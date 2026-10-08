@@ -73,7 +73,9 @@ void RegisterKeyEncodingFunctions(duckdb::DatabaseInstance& db) {
                               {duckdb::LogicalType::ANY},
                               duckdb::LogicalType::BLOB,
                               EncodeKeyFunction};
-  func.SetVarArgs(duckdb::LogicalType::ANY);
+  func.GetSignature()
+    .AddArgs("args", duckdb::LogicalType::ANY)
+    .AddKwargs("kwargs", duckdb::LogicalType::ANY);
   func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   loader.RegisterFunction(func);
 }

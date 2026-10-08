@@ -1,0 +1,109 @@
+control substitution on
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE icr_t (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE UNIQUE INDEX icr_body ON icr_t (body);
+
+
+statement ok
+INSERT INTO icr_t VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+INSERT INTO icr_t VALUES (3, 'three');
+
+
+statement ok
+CREATE TABLE icr_existing (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO icr_existing VALUES (1, 'one');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE UNIQUE INDEX icr_existing_body ON icr_existing (body);
+
+
+statement ok
+INSERT INTO icr_existing VALUES (2, 'two');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM icr_t;
+----
+n
+3
+
+
+connection after_crash
+statement error
+INSERT INTO icr_t VALUES (3, 'other');
+----
+db error: ERROR: Duplicate key "id: 3" violates primary key constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO icr_t VALUES (4, 'one');
+----
+db error: ERROR: Duplicate key "body: one" violates unique constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO icr_t VALUES (4, 'three');
+----
+db error: ERROR: Duplicate key "body: three" violates unique constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO icr_existing VALUES (3, 'one');
+----
+db error: ERROR: Duplicate key "body: one" violates unique constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO icr_existing VALUES (3, 'two');
+----
+db error: ERROR: Duplicate key "body: two" violates unique constraint.
+
+
+connection after_crash
+statement ok
+DROP TABLE icr_t;
+
+
+connection after_crash
+statement ok
+DROP TABLE icr_existing;

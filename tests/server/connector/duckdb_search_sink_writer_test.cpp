@@ -188,34 +188,26 @@ duckdb::Vector MakeSqlNullVector(duckdb::idx_t count) {
 
 class DuckDBSearchSinkWriterTest : public ::testing::Test {
  public:
-  static search::ColumnTokenizer AnalyzerProvider(irs::field_id) {
-    static catalog::Tokenizer gKeywordTokenizer(
-      ObjectId{12345}, {},
-      irs::analysis::TokenizerConfig{.config =
-                                       irs::KeywordTokenizer::Options{}});
-    auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
+  static catalog::ColumnTokenizer AnalyzerProvider(irs::field_id) {
+    static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
+      search::Features{}, irs::analysis::TokenizerConfig{
+                            .config = irs::KeywordTokenizer::Options{}});
+    auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
     return {.analyzer = std::move(tokenizer),
             .features = irs::IndexFeatures::None};
-  }
-
-  static void SetUpTestCase() {
-    // Running these multiple times does no harm but is redundant.
-    irs::formats::Init();
   }
 
   void SetUp() final {
     irs::IndexWriterOptions options;
     options.db = &TestDb();
     options.reader_options.db = &TestDb();
-    _codec = irs::formats::Get("1_5simd");
     _data_writer =
-      irs::IndexWriter::Make(_dir, _codec, irs::kOmCreate, std::move(options));
+      irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
   }
 
   void TearDown() final { _data_writer.reset(); }
 
  protected:
-  irs::Format::ptr _codec;
   irs::MemoryDirectory _dir;
   irs::IndexWriter::ptr _data_writer;
 };
@@ -242,8 +234,8 @@ TEST(PrimaryKeyTermTest, KeyTermMatchesStringEncoders) {
 }
 
 TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
-  catalog::Tokenizer dict(
-    ObjectId{54321}, {},
+  auto dict = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonTokenizer::Options{}});
 
@@ -268,7 +260,7 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
     return ok && consumer.count > 0;
   };
 
-  auto lease = dict.GetTokenizer(TestContext());
+  auto lease = dict->Acquire(TestContext());
   auto* instance = lease.get();
   ASSERT_TRUE(fill(*lease));
 
@@ -276,7 +268,7 @@ TEST(TokenizerPoolTest, ReturnedGeoLeaseIsUnbound) {
   ASSERT_FALSE(fill(*lease));
   lease.reset();
 
-  auto release = dict.GetTokenizer(TestContext());
+  auto release = dict->Acquire(TestContext());
   ASSERT_EQ(instance, release.get());
   ASSERT_TRUE(fill(*release));
 }
@@ -447,7 +439,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
     ASSERT_FALSE(!irs::doc_limits::eof(big_postings->Next()));
   };
   {
-    auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(4, reader.live_docs_count());
@@ -478,7 +470,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteMultipleColumns) {
   _data_writer->RefreshCommit();
 
   {
-    auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(4, reader.docs_count());
     ASSERT_EQ(2, reader.live_docs_count());
@@ -507,14 +499,13 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   // fallback where null_field_id collapses onto the value field.
   constexpr irs::field_id kVarcharNullsFieldId = 100;
   constexpr irs::field_id kUnknownNullsFieldId = 101;
-  search::InvertedIndexEntryInfo varchar_entry;
+  catalog::InvertedIndexField varchar_entry;
   varchar_entry.null_field_id = kVarcharNullsFieldId;
-  search::InvertedIndexEntryInfo unknown_entry;
+  catalog::InvertedIndexField unknown_entry;
   unknown_entry.null_field_id = kUnknownNullsFieldId;
   EntryInfoProvider entry_provider =
     [varchar_field = col_id[0], unknown_field = col_id[1], &varchar_entry,
-     &unknown_entry](
-      irs::field_id id) -> const search::InvertedIndexEntryInfo* {
+     &unknown_entry](irs::field_id id) -> const catalog::InvertedIndexField* {
     if (id == varchar_field) {
       return &varchar_entry;
     }
@@ -549,7 +540,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertNullsColumns) {
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(4, reader.live_docs_count());
@@ -709,7 +700,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertStringPrefix) {
   sink.Finish();
   ASSERT_TRUE(trx.Commit());
   _data_writer->RefreshCommit();
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(1, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
@@ -755,7 +746,7 @@ void InsertOneVarcharRow(irs::IndexWriter& writer, std::string_view pk,
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
     std::array<connector::ColumnId, 1>{connector::ColumnId{1}}};
-  const std::vector<std::string_view> rk{pk};
+  const auto rk = KeyTerms({pk});
   auto pk_vec =
     MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT, {PkIdOf(pk)});
   sink.Init(1, PkChunk{.key_terms = rk, .column = &pk_vec});
@@ -774,7 +765,7 @@ void InsertTwoVarcharRows(irs::IndexWriter& writer, std::string_view pk_a,
   DuckDBSearchSinkInsertWriter sink{
     trx, DuckDBSearchSinkWriterTest::AnalyzerProvider,
     std::array<connector::ColumnId, 1>{connector::ColumnId{1}}};
-  const std::vector<std::string_view> rk{pk_a, pk_b};
+  const auto rk = KeyTerms({pk_a, pk_b});
   auto pk_vec = MakeNumericVector<int64_t>(duckdb::LogicalType::BIGINT,
                                            {PkIdOf(pk_a), PkIdOf(pk_b)});
   sink.Init(2, PkChunk{.key_terms = rk, .column = &pk_vec});
@@ -812,7 +803,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertWithExisting) {
   InsertOneVarcharRow(*_data_writer, kPk, "value3");
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(4, reader.docs_count());
   ASSERT_EQ(2, reader.live_docs_count());
@@ -880,7 +871,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePending) {
   InsertOneVarcharRow(*_data_writer, kPk, "value3");
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(3, reader.docs_count());
   ASSERT_EQ(1, reader.live_docs_count());
@@ -943,7 +934,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
   // local block is needed as reader/writer should not outlive directory
   {
     auto limited_data_writer =
-      irs::IndexWriter::Make(dir, _codec, irs::kOmCreate, std::move(options));
+      irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
     constexpr std::string_view kPk = {"pk1", 3};
     constexpr std::string_view kPk2 = {"pk2", 3};
     constexpr std::string_view kPk3 = {"pk3", 3};
@@ -955,7 +946,7 @@ TEST_F(DuckDBSearchSinkWriterTest, InsertDeleteInsertOnePendingWithFlush) {
     InsertOneVarcharRow(*limited_data_writer, kPk, "value3");
     limited_data_writer->RefreshCommit();
 
-    auto reader = irs::DirectoryReader(dir, _codec, {.db = &TestDb()});
+    auto reader = irs::DirectoryReader(dir, {.db = &TestDb()});
     ASSERT_EQ(3, reader.size());
     ASSERT_EQ(5, reader.docs_count());
     ASSERT_EQ(3, reader.live_docs_count());
@@ -1028,7 +1019,7 @@ TEST_F(DuckDBSearchSinkWriterTest, DeleteNotMissedWithExisting) {
   InsertOneVarcharRow(*_data_writer, kPk, "value2");
   _data_writer->RefreshCommit();
 
-  auto reader = irs::DirectoryReader(_dir, _codec, {.db = &TestDb()});
+  auto reader = irs::DirectoryReader(_dir, {.db = &TestDb()});
   ASSERT_EQ(2, reader.size());
   ASSERT_EQ(3, reader.docs_count());
   ASSERT_EQ(2, reader.live_docs_count());

@@ -766,7 +766,7 @@ Integers:
 
 <SqlLogicTest id="sql/functions/text/example_017" />
 
-Booleans are not accepted as `%s` arguments and raise `invalid format specifier`; cast them to text first:
+Booleans format as `true` and `false`:
 
 <SqlLogicTest id="sql/functions/text/example_018" />
 
@@ -790,16 +790,16 @@ Convert to hexadecimal:
 
 <SqlLogicTest id="sql/functions/text/example_023" />
 
-There is no binary (`%b`) specifier; it raises `invalid format specifier`. Use [`bin`](#binstring) to obtain a binary representation:
+Convert to binary:
 
 <SqlLogicTest id="sql/functions/text/example_024" />
 
 #### Thousand Separators
 
-`printf` does not support thousand-separator specifiers (such as `%,d`, `%_d` or `%''d`); they raise `invalid format specifier`:
+Insert thousand separators: `%,d` groups digits with commas, `%.d` with periods, `%'d` with apostrophes and `%_d` with underscores:
 
 <SqlLogicTest id="sql/functions/text/example_025" />
 
-This also applies to floats and doubles:
+Floats and doubles take them too:
 
 <SqlLogicTest id="sql/functions/text/example_026" />

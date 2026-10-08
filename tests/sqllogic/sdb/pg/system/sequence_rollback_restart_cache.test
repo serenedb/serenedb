@@ -1,0 +1,35 @@
+statement ok
+CREATE SEQUENCE srr_seq CACHE 10;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE srr_seq RESTART WITH 2000;
+
+
+query
+SELECT nextval('srr_seq') AS n;
+----
+n
+2000
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT nextval('srr_seq') AS n;
+----
+n
+1
+
+
+query
+SELECT nextval('srr_seq') AS n;
+----
+n
+2

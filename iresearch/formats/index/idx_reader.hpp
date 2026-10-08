@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/serializer/serialization_traits.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -64,14 +65,10 @@ struct HnswMeta {
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
-inline constexpr std::string_view kIdxFormatName = "iresearch_index";
-inline constexpr int32_t kIdxFormatVersion = 1;
 
-enum class IdxSlotKind : uint8_t {
-  TermDict = 0,
-  Ivf = 1,
-  Hnsw = 2,
-};
+inline constexpr duckdb::field_id_t kIdxFieldTermDict = 0;
+inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
+inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 
 class IdxReader final {
  public:
@@ -86,9 +83,9 @@ class IdxReader final {
 
   std::span<const std::pair<field_id, TermDictMeta>> TermDicts() const noexcept;
 
-  IndexInput::ptr ReopenIn() const;
+  std::span<const uint64_t> AnnEnds() const noexcept;
 
-  uint64_t BodyStart() const noexcept;
+  IndexInput::ptr ReopenIn() const;
 
  private:
   struct Impl;

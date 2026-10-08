@@ -19,6 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
@@ -26,6 +29,7 @@
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <functional>
+#include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
@@ -627,6 +631,89 @@ TEST_F(ColumnReaderTest, SegmentRoundTripStruct) {
       } else {
         EXPECT_FALSE(vb.RowIsValid(k)) << "b row " << g;
       }
+    }
+    pos += take;
+  }
+}
+
+TEST_F(ColumnReaderTest, SegmentRoundTripTuple) {
+  constexpr uint64_t kRows = 6000;
+  constexpr uint32_t kRgSize = 4096;
+  constexpr irs::field_id kT = 9;
+  const auto ttype =
+    duckdb::LogicalType::TUPLE(duckdb::vector<duckdb::LogicalType>{
+      duckdb::LogicalType::BIGINT, duckdb::LogicalType::DOUBLE});
+  ASSERT_EQ(ttype.id(), duckdb::LogicalTypeId::TUPLE);
+
+  auto t_valid = [](uint64_t g) { return g % 11 != 0; };
+  auto x_valid = [](uint64_t g) { return g % 10 != 0; };
+  auto x_val = [](uint64_t g) { return static_cast<int64_t>(g); };
+  auto y_val = [](uint64_t g) { return static_cast<double>(g) / 4; };
+
+  irs::MemoryDirectory dir{};
+  {
+    irs::ColWriter w{dir, "seg", Db()};
+    auto& cwT = w.OpenColumn(kT, ttype, false, kRgSize);
+    uint64_t pos = 0;
+    while (pos < kRows) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{ttype, STANDARD_VECTOR_SIZE};
+      auto& entries = duckdb::StructVector::GetEntries(v);
+      auto* dx = duckdb::FlatVector::GetDataMutable<int64_t>(entries[0]);
+      auto* dy = duckdb::FlatVector::GetDataMutable<double>(entries[1]);
+      auto& vx = duckdb::FlatVector::ValidityMutable(entries[0]);
+      auto& vt = duckdb::FlatVector::ValidityMutable(v);
+      vx.Reset(STANDARD_VECTOR_SIZE);
+      vt.Reset(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto g = pos + k;
+        if (!t_valid(g)) {
+          vt.SetInvalid(k);
+        }
+        if (x_valid(g)) {
+          dx[k] = x_val(g);
+        } else {
+          vx.SetInvalid(k);
+        }
+        dy[k] = y_val(g);
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cwT.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r{dir, "seg", Db()};
+  const auto* ct = r.Column(kT);
+  ASSERT_NE(ct, nullptr);
+  ASSERT_EQ(ct->RowCount(), kRows);
+  EXPECT_EQ(ct->StructFieldCount(), 2);
+
+  auto state = ct->InitScan(r.Ctx());
+  uint64_t pos = 0;
+  while (pos < kRows) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector result{ttype, STANDARD_VECTOR_SIZE};
+    ct->Scan(state, result, take);
+    result.Flatten(take);
+    auto& entries = duckdb::StructVector::GetEntries(result);
+    const auto* dx = duckdb::FlatVector::GetData<int64_t>(entries[0]);
+    const auto* dy = duckdb::FlatVector::GetData<double>(entries[1]);
+    const auto& tv = duckdb::FlatVector::Validity(result);
+    const auto& vx = duckdb::FlatVector::Validity(entries[0]);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      const auto g = pos + k;
+      EXPECT_EQ(tv.RowIsValid(k), t_valid(g)) << "tuple row " << g;
+      if (x_valid(g)) {
+        ASSERT_TRUE(vx.RowIsValid(k)) << "x row " << g;
+        EXPECT_EQ(dx[k], x_val(g)) << "x row " << g;
+      } else {
+        EXPECT_FALSE(vx.RowIsValid(k)) << "x row " << g;
+      }
+      EXPECT_EQ(dy[k], y_val(g)) << "y row " << g;
     }
     pos += take;
   }
@@ -2452,6 +2539,46 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
     }
     pos += take;
   }
+}
+
+TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
+  auto unknown =
+    duckdb::DBConfig::GetConfig(Db())
+      .GetCompressionFunction(duckdb::CompressionType::COMPRESSION_UNCOMPRESSED,
+                              duckdb::PhysicalType::INT64)
+      .get();
+  unknown.type = static_cast<duckdb::CompressionType>(200);
+
+  irs::ColumnMeta meta;
+  meta.id = 7;
+  meta.type = duckdb::LogicalType::BIGINT;
+  meta.data.push_back(irs::ColumnBlockMeta{
+    .statistics =
+      duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::BIGINT),
+    .tuple_count = 1,
+    .byte_size = sizeof(int64_t),
+    .codec = &unknown,
+  });
+
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  irs::SerializeColumnMeta(serializer, meta);
+  serializer.End();
+
+  stream.Rewind();
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::DatabaseInstance&>(Db());
+  deserializer.Begin();
+  std::string message;
+  try {
+    irs::DeserializeColumnMeta(deserializer);
+  } catch (const irs::IndexError& e) {
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos, message.find("compression 200")) << message;
+  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+    << message;
 }
 
 }  // namespace

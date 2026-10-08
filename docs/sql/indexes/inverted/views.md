@@ -52,16 +52,59 @@ Row identity is always derived automatically — there is no `pk` index option. 
 
 ## Fast-path sources
 
-A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), Iceberg tables, attached DuckDB tables, [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases) and `read_text` / `read_blob`.
+A **fast-path source** is a view body SereneDB recognizes well enough to both derive the row identity and re-read columns by it later. The recognized sources are: SereneDB base tables, `read_parquet` / `read_csv` / `read_json` (and their `*_auto` / `parquet_scan` / `read_ndjson` variants), `read_text`, Iceberg tables, attached DuckDB tables and [attached PostgreSQL and ClickHouse tables](./external-data.md#external-databases).
 
-The view body may shape the source freely and still qualify as fast-path:
+The view body may shape the source and still qualify as fast-path:
 
 - a column subset, reordering or renaming (`SELECT body, id FROM …`, `SELECT a AS x FROM …`);
-- a cast on the indexed column (`SELECT id::BIGINT, body FROM …`);
-- an indexed **expression** over source columns (`upper(body)`, `(json ->> 'b')`);
+- a cast on a column (`SELECT id::BIGINT, body FROM …`);
 - a `WHERE` / `ORDER BY` / `LIMIT` in the view body (the index then captures only the rows the view emits).
 
+An indexed **expression** over source columns (`upper(body)`, `(json ->> 'b')`) goes in the index definition, over a plain view.
+
 A body with **no fast-path leaf** — inline `VALUES`, a `UNION ALL`, a join — is a *generic* view: it indexes normally but supports only the non-materializing queries below.
+
+### Keeping a view on the fast path
+
+Besides losing [materialization](#materializing-real-columns), a generic view's index is rebuilt in full on every [refresh](#refreshing-the-index) — each `REINDEX` and each `reindex_interval` tick, whether or not the source changed — even over files or Iceberg, which otherwise refresh incrementally. These make a view generic:
+
+| In the view body | Write instead |
+|---|---|
+| An expression in the select list: `SELECT id, upper(body) AS body FROM …` | A plain view, with the expression in the index: `USING inverted((upper(body)) en)` |
+| A qualified column: `SELECT t.id, t.body FROM … AS t` | Bare column names: `SELECT id, body FROM …` |
+| A join, a subquery, `UNION ALL` or inline `VALUES` | One table or one reader call per view |
+| `GROUP BY`, `HAVING`, `DISTINCT`, `QUALIFY`, `SAMPLE` or a `WITH` clause | A plain view; aggregate or deduplicate in the query |
+| A reader over a list of files: `read_parquet(['a.parquet', 'b.parquet'])` | One glob: `read_parquet('data/*.parquet')` |
+| Compressed JSON: a `.gz` / `.zst` path, or `compression = 'gzip'` / `'zstd'` | Uncompressed files, or [`INCLUDE`](#include-columns) the columns you return |
+
+Two constructs keep the fast path but turn every refresh that finds a change into a full rebuild: a `LIMIT` in the view body, and a reader's `union_by_name` option.
+
+### Referencing the source
+
+Names in a view body are resolved each time the view is used — first in the view's own schema, then along the `search_path` of the session running the query. Write a table that lives outside the view's schema in full: a short name makes the view resolve differently, or not at all, depending on who queries it.
+
+<DocCallout type="attention">
+
+**Write an Iceberg table by its full path, `server.namespace.table`.** Any part you leave out has to be looked up in the catalog: SereneDB asks for the table in each Iceberg namespace the name could live in until it finds it — one catalog request for the namespace that holds it, plus a wasted one for every namespace tried before it. These lookups happen when each query is planned, even a query answered entirely from the index, whenever the catalog's cached answer is older than `max_table_staleness` (so on every query if it is not set). With the full path the location is already known, and a query answered from the index makes no catalog request at all.
+
+</DocCallout>
+
+- **Iceberg** — attach the REST catalog with [`CREATE SERVER … FOREIGN DATA WRAPPER iceberg_fdw`](../../statements/create_server/index.md) and use the full path:
+
+  ```sql
+  CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
+      warehouse '⟨warehouse⟩',
+      endpoint '⟨https://your-rest-catalog/iceberg/v1/restcatalog⟩',
+      authorization_type '⟨oauth2⟩', token '⟨...⟩',
+      max_table_staleness '10 minutes');
+
+  CREATE VIEW events_v AS SELECT id, body FROM lake.analytics.events;
+  ```
+
+  Prefer the catalog to `iceberg_scan('⟨path⟩')`. A metadata-file path pins the view to that one snapshot, so a refresh never sees newer commits; a table-directory path needs a `version-hint.text` file, which catalog-managed tables usually do not have. The catalog always knows the current snapshot, and every refresh loads it.
+- **Parquet, CSV, JSON and text files** — give one path, and use a glob for a dataset that grows: a refresh then re-reads only the files that appeared, changed or disappeared.
+- **Attached DuckDB** — attach a database *file*: a table in an in-memory attached database is not a fast-path source.
+- **Attached PostgreSQL and ClickHouse** — matches are re-fetched by key; see [the default key](./external-data.md#the-default-key) and when to [override it](./external-data.md#overriding-the-key-with-key_columns).
 
 ## What runs without materialization
 
@@ -85,6 +128,8 @@ Selecting a real source column that is neither indexed nor `INCLUDE`d **material
 
 Because the read is live, if the underlying source changed after the index was built, materialized values reflect the *current* source: rows deleted from the source come back as `NULL`, and edited content shows its new value (or raises an error if a file became unreadable). Counts and scores, by contrast, still reflect the frozen build-time snapshot.
 
+Columns a file reader adds on its own materialize too, with the values the view gives them: a hive partition column (`hive_partitioning`) comes from the path of the row's file, `filename` is that path, and `file_row_number` is the position the reader reports for the row. Filters on these columns work like filters on any other materialized column.
+
 ## Generic views
 
 A generic view (no fast-path source) still indexes and answers the non-materializing queries — no extra options are needed, the postings key on a synthetic row id:
@@ -97,13 +142,17 @@ Selecting its real columns is not supported and raises an error:
 
 ## `INCLUDE` columns
 
-`INCLUDE`d columns on a view are stored in the index's columnstore, so they are returned **without** materializing the source — the same as on a base table. Use `INCLUDE` for columns you frequently return but never search, to avoid the per-row source lookup.
+`INCLUDE`d columns on a view are stored in the index's columnstore, so they are returned **without** materializing the source — the same as on a base table. Use `INCLUDE` for columns you frequently return but never search, to avoid the per-row source lookup. A query that returns only indexed and `INCLUDE`d columns never touches the source at all: over a catalog-attached Iceberg table [named in full](#referencing-the-source) it does not even contact the catalog, so its latency does not depend on the server's `max_table_staleness`.
 
 ## Refreshing the index
 
 The postings are a snapshot; the source moves on. `REINDEX INDEX <name>` runs **one refresh pass**: it compares the current source state against what the index holds, applies the difference **incrementally** when the source supports it and falls back to a **full rebuild** when it does not, then publishes the result atomically — readers see either the previous complete state or the new one, never a partial index. (`REINDEX INDEX CONCURRENTLY` is accepted too: the pass never blocks readers either way.)
 
 A pass always compares against the source's **current committed state** — for a catalog-attached Iceberg table it forces a fresh table load even inside the server's `max_table_staleness` window. That is what makes `REINDEX` a freshness barrier: when it returns, everything committed before it is searchable. It requires the `MAINTAIN` privilege on the view (the same class as `VACUUM`).
+
+A pass reads the source in a transaction of its own, not the caller's. Inside an explicit transaction it still sees every commit made before it started, and it never sees the caller's own uncommitted writes to the source. The index itself must be committed: an index created in the same, still-open transaction cannot be refreshed yet.
+
+Only one pass runs per index at a time. A `REINDEX` that finds another pass running — manual or [automatic](#automatic-refresh) — waits for it to finish and then runs its own pass against the source as it is at that moment. While it waits, `pg_stat_progress_create_index` shows it with `command = 'REINDEX'` and phase `waiting for running reindex`; it can be cancelled during the wait. If the source changes while a pass is running, the pass is repeated automatically.
 
 <SqlLogicTest id="sql/indexes/inverted/views/reindex_setup" />
 

@@ -21,11 +21,16 @@
 #pragma once
 
 #include "iresearch/analysis/token_attributes.hpp"
+#include "iresearch/formats/basic_term_reader.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/iterators.hpp"
+#include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -117,19 +122,41 @@ inline ScoreBoundWriter::ptr PrepareScoreBoundWriter(ScorerPtr scorer,
 //  |       block#0       | |      block#1        | |vInts|
 //  d d d d d d d d d d d d d d d d d d d d d d d d d d d d (posting list)
 //                          ^                       ^       (level 0 skip point)
-class PostingsWriterBase : public PostingsWriter {
+class PostingsWriter final {
  public:
-  static constexpr std::string_view kDocFormatName =
-    "iresearch_10_postings_documents";
   static constexpr std::string_view kDocExt = "doc";
-  static constexpr std::string_view kPosFormatName =
-    "iresearch_10_postings_positions";
   static constexpr std::string_view kPosExt = "pos";
-  static constexpr std::string_view kPayFormatName =
-    "iresearch_10_postings_payloads";
   static constexpr std::string_view kPayExt = "pay";
 
-  FieldStats EndField() final {
+  struct FieldStats {
+    bool has_score_bounds;
+    doc_id_t docs_count;
+  };
+
+  PostingsWriter(bool volatile_attributes, IResourceManager& rm)
+    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, rm},
+      _volatile_attributes{volatile_attributes} {}
+
+  void Prepare(const FlushState& state);
+  void BeginField(const FieldProperties& meta);
+
+  void SetTermPayloadWriter(TermPayloadWriter* writer) noexcept {
+    _term_pay = writer;
+  }
+
+  void Write(TermPostings& docs, PostingMeta& meta);
+  void WritePostings(const PostingRows& postings, PostingMeta& meta);
+
+  void BeginBlock() noexcept {
+    // clear state in order to write
+    // absolute address of the first
+    // entry in the block
+    _last_state.clear();
+  }
+
+  void Encode(BufferedOutput& out, const PostingMeta& state);
+
+  FieldStats EndField() {
     if (_features.HasVector() && _term_pay != nullptr) {
       SDB_ASSERT(_pay_out);
       _term_pay->Finish(*_pay_out);
@@ -140,24 +167,9 @@ class PostingsWriterBase : public PostingsWriter {
             .docs_count = static_cast<doc_id_t>(count)};
   }
 
-  void SetTermPayloadWriter(TermPayloadWriter* writer) final {
-    _term_pay = writer;
-  }
+  void End();
 
-  void BeginBlock() final {
-    // clear state in order to write
-    // absolute address of the first
-    // entry in the block
-    _last_state.clear();
-  }
-
-  void Prepare(IndexOutput& out, const FlushState& state) final;
-  void Encode(BufferedOutput& out, const PostingMeta& state) final;
-
- protected:
-  explicit PostingsWriterBase(IResourceManager& rm)
-    : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize, rm} {}
-
+ private:
   class Features {
    public:
     void Reset(IndexFeatures features) noexcept {
@@ -213,9 +225,20 @@ class PostingsWriterBase : public PostingsWriter {
   void WriteSkip(size_t level, MemoryIndexOutput& out);
   void BeginTerm(PostingMeta& meta);
   void ArmSkip(const PostingMeta& meta);
-  virtual void FlushTailDoc() = 0;
   void EndTerm(PostingMeta& meta);
   void PrepareWriters(const FieldProperties& meta);
+  void FlushTailDoc();
+  void FlushTailPos();
+  void FlushTailPay();
+  template<bool HasOffs>
+  void PushPosition(uint32_t pos, uint32_t offs_start = 0,
+                    uint32_t offs_end = 0);
+  template<bool HasOffs>
+  void PushPositions(const uint32_t* pos, const uint32_t* offs_start,
+                     const uint32_t* offs_end, size_t n);
+  void AddPosition(uint32_t pos);
+  void BeginDocInTerm(doc_id_t doc, uint32_t freq, uint32_t docs_count,
+                      PostingMeta& meta, bool has_freq);
 
   template<typename Func>
   void ApplyToWriter(Func&& func) {
@@ -246,9 +269,12 @@ class PostingsWriterBase : public PostingsWriter {
   // Whether the current term armed the skip writer (it does at its first
   // block fill).
   bool _skip_armed{false};
+  // Buffer for block encoding (worst case)
+  uint32_t _enc_buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
+  bool _volatile_attributes;
 };
 
-inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
+inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
   _valid_writer = nullptr;
 
   if (!_norms) [[unlikely]] {
@@ -262,8 +288,7 @@ inline void PostingsWriterBase::PrepareWriters(const FieldProperties& meta) {
   }
 }
 
-inline void PostingsWriterBase::WriteSkip(size_t level,
-                                          MemoryIndexOutput& out) {
+inline void PostingsWriter::WriteSkip(size_t level, MemoryIndexOutput& out) {
   SDB_ASSERT(_doc_out);
   const doc_id_t doc = _doc.block_last;
   const uint64_t doc_ptr = _doc_out->Position();
@@ -290,20 +315,19 @@ inline void PostingsWriterBase::WriteSkip(size_t level,
   }
 }
 
-inline void PostingsWriterBase::Prepare(IndexOutput& out,
-                                        const FlushState& state) {
+inline void PostingsWriter::Prepare(const FlushState& state) {
   SDB_ASSERT(state.dir);
   SDB_ASSERT(!IsNull(state.name));
 
   std::string name;
 
   // Prepare document stream
-  format_utils::PrepareOutput(name, _doc_out, state, kDocExt, kDocFormatName);
+  format_utils::PrepareOutput(name, _doc_out, state, kDocExt);
 
   if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
     // Prepare proximity stream
     _pos.Reset();
-    format_utils::PrepareOutput(name, _pos_out, state, kPosExt, kPosFormatName);
+    format_utils::PrepareOutput(name, _pos_out, state, kPosExt);
   }
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
@@ -316,12 +340,10 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
     _pay.Reset();
   }
   if (has_offs || has_vec) {
-    format_utils::PrepareOutput(name, _pay_out, state, kPayExt, kPayFormatName);
+    format_utils::PrepareOutput(name, _pay_out, state, kPayExt);
   }
 
   _skip.Prepare(doc_limits::kMaxSkipLevels, state.doc_count);
-
-  out.WriteV32(_skip.Skip0());  // Write postings block size
 
   _writer = PrepareScoreBoundWriter(state.scorer, doc_limits::kMaxSkipLevels);
   _norms = state.norms;
@@ -330,8 +352,8 @@ inline void PostingsWriterBase::Prepare(IndexOutput& out,
   _docs.reset(doc_limits::min() + state.doc_count);
 }
 
-inline void PostingsWriterBase::Encode(BufferedOutput& out,
-                                       const PostingMeta& meta) {
+inline void PostingsWriter::Encode(BufferedOutput& out,
+                                   const PostingMeta& meta) {
   SDB_ASSERT(!_features.HasVector() ||
              (!_features.HasPosition() && !_features.HasOffset()));
 
@@ -362,7 +384,7 @@ inline void PostingsWriterBase::Encode(BufferedOutput& out,
   _last_state = meta;
 }
 
-inline void PostingsWriterBase::BeginTerm(PostingMeta& meta) {
+inline void PostingsWriter::BeginTerm(PostingMeta& meta) {
   meta.doc_start = _doc_out->Position();
   if (_features.HasPosition()) {
     SDB_ASSERT(_pos_out);
@@ -376,7 +398,7 @@ inline void PostingsWriterBase::BeginTerm(PostingMeta& meta) {
   }
 }
 
-inline void PostingsWriterBase::ArmSkip(const PostingMeta& meta) {
+inline void PostingsWriter::ArmSkip(const PostingMeta& meta) {
   std::fill_n(_doc.skip_ptr, doc_limits::kMaxSkipLevels, meta.doc_start);
   if (_features.HasPosition()) {
     std::fill_n(_pos.skip_ptr, doc_limits::kMaxSkipLevels, meta.pos_start);
@@ -388,7 +410,7 @@ inline void PostingsWriterBase::ArmSkip(const PostingMeta& meta) {
   _skip_armed = true;
 }
 
-inline void PostingsWriterBase::EndTerm(PostingMeta& meta) {
+inline void PostingsWriter::EndTerm(PostingMeta& meta) {
   if (meta.docs_count == 0) {
     return;  // no documents to write
   }
@@ -439,49 +461,17 @@ inline void PostingsWriterBase::EndTerm(PostingMeta& meta) {
   _pay.last = 0;
 }
 
-template<typename FormatTraits>
-class PostingsWriterImpl final : public PostingsWriterBase {
- public:
-  explicit PostingsWriterImpl(bool volatile_attributes, IResourceManager& rm)
-    : PostingsWriterBase{rm}, _volatile_attributes{volatile_attributes} {}
-
-  void BeginField(const FieldProperties& meta) final;
-  void Write(TermPostings& docs, PostingMeta& meta) final;
-  bool WritePostings(const PostingRows& postings, PostingMeta& meta) final;
-  void End() final;
-
- private:
-  void FlushTailDoc() final;
-  void FlushTailPos();
-  void FlushTailPay();
-  template<bool HasOffs>
-  void PushPosition(uint32_t pos, uint32_t offs_start = 0,
-                    uint32_t offs_end = 0);
-  template<bool HasOffs>
-  void PushPositions(const uint32_t* pos, const uint32_t* offs_start,
-                     const uint32_t* offs_end, size_t n);
-  void AddPosition(uint32_t pos);
-  void BeginDocInTerm(doc_id_t doc, uint32_t freq, uint32_t docs_count,
-                      PostingMeta& meta, bool has_freq);
-
-  // Buffer for block encoding (worst case)
-  uint32_t _enc_buf[std::max(doc_limits::kBlockSize, pos_limits::kBlockSize)];
-  bool _volatile_attributes;
-};
-
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::FlushTailDoc() {
+inline void PostingsWriter::FlushTailDoc() {
   const auto tail = _doc.size;
   SDB_ASSERT(tail != 0);
-  FormatTraits::WriteTailDelta(tail, *_doc_out, _doc.docs, _doc.block_last,
-                               _enc_buf);
+  FormatTraits128::WriteTailDelta(tail, *_doc_out, _doc.docs, _doc.block_last,
+                                  _enc_buf);
   if (_features.HasFrequency()) {
-    FormatTraits::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf);
+    FormatTraits128::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf);
   }
 }
 
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::FlushTailPos() {
+inline void PostingsWriter::FlushTailPos() {
   SDB_ASSERT(_pos_out);
   SDB_ASSERT(_pos.size != 0);
   const auto tail_size = doc_limits::kBlockSize - _pos.size;
@@ -489,13 +479,12 @@ void PostingsWriterImpl<FormatTraits>::FlushTailPos() {
 
   auto* pos_tail = _pos.buf + _pos.size;
   std::fill_n(pos_tail, tail_size, pos_tail[-1]);
-  FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
+  FormatTraits128::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
 
   _pos.size = 0;
 }
 
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::FlushTailPay() {
+inline void PostingsWriter::FlushTailPay() {
   SDB_ASSERT(_pay_out);
   SDB_ASSERT(_pay.size != 0);
   const auto tail_size = doc_limits::kBlockSize - _pay.size;
@@ -503,17 +492,16 @@ void PostingsWriterImpl<FormatTraits>::FlushTailPay() {
 
   auto* offs_start_tail = _pay.offs_start_buf + _pay.size;
   std::fill_n(offs_start_tail, tail_size, offs_start_tail[-1]);
-  FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
+  FormatTraits128::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
 
   auto* offs_len_tail = _pay.offs_len_buf + _pay.size;
   std::fill_n(offs_len_tail, tail_size, offs_len_tail[-1]);
-  FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
+  FormatTraits128::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
 
   _pay.size = 0;
 }
 
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::BeginField(const FieldProperties& meta) {
+inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   _features.Reset(meta.index_features);
   PrepareWriters(meta);
   _docs.clear();
@@ -535,11 +523,9 @@ void PostingsWriterImpl<FormatTraits>::BeginField(const FieldProperties& meta) {
   }
 }
 
-template<typename FormatTraits>
 template<bool HasOffs>
-void PostingsWriterImpl<FormatTraits>::PushPosition(uint32_t pos,
-                                                    uint32_t offs_start,
-                                                    uint32_t offs_end) {
+void PostingsWriter::PushPosition(uint32_t pos, uint32_t offs_start,
+                                  uint32_t offs_end) {
   // at least positions stream should be created
   SDB_ASSERT(_features.HasPosition());
   SDB_ASSERT(_features.HasOffset() == HasOffs);
@@ -553,14 +539,14 @@ void PostingsWriterImpl<FormatTraits>::PushPosition(uint32_t pos,
 
   if (_pos.Full()) [[unlikely]] {
     SDB_ASSERT(_pos_out);
-    FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
+    FormatTraits128::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
     _pos.size = 0;
 
     if constexpr (HasOffs) {
       SDB_ASSERT(_pay_out);
       SDB_ASSERT(_pay.size != 0);
-      FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
-      FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
+      FormatTraits128::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
+      FormatTraits128::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
       _pay.size = 0;
     }
   }
@@ -570,12 +556,10 @@ void PostingsWriterImpl<FormatTraits>::PushPosition(uint32_t pos,
 // columns: deltas land block-chunk-at-a-time (the inner subtract loops
 // vectorize), the block-full check runs once per chunk instead of once per
 // position.
-template<typename FormatTraits>
 template<bool HasOffs>
-void PostingsWriterImpl<FormatTraits>::PushPositions(const uint32_t* pos,
-                                                     const uint32_t* offs_start,
-                                                     const uint32_t* offs_end,
-                                                     size_t n) {
+void PostingsWriter::PushPositions(const uint32_t* pos,
+                                   const uint32_t* offs_start,
+                                   const uint32_t* offs_end, size_t n) {
   SDB_ASSERT(_features.HasPosition());
   SDB_ASSERT(_features.HasOffset() == HasOffs);
 
@@ -613,14 +597,14 @@ void PostingsWriterImpl<FormatTraits>::PushPositions(const uint32_t* pos,
 
     if (_pos.Full()) [[unlikely]] {
       SDB_ASSERT(_pos_out);
-      FormatTraits::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
+      FormatTraits128::WriteBlock(*_pos_out, _pos.buf, _enc_buf);
       _pos.size = 0;
 
       if constexpr (HasOffs) {
         SDB_ASSERT(_pay_out);
         SDB_ASSERT(_pay.size != 0);
-        FormatTraits::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
-        FormatTraits::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
+        FormatTraits128::WriteBlock(*_pay_out, _pay.offs_start_buf, _enc_buf);
+        FormatTraits128::WriteBlock(*_pay_out, _pay.offs_len_buf, _enc_buf);
         _pay.size = 0;
       }
     }
@@ -628,8 +612,7 @@ void PostingsWriterImpl<FormatTraits>::PushPositions(const uint32_t* pos,
   }
 }
 
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
+inline void PostingsWriter::AddPosition(uint32_t pos) {
   SDB_ASSERT(!_features.HasOffset() == !_attrs.offs);
   if (_features.HasOffset()) {
     PushPosition<true>(pos, _attrs.offs->start, _attrs.offs->end);
@@ -638,8 +621,7 @@ void PostingsWriterImpl<FormatTraits>::AddPosition(uint32_t pos) {
   }
 }
 
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::End() {
+inline void PostingsWriter::End() {
   format_utils::WriteFooter(*_doc_out);
   _doc_out.reset();  // ensure stream is closed
 
@@ -666,10 +648,11 @@ void PostingsWriterImpl<FormatTraits>::End() {
   }
 }
 
-template<typename FormatTraits>
-IRS_FORCE_INLINE void PostingsWriterImpl<FormatTraits>::BeginDocInTerm(
-  doc_id_t doc, uint32_t freq, uint32_t docs_count, PostingMeta& meta,
-  bool has_freq) {
+IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
+                                                            uint32_t freq,
+                                                            uint32_t docs_count,
+                                                            PostingMeta& meta,
+                                                            bool has_freq) {
   if (_doc.last >= doc) [[unlikely]] {
     throw IndexError{
       absl::StrCat("While beginning document in postings_writer, error: "
@@ -699,10 +682,10 @@ IRS_FORCE_INLINE void PostingsWriterImpl<FormatTraits>::BeginDocInTerm(
     _doc.Push(doc);
   }
   if (_doc.Full()) {
-    FormatTraits::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last,
-                                  _enc_buf);
+    FormatTraits128::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last,
+                                     _enc_buf);
     if (has_freq) {
-      FormatTraits::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
+      FormatTraits128::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
     }
     _doc.block_last = _doc.last;
     _doc.size = 0;
@@ -721,9 +704,7 @@ IRS_FORCE_INLINE void PostingsWriterImpl<FormatTraits>::BeginDocInTerm(
   }
 }
 
-template<typename FormatTraits>
-void PostingsWriterImpl<FormatTraits>::Write(TermPostings& docs,
-                                             PostingMeta& meta) {
+inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
   auto refresh = [&](TermPostings& attrs) noexcept { _attrs.Reset(attrs); };
 
   if (!_volatile_attributes) {
@@ -786,9 +767,8 @@ void PostingsWriterImpl<FormatTraits>::Write(TermPostings& docs,
 // Span fast path: the same per-doc protocol as Write, fed straight from
 // the term's row columns instead of per-doc iterator dispatch; the row
 // walk itself lives in TermPostings::VisitRuns.
-template<typename FormatTraits>
-bool PostingsWriterImpl<FormatTraits>::WritePostings(
-  const PostingRows& postings, PostingMeta& meta) {
+inline void PostingsWriter::WritePostings(const PostingRows& postings,
+                                          PostingMeta& meta) {
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
@@ -853,7 +833,6 @@ bool PostingsWriterImpl<FormatTraits>::WritePostings(
     meta.pos_offset = _term_pay->PendingLanes();
     _term_pay->WriteTermPayload(*_pay_out, _term_docs);
   }
-  return true;
 }
 
 }  // namespace irs

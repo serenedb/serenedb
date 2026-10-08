@@ -226,7 +226,7 @@ Returns `true` if the `list` contains the `element`.
 
 <SqlLogicTest id="sql/functions/list/flatten" />
 
-#### `generate_series(start[, stop][, step])`
+#### `generate_series(start[, stop][, step])` {#generate_seriesstart-stop-step}
 
 Creates a list of values between `start` and `stop` - the stop parameter is inclusive.
 
@@ -602,7 +602,7 @@ Zips n `LIST`s to a new `LIST` whose length will be that of the longest list. It
 
 <SqlLogicTest id="sql/functions/list/list_zip_3" />
 
-#### `range(start[, stop][, step])`
+#### `range(start[, stop][, step])` {#rangestart-stop-step}
 
 Creates a list of values between `start` and `stop` - the stop parameter is exclusive.
 
@@ -682,7 +682,7 @@ Based on the number of arguments, the following variants of `range` exist.
 
 <SqlLogicTest id="sql/functions/list/example_006" />
 
-#### `range(start, stop, step)`
+#### `range(start, stop, step)` {#range-with-step}
 
 <SqlLogicTest id="sql/functions/list/example_007" />
 
@@ -701,7 +701,7 @@ Based on the number of arguments, the following variants of `generate_series` ex
 
 <SqlLogicTest id="sql/functions/list/example_009" />
 
-#### `generate_series(start, stop, step)`
+#### `generate_series(start, stop, step)` {#generate_series-with-step}
 
 <SqlLogicTest id="sql/functions/list/example_010" />
 

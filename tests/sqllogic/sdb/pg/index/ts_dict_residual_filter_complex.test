@@ -80,12 +80,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -123,12 +123,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -168,12 +168,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -211,12 +211,12 @@ WHERE ts::DATE = DATE '2026-01-01' GROUP BY sev
 QUERY PLAN
 ╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
 │ Groups: #0                                                                           │
 │ Aggregates: sum(#1)                                                                  │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
@@ -250,12 +250,12 @@ WHERE ts >= TIMESTAMP '2026-01-02' AND ts < TIMESTAMP '2026-01-03' GROUP BY sev
 QUERY PLAN
 ╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
 │ Groups: #0                                                                           │
 │ Aggregates: sum(#1)                                                                  │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
@@ -291,12 +291,12 @@ WHERE date_trunc('day', ts) = TIMESTAMP '2026-01-02' GROUP BY sev
 QUERY PLAN
 ╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
 │ Groups: #0                                                                           │
 │ Aggregates: sum(#1)                                                                  │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
@@ -337,12 +337,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -381,12 +381,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -423,12 +423,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -467,12 +467,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -512,12 +512,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -556,12 +556,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -569,8 +569,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter:                            │
-│ substr(svc, 1, 5) = 'front'               │
+│ Column Filter: svc >= 'front'             │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 
@@ -601,12 +600,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -649,12 +648,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -694,12 +693,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -707,7 +706,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter: starts_with(svc, 'front')  │
+│ Column Filter: svc >= 'front'             │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 
@@ -738,12 +737,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -782,12 +781,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -795,8 +794,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter:                            │
-│ (svc >= 'front') AND (svc < 'fronu')      │
+│ Column Filter: svc >= 'front'             │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 
@@ -827,12 +825,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -872,12 +870,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -960,12 +958,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1002,12 +1000,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1015,8 +1013,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter:                            │
-│ (svc >= 'front') AND (svc < 'fronu')      │
+│ Column Filter: svc >= 'front'             │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 
@@ -1147,7 +1144,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ────────────────╮
 │ Groups: #0                     │
 │ Aggregates: count_star()       │
-│ ~0 rows                        │
+│ ~1 row                         │
 ╰────────────────┬───────────────╯
 ╭─ PROJECTION ───┴───────────────╮
 │ Projections: #1                │
@@ -1191,7 +1188,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ─────────────────────────╮
 │ Groups: #0                              │
 │ Aggregates: count_star()                │
-│ ~0 rows                                 │
+│ ~1 row                                  │
 ╰────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ───┴────────────────────╮
 │ Index: cev_idx                          │
@@ -1232,7 +1229,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ────────────────────────────╮
 │ Groups: #0                                 │
 │ Aggregates: count_star()                   │
-│ ~0 rows                                    │
+│ ~1 row                                     │
 ╰──────────────────────┬─────────────────────╯
 ╭─ PROJECTION ─────────┴─────────────────────╮
 │ Projections: #1                            │
@@ -1279,7 +1276,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ──────────────────────────────╮
 │ Groups: #0                                   │
 │ Aggregates: count_star()                     │
-│ ~0 rows                                      │
+│ ~1 row                                       │
 ╰───────────────────────┬──────────────────────╯
 ╭─ PROJECTION ──────────┴──────────────────────╮
 │ Projections: #1                              │
@@ -1322,7 +1319,7 @@ QUERY PLAN
 ╭─ HASH_GROUP_BY ─────────────────────╮
 │ Groups: #0                          │
 │ Aggregates: count_star()            │
-│ ~0 rows                             │
+│ ~1 row                              │
 ╰──────────────────┬──────────────────╯
 ╭─ PROJECTION ─────┴──────────────────╮
 │ Projections: #2                     │
@@ -1372,12 +1369,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cvw_idx                            │
@@ -1414,12 +1411,12 @@ WHERE Ts::DATE = DATE '2026-01-01' AND Body @@ 'failed' GROUP BY Sev
 QUERY PLAN
 ╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
 │ Groups: #0                                                                           │
 │ Aggregates: sum(#1)                                                                  │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cvw_idx                                                                       │
@@ -1509,12 +1506,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1550,12 +1547,12 @@ WHERE ts::DATE = DATE '2026-01-02' GROUP BY sev
 QUERY PLAN
 ╭─ PROJECTION ─────────────────────────────────────────────────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, CAST(#1 AS BIGINT)                         │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ HASH_GROUP_BY ───────────────────────────┴──────────────────────────────────────────╮
 │ Groups: #0                                                                           │
 │ Aggregates: sum(#1)                                                                  │
-│ ~0 rows                                                                              │
+│ ~1 row                                                                               │
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
@@ -1592,12 +1589,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1635,12 +1632,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1648,8 +1645,7 @@ QUERY PLAN
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
 │ sdb_inverted_index_term_count$sev         │
-│ Column Filter:                            │
-│ (svc >= 'front') AND (svc < 'fronu')      │
+│ Column Filter: svc >= 'front'             │
 │ ~1 row                                    │
 ╰───────────────────────────────────────────╯
 
@@ -1680,12 +1676,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1720,12 +1716,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
@@ -1769,12 +1765,12 @@ QUERY PLAN
 ╭─ PROJECTION ──────────────────────────────╮
 │ Projections: sdb_inverted_index_term$sev, │
 │              CAST(#1 AS BIGINT)           │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ HASH_GROUP_BY ─────┴─────────────────────╮
 │ Groups: #0                                │
 │ Aggregates: sum(#1)                       │
-│ ~0 rows                                   │
+│ ~1 row                                    │
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │

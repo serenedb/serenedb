@@ -1,0 +1,229 @@
+control substitution on
+
+# Reading hive partition columns back from a view-backed inverted index. A
+# partition column is not stored in the data files: its value comes from the
+# file's path, the way the view itself derives it.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivh_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge goes mid' AS body, 'red' AS color
+      UNION ALL SELECT 2, 'anchin reads manga', 'blue'
+      UNION ALL SELECT 3, 'pudge plays again', 'red')
+TO '${__TEST_DIR__}/ivh_parquet' (FORMAT PARQUET, PARTITION_BY (color));
+
+statement ok
+CREATE VIEW ivh_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivh_parquet/**/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivh_idx ON ivh_v USING inverted(id, body ivh_en);
+
+statement ok
+CREATE INDEX ivh_color_idx ON ivh_v USING inverted(id, body ivh_en, color);
+
+query
+SELECT id, body, color FROM ivh_idx ORDER BY id;
+----
+id	body	color
+1	pudge goes mid	red
+2	anchin reads manga	blue
+3	pudge plays again	red
+
+query
+SELECT * FROM ivh_color_idx ORDER BY id;
+----
+id	body	color
+1	pudge goes mid	red
+2	anchin reads manga	blue
+3	pudge plays again	red
+
+query
+SELECT color FROM ivh_idx ORDER BY color;
+----
+color
+blue
+red
+red
+
+query
+SELECT id, color FROM ivh_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color
+1	red
+3	red
+
+# A filter on the partition column, indexed or not.
+query
+SELECT id, color FROM ivh_color_idx WHERE color = 'blue';
+----
+id	color
+2	blue
+
+query
+SELECT id, body FROM ivh_idx WHERE color = 'red' AND body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body
+1	pudge goes mid
+3	pudge plays again
+
+query
+SELECT count(*) FROM ivh_idx WHERE color = 'green';
+----
+count
+0
+
+query
+SELECT count(*) FROM (SELECT * FROM ivh_v EXCEPT SELECT * FROM ivh_idx);
+----
+count
+0
+
+# Typed partitions, a NULL partition, and explicit hive_types.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge goes mid' AS body, 2024 AS year
+      UNION ALL SELECT 2, 'anchin reads manga', 2025
+      UNION ALL SELECT 3, 'techies plants mines', NULL)
+TO '${__TEST_DIR__}/ivh_typed' (FORMAT PARQUET, PARTITION_BY (year));
+
+statement ok
+CREATE VIEW ivh_typed_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivh_typed/**/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivh_typed_idx ON ivh_typed_v USING inverted(id, body ivh_en);
+
+query
+SELECT id, year, year + 1 AS next_year FROM ivh_typed_idx ORDER BY id;
+----
+id	year	next_year
+1	2024	2025
+2	2025	2026
+3	NULL	NULL
+
+query
+SELECT id FROM ivh_typed_idx WHERE year > 2024;
+----
+id
+2
+
+statement ok
+CREATE VIEW ivh_varchar_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivh_typed/**/*.parquet', hive_partitioning=true,
+                             hive_types={'year': 'VARCHAR'});
+
+statement ok
+CREATE INDEX ivh_varchar_idx ON ivh_varchar_v USING inverted(id, body ivh_en);
+
+query
+SELECT id, year || '!' AS tagged FROM ivh_varchar_idx WHERE year IS NOT NULL ORDER BY id;
+----
+id	tagged
+1	2024!
+2	2025!
+
+# The same over a CSV glob.
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge goes mid' AS body, 'red' AS color
+      UNION ALL SELECT 2, 'anchin reads manga', 'blue')
+TO '${__TEST_DIR__}/ivh_csv' (FORMAT CSV, HEADER, PARTITION_BY (color));
+
+statement ok
+CREATE VIEW ivh_csv_v AS
+  SELECT * FROM read_csv('${__TEST_DIR__}/ivh_csv/**/*.csv', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivh_csv_idx ON ivh_csv_v USING inverted(id, body ivh_en);
+
+query
+SELECT id, color FROM ivh_csv_idx ORDER BY id;
+----
+id	color
+1	red
+2	blue
+
+# A single partitioned file: the partition still comes from its path.
+statement ok
+CREATE VIEW ivh_single_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivh_parquet/color=blue/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivh_single_idx ON ivh_single_v USING inverted(id, body ivh_en);
+
+query
+SELECT id, body, color FROM ivh_single_idx;
+----
+id	body	color
+2	anchin reads manga	blue
+
+# A partition named like a column inside the file overrides it, as in the view.
+system ok
+mkdir -p $__TEST_DIR__/ivh_override/color=blue
+
+statement ok
+COPY (SELECT 1::int4 AS id, 'pudge goes mid' AS body, 'red' AS color)
+TO '${__TEST_DIR__}/ivh_override/color=blue/f.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW ivh_override_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivh_override/**/*.parquet', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivh_override_idx ON ivh_override_v USING inverted(id, body ivh_en);
+
+query
+SELECT id, color FROM ivh_override_v;
+----
+id	color
+1	blue
+
+query
+SELECT id, color FROM ivh_override_idx;
+----
+id	color
+1	blue
+
+statement ok
+DROP INDEX ivh_override_idx;
+
+statement ok
+DROP VIEW ivh_override_v;
+
+statement ok
+DROP INDEX ivh_single_idx;
+
+statement ok
+DROP VIEW ivh_single_v;
+
+statement ok
+DROP INDEX ivh_csv_idx;
+
+statement ok
+DROP VIEW ivh_csv_v;
+
+statement ok
+DROP INDEX ivh_varchar_idx;
+
+statement ok
+DROP VIEW ivh_varchar_v;
+
+statement ok
+DROP INDEX ivh_typed_idx;
+
+statement ok
+DROP VIEW ivh_typed_v;
+
+statement ok
+DROP INDEX ivh_color_idx;
+
+statement ok
+DROP INDEX ivh_idx;
+
+statement ok
+DROP VIEW ivh_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivh_en;

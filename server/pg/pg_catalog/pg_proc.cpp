@@ -20,6 +20,7 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
+#include <algorithm>
 #include <deque>
 #include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
@@ -36,6 +37,7 @@
 #include "pg/pg_catalog/builtin_functions.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
+#include "pg/sql_utils.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::pg {
@@ -54,29 +56,8 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 constexpr Oid kLangSql = 14;
 constexpr Oid kLangInternal = 12;
 
-bool TypeIsComplete(const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    using enum duckdb::LogicalTypeId;
-    case DECIMAL:
-    case STRUCT:
-    case MAP:
-    case UNION:
-    case ENUM:
-      return type.AuxInfo();
-    case LIST:
-      return type.AuxInfo() &&
-             TypeIsComplete(duckdb::ListType::GetChildType(type));
-    case ARRAY:
-      return type.AuxInfo() &&
-             TypeIsComplete(duckdb::ArrayType::GetChildType(type));
-    default:
-      return true;
-  }
-}
-
 Oid BuiltinArgOid(const duckdb::LogicalType& type) {
-  return TypeIsComplete(type) ? static_cast<Oid>(Type2Oid(type, nullptr))
-                              : static_cast<Oid>(PgTypeOID::kUnknown);
+  return static_cast<Oid>(BuiltinTypeOid(type));
 }
 
 PgProc::Prokind KindOf(duckdb::CatalogType type) {
@@ -90,19 +71,18 @@ PgProc::Prokind KindOf(duckdb::CatalogType type) {
   }
 }
 
-std::string MacroBody(const duckdb::MacroFunction& macro) {
-  if (macro.type == duckdb::MacroType::TABLE_MACRO) {
-    return macro.Cast<duckdb::TableMacroFunction>().query_node->ToString();
-  }
-  return macro.Cast<duckdb::ScalarMacroFunction>().expression->ToString();
-}
+constexpr uint64_t kNamedArgsNullMask =
+  kNullMask & ~(uint64_t{1} << GetIndex(&PgProc::proargnames));
 
 }  // namespace
 
 template<>
 MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   std::vector<PgProc> values;
+  std::vector<uint64_t> null_masks;
   std::vector<std::vector<Oid>> argtypes_storage;
+  std::deque<std::vector<std::string>> argnames_storage;
+  std::deque<std::vector<Text>> argnames_views;
   auto& context = _context;
 
   const auto emit = [&](const duckdb::MacroCatalogEntry& func) {
@@ -117,7 +97,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       // prorettype: first return type (or 0 if not specified).
       Oid rettype = 0;
       if (!macro->return_types.empty()) {
-        rettype = Type2Oid(macro->return_types[0], &context);
+        rettype = Type2Oid(macro->return_types[0]);
       }
 
       // Build argument types from macro->types (one per parameter).
@@ -127,12 +107,21 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         if (param_type.id() == duckdb::LogicalTypeId::UNKNOWN) {
           argtypes.push_back(0);
         } else {
-          argtypes.emplace_back(Type2Oid(param_type, &context));
+          argtypes.emplace_back(Type2Oid(param_type));
         }
       }
 
       auto pronargs = static_cast<int16_t>(argtypes.size());
       argtypes_storage.push_back(std::move(argtypes));
+      auto& argnames = argnames_storage.emplace_back();
+      for (duckdb::idx_t i = 0; i < macro->parameters.size(); ++i) {
+        argnames.push_back(MacroParameterName(*macro, i));
+      }
+      const bool named = std::ranges::any_of(
+        argnames, [](const std::string& name) { return !name.empty(); });
+      auto& argname_views =
+        argnames_views.emplace_back(argnames.begin(), argnames.end());
+      null_masks.push_back(named ? kNamedArgsNullMask : kNullMask);
       values.push_back(PgProc{
         .oid = func.oid,
         .proname = func.name.GetIdentifierName(),
@@ -154,6 +143,7 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         .pronargdefaults = 0,
         .prorettype = rettype,
         .proargtypes = argtypes_storage.back(),
+        .proargnames = argname_views,
         .prosrc = MacroBody(*macro),
         .proacl = {std::span<const duckdb::AclItem>{perm.acl}},
       });
@@ -203,12 +193,13 @@ MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
       .prosrc = name,
       .proacl = {},
     });
+    null_masks.push_back(kNullMask);
   });
 
   auto result = CreateColumns<PgProc>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, Roles());
+    WriteData(result, values[row], null_masks[row], row, Roles());
   }
 
   return {std::move(result), values.size()};

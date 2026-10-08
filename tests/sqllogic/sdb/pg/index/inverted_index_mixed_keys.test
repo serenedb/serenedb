@@ -1,0 +1,83 @@
+# Expression keys interleaved with column keys, with rows written before the
+# index exists (the build projects the expressions) and after it (DML evaluates
+# them in the index). Every key must read its own value.
+
+
+statement ok
+CREATE TABLE mk(id INTEGER PRIMARY KEY, a VARCHAR, b VARCHAR, c INTEGER);
+
+
+statement ok
+INSERT INTO mk VALUES (1, 'Alpha', 'Beta', 10), (2, 'Gamma', 'Delta', 20);
+
+
+statement ok
+CREATE INDEX mk_idx ON mk USING inverted((LOWER(a)), id, (UPPER(b)), c, (c * 2));
+
+
+statement ok
+INSERT INTO mk VALUES (3, 'Epsilon', 'Zeta', 30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mk;
+
+
+query
+SELECT id FROM mk_idx WHERE LOWER(a) = 'alpha';
+----
+id
+1
+
+
+query
+SELECT id FROM mk_idx WHERE LOWER(a) = 'epsilon';
+----
+id
+3
+
+
+query
+SELECT id FROM mk_idx WHERE UPPER(b) = 'DELTA';
+----
+id
+2
+
+
+query
+SELECT id FROM mk_idx WHERE UPPER(b) = 'ZETA';
+----
+id
+3
+
+
+query
+SELECT id FROM mk_idx WHERE c = 20;
+----
+id
+2
+
+
+query
+SELECT id FROM mk_idx WHERE c * 2 = 60;
+----
+id
+3
+
+
+query
+SELECT id FROM mk_idx WHERE c * 2 = 20;
+----
+id
+1
+
+
+query
+SELECT id FROM mk_idx WHERE id = 2;
+----
+id
+2
+
+
+statement ok
+DROP TABLE mk;

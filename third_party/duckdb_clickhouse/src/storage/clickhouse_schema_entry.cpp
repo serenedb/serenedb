@@ -58,7 +58,7 @@ static void RunClickHouseDDL(ClickHouseCatalog &ch_catalog, const string &sql) {
 		// mid-stream either way, so never hand it back to the pool.
 		conn.Invalidate();
 		throw;
-		}
+	}
 }
 
 // Render a *constant* column DEFAULT into ClickHouse DDL. Non-constant defaults
@@ -72,7 +72,7 @@ static string RenderConstantDefault(const ColumnDefinition &col) {
 	if (expr.GetExpressionClass() != ExpressionClass::CONSTANT) {
 		return "";
 	}
-	auto &value = expr.Cast<ConstantExpression>().GetValue();
+	auto value = expr.Cast<ConstantExpression>().GetLiteral().ToValue();
 	if (value.IsNull()) {
 		return "";
 	}
@@ -148,14 +148,16 @@ static string GetCreateTableSQL(const string &database, CreateTableInfo &info) {
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		sql += "IF NOT EXISTS ";
 	}
-	sql += ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetTableName().GetIdentifierName()) + " (";
+	sql += ClickHouseQuoteIdentifier(database) + "." +
+	       ClickHouseQuoteIdentifier(info.GetTableName().GetIdentifierName()) + " (";
 	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
 		auto &col = columns.GetColumn(LogicalIndex(i));
 		if (i > 0) {
 			sql += ", ";
 		}
 		bool nullable = !is_not_null(i, col.GetName().GetIdentifierName());
-		sql += ClickHouseQuoteIdentifier(col.GetName().GetIdentifierName()) + " " + LogicalTypeToClickHouseType(col.GetType(), nullable);
+		sql += ClickHouseQuoteIdentifier(col.GetName().GetIdentifierName()) + " " +
+		       LogicalTypeToClickHouseType(col.GetType(), nullable);
 		auto default_literal = RenderConstantDefault(col);
 		if (!default_literal.empty()) {
 			sql += " DEFAULT " + default_literal;
@@ -244,10 +246,10 @@ static void StripCatalogFromTableRef(TableRef &ref, const string &catalog_name) 
 	// silently rewritten to run on THIS server against a same-named table --
 	// wrong data -- so refuse it instead.
 	if (!catalog.empty() && !(catalog == catalog_name)) {
-		throw BinderException(
-		    "cannot create a ClickHouse view whose query references table \"%s\" in a different "
-		    "catalog \"%s\": a ClickHouse view can only read tables in its own server (\"%s\")",
-		    base.GetQualifiedName().Name().GetIdentifierName(), catalog.GetIdentifierName(), catalog_name);
+		throw BinderException("cannot create a ClickHouse view whose query references table \"%s\" in a different "
+		                      "catalog \"%s\": a ClickHouse view can only read tables in its own server (\"%s\")",
+		                      base.GetQualifiedName().Name().GetIdentifierName(), catalog.GetIdentifierName(),
+		                      catalog_name);
 	}
 	base.SetQualifiedName(Identifier(), base.GetQualifiedName().Schema(), base.GetQualifiedName().Name());
 }
@@ -277,8 +279,8 @@ static string GetCreateViewSQL(const string &catalog_name, const string &databas
 	if (info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 		sql += "IF NOT EXISTS ";
 	}
-	return sql + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetViewName().GetIdentifierName()) + " AS " +
-	       select.ToString();
+	return sql + ClickHouseQuoteIdentifier(database) + "." +
+	       ClickHouseQuoteIdentifier(info.GetViewName().GetIdentifierName()) + " AS " + select.ToString();
 }
 
 optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateView(CatalogTransaction transaction, CreateViewInfo &info) {
@@ -325,16 +327,12 @@ optional_ptr<CatalogEntry> ClickHouseSchemaEntry::CreateType(CatalogTransaction 
 }
 
 void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
-	if (info.type == AlterType::RENAME && info.GetCatalogType() == CatalogType::TABLE_ENTRY) {
-		RenameTableInfo rename(info.GetAlterEntryData(), info.Cast<RenameInfo>().new_name);
-		Alter(transaction, rename);
-		return;
-	}
 	if (info.type != AlterType::ALTER_TABLE) {
 		throw NotImplementedException("ClickHouse: only ALTER TABLE is supported");
 	}
 	auto &alter = info.Cast<AlterTableInfo>();
-	string qualified = ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(alter.GetQualifiedName().Name().GetIdentifierName());
+	string qualified = ClickHouseQuoteIdentifier(database) + "." +
+	                   ClickHouseQuoteIdentifier(alter.GetQualifiedName().Name().GetIdentifierName());
 
 	string sql;
 	switch (alter.alter_table_type) {
@@ -346,19 +344,22 @@ void ClickHouseSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &inf
 	}
 	case AlterTableType::RENAME_COLUMN: {
 		auto &rename = alter.Cast<RenameColumnInfo>();
-		sql = "ALTER TABLE " + qualified + " RENAME COLUMN " + ClickHouseQuoteIdentifier(rename.old_name.GetIdentifierName()) + " TO " +
+		sql = "ALTER TABLE " + qualified + " RENAME COLUMN " +
+		      ClickHouseQuoteIdentifier(rename.old_name.GetIdentifierName()) + " TO " +
 		      ClickHouseQuoteIdentifier(rename.new_name.GetIdentifierName());
 		break;
 	}
 	case AlterTableType::ADD_COLUMN: {
 		auto &add = alter.Cast<AddColumnInfo>();
-		sql = "ALTER TABLE " + qualified + " ADD COLUMN " + ClickHouseQuoteIdentifier(add.new_column.GetName().GetIdentifierName()) + " " +
+		sql = "ALTER TABLE " + qualified + " ADD COLUMN " +
+		      ClickHouseQuoteIdentifier(add.new_column.GetName().GetIdentifierName()) + " " +
 		      LogicalTypeToClickHouseType(add.new_column.GetType(), true);
 		break;
 	}
 	case AlterTableType::REMOVE_COLUMN: {
 		auto &remove = alter.Cast<RemoveColumnInfo>();
-		sql = "ALTER TABLE " + qualified + " DROP COLUMN " + ClickHouseQuoteIdentifier(remove.removed_column.GetIdentifierName());
+		sql = "ALTER TABLE " + qualified + " DROP COLUMN " +
+		      ClickHouseQuoteIdentifier(remove.removed_column.GetIdentifierName());
 		break;
 	}
 	default:
@@ -397,7 +398,8 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 	vector<string> clickhouse_types;
 	vector<bool> stringified_columns;
 	{
-		string sql = "SELECT name, type, is_in_primary_key, default_kind, default_expression FROM system.columns WHERE database = " +
+		string sql = "SELECT name, type, is_in_primary_key, default_kind, default_expression FROM system.columns WHERE "
+		             "database = " +
 		             ClickHouseStringLiteral(database) + " AND table = " + ClickHouseStringLiteral(table_name) +
 		             " ORDER BY position";
 		auto conn = clickhouse_catalog.GetConnectionPool().GetConnection();
@@ -440,7 +442,7 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 						string default_expr(def_exprs->At(row));
 						if (!default_expr.empty()) {
 							try {
-								auto expressions = Parser::ParseExpressionList(default_expr);
+								auto expressions = Parser::GetBuiltinParser().ParseExpressionList(default_expr);
 								// Constants only: a ClickHouse-dialect function default
 								// (today(), toDecimal128(...)) neither parses nor binds as
 								// DuckDB SQL; dropping it means an omitted column fills with
@@ -470,7 +472,7 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 			// mid-stream either way, so never hand it back to the pool.
 			conn.Invalidate();
 			throw;
-			}
+		}
 	}
 	// system.columns returned no rows: the table does not exist (or was dropped
 	// concurrently), or is otherwise unreadable. Do not construct + cache a
@@ -548,7 +550,7 @@ void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
 			// mid-stream either way, so never hand it back to the pool.
 			conn.Invalidate();
 			throw;
-			}
+		}
 	}
 
 	for (auto &table_name : table_names) {
@@ -576,7 +578,8 @@ void ClickHouseSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 		throw NotImplementedException("ClickHouse: cannot drop entry of this type");
 	}
 	const char *kind = info.type == CatalogType::VIEW_ENTRY ? "VIEW" : "TABLE";
-	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
+	string sql = string("DROP ") + kind + " IF EXISTS " + ClickHouseQuoteIdentifier(database) + "." +
+	             ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	RunClickHouseDDL(GetClickHouseCatalog(), sql);
 	lock_guard<mutex> l(tables_lock);
 	RetireTableLocked(info.GetQualifiedName().Name().GetIdentifierName());

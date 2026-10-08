@@ -1,0 +1,35 @@
+control substitution on
+
+statement ok
+CREATE TABLE amsr_t (a INT);
+
+
+statement ok
+INSERT INTO amsr_t VALUES (1);
+
+
+statement error
+ATTACH ':memory:' AS amsr_mem (TYPE serenedb);
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'amsr_mem';
+----
+n
+0
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM amsr_t;
+----
+n
+1

@@ -30,6 +30,11 @@
 #   REPORTS_DIR  (default: <workspace>/out/test-results)  -- where JUnit XML lands
 #   PGHOST/PGPORT/PGUSER/PGDATABASE -- postgres_scanner uses an existing server
 #                                      when PGHOST is set
+#   SDB_DUCKDB_MAX_THREADS  (default: min(nproc, 16)) -- caps DuckDB's default
+#     thread count, via the SLURM_CPUS_ON_NODE lever GetSystemMaxThreads()
+#     honours on Linux. The memory-limit tests set a fixed budget (100MB-1GB)
+#     but the minimum footprint scales per thread, so on a many-core box they
+#     OOM before they can spill. Set to empty to use the real core count.
 
 set -uo pipefail
 
@@ -39,10 +44,16 @@ WORKSPACE=$(cd "$SCRIPT_DIR/../.." && pwd)
 : "${BUILD_DIR:=build}"
 : "${REPORTS_DIR:=$WORKSPACE/out/test-results}"
 : "${DUCKDB_JOBS:=$(nproc 2>/dev/null || echo 4)}"
+: "${SDB_DUCKDB_MAX_THREADS:=$(($(nproc) < 16 ? $(nproc) : 16))}"
+
+if [[ -n "$SDB_DUCKDB_MAX_THREADS" ]] && [[ -z "${SLURM_CPUS_ON_NODE:-}" ]]; then
+	export SLURM_CPUS_ON_NODE="$SDB_DUCKDB_MAX_THREADS"
+fi
 
 # suite name -> vendored source root whose test/ tree we run.
 declare -A SUITE_DIR=(
 	[core]="$WORKSPACE/third_party/duckdb"
+	[cpp]="$WORKSPACE/third_party/duckdb"
 	[avro]="$WORKSPACE/third_party/duckdb_avro"
 	[azure]="$WORKSPACE/third_party/duckdb_azure"
 	[httpfs]="$WORKSPACE/third_party/duckdb_httpfs"
@@ -51,15 +62,19 @@ declare -A SUITE_DIR=(
 	[markdown]="$WORKSPACE/third_party/duckdb_markdown"
 	[postgres_scanner]="$WORKSPACE/third_party/duckdb_postgres"
 	[spatial]="$WORKSPACE/third_party/duckdb_spatial"
+	[interop]="$SCRIPT_DIR/interop"
 )
-SUITE_ORDER=(core avro azure httpfs iceberg inet markdown postgres_scanner spatial)
+SUITE_ORDER=(core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
 
 # suite name -> Catch2 name filter. Core's tests register relative to --test-dir
 # (so "test/..."), while extension tests come from LoadedExtensionTestPaths() and
-# register under their absolute path.
+# register under their absolute path. The C++ tests register under their own
+# names, so cpp is everything that is not a sqllogic file.
 suite_filter() {
 	if [[ "$1" == "core" ]]; then
 		echo 'test/*'
+	elif [[ "$1" == "cpp" ]]; then
+		echo '~"*.test" ~"*.test_slow" ~"*.test_coverage",[.] ~"*.test" ~"*.test_slow" ~"*.test_coverage"'
 	else
 		echo "${SUITE_DIR[$1]}/test/*"
 	fi
@@ -111,8 +126,18 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
+run_interop=false
+unittest_suites=""
+for suite in $SUITES; do
+	if [[ "$suite" == interop ]]; then
+		run_interop=true
+	else
+		unittest_suites="$unittest_suites $suite"
+	fi
+done
+
 UNITTEST="$WORKSPACE/$BUILD_DIR/third_party/duckdb/test/unittest"
-if [[ ! -x "$UNITTEST" ]]; then
+if [[ -n "${unittest_suites// /}" && ! -x "$UNITTEST" ]]; then
 	if [[ ! -f "$WORKSPACE/$BUILD_DIR/CMakeCache.txt" ]]; then
 		echo "ERROR: $WORKSPACE/$BUILD_DIR is not a configured build directory." >&2
 		exit 1
@@ -214,7 +239,7 @@ log="$REPORTS_DIR/duckdb.log"
 args=(--test-dir "${SUITE_DIR[core]}")
 filters=()
 serial_filters=()
-for suite in $SUITES; do
+for suite in $unittest_suites; do
 	config="$SCRIPT_DIR/config/$suite.json"
 	[[ -f "$config" ]] && args+=(--test-config "$config")
 	if [[ "$suite" == "postgres_scanner" ]]; then
@@ -283,6 +308,13 @@ run_unittest() {
 : >"$log"
 [[ -n "$spec" ]] && run_unittest --jobs "$DUCKDB_JOBS" "$spec"
 [[ -n "$serial_spec" ]] && run_unittest "$serial_spec"
+if [[ "$run_interop" == true ]]; then
+	start=$(wc -l <"$log")
+	BUILD_DIR="$BUILD_DIR" "$SCRIPT_DIR/interop/run.sh" 2>&1 | tee -a "$log"
+	interop_rc=${PIPESTATUS[0]}
+	summaries+=("$(tail -n +$((start + 1)) "$log" | grep -E '^===== \[duckdb interop\] [0-9]+/[0-9]+ passed' | tail -1)")
+	[[ $rc -eq 0 ]] && rc=$interop_rc
+fi
 
 # A spec that matches nothing exits 0, which would turn a typo'd filter (or an
 # extension whose tests stopped being registered) into a silent pass.

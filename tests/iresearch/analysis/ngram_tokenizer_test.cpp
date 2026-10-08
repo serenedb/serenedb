@@ -21,12 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <unicode/locid.h>
-
 #include <iresearch/analysis/ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <sstream>
+#include <text_locale.hpp>
 
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -233,7 +232,7 @@ TEST(ngram_token_stream_test, next_utf8) {
     }
   };
 
-  auto locale = icu::Locale::createFromName("C.UTF-8");
+  auto locale = duckdb::text::Locale::FromName("C.UTF-8");
 
   {
     SCOPED_TRACE("1-gram");

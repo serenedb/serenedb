@@ -20,7 +20,6 @@
 
 #include "network/http/router.h"
 
-#include <absl/algorithm/container.h>
 #include <ada.h>
 
 #include <iresearch/utils/assert.hpp>
@@ -34,76 +33,40 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
                      std::unique_ptr<HttpHandler> handler) {
   SDB_VERIFY(!pattern.empty() && pattern.front() == '/',
              "HTTP route pattern must start with '/': '", pattern, "'");
-  std::vector<Segment> segments;
-  std::string_view rest = pattern.substr(1);
-  // "/" is the root: zero segments. Any other pattern splits on '/'.
-  if (!rest.empty()) {
-    for (;;) {
-      const size_t slash = rest.find('/');
-      const std::string_view seg =
-        slash == std::string_view::npos ? rest : rest.substr(0, slash);
-      if (!seg.empty() && seg.front() == ':') {
-        segments.push_back({std::string{seg.substr(1)}, true});
-      } else {
-        segments.push_back({std::string{seg}, false});
-      }
-      if (slash == std::string_view::npos) {
-        break;
-      }
-      rest = rest.substr(slash + 1);
-    }
-  }
-  auto& routes =
-    absl::c_any_of(segments, [](const Segment& s) { return s.param; })
-      ? _parameterized
-      : _literal;
-  routes.push_back({method, std::move(segments), std::move(handler)});
+  ada::url_pattern_init init{};
+  init.pathname.emplace(pattern);
+  auto parsed = ada::parse_url_pattern<AdaRe2Provider>(std::move(init));
+  SDB_VERIFY(parsed.has_value(), "invalid HTTP route pattern: '", pattern, "'");
+  const bool literal =
+    pattern.find_first_of(":*(){}?+") == std::string_view::npos;
+  auto& routes = literal ? _literal : _parameterized;
+  routes.push_back({method, std::move(*parsed), std::move(handler)});
 }
 
 HttpHandler* HttpRouter::MatchIn(std::vector<Entry>& routes,
-                                 std::string_view path, HttpRequest& request) {
+                                 const ada::url_pattern_init& path,
+                                 HttpRequest& request) {
   for (auto& route : routes) {
     if (route.method != request.method) {
       continue;
     }
-    request.params.clear();
-    if (MatchPath(route.segments, path, request)) {
-      return route.handler.get();
+    const auto hit = route.pattern.test(path, nullptr);
+    if (!hit || !*hit) {
+      continue;
     }
+    const auto result = route.pattern.exec(path, nullptr);
+    if (!result || !*result) {
+      continue;
+    }
+    request.params.clear();
+    for (const auto& [name, value] : (*result)->pathname.groups) {
+      if (value) {
+        request.params.emplace_back(name, *value);
+      }
+    }
+    return route.handler.get();
   }
   return nullptr;
-}
-
-bool HttpRouter::MatchPath(const std::vector<Segment>& segments,
-                           std::string_view path, HttpRequest& request) {
-  // `path` is non-empty with a leading '/'. Walk segments in lockstep with
-  // '/'-delimited path pieces; a trailing '/' leaves an empty piece that only
-  // matches an empty literal (never registered), so "/x/" != "/x".
-  std::string_view rest = path.substr(1);
-  if (rest.empty()) {
-    return segments.empty();
-  }
-  size_t i = 0;
-  for (;;) {
-    if (i >= segments.size()) {
-      return false;
-    }
-    const size_t slash = rest.find('/');
-    const std::string_view seg =
-      slash == std::string_view::npos ? rest : rest.substr(0, slash);
-    const Segment& pat = segments[i];
-    if (pat.param) {
-      request.params.emplace_back(pat.text, std::string{seg});
-    } else if (seg != pat.text) {
-      return false;
-    }
-    ++i;
-    if (slash == std::string_view::npos) {
-      break;
-    }
-    rest = rest.substr(slash + 1);
-  }
-  return i == segments.size();
 }
 
 HttpHandler* HttpRouter::Match(HttpRequest& request) {
@@ -127,10 +90,12 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   if (path.empty() || path.front() != '/') {
     return nullptr;
   }
-  if (auto* handler = MatchIn(_literal, path, request)) {
+  ada::url_pattern_init input{};
+  input.pathname.emplace(path);
+  if (auto* handler = MatchIn(_literal, input, request)) {
     return handler;
   }
-  if (auto* handler = MatchIn(_parameterized, path, request)) {
+  if (auto* handler = MatchIn(_parameterized, input, request)) {
     return handler;
   }
   request.params.clear();

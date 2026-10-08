@@ -20,18 +20,14 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-#include <unicode/normalizer2.h>
-#include <unicode/translit.h>
-
 #include <magic_enum/magic_enum.hpp>
-#include <memory>
 #include <string>
 #include <string_view>
+#include <text_transform.hpp>
 #include <tuple>
 
 #include "iresearch/analysis/process_tokens.hpp"
-#include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/locale_serde.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "tokenizer.hpp"
 
@@ -52,7 +48,7 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
  public:
   struct Options {
     using Owner = NormalizingTokenizer;
-    icu::Locale locale = irs::MakeBogusLocale();
+    duckdb::text::Locale locale;
     Case case_convert{Case::None};
     bool accent{true};
     NormForm form{NormForm::Nfc};
@@ -77,9 +73,10 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   std::tuple<Case, bool, bool> PrepareBatch(BlockTraits traits);
 
   size_t MemoryUsage() const noexcept final {
-    return _norm_buf.capacity() + _strip_buf.capacity() +
-           static_cast<size_t>(_udata.getCapacity() + _token.getCapacity()) *
-             sizeof(char16_t);
+    return _norm_buf.capacity() + _decompose_buf.capacity() +
+           (_transform_buf.text.capacity() +
+            _transform_buf.scratch.capacity()) *
+             sizeof(uint32_t);
   }
 
   template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
@@ -97,27 +94,22 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     Icu,
   };
 
-  template<TokenLayout Layout, Case C, bool Accent, typename Sink>
-  bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
-  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  template<TokenLayout Layout, typename Sink>
+  IRS_NO_INLINE bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+  template<TokenLayout Layout, Case C, NormForm F, typename Sink>
   bool FastUnicodeEmit(const duckdb::string_t& raw, Sink& sink);
-  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  template<TokenLayout Layout, Case C, NormForm F, typename Sink>
   bool DecomposedEmit(const duckdb::string_t& raw, Sink& sink);
   template<Case C>
   size_t CaseBound(size_t size) const noexcept;
   template<Case C>
   size_t ConvertCase(std::string_view bytes, byte_type* out) const noexcept;
-  IRS_NO_INLINE void InitIcu();
 
   Options _options;
-  icu::UnicodeString _udata;
-  icu::UnicodeString _token;
-  const icu::Normalizer2* _normalizer{};
-  const icu::Normalizer2* _renormalizer{};
-  std::unique_ptr<icu::Transliterator> _transliterator;
+  duckdb::text::Transform _transform;
+  duckdb::text::TransformBuffer _transform_buf;
   std::string _norm_buf;
-  std::string _strip_buf;
-  uint32_t _fold_options{0};
+  std::string _decompose_buf;
   CasePath _case_path = CasePath::Fast;
 };
 

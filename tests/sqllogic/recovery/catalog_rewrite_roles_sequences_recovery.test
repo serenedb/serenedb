@@ -1,0 +1,101 @@
+control substitution on
+
+statement ok
+CREATE ROLE crrs_a;
+
+
+statement ok
+CREATE ROLE crrs_b;
+
+
+statement ok
+GRANT crrs_a TO crrs_b;
+
+
+statement ok
+CREATE SEQUENCE crrs_s1;
+
+
+statement ok
+CREATE SEQUENCE crrs_s2 CACHE 5;
+
+
+statement ok
+CREATE TABLE crrs_t (id SERIAL PRIMARY KEY, v INT);
+
+
+statement count 50
+INSERT INTO crrs_t (v) SELECT i FROM generate_series(1, 50) AS s(i);
+
+
+query
+SELECT nextval('crrs_s1') AS a, nextval('crrs_s2') AS b;
+----
+a	b
+1	1
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE ROLE crrs_c;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+DROP ROLE crrs_c;
+
+
+statement count 10
+INSERT INTO crrs_t (v) SELECT i FROM generate_series(51, 60) AS s(i);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT rolname FROM pg_roles WHERE rolname LIKE 'crrs_%' ORDER BY rolname;
+----
+rolname
+crrs_a
+crrs_b
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_auth_members m JOIN pg_roles r ON m.roleid = r.oid JOIN pg_roles u ON m.member = u.oid WHERE r.rolname = 'crrs_a' AND u.rolname = 'crrs_b';
+----
+n
+1
+
+
+connection after_crash
+query
+SELECT nextval('crrs_s1') > 1 AS a, nextval('crrs_s2') > 1 AS b;
+----
+a	b
+t	t
+
+
+connection after_crash
+statement count 5
+INSERT INTO crrs_t (v) SELECT i FROM generate_series(61, 65) AS s(i);
+
+
+connection after_crash
+query
+SELECT count(DISTINCT id) AS n FROM crrs_t;
+----
+n
+65

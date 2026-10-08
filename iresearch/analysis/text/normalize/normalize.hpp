@@ -49,14 +49,10 @@ struct FormSpec;
 
 template<>
 struct FormSpec<sz_normal_form_nfc_k> {
-  static constexpr sz_normal_form_t kDecomposed = sz_normal_form_nfd_k;
   static constexpr classify::ByteRange kQcRanges[] = {
     Range(0xCC, 0xCD), Range(0xD6, 0xD9), Range(0xDB, 0xDD),
     Range(0xDF, 0xE1), Range(0xEA, 0xEA), Range(0xEF, 0xEF)};
   static constexpr uint8_t kPairLeads[] = {0xCE, 0xD2, 0xE2, 0xE3, 0xF0};
-  static constexpr classify::ByteRange kStripRanges[] = {
-    Range(0xC3, 0xC8), Range(0xCC, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
-    Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
   IRS_FORCE_INLINE static constexpr bool PairIsUnsafeByte(uint8_t lead,
                                                           uint8_t next,
                                                           uint8_t third) {
@@ -99,15 +95,11 @@ struct FormSpec<sz_normal_form_nfc_k> {
 
 template<>
 struct FormSpec<sz_normal_form_nfkc_k> {
-  static constexpr sz_normal_form_t kDecomposed = sz_normal_form_nfkd_k;
   static constexpr classify::ByteRange kQcRanges[] = {
     Range(0xC2, 0xC2), Range(0xC4, 0xC5), Range(0xC7, 0xC7),
     Range(0xCA, 0xCD), Range(0xD6, 0xD9), Range(0xDB, 0xDD),
     Range(0xDF, 0xE3), Range(0xEA, 0xEA), Range(0xEF, 0xF0)};
   static constexpr uint8_t kPairLeads[] = {0xCE, 0xCF, 0xD2};
-  static constexpr classify::ByteRange kStripRanges[] = {
-    Range(0xC2, 0xC8), Range(0xCA, 0xD3), Range(0xD6, 0xD9), Range(0xDB, 0xE3),
-    Range(0xEA, 0xED), Range(0xEF, 0xF0), Range(0xF3, 0xF3)};
   IRS_FORCE_INLINE static constexpr bool PairIsUnsafeByte(uint8_t lead,
                                                           uint8_t next,
                                                           uint8_t) {
@@ -131,17 +123,6 @@ inline constexpr auto kLeadClassOf = [] {
   }
   for (const uint8_t lead : FormSpec<Form>::kPairLeads) {
     t[lead] = kLeadPair;
-  }
-  return t;
-}();
-
-template<sz_normal_form_t Form>
-inline constexpr auto kStripUnsafeLeadOf = [] {
-  std::array<bool, 256> t{};
-  for (const auto [lo, span] : FormSpec<Form>::kStripRanges) {
-    for (int b = lo; b <= lo + span; ++b) {
-      t[b] = true;
-    }
   }
   return t;
 }();
@@ -338,48 +319,8 @@ inline bool Denormalized(const char* data, size_t n) noexcept {
 }
 
 template<sz_normal_form_t Form>
-inline bool StripSafe(const char* data, size_t n) noexcept {
-  const auto* bytes = reinterpret_cast<const byte_type*>(data);
-  size_t i = 0;
-  while (i + classify::kClassifyBlock <= n) {
-    i = detail::SkipAscii(data, n, i);
-    if (i + classify::kClassifyBlock > n) {
-      break;
-    }
-    if (classify::ClassifyAnyInRangeBlock(
-          bytes + i, detail::FormSpec<Form>::kStripRanges) != 0) {
-      return false;
-    }
-    i += classify::kClassifyBlock;
-  }
-  for (; i < n; ++i) {
-    if (detail::kStripUnsafeLeadOf<Form>[bytes[i]]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-template<sz_normal_form_t Form>
 inline size_t Compose(std::string_view in, char* out) noexcept {
   return sz::Norm(in.data(), in.size(), Form, out);
 }
-
-template<sz_normal_form_t Form>
-inline size_t Decompose(std::string_view in, char* out) noexcept {
-  return sz::Norm(in.data(), in.size(), detail::FormSpec<Form>::kDecomposed,
-                  out);
-}
-
-void StripNonspacingMarks(std::string_view in, std::string& out);
-
-enum class StripResult : uint8_t {
-  Unchanged,
-  Stripped,
-  Unsupported,
-};
-
-template<sz_normal_form_t Form>
-StripResult StripTwoByte(std::string_view in, std::string& out);
 
 }  // namespace irs::analysis::normalize

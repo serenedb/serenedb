@@ -1,0 +1,117 @@
+control substitution on
+
+# A reader inside a transaction keeps the index it started with while
+# another connection adds a partition and refreshes the index: its rows keep
+# their partitions and file names, and the new partition stays invisible to
+# it until the next transaction.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvhi_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvhi/color=red $__TEST_DIR__/rvhi/color=blue $__TEST_DIR__/rvhi/color=green
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga')) t(id, body))
+TO '${__TEST_DIR__}/rvhi/color=red/a.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT * FROM (VALUES (3, 'pudge plays again')) t(id, body))
+TO '${__TEST_DIR__}/rvhi/color=blue/b.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvhi_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/rvhi/*/*.parquet', hive_partitioning=true, filename=true);
+
+statement ok
+CREATE INDEX rvhi_idx ON rvhi_v USING inverted(id, body rvhi_en);
+
+connection reader
+statement ok
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+connection reader
+query
+SELECT id, color, replace(filename, '${__TEST_DIR__}/', '') AS file FROM rvhi_idx ORDER BY id;
+----
+id	color	file
+1	red	rvhi/color=red/a.parquet
+2	red	rvhi/color=red/a.parquet
+3	blue	rvhi/color=blue/b.parquet
+
+connection writer
+statement ok
+COPY (SELECT * FROM (VALUES (4, 'pudge buys blink'), (5, 'lina burns pudge')) t(id, body))
+TO '${__TEST_DIR__}/rvhi/color=green/c.parquet' (FORMAT PARQUET);
+
+connection writer
+query
+SELECT * FROM serenedb_reindex('rvhi_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+connection writer
+query
+SELECT id, color FROM rvhi_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color
+1	red
+3	blue
+4	green
+5	green
+
+connection reader
+query
+SELECT id, color FROM rvhi_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color
+1	red
+3	blue
+
+connection reader
+query
+SELECT count(*) FROM rvhi_idx WHERE color = 'green';
+----
+count
+0
+
+connection reader
+query
+SELECT id, color, replace(filename, '${__TEST_DIR__}/', '') AS file FROM rvhi_idx ORDER BY id;
+----
+id	color	file
+1	red	rvhi/color=red/a.parquet
+2	red	rvhi/color=red/a.parquet
+3	blue	rvhi/color=blue/b.parquet
+
+connection reader
+statement ok
+COMMIT;
+
+connection reader
+query
+SELECT id, color, replace(filename, '${__TEST_DIR__}/', '') AS file FROM rvhi_idx WHERE color = 'green' ORDER BY id;
+----
+id	color	file
+4	green	rvhi/color=green/c.parquet
+5	green	rvhi/color=green/c.parquet
+
+connection reader
+query
+SELECT count(*) FROM ((SELECT * FROM rvhi_v EXCEPT SELECT * FROM rvhi_idx)
+                      UNION ALL (SELECT * FROM rvhi_idx EXCEPT SELECT * FROM rvhi_v));
+----
+count
+0
+
+statement ok
+DROP INDEX rvhi_idx;
+
+statement ok
+DROP VIEW rvhi_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvhi_en;

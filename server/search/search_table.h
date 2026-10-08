@@ -25,6 +25,7 @@
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <duckdb/parser/column_list.hpp>
@@ -36,6 +37,7 @@
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -45,6 +47,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "search/maintenance.h"
@@ -59,8 +62,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
   // catalog (mirrors InvertedIndexStorage).
-  SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
-              duckdb::idx_t table_id, bool is_new,
+  SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
+              bool in_memory, duckdb::idx_t table_id, bool is_new,
               const catalog::SearchTableOptions& options,
               catalog::CompressionByColumn compression);
   ~SearchTable();
@@ -68,11 +71,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   SearchTable(const SearchTable&) = delete;
   SearchTable& operator=(const SearchTable&) = delete;
   static std::shared_ptr<SearchTable> Create(
-    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-    bool is_new, const catalog::SearchTableOptions& options,
+    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+    duckdb::idx_t table_id, bool is_new,
+    const catalog::SearchTableOptions& options,
     catalog::CompressionByColumn compression) {
-    return std::make_shared<SearchTable>(db_id, schema_id, table_id, is_new,
-                                         options, std::move(compression));
+    return std::make_shared<SearchTable>(std::move(directory), in_memory,
+                                         table_id, is_new, options,
+                                         std::move(compression));
   }
 
   static catalog::CompressionByColumn DeclaredCompression(
@@ -85,14 +90,14 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void RemoveIndexConfig(duckdb::idx_t index_oid);
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
+  uint64_t GetWriteBufferMaxBytes() const noexcept {
+    return _segment_memory_max == 0
+             ? std::numeric_limits<uint64_t>::max()
+             : std::max<uint64_t>(_segment_memory_max / 2, 1);
+  }
   auto& GetTableLock() noexcept { return _table_lock; }
 
-  static std::filesystem::path GetPath(duckdb::idx_t db_id,
-                                       duckdb::idx_t schema_id,
-                                       duckdb::idx_t table_id);
-  static std::filesystem::path GetWalPath(duckdb::idx_t db_id);
-  static std::filesystem::path GetChunkDir(duckdb::idx_t db_id,
-                                           duckdb::idx_t table_id);
+  static uint64_t ReadCommittedTick(duckdb::BinaryDeserializer& payload);
 
   // A drop commits while readers may still hold this table; the destructor
   // removes the index dir and the WAL shard once the last of them lets go.
@@ -100,11 +105,29 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  std::filesystem::path Path() const {
+    return _directory->StoragePath(GetTableId());
+  }
+  bool Absent() const noexcept { return _absent; }
 
+  // `exclusive_segment` is required of a writer that will record its flushed
+  // segments in the WAL -- see irs::IndexWriter::GetBatch.
   irs::IndexWriter::Transaction GetTransaction(
     bool exclusive_segment = false) noexcept {
     return _writer->GetBatch(exclusive_segment);
   }
+
+  // Re-attach a segment this shard already flushed + fsynced, named by its meta
+  // file. `tick` must be in the adopting transaction's space -- it orders the
+  // segment against that transaction's removals. False == cannot be reopened.
+  bool AdoptSegment(std::string_view meta_file, uint64_t tick) {
+    return _writer->AdoptSegment(meta_file, tick);
+  }
+
+  // Called once this shard's WAL has been replayed, to reclaim what the replay
+  // did not adopt (the writer was opened with cleanup suppressed). Promptness
+  // only: the refresh loop's periodic cleanup would get there a tick later.
+  void FinishRecovery() { CleanupUnsafe(); }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
     return _writer->GetSnapshot();
@@ -112,23 +135,16 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   void Commit() {
     _writer->RefreshCommit();
-    _wal->OnShardCommit(GetTableId(), _last_committed_tick);
+    _wal->OnShardCommit(GetTableId(), CommittedTick());
   }
 
-  void Clear(uint64_t tick) {
-    _writer->Clear(tick);
-    if (tick > _last_committed_tick) {
-      _last_committed_tick = tick;
-    }
-  }
+  void Clear(uint64_t tick) { _writer->Clear(tick); }
 
   SearchDbWal& Wal() noexcept { return *_wal; }
 
-  SearchDbWal::ChunkWriter NewChunkWriter() {
-    return _wal->NewChunkWriter(GetTableId());
+  uint64_t CommittedTick() const noexcept {
+    return _last_committed_tick.load(std::memory_order_acquire);
   }
-
-  uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
 
   // --- Background maintenance ---
   // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
@@ -191,8 +207,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void VacuumRefresh();
   void VacuumCompact(uint32_t target_segments);
 
-  [[nodiscard]] unsigned RegisterWriter() { return _writers.Register(); }
+  [[nodiscard]] std::optional<unsigned> RegisterWriter() {
+    return _writers.Register();
+  }
   void DeregisterWriter(unsigned slot) noexcept { _writers.Deregister(slot); }
+  [[nodiscard]] bool ClaimTruncate() { return _writers.ClaimTruncate(); }
+  void ReleaseTruncate() noexcept { _writers.ReleaseTruncate(); }
   void DrainPriorWriters(absl::FunctionRef<bool()> cancelled);
 
   class [[nodiscard]] BuildClaim {
@@ -225,26 +245,32 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   }
   void OpenDeleteLog();
   void AppendDeleteLog(std::span<const int64_t> rows);
-
-  template<typename Fn>
-  bool SwapWithDrainedDeletes(Fn&& swap) {
-    absl::MutexLock lock{&_delete_log_mutex};
-    return swap(std::exchange(_delete_log, {}));
+  void RecordTruncateForBuild(uint64_t tick);
+  bool TruncatedAfter(uint64_t tick) const noexcept {
+    return _build_truncate_tick.load(std::memory_order_acquire) > tick;
   }
-  std::vector<int64_t> TakeDeleteLog();
+
+  std::pair<std::vector<int64_t>, uint64_t> DrainDeleteLog() {
+    absl::MutexLock lock{&_delete_log_mutex};
+    return {std::exchange(_delete_log, {}),
+            _build_truncate_tick.load(std::memory_order_relaxed)};
+  }
+
+  std::pair<irs::DirectoryReader, uint64_t> GetSnapshotWithTick() {
+    absl::MutexLock lock{&_refresh_mutex};
+    return {_writer->GetSnapshot(), CommittedTick()};
+  }
   void CloseDeleteLog();
 
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
-  const irs::Format::ptr& Codec() const noexcept { return _writer->Codec(); }
-  bool ReplaceSegments(std::span<const std::string_view> replaced,
-                       std::span<const std::string_view> adopted_metas,
-                       const irs::Format::ptr& codec,
-                       irs::IndexWriter::Transaction* removals = nullptr,
-                       uint64_t removals_tick = irs::writer_limits::kMinTick) {
-    return _writer->ReplaceSegments(replaced, adopted_metas, codec, removals,
-                                    removals_tick);
+  bool ReplaceSegments(
+    std::span<const std::string_view> replaced,
+    std::span<const std::string_view> adopted_metas,
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
+      removal_provider) {
+    return _writer->ReplaceSegments(replaced, adopted_metas, removal_provider);
   }
 
  private:
@@ -253,13 +279,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
 
-  void OpenWriter();
+  void OpenWriter(bool in_memory);
   void RebuildConfig();
 
   duckdb::idx_t _table_id;
-  duckdb::idx_t _db_id;
-  duckdb::idx_t _schema_id;
+  std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _is_new;
+  bool _absent = false;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
@@ -271,9 +297,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::shared_ptr<irs::IndexWriter> _writer;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
-  // Borrowed from the search engine (set in OpenWriter). Outlives this object.
   SearchDbWal* _wal = nullptr;
-  uint64_t _last_committed_tick = 0;
+  std::atomic<uint64_t> _last_committed_tick{0};
 
   // Background maintenance state (mirrors InvertedIndexStorage). A zero
   // refresh/compaction interval disables the loops.
@@ -289,6 +314,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::atomic<bool> _delete_log_open{false};
   absl::Mutex _delete_log_mutex;
   std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
+  std::atomic<uint64_t> _build_truncate_tick{0};
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement
   // keeps waiting.

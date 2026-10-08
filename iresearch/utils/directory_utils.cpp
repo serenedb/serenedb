@@ -23,7 +23,6 @@
 
 #include "iresearch/utils/directory_utils.hpp"
 
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/directory_attributes.hpp"
 #include "iresearch/utils/attributes.hpp"

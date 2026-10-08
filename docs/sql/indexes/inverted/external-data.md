@@ -33,13 +33,13 @@ The same applies to data that lives in another **database** rather than in files
 | Parquet | `read_parquet` / `parquet_scan` | Single file or glob; `file_row_number` PK |
 | CSV | `read_csv` / `read_csv_auto` | Byte-offset PK; full reader-option support |
 | JSON / NDJSON | `read_json` / `read_ndjson` (`*_auto`) | Byte-offset PK |
-| Iceberg | `iceberg_scan(...)` / catalog table | Snapshot at build time |
+| Iceberg | Catalog table via [`CREATE SERVER`](../../statements/create_server/index.md) (recommended) / `iceberg_scan(...)` | Snapshot at build time; name catalog tables in full — see [Referencing the source](./views.md#referencing-the-source) |
 | Attached DuckDB | `ATTACH … ; SELECT … FROM db.schema.t` | Read through the live attachment |
 | Attached PostgreSQL | `ATTACH` / [`CREATE SERVER`](../../statements/create_server/index.md) | Keyed on the remote `ctid`; see [External databases](#external-databases) |
 | Attached ClickHouse | `ATTACH` / [`CREATE SERVER`](../../statements/create_server/index.md) | Keyed on the engine's primary key; see [External databases](#external-databases) |
-| Text / blobs | `read_text` / `read_blob` | One document per file (or per glob entry) |
+| Text / blobs | `read_text` / `read_blob` | One document per file (or per glob entry); `read_blob` is not a fast-path source, so its views are [generic](./views.md#generic-views) |
 
-Local paths and `s3://` URLs (via httpfs) both work, as do **globs** (`'…/*.parquet'`) spanning thousands of files across a partitioned dataset.
+Local paths and `s3://` URLs (via httpfs) both work, as do **globs** (`'…/*.parquet'`) spanning thousands of files across a partitioned dataset. Pass a single path or glob: a list of files makes the view [generic](./views.md#keeping-a-view-on-the-fast-path).
 
 ## How it works
 
@@ -129,15 +129,7 @@ A few combinations are rejected at materialization time and fall back to the sta
 
 ## Freshness
 
-An external-data index is a **static snapshot** of the postings at `CREATE INDEX` time; it does not track changes to the files. When the underlying data changes, rebuild the index:
-
-<SqlLogicTest id="cookbook/search/indexing-external-data/example_006" />
-
-<DocCallout type="tip">
-
-Incremental refresh of external-data indexes — picking up new and changed files without a full rebuild — is on the roadmap. For now, rebuild to pick up changes.
-
-</DocCallout>
+An external-data index holds a snapshot of the postings; it does not follow changes to the files on its own. `REINDEX INDEX <name>` brings it up to date in one pass, indexing only the files that appeared, changed or disappeared behind a glob and only the snapshot difference of an Iceberg table. The `reindex_interval` index option runs the same pass on a timer. See [Refreshing the index](./views.md#refreshing-the-index) for what each source supports.
 
 Materialized column *values* are read live from the current files, so counts and scores reflect the build-time snapshot while a materialized column reflects the file as it is now (a row removed from the source materializes as `NULL`).
 

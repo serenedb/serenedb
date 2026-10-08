@@ -1,0 +1,300 @@
+control substitution on
+
+# Hive partitions read back from view-backed inverted indexes over CSV, JSON
+# and DuckDB files: globs over nested partitions, a single file inside a
+# partition directory, and the objects reader. The CSV and JSON lookups fetch
+# rows by byte offset, the DuckDB one by row id; the partition values still
+# come from the path.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivhf_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE ivhf_src AS SELECT * FROM (VALUES
+  (1, 'pudge goes mid', 'radiant', DATE '2024-01-01'),
+  (2, 'anchin reads manga', 'dire', DATE '2024-01-01'),
+  (3, 'techies plants mines', 'radiant', DATE '2024-01-02'),
+  (4, 'lina burns pudge', 'dire', DATE '2024-01-02'),
+  (5, 'pudge, the "butcher", plays again', 'radiant', DATE '2024-01-03')) t(id, body, team, day);
+
+# ---- CSV over two partition levels, one of them a date.
+
+statement ok
+COPY ivhf_src TO '${__TEST_DIR__}/ivhf_csv' (FORMAT CSV, HEADER, PARTITION_BY (team, day));
+
+statement ok
+CREATE VIEW ivhf_csv_v AS
+  SELECT * FROM read_csv('${__TEST_DIR__}/ivhf_csv/*/*/*.csv', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhf_csv_idx ON ivhf_csv_v USING inverted(id, body ivhf_en);
+
+query
+SELECT * FROM ivhf_csv_idx ORDER BY id;
+----
+id	body	day	team
+1	pudge goes mid	2024-01-01	radiant
+2	anchin reads manga	2024-01-01	dire
+3	techies plants mines	2024-01-02	radiant
+4	lina burns pudge	2024-01-02	dire
+5	pudge, the "butcher", plays again	2024-01-03	radiant
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhf_csv_v EXCEPT SELECT * FROM ivhf_csv_idx)
+                      UNION ALL (SELECT * FROM ivhf_csv_idx EXCEPT SELECT * FROM ivhf_csv_v));
+----
+count
+0
+
+query
+SELECT id, day + 1 AS next_day FROM ivhf_csv_idx
+WHERE team = 'radiant' AND day >= DATE '2024-01-02' ORDER BY id;
+----
+id	next_day
+3	2024-01-03
+5	2024-01-04
+
+query
+SELECT team, count(*) AS n FROM ivhf_csv_idx WHERE body @@ ts_phrase('pudge')
+GROUP BY team ORDER BY team;
+----
+team	n
+dire	1
+radiant	2
+
+# ---- JSON, newline-delimited.
+
+statement ok
+COPY ivhf_src TO '${__TEST_DIR__}/ivhf_json' (FORMAT JSON, PARTITION_BY (team));
+
+statement ok
+CREATE VIEW ivhf_json_v AS
+  SELECT * FROM read_json('${__TEST_DIR__}/ivhf_json/*/*.json', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhf_json_idx ON ivhf_json_v USING inverted(id, body ivhf_en);
+
+query
+SELECT id, day, team FROM ivhf_json_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	day	team
+1	2024-01-01	radiant
+4	2024-01-02	dire
+5	2024-01-03	radiant
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhf_json_v EXCEPT SELECT * FROM ivhf_json_idx)
+                      UNION ALL (SELECT * FROM ivhf_json_idx EXCEPT SELECT * FROM ivhf_json_v));
+----
+count
+0
+
+statement ok
+CREATE VIEW ivhf_ndjson_v AS
+  SELECT * FROM read_ndjson('${__TEST_DIR__}/ivhf_json/*/*.json', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhf_ndjson_idx ON ivhf_ndjson_v USING inverted(id, body ivhf_en);
+
+query
+SELECT team, string_agg(id::text, ',' ORDER BY id) AS ids FROM ivhf_ndjson_idx
+GROUP BY team ORDER BY team;
+----
+team	ids
+dire	2,4
+radiant	1,3,5
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhf_ndjson_v EXCEPT SELECT * FROM ivhf_ndjson_idx)
+                      UNION ALL (SELECT * FROM ivhf_ndjson_idx EXCEPT SELECT * FROM ivhf_ndjson_v));
+----
+count
+0
+
+# The objects reader: the whole record is the indexed column, the partition
+# rides along.
+statement ok
+CREATE VIEW ivhf_objects_v AS
+  SELECT * FROM read_ndjson_objects('${__TEST_DIR__}/ivhf_json/*/*.json', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhf_objects_idx ON ivhf_objects_v USING inverted(json);
+
+query
+SELECT team, json->>'id' AS id FROM ivhf_objects_idx ORDER BY (json->>'id')::int;
+----
+team	id
+radiant	1
+dire	2
+radiant	3
+dire	4
+radiant	5
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhf_objects_v EXCEPT SELECT * FROM ivhf_objects_idx)
+                      UNION ALL (SELECT * FROM ivhf_objects_idx EXCEPT SELECT * FROM ivhf_objects_v));
+----
+count
+0
+
+# ---- A single file inside a partition directory.
+
+statement ok
+CREATE VIEW ivhf_csv_one_v AS
+  SELECT * FROM read_csv('${__TEST_DIR__}/ivhf_csv/team=dire/day=2024-01-02/*.csv', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhf_csv_one_idx ON ivhf_csv_one_v USING inverted(id, body ivhf_en);
+
+query
+SELECT * FROM ivhf_csv_one_idx;
+----
+id	body	day	team
+4	lina burns pudge	2024-01-02	dire
+
+statement ok
+CREATE VIEW ivhf_json_one_v AS
+  SELECT * FROM read_json('${__TEST_DIR__}/ivhf_json/team=radiant/*.json', hive_partitioning=true);
+
+statement ok
+CREATE INDEX ivhf_json_one_idx ON ivhf_json_one_v USING inverted(id, body ivhf_en);
+
+query
+SELECT id, team FROM ivhf_json_one_idx ORDER BY id;
+----
+id	team
+1	radiant
+3	radiant
+5	radiant
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhf_json_one_v EXCEPT SELECT * FROM ivhf_json_one_idx)
+                      UNION ALL (SELECT * FROM ivhf_json_one_idx EXCEPT SELECT * FROM ivhf_json_one_v));
+----
+count
+0
+
+# ---- DuckDB database files, one per partition.
+
+system ok
+mkdir -p $__TEST_DIR__/ivhf_ddb/team=radiant $__TEST_DIR__/ivhf_ddb/team=dire
+
+statement ok
+DETACH DATABASE IF EXISTS ivhf_ddb_a;
+
+statement ok
+ATTACH '${__TEST_DIR__}/ivhf_ddb/team=radiant/a.db' AS ivhf_ddb_a;
+
+statement ok
+CREATE TABLE ivhf_ddb_a.main.t (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO ivhf_ddb_a.main.t VALUES
+  (1, 'pudge goes mid'), (3, 'techies plants mines'), (5, 'pudge, the "butcher", plays again');
+
+statement ok
+DETACH ivhf_ddb_a;
+
+statement ok
+DETACH DATABASE IF EXISTS ivhf_ddb_b;
+
+statement ok
+ATTACH '${__TEST_DIR__}/ivhf_ddb/team=dire/b.db' AS ivhf_ddb_b;
+
+statement ok
+CREATE TABLE ivhf_ddb_b.main.t (id INTEGER, body TEXT);
+
+statement ok
+INSERT INTO ivhf_ddb_b.main.t VALUES (2, 'anchin reads manga'), (4, 'lina burns pudge');
+
+statement ok
+DETACH ivhf_ddb_b;
+
+statement ok
+CREATE VIEW ivhf_ddb_v AS
+  SELECT * FROM read_duckdb('${__TEST_DIR__}/ivhf_ddb/*/*.db', table_name='t',
+                            hive_partitioning=true, filename=true);
+
+statement ok
+CREATE INDEX ivhf_ddb_idx ON ivhf_ddb_v USING inverted(id, body ivhf_en);
+
+query
+SELECT id, team, replace(filename, '${__TEST_DIR__}/', '') AS file FROM ivhf_ddb_idx ORDER BY id;
+----
+id	team	file
+1	radiant	ivhf_ddb/team=radiant/a.db
+2	dire	ivhf_ddb/team=dire/b.db
+3	radiant	ivhf_ddb/team=radiant/a.db
+4	dire	ivhf_ddb/team=dire/b.db
+5	radiant	ivhf_ddb/team=radiant/a.db
+
+query
+SELECT id FROM ivhf_ddb_idx WHERE team = 'dire' AND body @@ ts_phrase('pudge');
+----
+id
+4
+
+query
+SELECT id FROM ivhf_ddb_idx WHERE filename = '${__TEST_DIR__}/ivhf_ddb/team=radiant/a.db' ORDER BY id;
+----
+id
+1
+3
+5
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivhf_ddb_v EXCEPT SELECT * FROM ivhf_ddb_idx)
+                      UNION ALL (SELECT * FROM ivhf_ddb_idx EXCEPT SELECT * FROM ivhf_ddb_v));
+----
+count
+0
+
+statement ok
+DROP INDEX ivhf_ddb_idx;
+
+statement ok
+DROP VIEW ivhf_ddb_v;
+
+statement ok
+DROP INDEX ivhf_json_one_idx;
+
+statement ok
+DROP VIEW ivhf_json_one_v;
+
+statement ok
+DROP INDEX ivhf_csv_one_idx;
+
+statement ok
+DROP VIEW ivhf_csv_one_v;
+
+statement ok
+DROP INDEX ivhf_objects_idx;
+
+statement ok
+DROP VIEW ivhf_objects_v;
+
+statement ok
+DROP INDEX ivhf_ndjson_idx;
+
+statement ok
+DROP VIEW ivhf_ndjson_v;
+
+statement ok
+DROP INDEX ivhf_json_idx;
+
+statement ok
+DROP VIEW ivhf_json_v;
+
+statement ok
+DROP INDEX ivhf_csv_idx;
+
+statement ok
+DROP VIEW ivhf_csv_v;
+
+statement ok
+DROP TABLE ivhf_src;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivhf_en;

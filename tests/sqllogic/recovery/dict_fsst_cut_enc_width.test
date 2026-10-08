@@ -13,7 +13,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfw_width.db' AS dfw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+CREATE DATABASE dfw;
 
 
 statement ok
@@ -120,7 +120,7 @@ own_max_len	own_staircase_max	nat_staircase_max
 
 
 statement ok
-DETACH dfw;
+DROP DATABASE dfw;
 
 
 statement ok

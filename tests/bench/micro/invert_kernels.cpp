@@ -1974,7 +1974,7 @@ void BM_PipelineLegacy(benchmark::State& state) {
   {
     analysis::TokenizerConfig c;
     analysis::NormalizingTokenizer::Options n;
-    n.locale = icu::Locale::createFromName("en");
+    n.locale = duckdb::text::Locale::FromName("en");
     n.case_convert = Case::Lower;
     c.config = std::move(n);
     add(std::move(c));
@@ -2127,5 +2127,3 @@ BENCHMARK(BM_DictResolveSweep)
 BENCHMARK(BM_DictFusedLowCard)->Unit(benchmark::kMillisecond);
 
 }  // namespace
-
-BENCHMARK_MAIN();

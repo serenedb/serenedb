@@ -42,10 +42,11 @@ printf
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT printf('%s != %s', true, false);
 ----
-db error: ERROR: invalid format specifier
+printf
+true != false
 
 
 # DOCS_TEST: example_019
@@ -115,54 +116,61 @@ printf
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT printf('%b', 123_456_789);
 ----
-db error: ERROR: invalid format specifier
+printf
+111010110111100110100010101
 
 
 # DOCS_TEST: example_025
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT printf('%,d',  123_456_789);
 ----
-db error: ERROR: invalid format specifier
+printf
+123,456,789
 
 
 query
 SELECT printf('%.d',  123_456_789);
 ----
 printf
-123456789
+123.456.789
 
-query error
+
+query
 SELECT printf('%''d', 123_456_789);
 ----
-db error: ERROR: invalid format specifier
+printf
+123'456'789
 
 
-query error
+query
 SELECT printf('%_d',  123_456_789);
 ----
-db error: ERROR: invalid format specifier
+printf
+123_456_789
 
 
 # DOCS_TEST: example_026
 
 # DOCS_TEST_BODY
 
-query error
+query
 SELECT printf('%,f',   123456.789);
 ----
-db error: ERROR: invalid format specifier
+printf
+123,456.789000
 
 
-query error
+query
 SELECT printf('%,.2f', 123456.789);
 ----
-db error: ERROR: invalid format specifier
+printf
+123,456.79
 
 
 # DOCS_TEST: string_index

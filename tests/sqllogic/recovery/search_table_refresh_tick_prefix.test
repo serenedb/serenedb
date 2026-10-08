@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE rtp (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) rtp;
+
+statement ok
+INSERT INTO rtp VALUES (1, 'base');
+
+statement ok
+VACUUM (REFRESH_TABLE) rtp;
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_wal';
+
+connection q
+statement async ok
+INSERT INTO rtp VALUES (2, 'q');
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_wal:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+connection r
+statement async ok
+VACUUM (REFRESH_TABLE) rtp;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+connection a
+statement ok
+INSERT INTO rtp VALUES (3, 'a');
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_wal:release';
+
+wait
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) rtp;
+
+connection after_crash
+query
+SELECT id, tag FROM rtp ORDER BY id;
+----
+id	tag
+1	base
+2	q
+3	a
+
+connection after_crash
+statement ok
+DROP TABLE rtp;

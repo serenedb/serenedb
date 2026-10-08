@@ -374,15 +374,15 @@ query
 SELECT 'Africa/Casablanca' AS zone, width, count(*) AS c, count(DISTINCT b) AS d, min(b)::VARCHAR AS lo, max(b)::VARCHAR AS hi, sum(epoch_us(b)::HUGEINT) AS s FROM (SELECT '15 minutes' AS width, time_bucket(INTERVAL '15 minutes', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '90 minutes' AS width, time_bucket(INTERVAL '90 minutes', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '1 hour' AS width, time_bucket(INTERVAL '1 hour', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '6 hours' AS width, time_bucket(INTERVAL '6 hours', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '1 day' AS width, time_bucket(INTERVAL '1 day', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '3 days' AS width, time_bucket(INTERVAL '3 days', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '7 days' AS width, time_bucket(INTERVAL '7 days', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '1 month' AS width, time_bucket(INTERVAL '1 month', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '3 months' AS width, time_bucket(INTERVAL '3 months', tstz, 'Africa/Casablanca') AS b FROM rnd UNION ALL SELECT '1 year' AS width, time_bucket(INTERVAL '1 year', tstz, 'Africa/Casablanca') AS b FROM rnd) w GROUP BY 1, 2 ORDER BY 2;
 ----
 zone	width	c	d	lo	hi	s
-Africa/Casablanca	1 day	20000	18663	1900-01-01 00:30:20+00	2299-09-20 23:00:00+00	82236648795860000000
+Africa/Casablanca	1 day	20000	18676	1900-01-01 00:30:20+00	2299-09-21 00:00:00+00	82236645660260000000
 Africa/Casablanca	1 hour	20000	19945	1900-01-01 00:00:00+00	2299-09-21 08:00:00+00	82237476229200000000
-Africa/Casablanca	1 month	20000	4740	1900-01-01 00:30:20+00	2299-08-31 23:00:00+00	82211184941060000000
-Africa/Casablanca	1 year	20000	400	1900-01-01 00:30:20+00	2298-12-31 23:00:00+00	81921317489880000000
+Africa/Casablanca	1 month	20000	4740	1900-01-01 00:30:20+00	2299-09-01 00:00:00+00	82211172377060000000
+Africa/Casablanca	1 year	20000	400	1900-01-01 00:30:20+00	2299-01-01 00:00:00+00	81921302337480000000
 Africa/Casablanca	15 minutes	20000	19988	1900-01-01 00:45:00+00	2299-09-21 08:45:00+00	82237503108600000000
-Africa/Casablanca	3 days	20000	16354	1899-12-30 00:30:20+00	2299-09-18 23:00:00+00	82234909941860000000
-Africa/Casablanca	3 months	20000	1599	1900-01-01 00:30:20+00	2299-06-30 23:00:00+00	82158514595880000000
+Africa/Casablanca	3 days	20000	16361	1899-12-30 00:30:20+00	2299-09-19 00:00:00+00	82234909110260000000
+Africa/Casablanca	3 months	20000	1599	1900-01-01 00:30:20+00	2299-07-01 00:00:00+00	82158499688280000000
 Africa/Casablanca	6 hours	20000	19650	1900-01-01 00:00:00+00	2299-09-21 06:00:00+00	82237295649600000000
-Africa/Casablanca	7 days	20000	12864	1900-01-01 00:30:20+00	2299-09-17 23:00:00+00	82231475941460000000
+Africa/Casablanca	7 days	20000	12864	1900-01-01 00:30:20+00	2299-09-18 00:00:00+00	82231471509860000000
 Africa/Casablanca	90 minutes	20000	19914	1900-01-01 00:00:00+00	2299-09-21 07:30:00+00	82237458141000000000
 
 query
@@ -404,15 +404,15 @@ query
 SELECT 'Europe/Dublin' AS zone, width, count(*) AS c, count(DISTINCT b) AS d, min(b)::VARCHAR AS lo, max(b)::VARCHAR AS hi, sum(epoch_us(b)::HUGEINT) AS s FROM (SELECT '15 minutes' AS width, time_bucket(INTERVAL '15 minutes', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '90 minutes' AS width, time_bucket(INTERVAL '90 minutes', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '1 hour' AS width, time_bucket(INTERVAL '1 hour', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '6 hours' AS width, time_bucket(INTERVAL '6 hours', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '1 day' AS width, time_bucket(INTERVAL '1 day', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '3 days' AS width, time_bucket(INTERVAL '3 days', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '7 days' AS width, time_bucket(INTERVAL '7 days', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '1 month' AS width, time_bucket(INTERVAL '1 month', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '3 months' AS width, time_bucket(INTERVAL '3 months', tstz, 'Europe/Dublin') AS b FROM rnd UNION ALL SELECT '1 year' AS width, time_bucket(INTERVAL '1 year', tstz, 'Europe/Dublin') AS b FROM rnd) w GROUP BY 1, 2 ORDER BY 2;
 ----
 zone	width	c	d	lo	hi	s
-Europe/Dublin	1 day	20000	18673	1900-01-01 00:25:21+00	2299-09-20 23:00:00+00	82236648408282000000
+Europe/Dublin	1 day	20000	18673	1900-01-01 00:25:21+00	2299-09-20 23:00:00+00	82236648419082000000
 Europe/Dublin	1 hour	20000	19945	1900-01-01 00:00:00+00	2299-09-21 08:00:00+00	82237476229200000000
-Europe/Dublin	1 month	20000	4740	1900-01-01 00:25:21+00	2299-08-31 23:00:00+00	82211178529008000000
+Europe/Dublin	1 month	20000	4740	1900-01-01 00:25:21+00	2299-08-31 23:00:00+00	82211178547008000000
 Europe/Dublin	1 year	20000	400	1900-01-01 00:25:21+00	2299-01-01 00:00:00+00	81921303298134000000
 Europe/Dublin	15 minutes	20000	19988	1900-01-01 00:45:00+00	2299-09-21 08:45:00+00	82237503108600000000
-Europe/Dublin	3 days	20000	16359	1899-12-30 00:25:21+00	2299-09-18 23:00:00+00	82234907214282000000
-Europe/Dublin	3 months	20000	1599	1900-01-01 00:25:21+00	2299-06-30 23:00:00+00	82158508172934000000
+Europe/Dublin	3 days	20000	16359	1899-12-30 00:25:21+00	2299-09-18 23:00:00+00	82234907225082000000
+Europe/Dublin	3 months	20000	1599	1900-01-01 00:25:21+00	2299-06-30 23:00:00+00	82158508226934000000
 Europe/Dublin	6 hours	20000	19650	1900-01-01 00:00:00+00	2299-09-21 06:00:00+00	82237295649600000000
-Europe/Dublin	7 days	20000	12856	1900-01-01 00:25:21+00	2299-09-17 23:00:00+00	82231476144282000000
+Europe/Dublin	7 days	20000	12856	1900-01-01 00:25:21+00	2299-09-17 23:00:00+00	82231476155082000000
 Europe/Dublin	90 minutes	20000	19914	1900-01-01 00:00:00+00	2299-09-21 07:30:00+00	82237458141000000000
 
 query

@@ -1,0 +1,181 @@
+control substitution on
+
+# REINDEX over a hive-partitioned glob: partitions and files appear, get
+# rewritten and go away between passes. After every pass the partition, the
+# file name and the row number of each indexed row read back as the view
+# shows them.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvh_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/rvh/color=red $__TEST_DIR__/rvh/color=blue $__TEST_DIR__/rvh/color=green
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'pudge goes mid'), (2, 'anchin reads manga')) t(id, body))
+TO '${__TEST_DIR__}/rvh/color=red/a.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT * FROM (VALUES (3, 'pudge plays again')) t(id, body))
+TO '${__TEST_DIR__}/rvh/color=blue/b.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW rvh_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/rvh/*/*.parquet', hive_partitioning=true,
+                             filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX rvh_idx ON rvh_v USING inverted(id, body rvh_en);
+
+query
+SELECT id, color, file_row_number, replace(filename, '${__TEST_DIR__}/', '') AS file
+FROM rvh_idx ORDER BY id;
+----
+id	color	file_row_number	file
+1	red	0	rvh/color=red/a.parquet
+2	red	1	rvh/color=red/a.parquet
+3	blue	0	rvh/color=blue/b.parquet
+
+# ---- A new partition.
+
+statement ok
+COPY (SELECT * FROM (VALUES (4, 'techies plants mines'), (5, 'lina burns pudge')) t(id, body))
+TO '${__TEST_DIR__}/rvh/color=green/c.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, color, file_row_number, replace(filename, '${__TEST_DIR__}/', '') AS file
+FROM rvh_idx WHERE color = 'green' ORDER BY id;
+----
+id	color	file_row_number	file
+4	green	0	rvh/color=green/c.parquet
+5	green	1	rvh/color=green/c.parquet
+
+query
+SELECT id, color FROM rvh_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	color
+1	red
+3	blue
+5	green
+
+query
+SELECT count(*) FROM ((SELECT * FROM rvh_v EXCEPT SELECT * FROM rvh_idx)
+                      UNION ALL (SELECT * FROM rvh_idx EXCEPT SELECT * FROM rvh_v));
+----
+count
+0
+
+# ---- A second file in an existing partition.
+
+statement ok
+COPY (SELECT * FROM (VALUES (6, 'pudge buys blink')) t(id, body))
+TO '${__TEST_DIR__}/rvh/color=red/d.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	1	0	0	0
+
+query
+SELECT id, file_row_number, replace(filename, '${__TEST_DIR__}/', '') AS file
+FROM rvh_idx WHERE color = 'red' ORDER BY id;
+----
+id	file_row_number	file
+1	0	rvh/color=red/a.parquet
+2	1	rvh/color=red/a.parquet
+6	0	rvh/color=red/d.parquet
+
+query
+SELECT id FROM rvh_idx WHERE filename = '${__TEST_DIR__}/rvh/color=red/d.parquet';
+----
+id
+6
+
+# ---- A file rewritten in place: its rows move to new positions.
+
+statement ok
+COPY (SELECT * FROM (VALUES (7, 'kostya types all night'), (3, 'pudge plays support')) t(id, body))
+TO '${__TEST_DIR__}/rvh/color=blue/b.parquet' (FORMAT PARQUET);
+
+query
+SELECT * FROM serenedb_reindex('rvh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	1	0	1
+
+query
+SELECT id, body, color, file_row_number FROM rvh_idx WHERE color = 'blue' ORDER BY id;
+----
+id	body	color	file_row_number
+3	pudge plays support	blue	1
+7	kostya types all night	blue	0
+
+query
+SELECT id FROM rvh_idx WHERE file_row_number = 1 ORDER BY id;
+----
+id
+2
+3
+5
+
+query
+SELECT count(*) FROM ((SELECT * FROM rvh_v EXCEPT SELECT * FROM rvh_idx)
+                      UNION ALL (SELECT * FROM rvh_idx EXCEPT SELECT * FROM rvh_v));
+----
+count
+0
+
+# ---- A partition gone.
+
+system ok
+rm $__TEST_DIR__/rvh/color=green/c.parquet
+
+query
+SELECT * FROM serenedb_reindex('rvh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+delta	0	0	1	0
+
+query
+SELECT color, string_agg(id::text, ',' ORDER BY id) AS ids FROM rvh_idx GROUP BY color ORDER BY color;
+----
+color	ids
+blue	3,7
+red	1,2,6
+
+query
+SELECT count(*) FROM rvh_idx WHERE color = 'green';
+----
+count
+0
+
+query
+SELECT count(*) FROM ((SELECT * FROM rvh_v EXCEPT SELECT * FROM rvh_idx)
+                      UNION ALL (SELECT * FROM rvh_idx EXCEPT SELECT * FROM rvh_v));
+----
+count
+0
+
+query
+SELECT * FROM serenedb_reindex('rvh_idx');
+----
+action	files_added	files_changed	files_removed	files_rescanned
+up_to_date	0	0	0	0
+
+statement ok
+DROP INDEX rvh_idx;
+
+statement ok
+DROP VIEW rvh_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rvh_en;

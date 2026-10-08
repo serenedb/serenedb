@@ -23,8 +23,6 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-
 #include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
 #include <filesystem>

@@ -71,9 +71,9 @@ class OptionsParser {
            (value_raw.front() == '\'' && value_raw.back() == '\''))) {
         value_raw = value_raw.substr(1, value_raw.size() - 2);
       }
-      auto [_, inserted] = out.try_emplace(
-        absl::AsciiStrToLower(key_raw),
-        std::make_unique<duckdb::Value>(std::string{value_raw}));
+      auto [_, inserted] =
+        out.try_emplace(absl::AsciiStrToLower(key_raw),
+                        std::make_unique<duckdb::Value>(value_raw));
       if (!inserted) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("conflicting or redundant options"));

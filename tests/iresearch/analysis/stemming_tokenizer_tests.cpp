@@ -65,7 +65,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
   // there is no Snowball stemmer for "C" locale
   {
     irs::analysis::StemmingTokenizer::Options opts;
-    opts.locale = icu::Locale{"C"};
+    opts.locale = duckdb::text::Locale::FromName("C");
 
     std::string_view data("running");
     irs::analysis::StemmingTokenizer stream(opts);
@@ -81,7 +81,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
     std::string_view data("running");
 
     irs::analysis::StemmingTokenizer::Options opts;
-    opts.locale = icu::Locale::createFromName("en");
+    opts.locale = duckdb::text::Locale::FromName("en");
 
     irs::analysis::StemmingTokenizer stream(opts);
     AssertStemBlock(stream, data, "run");
@@ -93,7 +93,7 @@ TEST_F(StemmingTokenizerTests, test_stemming) {
     std::string_view data("running");
 
     irs::analysis::StemmingTokenizer::Options opts;
-    opts.locale = icu::Locale::createFromName("zh");
+    opts.locale = duckdb::text::Locale::FromName("zh");
 
     irs::analysis::StemmingTokenizer stream(opts);
     AssertStemBlock(stream, data, "running");
@@ -104,7 +104,7 @@ TEST_F(StemmingTokenizerTests, test_load) {
   std::string_view data("running");
   auto stream = irs::analysis::StemmingTokenizer::Make(
     irs::analysis::StemmingTokenizer::Options{
-      .locale = icu::Locale::createFromName("en"),
+      .locale = duckdb::text::Locale::FromName("en"),
     });
 
   ASSERT_NE(nullptr, stream);
@@ -123,23 +123,20 @@ TEST_F(StemmingTokenizerTests, test_load_invalid) {
     irs::analysis::StemmingTokenizer::Options{}));
   ASSERT_ANY_THROW(irs::analysis::StemmingTokenizer::Make(
     irs::analysis::StemmingTokenizer::Options{
-      .locale = irs::MakeBogusLocale(),
+      .locale = duckdb::text::Locale{},
     }));
 }
 
 TEST_F(StemmingTokenizerTests, test_invalid_locale) {
-  // The legacy test fed `{"locale":"invalid12345.UTF-8"}` to the JSON
-  // parser. With the direct-Options API, a missing/invalid locale shows
-  // up as a bogus `icu::Locale`, which `Make` rejects.
   ASSERT_ANY_THROW(irs::analysis::StemmingTokenizer::Make(
     irs::analysis::StemmingTokenizer::Options{
-      .locale = irs::MakeBogusLocale(),
+      .locale = duckdb::text::Locale{},
     }));
 }
 
 TEST_F(StemmingTokenizerTests, native_fills_match_pull) {
   irs::analysis::StemmingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   irs::analysis::StemmingTokenizer pull_stream{opts};
   irs::analysis::StemmingTokenizer fill_stream{opts};
 
@@ -158,7 +155,7 @@ TEST_F(StemmingTokenizerTests, native_fills_match_pull) {
 
 TEST_F(StemmingTokenizerTests, column_fill_runs) {
   irs::analysis::StemmingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   irs::analysis::StemmingTokenizer stream{opts};
 
   constexpr size_t kCap = irs::TokenBatch::kCapacity;
@@ -215,7 +212,7 @@ TEST(StemmingTokenizerCache, repeated_terms_match_fresh_analyzer) {
     "connected", "national", "nationality",    "generously", "cats",
     "x",         "",         "already-stemmed"};
   irs::analysis::StemmingTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("en")};
+    .locale = duckdb::text::Locale::FromName("en")};
 
   auto cached = irs::analysis::StemmingTokenizer::Make(
     irs::analysis::StemmingTokenizer::Options{opts});
@@ -236,7 +233,7 @@ TEST(StemmingTokenizerCache, repeated_terms_match_fresh_analyzer) {
 
 TEST(StemmingTokenizerCache, cap_overflow_stays_correct) {
   irs::analysis::StemmingTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("en")};
+    .locale = duckdb::text::Locale::FromName("en")};
   auto cached = irs::analysis::StemmingTokenizer::Make(
     irs::analysis::StemmingTokenizer::Options{opts});
   auto fresh = irs::analysis::StemmingTokenizer::Make(
@@ -258,7 +255,7 @@ TEST(StemmingTokenizerCache, cap_overflow_stays_correct) {
 
 TEST(StemmingTokenizerCache, long_words_bypass_cache) {
   irs::analysis::StemmingTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("en")};
+    .locale = duckdb::text::Locale::FromName("en")};
   auto cached = irs::analysis::StemmingTokenizer::Make(
     irs::analysis::StemmingTokenizer::Options{opts});
   auto fresh = irs::analysis::StemmingTokenizer::Make(
@@ -273,7 +270,7 @@ TEST(StemmingTokenizerCache, long_words_bypass_cache) {
 
 TEST(StemmingTokenizerCache, memory_usage_reports_cache_bytes) {
   irs::analysis::StemmingTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("en")};
+    .locale = duckdb::text::Locale::FromName("en")};
   auto stream = irs::analysis::StemmingTokenizer::Make(std::move(opts));
   ASSERT_TRUE(stream);
   EXPECT_EQ(0u, stream->MemoryUsage());

@@ -1,0 +1,311 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE seq_other;
+
+
+statement ok
+CREATE TABLE seq_rows (id BIGSERIAL PRIMARY KEY, v INTEGER);
+
+
+statement ok
+INSERT INTO seq_rows (v) SELECT i FROM range(0, 1000) t(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE SEQUENCE seq_local;
+
+
+statement ok
+CREATE SEQUENCE seq_other.public.seq_remote;
+
+
+statement ok
+BEGIN;
+
+
+query ok
+SELECT nextval('seq_local');
+----
+nextval
+1
+
+
+query ok
+SELECT nextval('seq_other.public.seq_remote');
+----
+nextval
+1
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE seq_search (a INTEGER, txt TEXT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO seq_search VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+INSERT INTO seq_rows (v) VALUES (1000);
+
+
+connection after_crash
+query ok
+SELECT count(*) AS n, max(id) AS m FROM seq_rows;
+----
+n	m
+1001	1065
+
+
+connection after_crash
+query ok
+SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
+----
+l	r
+34	34
+
+
+connection after_crash
+statement ok
+INSERT INTO seq_search VALUES (3, 'three'), (4, 'four');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) seq_search;
+
+
+connection after_crash
+statement ok
+DELETE FROM seq_search WHERE a = 3;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) seq_search;
+
+
+connection after_crash
+query ok
+SELECT a FROM seq_search ORDER BY a;
+----
+a
+1
+2
+4
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_after_catalog_before_data';
+
+
+connection after_crash
+statement ok
+BEGIN;
+
+
+connection after_crash
+statement ok
+CREATE TABLE seq_other.public.seq_made (x INTEGER);
+
+
+connection after_crash
+query ok
+SELECT nextval('seq_local');
+----
+nextval
+35
+
+
+connection after_crash
+statement error connection closed
+COMMIT;
+
+
+connection after_decided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM seq_other.public.seq_made;
+----
+n
+0
+
+
+connection after_decided
+query ok
+SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
+----
+l	r
+67	67
+
+
+connection after_decided
+statement ok
+BEGIN;
+
+
+connection after_decided
+query ok
+SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
+----
+l	r
+68	68
+
+
+connection after_decided
+statement ok
+COMMIT;
+
+
+connection after_decided
+statement ok
+SET sdb_faults = 'crash_before_catalog_commit';
+
+
+connection after_decided
+statement ok
+BEGIN;
+
+
+connection after_decided
+statement ok
+CREATE TABLE seq_other.public.seq_undecided (x INTEGER);
+
+
+connection after_decided
+query ok
+SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
+----
+l	r
+69	69
+
+
+connection after_decided
+statement error connection closed
+COMMIT;
+
+
+connection after_undecided
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('seq_local') AS l, nextval('seq_other.public.seq_remote') AS r;
+----
+l	r
+100	100
+
+
+connection after_undecided
+statement ok
+DROP TABLE seq_search;
+
+
+connection after_undecided
+statement ok
+DROP TABLE seq_rows;
+
+
+connection after_undecided
+statement ok
+DROP SEQUENCE seq_local;
+
+
+connection after_undecided
+statement ok
+DROP DATABASE seq_other;
+
+
+connection after_undecided
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_undecided
+statement error connection closed
+SELECT 1;
+
+
+connection after_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_database WHERE datname = 'seq_other';
+----
+n
+0
+
+
+connection after_drop
+statement ok
+CREATE DATABASE seq_gone;
+
+
+connection after_drop
+statement ok
+CREATE SEQUENCE seq_gone.public.s;
+
+
+connection after_drop
+statement ok
+CREATE TABLE seq_gone.public.t (id BIGINT DEFAULT nextval('seq_gone.public.s'), v INTEGER);
+
+
+connection after_drop
+statement ok
+INSERT INTO seq_gone.public.t (v) VALUES (1);
+
+
+connection holder
+statement ok
+BEGIN;
+
+
+connection holder
+query ok
+SELECT count(*) AS n FROM seq_gone.public.t;
+----
+n
+1
+
+
+connection after_drop
+statement ok
+DROP DATABASE seq_gone;
+
+
+connection holder
+statement ok
+ROLLBACK;
+
+
+connection after_drop
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_drop
+statement error connection closed
+SELECT 1;
+
+
+connection after_gone
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_database WHERE datname = 'seq_gone';
+----
+n
+0

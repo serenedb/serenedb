@@ -21,8 +21,9 @@ void ClickHouseDiscoverColumns(ClickHouseConnection &connection, const string &d
                                vector<bool> &stringified, vector<string> &clickhouse_types);
 
 static unique_ptr<FunctionData> ClickHouseQueryBindInternal(ClientContext &context, TableFunctionBindInput &input,
-                                                            vector<LogicalType> &return_types, vector<string> &names,
-                                                            bool lookup) {
+                                                            vector<LogicalType> &return_types,
+                                                            vector<Identifier> &names, bool lookup) {
+	vector<string> column_names;
 	auto bind_data = make_uniq<ClickHouseBindData>();
 	bind_data->lookup = lookup;
 
@@ -74,27 +75,30 @@ static unique_ptr<FunctionData> ClickHouseQueryBindInternal(ClientContext &conte
 			const auto cache_key = StringUtil::Format("%d:%s", binary_as_blob ? 1 : 0, describe_sql);
 			ClickHouseCatalog::DescribeCacheEntry cached;
 			if (ch_catalog.TryGetDescribe(cache_key, cached)) {
-				names = cached.names;
+				column_names = cached.names;
 				return_types = cached.types;
 				bind_data->stringified = std::move(cached.stringified);
 				bind_data->clickhouse_types = std::move(cached.clickhouse_types);
 			} else {
-				ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
+				ClickHouseDiscoverColumns(connection, describe_sql, return_types, column_names, binary_as_blob,
 				                          bind_data->stringified, bind_data->clickhouse_types);
-				ch_catalog.StoreDescribe(cache_key, ClickHouseCatalog::DescribeCacheEntry {
-				                                        names, return_types, bind_data->stringified,
-				                                        bind_data->clickhouse_types});
+				ch_catalog.StoreDescribe(
+				    cache_key, ClickHouseCatalog::DescribeCacheEntry {
+				                   column_names, return_types, bind_data->stringified, bind_data->clickhouse_types});
 			}
 		} else {
 			auto connection = ClickHouseConnection::Open(bind_data->params);
-			ClickHouseDiscoverColumns(connection, describe_sql, return_types, names, binary_as_blob,
+			ClickHouseDiscoverColumns(connection, describe_sql, return_types, column_names, binary_as_blob,
 			                          bind_data->stringified, bind_data->clickhouse_types);
 		}
 	} catch (const clickhouse::Error &e) {
 		ClickHouseConnection::ThrowError("describing query", describe_sql, e);
 	}
 
-	bind_data->names = names;
+	for (auto &name : column_names) {
+		names.emplace_back(name);
+	}
+	bind_data->names = std::move(column_names);
 	bind_data->types = return_types;
 	bind_data->sql = std::move(sql);
 	bind_data->from_query = true;
@@ -102,18 +106,25 @@ static unique_ptr<FunctionData> ClickHouseQueryBindInternal(ClientContext &conte
 }
 
 static unique_ptr<FunctionData> ClickHouseQueryBind(ClientContext &context, TableFunctionBindInput &input,
-                                                    vector<LogicalType> &return_types, vector<string> &names) {
+                                                    vector<LogicalType> &return_types, vector<Identifier> &names) {
 	return ClickHouseQueryBindInternal(context, input, return_types, names, /*lookup=*/false);
 }
 
 static unique_ptr<FunctionData> ClickHouseLookupBind(ClientContext &context, TableFunctionBindInput &input,
-                                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 	return ClickHouseQueryBindInternal(context, input, return_types, names, /*lookup=*/true);
 }
 
+static FunctionSignature ClickHouseQuerySignature() {
+	FunctionSignature signature;
+	signature.AddParameter("database", LogicalType::VARCHAR)
+	    .AddParameter("sql", LogicalType::VARCHAR)
+	    .WithTypedKwargs("options", [](TypedKwargs &options) { options.Add("schema_query", LogicalType::VARCHAR); });
+	return signature;
+}
+
 ClickHouseQueryFunction::ClickHouseQueryFunction()
-    : TableFunction("clickhouse_query", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, ClickHouseQueryBind) {
-	named_parameters["schema_query"] = LogicalType::VARCHAR;
+    : TableFunction("clickhouse_query", ClickHouseQuerySignature(), nullptr, ClickHouseQueryBind) {
 	ClickHouseScanFunction scan_function;
 	init_global = scan_function.init_global;
 	function = scan_function.function;
@@ -124,8 +135,7 @@ ClickHouseQueryFunction::ClickHouseQueryFunction()
 }
 
 ClickHouseLookupFunction::ClickHouseLookupFunction()
-    : TableFunction("clickhouse_lookup", {LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, ClickHouseLookupBind) {
-	named_parameters["schema_query"] = LogicalType::VARCHAR;
+    : TableFunction("clickhouse_lookup", ClickHouseQuerySignature(), nullptr, ClickHouseLookupBind) {
 	ClickHouseScanFunction scan_function;
 	init_global = scan_function.init_global;
 	in_out_function = ClickHouseLookupScan;
@@ -140,7 +150,7 @@ struct ClickHouseExecuteBindData : public TableFunctionData {
 };
 
 static unique_ptr<FunctionData> ClickHouseExecuteBind(ClientContext &context, TableFunctionBindInput &input,
-                                                      vector<LogicalType> &return_types, vector<string> &names) {
+                                                      vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto bind_data = make_uniq<ClickHouseExecuteBindData>();
 	bind_data->params = ClickHouseConnectionParams::FromConnectionString(input.inputs[0].GetValue<string>());
 	auto sql = input.inputs[1].GetValue<string>();
@@ -199,7 +209,7 @@ struct ClickHouseClearCacheData : public TableFunctionData {
 };
 
 static unique_ptr<FunctionData> ClickHouseClearCacheBind(ClientContext &context, TableFunctionBindInput &input,
-                                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                                         vector<LogicalType> &return_types, vector<Identifier> &names) {
 	return_types.push_back(LogicalType::BOOLEAN);
 	names.emplace_back("Success");
 	return make_uniq<ClickHouseClearCacheData>();

@@ -51,6 +51,7 @@
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <icu-helpers.hpp>
 #include <icu-zone-lut.hpp>
 #include <limits>
 #include <string_view>
@@ -952,14 +953,10 @@ void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
   });
 }
 
-int32_t SessionTzOffsetSeconds(const icu::TimeZone& tz, int64_t utc_ms) {
+int32_t SessionTzOffsetSeconds(const duckdb::TimeZone& tz, int64_t utc_ms) {
   int32_t raw_ms = 0;
   int32_t dst_ms = 0;
-  UErrorCode status = U_ZERO_ERROR;
-  tz.getOffset(static_cast<UDate>(utc_ms), false, raw_ms, dst_ms, status);
-  if (U_FAILURE(status)) {
-    return 0;
-  }
+  tz.GetOffset(utc_ms, raw_ms, dst_ms);
   return (raw_ms + dst_ms) / 1000;
 }
 
@@ -1054,7 +1051,7 @@ struct TimeBinCore {
   using Value = duckdb::dtime_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value time) {
-    absl::big_endian::Store64(dst, time.micros);
+    absl::big_endian::Store64(dst, time.value);
     return 8;
   }
 };
@@ -1072,7 +1069,8 @@ struct TimeNsBinCore {
   using Value = duckdb::dtime_ns_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value time) {
-    absl::big_endian::Store64(dst, time.time().micros);
+    absl::big_endian::Store64(dst, time.value / (duckdb::dtime_ns_t::PRECISION /
+                                                 duckdb::dtime_t::PRECISION));
     return 8;
   }
 };
@@ -1091,7 +1089,7 @@ struct TimeTzBinCore {
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value tz) {
     // PG binary: int64 time_micros + int32 zone (seconds WEST of UTC).
     // DuckDB offset() is seconds EAST, so negate.
-    absl::big_endian::Store64(dst, tz.time().micros);
+    absl::big_endian::Store64(dst, tz.time().value);
     absl::big_endian::Store32(dst + 8, -tz.offset());
     return 12;
   }
@@ -1309,6 +1307,7 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP_TZ:
     case TIMESTAMP_TZ_NS:
     case BLOB:
+    case TUPLE:
     case STRUCT:
       return true;
     case INTERVAL: {
@@ -1426,7 +1425,7 @@ const RecordSerializers& GetSerializersCache(
       for (const auto& [_, child_type] : children) {
         cached.functions.push_back(
           GetSerialization(child_type, VarFormat::Binary, context));
-        cached.oids.emplace_back(Type2Oid(child_type, context.client, false));
+        cached.oids.emplace_back(Type2Oid(child_type));
       }
     }
   }
@@ -1535,28 +1534,24 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(unified)[idx];
     return std::string{raw.GetData(), raw.GetSize()};
   };
+  const auto read_flat = [&]<typename T>(duckdb::idx_t child, T fallback) {
+    const auto& unified = vdata.children[child].unified;
+    const auto idx = unified.sel->get_index(row);
+    if (!unified.validity.RowIsValid(idx)) {
+      return fallback;
+    }
+    return duckdb::UnifiedVectorFormat::GetData<T>(unified)[idx];
+  };
   connector::TSQueryParts parts;
   parts.text = read_string(connector::kTSQueryTextChild);
   parts.tokenizer = read_string(connector::kTSQueryTokenizerChild);
   parts.scorer = read_string(connector::kTSQueryScorerChild);
-  const auto& boost_child =
-    vdata.children[connector::kTSQueryBoostChild].unified;
-  if (const auto idx = boost_child.sel->get_index(row);
-      boost_child.validity.RowIsValid(idx)) {
-    parts.boost = duckdb::UnifiedVectorFormat::GetData<float>(boost_child)[idx];
-  }
-  const auto& slop_child = vdata.children[connector::kTSQuerySlopChild].unified;
-  if (const auto idx = slop_child.sel->get_index(row);
-      slop_child.validity.RowIsValid(idx)) {
-    parts.slop = duckdb::UnifiedVectorFormat::GetData<int64_t>(slop_child)[idx];
-  }
-  const auto& merge_child =
-    vdata.children[connector::kTSQueryMergeChild].unified;
-  if (const auto idx = merge_child.sel->get_index(row);
-      merge_child.validity.RowIsValid(idx)) {
-    parts.merge = static_cast<connector::TSQueryMerge>(
-      duckdb::UnifiedVectorFormat::GetData<uint8_t>(merge_child)[idx]);
-  }
+  parts.boost = read_flat(connector::kTSQueryBoostChild, parts.boost);
+  parts.slop = read_flat(connector::kTSQuerySlopChild, parts.slop);
+  parts.merge = static_cast<connector::TSQueryMerge>(read_flat(
+    connector::kTSQueryMergeChild, static_cast<uint8_t>(parts.merge)));
+  parts.min_match =
+    read_flat(connector::kTSQueryMinMatchChild, parts.min_match);
   return connector::RenderTSQueryValueText(parts);
 }
 
@@ -1849,7 +1844,7 @@ struct OneDimArrayCore {
     } else {
       int32_t element_oid;
       if constexpr (ElementOID == kDynamicOid) {
-        element_oid = Type2Oid(child_vdata.logical_type, context.client, false);
+        element_oid = Type2Oid(child_vdata.logical_type);
       } else {
         element_oid = ElementOID;
       }
@@ -1894,14 +1889,14 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
                ? &duckdb::ArrayType::GetChildType(*leaf)
                : &duckdb::ListType::GetChildType(*leaf);
     }
-    leaf_oid = Type2Oid(*leaf, context.client, false);
+    leaf_oid = Type2Oid(*leaf);
     return;
   }
   const auto child_lid = child_vdata.logical_type.id();
   if (child_lid != duckdb::LogicalTypeId::ARRAY &&
       child_lid != duckdb::LogicalTypeId::LIST &&
       child_lid != duckdb::LogicalTypeId::MAP) {
-    leaf_oid = Type2Oid(child_vdata.logical_type, context.client, false);
+    leaf_oid = Type2Oid(child_vdata.logical_type);
     has_null |= EmitArrayElems<Core, VarFormat::Binary>(
       context, child_vdata, array_offset, array_size);
     return;
@@ -2012,7 +2007,7 @@ struct MultiDimArrayCore {
         // PG sends an empty array as ndim=0 with no dimension descriptors.
         int32_t leaf_oid;
         if constexpr (ElementOID == kDynamicOid) {
-          leaf_oid = Type2Oid(*t, context.client, false);
+          leaf_oid = Type2Oid(*t);
         } else {
           leaf_oid = ElementOID;
         }
@@ -2299,6 +2294,7 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case BIT:
       return MakeArraySerializer<BitTextCore, BitBinCore, kVarbit>(
         format, context, kind);
+    case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
         return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
@@ -2371,14 +2367,14 @@ void ByteaOutEscape(char* buf, std::string_view value) {
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
-  const auto tz_name = config.GetTimeZone();
-  if (IsUtcTimeZoneName(tz_name)) {
-    context.time_zone.reset();
-    context.zone_lut.reset();
-  } else {
-    context.time_zone.reset(
-      icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz_name)));
+  std::string tz_name{config.GetTimeZone()};
+  context.time_zone = IsUtcTimeZoneName(tz_name)
+                        ? nullptr
+                        : duckdb::ICUHelpers::TryGetTimeZone(tz_name);
+  if (context.time_zone) {
     context.zone_lut = duckdb::ZoneLUT::Get(*context.time_zone);
+  } else {
+    context.zone_lut.reset();
   }
   context.client = &config.GetClientContext();
   // types_cache stays lazy (GetSerializersCache); record results only.
@@ -2562,6 +2558,7 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<EnumTextCore<WrapContext::None>,
                                    EnumTextCore<WrapContext::Record>,
                                    EnumBinCore>(format, context);
+    case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
         return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(

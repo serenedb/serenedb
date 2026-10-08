@@ -21,8 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <unicode/bytestream.h>
-
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
@@ -30,6 +28,10 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <random>
+#include <text_casing.hpp>
+#include <text_normalizer.hpp>
+#include <text_utf8.hpp>
+#include <vector>
 
 #include "gtest/gtest.h"
 #include "token_sink_utils.hpp"
@@ -73,7 +75,7 @@ TEST_F(NormalizingTokenizerTests, test_normalizing) {
 
   {
     OptionsT options;
-    options.locale = icu::Locale::createFromName("en");
+    options.locale = duckdb::text::Locale::FromName("en");
     irs::analysis::NormalizingTokenizer stream(options);
     ASSERT_EQ(irs::Type<irs::analysis::NormalizingTokenizer>::id(),
               stream.type());
@@ -82,21 +84,21 @@ TEST_F(NormalizingTokenizerTests, test_normalizing) {
 
   {
     OptionsT options;
-    options.locale = icu::Locale::createFromName("en.utf8");
+    options.locale = duckdb::text::Locale::FromName("en.utf8");
     options.accent = false;
     AssertBlockTerm(options, "rUnNiNg\xd0\x81", "rUnNiNg\xd0\x95");
   }
 
   {
     OptionsT options;
-    options.locale = icu::Locale::createFromName("en.utf8");
+    options.locale = duckdb::text::Locale::FromName("en.utf8");
     options.case_convert = irs::Case::Lower;
     AssertBlockTerm(options, "rUnNiNg\xd0\x81", "running\xd1\x91");
   }
 
   {
     OptionsT options;
-    options.locale = icu::Locale::createFromName("en.utf8");
+    options.locale = duckdb::text::Locale::FromName("en.utf8");
     options.case_convert = irs::Case::Upper;
     AssertBlockTerm(options, "rUnNiNg\xd1\x91", "RUNNING\xd0\x81");
   }
@@ -107,7 +109,7 @@ TEST_F(NormalizingTokenizerTests, test_load) {
     std::string_view data("running");
     auto stream = irs::analysis::NormalizingTokenizer::Make(
       irs::analysis::NormalizingTokenizer::Options{
-        .locale = icu::Locale::createFromName("en"),
+        .locale = duckdb::text::Locale::FromName("en"),
       });
 
     ASSERT_NE(nullptr, stream);
@@ -122,7 +124,7 @@ TEST_F(NormalizingTokenizerTests, test_load) {
     std::string_view data("ruNNing");
     auto stream = irs::analysis::NormalizingTokenizer::Make(
       irs::analysis::NormalizingTokenizer::Options{
-        .locale = icu::Locale::createFromName("en"),
+        .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::Upper,
       });
 
@@ -138,7 +140,7 @@ TEST_F(NormalizingTokenizerTests, test_load) {
     std::string_view data("ruNNing");
     auto stream = irs::analysis::NormalizingTokenizer::Make(
       irs::analysis::NormalizingTokenizer::Options{
-        .locale = icu::Locale::createFromName("en"),
+        .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::Lower,
       });
 
@@ -154,7 +156,7 @@ TEST_F(NormalizingTokenizerTests, test_load) {
     std::string_view data("ruNNing");
     auto stream = irs::analysis::NormalizingTokenizer::Make(
       irs::analysis::NormalizingTokenizer::Options{
-        .locale = icu::Locale::createFromName("en"),
+        .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::None,
       });
 
@@ -172,7 +174,7 @@ TEST_F(NormalizingTokenizerTests, test_load) {
 
     auto stream = irs::analysis::NormalizingTokenizer::Make(
       irs::analysis::NormalizingTokenizer::Options{
-        .locale = icu::Locale::createFromName("de_DE.UTF8"),
+        .locale = duckdb::text::Locale::FromName("de_DE.UTF8"),
         .case_convert = irs::Case::Lower,
         .accent = false,
       });
@@ -201,7 +203,7 @@ TEST_F(NormalizingTokenizerTests, omitted_locale_means_simple_case) {
 
 TEST_F(NormalizingTokenizerTests, native_fills_match_pull) {
   irs::analysis::NormalizingTokenizer::Options options;
-  options.locale = icu::Locale::createFromName("en");
+  options.locale = duckdb::text::Locale::FromName("en");
   options.case_convert = irs::Case::Lower;
   options.accent = false;
   irs::analysis::NormalizingTokenizer stream(options);
@@ -310,7 +312,7 @@ TEST_F(NormalizingTokenizerTests, native_fills_match_pull) {
 
 TEST_F(NormalizingTokenizerTests, column_suspension) {
   irs::analysis::NormalizingTokenizer::Options options;
-  options.locale = icu::Locale::createFromName("en");
+  options.locale = duckdb::text::Locale::FromName("en");
   options.case_convert = irs::Case::Lower;
   options.accent = false;
   irs::analysis::NormalizingTokenizer stream(options);
@@ -373,83 +375,73 @@ TEST_F(NormalizingTokenizerTests, column_suspension) {
 
 namespace {
 
-const icu::Normalizer2* ReferenceNormalizer(irs::analysis::NormForm form) {
+duckdb::text::NormalizationForm ReferenceForm(irs::analysis::NormForm form) {
+  using duckdb::text::NormalizationForm;
   using irs::analysis::NormForm;
-  auto err = UErrorCode::U_ZERO_ERROR;
-  const icu::Normalizer2* normalizer = nullptr;
   switch (form) {
     case NormForm::Nfc:
-      normalizer = icu::Normalizer2::getNFCInstance(err);
-      break;
+      return NormalizationForm::NFC;
     case NormForm::Nfkc:
-      normalizer = icu::Normalizer2::getNFKCInstance(err);
-      break;
+      return NormalizationForm::NFKC;
     case NormForm::Nfd:
-      normalizer = icu::Normalizer2::getNFDInstance(err);
-      break;
+      return NormalizationForm::NFD;
     case NormForm::Nfkd:
-      normalizer = icu::Normalizer2::getNFKDInstance(err);
-      break;
+      return NormalizationForm::NFKD;
     case NormForm::NfkcCf:
-      normalizer = icu::Normalizer2::getNFKCCasefoldInstance(err);
-      break;
+      return NormalizationForm::NFKC_CF;
   }
-  EXPECT_TRUE(U_SUCCESS(err) && normalizer);
-  return normalizer;
-}
-
-const icu::Transliterator& ReferenceStrip(irs::analysis::NormForm form) {
-  const auto make_tr = [](const char* rule) {
-    auto e = UErrorCode::U_ZERO_ERROR;
-    return std::unique_ptr<icu::Transliterator>{
-      icu::Transliterator::createInstance(icu::UnicodeString{rule},
-                                          UTransDirection::UTRANS_FORWARD, e)};
-  };
-  static const std::unique_ptr<icu::Transliterator> kStrips[] = {
-    make_tr("NFD; [:Nonspacing Mark:] Remove; NFC"),
-    make_tr("NFKD; [:Nonspacing Mark:] Remove; NFKC"),
-    make_tr("NFD; [:Nonspacing Mark:] Remove"),
-    make_tr("NFKD; [:Nonspacing Mark:] Remove"),
-    make_tr("NFKD; [:Nonspacing Mark:] Remove; NFKC"),
-  };
-  const auto& tr = kStrips[static_cast<size_t>(form)];
-  EXPECT_NE(nullptr, tr);
-  return *tr;
+  return NormalizationForm::NFC;
 }
 
 std::string ReferenceNorm(
   const irs::analysis::NormalizingTokenizer::Options& opts,
   std::string_view value) {
+  using duckdb::text::CaseFolding;
+  using duckdb::text::CaseMap;
+  using duckdb::text::NormalizationForm;
+  using duckdb::text::Normalizer;
   using irs::analysis::NormForm;
-  const auto* normalizer = ReferenceNormalizer(opts.form);
-  const auto* renormalizer = ReferenceNormalizer(
-    opts.form == NormForm::NfkcCf ? NormForm::Nfkc : opts.form);
-  auto err = UErrorCode::U_ZERO_ERROR;
-  const auto raw = icu::UnicodeString::fromUTF8(
-    icu::StringPiece{value.data(), static_cast<int32_t>(value.size())});
-  icu::UnicodeString token;
-  normalizer->normalize(raw, token, err);
-  EXPECT_TRUE(U_SUCCESS(err));
-  const std::string_view language{opts.locale.getLanguage()};
+  const auto form = ReferenceForm(opts.form);
+  const auto renormalize =
+    opts.form == NormForm::NfkcCf ? NormalizationForm::NFKC : form;
+  std::vector<uint32_t> chars;
+  std::vector<uint32_t> token;
+  duckdb::text::DecodeUtf8(value, chars);
+  Normalizer::Normalize(form, chars.data(), chars.size(), token);
+  const auto language = opts.locale.GetLanguage();
   const bool turkic = language == "tr" || language == "az";
+  const auto case_locale = opts.locale.GetCaseLocale();
+  const bool cased = opts.fold || opts.case_convert != irs::Case::None;
   if (opts.fold) {
-    token.foldCase(turkic ? U_FOLD_CASE_EXCLUDE_SPECIAL_I
-                          : U_FOLD_CASE_DEFAULT);
+    CaseMap::Fold(turkic ? CaseFolding::TURKIC : CaseFolding::DEFAULT,
+                  token.data(), token.size(), chars);
   } else if (opts.case_convert == irs::Case::Lower) {
-    token.toLower(opts.locale);
+    CaseMap::ToLower(case_locale, token.data(), token.size(), chars);
   } else if (opts.case_convert == irs::Case::Upper) {
-    token.toUpper(opts.locale);
+    CaseMap::ToUpper(case_locale, token.data(), token.size(), chars);
+  }
+  if (cased) {
+    token.swap(chars);
   }
   if (!opts.accent) {
-    ReferenceStrip(opts.form).transliterate(token);
-  } else if (opts.fold || opts.case_convert != irs::Case::None) {
-    icu::UnicodeString renormalized;
-    renormalizer->normalize(token, renormalized, err);
-    EXPECT_TRUE(U_SUCCESS(err));
-    token = renormalized;
+    const bool compatibility = opts.form == NormForm::Nfkc ||
+                               opts.form == NormForm::Nfkd ||
+                               opts.form == NormForm::NfkcCf;
+    Normalizer::Normalize(
+      compatibility ? NormalizationForm::NFKD : NormalizationForm::NFD,
+      token.data(), token.size(), chars);
+    Normalizer::RemoveNonspacingMarks(chars);
+    if (opts.form == NormForm::Nfd || opts.form == NormForm::Nfkd) {
+      token.swap(chars);
+    } else {
+      Normalizer::Normalize(renormalize, chars.data(), chars.size(), token);
+    }
+  } else if (cased) {
+    Normalizer::Normalize(renormalize, token.data(), token.size(), chars);
+    token.swap(chars);
   }
   std::string out;
-  token.toUTF8String(out);
+  duckdb::text::AppendUtf8(token.data(), token.size(), out);
   return out;
 }
 
@@ -485,7 +477,7 @@ TEST(NormalizingTokenizerAsciiFastPath, property_oracle_full_ascii) {
          {irs::Case::None, irs::Case::Lower, irs::Case::Upper}) {
       for (const bool accent : {true, false}) {
         irs::analysis::NormalizingTokenizer::Options opts{
-          .locale = icu::Locale::createFromName(locale),
+          .locale = duckdb::text::Locale::FromName(locale),
           .case_convert = cc,
           .accent = accent};
         SCOPED_TRACE(testing::Message() << "locale=" << locale << " case="
@@ -508,7 +500,7 @@ TEST(NormalizingTokenizerAsciiFastPath, property_oracle_full_ascii) {
 
 TEST(NormalizingTokenizerAsciiFastPath, turkish_locale_stays_unicode) {
   irs::analysis::NormalizingTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("tr_TR"),
+    .locale = duckdb::text::Locale::FromName("tr_TR"),
     .case_convert = irs::Case::Lower,
     .accent = true};
   AssertNormMatchesReference(opts, "III");
@@ -522,7 +514,7 @@ TEST(NormalizingTokenizerAsciiFastPath, turkish_locale_stays_unicode) {
 
 TEST(NormalizingTokenizerAsciiFastPath, non_ascii_takes_unicode_path) {
   irs::analysis::NormalizingTokenizer::Options opts{
-    .locale = icu::Locale::createFromName("de_DE"),
+    .locale = duckdb::text::Locale::FromName("de_DE"),
     .case_convert = irs::Case::Lower,
     .accent = false};
   AssertNormMatchesReference(opts,
@@ -535,7 +527,7 @@ TEST(NormalizingTokenizerAsciiFastPath, case_none_is_locale_safe) {
   for (const char* locale : {"tr_TR", "az", "lt"}) {
     for (const bool accent : {true, false}) {
       irs::analysis::NormalizingTokenizer::Options opts{
-        .locale = icu::Locale::createFromName(locale),
+        .locale = duckdb::text::Locale::FromName(locale),
         .case_convert = irs::Case::None,
         .accent = accent};
       SCOPED_TRACE(testing::Message()
@@ -552,7 +544,7 @@ TEST(NormalizingTokenizerAsciiFastPath, case_none_is_locale_safe) {
   }
   for (const auto cc : {irs::Case::Lower, irs::Case::Upper}) {
     irs::analysis::NormalizingTokenizer::Options opts{
-      .locale = icu::Locale::createFromName("tr_TR"),
+      .locale = duckdb::text::Locale::FromName("tr_TR"),
       .case_convert = cc,
       .accent = true};
     auto stream = irs::analysis::NormalizingTokenizer::Make(std::move(opts));
@@ -585,7 +577,7 @@ TEST(NormalizingTokenizerFastPath, icu_parity_case_none) {
   std::mt19937_64 rng{29};
   for (const bool accent : {true, false}) {
     irs::analysis::NormalizingTokenizer::Options opts{
-      .locale = icu::Locale::createFromName("en"),
+      .locale = duckdb::text::Locale::FromName("en"),
       .case_convert = irs::Case::None,
       .accent = accent};
     SCOPED_TRACE(testing::Message() << "accent=" << accent);
@@ -602,7 +594,7 @@ TEST(NormalizingTokenizerFastPath, icu_parity_case_none) {
 TEST(NormalizingTokenizerFastPath, simple_case_drift_pins) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
   const auto opts = [](irs::Case cc, bool accent) {
-    return OptionsT{.locale = icu::Locale::createFromName("en"),
+    return OptionsT{.locale = duckdb::text::Locale::FromName("en"),
                     .case_convert = cc,
                     .accent = accent};
   };
@@ -623,7 +615,7 @@ TEST(NormalizingTokenizerFastPath, simple_case_drift_pins) {
 TEST(NormalizingTokenizerFastPath, tailored_locale_keeps_icu) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
   const auto opts = [](const char* locale) {
-    return OptionsT{.locale = icu::Locale::createFromName(locale),
+    return OptionsT{.locale = duckdb::text::Locale::FromName(locale),
                     .case_convert = irs::Case::Lower,
                     .accent = true};
   };
@@ -639,7 +631,7 @@ TEST(NormalizingTokenizerFastPath, tailored_locale_keeps_icu) {
 TEST(NormalizingTokenizerFastPath, nfkc_goldens) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
   const auto opts = [](irs::Case cc) {
-    return OptionsT{.locale = icu::Locale::createFromName("en"),
+    return OptionsT{.locale = duckdb::text::Locale::FromName("en"),
                     .case_convert = cc,
                     .accent = true,
                     .form = irs::analysis::NormForm::Nfkc};
@@ -662,7 +654,7 @@ TEST(NormalizingTokenizerFold, goldens) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
   using irs::analysis::NormForm;
   const auto fold = [](NormForm form, bool accent) {
-    return OptionsT{.locale = icu::Locale::createFromName("en"),
+    return OptionsT{.locale = duckdb::text::Locale::FromName("en"),
                     .accent = accent,
                     .form = form,
                     .fold = true};
@@ -692,7 +684,7 @@ TEST(NormalizingTokenizerFold, turkic_locales_keep_dotless_i) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
   for (const char* locale : {"tr_TR", "az"}) {
     SCOPED_TRACE(testing::Message() << "locale=" << locale);
-    const OptionsT opts{.locale = icu::Locale::createFromName(locale),
+    const OptionsT opts{.locale = duckdb::text::Locale::FromName(locale),
                         .fold = true};
     AssertBlockTerm(opts, "ISPARTA \xC4\xB0zmir", "\xC4\xB1sparta izmir");
     AssertBlockTerm(opts, "\xC7\xB0", "\xC7\xB0");
@@ -705,7 +697,7 @@ TEST(NormalizingTokenizerFold, turkic_locales_keep_dotless_i) {
     EXPECT_FALSE(norm->WantedBlockTraits().ascii);
     EXPECT_FALSE(norm->Traits().keeps_ascii);
   }
-  const OptionsT opts{.locale = icu::Locale::createFromName("en"),
+  const OptionsT opts{.locale = duckdb::text::Locale::FromName("en"),
                       .fold = true};
   AssertBlockTerm(opts, "ISPARTA \xC4\xB0zmir", "isparta i\xCC\x87zmir");
   irs::analysis::NormalizingTokenizer stream{OptionsT{opts}};
@@ -729,7 +721,7 @@ TEST(NormalizingTokenizerFold, icu_parity) {
         irs::analysis::NormForm::Nfd, irs::analysis::NormForm::Nfkd}) {
     for (const bool accent : {true, false}) {
       const irs::analysis::NormalizingTokenizer::Options opts{
-        .locale = icu::Locale::createFromName("en"),
+        .locale = duckdb::text::Locale::FromName("en"),
         .accent = accent,
         .form = form,
         .fold = true};
@@ -752,7 +744,7 @@ TEST(NormalizingTokenizerForms, goldens) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
   using irs::analysis::NormForm;
   const auto opts = [](NormForm form, irs::Case cc, bool accent) {
-    return OptionsT{.locale = icu::Locale::createFromName("en"),
+    return OptionsT{.locale = duckdb::text::Locale::FromName("en"),
                     .case_convert = cc,
                     .accent = accent,
                     .form = form};
@@ -805,7 +797,7 @@ TEST(NormalizingTokenizerForms, icu_parity_case_none) {
         irs::analysis::NormForm::NfkcCf}) {
     for (const bool accent : {true, false}) {
       const irs::analysis::NormalizingTokenizer::Options opts{
-        .locale = icu::Locale::createFromName("en"),
+        .locale = duckdb::text::Locale::FromName("en"),
         .case_convert = irs::Case::None,
         .accent = accent,
         .form = form};
@@ -824,7 +816,7 @@ TEST(NormalizingTokenizerForms, icu_parity_case_none) {
 
 TEST(NormalizingTokenizerIcuPath, case_conversion_output_stays_normalized) {
   typedef irs::analysis::NormalizingTokenizer::Options OptionsT;
-  const OptionsT upper{.locale = icu::Locale::createFromName("tr_TR"),
+  const OptionsT upper{.locale = duckdb::text::Locale::FromName("tr_TR"),
                        .case_convert = irs::Case::Upper};
   AssertBlockTerm(upper, "\xCE\x90", "\xCE\xAA\xCC\x81");
   AssertNormMatchesReference(upper, "\xCE\x90 \xCE\xB0 \xC7\xB0 i");
@@ -832,7 +824,7 @@ TEST(NormalizingTokenizerIcuPath, case_conversion_output_stays_normalized) {
        {irs::analysis::NormForm::Nfd, irs::analysis::NormForm::Nfkd,
         irs::analysis::NormForm::NfkcCf}) {
     for (const auto cc : {irs::Case::Lower, irs::Case::Upper}) {
-      OptionsT opts{.locale = icu::Locale::createFromName("tr_TR"),
+      OptionsT opts{.locale = duckdb::text::Locale::FromName("tr_TR"),
                     .case_convert = cc,
                     .form = form};
       SCOPED_TRACE(testing::Message() << "form=" << magic_enum::enum_name(form)
@@ -853,7 +845,7 @@ TEST(NormalizingTokenizerFastPath, icu_parity_nfkc) {
   std::mt19937_64 rng{31};
   for (const bool accent : {true, false}) {
     irs::analysis::NormalizingTokenizer::Options opts{
-      .locale = icu::Locale::createFromName("en"),
+      .locale = duckdb::text::Locale::FromName("en"),
       .case_convert = irs::Case::None,
       .accent = accent,
       .form = irs::analysis::NormForm::Nfkc};

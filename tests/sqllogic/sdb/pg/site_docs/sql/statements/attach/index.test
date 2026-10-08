@@ -402,7 +402,7 @@ CREATE SCHEMA db22;
 statement error
 CREATE TABLE db22.tbl2 (i INTEGER);
 ----
-db error: ERROR: Ambiguous reference to catalog or schema "db22" - use a fully qualified path like "<slt:ignore>.db22"
+db error: ERROR: Ambiguous reference to catalog or schema "db22" - use a fully qualified path like '<slt:ignore>.db22'
 
 
 # DOCS_TEST: example_033

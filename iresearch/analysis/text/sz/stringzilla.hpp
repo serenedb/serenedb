@@ -29,6 +29,8 @@
 #include <stringzilla/utf8_graphemes/haswell.h>
 #include <stringzilla/utf8_graphemes/icelake.h>
 #include <stringzilla/utf8_norm/haswell.h>
+#include <stringzilla/utf8_norm/icelake.h>
+#include <stringzilla/utf8_norm/skylake.h>
 #include <stringzilla/utf8_sentences/haswell.h>
 #include <stringzilla/utf8_sentences/icelake.h>
 #include <stringzilla/utf8_tokens/haswell.h>
@@ -37,10 +39,18 @@
 #include <stringzilla/utf8_uncased_fold/icelake.h>
 #elif defined(__aarch64__)
 #include <stringzilla/utf8_graphemes/neon.h>
+#include <stringzilla/utf8_graphemes/sve2.h>
 #include <stringzilla/utf8_norm/neon.h>
+#include <stringzilla/utf8_norm/sve.h>
+#include <stringzilla/utf8_norm/sve2.h>
 #include <stringzilla/utf8_sentences/neon.h>
+#include <stringzilla/utf8_sentences/sve2.h>
 #include <stringzilla/utf8_tokens/neon.h>
+#include <stringzilla/utf8_tokens/sve2.h>
 #include <stringzilla/utf8_uncased_fold/neon.h>
+#include <stringzilla/utf8_uncased_fold/sve2.h>
+#include <sys/auxv.h>
+#include <sys/prctl.h>
 #endif
 
 #include <cstddef>
@@ -61,13 +71,55 @@ inline bool HasAvx512() noexcept {
                            __builtin_cpu_supports("avx512vbmi2");
   return kHas;
 }
+
+inline bool HasAvx512Bw() noexcept {
+  static const bool kHas = __builtin_cpu_supports("avx512f") &&
+                           __builtin_cpu_supports("avx512vl") &&
+                           __builtin_cpu_supports("avx512bw");
+  return kHas;
+}
+#elif defined(__aarch64__)
+inline bool HasSve() noexcept {
+  static const bool kHas = (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
+  return kHas;
+}
+
+inline bool HasSve2() noexcept {
+  static const bool kHas = (getauxval(AT_HWCAP2) & HWCAP2_SVE2) != 0;
+  return kHas;
+}
+
+inline constexpr int kNeonBytes = 16;
+
+inline bool HasWideSve2() noexcept {
+  static const bool kHas = [] {
+    if (!HasSve2()) {
+      return false;
+    }
+    const int vl = prctl(PR_SVE_GET_VL);
+    return vl > 0 && (vl & PR_SVE_VL_LEN_MASK) > kNeonBytes;
+  }();
+  return kHas;
+}
 #endif
 
 inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
                    char* out) noexcept {
 #ifdef __x86_64__
+  if (HasAvx512()) {
+    return sz_utf8_norm_icelake(in, n, form, out);
+  }
+  if (HasAvx512Bw()) {
+    return sz_utf8_norm_skylake(in, n, form, out);
+  }
   return sz_utf8_norm_haswell(in, n, form, out);
 #elif defined(__aarch64__)
+  if (HasSve2()) {
+    return sz_utf8_norm_sve2(in, n, form, out);
+  }
+  if (HasSve()) {
+    return sz_utf8_norm_sve(in, n, form, out);
+  }
   return sz_utf8_norm_neon(in, n, form, out);
 #else
   return sz_utf8_norm_serial(in, n, form, out);
@@ -128,6 +180,9 @@ inline size_t Fold(const char* in, size_t n, char* out) noexcept {
   }
   return sz_utf8_uncased_fold_haswell(in, n, out);
 #elif defined(__aarch64__)
+  if (HasWideSve2()) {
+    return sz_utf8_uncased_fold_sve2(in, n, out);
+  }
   return sz_utf8_uncased_fold_neon(in, n, out);
 #else
   return sz_utf8_uncased_fold_serial(in, n, out);
@@ -197,6 +252,10 @@ inline SegmentFn GraphemesFor(const char* text, size_t length) noexcept {
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
                         size_t* lengths, size_t capacity,
                         size_t* consumed) noexcept {
+  if (HasSve2()) {
+    return sz_utf8_sentences_sve2(text, length, starts, lengths, capacity,
+                                  consumed);
+  }
   return sz_utf8_sentences_neon(text, length, starts, lengths, capacity,
                                 consumed);
 }
@@ -204,11 +263,18 @@ inline size_t Sentences(const char* text, size_t length, size_t* starts,
 inline size_t Newlines(const char* text, size_t length, size_t* offsets,
                        size_t* lengths, size_t capacity,
                        size_t* consumed) noexcept {
+  if (HasWideSve2()) {
+    return sz_utf8_newlines_sve2(text, length, offsets, lengths, capacity,
+                                 consumed);
+  }
   return sz_utf8_newlines_neon(text, length, offsets, lengths, capacity,
                                consumed);
 }
 
 inline SegmentFn GraphemesFor(const char*, size_t) noexcept {
+  if (HasWideSve2()) {
+    return sz_utf8_graphemes_sve2;
+  }
   return sz_utf8_graphemes_neon;
 }
 #else

@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include <absl/base/thread_annotations.h>
+#include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
@@ -30,13 +32,18 @@
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
+#include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <utility>
 #include <vector>
 
+#include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/maintenance.h"
@@ -75,12 +82,15 @@ struct WalCursor {
   uint64_t offset = 0;
 };
 
-// Removes a dropped storage's directory tree, then up to `parent_levels`
-// ancestors that emptied out with it -- a still-populated ancestor stops the
-// walk. A failed removal is only logged, because a dropped object's ids are
-// never reissued.
-void RemoveDroppedStorageDir(const std::filesystem::path& path,
-                             size_t parent_levels);
+struct StorageDirectory {
+  std::unique_ptr<irs::Directory> directory;
+  bool on_disk = false;
+  bool absent = false;
+};
+
+StorageDirectory OpenStorageDirectory(
+  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
+  bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
 // iresearch writer/reader and all mutable index state; lives in the
@@ -88,10 +98,9 @@ void RemoveDroppedStorageDir(const std::filesystem::path& path,
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
-  using Stats = StoreStats;
-
-  InvertedIndexStorage(duckdb::idx_t db_id, duckdb::idx_t schema_id,
-                       duckdb::idx_t table_id, duckdb::idx_t index_id,
+  InvertedIndexStorage(std::shared_ptr<catalog::DatabaseDirectory> directory,
+                       bool in_memory, duckdb::idx_t db_id,
+                       duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
                        bool is_new);
@@ -103,21 +112,22 @@ class InvertedIndexStorage final
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
-
-  static std::filesystem::path GetPath(duckdb::idx_t db_id,
-                                       duckdb::idx_t schema_id,
-                                       duckdb::idx_t table_id,
-                                       duckdb::idx_t index_id);
+  std::filesystem::path Path() const {
+    return _directory->StoragePath(_index_id);
+  }
+  bool Absent() const noexcept { return _absent; }
 
   // `db_id` is passed in rather than derived from the catalog: an index
   // created inside a transaction lives in that transaction's overlay, and so
   // may the schema its database has to be walked through.
   static std::shared_ptr<InvertedIndexStorage> Create(
-    duckdb::idx_t db_id, duckdb::idx_t schema_id, duckdb::idx_t table_id,
-    duckdb::idx_t index_id, const catalog::InvertedIndexSettings& options,
+    std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
+    duckdb::idx_t db_id, duckdb::idx_t index_id,
+    const catalog::InvertedIndexSettings& options,
     const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
-      db_id, schema_id, table_id, index_id, options, top_k_scorer, is_new);
+      std::move(directory), in_memory, db_id, index_id, options, top_k_scorer,
+      is_new);
   }
 
   auto GetTransaction() {
@@ -174,24 +184,18 @@ class InvertedIndexStorage final
 
   ResultWithTime RefreshUnsafe(bool wait,
                                const irs::ProgressReportCallback& progress,
-                               RefreshResult& code,
-                               bool for_checkpoint = false);
+                               RefreshResult& code);
 
   ResultWithTime CleanupUnsafe();
-  Stats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
+  StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
   void Refresh(const irs::ProgressReportCallback& progress = nullptr);
-  // Refresh driven by the checkpoint barrier: the store WAL is about to be
-  // truncated and its iteration bumped, so the stamped durable cursor must
-  // carry the NEXT generation (offset 0), not the live one (see
-  // RefreshUnsafeImpl). Synchronous; the flag is consumed by this call.
-  void CheckpointRefresh();
 
   duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
 
-  Stats GetStats() const {
+  StoreStats GetStats() const {
     return UpdateStatsUnsafe(GetInvertedIndexSnapshot());
   }
 
@@ -201,25 +205,23 @@ class InvertedIndexStorage final
 
   // One REINDEX at a time per index, across all connections: claim the
   // storage for the whole refresh (observe -> delta/rebuild -> publish).
-  // Fail-fast, never waits -- a losing claimant reports "already in
-  // progress".
-  struct ReindexClaim {
-    explicit ReindexClaim(InvertedIndexStorage& storage) noexcept
-      : _storage{&storage},
-        _claimed{!storage._reindex_in_flight.exchange(
-          true, std::memory_order_acq_rel)} {}
-    ~ReindexClaim() {
-      if (_claimed) {
-        _storage->_reindex_in_flight.store(false, std::memory_order_release);
-      }
-    }
-    ReindexClaim(const ReindexClaim&) = delete;
-    ReindexClaim& operator=(const ReindexClaim&) = delete;
-    bool Claimed() const noexcept { return _claimed; }
+  class [[nodiscard]] ReindexClaim {
+   public:
+    static ReindexClaim TryAcquire(InvertedIndexStorage& storage);
+    static ReindexClaim Acquire(InvertedIndexStorage& storage,
+                                absl::FunctionRef<bool()> cancelled,
+                                absl::Duration poll);
+    ReindexClaim(ReindexClaim&& other) noexcept
+      : _storage{std::exchange(other._storage, nullptr)} {}
+    ReindexClaim& operator=(ReindexClaim&&) = delete;
+    ~ReindexClaim();
+    bool Claimed() const noexcept { return _storage != nullptr; }
 
    private:
+    explicit ReindexClaim(InvertedIndexStorage* storage) noexcept
+      : _storage{storage} {}
+
     InvertedIndexStorage* _storage;
-    bool _claimed;
   };
 
   void StoreInvertedIndexSnapshot(
@@ -288,6 +290,7 @@ class InvertedIndexStorage final
   // entries strictly below the returned one for THIS index (they can never be
   // selected again here), which is safe because the table is per-index.
   WalCursor CursorAtOrBelow(Tick tick) noexcept;
+  Tick FlushBound(uint64_t generation, Tick unbounded) noexcept;
 
   // The index lost a committed transaction's rows (an iresearch tick commit
   // failed after the store transaction was already durable). The storage keeps
@@ -321,14 +324,15 @@ class InvertedIndexStorage final
     -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
-                                 RefreshResult& code, bool for_checkpoint);
+                                 RefreshResult& code);
   absl::Status CleanupUnsafeImpl();
 
   duckdb::idx_t _index_id;
-  // The database whose duckdb file backs the indexed table: the refresh reads
-  // its checkpoint iteration to stamp the recovery cursor.
+  // The database whose duckdb file backs the indexed table: its checkpoint
+  // iteration bounds what a refresh makes durable.
   duckdb::idx_t _db_id;
-  std::filesystem::path _path;
+  std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  bool _absent = false;
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
@@ -338,7 +342,10 @@ class InvertedIndexStorage final
   std::unique_ptr<irs::Directory> _dir;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::shared_ptr<irs::IndexWriter> _writer;
-  std::atomic<bool> _reindex_in_flight{false};
+  absl::Mutex _reindex_mutex;
+  absl::CondVar _reindex_cv;
+  bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
+  uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
   TasksSettings _tasks_settings;
   absl::Mutex _refresh_mutex;
 
@@ -352,9 +359,7 @@ class InvertedIndexStorage final
   WalCursor _recovery_wal_cursor;
   // When true, the meta payload provider stamps _pending_wal_cursor from
   // CursorAtOrBelow(_last_durable_tick) -- the durable tick it is persisting in
-  // that same call. When false (checkpoint refresh), _pending_wal_cursor was
-  // already set by RefreshUnsafeImpl (next generation, offset 0) and is left
-  // as-is.
+  // that same call.
   bool _stamp_cursor_from_flush{false};
   // Per-index commit-tick -> store-WAL cursor table. Recorded by
   // CommitSearch/FinishReplay before a batch becomes flushable; consumed by

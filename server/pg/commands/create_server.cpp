@@ -25,6 +25,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -41,8 +42,8 @@ namespace {
 
 catalog::SereneDBCatalog& CatalogOf(ConnectionContext& conn_ctx) {
   auto& context = conn_ctx.GetClientContext();
-  const duckdb::Identifier name{conn_ctx.GetDatabase()};
-  return duckdb::Catalog::GetCatalog(context, name)
+  return duckdb::Catalog::GetCatalog(
+           context, duckdb::DatabaseManager::GetDefaultDatabase(context))
     .Cast<catalog::SereneDBCatalog>();
 }
 
@@ -64,7 +65,7 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
                          const duckdb::named_parameter_map_t& options) {
   duckdb::CreateForeignServerInfo info;
   info.SetName(duckdb::Identifier{name});
-  info.fdw_name = std::string{fdw_name};
+  info.fdw_name.assign(fdw_name);
   info.options = MakeServerOptions(options);
   info.on_conflict = if_not_exists
                        ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
@@ -72,9 +73,10 @@ void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
   const auto role = conn_ctx.GetRoleId();
   auto& context = conn_ctx.GetClientContext();
   auto& cluster = catalog::ClusterOf(context);
-  auto database = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                    .GetEntry(cluster.GetCatalogTransaction(context),
-                              duckdb::Identifier{conn_ctx.GetDatabase()});
+  auto database =
+    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(context),
+                duckdb::DatabaseManager::GetDefaultDatabase(context));
   if (database && !auth::ClosureFor(&context, role)
                      ->Can(duckdb::CatalogType::DATABASE_ENTRY,
                            database->permissions, duckdb::AclMode::Create)) {

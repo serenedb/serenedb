@@ -1,0 +1,93 @@
+control substitution on
+
+statement ok
+CREATE TABLE pudge_hooks (id INT, b TEXT);
+
+
+statement ok
+CREATE INDEX pudge_hooks_b ON pudge_hooks USING inverted (b);
+
+
+statement ok
+INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(0, 1000) r(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pudge_hooks;
+
+
+statement ok
+INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(1000, 1500) r(i);
+
+
+statement ok
+SET debug_checkpoint_abort = 'before_header';
+
+
+statement error Checkpoint aborted before header write
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pudge_hooks;
+----
+n
+1500
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) pudge_hooks;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM pudge_hooks_b) AS docs, (SELECT count(*) FROM pudge_hooks_b WHERE b @@ 'hook3') AS three;
+----
+docs	three
+1500	300
+
+
+connection after_crash
+statement ok
+INSERT INTO pudge_hooks SELECT i, 'hook' || (i % 5) FROM range(1500, 2000) r(i);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pudge_hooks;
+----
+n
+2000
+
+
+connection after_second_crash
+statement ok
+VACUUM (REFRESH_TABLE) pudge_hooks;
+
+
+connection after_second_crash
+query
+SELECT (SELECT count(*) FROM pudge_hooks_b) AS docs, (SELECT count(*) FROM pudge_hooks_b WHERE b @@ 'hook3') AS three;
+----
+docs	three
+2000	400

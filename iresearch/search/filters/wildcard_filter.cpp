@@ -22,10 +22,10 @@
 
 #include "wildcard_filter.hpp"
 
+#include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
-#include "iresearch/utils/automaton_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
@@ -58,7 +58,8 @@ Filter::ptr LowerWildcard(irs::field_id id, bytes_view term, score_t boost) {
     [&](bytes_view term) -> Filter::ptr {
       auto filter = std::make_unique<AutomatonFilter>();
       *filter->mutable_field_id() = id;
-      *filter->mutable_options() = AutomatonOptions{FromWildcard(term), term};
+      *filter->mutable_options() =
+        AutomatonOptions{term, PatternKind::Wildcard};
       filter->SetBoost(boost);
       return filter;
     });
@@ -73,12 +74,22 @@ Filter::ptr CreateByWildcard(irs::field_id id, bytes_view term, score_t boost) {
 }
 
 TermPredicate::ptr ByWildcard::CompileTermPredicate() const {
-  auto acceptor = FromWildcard(options().term);
-  if (!Validate(acceptor)) {
-    return nullptr;
-  }
-  return MakeAutomatonTermPredicate(
-    std::make_shared<const CompiledAcceptor>(std::move(acceptor)));
+  bstring buf;
+  return ExecuteWildcard(
+    buf, options().term,
+    [](bytes_view term) -> TermPredicate::ptr {
+      return MakeTermPredicate(
+        [term = bstring{term}](bytes_view key) { return key == term; });
+    },
+    [](bytes_view prefix) -> TermPredicate::ptr {
+      return MakeTermPredicate([prefix = bstring{prefix}](bytes_view key) {
+        return key.starts_with(prefix);
+      });
+    },
+    [](bytes_view pattern) -> TermPredicate::ptr {
+      const auto source = MakePatternSource(pattern, PatternKind::Wildcard);
+      return source->ok() ? source->Predicate() : nullptr;
+    });
 }
 
 }  // namespace irs

@@ -39,6 +39,8 @@ void PushdownTsDictAggregates(duckdb::unique_ptr<duckdb::LogicalOperator>& plan,
 
 void CollapseTsDictUnnest(duckdb::unique_ptr<duckdb::LogicalOperator>& plan);
 
+void LimitTsDictEnumerations(duckdb::LogicalOperator& plan);
+
 void ClaimTsDictFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   duckdb::LogicalGet& get, connector::ScanBindData& bind_data,

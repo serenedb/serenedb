@@ -35,7 +35,6 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
@@ -250,16 +249,15 @@ class PgWireSession final
   yaclib::Task<StartupOutcome> NegotiateStartup(StartupRequest& startup);
   // Register the cancel token, emplace the task, and start the cpu coroutine on
   // a duck worker. Returns its future for Run to join.
-  yaclib::Future<> SpawnSession();
+  yaclib::Future<> SpawnSession() noexcept;
   // The steady recv pump: socket read -> _recv -> wake the worker (or the
   // copy-gate while a COPY FROM STDIN feeder owns the consumer role).
   yaclib::Task<> PumpRecv();
   // Each wraps the shared frame assembler (_frames) with its own wait:
   // NextFrame (RecvLoop startup phase: socket reads), AwaitFrame (SessionTask:
-  // park), FeedFrame (COPY feeder: gate wait).
+  // park).
   yaclib::Task<Frame> NextFrame(FrameKind kind, uint32_t max_len);
   yaclib::Task<Frame> AwaitFrame(FrameKind kind, uint32_t max_len);
-  yaclib::Task<Frame> FeedFrame(FrameKind kind, uint32_t max_len);
   void DrainNotices();
   void ReportChangedParameters();
   // At a sync point (client Sync, or the self-sync after a simple query):
@@ -297,8 +295,8 @@ class PgWireSession final
   // worker: yields between productive slices, parks on NO_TASKS/BLOCKED until
   // the executor's on_reschedule wake. With a wire context, every wake also
   // drains the collector (splice chains, reschedule blocked sinks).
-  yaclib::Task<duckdb::PendingExecutionResult> DriveQuery(
-    duckdb::PendingQueryResult& pending, WireSinkContext* wire = nullptr,
+  yaclib::Task<duckdb::QueryResultState> DriveQuery(
+    duckdb::QueryResult& pending, WireSinkContext* wire = nullptr,
     bool own_waiter = true);
   // The drive sequence the simple, extended and COPY flows share: plan, drive
   // to a ready status, then materialize. The error boundaries fire in postgres
@@ -342,11 +340,7 @@ class PgWireSession final
   void RevalidatePlan(Statement& stmt);
   void DescribeStatement(Statement& stmt);
   void DescribePortal(Portal& portal);
-  void WriteResolvedRowDescription(
-    duckdb::PreparedStatement& prepared,
-    const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints,
-    duckdb::vector<duckdb::Value>* params,
-    std::span<const sdb::pg::VarFormat> formats);
+  PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 
@@ -354,7 +348,7 @@ class PgWireSession final
   std::string_view UserName() const;
   bool SetupConnection();
   void SendStartupBurst();
-  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingQueryEnsured(
+  duckdb::unique_ptr<duckdb::QueryResult> PendingQueryEnsured(
     duckdb::PreparedStatement& prepared, duckdb::vector<duckdb::Value>& values,
     std::shared_ptr<WireSinkContext> wire);
   // Single-lifecycle variant for the simple protocol: bind and execution share
@@ -362,7 +356,7 @@ class PgWireSession final
   // stay valid end-to-end. RowDescription is written by the collector hook
   // (wire->announce_rowdesc), the only post-bind point that precedes task
   // start.
-  duckdb::unique_ptr<duckdb::PendingQueryResult> PendingStatementEnsured(
+  duckdb::unique_ptr<duckdb::QueryResult> PendingStatementEnsured(
     duckdb::unique_ptr<duckdb::SQLStatement> statement,
     const std::shared_ptr<WireSinkContext>& wire);
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> DriveStatementToResult(

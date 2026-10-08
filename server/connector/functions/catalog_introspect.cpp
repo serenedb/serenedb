@@ -96,7 +96,7 @@ struct CatalogSetsState final : duckdb::GlobalTableFunctionState {
 duckdb::unique_ptr<duckdb::FunctionData> CatalogSetsBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   RequireSuperuser(context, "sdb_catalog_sets()");
   names.emplace_back("schema_name");
   return_types.emplace_back(duckdb::LogicalType::VARCHAR);
@@ -227,7 +227,7 @@ void CatalogSetsExecute(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::FunctionData> DeferredCatalogBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput&,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
+  duckdb::vector<duckdb::Identifier>& names) {
   RequireSuperuser(context, "sdb_deferred_catalog()");
   names.emplace_back("catalog_version");
   return_types.emplace_back(duckdb::LogicalType::UBIGINT);

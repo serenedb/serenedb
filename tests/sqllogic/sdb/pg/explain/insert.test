@@ -22,14 +22,14 @@ query
 EXPLAIN INSERT INTO t VALUES ('text', 42);
 ----
 QUERY PLAN
-╭─ INSERT ───────────╮
+╭─ BATCH_INSERT ─────╮
 ╰──────────┬─────────╯
 ╭─ COLUMN_DATA_SCAN ─╮
 │ ~1 row             │
 ╰────────────────────╯
 
 
-query error db error: ERROR: table t has 2 columns but 1 values were supplied
+query error db error: ERROR: table "t" has 2 columns but 1 values were supplied
 EXPLAIN INSERT INTO t VALUES ('text');
 
 

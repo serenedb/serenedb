@@ -1,0 +1,80 @@
+statement ok
+CREATE DATABASE use_default_db;
+
+
+statement ok
+USE use_default_db;
+
+
+statement ok
+CREATE SCHEMA use_default_s;
+
+
+statement ok
+CREATE TABLE use_default_t (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+query
+SELECT 'use_default_t'::regclass::text;
+----
+text
+use_default_t
+
+
+query
+SELECT 'use_default_s'::regnamespace::text;
+----
+text
+use_default_s
+
+
+query
+SELECT relname FROM pg_class WHERE oid = 'use_default_t'::regclass;
+----
+relname
+use_default_t
+
+
+statement ok
+CREATE INDEX use_default_idx ON use_default_t USING inverted (body);
+
+
+statement ok
+INSERT INTO use_default_t VALUES (1, 'alpha');
+
+
+statement error
+CALL serenedb_reindex('use_default_idx');
+----
+db error: ERROR: REINDEX is only supported for view-backed inverted indexes
+
+
+statement ok
+VACUUM (REFRESH_INDEX) use_default_idx;
+
+
+query
+SELECT count(*) FROM use_default_idx WHERE body @@ ts_phrase('alpha');
+----
+count
+1
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES IN SCHEMA use_default_s GRANT SELECT ON TABLES TO PUBLIC;
+
+
+query
+SELECT count(*) FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace
+WHERE n.nspname = 'use_default_s';
+----
+count
+1
+
+
+statement ok
+USE postgres;
+
+
+statement ok
+DROP DATABASE use_default_db;

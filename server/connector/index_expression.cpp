@@ -48,7 +48,6 @@
 #include <duckdb/planner/expression_iterator.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <utility>
 
 #include "connector/column_id.h"
@@ -64,10 +63,10 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
       child = FoldConstantCasts(std::move(child), context);
     });
-  if (expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST) {
-    auto& cast = expr->Cast<duckdb::BoundCastExpression>();
-    if (cast.Child().GetExpressionClass() ==
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (duckdb::BoundCastExpression::IsCast(*expr)) {
+    if (duckdb::BoundCastExpression::Child(
+          expr->Cast<duckdb::BoundFunctionExpression>())
+          .GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
       duckdb::Value folded;
       SDB_ENSURE(
         duckdb::ExpressionExecutor::TryEvaluateScalar(context, *expr, folded),
@@ -95,8 +94,7 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
 
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer::Serialize(expr, stream,
-                                      duckdb::VersionStorageOptions());
+  duckdb::BinarySerializer::Serialize(expr, stream);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
 }

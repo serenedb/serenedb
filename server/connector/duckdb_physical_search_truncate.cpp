@@ -34,25 +34,23 @@ namespace sdb::connector {
 
 SereneDBSearchTruncate::SereneDBSearchTruncate(
   duckdb::PhysicalPlan& plan, std::shared_ptr<search::SearchTable> data,
-  duckdb::idx_t estimated_cardinality, bool clears_shard)
+  duckdb::Identifier table_name, duckdb::idx_t estimated_cardinality,
+  bool clears_shard)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
     _data(std::move(data)),
+    _table_name(std::move(table_name)),
     _clears_shard(clears_shard) {}
 
 duckdb::SourceResultType SereneDBSearchTruncate::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& /*chunk*/,
   duckdb::OperatorSourceInput& /*input*/) const {
   auto& search_txn = GetSereneDBContext(context.client).SearchTxn();
-  search_txn.RegisterWriter(_data);
-  if (!_clears_shard) {
-    search_txn
-      .EnsureSerialSearchTransaction(_data,
-                                     [&] { return _data->GetTransaction(); })
-      .Remove(std::make_shared<irs::All>());
-  }
-  search_txn.AddSearchTruncate(_data, _clears_shard);
+  search_txn.RegisterWriter(_data, _table_name);
+  // Buffered like a removal: the wipe reaches iresearch when the write buffer
+  // is replayed, after the rows that precede it.
+  search_txn.AddSearchTruncate(_data, _table_name, _clears_shard);
   return duckdb::SourceResultType::FINISHED;
 }
 

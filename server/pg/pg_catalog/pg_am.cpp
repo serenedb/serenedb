@@ -34,7 +34,7 @@ constexpr auto kSampleData = std::to_array<PgAm>({
     .amtype = PgAm::Amtype::Index,
   },
   {
-    .oid = pg::kPgAmIresearch,
+    .oid = pg::kPgAmIResearch,
     .amname = "iresearch",
     .amhandler = 0,
     .amtype = PgAm::Amtype::Table,

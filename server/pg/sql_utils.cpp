@@ -20,10 +20,15 @@
 
 #include "sql_utils.h"
 
+#include <algorithm>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <vector>
 
@@ -70,6 +75,112 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
            .Name()
            .GetIdentifierName() +
          "_not_null";
+}
+
+std::string QuoteIdentifier(std::string_view ident) {
+  bool safe =
+    !ident.empty() &&
+    ((ident.front() >= 'a' && ident.front() <= 'z') || ident.front() == '_');
+  for (const auto c : ident) {
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+      safe = false;
+      break;
+    }
+  }
+  if (safe) {
+    const auto category = duckdb::KeywordHelper::KeywordCategoryType(ident);
+    safe = category == duckdb::KeywordCategory::KEYWORD_NONE ||
+           category == duckdb::KeywordCategory::KEYWORD_UNRESERVED;
+  }
+  if (safe) {
+    return std::string{ident};
+  }
+  std::string out;
+  out.reserve(ident.size() + 2);
+  out += '"';
+  for (const auto c : ident) {
+    if (c == '"') {
+      out += '"';
+    }
+    out += c;
+  }
+  out += '"';
+  return out;
+}
+
+namespace {
+
+template<typename Match>
+KeyIndex FindKeyIndexIn(duckdb::ClientContext& context,
+                        duckdb::SchemaCatalogEntry& schema, Match&& match) {
+  KeyIndex found;
+  schema.Scan(
+    context, duckdb::CatalogType::TABLE_ENTRY,
+    [&](duckdb::CatalogEntry& entry) {
+      if (found.table || entry.type != duckdb::CatalogType::TABLE_ENTRY) {
+        return;
+      }
+      const auto& table = entry.Cast<duckdb::TableCatalogEntry>();
+      for (const auto& constraint : table.GetConstraints()) {
+        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+          continue;
+        }
+        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+        if (match(table, unique)) {
+          found = {&table, &unique};
+          return;
+        }
+      }
+    });
+  return found;
+}
+
+}  // namespace
+
+KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
+                      duckdb::idx_t oid) {
+  KeyIndex found;
+  for (auto& schema : database.GetSchemas(context)) {
+    found = FindKeyIndexIn(context, schema.get(),
+                           [&](const duckdb::TableCatalogEntry&,
+                               const duckdb::UniqueConstraint& unique) {
+                             return unique.index_oid == oid;
+                           });
+    if (found.table) {
+      break;
+    }
+  }
+  return found;
+}
+
+KeyIndex FindKeyIndex(duckdb::ClientContext& context,
+                      duckdb::SchemaCatalogEntry& schema,
+                      std::string_view name) {
+  return FindKeyIndexIn(context, schema,
+                        [&](const duckdb::TableCatalogEntry& table,
+                            const duckdb::UniqueConstraint& unique) {
+                          return ConstraintName(table, unique) == name;
+                        });
+}
+
+std::string MacroBody(const duckdb::MacroFunction& macro) {
+  if (macro.type == duckdb::MacroType::TABLE_MACRO) {
+    return macro.Cast<duckdb::TableMacroFunction>().query_node->ToString();
+  }
+  return macro.Cast<duckdb::ScalarMacroFunction>().expression->ToString();
+}
+
+std::string MacroParameterName(const duckdb::MacroFunction& macro,
+                               duckdb::idx_t index) {
+  const auto& name = macro.parameters[index]
+                       ->Cast<duckdb::ColumnRefExpression>()
+                       .GetColumnName()
+                       .GetIdentifierName();
+  const bool positional = name.size() > 1 && name.front() == '$' &&
+                          std::all_of(name.begin() + 1, name.end(), [](char c) {
+                            return c >= '0' && c <= '9';
+                          });
+  return positional ? std::string{} : name;
 }
 
 }  // namespace sdb::pg

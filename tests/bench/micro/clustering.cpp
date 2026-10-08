@@ -22,11 +22,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <core_functions/array_kernels.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iresearch/formats/ivf/clustering.hpp>
-#include <iresearch/utils/vector.hpp>
 #include <limits>
 #include <random>
 #include <vector>
@@ -81,14 +81,11 @@ double MeanObjective(const std::vector<float>& data, size_t n, uint32_t d,
   double total = 0.0;
   size_t cnt = 0;
   for (size_t i = 0; i < n; i += step) {
-    const auto* x =
-      reinterpret_cast<const irs::byte_type*>(data.data() + i * d);
+    const float* x = data.data() + i * d;
     float best = 0.f;
     for (uint32_t j = 0; j < k; ++j) {
-      const auto* cj = reinterpret_cast<const irs::byte_type*>(
-        c.data() + static_cast<size_t>(j) * d);
-      const float dist = irs::vector::L2Space<float, float, float>::Dist(
-        x, cj, static_cast<uint16_t>(d));
+      const float dist = duckdb::DistanceSquaredOp::Operation(
+        x, c.data() + static_cast<size_t>(j) * d, d);
       if (j == 0 || dist < best) {
         best = dist;
       }
@@ -117,15 +114,12 @@ std::vector<float> RunHierarchical(const std::vector<float>& data, size_t n,
   std::vector<uint32_t> label(n);
   std::vector<size_t> counts(km, 0);
   for (size_t i = 0; i < n; ++i) {
-    const auto* x =
-      reinterpret_cast<const irs::byte_type*>(data.data() + i * d);
+    const float* x = data.data() + i * d;
     float best = std::numeric_limits<float>::max();
     uint32_t bg = 0;
     for (uint32_t g = 0; g < km; ++g) {
-      const auto* cg = reinterpret_cast<const irs::byte_type*>(
-        meso.data() + static_cast<size_t>(g) * d);
-      const float dist = irs::vector::L2Space<float, float, float>::Dist(
-        x, cg, static_cast<uint16_t>(d));
+      const float dist = duckdb::DistanceSquaredOp::Operation(
+        x, meso.data() + static_cast<size_t>(g) * d, d);
       if (dist < best) {
         best = dist;
         bg = g;
@@ -249,5 +243,3 @@ CLUSTERING_REGISTER(HierLloyd);
 CLUSTERING_REGISTER(Hskm);
 
 }  // namespace
-
-BENCHMARK_MAIN();

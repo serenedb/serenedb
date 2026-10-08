@@ -32,6 +32,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -58,9 +59,8 @@ duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto slot = _slot.load(std::memory_order_relaxed);
   if (slot.config != &config) [[unlikely]] {
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    const auto index = config.TryGetSettingIndex(
-      duckdb::String{_name.data(), static_cast<uint32_t>(_name.size())},
-      option);
+    const auto index =
+      config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
     SDB_ASSERT(index.IsValid());
     slot = {.config = &config, .index = index.GetIndex()};
     _slot.store(slot, std::memory_order_relaxed);
@@ -69,7 +69,7 @@ duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto found = context.config.user_settings.TryGetSetting(config.user_settings,
                                                           slot.index, value);
   if (!found) [[unlikely]] {
-    auto res = context.TryGetCurrentSetting(std::string{_name}, value);
+    auto res = context.TryGetCurrentSetting(duckdb::Identifier{_name}, value);
     SDB_ASSERT(res);
   }
   SDB_ASSERT(!value.IsNull());
@@ -129,7 +129,7 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
   duckdb::Value current;
-  if (!ctx.TryGetCurrentSetting(std::string{kName}, current)) {
+  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{kName}, current)) {
     return;
   }
   bool equal = false;
@@ -386,6 +386,147 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
 #endif
+    {
+      "sdb_ai_text_default_secret",
+      {
+        LogicalTypeId::VARCHAR,
+        "Name of the openai secret used by ai_generate, ai_classify, "
+        "ai_classify_labels, ai_extract, ai_filter, ai_translate, ai_redact, "
+        "ai_score, ai_rerank, ai_agg and ai_summarize_agg when the call does "
+        "not pass secret_name. Default: '' (no default).",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_embedding_default_secret",
+      {
+        LogicalTypeId::VARCHAR,
+        "Name of the openai secret used by ai_embed and ai_similarity when "
+        "the call does not pass secret_name. Default: '' (no default).",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_system_one_default_secret",
+      {
+        LogicalTypeId::VARCHAR,
+        "Name of the typesafe secret used by ai_system_one when the call does "
+        "not pass secret_name. Default: '' (no default).",
+        [] { return duckdb::Value{""}; },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_throw_on_error",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, a row whose AI function request fails fails the query; "
+        "when false, that row returns NULL. Authentication, not-found, "
+        "validation (422) and exhausted-quota (429 insufficient_quota) errors "
+        "always fail the query. Default: true.",
+        [] { return duckdb::Value::BOOLEAN(true); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_throw_on_quota_exceeded",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When true, exceeding sdb_ai_max_api_calls_per_query or "
+        "sdb_ai_max_output_tokens_per_query fails the query; when false, the "
+        "remaining rows return NULL. Default: true.",
+        [] { return duckdb::Value::BOOLEAN(true); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_max_api_calls_per_query",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of AI provider requests a single query may send. "
+        "0 = unlimited. Default: 0.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_max_output_tokens_per_query",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of output tokens, as reported by the provider, a "
+        "single query may consume; checked before each request, so requests "
+        "already in flight may exceed it. 0 = unlimited. Default: 0.",
+        [] { return duckdb::Value::UINTEGER(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_max_retries",
+      {
+        LogicalTypeId::UINTEGER,
+        "How many times an AI provider request is retried after a connection "
+        "error or HTTP 408, 429, 5xx or 529. Default: 3.",
+        [] { return duckdb::Value::UINTEGER(3); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_retry_initial_delay_ms",
+      {
+        LogicalTypeId::UINTEGER,
+        "Delay before the first AI provider retry, in milliseconds; each "
+        "further retry doubles it, up to 60 seconds. A Retry-After response "
+        "header overrides it, up to 60 "
+        "seconds. Default: 500.",
+        [] { return duckdb::Value::UINTEGER(500); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
+    {
+      "sdb_ai_request_timeout",
+      {
+        LogicalTypeId::UINTEGER,
+        "Timeout of a single AI provider request, in seconds. Default: 120.",
+        [] { return duckdb::Value::UINTEGER(120); },
+        RejectZero<"sdb_ai_request_timeout">,
+      },
+    },
+    {
+      "sdb_ai_max_concurrent_requests",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of AI provider requests a query has in flight, across "
+        "all of its AI calls and threads. Requests run on DuckDB's async I/O "
+        "threads (async_threads) and on the threads that evaluate the calls. "
+        "Default: 16.",
+        [] { return duckdb::Value::UINTEGER(16); },
+        RejectZero<"sdb_ai_max_concurrent_requests">,
+      },
+    },
+    {
+      "sdb_ai_embedding_max_batch_size",
+      {
+        LogicalTypeId::UINTEGER,
+        "Maximum number of texts ai_embed and ai_similarity send in one "
+        "embeddings request. Default: 100.",
+        [] { return duckdb::Value::UINTEGER(100); },
+        RejectZero<"sdb_ai_embedding_max_batch_size">,
+      },
+    },
+    {
+      "sdb_ai_allow_insecure_endpoint",
+      {
+        LogicalTypeId::BOOLEAN,
+        "When false, AI functions refuse a secret whose base_url sends "
+        "requests over plain http:// to a host other than localhost, "
+        "127.0.0.0/8 or ::1, because the prompts and the API key would "
+        "travel unencrypted. Default: false.",
+        [] { return duckdb::Value::BOOLEAN(false); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+      },
+    },
     // Logging knobs (level, type filters, storage, on/off) live in duckdb's
     // built-in settings: logging_level / enable_logging / enabled_log_types
     // / disabled_log_types / logging_storage / logging_mode. The previous
@@ -537,6 +678,29 @@ constexpr std::pair<std::string_view, VariableDescription>
                                     value.ToString(), "\""));
           }
         },
+      },
+    },
+    {
+      "sdb_pattern_cache_size",
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and "
+        "fused alternations over an inverted index) kept across queries, so "
+        "a pattern is compiled once per server rather than once per query. "
+        "The least recently used patterns are dropped first; a pattern in use "
+        "by a running query stays alive until it finishes. 0, the default, "
+        "keeps nothing: each query compiles its own patterns. Server-global.",
+        [] {
+          return duckdb::Value::UBIGINT(irs::PatternCache::kDefaultCapacity);
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+          irs::PatternCache::Instance().SetCapacity(value.GetValue<uint64_t>());
+        },
+        [](duckdb::ClientContext&, duckdb::SetScope) {
+          irs::PatternCache::Instance().SetCapacity(
+            irs::PatternCache::kDefaultCapacity);
+        },
+        duckdb::SetScope::GLOBAL,
       },
     },
     {
@@ -725,8 +889,10 @@ constexpr std::pair<std::string_view, VariableDescription>
         LogicalTypeId::UBIGINT,
         "In-memory bytes an inverted-index or search-table segment writer "
         "fills before rolling over to a new on-disk segment (also the CREATE "
-        "INDEX backfill commit cadence). Per-object WITH (segment_memory_max = "
-        "...) overrides. Default 268435456 (256MB).",
+        "INDEX backfill commit cadence, and half of it is the write buffer a "
+        "serial search-table statement fills before it starts feeding the "
+        "index as it goes). Per-object WITH (segment_memory_max = ...) "
+        "overrides. Default 268435456 (256MB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.segment_memory_max);
@@ -940,9 +1106,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
-        [] {
-          return duckdb::Value{std::string{irs::StaticStrings::kDefaultUser}};
-        },
+        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
         SetSessionAuthCallback,
         ResetSessionAuthCallback,
       },
@@ -1013,22 +1177,40 @@ std::string_view GetOriginalName(std::string_view name) {
   return *it;
 }
 
+// Settings a client may never change, refused for the lifetime of the process
+// by the setting_change_handler.
+const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
+  // Describes how this process is wired rather than a preference, and is pinned
+  // at startup in
+  // ConfigureServerDBConfig.
+  "external_threads",
+  // Read-only in PostgreSQL, where reporting the value is the whole point of
+  // the GUC.
+  "in_hot_standby",
+  "is_superuser",
+  "server_encoding",
+  "server_version",
+  "server_version_num",
+};
+
+bool IsUnchangeableSetting(std::string_view name) {
+  return kUnchangeableSettings.contains(name);
+}
+
 namespace {
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
                  const VariableDescription& desc) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  if (config
-        .TryGetSettingIndex(duckdb::String::Reference(name.data(), name.size()),
-                            option)
-        .IsValid()) {
+  const duckdb::Identifier setting{name};
+  if (config.TryGetSettingIndex(setting, option).IsValid()) {
     return;  // already registered or built-in
   }
   config.AddExtensionOption(
-    std::string{name}, std::string{desc.description},
-    duckdb::LogicalType{desc.type},
+    setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
-    desc.set_callback, desc.reset_callback, desc.scope);
+    desc.set_callback, desc.reset_callback, desc.scope,
+    IsUnchangeableSetting(name));
 }
 
 }  // namespace
@@ -1044,8 +1226,8 @@ duckdb::Value ValidateSetting(duckdb::ClientContext& context,
                               std::string_view name,
                               const duckdb::Value& value) {
   duckdb::ExtensionOption option;
-  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
-                                                             option);
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(
+    duckdb::Identifier{name}, option);
   auto result = value.CastAs(context, option.type);
   option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
   return result;

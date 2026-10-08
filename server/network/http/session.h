@@ -24,6 +24,7 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_split.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -32,8 +33,9 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
-#include <duckdb/main/pending_query_result.hpp>
+#include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/query_parameters.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -90,6 +92,7 @@ struct HttpServerContext {
   std::string_view cors_origins;
   // The database sessions connect to; empty means the default database.
   std::string database;
+  std::string schema;
   // HAProxy PROXY-protocol preface policy (off / optional / require); never
   // set on an https listener (the header precedes the TLS handshake).
   ProxyMode proxy = ProxyMode::Off;
@@ -124,6 +127,7 @@ class HttpSession final
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
       _database{ctx.database},
+      _schema{ctx.schema},
       _proxy{ctx.proxy} {}
 
   HttpSession(HttpServerContext& ctx, IoExecutor& exec)
@@ -139,6 +143,7 @@ class HttpSession final
       _max_conn{ctx.max_connections},
       _cors_origins{ctx.cors_origins},
       _database{ctx.database},
+      _schema{ctx.schema},
       _proxy{ctx.proxy} {}
 
   // Run is the session's sole owner: it grabs the one shared_from_this, starts
@@ -161,8 +166,7 @@ class HttpSession final
   // --- RequestContext -------------------------------------------------------
   // First use sets up the full SereneDB client state (like pg-wire's
   // SetupConnection, minus the wire collector): server-side functions reach
-  // ConnectionContext through GetSereneDBContext. The user is whoever
-  // authenticated the request that first touched the connection.
+  // ConnectionContext through GetSereneDBContext.
   duckdb::Connection& Connection() final {
     if (!_conn) {
       const std::string_view dbname =
@@ -192,17 +196,9 @@ class HttpSession final
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
-      _conn->context->session_user = std::string{user};
-      std::vector<duckdb::CatalogSearchEntry> default_paths{
-        duckdb::CatalogSearchEntry{duckdb::Identifier{dbname},
-                                   duckdb::Identifier{"$user"}},
-        duckdb::CatalogSearchEntry{duckdb::Identifier{dbname},
-                                   duckdb::Identifier{"public"}},
-      };
-      _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-        std::vector{default_paths});
-      _conn->context->client_data->catalog_search_path->Set(
-        std::move(default_paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
+      _conn->context->session_user.assign(user);
+      connector::SetDefaultSearchPath(*_conn->context, dbname);
+      _conn_user = _user;
     }
     return *_conn;
   }
@@ -213,7 +209,7 @@ class HttpSession final
   // until the executor's on_reschedule wake re-runs us. A blocking
   // Connection().Query() would instead pin this scheduler worker for the
   // whole query and starve the pool under concurrent requests.
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunQuery(
     std::string sql, bool /*writes*/) final {
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
@@ -223,7 +219,45 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      auto pending = conn.PendingQuery(sql, /*allow_stream_result=*/false);
+      co_return co_await Drive(conn.Submit(sql, MaterializedQuery()));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
+    }
+  }
+
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunPrepared(
+    duckdb::PreparedStatement& statement) final {
+    try {
+      duckdb::vector<duckdb::Value> params;
+      co_return co_await Drive(statement.Submit(params, MaterializedQuery()));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
+    }
+  }
+
+  PreparedEntry& PreparedSlot(PreparedSlotId slot) final {
+    const auto index = static_cast<size_t>(slot);
+    SDB_ASSERT(index < _prepared.size());
+    return _prepared[index];
+  }
+
+  std::string_view User() const final { return _user; }
+
+  std::string_view Schema() const final {
+    return _schema.empty() ? std::string_view{"public"} : _schema;
+  }
+
+ private:
+  static duckdb::QueryParameters MaterializedQuery() {
+    duckdb::QueryParameters parameters;
+    parameters.result_eagerness = duckdb::ResultEagerness::FORCED;
+    parameters.caller_drives = true;
+    return parameters;
+  }
+
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> Drive(
+    duckdb::unique_ptr<duckdb::QueryResult> pending) {
+    try {
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.
 #ifdef SDB_DEV
@@ -235,10 +269,10 @@ class HttpSession final
         for (;;) {
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
-          if (duckdb::PendingQueryResult::IsResultReady(status)) {
+          if (duckdb::IsObservable(status)) {
             break;
           }
-          if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+          if (status == duckdb::QueryResultState::NOT_READY) {
             if (++inline_slices < kInlineSliceBudget) {
               continue;
             }
@@ -250,26 +284,17 @@ class HttpSession final
           }
         }
       }
-      // An execution error leaves the pending result un-executable; pull the
-      // error directly (it preserves the typed exception) instead of calling
-      // Execute(), which would throw "unsuccessful pending result".
-      if (pending->HasError()) {
-        co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-          pending->GetErrorObject());
+      auto result = pending->TakeCollectorResult();
+      if (!result) {
+        pending->Complete();
+        result = std::move(pending);
       }
-      auto result = pending->Execute();
-      co_return duckdb::unique_ptr_cast<duckdb::QueryResult,
-                                        duckdb::MaterializedQueryResult>(
-        std::move(result));
+      co_return result;
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 
-  std::string_view User() const final { return _user; }
-
- private:
   using Transport<Kind, HttpSession<Kind>>::_socket;
   using Transport<Kind, HttpSession<Kind>>::_ioexec;
   using Transport<Kind, HttpSession<Kind>>::_recv;
@@ -282,6 +307,7 @@ class HttpSession final
   using Transport<Kind, HttpSession<Kind>>::_stopping;
   using Transport<Kind, HttpSession<Kind>>::_producer_gate;
   using Transport<Kind, HttpSession<Kind>>::_task;
+  using Transport<Kind, HttpSession<Kind>>::_handed_off;
   using Transport<Kind, HttpSession<Kind>>::KickSend;
   using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
   using Transport<Kind, HttpSession<Kind>>::SendBroken;
@@ -302,12 +328,28 @@ class HttpSession final
   // duck-side: the request loop. Parse -> body -> auth -> route -> handler.
   yaclib::Future<> SessionMain();
 
+  void ReleaseConnection() {
+    {
+      absl::MutexLock lock{&_cancel_token->mu};
+      _cancel_token->ctx = nullptr;
+    }
+    _prepared = {};
+    _connection_ctx.reset();
+    _conn.reset();
+  }
+
   // Incremental llhttp feed over the recv channel. Returns the head event or
   // nullopt when the connection died mid-parse.
   yaclib::Task<std::optional<H1Event>> ReadHead();
   // Assembles the request body (chunked into _dechunk, otherwise a pinned
   // view over _recv). Returns false when the connection died / parse failed.
   yaclib::Task<bool> ReadBody(HttpRequest& request, size_t& pinned_body);
+
+  struct BodyDecoding {
+    http::HttpStatus status = http::HttpStatus::None;
+    std::string_view error;
+  };
+  BodyDecoding DecodeRequestBody(HttpRequest& request);
 
   asio_ns::io_context& _io;
   asio_ns::steady_timer _deadline;
@@ -321,10 +363,12 @@ class HttpSession final
   uint32_t _max_conn = 0;
   std::string_view _cors_origins;
   std::string_view _database;
+  std::string_view _schema;
   ProxyMode _proxy = ProxyMode::Off;
   H1Codec _codec;
 
   message::Buffer _dechunk{kReadBlock, kWireChunkMax};
+  message::Buffer _decoded{kReadBlock, kWireChunkMax};
 
   // Read-deadline phase for RecvLoop: idle (between requests, generous
   // keep-alive timeout) vs mid-request (strict header/body timeout).
@@ -333,7 +377,11 @@ class HttpSession final
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
   std::shared_ptr<ConnectionContext> _connection_ctx;
+  // Statements prepared on _conn; declared after it so they are destroyed
+  // first.
+  std::array<PreparedEntry, kPreparedSlots> _prepared;
   std::string _user;
+  std::string _conn_user;
 };
 
 template<SocketKind Kind>
@@ -385,14 +433,9 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    _task = duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(
-        irs::DuckDBEngine::Instance().instance()),
-      *_ioexec);
-    // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
-    // it onto a duck worker.
     cpu = SessionMain();
-    _task->RequestRun();
+    _handed_off = true;
+    _task->Start();
 
     for (;;) {
       _deadline.expires_after(_idle.load(std::memory_order_acquire)
@@ -497,6 +540,42 @@ yaclib::Task<bool> HttpSession<Kind>::ReadBody(HttpRequest& request,
 }
 
 template<SocketKind Kind>
+auto HttpSession<Kind>::DecodeRequestBody(HttpRequest& request)
+  -> BodyDecoding {
+  const auto field = request.Header(HttpHeader::ContentEncoding);
+  if (field.empty()) {
+    return {};
+  }
+  const auto codings = http::ParseContentEncoding(field);
+  if (!codings) {
+    return {http::HttpStatus::UnsupportedMediaType,
+            "unsupported_content_encoding"};
+  }
+  if (codings->empty() || request.body.Empty()) {
+    return {};
+  }
+  try {
+    _decoded.Clear();
+    message::Writer out{_decoded};
+    http::DecodeContent(
+      request.body, *codings, [&](std::string_view part) { out.Write(part); },
+      _codec.MaxBodyBytes());
+    out.Commit(false);
+    request.body = _decoded.Written();
+    return {};
+  } catch (const irs::SqlException& error) {
+    switch (error.error().errcode) {
+      case ERRCODE_PROGRAM_LIMIT_EXCEEDED:
+        return {http::HttpStatus::ContentTooLarge, "decoded_body_too_large"};
+      case ERRCODE_DATA_EXCEPTION:
+        return {http::HttpStatus::BadRequest, "bad_content_encoding"};
+      default:
+        return {http::HttpStatus::InternalError, "internal"};
+    }
+  }
+}
+
+template<SocketKind Kind>
 yaclib::Future<> HttpSession<Kind>::SessionMain() {
   co_await _task->Park();
   absl::Cleanup finish_guard = [this] { _task->Finish(); };
@@ -535,90 +614,120 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       const bool keep_alive = request.keep_alive;
       const bool head_only = request.method == HttpMethod::Head;
       http::HttpResponseWriter writer{_send, *this, keep_alive, head_only};
+      bool close = false;
+      do {
+        const auto negotiated = http::NegotiateContentCoding(
+          request.Header(HttpHeader::AcceptEncoding));
+        if (negotiated.acceptance == http::Acceptance::Malformed) {
+          writer.Error(http::HttpStatus::BadRequest, "bad_accept_encoding");
+          co_await DrainSendOnTask();
+          break;
+        }
+        if (negotiated.acceptance == http::Acceptance::NotAcceptable) {
+          writer.Error(http::HttpStatus::NotAcceptable,
+                       "no_acceptable_content_coding");
+          co_await DrainSendOnTask();
+          break;
+        }
+        if (negotiated.coding != nullptr) {
+          writer.SetContentCoding(*negotiated.coding);
+        }
+        if (_max_conn != 0 && _active &&
+            _active->load(std::memory_order_relaxed) > _max_conn) {
+          writer.Fixed(http::HttpStatus::ServiceUnavailable,
+                       http::kJsonContentType,
+                       R"({"error":"too_many_connections"})", "");
+          co_await DrainSendOnTask();
+          close = true;
+          break;
+        }
 
-      if (_max_conn != 0 && _active &&
-          _active->load(std::memory_order_relaxed) > _max_conn) {
-        writer.Fixed(http::HttpStatus::ServiceUnavailable,
-                     http::kJsonContentType,
-                     R"({"error":"too_many_connections"})", "");
-        co_await DrainSendOnTask();
-        break;
-      }
-
-      // CORS: echo an allowed Origin (credentials-safe), answer preflight here.
-      std::string cors_headers;
-      if (const std::string_view origin = request.Header(HttpHeader::Origin);
-          !origin.empty() && !_cors_origins.empty()) {
-        bool allowed = _cors_origins == "*";
-        if (!allowed) {
-          for (std::string_view o :
-               absl::StrSplit(_cors_origins, ',', absl::SkipEmpty())) {
-            if (absl::StripAsciiWhitespace(o) == origin) {
-              allowed = true;
-              break;
+        // CORS: echo an allowed Origin (credentials-safe), answer preflight
+        // here.
+        std::string cors_headers;
+        if (const std::string_view origin = request.Header(HttpHeader::Origin);
+            !origin.empty() && !_cors_origins.empty()) {
+          bool allowed = _cors_origins == "*";
+          if (!allowed) {
+            for (std::string_view o :
+                 absl::StrSplit(_cors_origins, ',', absl::SkipEmpty())) {
+              if (absl::StripAsciiWhitespace(o) == origin) {
+                allowed = true;
+                break;
+              }
             }
           }
-        }
-        if (allowed) {
-          cors_headers = absl::StrCat(
-            "Access-Control-Allow-Origin: ", origin,
-            "\r\nAccess-Control-Allow-Credentials: true\r\nVary: Origin\r\n");
-          if (request.method == HttpMethod::Options) {
-            writer.Fixed(
-              http::HttpStatus::NoContent, "text/plain", "",
-              absl::StrCat(
-                cors_headers,
-                "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, HEAD, "
-                "OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, "
-                "Authorization\r\nAccess-Control-Max-Age: 86400\r\n"));
-            co_await DrainSendOnTask();
-            continue;
+          if (allowed) {
+            cors_headers = absl::StrCat(
+              "Access-Control-Allow-Origin: ", origin,
+              "\r\nAccess-Control-Allow-Credentials: true\r\nVary: Origin\r\n");
+            if (request.method == HttpMethod::Options) {
+              writer.Fixed(
+                http::HttpStatus::NoContent, "text/plain", "",
+                absl::StrCat(
+                  cors_headers,
+                  "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, HEAD, "
+                  "OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, "
+                  "Authorization\r\nAccess-Control-Max-Age: 86400\r\n"));
+              co_await DrainSendOnTask();
+              break;
+            }
+            writer.SetExtraHeaders(cors_headers);
           }
-          writer.SetExtraHeaders(cors_headers);
         }
-      }
 
-      // A unix socket is inherently local; a TCP peer is loopback only if its
-      // address is 127.0.0.0/8 or ::1. A passwordless role is trusted only when
-      // this is true (see HttpAuthenticator) -- never over the network.
-      bool peer_is_loopback = true;
-      if constexpr (Kind != SocketKind::Unix) {
-        asio_ns::error_code peer_ec;
-        const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
-        peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
-      }
-      auto auth = _auth.Authenticate(request.Header(HttpHeader::Authorization),
-                                     peer_is_loopback);
-      _user = std::move(auth.context.user);
-      if (auth.status != http::HttpStatus::None) {
-        writer.Fixed(auth.status, http::kJsonContentType,
-                     R"({"error":"unauthorized"})",
-                     "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
-      } else if (HttpHandler* handler = _router.Match(request)) {
-        try {
-          co_await handler->Handle(*this, request, writer);
-        } catch (const std::exception&) {
+        // A unix socket is inherently local; a TCP peer is loopback only if its
+        // address is 127.0.0.0/8 or ::1. A passwordless role is trusted only
+        // when this is true (see HttpAuthenticator) -- never over the network.
+        bool peer_is_loopback = true;
+        if constexpr (Kind != SocketKind::Unix) {
+          asio_ns::error_code peer_ec;
+          const auto peer_ep = _socket.Lowest().remote_endpoint(peer_ec);
+          peer_is_loopback = !peer_ec && peer_ep.address().is_loopback();
+        }
+        auto auth = _auth.Authenticate(
+          request.Header(HttpHeader::Authorization), peer_is_loopback);
+        _user = std::move(auth.context.user);
+        if (auth.status != http::HttpStatus::None) {
+          writer.Fixed(auth.status, http::kJsonContentType,
+                       R"({"error":"unauthorized"})",
+                       "WWW-Authenticate: Basic realm=\"serenedb\"\r\n");
+        } else if (const auto decoding = DecodeRequestBody(request);
+                   decoding.status != http::HttpStatus::None) {
+          writer.Error(decoding.status, decoding.error);
+        } else if (HttpHandler* handler = _router.Match(request)) {
+          if (_conn && _user != _conn_user) {
+            ReleaseConnection();
+          }
+          try {
+            co_await handler->Handle(*this, request, writer);
+          } catch (const std::exception&) {
+            if (!writer.HeadWritten()) {
+              writer.Error(http::HttpStatus::InternalError, "internal");
+            }
+          }
+          if (writer.HeadWritten() && !writer.Finished()) {
+            // The head promised a body that never fully materialized; a clean
+            // HTTP error is no longer possible -- drop the connection so the
+            // client sees truncation, not a corrupt next response.
+            this->Stop();
+            break;
+          }
           if (!writer.HeadWritten()) {
             writer.Error(http::HttpStatus::InternalError, "internal");
           }
+          if (_connection_ctx) {
+            // No NoticeResponse equivalent on this protocol (and the
+            // ConnectionContext dtor asserts the queue is empty).
+            _connection_ctx->ConsumeNotices(
+              [](const irs::pg::SqlErrorData&) {});
+          }
+        } else {
+          writer.Error(http::HttpStatus::NotFound, "not_found");
         }
-        if (writer.HeadWritten() && !writer.Finished()) {
-          // The head promised a body that never fully materialized; a clean
-          // HTTP error is no longer possible -- drop the connection so the
-          // client sees truncation, not a corrupt next response.
-          this->Stop();
-          break;
-        }
-        if (!writer.HeadWritten()) {
-          writer.Error(http::HttpStatus::InternalError, "internal");
-        }
-        if (_connection_ctx) {
-          // No NoticeResponse equivalent on this protocol (and the
-          // ConnectionContext dtor asserts the queue is empty).
-          _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
-        }
-      } else {
-        writer.Error(http::HttpStatus::NotFound, "not_found");
+      } while (false);
+      if (close) {
+        break;
       }
       KickSend();
 

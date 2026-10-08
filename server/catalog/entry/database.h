@@ -22,7 +22,10 @@
 
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
+#include <memory>
 #include <string>
+
+#include "catalog/database_directory.h"
 
 namespace sdb::catalog {
 
@@ -33,18 +36,26 @@ class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
   static constexpr const char* Name = "database";
 
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
-                       duckdb::CreateDatabaseInfo& info);
-  ~DatabaseCatalogEntry() final;
+                       duckdb::CreateDatabaseInfo& info,
+                       std::shared_ptr<DatabaseDirectory> directory = nullptr);
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
   std::string ToSQL() const final { return GetInfo()->ToString(); }
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
-  void OnDrop() final { _dropped = true; }
+  void OnDrop() final { _directory->MarkDropped(); }
+
+  const duckdb::case_insensitive_map_t<duckdb::Value>& Options() const {
+    return _options;
+  }
+  const std::shared_ptr<DatabaseDirectory>& Directory() const {
+    return _directory;
+  }
 
  private:
-  bool _dropped = false;
+  duckdb::case_insensitive_map_t<duckdb::Value> _options;
+  std::shared_ptr<DatabaseDirectory> _directory;
 };
 
 }  // namespace sdb::catalog

@@ -51,9 +51,11 @@ target_directory/t_1.csv
 target_directory/t_n.csv
 ```
 
-The `schema.sql` file contains the schema statements that are found in the database. It contains any `CREATE SCHEMA`, `CREATE TABLE`, `CREATE VIEW` and `CREATE SEQUENCE` commands that are necessary to re-construct the database.
+The `schema.sql` file contains the schema statements that are found in the database. It contains the `CREATE SCHEMA`, `CREATE TYPE`, `CREATE SEQUENCE`, `CREATE TABLE`, `CREATE FUNCTION`, `CREATE VIEW` and `CREATE INDEX` commands, including inverted indexes, and the `COMMENT ON` commands for tables, columns, views, sequences, indexes, types and functions that are necessary to re-construct the database. Sequences resume where they were, and a search table's internal row-numbering sequence is not exported: the search table creates its own when it is imported.
 
-The `load.sql` file contains a set of `COPY` statements that can be used to read the data from the CSV files again. The file contains a single `COPY` statement for every table found in the schema.
+The `load.sql` file contains a set of `COPY` statements that can be used to read the data from the CSV files again. The file contains a single `COPY` statement for every table found in the schema. Generated columns are not exported; their values are computed again on import. A search table exports the rows that queries see, that is, the rows as of its last refresh.
+
+`EXPORT DATABASE` does not support text search dictionaries yet: it fails with an error on a database that has one.
 
 ### Syntax
 

@@ -62,7 +62,7 @@ size_t ThreadsSeen(duckdb::Connection& con) {
   }
   auto result = con.Query("SELECT count(*) FROM s.t WHERE record_thread(i)");
   EXPECT_FALSE(result->HasError()) << result->GetError();
-  EXPECT_EQ(result->GetValue(0, 0), duckdb::Value::BIGINT(kRows));
+  EXPECT_EQ(result->Collection().GetValue(0, 0), duckdb::Value::BIGINT(kRows));
   std::lock_guard guard{gSeenLock};
   return gSeen.size();
 }
@@ -73,7 +73,9 @@ void Exec(duckdb::Connection& con, const std::string& sql) {
 }
 
 duckdb::Value CurrentThreads(duckdb::Connection& con) {
-  return con.Query("SELECT current_setting('threads')")->GetValue(0, 0);
+  return con.Query("SELECT current_setting('threads')")
+    ->Collection()
+    .GetValue(0, 0);
 }
 
 TEST(DuckDBThreads, SessionValueCapsItsQueries) {

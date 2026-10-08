@@ -305,7 +305,7 @@ connection s2
 statement error
 INSERT INTO cst_d.t VALUES (3, 'z')
 ----
-db error: ERROR: Failed to commit: Attempting to modify table t but another transaction has no changes this table
+db error: ERROR: Failed to commit: Attempting to modify table "t" but another transaction has no changes this table
 
 
 connection s1
@@ -639,7 +639,7 @@ connection s2
 statement error
 COMMIT
 ----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "t2" has been deleted
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cst_j" has been deleted
 
 
 connection s2

@@ -1,0 +1,30 @@
+statement ok
+CREATE TABLE stthrow (pk BIGINT PRIMARY KEY, id INTEGER, s TEXT)
+  WITH (storage='search', compaction_interval=0);
+
+
+statement ok
+INSERT INTO stthrow
+  SELECT i, i % 5, CASE WHEN i % 5 = 0 THEN 'not_a_number' ELSE ((i % 5) * 10)::TEXT END
+  FROM generate_series(0, 99999) g(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) stthrow;
+
+
+query
+SELECT count(*) AS c FROM stthrow WHERE id <> 0 AND s::INT = 10;
+----
+c
+20000
+
+
+statement error
+SELECT count(*) FROM stthrow WHERE s::INT = 10;
+----
+db error: ERROR: Could not convert string 'not_a_number' to INT32 when casting from source column s
+
+
+statement ok
+DROP TABLE stthrow;

@@ -28,7 +28,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <list>
 #include <map>
@@ -50,7 +49,7 @@ template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -68,7 +67,7 @@ template<typename T, typename Input>
 void ExpectReadFails(const Input& in) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in);
   }
   stream.Rewind();
@@ -255,7 +254,7 @@ TEST(SerializerTest, testRange) {
 
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, view);
   }
   stream.Rewind();
@@ -295,10 +294,6 @@ TEST(SerializerTest, testCustomWithArg) {
 }
 
 TEST(SerializerTest, testMandatory) {
-  // Two-field mandatory tuple. Object-format and slice-parser error
-  // variants from the original test don't translate; only the duckdb-
-  // applicable cases survive: positive round-trip + stream underflow on
-  // a too-short payload.
   struct Test {
     int a{};
     int b{0};
@@ -306,13 +301,22 @@ TEST(SerializerTest, testMandatory) {
   };
   RoundTrip(Test{42, 43});
 
-  // Stream underflow: a struct with a single field written, then read
-  // into the wide two-field shape => ReadTuple throws on field `b`.
   struct Narrow {
     int a{};
     bool operator==(const Narrow&) const = default;
   };
-  ExpectReadFails<Test>(Narrow{.a = 42});
+  ExpectReadFails<Narrow>(Test{42, 43});
+
+  duckdb::MemoryStream stream;
+  {
+    duckdb::BinarySerializer sink{stream};
+    irs::utils::WriteTuple(sink, Narrow{.a = 42});
+  }
+  stream.Rewind();
+  duckdb::BinaryDeserializer source{stream};
+  Test out{.a = 1, .b = 2};
+  irs::utils::ReadTuple(source, out);
+  EXPECT_EQ(out, (Test{42, 0}));
 }
 
 TEST(SerializerTest, testEnum) {

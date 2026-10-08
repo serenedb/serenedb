@@ -1,0 +1,161 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+# The only rows predate the index but are not published yet (no refresh loop),
+# so the build's first snapshot sees no segment to rebuild. Unless the build
+# publishes what the drained writers committed before reading that snapshot,
+# the loop exits at once and the next refresh publishes the row without the
+# indexed field -- unreachable through the index for good.
+statement ok
+CREATE TABLE bpu (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bpu VALUES (1, 'unpublished');
+
+statement ok
+CREATE INDEX bpu_idx ON bpu USING inverted (tag);
+
+query
+SELECT id FROM bpu_idx WHERE tag @@ 'unpublished';
+----
+id
+1
+
+statement ok
+DROP TABLE bpu;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bp_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE bpb (id BIGINT, body VARCHAR)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bpb SELECT i, 'w' || (i % 1000) FROM range(100000) t(i);
+
+statement ok
+CREATE INDEX bpb_idx ON bpb USING inverted(id, body bp_en);
+
+query
+SELECT count(*) AS n FROM bpb WHERE body @@ ts_phrase('w7');
+----
+n
+100
+
+statement ok
+DROP TABLE bpb;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY bp_en;
+
+statement ok
+CREATE TABLE bpw (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+INSERT INTO bpw VALUES (1, 'drained');
+
+connection builder
+statement async ok
+CREATE INDEX bpw_idx ON bpw USING inverted (tag);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_progress_create_index
+WHERE relid = 'bpw'::regclass;
+----
+n
+1
+
+connection writer
+statement ok
+COMMIT;
+
+wait
+
+connection default
+query
+SELECT id FROM bpw_idx WHERE tag @@ 'drained';
+----
+id
+1
+
+connection default
+statement ok
+DROP TABLE bpw;
+
+statement ok
+CREATE TABLE bpt (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO bpt VALUES (1, 'old'), (2, 'old');
+
+statement ok
+VACUUM (REFRESH_TABLE) bpt;
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+TRUNCATE bpt;
+
+connection writer
+statement ok
+INSERT INTO bpt VALUES (3, 'reborn');
+
+connection builder
+statement async ok
+CREATE INDEX bpt_idx ON bpt USING inverted (tag);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_progress_create_index
+WHERE relid = 'bpt'::regclass;
+----
+n
+1
+
+connection writer
+statement ok
+COMMIT;
+
+wait
+
+connection default
+query
+SELECT id, tag FROM bpt ORDER BY id;
+----
+id	tag
+3	reborn
+
+connection default
+query
+SELECT id FROM bpt_idx WHERE tag @@ 'reborn';
+----
+id
+3
+
+connection default
+query
+SELECT count(*) AS n FROM bpt_idx WHERE tag @@ 'old';
+----
+n
+0
+
+connection default
+statement ok
+DROP TABLE bpt;

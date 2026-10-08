@@ -15,17 +15,17 @@ SET sdb_faults = 'crash_on_packet';
 statement error connection closed
 SELECT 1;
 
-# duckdb logs the exact counter when the transaction commits, so a restart
-# resumes right after the last handout: no horizon, no gap, never a reuse.
+# The persisted horizon runs 32 past the last handout; a restart resumes
+# after it, burning the gap but never reusing a value.
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT nextval('gap_seq');
 ----
 nextval
-2
+34
 
-# setval is logged the same way, so a restart resumes right after the
-# written value.
+# setval is exact: it collapses the horizon to the written value, so a
+# restart resumes right after it with no gap.
 connection after_crash
 query ok
 SELECT setval('gap_seq', 100);
@@ -51,3 +51,68 @@ nextval
 connection after_setval
 statement ok
 DROP SEQUENCE gap_seq;
+
+connection after_setval
+statement ok
+CREATE SEQUENCE cache_seq CACHE 100;
+
+connection after_setval
+query ok
+SELECT nextval('cache_seq');
+----
+nextval
+1
+
+connection after_setval
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_setval
+statement error connection closed
+SELECT 1;
+
+connection after_cache
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT nextval('cache_seq');
+----
+nextval
+201
+
+connection after_cache
+query ok
+SELECT nextval('cache_seq');
+----
+nextval
+202
+
+connection other_session
+query ok
+SELECT nextval('cache_seq');
+----
+nextval
+301
+
+connection other_session
+query ok
+SELECT currval('cache_seq');
+----
+currval
+301
+
+connection after_cache
+query ok
+SELECT currval('cache_seq');
+----
+currval
+202
+
+connection after_cache
+query ok
+SELECT seqcache FROM pg_sequence WHERE seqrelid = 'cache_seq'::regclass;
+----
+seqcache
+100
+
+connection after_cache
+statement ok
+DROP SEQUENCE cache_seq;

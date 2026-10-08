@@ -199,7 +199,7 @@ connection s1
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccd_index_i" has been deleted
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "ccd_index" has been deleted
 
 
 connection s1
@@ -473,11 +473,6 @@ DROP TABLE ccd_pin;
 
 
 # --- the same direction for a role ---
-#
-# Roles live in their own attachment, which starts its transaction the first
-# time a statement touches it -- after the drop, here. duckdb's own conflict
-# check cannot see the loss from that read view, so the install refuses the
-# resurrection itself and names the object.
 
 statement ok
 CREATE TABLE ccd_rolepin(a INTEGER);
@@ -497,6 +492,14 @@ statement ok
 COMMENT ON TABLE ccd_rolepin IS 'pins the read view';
 
 
+connection s5
+query
+SELECT count(*) AS n FROM pg_roles WHERE rolname = 'ccd_gone';
+----
+n
+1
+
+
 connection s6
 statement ok
 DROP ROLE ccd_gone;
@@ -506,7 +509,7 @@ connection s5
 statement error
 ALTER ROLE ccd_gone NOSUPERUSER;
 ----
-db error: ERROR: Attempting to write to database "sdb_cluster" in a transaction that has already modified database "<slt:ignore>" - a single transaction can only write to a single attached database.
+db error: ERROR: Catalog write-write conflict on alter with "ccd_gone"
 
 
 connection s5

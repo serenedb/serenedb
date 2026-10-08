@@ -35,7 +35,7 @@ SELECT
 FROM information_schema.schemata s
 JOIN pg_namespace n
     ON n.nspname = s.schema_name
-WHERE s.schema_name NOT IN ('information_schema', 'sdb_docs')
+WHERE s.schema_name NOT IN ('information_schema')
   AND s.schema_name NOT LIKE 'pg_%'
   AND has_schema_privilege(current_user, s.schema_name, 'USAGE')
 ----
@@ -58,7 +58,7 @@ WHERE (s.schema_name IN ('information_schema')
 ----
 id	name
 11	pg_catalog
-1000003	information_schema
+16387	information_schema
 
 
 # tables: list tables in a schema
@@ -187,4 +187,4 @@ SELECT
 ----
 id	name
 11	pg_catalog
-1000003	information_schema
+16387	information_schema

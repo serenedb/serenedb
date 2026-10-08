@@ -9,7 +9,7 @@ services:
       POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
       LANG: C.UTF-8
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
       interval: 1s
       timeout: 3s
       retries: 30
@@ -24,9 +24,12 @@ services:
   tests:
     image: ${BUILD_IMAGE}
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    group_add:
+      - "${DOCKER_SOCK_GID:-999}"
     volumes:
       - "${WORKSPACE}:/serenedb"
       - "${WORKSPACE}/out/logs:/logs"
+      - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
@@ -41,6 +44,10 @@ services:
       - PGPORT=5432
       - PGUSER=postgres
       - PGDATABASE=postgres
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
     networks:
       - test-network
     depends_on:

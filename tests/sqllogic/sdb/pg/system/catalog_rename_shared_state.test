@@ -45,7 +45,8 @@ COMMIT;
 
 connection s2
 query
-SELECT table_name, sql FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+SELECT table_name, sql FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
 t2	CREATE INDEX crs_t_v ON crs.t2(v);
@@ -70,7 +71,8 @@ statement ok
 ALTER TABLE crs.t2 RENAME TO t9;
 
 query
-SELECT table_name FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+SELECT table_name FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name
 t9
@@ -79,7 +81,8 @@ statement ok
 ROLLBACK;
 
 query
-SELECT table_name, sql FROM duckdb_indexes() WHERE index_name = 'crs_t_v';
+SELECT table_name, sql FROM duckdb_indexes()
+WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
 t2	CREATE INDEX crs_t_v ON crs.t2(v);
@@ -122,7 +125,7 @@ statement ok
 ROLLBACK;
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE table_name = 't2';
+SELECT index_name FROM duckdb_indexes() WHERE table_name = 't2' AND database_name = current_database();
 ----
 index_name
 i2
@@ -152,7 +155,7 @@ connection s2
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "i4" has been deleted
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "t2" has been deleted
 
 
 connection s2
@@ -183,7 +186,7 @@ db error: ERROR: Failed to commit: Could not commit DROP of "t5" because a depen
 
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE table_name = 't5' ORDER BY 1;
+SELECT index_name FROM duckdb_indexes() WHERE table_name = 't5' AND database_name = current_database() ORDER BY 1;
 ----
 index_name
 i

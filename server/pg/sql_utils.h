@@ -21,12 +21,19 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
+#include <duckdb/function/macro_function.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace duckdb {
@@ -63,5 +70,24 @@ std::vector<int16_t> KeyConstraintAttnums(
 
 std::string ConstraintName(const duckdb::TableCatalogEntry& table,
                            const duckdb::Constraint& constraint);
+
+std::string QuoteIdentifier(std::string_view ident);
+
+struct KeyIndex {
+  const duckdb::TableCatalogEntry* table = nullptr;
+  const duckdb::UniqueConstraint* constraint = nullptr;
+};
+
+KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
+                      duckdb::idx_t oid);
+
+KeyIndex FindKeyIndex(duckdb::ClientContext& context,
+                      duckdb::SchemaCatalogEntry& schema,
+                      std::string_view name);
+
+std::string MacroBody(const duckdb::MacroFunction& macro);
+
+std::string MacroParameterName(const duckdb::MacroFunction& macro,
+                               duckdb::idx_t index);
 
 }  // namespace sdb::pg

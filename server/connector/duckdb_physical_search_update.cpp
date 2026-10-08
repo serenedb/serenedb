@@ -52,11 +52,11 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   duckdb::vector<duckdb::LogicalType> chunk_types;
   duckdb::vector<duckdb::column_t> new_row_src;
   duckdb::optional_ptr<duckdb::SequenceCatalogEntry> generated_pk_seq;
-  std::unique_ptr<SearchSinkInsertBaseImpl> insert_sink;
 
   std::vector<primary_key::PKColumn> old_pk_columns;
 
   std::shared_lock<std::shared_mutex> table_lock;
+  uint64_t write_buffer_max_bytes = 0;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -88,7 +88,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
 
   state->search_table = _table.Storage();
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table);
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table, _table.name);
 
   const auto& columns = _table.GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());
@@ -96,6 +96,7 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->column_ids.emplace_back(column.Oid());
   }
   state->chunk_types = columns.GetColumnTypes();
+  state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
 
   const auto p = state->column_ids.size();
   state->new_row_src.assign(p, duckdb::DConstants::INVALID_INDEX);
@@ -137,43 +138,44 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   const auto num_rows = chunk.size();
 
-  auto& trx = gstate.sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-    gstate.search_table, [&] { return gstate.search_table->GetTransaction(); });
-
-  SearchSinkDeleteBaseImpl remover{trx};
-  remover.InitImpl(num_rows);
-  std::vector<duckdb::UnifiedVectorFormat> old_pk_formats;
-  primary_key::PreparePKFormats(chunk, gstate.old_pk_columns, old_pk_formats);
-  std::vector<std::string> wal_pks;
-  wal_pks.reserve(num_rows);
-  std::string pk;
+  // Buffered, not removed here: the removal reaches iresearch when the write
+  // buffer is replayed, ordered against exactly the rows that precede it. The
+  // new row is buffered straight after, so it still outranks the removal of the
+  // version it replaces.
+  duckdb::UnifiedVectorFormat old_pk;
+  chunk.data[gstate.old_pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
+                                                                     old_pk);
+  const auto* old_pk_data =
+    duckdb::UnifiedVectorFormat::GetData<int64_t>(old_pk);
+  std::vector<int64_t> old_rows;
+  old_rows.reserve(num_rows);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    pk.clear();
-    primary_key::Create(old_pk_formats, gstate.old_pk_columns, row, pk);
-    remover.DeleteRowImpl(pk);
-    wal_pks.emplace_back(pk);
+    old_rows.push_back(old_pk_data[old_pk.sel->get_index(row)]);
   }
-  remover.FinishImpl();
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, wal_pks);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows);
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);
   new_row.ReferenceColumns(chunk, gstate.new_row_src);
 
-  if (!gstate.insert_sink) {
-    gstate.insert_sink = MakeSearchTableInsertSink(
-      trx, *gstate.search_table, _table.catalog, context.client);
-  }
   const uint64_t pk_base = gstate.generated_pk_seq->NextValues(
     duckdb::DuckTransaction::Get(context.client,
                                  gstate.generated_pk_seq->catalog),
     num_rows);
-  WriteChunkToSearchSink(*gstate.insert_sink, new_row, gstate.column_ids,
-                         pk_base, _table.oid, context.client);
-  gstate.sdb_txn->SearchTxn().AddInlineInsertChunk(
+  // TODO(Dronplane): Maybe we can re-use generated PKs from delete if PK is not
+  // changed. Looks not big win now. But for future optimizations.
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  search_txn.AddInlineInsertChunk(
     gstate.search_table,
     duckdb::BufferManager::GetBufferManager(context.client), gstate.chunk_types,
-    new_row, pk_base);
+    gstate.column_ids, _table.catalog, new_row, pk_base);
+
+  // After the new row, never between it and the removal above: a flush replays
+  // the buffer in issue order, so the pair has to reach iresearch together for
+  // the new version to outrank the removal of the one it replaces.
+  if (search_txn.BufferedBytes(_table.oid) > gstate.write_buffer_max_bytes) {
+    search_txn.FlushBuffer(gstate.search_table, context.client);
+  }
 
   if (gstate.returned) {
     gstate.returned->Append(new_row);
@@ -208,6 +210,16 @@ duckdb::SourceResultType SereneDBSearchUpdate::GetDataInternal(
   chunk.SetCardinality(1);
   chunk.SetValue(0, 0, duckdb::Value::BIGINT(gstate.update_count));
   return duckdb::SourceResultType::FINISHED;
+}
+
+duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
+  duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
+  duckdb::OperatorSinkFinalizeInput& input) const {
+  auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
+  if (state.table_lock.owns_lock()) {
+    state.table_lock.unlock();
+  }
+  return duckdb::SinkFinalizeType::READY;
 }
 
 }  // namespace sdb::connector

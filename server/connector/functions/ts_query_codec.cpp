@@ -27,7 +27,8 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/common/exception.hpp>
-#include <duckdb/common/extra_type_info.hpp>
+#include <duckdb/common/logical_type_info.hpp>
+#include <duckdb/common/sql_identifier.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/cast_expression.hpp>
@@ -42,8 +43,12 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <exception>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -51,16 +56,29 @@
 namespace sdb::connector {
 
 bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out) {
-  if (v.IsNull() || !v.type().IsNumeric() ||
-      !v.DefaultTryCastAs(duckdb::LogicalType::BIGINT, out,
-                          /*error_message=*/nullptr, /*strict=*/true)) {
+  if (v.IsNull() || !v.type().IsNumeric()) {
     return false;
   }
-  duckdb::Value back;
-  return out.DefaultTryCastAs(v.type(), back,
-                              /*error_message=*/nullptr, /*strict=*/false) &&
-         duckdb::Value::NotDistinctFrom(back, v);
+  auto cast = v.DefaultTryCastAs(duckdb::LogicalType::BIGINT,
+                                 /*error_message=*/nullptr, /*strict=*/true);
+  if (!cast) {
+    return false;
+  }
+  out = std::move(*cast);
+  const auto back = out.DefaultTryCastAs(v.type());
+  return back && duckdb::Value::NotDistinctFrom(*back, v);
 }
+
+uint16_t CheckedSlop(int64_t value) {
+  SDB_ASSERT(value >= 0);
+  if (value > kMaxSlop) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("::slop too large: ", value, " (at most ", kMaxSlop, ")"));
+  }
+  return static_cast<uint16_t>(value);
+}
+
 namespace {
 
 constexpr size_t kMaxStructuredNodes = 4096;
@@ -78,7 +96,9 @@ bool IsTSQueryFamilyTypeName(std::string_view name) {
          absl::EqualsIgnoreCase(name, kTokenizerTypeName) ||
          absl::EqualsIgnoreCase(name, kBoostTypeName) ||
          absl::EqualsIgnoreCase(name, kSlopTypeName) ||
-         absl::EqualsIgnoreCase(name, kScoreTypeName);
+         absl::EqualsIgnoreCase(name, kScoreTypeName) ||
+         absl::EqualsIgnoreCase(name, kMergeTypeName) ||
+         absl::EqualsIgnoreCase(name, kMinMatchTypeName);
 }
 
 bool IsNumericTypeId(duckdb::LogicalTypeId id) {
@@ -102,19 +122,10 @@ bool IsNumericTypeId(duckdb::LogicalTypeId id) {
 
 bool IsWhitelistedTypeName(std::string_view name) {
   return IsTSQueryFamilyTypeName(name) ||
-         IsNumericTypeId(
-           duckdb::TransformStringToLogicalTypeId(std::string{name}));
+         IsNumericTypeId(duckdb::TransformStringToLogicalTypeId(name));
 }
 
-bool IsWhitelistedCastType(const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::UNBOUND || !type.AuxInfo()) {
-    return false;
-  }
-  const auto& expr = duckdb::UnboundType::GetTypeExpression(type);
-  if (!expr || expr->GetExpressionClass() != duckdb::ExpressionClass::TYPE) {
-    return false;
-  }
-  const auto& type_expr = expr->Cast<duckdb::TypeExpression>();
+bool IsWhitelistedCastType(const duckdb::TypeExpression& type_expr) {
   if (!type_expr.GetSchema().empty() || !type_expr.GetCatalog().empty()) {
     return false;
   }
@@ -186,7 +197,7 @@ duckdb::unique_ptr<duckdb::ParsedExpression> ParseWhitelisted(
     return nullptr;
   }
   try {
-    auto exprs = duckdb::Parser::ParseExpressionList(text);
+    auto exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(text);
     if (exprs.size() != 1 || !exprs[0]) {
       return nullptr;
     }
@@ -246,7 +257,24 @@ std::optional<std::string> RenderPlainValue(const duckdb::Value& value) {
   if (!IsRenderableValueType(value.type())) {
     return std::nullopt;
   }
-  return value.ToSQLString();
+  const auto type_id = value.type().id();
+  if (type_id != duckdb::LogicalTypeId::LIST &&
+      type_id != duckdb::LogicalTypeId::ARRAY) {
+    return value.ToSQLString();
+  }
+  std::string out = "[";
+  for (const auto& child : ListOrArrayChildren(value)) {
+    if (out.size() > 1) {
+      out += ", ";
+    }
+    auto rendered = RenderPlainValue(child);
+    if (!rendered) {
+      return std::nullopt;
+    }
+    out += *rendered;
+  }
+  out += "]";
+  return out;
 }
 
 std::string BoostOperand(std::string rendered) {
@@ -264,7 +292,7 @@ std::string RenderBoosted(std::string operand, double factor) {
 
 std::string RenderTokenized(std::string operand, std::string_view tokenizer) {
   return absl::StrCat(std::move(operand), "::tokenize(",
-                      duckdb::Value(std::string{tokenizer}).ToSQLString(), ")");
+                      duckdb::SQLString::ToString(tokenizer), ")");
 }
 
 }  // namespace
@@ -288,9 +316,10 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
   if (parts.merge != TSQueryMerge::Default) {
     absl::StrAppend(
       &out, "::merge(",
-      duckdb::Value(std::string{magic_enum::enum_name(parts.merge)})
-        .ToSQLString(),
-      ")");
+      duckdb::SQLString::ToString(magic_enum::enum_name(parts.merge)), ")");
+  }
+  if (parts.min_match != 0) {
+    absl::StrAppend(&out, "::min_match(", parts.min_match, ")");
   }
   if (!parts.scorer.empty()) {
     absl::StrAppend(&out, "::score(",
@@ -303,8 +332,7 @@ std::string RenderTSQueryPartsSQL(const TSQueryParts& parts) {
 }
 
 std::string RenderTSQueryValueText(const TSQueryParts& parts) {
-  if (parts.tokenizer.empty() && parts.boost == 1.0f && parts.slop == 0 &&
-      parts.scorer.empty() && parts.merge == TSQueryMerge::Default) {
+  if (!HasModifiers(parts)) {
     return parts.text;
   }
   return RenderTSQueryPartsSQL(parts);
@@ -357,15 +385,16 @@ std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
   return result;
 }
 
-std::optional<std::string> RenderCast(duckdb::ClientContext& context,
-                                      const duckdb::BoundCastExpression& cast) {
+std::optional<std::string> RenderCast(
+  duckdb::ClientContext& context, const duckdb::BoundFunctionExpression& cast) {
   const auto& target = cast.GetReturnType();
-  const auto& source = cast.Child().GetReturnType();
+  const auto& inner = duckdb::BoundCastExpression::Child(cast);
+  const auto& source = inner.GetReturnType();
   if (const auto boost = TryGetBoostModifier(target)) {
     if (*boost < 0.0) {
       return std::nullopt;
     }
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
@@ -373,31 +402,37 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
   }
   if (const auto tokenizer = TryGetTokenizerModifier(target);
       !tokenizer.empty()) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
     return RenderTokenized(std::move(*child), tokenizer);
   }
   if (const auto slop = TryGetSlopModifier(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
     return absl::StrCat(std::move(*child), "::slop(", *slop, ")");
   }
   if (const auto merge = TryGetMergeModifier(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
     return absl::StrCat(
       std::move(*child), "::merge(",
-      duckdb::Value(std::string{magic_enum::enum_name(*merge)}).ToSQLString(),
-      ")");
+      duckdb::SQLString::ToString(magic_enum::enum_name(*merge)), ")");
+  }
+  if (const auto min_match = TryGetMinMatchModifier(target)) {
+    auto child = RenderTSQueryExpression(context, inner);
+    if (!child) {
+      return std::nullopt;
+    }
+    return absl::StrCat(std::move(*child), "::min_match(", *min_match, ")");
   }
   if (const auto scorer = TryGetScoreModifier(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child) {
       return std::nullopt;
     }
@@ -408,7 +443,7 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
                         ")");
   }
   if (IsTSQueryStructType(target)) {
-    auto child = RenderTSQueryExpression(context, cast.Child());
+    auto child = RenderTSQueryExpression(context, inner);
     if (!child || IsTSQueryStructType(source)) {
       return child;
     }
@@ -417,7 +452,7 @@ std::optional<std::string> RenderCast(duckdb::ClientContext& context,
   if ((IsTSQueryStructType(source) && IsStringishTypeId(target.id())) ||
       (IsTSQueryishType(target) && !IsTSQueryishType(source) &&
        IsRenderableValueType(source))) {
-    return RenderTSQueryExpression(context, cast.Child());
+    return RenderTSQueryExpression(context, inner);
   }
   return std::nullopt;
 }
@@ -448,9 +483,9 @@ void FoldStructuredConstants(duckdb::ClientContext& context,
     return;
   }
   const auto& type = expr->GetReturnType();
-  const bool list_of_tsquery =
-    IsTSQueryishType(type) && !IsTSQueryStructType(type) &&
-    expr->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CAST;
+  const bool list_of_tsquery = IsTSQueryishType(type) &&
+                               !IsTSQueryStructType(type) &&
+                               duckdb::BoundCastExpression::IsCast(*expr);
   if (!IsTSQueryishType(type) || list_of_tsquery) {
     if (auto value = TryEvaluateScalar(context, *expr)) {
       auto alias = expr->GetAlias();
@@ -474,16 +509,16 @@ std::optional<std::string> RenderTSQueryExpression(
     case duckdb::ExpressionClass::BOUND_CONSTANT:
       return RenderConstant(
         expr.Cast<duckdb::BoundConstantExpression>().GetValue());
-    case duckdb::ExpressionClass::BOUND_CAST: {
-      const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
-      if (IsTSQueryishType(cast.GetReturnType()) ||
-          IsTSQueryishType(cast.Child().GetReturnType())) {
-        return RenderCast(context, cast);
-      }
-      break;
-    }
     case duckdb::ExpressionClass::BOUND_FUNCTION: {
       const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+      if (duckdb::BoundCastExpression::IsCast(func)) {
+        if (IsTSQueryishType(func.GetReturnType()) ||
+            IsTSQueryishType(
+              duckdb::BoundCastExpression::Child(func).GetReturnType())) {
+          return RenderCast(context, func);
+        }
+        break;
+      }
       if (IsTSQueryishType(func.GetReturnType())) {
         return RenderTSQueryCall(context,
                                  func.Function().GetName().GetIdentifierName(),
@@ -539,13 +574,12 @@ std::optional<std::string> RenderTSQueryCall(
       if (!inner || !factor || factor->IsNull()) {
         return std::nullopt;
       }
-      duckdb::Value coerced;
-      if (!factor->DefaultTryCastAs(duckdb::LogicalType::DOUBLE, coerced,
-                                    nullptr) ||
-          coerced.GetValue<double>() < 0.0) {
+      const auto coerced =
+        factor->DefaultTryCastAs(duckdb::LogicalType::DOUBLE);
+      if (!coerced || coerced->GetValue<double>() < 0.0) {
         return std::nullopt;
       }
-      return RenderBoosted(std::move(*inner), coerced.GetValue<double>());
+      return RenderBoosted(std::move(*inner), coerced->GetValue<double>());
     }
     case TSQueryOp::Or:
     case TSQueryOp::And:
@@ -610,7 +644,7 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
   }
   if (children.size() > kTSQuerySlopChild &&
       !children[kTSQuerySlopChild].IsNull()) {
-    parts.slop = children[kTSQuerySlopChild].GetValue<int64_t>();
+    parts.slop = children[kTSQuerySlopChild].GetValue<uint16_t>();
   }
   if (children.size() > kTSQueryScorerChild &&
       !children[kTSQueryScorerChild].IsNull()) {
@@ -621,25 +655,32 @@ std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value) {
     parts.merge = static_cast<TSQueryMerge>(
       children[kTSQueryMergeChild].GetValue<uint8_t>());
   }
+  if (children.size() > kTSQueryMinMatchChild &&
+      !children[kTSQueryMinMatchChild].IsNull()) {
+    parts.min_match = children[kTSQueryMinMatchChild].GetValue<uint32_t>();
+  }
   return parts;
 }
 
 TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
                                  std::string_view text) {
   TSQueryParts parts;
-  parts.text = std::string{text};
-  parts.tokenizer = std::string{TryGetTokenizerModifier(type)};
+  parts.text.assign(text);
+  parts.tokenizer.assign(TryGetTokenizerModifier(type));
   if (const auto boost = TryGetBoostModifier(type)) {
     parts.boost = static_cast<float>(*boost);
   }
   if (const auto slop = TryGetSlopModifier(type)) {
-    parts.slop = *slop;
+    parts.slop = CheckedSlop(*slop);
   }
   if (auto scorer = TryGetScoreModifier(type)) {
     parts.scorer = std::move(*scorer);
   }
   if (const auto merge = TryGetMergeModifier(type)) {
     parts.merge = *merge;
+  }
+  if (const auto min_match = TryGetMinMatchModifier(type)) {
+    parts.min_match = *min_match;
   }
   return parts;
 }
@@ -649,16 +690,17 @@ duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
   SDB_ASSERT(IsTSQueryStructType(type));
   const auto parts = TSQueryPartsForType(type, text);
   duckdb::vector<duckdb::Value> children;
-  children.reserve(6);
+  children.reserve(7);
   children.emplace_back(parts.text);
   children.emplace_back(parts.tokenizer);
   children.emplace_back(duckdb::Value::FLOAT(parts.boost));
-  children.emplace_back(duckdb::Value::BIGINT(parts.slop));
+  children.emplace_back(duckdb::Value::USMALLINT(parts.slop));
   children.emplace_back(parts.scorer.empty()
                           ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                           : duckdb::Value{parts.scorer});
   children.emplace_back(
     duckdb::Value::UTINYINT(static_cast<uint8_t>(parts.merge)));
+  children.emplace_back(duckdb::Value::UINTEGER(parts.min_match));
   return duckdb::Value::STRUCT(type, std::move(children));
 }
 
@@ -694,6 +736,11 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     if (bound) {
       FoldStructuredConstants(context, bound);
     }
+  } catch (const irs::SqlException&) {
+    if (begin_transaction) {
+      context.transaction.Rollback(nullptr);
+    }
+    throw;
   } catch (const std::exception&) {
     bound = nullptr;
   }
@@ -703,6 +750,9 @@ duckdb::unique_ptr<duckdb::Expression> TryParseStructuredTSQueryText(
     } catch (const std::exception&) {
       bound = nullptr;
     }
+  }
+  if (bound && !IsTSQueryStructType(bound->GetReturnType())) {
+    return nullptr;
   }
   return bound;
 }

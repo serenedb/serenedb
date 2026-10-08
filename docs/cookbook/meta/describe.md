@@ -12,7 +12,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 ## Describing a Table
 
-To view the schema of a table, use the `DESCRIBE` statement (or its aliases `DESC` and `SHOW`) followed by the table name.
+To view the schema of a table, use `DESCRIBE TABLE` or `SHOW TABLE` followed by the table name. Without the `TABLE` keyword, a name after `SHOW` is read as a setting, not as a table (see [`SHOW`](../../sql/statements/show.md)).
 
 <SqlLogicTest id="cookbook/meta/describe/table_description/example_001" />
 

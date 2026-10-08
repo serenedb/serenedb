@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/functional/any_invocable.h>
-#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -29,11 +28,9 @@
 #include <duckdb/common/typedefs.hpp>
 #include <filesystem>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/zstd_context.hpp>
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace duckdb {
@@ -49,84 +46,46 @@ namespace sdb::search {
 
 class SearchDbWal {
  public:
-  class PendingChunk {
-   public:
-    PendingChunk() = default;
-    PendingChunk(uint64_t seg_id, std::filesystem::path path)
-      : _seg_id(seg_id), _path(std::move(path)) {}
-    PendingChunk(PendingChunk&&) noexcept;
-    PendingChunk& operator=(PendingChunk&&) noexcept;
-    PendingChunk(const PendingChunk&) = delete;
-    PendingChunk& operator=(const PendingChunk&) = delete;
-    ~PendingChunk() { ReclaimIfUncommitted(); }
-
-    uint64_t SegId() const noexcept { return _seg_id; }
-
-    void MarkCommitted() noexcept { _committed = true; }
-
-   private:
-    void ReclaimIfUncommitted() noexcept;
-
-    uint64_t _seg_id = 0;
-    std::filesystem::path _path;
-    bool _committed = false;
-  };
-
-  class ChunkWriter {
-   public:
-    ChunkWriter(PendingChunk pending,
-                std::unique_ptr<duckdb::BufferedFileWriter> writer);
-    ChunkWriter(ChunkWriter&&) noexcept;
-    ChunkWriter& operator=(ChunkWriter&&) noexcept;
-    ChunkWriter(const ChunkWriter&) = delete;
-    ChunkWriter& operator=(const ChunkWriter&) = delete;
-    ~ChunkWriter();
-
-    uint64_t SegId() const noexcept { return _pending.SegId(); }
-
-    // Serialise + append one chunk with its generated-PK base `pk_base` (0 for
-    // explicit-PK shards) for replay PK reconstruction; buffered, no fsync.
-    // zstd-1 with raw fallback.
-    void Append(duckdb::DataChunk& chunk, uint64_t pk_base);
-
-    PendingChunk Finish();
-
-   private:
-    PendingChunk _pending;
-    std::unique_ptr<duckdb::BufferedFileWriter> _writer;
-    // Reused across Append() calls (Rewind keeps the backing buffer).
-    std::unique_ptr<duckdb::MemoryStream> _stream;
-    // Reused zstd context: created once, reset per Append (ZSTD_compressCCtx).
-    irs::utils::ZstdCCtxPtr _cctx;
-    // Reused zstd output buffer (grows to the high-water compressed size).
-    std::vector<uint8_t> _comp;
-  };
-
   // One inserted Sink chunk's generated-PK run: `count` rows keyed
-  // [base, base+count). Recorded per Sink chunk -- NOT per inline_data Chunk:
-  // ColumnDataCollection coalesces partial appends, so its Chunks() boundaries
-  // don't line up with the Sink chunks the bases are keyed to. base is 0 for
-  // explicit-PK.
+  // [base, base+count), base 0 for explicit-PK. Per Sink chunk, NOT per
+  // inline_data Chunk -- ColumnDataCollection coalesces partial appends, so its
+  // Chunks() boundaries don't line up.
   struct InlinePk {
     uint64_t base;
     uint64_t count;
   };
 
-  struct Op {
-    // INLINE only: one entry per inserted Sink chunk, in append order.
-    const duckdb::ColumnDataCollection* inline_data = nullptr;
-    std::span<const InlinePk> inline_pks;
-    // REFERENCE: the bulk chunk files this op points at.
-    std::span<PendingChunk> reference_chunks;
-    // DELETE: the encoded PK byte strings to remove (iresearch PK terms).
-    std::span<const std::string> delete_pks;
-
-    bool truncate = false;
+  // One iresearch segment flushed and fsynced before the commit record was
+  // written, so its rows are never written twice. Ordering against the deletes
+  // around it comes from the op manifest, so no tick is recorded.
+  struct SegmentRef {
+    std::string meta_file;
   };
 
-  // One transaction's contribution for a single search shard
+  // One op of a shard section. The record stores them in issue order, so
+  // position IS the ordering -- no watermark needed. Rows name a band range of
+  // the section's collection, which lets one buffer back several ops.
+  struct Op {
+    enum class Kind : uint8_t {
+      kTruncate = 3,
+      kSegments = 4,
+      kRows = 5,
+      kDelete = 6,
+    };
+
+    Kind kind = Kind::kRows;
+    uint32_t first_band = 0;
+    uint32_t last_band = 0;
+    std::span<const int64_t> delete_rows;
+    std::span<const SegmentRef> segments;
+  };
+
+  // One transaction's contribution for a single search shard: the rows it
+  // buffered, plus the ops that put them in order with everything else.
   struct ShardSection {
     duckdb::idx_t table_id;
+    const duckdb::ColumnDataCollection* inline_data = nullptr;
+    std::span<const InlinePk> inline_pks;
     std::span<const Op> ops;
   };
 
@@ -134,11 +93,17 @@ class SearchDbWal {
     absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
                             uint64_t pk_base, duckdb::DataChunk& chunk) const>;
 
-  // Invoked once per DELETE op, in manifest order, with the encoded PK byte
-  // strings to remove (views into the record buffer, valid for the call only).
+  // Invoked once per DELETE op, in record order, with the rowids to remove
+  // (a view into the record buffer, valid for the call only).
   using DeleteReplayCallback =
     absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
-                            std::span<const std::string_view> pks) const>;
+                            std::span<const int64_t> rows) const>;
+
+  // Invoked once per recorded segment, in manifest order. `tick` is the
+  // record's own, for the caller's high-water mark -- the tick to adopt at
+  // lives in the replay transaction's space (see RunSearchTableRecovery).
+  using AdoptReplayCallback = absl::AnyInvocable<void(
+    uint64_t tick, duckdb::idx_t table_id, const SegmentRef& ref) const>;
 
   using TruncateReplayCallback =
     absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id) const>;
@@ -166,23 +131,24 @@ class SearchDbWal {
   void OnShardCommit(duckdb::idx_t table_id, uint64_t committed_tick);
   void DeregisterShard(duckdb::idx_t table_id);
 
-  ChunkWriter NewChunkWriter(duckdb::idx_t table_id);
   // Reserves `tick_span` consecutive ticks under the append lock and writes one
   // record at the top of that band; returns the record tick (== base +
-  // tick_span). Once the record is fsynced, marks every REFERENCE op's chunks
-  // committed -- they are now durably referenced and must outlive the txn.
+  // tick_span).
   uint64_t AppendCommit(std::span<const ShardSection> sections,
                         uint64_t tick_span);
+  uint64_t AppendCommit(std::span<const ShardSection> sections,
+                        uint64_t tick_span,
+                        absl::AnyInvocable<void(uint64_t) noexcept> on_durable);
   uint64_t Recover(const ShardExistsFn& exists_of,
                    const ShardCommittedFn& committed_of,
                    const ReplayCallback& insert_cb,
                    const DeleteReplayCallback& delete_cb,
-                   const TruncateReplayCallback& truncate_cb);
+                   const TruncateReplayCallback& truncate_cb,
+                   const AdoptReplayCallback& adopt_cb);
 
  private:
   duckdb::FileSystem& _fs;
   std::filesystem::path _wal_dir;
-  std::filesystem::path _chunks_root;
 
   const uint64_t _seal_threshold;
 
@@ -190,29 +156,33 @@ class SearchDbWal {
   std::atomic<uint64_t> _tick{0};
   std::unique_ptr<duckdb::BufferedFileWriter> _active;
   uint64_t _active_first_tick = 0;
-  uint64_t _active_chunk_bytes = 0;
-
-  absl::Mutex _seg_mu;
-  irs::containers::FlatHashMap<uint64_t, uint64_t> _seg_ids;
 
   absl::Mutex _sub_mu;
   irs::containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
-  void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
-  std::filesystem::path ChunkDir(uint64_t table_id) const {
-    return _chunks_root / absl::StrCat(table_id);
-  }
+  void WriteFrameLocked(const uint8_t* frame, uint64_t frame_size);
   uint64_t MinCommittedTick();
   void RunGc();
 };
 
-// Re-slice an inline collection by its recorded per-Sink-chunk `segments`,
-// invoking `emit(slice, base)` once per segment with that chunk's rows + base.
+// Re-slice an inline collection by its recorded per-Sink-chunk bands, invoking
+// `emit(slice, base)` once per band with that chunk's rows + rowid base. The
+// ranged overload emits only bands [first_band, last_band), skipping the rows
+// the earlier bands hold -- what lets one collection back several record ops.
 void VisitInlineSegments(
+  const duckdb::ColumnDataCollection& cdc,
+  std::span<const SearchDbWal::InlinePk> segments, size_t first_band,
+  size_t last_band,
+  const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
+    emit);
+
+inline void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
   std::span<const SearchDbWal::InlinePk> segments,
   const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
-    emit);
+    emit) {
+  VisitInlineSegments(cdc, segments, 0, segments.size(), emit);
+}
 
 }  // namespace sdb::search

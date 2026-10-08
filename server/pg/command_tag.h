@@ -37,7 +37,7 @@ struct CommandTag {
   // Static-lifetime verb: a string literal or a StatementTypeToString() view,
   // so the tag never allocates.
   std::string_view tag;
-  // The "effective" statement type -- same as `prepared.data->statement_type`
+  // The "effective" statement type -- same as `prepared.GetStatementType()`
   // except for EXECUTE, where it's the underlying prepared's type. Selects the
   // `INSERT 0 N` form (INSERT) from the plain `<TAG> N` form.
   duckdb::StatementType effective_type;
@@ -60,5 +60,8 @@ CommandTag BuildCommandTag(const duckdb::PreparedStatement& prepared);
 // underlying statement of EXECUTE tags.
 CommandTag BuildCommandTag(const duckdb::SQLStatement& statement,
                            duckdb::ClientContext& context);
+
+const duckdb::SQLStatement* UnboundStatement(
+  const duckdb::PreparedStatement& prepared);
 
 }  // namespace sdb::pg

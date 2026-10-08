@@ -19,6 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -47,7 +50,7 @@ irs::bstring Bytes(std::string_view s) {
                       s.size()};
 }
 
-icu::Locale Bogus() { return irs::MakeBogusLocale(); }
+duckdb::text::Locale Bogus() { return duckdb::text::Locale{}; }
 
 std::string ModelLocation() {
   return TestEnv::resource("model_cooking.bin").string();
@@ -184,7 +187,7 @@ std::vector<Rejected> RejectedConfigs() {
   Collect(out, "pipeline/blob_into_varchar", [] {
     PipelineTokenizer::Options opts;
     opts.children.push_back(Child(Cfg{CollationTokenizer::Options{
-      .locale = icu::Locale::createFromName("en_US.UTF-8")}}));
+      .locale = duckdb::text::Locale::FromName("en_US.UTF-8")}}));
     opts.children.push_back(
       Child(Cfg{DelimitedTokenizer::Options{.delimiter = ","}}));
     return Cfg{std::move(opts)};
@@ -298,4 +301,67 @@ TEST(TokenizerConfig, FileBackedSpecsAreRegistered) {
   }
   EXPECT_GE(file_backed, 3u)
     << "the fuzz corpus no longer reaches any file-backed resource";
+}
+
+namespace {
+
+std::string Pack(const Cfg& cfg) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  irs::utils::WriteTuple(serializer, cfg);
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
+}
+
+Cfg Unpack(const std::string& bytes) {
+  duckdb::MemoryStream stream{
+    const_cast<duckdb::data_ptr_t>(
+      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data())),
+    bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  Cfg cfg;
+  irs::utils::ReadTuple(deserializer, cfg);
+  EXPECT_EQ(stream.GetPosition(), bytes.size());
+  return cfg;
+}
+
+}  // namespace
+
+TEST(TokenizerConfig, EverySpecRoundTripsThroughTheBinaryFormat) {
+  size_t round_tripped = 0;
+  for (const auto& spec : tests::fuzz::AllSpecs()) {
+    SCOPED_TRACE(spec.name);
+    std::string bytes;
+    try {
+      bytes = Pack(spec.config());
+    } catch (const std::exception& e) {
+      EXPECT_NE(std::string_view{e.what()}.find("for Accept"),
+                std::string_view::npos)
+        << e.what();
+      continue;
+    }
+    EXPECT_EQ(Pack(Unpack(bytes)), bytes);
+    ++round_tripped;
+  }
+  EXPECT_GT(round_tripped, tests::fuzz::AllSpecs().size() / 2);
+}
+
+TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {
+  const auto plain =
+    Pack(Cfg{NGramTokenizer::Options{.min_gram = 2, .max_gram = 3}});
+  const auto prefix = Pack(Cfg{NGramTokenizer::Options{
+    .min_gram = 2,
+    .max_gram = 3,
+    .ngram_mode = NGramTokenizer::NGramMode::Prefix,
+  }});
+  EXPECT_LT(plain.size(), prefix.size());
+
+  const auto read = Unpack(plain);
+  const auto& options = std::get<NGramTokenizer::Options>(read.config);
+  EXPECT_EQ(options.min_gram, 2u);
+  EXPECT_EQ(options.max_gram, 3u);
+  EXPECT_TRUE(options.preserve_original);
+  EXPECT_EQ(options.ngram_mode, NGramTokenizer::NGramMode::All);
+  EXPECT_EQ(std::get<NGramTokenizer::Options>(Unpack(prefix).config).ngram_mode,
+            NGramTokenizer::NGramMode::Prefix);
 }

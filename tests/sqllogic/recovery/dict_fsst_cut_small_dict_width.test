@@ -19,7 +19,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfsw_small.db' AS dfsw (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+CREATE DATABASE dfsw WITH (ROW_GROUP_SIZE = 1048576);
 
 
 statement ok
@@ -58,4 +58,4 @@ t	t
 
 
 statement ok
-DETACH dfsw;
+DROP DATABASE dfsw;

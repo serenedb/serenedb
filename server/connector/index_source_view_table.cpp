@@ -31,6 +31,7 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <ranges>
 
 namespace sdb::connector {
 namespace {
@@ -123,10 +124,13 @@ ViewTableIndexSource::ViewTableIndexSource(
   const auto& columns = table.GetColumns();
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,
-    [&](std::string_view name) {
-      duckdb::Identifier column{name};
-      return columns.GetColumnIndex(column).index;
-    },
+    SourceColumns{
+      std::views::iota(duckdb::idx_t{0}, columns.LogicalColumnCount()) |
+      std::views::transform([&](duckdb::idx_t i) -> std::string_view {
+        return columns.GetColumn(duckdb::LogicalIndex(i))
+          .Name()
+          .GetIdentifierName();
+      })},
     [&](duckdb::idx_t table_col_idx) {
       SDB_ASSERT(table_col_idx < columns.LogicalColumnCount());
       return AddFetchColumn(
@@ -153,10 +157,10 @@ TableRowIdIndexSource::TableRowIdIndexSource(
   id_to_pos.reserve(columns.LogicalColumnCount());
   duckdb::idx_t pos = 0;
   for (const auto& col : columns.Logical()) {
-    if (ColumnId{col.Oid()} == kGeneratedPKId) {
+    if (TableColumnId(col) == kGeneratedPKId) {
       continue;
     }
-    id_to_pos.emplace(col.Oid(), pos++);
+    id_to_pos.emplace(TableColumnId(col), pos++);
   }
   InitProjection(
     context, projected_columns, projected_types, bind_column_ids,

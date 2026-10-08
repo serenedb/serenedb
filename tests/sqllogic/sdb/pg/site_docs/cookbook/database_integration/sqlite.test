@@ -9,9 +9,7 @@
 query error
 SELECT * FROM sqlite_scan('test.db', 'tbl_name');
 ----
-db error: ERROR: Table Function with name "sqlite_scan" is not in the catalog, but it exists in the sqlite_scanner extension.
-
-This feature relies on the "sqlite_scanner" extension which is not built into this SereneDB binary. Please open an issue at https://github.com/serenedb/serenedb/issues/887 if you need it.
+db error: ERROR: Table Function with name "sqlite_scan" does not exist in SereneDB (DuckDB provides it in its sqlite_scanner extension). If you need it, tell us in https://github.com/serenedb/serenedb/issues/887.
 
 
 # DOCS_TEST: example_004

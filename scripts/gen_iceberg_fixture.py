@@ -68,19 +68,20 @@ def local_path(p):
 def read_avro(path):
     with open(path, "rb") as f:
         reader = fastavro.reader(f)
-        return reader.writer_schema, list(reader)
+        metadata = {k: v for k, v in reader.metadata.items() if not k.startswith("avro.")}
+        return reader.writer_schema, list(reader), metadata
 
 
-def write_avro(path, schema, records):
+def write_avro(path, schema, records, metadata):
     with open(path, "wb") as f:
-        fastavro.writer(f, schema, records)
+        fastavro.writer(f, schema, records, metadata=metadata)
 
 
 def data_files_of(table):
     files = []
     snap = table.current_snapshot()
     for mf in snap.manifests(table.io):
-        _, entries = read_avro(local_path(mf.manifest_path))
+        _, entries, _ = read_avro(local_path(mf.manifest_path))
         for e in entries:
             files.append(e["data_file"])
     return files
@@ -121,9 +122,9 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
 
     cur_snap = next(s for s in meta["snapshots"] if s["snapshot-id"] == meta["current-snapshot-id"])
     old_list_path = local_path(cur_snap["manifest-list"])
-    list_schema, list_records = read_avro(old_list_path)
+    list_schema, list_records, list_metadata = read_avro(old_list_path)
     template_manifest = local_path(list_records[0]["manifest_path"])
-    entry_schema, template_entries = read_avro(template_manifest)
+    entry_schema, template_entries, manifest_metadata = read_avro(template_manifest)
 
     dropped = {os.path.basename(p) for p in drop_manifests}
     list_records = [r for r in list_records
@@ -230,7 +231,7 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
         entries.append(entry)
 
     manifest_path = os.path.join(meta_dir, f"delete-{uuid.uuid4()}-m0.avro")
-    write_avro(manifest_path, entry_schema, entries)
+    write_avro(manifest_path, entry_schema, entries, {**manifest_metadata, "content": "deletes"})
     new_records = list_records + [make_list_entry(manifest_path, 1, len(entries))]
 
     if appends:
@@ -244,12 +245,15 @@ def craft_snapshot(table_dir, table, deletes, appends, version, drop_manifests):
         pq.write_table(pa.table(arrays, schema=pa.schema(fields)), data_parquet)
         data_entry = make_entry(data_parquet, 0, len(appends), {})
         data_manifest_path = os.path.join(meta_dir, f"data-{uuid.uuid4()}-m0.avro")
-        write_avro(data_manifest_path, entry_schema, [data_entry])
+        write_avro(data_manifest_path, entry_schema, [data_entry], {**manifest_metadata, "content": "data"})
         new_records = new_records + [make_list_entry(data_manifest_path, 0, 1)]
 
     new_list_name = f"snap-{snap_id}-0-{uuid.uuid4()}.avro"
     new_list_path = os.path.join(meta_dir, new_list_name)
-    write_avro(new_list_path, list_schema, new_records)
+    list_metadata = {**list_metadata, "snapshot-id": str(snap_id), "parent-snapshot-id": str(cur_snap["snapshot-id"])}
+    if "sequence-number" in list_metadata:
+        list_metadata["sequence-number"] = str(seq)
+    write_avro(new_list_path, list_schema, new_records, list_metadata)
 
     meta["snapshots"].append({
         "snapshot-id": snap_id,
@@ -381,7 +385,7 @@ def main():
     craft_snapshot(
         part_dir, part,
         [{"dead_id": 4, "partition": {"part": "a"}, "pin": False},
-         {"dead_id": 5, "partition": {"part": None}, "pin": True}], [], 3, set())
+         {"dead_id": 5, "partition": {"part": "b"}, "pin": True}], [], 3, set())
     # Equality rungs: snapshot 4 scopes an equality delete on id=1 to
     # partition a (partition b's files must not move); snapshot 5 deletes on
     # `part` -- a column a (id, body) index has no term dictionary for, the

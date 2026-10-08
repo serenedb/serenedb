@@ -67,7 +67,6 @@ class IndexBuilder {
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::MMapDirectory _dir;
-  irs::Format::ptr _format;
   irs::IndexWriter::ptr _writer;
 };
 

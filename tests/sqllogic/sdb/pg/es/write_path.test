@@ -90,6 +90,45 @@ SELECT count(*) FROM es.slt_es_w;
 count
 3
 
+statement error es_bulk_source can only be called by the Elasticsearch _bulk endpoint
+INSERT INTO es.slt_es_w SELECT * FROM es_bulk_source('slt_es_w');
+
+statement count 1
+DELETE FROM es.slt_es_w WHERE _id = 'a';
+
+statement count 1
+UPDATE es.slt_es_w SET title = 'slow brown fox' WHERE _id = 'b';
+
+query
+CALL es_refresh('slt_es_w');
+----
+acknowledged
+t
+
+query
+SELECT count(*) FROM es."slt_es_w$text";
+----
+count
+2
+
+query
+SELECT count(*) FROM es."slt_es_w$text" WHERE title @@ 'hello';
+----
+count
+0
+
+query
+SELECT count(*) FROM es."slt_es_w$text" WHERE title @@ 'quick';
+----
+count
+0
+
+query
+SELECT count(*) FROM es."slt_es_w$text" WHERE title @@ 'slow';
+----
+count
+1
+
 query
 CALL es_drop_index('slt_es_w');
 ----

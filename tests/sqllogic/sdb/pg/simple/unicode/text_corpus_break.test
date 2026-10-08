@@ -1,0 +1,961 @@
+statement ok
+CREATE TABLE tc_lines AS SELECT * FROM (VALUES
+    (1, 'en', 'Anarchists employ diverse approaches, which may be generally divided into revolutionary and evolutionary strategies; there is significant overlap between the two. Evolutionary methods try to simulate '),
+    (2, 'en', 'As directed by a Congressional resolution of May 26, 1783, all non-commissioned officers and enlisted were furloughed "to their homes" until the "definitive treaty of peace", when they would be automa'),
+    (3, 'en', '1939 – Alan Ayckbourn, English director and playwright'),
+    (4, 'en', 'Crowley has remained an influential figure, both amongst occultists and in popular culture, particularly that of Britain, but also of other parts of the world. In 2002, a BBC poll placed Crowley seven'),
+    (5, 'en', ' Julian, John (ed.)(1892). A Dictionary of Hymnology, Charles Scribner''s Sons, New York.'),
+    (6, 'en', ' Sacrificio di Ifigenia, by Pietro Testa, 1640'),
+    (7, 'en', '1963 – March on Washington for Jobs and Freedom: Rev. Dr. Martin Luther King Jr. gives his I Have a Dream speech.'),
+    (8, 'en', 'During projects Mercury and Gemini, each mission had a prime and a backup crew. Apollo 9 commander James McDivitt believed meetings that required a member of the flight crew were being missed, so for '),
+    (9, 'en', 'As early Native Americans lacked pottery that could be used directly over a fire, they developed a technique many anthropologists call "stone boiling". They heated rocks in a fire, then added the rock'),
+    (10, 'en', 'In the league''s first years, players such as Oilers'' George Blanda, Chargers/Bills'' Jack Kemp, Texans'' Len Dawson, the NY Titans'' Don Maynard, Raiders/Patriots/Jets'' Babe Parilli, Pats'' Bob Dee proved'),
+    (11, 'en', 'Agarose gel electrophoresis is the routine method for resolving DNA in the laboratory. Agarose gels have lower resolving power for DNA than acrylamide gels, but they have greater range of separation, '),
+    (12, 'en', ' aim:goim?screenname=notarealuser&message=This+is+my+message'),
+    (13, 'en', 'A number of musicians from a variety of genres have joined Guthrie onstage, including Pete Seeger, David Bromberg, Cyril Neville, Emmylou Harris, Willie Nelson, Judy Collins, John Prine, Wesley Gray, '),
+    (14, 'en', 'The Brazilian Navy which is the oldest of the Brazilian Armed Forces, includes the Brazilian Marine Corps and the Brazilian Naval Aviation.'),
+    (15, 'en', 'Dr. Strabismus (whom God preserve) of Utrecht: eccentric scientist and inventor.'),
+    (16, 'en', 'Therefore, to get a grid started, there must be at least a small number of power stations that can start entirely on their own. A black start is the process of restoring a power station to operation w'),
+    (17, 'en', 'Barcelona is an internationally renowned tourist destination, with numerous recreational areas, one of the best beaches in the world, mild and warm climate, historical monuments, including eight UNESC'),
+    (18, 'en', 'In 1982, Billy Crystal hosted his own variety show, The Billy Crystal Comedy Hour on NBC. When Crystal arrived to shoot the fifth episode, he learned it had been canceled after only the first two aire'),
+    (19, 'en', '1971 Gold Medal Award, American Psychological Foundation'),
+    (20, 'en', ' Orlandis, Jose, A Short History of the Catholic Church. Scepter Publishers (1993) '),
+    (21, 'en', 'The Cameroon Armed Forces (French: Forces armées camerounaises, FAC) consists of the country''s army (Armée de Terre), the country''s navy (Marine Nationale de la République (MNR), includes naval infant'),
+    (22, 'en', 'Sometimes because of guilt or other reasons cross-dressers dispose of all their clothing, a practice called "purging", only to start collecting the other gender''s clothing again.'),
+    (23, 'en', 'Professor Simpson L. Brown — in addition to his teaching and research work in the Physics Department — served simultaneously as general manager, technical director, and producer.  Programs were aired '),
+    (24, 'en', '1991, Yakir Yerushalaim (Distinguished Citizen of Jerusalem)'),
+    (25, 'en', ' Midrash Temurah (), one of the smaller midrashim, consisting of three chapters.'),
+    (26, 'en', 'Freedom of Expression Award – Fear and Learning at Hoover Elementary'),
+    (27, 'en', 'Introduction to Formal Philosophy [edited with Sven Ove Hansson and Esther Michelsen Kjeldahl] (Dordrecht: Springer, 2018)'),
+    (28, 'en', ' MPMU: Musyawarah Perwakilan Mahasiswa Universitas'),
+    (29, 'en', 'In 1670, Frederick III died and was succeeded by her eldest son Christian V. Her son the king did what he could to curb her influence in state affairs, which was evidently not easy: in 1671, he wrote '),
+    (30, 'en', 'In 1959, Newland became the host and director of the paranormal television series One Step Beyond. The series ended its run in 1961 and Newland later hosted its short-lived counterpart The Next Step B'),
+    (31, 'en', ' ''Studio portrait, Chelsea'', a 1911 self-portrait (1915) kept at Art Gallery NSW.'),
+    (32, 'en', ' 31 January 1971: Leeds United now have a five-point lead over Arsenal, who have a game in hand, at the top of the First Division. The challenge from Tottenham Hotspur, Chelsea and Wolverhampton Wande'),
+    (33, 'en', 'Example: In area 19 the prefix 4001 was located to Metropolitan Region of Campinas, therefore:'),
+    (34, 'en', 'It''s a Love Cult is the tenth full-length studio album by the Norwegian band Motorpsycho. The album was preceded by the EP release of "Serpentine", for which also a video was made.'),
+    (35, 'en', 'The Market Theatre was designed by Page + Steele Architects and constructed by Aecon Buildings of Aecon Group Inc. Named the Rose Theatre Brampton, it opened in September 2006. The theatre included an'),
+    (36, 'en', 'With the 1994 book Reinventing Politics, the Romanian author looked into the European revolutions of the previous decade, exploring the shades of repression, the differences in political culture, and '),
+    (37, 'en', 'Another common practice is special second letter pair for taxi service cars, regional independent. Like PG TX123 or KO TX456.'),
+    (38, 'en', 'A number of classes inherited by the LNER were not formally allocated a place in the new system. Most of these were one-off or departmental engines, or types slated for early withdrawal, although some'),
+    (39, 'url', 'http%3A%252d01.adriver.ru/user_id=&auto_in_my_ob.html_params'),
+    (40, 'url', 'http%3A//masterh5.adriver.ru/ishi_trailer/#tab-70-kv-m-advert279025801517696%26sob%3D43%26bn%3D90'),
+    (41, 'url', 'http%3A//masterh5.adriver.ru/searchingXeIyw&where=all&film/48460&page=2&driver'),
+    (42, 'url', 'http:%2F%23image=0&checked_auto_id=0&input_age2/2f2e1ff95c-41.html_param=0&userId=6TThrSuUXI&where=all&filmId=FVCfVXfJ0Cw&where=all&filmId=vL7s0Cw&where=all&filmId=R_M10.html%3Fhtml?1=1&cid=678'),
+    (43, 'url', 'http:%2F%23image=0&engineVolumeFrom=&power_name=Короткие'),
+    (44, 'url', 'http:%2F%23image=1&expand_search&input_state/rent_aliance/search?where=all&filmId=P8pClxIMs3M&where=all&filmId'),
+    (45, 'url', 'http:%2F%23image=1&with_photo=750&op_product_id=8460&lo=http://domkadrov.ru/bs.php?id=43149732854'),
+    (46, 'url', 'http:%2F%23image=1&with_photo=750&op_product_id=8460&lo=http://pogoda.yandex.ru/cars/partner=17711945-4-obschentialAmount'),
+    (47, 'url', 'http:%2F%23image=1&with_photo=750&op_product_id=8460&lo=http://wildberries.ru/search&input_action.ru/page2/#overlay-phoney'),
+    (48, 'url', 'http:%2F%23image=1&with_video.yandex.ru%2Fkatering (Record.ru/iframe-owa.html_param=0&user=user_id=3205&bt'),
+    (49, 'url', 'http:%2F%23image=1&with_video.yandex.ru%2Fkatering (Record.ru/real-estate/out-of-town/houses/post_from=&powerFrom=&engineVolumeTo=&raceFrom=&raceTo=&powerFrom=&engineVolumeTo=&fuelRateFrom=adwolf.ru'),
+    (50, 'url', 'http:%2F%23image=1&with_video.yandex.ru%2Fkatering (Record.ru/search?text=как хочу телевизор&where=all&filmId=qB5i0A%26url%3D//ad.adriver.ru/catalog'),
+    (51, 'url', 'http:%2F%2Fsport-pliazhnaya_istory.radiana1165_42427&pt=b&pd=6&pv=22&engineVolumeTo=&power_name=Купально смотреть'),
+    (52, 'url', 'http:%2F%2Fvk.com.ua/sumi/veröffner/bmw.html?city=13333482'),
+    (53, 'url', 'http:%2F%2Fvk.com/iframe-owa.html#404100/0/pol-1/bage-99fa-d61f-fea0-0140375330271.htm?from=&engineVolumeTo=&powerTo'),
+    (54, 'url', 'http:%2F%2Fvk.com/iframe-owa.html?key=c92011%2F25.0.html?1=1&cid=577&oki=1&op_product&op_uid=135028159401090'),
+    (55, 'url', 'http:%2F%2Fvk.com/iframe/iframe/iframe/Massadult.php?id=27888898173259045796/1/4/9186155/#image'),
+    (56, 'url', 'http:%2F%2Fwww.bonprix.ru/businessbar.ru/pramuse/1.php?tag=slide-id=3193522][from=&engineVolumeFrom=&powerFrom=&power спринц перевод/#lingvo/?page=33&city=0&po_yers=0&page3/#overlay-photo'),
+    (57, 'url', 'http:%2F%2Fwwww.bonprix.ru%26sid%3D0%26nid%3D0%26url%3D//ad.adriver.ru/index.ru&pvid=147518518-zhiens.ru/GameMain.aspx?d=7'),
+    (58, 'url', 'http:%2F%2Fwwww.bonprix.ru%2Fproduct_price/artira-Nizhniynovgorod/search?text=смотреть фильмы'),
+    (59, 'url', 'http:%2F%2Fwwww.bonprix.ru/cars/page_len80/page%3D0%26nid'),
+    (60, 'url', 'http:%2F%2Fwwww.bonprix.ru/real-estate/out-of-town/hotels/horesto%2F22.14&he=768&spn=0.016942554'),
+    (61, 'url', 'http:%2F%2Fwwww.bonprix_ru_1_ru_1}%2Fcategory_id=0&last_auto'),
+    (62, 'url', 'http:%2F%2Fwwwww.bonprix.ru%26sid%3DBlP_wWZXCI&where=all&filmId=pdq'),
+    (63, 'url', 'http://1.2022.radiorecord.ru/car-yar.ru/page/150295,9592769.html?page=0&deletedAutoSearch?text=чемпионы#tab=com'),
+    (64, 'url', 'http://55love.ru/GameMain.aspx#comme%2F27.0.1364.172 YaBrowser%26pz%3D0%26ref%3D%26CompPath%3Dhttp'),
+    (65, 'url', 'http://8-41ee4a46c6537331480718&input_who1=2&input_online'),
+    (66, 'url', 'http://acat.php?cid=577&oki=1&op_page.aspx#location/drofor.ru/index.ru/news/38708&po_yers=0&price_ot=1490'),
+    (67, 'url', 'http://acat.php?cid=577&oki=1&op_page=1&fuelRateTo=&power_name=1&ground-zakaz.ru/images'),
+    (68, 'url', 'http://acat.php?cid=577&oki=1&op_page=46&cmguide.travel.ru/real-estation'),
+    (69, 'url', 'http://acat.php?cid=577&oki=1&op_produkty/places/10495,9592345bhfbhbif75/8eef'),
+    (70, 'url', 'http://acat.php?cid=577&oki=1&op_uid=1&bc=3&ct=1&pr=683661_2.html%3Fhtml?1=1&cid=514569494151/3/women.aspx'),
+    (71, 'url', 'http://ae5000&mm_count=2&sort=sale/secondary/detail'),
+    (72, 'url', 'http://afisha.mail.aspx#locations[0][15339394&s_yers=0&with'),
+    (73, 'url', 'http://afisha.yandex.html?item_no=110000121662056612030882878183/10/07/16/19'),
+    (74, 'url', 'http://afisha.yandex.ru%26bid%3D1216629/0/index.ru/realty/lear_from]=&price_ot=&priceup&_suid=1&bodystyle_id=0&state'),
+    (75, 'url', 'http://afisha.yandex.ru%2Fproduct&op_uid=18497&po_yers=0&page.aspx?Topic-91?query=догов'),
+    (76, 'url', 'http://afisha.yandex.ru/albums/search?text=зловер&where'),
+    (77, 'code', '/// Copyright 2026 SereneDB GmbH, Berlin, Germany'),
+    (78, 'code', 'return g;'),
+    (79, 'code', 'return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);'),
+    (80, 'code', '#include "iresearch/search/docs/plan.hpp"'),
+    (81, 'code', '/// limitations under the License.'),
+    (82, 'code', 'return FastpackAt<N, 9>(in);'),
+    (83, 'code', '/// Copyright 2025 SereneDB GmbH, Berlin, Germany'),
+    (84, 'code', '0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x0a, 0x0a, 0x0a,'),
+    (85, 'code', 'bool _leaf_scalar = false;'),
+    (86, 'code', 'const auto& doc = *DocOf(own);'),
+    (87, 'code', '////////////////////////////////////////////////////////////////////////////////'),
+    (88, 'code', '/// DISCLAIMER'),
+    (89, 'code', '#include "iresearch/utils/shared.hpp"'),
+    (90, 'code', '"For large T better to use NodeHashSet. "'),
+    (91, 'code', '_conn{*context.db},'),
+    (92, 'code', '[&](irs::FieldInverter& fld, irs::TokenSink& w) {'),
+    (93, 'code', 'context,'),
+    (94, 'code', 'duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {'),
+    (95, 'code', 'ERR_MSG(kLayoutFile, " names no terms for ''", name, "''"));'),
+    (96, 'code', 'std::optional<Ruleset> Parse(std::string_view text, ParseError& error) {'),
+    (97, 'code', '} else {'),
+    (98, 'code', '.typbasetype = 0,'),
+    (99, 'code', 'class SereneDBCopyFileSystem final : public duckdb::FileSystem {'),
+    (100, 'code', '// PG conntype (parse_hba_line, hba.c:1362-1418). An enum, not a bitmask: PG'),
+    (101, 'code', 'UNION ALL'),
+    (102, 'code', '_values = nullptr;'),
+    (103, 'code', '"qay2hgfwvpq7e5ixtgby",'),
+    (104, 'code', 'constexpr auto kN = sizeof(kAlnum) - 1;'),
+    (105, 'code', 'const auto ring_union = coverer.GetCovering(polygon).Difference('),
+    (106, 'code', 'const auto next = [&] {'),
+    (107, 'code', 'for (const auto* spec : SelectedSpecs()) {'),
+    (108, 'code', 'ASSERT_NE(nullptr, field);'),
+    (109, 'code', 'MemoryIndexOutput out{file};'),
+    (110, 'code', 'auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());'),
+    (111, 'code', '// Segments already marked for compaction are skipped by the policy, so'),
+    (112, 'code', '#include "formats/column/test_cs_helpers.hpp"'),
+    (113, 'code', 'CheckQuery(*tests::Optimized(std::move(root)), Docs{1, 5, 11, 21, 27, 31},'),
+    (114, 'code', 'ASSERT_GT(finish_docs_with_term, 0u);   // scorer collected term stats')
+) t(id, kind, s);
+
+
+query
+SELECT id, split_text_icu(s, 'en') AS words FROM tc_lines ORDER BY id;
+----
+id	words
+1	{Anarchists,employ,diverse,approaches,which,may,be,generally,divided,into,revolutionary,and,evolutionary,strategies,there,is,significant,overlap,between,the,two,Evolutionary,methods,try,to,simulate}
+2	{As,directed,by,a,Congressional,resolution,of,May,26,1783,all,non,commissioned,officers,and,enlisted,were,furloughed,to,their,homes,until,the,definitive,treaty,of,peace,when,they,would,be,automa}
+3	{1939,Alan,Ayckbourn,English,director,and,playwright}
+4	{Crowley,has,remained,an,influential,figure,both,amongst,occultists,and,in,popular,culture,particularly,that,of,Britain,but,also,of,other,parts,of,the,world,In,2002,a,BBC,poll,placed,Crowley,seven}
+5	{Julian,John,ed,1892,A,Dictionary,of,Hymnology,Charles,Scribner's,Sons,New,York}
+6	{Sacrificio,di,Ifigenia,by,Pietro,Testa,1640}
+7	{1963,March,on,Washington,for,Jobs,and,Freedom,Rev,Dr,Martin,Luther,King,Jr,gives,his,I,Have,a,Dream,speech}
+8	{During,projects,Mercury,and,Gemini,each,mission,had,a,prime,and,a,backup,crew,Apollo,9,commander,James,McDivitt,believed,meetings,that,required,a,member,of,the,flight,crew,were,being,missed,so,for}
+9	{As,early,Native,Americans,lacked,pottery,that,could,be,used,directly,over,a,fire,they,developed,a,technique,many,anthropologists,call,stone,boiling,They,heated,rocks,in,a,fire,then,added,the,rock}
+10	{In,the,league's,first,years,players,such,as,Oilers,George,Blanda,Chargers,Bills,Jack,Kemp,Texans,Len,Dawson,the,NY,Titans,Don,Maynard,Raiders,Patriots,Jets,Babe,Parilli,Pats,Bob,Dee,proved}
+11	{Agarose,gel,electrophoresis,is,the,routine,method,for,resolving,DNA,in,the,laboratory,Agarose,gels,have,lower,resolving,power,for,DNA,than,acrylamide,gels,but,they,have,greater,range,of,separation}
+12	{aim:goim,screenname,notarealuser,message,This,is,my,message}
+13	{A,number,of,musicians,from,a,variety,of,genres,have,joined,Guthrie,onstage,including,Pete,Seeger,David,Bromberg,Cyril,Neville,Emmylou,Harris,Willie,Nelson,Judy,Collins,John,Prine,Wesley,Gray}
+14	{The,Brazilian,Navy,which,is,the,oldest,of,the,Brazilian,Armed,Forces,includes,the,Brazilian,Marine,Corps,and,the,Brazilian,Naval,Aviation}
+15	{Dr,Strabismus,whom,God,preserve,of,Utrecht,eccentric,scientist,and,inventor}
+16	{Therefore,to,get,a,grid,started,there,must,be,at,least,a,small,number,of,power,stations,that,can,start,entirely,on,their,own,A,black,start,is,the,process,of,restoring,a,power,station,to,operation,w}
+17	{Barcelona,is,an,internationally,renowned,tourist,destination,with,numerous,recreational,areas,one,of,the,best,beaches,in,the,world,mild,and,warm,climate,historical,monuments,including,eight,UNESC}
+18	{In,1982,Billy,Crystal,hosted,his,own,variety,show,The,Billy,Crystal,Comedy,Hour,on,NBC,When,Crystal,arrived,to,shoot,the,fifth,episode,he,learned,it,had,been,canceled,after,only,the,first,two,aire}
+19	{1971,Gold,Medal,Award,American,Psychological,Foundation}
+20	{Orlandis,Jose,A,Short,History,of,the,Catholic,Church,Scepter,Publishers,1993}
+21	{The,Cameroon,Armed,Forces,French,Forces,armées,camerounaises,FAC,consists,of,the,country's,army,Armée,de,Terre,the,country's,navy,Marine,Nationale,de,la,République,MNR,includes,naval,infant}
+22	{Sometimes,because,of,guilt,or,other,reasons,cross,dressers,dispose,of,all,their,clothing,a,practice,called,purging,only,to,start,collecting,the,other,gender's,clothing,again}
+23	{Professor,Simpson,L,Brown,in,addition,to,his,teaching,and,research,work,in,the,Physics,Department,served,simultaneously,as,general,manager,technical,director,and,producer,Programs,were,aired}
+24	{1991,Yakir,Yerushalaim,Distinguished,Citizen,of,Jerusalem}
+25	{Midrash,Temurah,one,of,the,smaller,midrashim,consisting,of,three,chapters}
+26	{Freedom,of,Expression,Award,Fear,and,Learning,at,Hoover,Elementary}
+27	{Introduction,to,Formal,Philosophy,edited,with,Sven,Ove,Hansson,and,Esther,Michelsen,Kjeldahl,Dordrecht,Springer,2018}
+28	{MPMU,Musyawarah,Perwakilan,Mahasiswa,Universitas}
+29	{In,1670,Frederick,III,died,and,was,succeeded,by,her,eldest,son,Christian,V,Her,son,the,king,did,what,he,could,to,curb,her,influence,in,state,affairs,which,was,evidently,not,easy,in,1671,he,wrote}
+30	{In,1959,Newland,became,the,host,and,director,of,the,paranormal,television,series,One,Step,Beyond,The,series,ended,its,run,in,1961,and,Newland,later,hosted,its,short,lived,counterpart,The,Next,Step,B}
+31	{Studio,portrait,Chelsea,a,1911,self,portrait,1915,kept,at,Art,Gallery,NSW}
+32	{31,January,1971,Leeds,United,now,have,a,five,point,lead,over,Arsenal,who,have,a,game,in,hand,at,the,top,of,the,First,Division,The,challenge,from,Tottenham,Hotspur,Chelsea,and,Wolverhampton,Wande}
+33	{Example,In,area,19,the,prefix,4001,was,located,to,Metropolitan,Region,of,Campinas,therefore}
+34	{It's,a,Love,Cult,is,the,tenth,full,length,studio,album,by,the,Norwegian,band,Motorpsycho,The,album,was,preceded,by,the,EP,release,of,Serpentine,for,which,also,a,video,was,made}
+35	{The,Market,Theatre,was,designed,by,Page,Steele,Architects,and,constructed,by,Aecon,Buildings,of,Aecon,Group,Inc,Named,the,Rose,Theatre,Brampton,it,opened,in,September,2006,The,theatre,included,an}
+36	{With,the,1994,book,Reinventing,Politics,the,Romanian,author,looked,into,the,European,revolutions,of,the,previous,decade,exploring,the,shades,of,repression,the,differences,in,political,culture,and}
+37	{Another,common,practice,is,special,second,letter,pair,for,taxi,service,cars,regional,independent,Like,PG,TX123,or,KO,TX456}
+38	{A,number,of,classes,inherited,by,the,LNER,were,not,formally,allocated,a,place,in,the,new,system,Most,of,these,were,one,off,or,departmental,engines,or,types,slated,for,early,withdrawal,although,some}
+39	{http,3A,252d01,adriver.ru,user_id,auto_in_my_ob.html_params}
+40	{http,3A,masterh5,adriver.ru,ishi_trailer,tab,70,kv,m,advert279025801517696,26sob,3D43,26bn,3D90}
+41	{http,3A,masterh5,adriver.ru,searchingXeIyw,where,all,film,48460,page,2,driver}
+42	{http,2F,23image,0,checked_auto_id,0,input_age2,2f2e1ff95c,41,html_param,0,userId,6TThrSuUXI,where,all,filmId,FVCfVXfJ0Cw,where,all,filmId,vL7s0Cw,where,all,filmId,R_M10,html,3Fhtml,1,1,cid,678}
+43	{http,2F,23image,0,engineVolumeFrom,power_name,Короткие}
+44	{http,2F,23image,1,expand_search,input_state,rent_aliance,search,where,all,filmId,P8pClxIMs3M,where,all,filmId}
+45	{http,2F,23image,1,with_photo,750,op_product_id,8460,lo,http,domkadrov.ru,bs.php,id,43149732854}
+46	{http,2F,23image,1,with_photo,750,op_product_id,8460,lo,http,pogoda.yandex.ru,cars,partner,17711945,4,obschentialAmount}
+47	{http,2F,23image,1,with_photo,750,op_product_id,8460,lo,http,wildberries.ru,search,input_action.ru,page2,overlay,phoney}
+48	{http,2F,23image,1,with_video.yandex.ru,2Fkatering,Record.ru,iframe,owa.html_param,0,user,user_id,3205,bt}
+49	{http,2F,23image,1,with_video.yandex.ru,2Fkatering,Record.ru,real,estate,out,of,town,houses,post_from,powerFrom,engineVolumeTo,raceFrom,raceTo,powerFrom,engineVolumeTo,fuelRateFrom,adwolf.ru}
+50	{http,2F,23image,1,with_video.yandex.ru,2Fkatering,Record.ru,search,text,как,хочу,телевизор,where,all,filmId,qB5i0A,26url,3D,ad.adriver.ru,catalog}
+51	{http,2F,2Fsport,pliazhnaya_istory.radiana1165_42427,pt,b,pd,6,pv,22,engineVolumeTo,power_name,Купально,смотреть}
+52	{http,2F,2Fvk.com.ua,sumi,veröffner,bmw.html,city,13333482}
+53	{http,2F,2Fvk.com,iframe,owa.html,404100,0,pol,1,bage,99fa,d61f,fea0,0140375330271,htm,from,engineVolumeTo,powerTo}
+54	{http,2F,2Fvk.com,iframe,owa.html,key,c92011,2F25.0,html,1,1,cid,577,oki,1,op_product,op_uid,135028159401090}
+55	{http,2F,2Fvk.com,iframe,iframe,iframe,Massadult.php,id,27888898173259045796,1,4,9186155,image}
+56	{http,2F,2Fwww.bonprix.ru,businessbar.ru,pramuse,1,php,tag,slide,id,3193522,from,engineVolumeFrom,powerFrom,power,спринц,перевод,lingvo,page,33,city,0,po_yers,0,page3,overlay,photo}
+57	{http,2F,2Fwwww.bonprix.ru,26sid,3D0,26nid,3D0,26url,3D,ad.adriver.ru,index.ru,pvid,147518518,zhiens.ru,GameMain.aspx,d,7}
+58	{http,2F,2Fwwww.bonprix.ru,2Fproduct_price,artira,Nizhniynovgorod,search,text,смотреть,фильмы}
+59	{http,2F,2Fwwww.bonprix.ru,cars,page_len80,page,3D0,26nid}
+60	{http,2F,2Fwwww.bonprix.ru,real,estate,out,of,town,hotels,horesto,2F22.14,he,768,spn,0.016942554}
+61	{http,2F,2Fwwww.bonprix_ru_1_ru_1,2Fcategory_id,0,last_auto}
+62	{http,2F,2Fwwwww.bonprix.ru,26sid,3DBlP_wWZXCI,where,all,filmId,pdq}
+63	{http,1.2022,radiorecord.ru,car,yar.ru,page,"150295,9592769",html,page,0,deletedAutoSearch,text,чемпионы,tab,com}
+64	{http,55love.ru,GameMain.aspx,comme,2F27.0.1364.172,YaBrowser,26pz,3D0,26ref,3D,26CompPath,3Dhttp}
+65	{http,8,41ee4a46c6537331480718,input_who1,2,input_online}
+66	{http,acat.php,cid,577,oki,1,op_page.aspx,location,drofor.ru,index.ru,news,38708,po_yers,0,price_ot,1490}
+67	{http,acat.php,cid,577,oki,1,op_page,1,fuelRateTo,power_name,1,ground,zakaz.ru,images}
+68	{http,acat.php,cid,577,oki,1,op_page,46,cmguide.travel.ru,real,estation}
+69	{http,acat.php,cid,577,oki,1,op_produkty,places,"10495,9592345bhfbhbif75",8eef}
+70	{http,acat.php,cid,577,oki,1,op_uid,1,bc,3,ct,1,pr,683661_2,html,3Fhtml,1,1,cid,514569494151,3,women.aspx}
+71	{http,ae5000,mm_count,2,sort,sale,secondary,detail}
+72	{http,afisha.mail.aspx,locations,0,15339394,s_yers,0,with}
+73	{http,afisha.yandex.html,item_no,110000121662056612030882878183,10,07,16,19}
+74	{http,afisha.yandex.ru,26bid,3D1216629,0,index.ru,realty,lear_from,price_ot,priceup,_suid,1,bodystyle_id,0,state}
+75	{http,afisha.yandex.ru,2Fproduct,op_uid,18497,po_yers,0,page.aspx,Topic,91,query,догов}
+76	{http,afisha.yandex.ru,albums,search,text,зловер,where}
+77	{Copyright,2026,SereneDB,GmbH,Berlin,Germany}
+78	{return,g}
+79	{return,SegmentReaderImpl,Open,dir,flushed.meta,reader_options}
+80	{include,iresearch,search,docs,plan.hpp}
+81	{limitations,under,the,License}
+82	{return,FastpackAt,N,9,in}
+83	{Copyright,2025,SereneDB,GmbH,Berlin,Germany}
+84	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0a,0x0a,0x0a,0x0a}
+85	{bool,_leaf_scalar,false}
+86	{const,auto,doc,DocOf,own}
+87	{}
+88	{DISCLAIMER}
+89	{include,iresearch,utils,shared.hpp}
+90	{For,large,T,better,to,use,NodeHashSet}
+91	{_conn,context.db}
+92	{irs,FieldInverter,fld,irs,TokenSink,w}
+93	{context}
+94	{duckdb,unique_ptr,duckdb,FunctionData,Copy,const,final}
+95	{ERR_MSG,kLayoutFile,names,no,terms,for,name}
+96	{std,optional,Ruleset,Parse,std,string_view,text,ParseError,error}
+97	{else}
+98	{typbasetype,0}
+99	{class,SereneDBCopyFileSystem,final,public,duckdb,FileSystem}
+100	{PG,conntype,parse_hba_line,hba.c,1362,1418,An,enum,not,a,bitmask,PG}
+101	{UNION,ALL}
+102	{_values,nullptr}
+103	{qay2hgfwvpq7e5ixtgby}
+104	{constexpr,auto,kN,sizeof,kAlnum,1}
+105	{const,auto,ring_union,coverer.GetCovering,polygon,Difference}
+106	{const,auto,next}
+107	{for,const,auto,spec,SelectedSpecs}
+108	{ASSERT_NE,nullptr,field}
+109	{MemoryIndexOutput,out,file}
+110	{auto,reader,irs,DirectoryReader,dir,irs,tests,DefaultReaderOptions}
+111	{Segments,already,marked,for,compaction,are,skipped,by,the,policy,so}
+112	{include,formats,column,test_cs_helpers.hpp}
+113	{CheckQuery,tests,Optimized,std,move,root,Docs,1,5,11,21,27,31}
+114	{ASSERT_GT,finish_docs_with_term,0u,scorer,collected,term,stats}
+
+
+query
+SELECT id, array_to_string(list_transform(split_text_icu(s, 'en', break := 'all'), lambda x: length(x)), ',') AS segments FROM tc_lines ORDER BY id;
+----
+id	segments
+1	10,1,6,1,7,1,10,1,1,5,1,3,1,2,1,9,1,7,1,4,1,13,1,3,1,12,1,10,1,1,5,1,2,1,11,1,7,1,7,1,3,1,3,1,1,12,1,7,1,3,1,2,1,8,1
+2	2,1,8,1,2,1,1,1,13,1,10,1,2,1,3,1,2,1,1,4,1,1,3,1,3,1,12,1,8,1,3,1,8,1,4,1,10,1,1,2,1,5,1,5,1,1,5,1,3,1,1,10,1,6,1,2,1,5,1,1,1,4,1,4,1,5,1,2,1,6
+3	4,1,1,1,4,1,9,1,1,7,1,8,1,3,1,10
+4	7,1,3,1,8,1,2,1,11,1,6,1,1,4,1,7,1,10,1,3,1,2,1,7,1,7,1,1,12,1,4,1,2,1,7,1,1,3,1,4,1,2,1,5,1,5,1,2,1,3,1,5,1,1,2,1,4,1,1,1,1,3,1,4,1,6,1,7,1,5
+5	1,6,1,1,4,1,1,2,1,1,1,4,1,1,1,1,1,10,1,2,1,9,1,1,7,1,10,1,4,1,1,3,1,4,1
+6	1,10,1,2,1,8,1,1,2,1,6,1,5,1,1,4
+7	4,1,1,1,5,1,2,1,10,1,3,1,4,1,3,1,7,1,1,3,1,1,2,1,1,6,1,6,1,4,1,2,1,1,5,1,3,1,1,1,4,1,1,1,5,1,6,1
+8	6,1,8,1,7,1,3,1,6,1,1,4,1,7,1,3,1,1,1,5,1,3,1,1,1,6,1,4,1,1,6,1,1,1,9,1,5,1,8,1,8,1,8,1,4,1,8,1,1,1,6,1,2,1,3,1,6,1,4,1,4,1,5,1,6,1,1,2,1,3,1
+9	2,1,5,1,6,1,9,1,6,1,7,1,4,1,5,1,2,1,4,1,8,1,4,1,1,1,4,1,1,4,1,9,1,1,1,9,1,4,1,15,1,4,1,1,5,1,7,1,1,1,4,1,6,1,5,1,2,1,1,1,4,1,1,4,1,5,1,3,1,4
+10	2,1,3,1,8,1,5,1,5,1,1,7,1,4,1,2,1,6,1,1,6,1,6,1,1,8,1,5,1,1,4,1,4,1,1,6,1,1,3,1,6,1,1,3,1,2,1,6,1,1,3,1,7,1,1,7,1,8,1,4,1,1,4,1,7,1,1,4,1,1,3,1,3,1,6
+11	7,1,3,1,15,1,2,1,3,1,7,1,6,1,3,1,9,1,3,1,2,1,3,1,10,1,1,7,1,4,1,4,1,5,1,9,1,5,1,3,1,3,1,4,1,10,1,4,1,1,3,1,4,1,4,1,7,1,5,1,2,1,10,1,1
+12	1,8,1,10,1,12,1,7,1,4,1,2,1,2,1,7
+13	1,1,6,1,2,1,9,1,4,1,1,1,7,1,2,1,6,1,4,1,6,1,7,1,7,1,1,9,1,4,1,6,1,1,5,1,8,1,1,5,1,7,1,1,7,1,6,1,1,6,1,6,1,1,4,1,7,1,1,4,1,5,1,1,6,1,4,1,1
+14	3,1,9,1,4,1,5,1,2,1,3,1,6,1,2,1,3,1,9,1,5,1,6,1,1,8,1,3,1,9,1,6,1,5,1,3,1,3,1,9,1,5,1,8,1
+15	2,1,1,10,1,1,4,1,3,1,8,1,1,2,1,7,1,1,9,1,9,1,3,1,8,1
+16	9,1,1,2,1,3,1,1,1,4,1,7,1,1,5,1,4,1,2,1,2,1,5,1,1,1,5,1,6,1,2,1,5,1,8,1,4,1,3,1,5,1,8,1,2,1,5,1,3,1,1,1,1,5,1,5,1,2,1,3,1,7,1,2,1,9,1,1,1,5,1,7,1,2,1,9,1,1
+17	9,1,2,1,2,1,15,1,8,1,7,1,11,1,1,4,1,8,1,12,1,5,1,1,3,1,2,1,3,1,4,1,7,1,2,1,3,1,5,1,1,4,1,3,1,4,1,7,1,1,10,1,9,1,1,9,1,5,1,5
+18	2,1,4,1,1,5,1,7,1,6,1,3,1,3,1,7,1,4,1,1,3,1,5,1,7,1,6,1,4,1,2,1,3,1,1,4,1,7,1,7,1,2,1,5,1,3,1,5,1,7,1,1,2,1,7,1,2,1,3,1,4,1,8,1,5,1,4,1,3,1,5,1,3,1,4
+19	4,1,4,1,5,1,5,1,1,8,1,13,1,10
+20	1,8,1,1,4,1,1,1,1,5,1,7,1,2,1,3,1,8,1,6,1,1,7,1,10,1,1,4,1,1
+21	3,1,8,1,5,1,6,1,1,6,1,1,6,1,6,1,13,1,1,3,1,1,8,1,2,1,3,1,9,1,4,1,1,5,1,2,1,5,1,1,1,3,1,9,1,4,1,1,6,1,9,1,2,1,2,1,10,1,1,3,1,1,1,8,1,5,1,6
+22	9,1,7,1,2,1,5,1,2,1,5,1,7,1,5,1,8,1,7,1,2,1,3,1,5,1,8,1,1,1,1,8,1,6,1,1,7,1,1,1,4,1,2,1,5,1,10,1,3,1,5,1,8,1,8,1,5,1
+23	9,1,7,1,1,1,1,5,1,1,1,2,1,8,1,2,1,3,1,8,1,3,1,8,1,4,1,2,1,3,1,7,1,10,1,1,1,6,1,14,1,2,1,7,1,7,1,1,9,1,8,1,1,3,1,8,1,2,8,1,4,1,5,1
+24	4,1,1,5,1,11,1,1,13,1,7,1,2,1,9,1
+25	1,7,1,7,1,1,1,1,1,3,1,2,1,3,1,7,1,9,1,1,10,1,2,1,5,1,8,1
+26	7,1,2,1,10,1,5,1,1,1,4,1,3,1,8,1,2,1,6,1,10
+27	12,1,2,1,6,1,10,1,1,6,1,4,1,4,1,3,1,7,1,3,1,6,1,9,1,8,1,1,1,9,1,1,8,1,1,4,1
+28	1,4,1,1,10,1,10,1,9,1,11
+29	2,1,4,1,1,9,1,3,1,4,1,3,1,3,1,9,1,2,1,3,1,6,1,3,1,9,1,1,1,1,3,1,3,1,3,1,4,1,3,1,4,1,2,1,5,1,2,1,4,1,3,1,9,1,2,1,5,1,7,1,1,5,1,3,1,9,1,3,1,4,1,1,2,1,4,1,1,2,1,5,1
+30	2,1,4,1,1,7,1,6,1,3,1,4,1,3,1,8,1,2,1,3,1,10,1,10,1,6,1,3,1,4,1,6,1,1,3,1,6,1,5,1,3,1,3,1,2,1,4,1,3,1,7,1,5,1,6,1,3,1,5,1,5,1,11,1,3,1,4,1,4,1,1
+31	1,1,6,1,8,1,1,7,1,1,1,1,1,4,1,4,1,8,1,1,4,1,1,4,1,2,1,3,1,7,1,3,1
+32	1,2,1,7,1,4,1,1,5,1,6,1,3,1,4,1,1,1,4,1,5,1,4,1,4,1,7,1,1,3,1,4,1,1,1,4,1,2,1,4,1,1,2,1,3,1,3,1,2,1,3,1,5,1,8,1,1,3,1,9,1,4,1,9,1,7,1,1,7,1,3,1,13,1,5
+33	7,1,1,2,1,4,1,2,1,3,1,6,1,4,1,3,1,7,1,2,1,12,1,6,1,2,1,8,1,1,9,1
+34	4,1,1,1,4,1,4,1,2,1,3,1,5,1,4,1,6,1,6,1,5,1,2,1,3,1,9,1,4,1,11,1,1,3,1,5,1,3,1,8,1,2,1,3,1,2,1,7,1,2,1,1,10,1,1,1,3,1,5,1,4,1,1,1,5,1,3,1,4,1
+35	3,1,6,1,7,1,3,1,8,1,2,1,4,1,1,1,6,1,10,1,3,1,11,1,2,1,5,1,9,1,2,1,5,1,5,1,3,1,1,5,1,3,1,4,1,7,1,8,1,1,2,1,6,1,2,1,9,1,4,1,1,3,1,7,1,8,1,2
+36	4,1,3,1,4,1,4,1,11,1,8,1,1,3,1,8,1,6,1,6,1,4,1,3,1,8,1,11,1,2,1,3,1,8,1,6,1,1,9,1,3,1,6,1,2,1,10,1,1,3,1,11,1,2,1,9,1,7,1,1,3,1
+37	7,1,6,1,8,1,2,1,7,1,6,1,6,1,4,1,3,1,4,1,7,1,4,1,1,8,1,11,1,1,4,1,2,1,5,1,2,1,2,1,5,1
+38	1,1,6,1,2,1,7,1,9,1,2,1,3,1,4,1,4,1,3,1,8,1,9,1,1,1,5,1,2,1,3,1,3,1,6,1,1,4,1,2,1,5,1,4,1,3,1,3,1,2,1,12,1,7,1,1,2,1,5,1,6,1,3,1,5,1,10,1,1,8,1,4
+39	4,1,2,1,6,1,10,1,7,1,1,25
+40	4,1,2,1,1,8,1,10,1,12,1,1,3,1,2,1,2,1,1,1,21,1,5,1,4,1,4,1,4
+41	4,1,2,1,1,8,1,10,1,14,1,5,1,3,1,4,1,5,1,4,1,1,1,6
+42	4,1,1,2,1,7,1,1,1,15,1,1,1,10,1,10,1,2,1,10,1,1,1,6,1,10,1,5,1,3,1,6,1,11,1,5,1,3,1,6,1,7,1,5,1,3,1,6,1,5,1,4,1,6,1,1,1,1,1,3,1,3
+43	4,1,1,2,1,7,1,1,1,16,1,1,10,1,8
+44	4,1,1,2,1,7,1,1,1,13,1,11,1,12,1,6,1,5,1,3,1,6,1,11,1,5,1,3,1,6
+45	4,1,1,2,1,7,1,1,1,10,1,3,1,13,1,4,1,2,1,4,1,1,1,12,1,6,1,2,1,11
+46	4,1,1,2,1,7,1,1,1,10,1,3,1,13,1,4,1,2,1,4,1,1,1,16,1,4,1,7,1,8,1,1,1,17
+47	4,1,1,2,1,7,1,1,1,10,1,3,1,13,1,4,1,2,1,4,1,1,1,14,1,6,1,15,1,5,1,1,7,1,6
+48	4,1,1,2,1,7,1,1,1,20,1,10,1,1,9,1,6,1,14,1,1,1,4,1,7,1,4,1,2
+49	4,1,1,2,1,7,1,1,1,20,1,10,1,1,9,1,4,1,6,1,3,1,2,1,4,1,6,1,9,1,1,9,1,1,14,1,1,8,1,1,6,1,1,9,1,1,14,1,1,12,1,9
+50	4,1,1,2,1,7,1,1,1,20,1,10,1,1,9,1,6,1,4,1,3,1,4,1,9,1,5,1,3,1,6,1,6,1,5,1,2,1,1,13,1,7
+51	4,1,1,2,1,7,1,35,1,2,1,1,1,2,1,1,1,2,1,2,1,14,1,1,10,1,8,1,8
+52	4,1,1,2,1,11,1,4,1,9,1,8,1,4,1,8
+53	4,1,1,2,1,8,1,6,1,8,1,6,1,1,1,3,1,1,1,4,1,4,1,4,1,4,1,13,1,3,1,4,1,1,14,1,1,7
+54	4,1,1,2,1,8,1,6,1,8,1,3,1,6,1,6,1,4,1,1,1,1,1,3,1,3,1,3,1,1,1,10,1,6,1,15
+55	4,1,1,2,1,8,1,6,1,6,1,6,1,13,1,2,1,20,1,1,1,1,1,7,1,1,5
+56	4,1,1,2,1,16,1,14,1,7,1,1,1,3,1,3,1,5,1,2,1,7,1,1,4,1,1,16,1,1,9,1,1,5,1,6,1,7,1,1,6,1,1,4,1,2,1,4,1,1,1,7,1,1,1,5,1,1,7,1,5
+57	4,1,1,2,1,17,1,5,1,3,1,5,1,3,1,5,1,2,1,1,13,1,8,1,4,1,9,1,9,1,13,1,1,1,1
+58	4,1,1,2,1,17,1,15,1,6,1,15,1,6,1,4,1,8,1,6
+59	4,1,1,2,1,17,1,4,1,10,1,4,1,3,1,5
+60	4,1,1,2,1,17,1,4,1,6,1,3,1,2,1,4,1,6,1,7,1,7,1,2,1,3,1,3,1,11
+61	4,1,1,2,1,24,1,1,13,1,1,1,9
+62	4,1,1,2,1,18,1,5,1,12,1,5,1,3,1,6,1,3
+63	4,1,1,1,6,1,14,1,3,1,6,1,4,1,14,1,4,1,4,1,1,1,17,1,4,1,8,1,3,1,3
+64	4,1,1,1,9,1,13,1,5,1,15,1,9,1,4,1,3,1,5,1,2,1,10,1,6
+65	4,1,1,1,1,1,22,1,10,1,1,1,12
+66	4,1,1,1,8,1,3,1,3,1,3,1,1,1,12,1,8,1,9,1,8,1,4,1,5,1,7,1,1,1,8,1,4
+67	4,1,1,1,8,1,3,1,3,1,3,1,1,1,7,1,1,1,10,1,1,10,1,1,1,6,1,8,1,6
+68	4,1,1,1,8,1,3,1,3,1,3,1,1,1,7,1,2,1,17,1,4,1,8
+69	4,1,1,1,8,1,3,1,3,1,3,1,1,1,11,1,6,1,23,1,4
+70	4,1,1,1,8,1,3,1,3,1,3,1,1,1,6,1,1,1,2,1,1,1,2,1,1,1,2,1,8,1,4,1,6,1,1,1,1,1,3,1,12,1,1,1,10
+71	4,1,1,1,6,1,8,1,1,1,4,1,4,1,9,1,6
+72	4,1,1,1,16,1,9,1,1,1,1,8,1,6,1,1,1,4
+73	4,1,1,1,18,1,7,1,30,1,2,1,2,1,2,1,2
+74	4,1,1,1,16,1,5,1,9,1,1,1,8,1,6,1,9,1,1,1,8,1,1,7,1,5,1,1,1,12,1,1,1,5
+75	4,1,1,1,16,1,9,1,6,1,5,1,7,1,1,1,9,1,5,1,2,1,5,1,5
+76	4,1,1,1,16,1,6,1,6,1,4,1,6,1,5
+77	1,1,1,1,9,1,4,1,8,1,4,1,1,6,1,1,7
+78	6,1,1,1
+79	6,1,17,1,1,4,1,3,1,1,12,1,1,14,1,1
+80	1,7,1,1,9,1,6,1,4,1,8,1
+81	1,1,1,1,11,1,5,1,3,1,7,1
+82	6,1,10,1,1,1,1,1,1,1,2,1,1
+83	1,1,1,1,9,1,4,1,8,1,4,1,1,6,1,1,7
+84	4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1
+85	4,1,12,1,1,1,5,1
+86	5,1,4,1,1,3,1,1,1,1,5,1,3,1,1
+87	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+88	1,1,1,1,10
+89	1,7,1,1,9,1,5,1,10,1
+90	1,3,1,5,1,1,1,6,1,2,1,3,1,11,1,1,1
+91	5,1,1,10,1,1
+92	1,1,1,1,3,1,1,13,1,1,3,1,1,3,1,1,9,1,1,1,1,1,1
+93	7,1
+94	6,1,1,10,1,6,1,1,12,1,1,4,1,1,1,5,1,5,1,1
+95	7,1,11,1,1,1,1,5,1,2,1,5,1,3,1,1,1,1,1,4,1,1,1,1,1,1,1,1
+96	3,1,1,8,1,7,1,1,5,1,3,1,1,11,1,4,1,1,10,1,1,5,1,1,1
+97	1,1,4,1,1
+98	1,11,1,1,1,1,1
+99	5,1,22,1,5,1,1,1,6,1,6,1,1,10,1,1
+100	1,1,1,2,1,8,1,1,14,1,1,5,1,4,1,4,1,1,1,2,1,4,1,1,3,1,1,1,7,1,1,2
+101	5,1,3
+102	7,1,1,1,7,1
+103	1,20,1,1
+104	9,1,4,1,2,1,1,1,6,1,6,1,1,1,1,1,1
+105	5,1,4,1,10,1,1,1,19,1,7,1,1,10,1
+106	5,1,4,1,4,1,1,1,1,1,1,1,1
+107	3,1,1,5,1,4,1,1,4,1,1,1,13,1,1,1,1,1
+108	9,1,7,1,1,5,1,1
+109	17,1,3,1,4,1,1
+110	4,1,6,1,1,1,3,1,1,15,1,3,1,1,3,1,1,5,1,1,20,1,1,1,1
+111	1,1,1,8,1,7,1,6,1,3,1,10,1,3,1,7,1,2,1,3,1,6,1,1,2
+112	1,7,1,1,7,1,6,1,19,1
+113	10,1,1,5,1,1,9,1,3,1,1,4,1,4,1,1,1,1,4,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,2,1,1
+114	9,1,21,1,1,2,1,1,3,1,1,1,6,1,9,1,4,1,5
+
+
+query
+SELECT id, split_text_icu(s, 'en', break := 'graphic') AS tokens FROM tc_lines ORDER BY id;
+----
+id	tokens
+1	{Anarchists,employ,diverse,approaches,",",which,may,be,generally,divided,into,revolutionary,and,evolutionary,strategies,;,there,is,significant,overlap,between,the,two,.,Evolutionary,methods,try,to,simulate}
+2	{As,directed,by,a,Congressional,resolution,of,May,26,",",1783,",",all,non,-,commissioned,officers,and,enlisted,were,furloughed,"\\"",to,their,homes,"\\"",until,the,"\\"",definitive,treaty,of,peace,"\\"",",",when,they,would,be,automa}
+3	{1939,–,Alan,Ayckbourn,",",English,director,and,playwright}
+4	{Crowley,has,remained,an,influential,figure,",",both,amongst,occultists,and,in,popular,culture,",",particularly,that,of,Britain,",",but,also,of,other,parts,of,the,world,.,In,2002,",",a,BBC,poll,placed,Crowley,seven}
+5	{Julian,",",John,(,ed,.,),(,1892,),.,A,Dictionary,of,Hymnology,",",Charles,Scribner's,Sons,",",New,York,.}
+6	{Sacrificio,di,Ifigenia,",",by,Pietro,Testa,",",1640}
+7	{1963,–,March,on,Washington,for,Jobs,and,Freedom,:,Rev,.,Dr,.,Martin,Luther,King,Jr,.,gives,his,I,Have,a,Dream,speech,.}
+8	{During,projects,Mercury,and,Gemini,",",each,mission,had,a,prime,and,a,backup,crew,.,Apollo,9,commander,James,McDivitt,believed,meetings,that,required,a,member,of,the,flight,crew,were,being,missed,",",so,for}
+9	{As,early,Native,Americans,lacked,pottery,that,could,be,used,directly,over,a,fire,",",they,developed,a,technique,many,anthropologists,call,"\\"",stone,boiling,"\\"",.,They,heated,rocks,in,a,fire,",",then,added,the,rock}
+10	{In,the,league's,first,years,",",players,such,as,Oilers,',George,Blanda,",",Chargers,/,Bills,',Jack,Kemp,",",Texans,',Len,Dawson,",",the,NY,Titans,',Don,Maynard,",",Raiders,/,Patriots,/,Jets,',Babe,Parilli,",",Pats,',Bob,Dee,proved}
+11	{Agarose,gel,electrophoresis,is,the,routine,method,for,resolving,DNA,in,the,laboratory,.,Agarose,gels,have,lower,resolving,power,for,DNA,than,acrylamide,gels,",",but,they,have,greater,range,of,separation,","}
+12	{aim:goim,?,screenname,=,notarealuser,&,message,=,This,+,is,+,my,+,message}
+13	{A,number,of,musicians,from,a,variety,of,genres,have,joined,Guthrie,onstage,",",including,Pete,Seeger,",",David,Bromberg,",",Cyril,Neville,",",Emmylou,Harris,",",Willie,Nelson,",",Judy,Collins,",",John,Prine,",",Wesley,Gray,","}
+14	{The,Brazilian,Navy,which,is,the,oldest,of,the,Brazilian,Armed,Forces,",",includes,the,Brazilian,Marine,Corps,and,the,Brazilian,Naval,Aviation,.}
+15	{Dr,.,Strabismus,(,whom,God,preserve,),of,Utrecht,:,eccentric,scientist,and,inventor,.}
+16	{Therefore,",",to,get,a,grid,started,",",there,must,be,at,least,a,small,number,of,power,stations,that,can,start,entirely,on,their,own,.,A,black,start,is,the,process,of,restoring,a,power,station,to,operation,w}
+17	{Barcelona,is,an,internationally,renowned,tourist,destination,",",with,numerous,recreational,areas,",",one,of,the,best,beaches,in,the,world,",",mild,and,warm,climate,",",historical,monuments,",",including,eight,UNESC}
+18	{In,1982,",",Billy,Crystal,hosted,his,own,variety,show,",",The,Billy,Crystal,Comedy,Hour,on,NBC,.,When,Crystal,arrived,to,shoot,the,fifth,episode,",",he,learned,it,had,been,canceled,after,only,the,first,two,aire}
+19	{1971,Gold,Medal,Award,",",American,Psychological,Foundation}
+20	{Orlandis,",",Jose,",",A,Short,History,of,the,Catholic,Church,.,Scepter,Publishers,(,1993,)}
+21	{The,Cameroon,Armed,Forces,(,French,:,Forces,armées,camerounaises,",",FAC,),consists,of,the,country's,army,(,Armée,de,Terre,),",",the,country's,navy,(,Marine,Nationale,de,la,République,(,MNR,),",",includes,naval,infant}
+22	{Sometimes,because,of,guilt,or,other,reasons,cross,-,dressers,dispose,of,all,their,clothing,",",a,practice,called,"\\"",purging,"\\"",",",only,to,start,collecting,the,other,gender's,clothing,again,.}
+23	{Professor,Simpson,L,.,Brown,—,in,addition,to,his,teaching,and,research,work,in,the,Physics,Department,—,served,simultaneously,as,general,manager,",",technical,director,",",and,producer,.,Programs,were,aired}
+24	{1991,",",Yakir,Yerushalaim,(,Distinguished,Citizen,of,Jerusalem,)}
+25	{Midrash,Temurah,(,),",",one,of,the,smaller,midrashim,",",consisting,of,three,chapters,.}
+26	{Freedom,of,Expression,Award,–,Fear,and,Learning,at,Hoover,Elementary}
+27	{Introduction,to,Formal,Philosophy,[,edited,with,Sven,Ove,Hansson,and,Esther,Michelsen,Kjeldahl,],(,Dordrecht,:,Springer,",",2018,)}
+28	{MPMU,:,Musyawarah,Perwakilan,Mahasiswa,Universitas}
+29	{In,1670,",",Frederick,III,died,and,was,succeeded,by,her,eldest,son,Christian,V,.,Her,son,the,king,did,what,he,could,to,curb,her,influence,in,state,affairs,",",which,was,evidently,not,easy,:,in,1671,",",he,wrote}
+30	{In,1959,",",Newland,became,the,host,and,director,of,the,paranormal,television,series,One,Step,Beyond,.,The,series,ended,its,run,in,1961,and,Newland,later,hosted,its,short,-,lived,counterpart,The,Next,Step,B}
+31	{',Studio,portrait,",",Chelsea,',",",a,1911,self,-,portrait,(,1915,),kept,at,Art,Gallery,NSW,.}
+32	{31,January,1971,:,Leeds,United,now,have,a,five,-,point,lead,over,Arsenal,",",who,have,a,game,in,hand,",",at,the,top,of,the,First,Division,.,The,challenge,from,Tottenham,Hotspur,",",Chelsea,and,Wolverhampton,Wande}
+33	{Example,:,In,area,19,the,prefix,4001,was,located,to,Metropolitan,Region,of,Campinas,",",therefore,:}
+34	{It's,a,Love,Cult,is,the,tenth,full,-,length,studio,album,by,the,Norwegian,band,Motorpsycho,.,The,album,was,preceded,by,the,EP,release,of,"\\"",Serpentine,"\\"",",",for,which,also,a,video,was,made,.}
+35	{The,Market,Theatre,was,designed,by,Page,+,Steele,Architects,and,constructed,by,Aecon,Buildings,of,Aecon,Group,Inc,.,Named,the,Rose,Theatre,Brampton,",",it,opened,in,September,2006,.,The,theatre,included,an}
+36	{With,the,1994,book,Reinventing,Politics,",",the,Romanian,author,looked,into,the,European,revolutions,of,the,previous,decade,",",exploring,the,shades,of,repression,",",the,differences,in,political,culture,",",and}
+37	{Another,common,practice,is,special,second,letter,pair,for,taxi,service,cars,",",regional,independent,.,Like,PG,TX123,or,KO,TX456,.}
+38	{A,number,of,classes,inherited,by,the,LNER,were,not,formally,allocated,a,place,in,the,new,system,.,Most,of,these,were,one,-,off,or,departmental,engines,",",or,types,slated,for,early,withdrawal,",",although,some}
+39	{http,%,3A,%,252d01,.,adriver.ru,/,user_id,=,&,auto_in_my_ob.html_params}
+40	{http,%,3A,/,/,masterh5,.,adriver.ru,/,ishi_trailer,/,#,tab,-,70,-,kv,-,m,-,advert279025801517696,%,26sob,%,3D43,%,26bn,%,3D90}
+41	{http,%,3A,/,/,masterh5,.,adriver.ru,/,searchingXeIyw,&,where,=,all,&,film,/,48460,&,page,=,2,&,driver}
+42	{http,:,%,2F,%,23image,=,0,&,checked_auto_id,=,0,&,input_age2,/,2f2e1ff95c,-,41,.,html_param,=,0,&,userId,=,6TThrSuUXI,&,where,=,all,&,filmId,=,FVCfVXfJ0Cw,&,where,=,all,&,filmId,=,vL7s0Cw,&,where,=,all,&,filmId,=,R_M10,.,html,%,3Fhtml,?,1,=,1,&,cid,=,678}
+43	{http,:,%,2F,%,23image,=,0,&,engineVolumeFrom,=,&,power_name,=,Короткие}
+44	{http,:,%,2F,%,23image,=,1,&,expand_search,&,input_state,/,rent_aliance,/,search,?,where,=,all,&,filmId,=,P8pClxIMs3M,&,where,=,all,&,filmId}
+45	{http,:,%,2F,%,23image,=,1,&,with_photo,=,750,&,op_product_id,=,8460,&,lo,=,http,:,/,/,domkadrov.ru,/,bs.php,?,id,=,43149732854}
+46	{http,:,%,2F,%,23image,=,1,&,with_photo,=,750,&,op_product_id,=,8460,&,lo,=,http,:,/,/,pogoda.yandex.ru,/,cars,/,partner,=,17711945,-,4,-,obschentialAmount}
+47	{http,:,%,2F,%,23image,=,1,&,with_photo,=,750,&,op_product_id,=,8460,&,lo,=,http,:,/,/,wildberries.ru,/,search,&,input_action.ru,/,page2,/,#,overlay,-,phoney}
+48	{http,:,%,2F,%,23image,=,1,&,with_video.yandex.ru,%,2Fkatering,(,Record.ru,/,iframe,-,owa.html_param,=,0,&,user,=,user_id,=,3205,&,bt}
+49	{http,:,%,2F,%,23image,=,1,&,with_video.yandex.ru,%,2Fkatering,(,Record.ru,/,real,-,estate,/,out,-,of,-,town,/,houses,/,post_from,=,&,powerFrom,=,&,engineVolumeTo,=,&,raceFrom,=,&,raceTo,=,&,powerFrom,=,&,engineVolumeTo,=,&,fuelRateFrom,=,adwolf.ru}
+50	{http,:,%,2F,%,23image,=,1,&,with_video.yandex.ru,%,2Fkatering,(,Record.ru,/,search,?,text,=,как,хочу,телевизор,&,where,=,all,&,filmId,=,qB5i0A,%,26url,%,3D,/,/,ad.adriver.ru,/,catalog}
+51	{http,:,%,2F,%,2Fsport,-,pliazhnaya_istory.radiana1165_42427,&,pt,=,b,&,pd,=,6,&,pv,=,22,&,engineVolumeTo,=,&,power_name,=,Купально,смотреть}
+52	{http,:,%,2F,%,2Fvk.com.ua,/,sumi,/,veröffner,/,bmw.html,?,city,=,13333482}
+53	{http,:,%,2F,%,2Fvk.com,/,iframe,-,owa.html,#,404100,/,0,/,pol,-,1,/,bage,-,99fa,-,d61f,-,fea0,-,0140375330271,.,htm,?,from,=,&,engineVolumeTo,=,&,powerTo}
+54	{http,:,%,2F,%,2Fvk.com,/,iframe,-,owa.html,?,key,=,c92011,%,2F25.0,.,html,?,1,=,1,&,cid,=,577,&,oki,=,1,&,op_product,&,op_uid,=,135028159401090}
+55	{http,:,%,2F,%,2Fvk.com,/,iframe,/,iframe,/,iframe,/,Massadult.php,?,id,=,27888898173259045796,/,1,/,4,/,9186155,/,#,image}
+56	{http,:,%,2F,%,2Fwww.bonprix.ru,/,businessbar.ru,/,pramuse,/,1,.,php,?,tag,=,slide,-,id,=,3193522,],[,from,=,&,engineVolumeFrom,=,&,powerFrom,=,&,power,спринц,перевод,/,#,lingvo,/,?,page,=,33,&,city,=,0,&,po_yers,=,0,&,page3,/,#,overlay,-,photo}
+57	{http,:,%,2F,%,2Fwwww.bonprix.ru,%,26sid,%,3D0,%,26nid,%,3D0,%,26url,%,3D,/,/,ad.adriver.ru,/,index.ru,&,pvid,=,147518518,-,zhiens.ru,/,GameMain.aspx,?,d,=,7}
+58	{http,:,%,2F,%,2Fwwww.bonprix.ru,%,2Fproduct_price,/,artira,-,Nizhniynovgorod,/,search,?,text,=,смотреть,фильмы}
+59	{http,:,%,2F,%,2Fwwww.bonprix.ru,/,cars,/,page_len80,/,page,%,3D0,%,26nid}
+60	{http,:,%,2F,%,2Fwwww.bonprix.ru,/,real,-,estate,/,out,-,of,-,town,/,hotels,/,horesto,%,2F22.14,&,he,=,768,&,spn,=,0.016942554}
+61	{http,:,%,2F,%,2Fwwww.bonprix_ru_1_ru_1,"}",%,2Fcategory_id,=,0,&,last_auto}
+62	{http,:,%,2F,%,2Fwwwww.bonprix.ru,%,26sid,%,3DBlP_wWZXCI,&,where,=,all,&,filmId,=,pdq}
+63	{http,:,/,/,1.2022,.,radiorecord.ru,/,car,-,yar.ru,/,page,/,"150295,9592769",.,html,?,page,=,0,&,deletedAutoSearch,?,text,=,чемпионы,#,tab,=,com}
+64	{http,:,/,/,55love.ru,/,GameMain.aspx,#,comme,%,2F27.0.1364.172,YaBrowser,%,26pz,%,3D0,%,26ref,%,3D,%,26CompPath,%,3Dhttp}
+65	{http,:,/,/,8,-,41ee4a46c6537331480718,&,input_who1,=,2,&,input_online}
+66	{http,:,/,/,acat.php,?,cid,=,577,&,oki,=,1,&,op_page.aspx,#,location,/,drofor.ru,/,index.ru,/,news,/,38708,&,po_yers,=,0,&,price_ot,=,1490}
+67	{http,:,/,/,acat.php,?,cid,=,577,&,oki,=,1,&,op_page,=,1,&,fuelRateTo,=,&,power_name,=,1,&,ground,-,zakaz.ru,/,images}
+68	{http,:,/,/,acat.php,?,cid,=,577,&,oki,=,1,&,op_page,=,46,&,cmguide.travel.ru,/,real,-,estation}
+69	{http,:,/,/,acat.php,?,cid,=,577,&,oki,=,1,&,op_produkty,/,places,/,"10495,9592345bhfbhbif75",/,8eef}
+70	{http,:,/,/,acat.php,?,cid,=,577,&,oki,=,1,&,op_uid,=,1,&,bc,=,3,&,ct,=,1,&,pr,=,683661_2,.,html,%,3Fhtml,?,1,=,1,&,cid,=,514569494151,/,3,/,women.aspx}
+71	{http,:,/,/,ae5000,&,mm_count,=,2,&,sort,=,sale,/,secondary,/,detail}
+72	{http,:,/,/,afisha.mail.aspx,#,locations,[,0,],[,15339394,&,s_yers,=,0,&,with}
+73	{http,:,/,/,afisha.yandex.html,?,item_no,=,110000121662056612030882878183,/,10,/,07,/,16,/,19}
+74	{http,:,/,/,afisha.yandex.ru,%,26bid,%,3D1216629,/,0,/,index.ru,/,realty,/,lear_from,],=,&,price_ot,=,&,priceup,&,_suid,=,1,&,bodystyle_id,=,0,&,state}
+75	{http,:,/,/,afisha.yandex.ru,%,2Fproduct,&,op_uid,=,18497,&,po_yers,=,0,&,page.aspx,?,Topic,-,91,?,query,=,догов}
+76	{http,:,/,/,afisha.yandex.ru,/,albums,/,search,?,text,=,зловер,&,where}
+77	{/,/,/,Copyright,2026,SereneDB,GmbH,",",Berlin,",",Germany}
+78	{return,g,;}
+79	{return,SegmentReaderImpl,:,:,Open,(,dir,",",flushed.meta,",",reader_options,),;}
+80	{#,include,"\\"",iresearch,/,search,/,docs,/,plan.hpp,"\\""}
+81	{/,/,/,limitations,under,the,License,.}
+82	{return,FastpackAt,<,N,",",9,>,(,in,),;}
+83	{/,/,/,Copyright,2025,SereneDB,GmbH,",",Berlin,",",Germany}
+84	{0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x0a,",",0x0a,",",0x0a,",",0x0a,","}
+85	{bool,_leaf_scalar,=,false,;}
+86	{const,auto,&,doc,=,*,DocOf,(,own,),;}
+87	{/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/}
+88	{/,/,/,DISCLAIMER}
+89	{#,include,"\\"",iresearch,/,utils,/,shared.hpp,"\\""}
+90	{"\\"",For,large,T,better,to,use,NodeHashSet,.,"\\""}
+91	{_conn,"{",*,context.db,"}",","}
+92	{[,&,],(,irs,:,:,FieldInverter,&,fld,",",irs,:,:,TokenSink,&,w,),"{"}
+93	{context,","}
+94	{duckdb,:,:,unique_ptr,<,duckdb,:,:,FunctionData,>,Copy,(,),const,final,"{"}
+95	{ERR_MSG,(,kLayoutFile,",","\\"",names,no,terms,for,',"\\"",",",name,",","\\"",',"\\"",),),;}
+96	{std,:,:,optional,<,Ruleset,>,Parse,(,std,:,:,string_view,text,",",ParseError,&,error,),"{"}
+97	{"}",else,"{"}
+98	{.,typbasetype,=,0,","}
+99	{class,SereneDBCopyFileSystem,final,:,public,duckdb,:,:,FileSystem,"{"}
+100	{/,/,PG,conntype,(,parse_hba_line,",",hba.c,:,1362,-,1418,),.,An,enum,",",not,a,bitmask,:,PG}
+101	{UNION,ALL}
+102	{_values,=,nullptr,;}
+103	{"\\"",qay2hgfwvpq7e5ixtgby,"\\"",","}
+104	{constexpr,auto,kN,=,sizeof,(,kAlnum,),-,1,;}
+105	{const,auto,ring_union,=,coverer.GetCovering,(,polygon,),.,Difference,(}
+106	{const,auto,next,=,[,&,],"{"}
+107	{for,(,const,auto,*,spec,:,SelectedSpecs,(,),),"{"}
+108	{ASSERT_NE,(,nullptr,",",field,),;}
+109	{MemoryIndexOutput,out,"{",file,"}",;}
+110	{auto,reader,=,irs,:,:,DirectoryReader,(,dir,",",irs,:,:,tests,:,:,DefaultReaderOptions,(,),),;}
+111	{/,/,Segments,already,marked,for,compaction,are,skipped,by,the,policy,",",so}
+112	{#,include,"\\"",formats,/,column,/,test_cs_helpers.hpp,"\\""}
+113	{CheckQuery,(,*,tests,:,:,Optimized,(,std,:,:,move,(,root,),),",",Docs,"{",1,",",5,",",11,",",21,",",27,",",31,"}",","}
+114	{ASSERT_GT,(,finish_docs_with_term,",",0u,),;,/,/,scorer,collected,term,stats}
+
+
+query
+SELECT id, split_text_icu(s, 'en_US_POSIX') AS words FROM tc_lines ORDER BY id;
+----
+id	words
+1	{Anarchists,employ,diverse,approaches,which,may,be,generally,divided,into,revolutionary,and,evolutionary,strategies,there,is,significant,overlap,between,the,two,Evolutionary,methods,try,to,simulate}
+2	{As,directed,by,a,Congressional,resolution,of,May,26,1783,all,non,commissioned,officers,and,enlisted,were,furloughed,to,their,homes,until,the,definitive,treaty,of,peace,when,they,would,be,automa}
+3	{1939,Alan,Ayckbourn,English,director,and,playwright}
+4	{Crowley,has,remained,an,influential,figure,both,amongst,occultists,and,in,popular,culture,particularly,that,of,Britain,but,also,of,other,parts,of,the,world,In,2002,a,BBC,poll,placed,Crowley,seven}
+5	{Julian,John,ed,1892,A,Dictionary,of,Hymnology,Charles,Scribner's,Sons,New,York}
+6	{Sacrificio,di,Ifigenia,by,Pietro,Testa,1640}
+7	{1963,March,on,Washington,for,Jobs,and,Freedom,Rev,Dr,Martin,Luther,King,Jr,gives,his,I,Have,a,Dream,speech}
+8	{During,projects,Mercury,and,Gemini,each,mission,had,a,prime,and,a,backup,crew,Apollo,9,commander,James,McDivitt,believed,meetings,that,required,a,member,of,the,flight,crew,were,being,missed,so,for}
+9	{As,early,Native,Americans,lacked,pottery,that,could,be,used,directly,over,a,fire,they,developed,a,technique,many,anthropologists,call,stone,boiling,They,heated,rocks,in,a,fire,then,added,the,rock}
+10	{In,the,league's,first,years,players,such,as,Oilers,George,Blanda,Chargers,Bills,Jack,Kemp,Texans,Len,Dawson,the,NY,Titans,Don,Maynard,Raiders,Patriots,Jets,Babe,Parilli,Pats,Bob,Dee,proved}
+11	{Agarose,gel,electrophoresis,is,the,routine,method,for,resolving,DNA,in,the,laboratory,Agarose,gels,have,lower,resolving,power,for,DNA,than,acrylamide,gels,but,they,have,greater,range,of,separation}
+12	{aim,goim,screenname,notarealuser,message,This,is,my,message}
+13	{A,number,of,musicians,from,a,variety,of,genres,have,joined,Guthrie,onstage,including,Pete,Seeger,David,Bromberg,Cyril,Neville,Emmylou,Harris,Willie,Nelson,Judy,Collins,John,Prine,Wesley,Gray}
+14	{The,Brazilian,Navy,which,is,the,oldest,of,the,Brazilian,Armed,Forces,includes,the,Brazilian,Marine,Corps,and,the,Brazilian,Naval,Aviation}
+15	{Dr,Strabismus,whom,God,preserve,of,Utrecht,eccentric,scientist,and,inventor}
+16	{Therefore,to,get,a,grid,started,there,must,be,at,least,a,small,number,of,power,stations,that,can,start,entirely,on,their,own,A,black,start,is,the,process,of,restoring,a,power,station,to,operation,w}
+17	{Barcelona,is,an,internationally,renowned,tourist,destination,with,numerous,recreational,areas,one,of,the,best,beaches,in,the,world,mild,and,warm,climate,historical,monuments,including,eight,UNESC}
+18	{In,1982,Billy,Crystal,hosted,his,own,variety,show,The,Billy,Crystal,Comedy,Hour,on,NBC,When,Crystal,arrived,to,shoot,the,fifth,episode,he,learned,it,had,been,canceled,after,only,the,first,two,aire}
+19	{1971,Gold,Medal,Award,American,Psychological,Foundation}
+20	{Orlandis,Jose,A,Short,History,of,the,Catholic,Church,Scepter,Publishers,1993}
+21	{The,Cameroon,Armed,Forces,French,Forces,armées,camerounaises,FAC,consists,of,the,country's,army,Armée,de,Terre,the,country's,navy,Marine,Nationale,de,la,République,MNR,includes,naval,infant}
+22	{Sometimes,because,of,guilt,or,other,reasons,cross,dressers,dispose,of,all,their,clothing,a,practice,called,purging,only,to,start,collecting,the,other,gender's,clothing,again}
+23	{Professor,Simpson,L,Brown,in,addition,to,his,teaching,and,research,work,in,the,Physics,Department,served,simultaneously,as,general,manager,technical,director,and,producer,Programs,were,aired}
+24	{1991,Yakir,Yerushalaim,Distinguished,Citizen,of,Jerusalem}
+25	{Midrash,Temurah,one,of,the,smaller,midrashim,consisting,of,three,chapters}
+26	{Freedom,of,Expression,Award,Fear,and,Learning,at,Hoover,Elementary}
+27	{Introduction,to,Formal,Philosophy,edited,with,Sven,Ove,Hansson,and,Esther,Michelsen,Kjeldahl,Dordrecht,Springer,2018}
+28	{MPMU,Musyawarah,Perwakilan,Mahasiswa,Universitas}
+29	{In,1670,Frederick,III,died,and,was,succeeded,by,her,eldest,son,Christian,V,Her,son,the,king,did,what,he,could,to,curb,her,influence,in,state,affairs,which,was,evidently,not,easy,in,1671,he,wrote}
+30	{In,1959,Newland,became,the,host,and,director,of,the,paranormal,television,series,One,Step,Beyond,The,series,ended,its,run,in,1961,and,Newland,later,hosted,its,short,lived,counterpart,The,Next,Step,B}
+31	{Studio,portrait,Chelsea,a,1911,self,portrait,1915,kept,at,Art,Gallery,NSW}
+32	{31,January,1971,Leeds,United,now,have,a,five,point,lead,over,Arsenal,who,have,a,game,in,hand,at,the,top,of,the,First,Division,The,challenge,from,Tottenham,Hotspur,Chelsea,and,Wolverhampton,Wande}
+33	{Example,In,area,19,the,prefix,4001,was,located,to,Metropolitan,Region,of,Campinas,therefore}
+34	{It's,a,Love,Cult,is,the,tenth,full,length,studio,album,by,the,Norwegian,band,Motorpsycho,The,album,was,preceded,by,the,EP,release,of,Serpentine,for,which,also,a,video,was,made}
+35	{The,Market,Theatre,was,designed,by,Page,Steele,Architects,and,constructed,by,Aecon,Buildings,of,Aecon,Group,Inc,Named,the,Rose,Theatre,Brampton,it,opened,in,September,2006,The,theatre,included,an}
+36	{With,the,1994,book,Reinventing,Politics,the,Romanian,author,looked,into,the,European,revolutions,of,the,previous,decade,exploring,the,shades,of,repression,the,differences,in,political,culture,and}
+37	{Another,common,practice,is,special,second,letter,pair,for,taxi,service,cars,regional,independent,Like,PG,TX123,or,KO,TX456}
+38	{A,number,of,classes,inherited,by,the,LNER,were,not,formally,allocated,a,place,in,the,new,system,Most,of,these,were,one,off,or,departmental,engines,or,types,slated,for,early,withdrawal,although,some}
+39	{http,3A,252d01,adriver,ru,user_id,auto_in_my_ob,html_params}
+40	{http,3A,masterh5,adriver,ru,ishi_trailer,tab,70,kv,m,advert279025801517696,26sob,3D43,26bn,3D90}
+41	{http,3A,masterh5,adriver,ru,searchingXeIyw,where,all,film,48460,page,2,driver}
+42	{http,2F,23image,0,checked_auto_id,0,input_age2,2f2e1ff95c,41,html_param,0,userId,6TThrSuUXI,where,all,filmId,FVCfVXfJ0Cw,where,all,filmId,vL7s0Cw,where,all,filmId,R_M10,html,3Fhtml,1,1,cid,678}
+43	{http,2F,23image,0,engineVolumeFrom,power_name,Короткие}
+44	{http,2F,23image,1,expand_search,input_state,rent_aliance,search,where,all,filmId,P8pClxIMs3M,where,all,filmId}
+45	{http,2F,23image,1,with_photo,750,op_product_id,8460,lo,http,domkadrov,ru,bs,php,id,43149732854}
+46	{http,2F,23image,1,with_photo,750,op_product_id,8460,lo,http,pogoda,yandex,ru,cars,partner,17711945,4,obschentialAmount}
+47	{http,2F,23image,1,with_photo,750,op_product_id,8460,lo,http,wildberries,ru,search,input_action,ru,page2,overlay,phoney}
+48	{http,2F,23image,1,with_video,yandex,ru,2Fkatering,Record,ru,iframe,owa,html_param,0,user,user_id,3205,bt}
+49	{http,2F,23image,1,with_video,yandex,ru,2Fkatering,Record,ru,real,estate,out,of,town,houses,post_from,powerFrom,engineVolumeTo,raceFrom,raceTo,powerFrom,engineVolumeTo,fuelRateFrom,adwolf,ru}
+50	{http,2F,23image,1,with_video,yandex,ru,2Fkatering,Record,ru,search,text,как,хочу,телевизор,where,all,filmId,qB5i0A,26url,3D,ad,adriver,ru,catalog}
+51	{http,2F,2Fsport,pliazhnaya_istory,radiana1165_42427,pt,b,pd,6,pv,22,engineVolumeTo,power_name,Купально,смотреть}
+52	{http,2F,2Fvk,com,ua,sumi,veröffner,bmw,html,city,13333482}
+53	{http,2F,2Fvk,com,iframe,owa,html,404100,0,pol,1,bage,99fa,d61f,fea0,0140375330271,htm,from,engineVolumeTo,powerTo}
+54	{http,2F,2Fvk,com,iframe,owa,html,key,c92011,2F25.0,html,1,1,cid,577,oki,1,op_product,op_uid,135028159401090}
+55	{http,2F,2Fvk,com,iframe,iframe,iframe,Massadult,php,id,27888898173259045796,1,4,9186155,image}
+56	{http,2F,2Fwww,bonprix,ru,businessbar,ru,pramuse,1,php,tag,slide,id,3193522,from,engineVolumeFrom,powerFrom,power,спринц,перевод,lingvo,page,33,city,0,po_yers,0,page3,overlay,photo}
+57	{http,2F,2Fwwww,bonprix,ru,26sid,3D0,26nid,3D0,26url,3D,ad,adriver,ru,index,ru,pvid,147518518,zhiens,ru,GameMain,aspx,d,7}
+58	{http,2F,2Fwwww,bonprix,ru,2Fproduct_price,artira,Nizhniynovgorod,search,text,смотреть,фильмы}
+59	{http,2F,2Fwwww,bonprix,ru,cars,page_len80,page,3D0,26nid}
+60	{http,2F,2Fwwww,bonprix,ru,real,estate,out,of,town,hotels,horesto,2F22.14,he,768,spn,0.016942554}
+61	{http,2F,2Fwwww,bonprix_ru_1_ru_1,2Fcategory_id,0,last_auto}
+62	{http,2F,2Fwwwww,bonprix,ru,26sid,3DBlP_wWZXCI,where,all,filmId,pdq}
+63	{http,1.2022,radiorecord,ru,car,yar,ru,page,"150295,9592769",html,page,0,deletedAutoSearch,text,чемпионы,tab,com}
+64	{http,55love,ru,GameMain,aspx,comme,2F27.0.1364.172,YaBrowser,26pz,3D0,26ref,3D,26CompPath,3Dhttp}
+65	{http,8,41ee4a46c6537331480718,input_who1,2,input_online}
+66	{http,acat,php,cid,577,oki,1,op_page,aspx,location,drofor,ru,index,ru,news,38708,po_yers,0,price_ot,1490}
+67	{http,acat,php,cid,577,oki,1,op_page,1,fuelRateTo,power_name,1,ground,zakaz,ru,images}
+68	{http,acat,php,cid,577,oki,1,op_page,46,cmguide,travel,ru,real,estation}
+69	{http,acat,php,cid,577,oki,1,op_produkty,places,"10495,9592345bhfbhbif75",8eef}
+70	{http,acat,php,cid,577,oki,1,op_uid,1,bc,3,ct,1,pr,683661_2,html,3Fhtml,1,1,cid,514569494151,3,women,aspx}
+71	{http,ae5000,mm_count,2,sort,sale,secondary,detail}
+72	{http,afisha,mail,aspx,locations,0,15339394,s_yers,0,with}
+73	{http,afisha,yandex,html,item_no,110000121662056612030882878183,10,07,16,19}
+74	{http,afisha,yandex,ru,26bid,3D1216629,0,index,ru,realty,lear_from,price_ot,priceup,_suid,1,bodystyle_id,0,state}
+75	{http,afisha,yandex,ru,2Fproduct,op_uid,18497,po_yers,0,page,aspx,Topic,91,query,догов}
+76	{http,afisha,yandex,ru,albums,search,text,зловер,where}
+77	{Copyright,2026,SereneDB,GmbH,Berlin,Germany}
+78	{return,g}
+79	{return,SegmentReaderImpl,Open,dir,flushed,meta,reader_options}
+80	{include,iresearch,search,docs,plan,hpp}
+81	{limitations,under,the,License}
+82	{return,FastpackAt,N,9,in}
+83	{Copyright,2025,SereneDB,GmbH,Berlin,Germany}
+84	{0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0a,0x0a,0x0a,0x0a}
+85	{bool,_leaf_scalar,false}
+86	{const,auto,doc,DocOf,own}
+87	{}
+88	{DISCLAIMER}
+89	{include,iresearch,utils,shared,hpp}
+90	{For,large,T,better,to,use,NodeHashSet}
+91	{_conn,context,db}
+92	{irs,FieldInverter,fld,irs,TokenSink,w}
+93	{context}
+94	{duckdb,unique_ptr,duckdb,FunctionData,Copy,const,final}
+95	{ERR_MSG,kLayoutFile,names,no,terms,for,name}
+96	{std,optional,Ruleset,Parse,std,string_view,text,ParseError,error}
+97	{else}
+98	{typbasetype,0}
+99	{class,SereneDBCopyFileSystem,final,public,duckdb,FileSystem}
+100	{PG,conntype,parse_hba_line,hba,c,1362,1418,An,enum,not,a,bitmask,PG}
+101	{UNION,ALL}
+102	{_values,nullptr}
+103	{qay2hgfwvpq7e5ixtgby}
+104	{constexpr,auto,kN,sizeof,kAlnum,1}
+105	{const,auto,ring_union,coverer,GetCovering,polygon,Difference}
+106	{const,auto,next}
+107	{for,const,auto,spec,SelectedSpecs}
+108	{ASSERT_NE,nullptr,field}
+109	{MemoryIndexOutput,out,file}
+110	{auto,reader,irs,DirectoryReader,dir,irs,tests,DefaultReaderOptions}
+111	{Segments,already,marked,for,compaction,are,skipped,by,the,policy,so}
+112	{include,formats,column,test_cs_helpers,hpp}
+113	{CheckQuery,tests,Optimized,std,move,root,Docs,1,5,11,21,27,31}
+114	{ASSERT_GT,finish_docs_with_term,0u,scorer,collected,term,stats}
+
+
+query
+SELECT id, array_to_string(list_transform(split_text_icu(s, 'en_US_POSIX', break := 'all'), lambda x: length(x)), ',') AS segments FROM tc_lines ORDER BY id;
+----
+id	segments
+1	10,1,6,1,7,1,10,1,1,5,1,3,1,2,1,9,1,7,1,4,1,13,1,3,1,12,1,10,1,1,5,1,2,1,11,1,7,1,7,1,3,1,3,1,1,12,1,7,1,3,1,2,1,8,1
+2	2,1,8,1,2,1,1,1,13,1,10,1,2,1,3,1,2,1,1,4,1,1,3,1,3,1,12,1,8,1,3,1,8,1,4,1,10,1,1,2,1,5,1,5,1,1,5,1,3,1,1,10,1,6,1,2,1,5,1,1,1,4,1,4,1,5,1,2,1,6
+3	4,1,1,1,4,1,9,1,1,7,1,8,1,3,1,10
+4	7,1,3,1,8,1,2,1,11,1,6,1,1,4,1,7,1,10,1,3,1,2,1,7,1,7,1,1,12,1,4,1,2,1,7,1,1,3,1,4,1,2,1,5,1,5,1,2,1,3,1,5,1,1,2,1,4,1,1,1,1,3,1,4,1,6,1,7,1,5
+5	1,6,1,1,4,1,1,2,1,1,1,4,1,1,1,1,1,10,1,2,1,9,1,1,7,1,10,1,4,1,1,3,1,4,1
+6	1,10,1,2,1,8,1,1,2,1,6,1,5,1,1,4
+7	4,1,1,1,5,1,2,1,10,1,3,1,4,1,3,1,7,1,1,3,1,1,2,1,1,6,1,6,1,4,1,2,1,1,5,1,3,1,1,1,4,1,1,1,5,1,6,1
+8	6,1,8,1,7,1,3,1,6,1,1,4,1,7,1,3,1,1,1,5,1,3,1,1,1,6,1,4,1,1,6,1,1,1,9,1,5,1,8,1,8,1,8,1,4,1,8,1,1,1,6,1,2,1,3,1,6,1,4,1,4,1,5,1,6,1,1,2,1,3,1
+9	2,1,5,1,6,1,9,1,6,1,7,1,4,1,5,1,2,1,4,1,8,1,4,1,1,1,4,1,1,4,1,9,1,1,1,9,1,4,1,15,1,4,1,1,5,1,7,1,1,1,4,1,6,1,5,1,2,1,1,1,4,1,1,4,1,5,1,3,1,4
+10	2,1,3,1,8,1,5,1,5,1,1,7,1,4,1,2,1,6,1,1,6,1,6,1,1,8,1,5,1,1,4,1,4,1,1,6,1,1,3,1,6,1,1,3,1,2,1,6,1,1,3,1,7,1,1,7,1,8,1,4,1,1,4,1,7,1,1,4,1,1,3,1,3,1,6
+11	7,1,3,1,15,1,2,1,3,1,7,1,6,1,3,1,9,1,3,1,2,1,3,1,10,1,1,7,1,4,1,4,1,5,1,9,1,5,1,3,1,3,1,4,1,10,1,4,1,1,3,1,4,1,4,1,7,1,5,1,2,1,10,1,1
+12	1,3,1,4,1,10,1,12,1,7,1,4,1,2,1,2,1,7
+13	1,1,6,1,2,1,9,1,4,1,1,1,7,1,2,1,6,1,4,1,6,1,7,1,7,1,1,9,1,4,1,6,1,1,5,1,8,1,1,5,1,7,1,1,7,1,6,1,1,6,1,6,1,1,4,1,7,1,1,4,1,5,1,1,6,1,4,1,1
+14	3,1,9,1,4,1,5,1,2,1,3,1,6,1,2,1,3,1,9,1,5,1,6,1,1,8,1,3,1,9,1,6,1,5,1,3,1,3,1,9,1,5,1,8,1
+15	2,1,1,10,1,1,4,1,3,1,8,1,1,2,1,7,1,1,9,1,9,1,3,1,8,1
+16	9,1,1,2,1,3,1,1,1,4,1,7,1,1,5,1,4,1,2,1,2,1,5,1,1,1,5,1,6,1,2,1,5,1,8,1,4,1,3,1,5,1,8,1,2,1,5,1,3,1,1,1,1,5,1,5,1,2,1,3,1,7,1,2,1,9,1,1,1,5,1,7,1,2,1,9,1,1
+17	9,1,2,1,2,1,15,1,8,1,7,1,11,1,1,4,1,8,1,12,1,5,1,1,3,1,2,1,3,1,4,1,7,1,2,1,3,1,5,1,1,4,1,3,1,4,1,7,1,1,10,1,9,1,1,9,1,5,1,5
+18	2,1,4,1,1,5,1,7,1,6,1,3,1,3,1,7,1,4,1,1,3,1,5,1,7,1,6,1,4,1,2,1,3,1,1,4,1,7,1,7,1,2,1,5,1,3,1,5,1,7,1,1,2,1,7,1,2,1,3,1,4,1,8,1,5,1,4,1,3,1,5,1,3,1,4
+19	4,1,4,1,5,1,5,1,1,8,1,13,1,10
+20	1,8,1,1,4,1,1,1,1,5,1,7,1,2,1,3,1,8,1,6,1,1,7,1,10,1,1,4,1,1
+21	3,1,8,1,5,1,6,1,1,6,1,1,6,1,6,1,13,1,1,3,1,1,8,1,2,1,3,1,9,1,4,1,1,5,1,2,1,5,1,1,1,3,1,9,1,4,1,1,6,1,9,1,2,1,2,1,10,1,1,3,1,1,1,8,1,5,1,6
+22	9,1,7,1,2,1,5,1,2,1,5,1,7,1,5,1,8,1,7,1,2,1,3,1,5,1,8,1,1,1,1,8,1,6,1,1,7,1,1,1,4,1,2,1,5,1,10,1,3,1,5,1,8,1,8,1,5,1
+23	9,1,7,1,1,1,1,5,1,1,1,2,1,8,1,2,1,3,1,8,1,3,1,8,1,4,1,2,1,3,1,7,1,10,1,1,1,6,1,14,1,2,1,7,1,7,1,1,9,1,8,1,1,3,1,8,1,2,8,1,4,1,5,1
+24	4,1,1,5,1,11,1,1,13,1,7,1,2,1,9,1
+25	1,7,1,7,1,1,1,1,1,3,1,2,1,3,1,7,1,9,1,1,10,1,2,1,5,1,8,1
+26	7,1,2,1,10,1,5,1,1,1,4,1,3,1,8,1,2,1,6,1,10
+27	12,1,2,1,6,1,10,1,1,6,1,4,1,4,1,3,1,7,1,3,1,6,1,9,1,8,1,1,1,9,1,1,8,1,1,4,1
+28	1,4,1,1,10,1,10,1,9,1,11
+29	2,1,4,1,1,9,1,3,1,4,1,3,1,3,1,9,1,2,1,3,1,6,1,3,1,9,1,1,1,1,3,1,3,1,3,1,4,1,3,1,4,1,2,1,5,1,2,1,4,1,3,1,9,1,2,1,5,1,7,1,1,5,1,3,1,9,1,3,1,4,1,1,2,1,4,1,1,2,1,5,1
+30	2,1,4,1,1,7,1,6,1,3,1,4,1,3,1,8,1,2,1,3,1,10,1,10,1,6,1,3,1,4,1,6,1,1,3,1,6,1,5,1,3,1,3,1,2,1,4,1,3,1,7,1,5,1,6,1,3,1,5,1,5,1,11,1,3,1,4,1,4,1,1
+31	1,1,6,1,8,1,1,7,1,1,1,1,1,4,1,4,1,8,1,1,4,1,1,4,1,2,1,3,1,7,1,3,1
+32	1,2,1,7,1,4,1,1,5,1,6,1,3,1,4,1,1,1,4,1,5,1,4,1,4,1,7,1,1,3,1,4,1,1,1,4,1,2,1,4,1,1,2,1,3,1,3,1,2,1,3,1,5,1,8,1,1,3,1,9,1,4,1,9,1,7,1,1,7,1,3,1,13,1,5
+33	7,1,1,2,1,4,1,2,1,3,1,6,1,4,1,3,1,7,1,2,1,12,1,6,1,2,1,8,1,1,9,1
+34	4,1,1,1,4,1,4,1,2,1,3,1,5,1,4,1,6,1,6,1,5,1,2,1,3,1,9,1,4,1,11,1,1,3,1,5,1,3,1,8,1,2,1,3,1,2,1,7,1,2,1,1,10,1,1,1,3,1,5,1,4,1,1,1,5,1,3,1,4,1
+35	3,1,6,1,7,1,3,1,8,1,2,1,4,1,1,1,6,1,10,1,3,1,11,1,2,1,5,1,9,1,2,1,5,1,5,1,3,1,1,5,1,3,1,4,1,7,1,8,1,1,2,1,6,1,2,1,9,1,4,1,1,3,1,7,1,8,1,2
+36	4,1,3,1,4,1,4,1,11,1,8,1,1,3,1,8,1,6,1,6,1,4,1,3,1,8,1,11,1,2,1,3,1,8,1,6,1,1,9,1,3,1,6,1,2,1,10,1,1,3,1,11,1,2,1,9,1,7,1,1,3,1
+37	7,1,6,1,8,1,2,1,7,1,6,1,6,1,4,1,3,1,4,1,7,1,4,1,1,8,1,11,1,1,4,1,2,1,5,1,2,1,2,1,5,1
+38	1,1,6,1,2,1,7,1,9,1,2,1,3,1,4,1,4,1,3,1,8,1,9,1,1,1,5,1,2,1,3,1,3,1,6,1,1,4,1,2,1,5,1,4,1,3,1,3,1,2,1,12,1,7,1,1,2,1,5,1,6,1,3,1,5,1,10,1,1,8,1,4
+39	4,1,2,1,6,1,7,1,2,1,7,1,1,13,1,11
+40	4,1,2,1,1,8,1,7,1,2,1,12,1,1,3,1,2,1,2,1,1,1,21,1,5,1,4,1,4,1,4
+41	4,1,2,1,1,8,1,7,1,2,1,14,1,5,1,3,1,4,1,5,1,4,1,1,1,6
+42	4,1,1,2,1,7,1,1,1,15,1,1,1,10,1,10,1,2,1,10,1,1,1,6,1,10,1,5,1,3,1,6,1,11,1,5,1,3,1,6,1,7,1,5,1,3,1,6,1,5,1,4,1,6,1,1,1,1,1,3,1,3
+43	4,1,1,2,1,7,1,1,1,16,1,1,10,1,8
+44	4,1,1,2,1,7,1,1,1,13,1,11,1,12,1,6,1,5,1,3,1,6,1,11,1,5,1,3,1,6
+45	4,1,1,2,1,7,1,1,1,10,1,3,1,13,1,4,1,2,1,4,1,1,1,9,1,2,1,2,1,3,1,2,1,11
+46	4,1,1,2,1,7,1,1,1,10,1,3,1,13,1,4,1,2,1,4,1,1,1,6,1,6,1,2,1,4,1,7,1,8,1,1,1,17
+47	4,1,1,2,1,7,1,1,1,10,1,3,1,13,1,4,1,2,1,4,1,1,1,11,1,2,1,6,1,12,1,2,1,5,1,1,7,1,6
+48	4,1,1,2,1,7,1,1,1,10,1,6,1,2,1,10,1,1,6,1,2,1,6,1,3,1,10,1,1,1,4,1,7,1,4,1,2
+49	4,1,1,2,1,7,1,1,1,10,1,6,1,2,1,10,1,1,6,1,2,1,4,1,6,1,3,1,2,1,4,1,6,1,9,1,1,9,1,1,14,1,1,8,1,1,6,1,1,9,1,1,14,1,1,12,1,6,1,2
+50	4,1,1,2,1,7,1,1,1,10,1,6,1,2,1,10,1,1,6,1,2,1,6,1,4,1,3,1,4,1,9,1,5,1,3,1,6,1,6,1,5,1,2,1,1,2,1,7,1,2,1,7
+51	4,1,1,2,1,7,1,17,1,17,1,2,1,1,1,2,1,1,1,2,1,2,1,14,1,1,10,1,8,1,8
+52	4,1,1,2,1,4,1,3,1,2,1,4,1,9,1,3,1,4,1,4,1,8
+53	4,1,1,2,1,4,1,3,1,6,1,3,1,4,1,6,1,1,1,3,1,1,1,4,1,4,1,4,1,4,1,13,1,3,1,4,1,1,14,1,1,7
+54	4,1,1,2,1,4,1,3,1,6,1,3,1,4,1,3,1,6,1,6,1,4,1,1,1,1,1,3,1,3,1,3,1,1,1,10,1,6,1,15
+55	4,1,1,2,1,4,1,3,1,6,1,6,1,6,1,9,1,3,1,2,1,20,1,1,1,1,1,7,1,1,5
+56	4,1,1,2,1,5,1,7,1,2,1,11,1,2,1,7,1,1,1,3,1,3,1,5,1,2,1,7,1,1,4,1,1,16,1,1,9,1,1,5,1,6,1,7,1,1,6,1,1,4,1,2,1,4,1,1,1,7,1,1,1,5,1,1,7,1,5
+57	4,1,1,2,1,6,1,7,1,2,1,5,1,3,1,5,1,3,1,5,1,2,1,1,2,1,7,1,2,1,5,1,2,1,4,1,9,1,6,1,2,1,8,1,4,1,1,1,1
+58	4,1,1,2,1,6,1,7,1,2,1,15,1,6,1,15,1,6,1,4,1,8,1,6
+59	4,1,1,2,1,6,1,7,1,2,1,4,1,10,1,4,1,3,1,5
+60	4,1,1,2,1,6,1,7,1,2,1,4,1,6,1,3,1,2,1,4,1,6,1,7,1,7,1,2,1,3,1,3,1,11
+61	4,1,1,2,1,6,1,17,1,1,13,1,1,1,9
+62	4,1,1,2,1,7,1,7,1,2,1,5,1,12,1,5,1,3,1,6,1,3
+63	4,1,1,1,6,1,11,1,2,1,3,1,3,1,2,1,4,1,14,1,4,1,4,1,1,1,17,1,4,1,8,1,3,1,3
+64	4,1,1,1,6,1,2,1,8,1,4,1,5,1,15,1,9,1,4,1,3,1,5,1,2,1,10,1,6
+65	4,1,1,1,1,1,22,1,10,1,1,1,12
+66	4,1,1,1,4,1,3,1,3,1,3,1,3,1,1,1,7,1,4,1,8,1,6,1,2,1,5,1,2,1,4,1,5,1,7,1,1,1,8,1,4
+67	4,1,1,1,4,1,3,1,3,1,3,1,3,1,1,1,7,1,1,1,10,1,1,10,1,1,1,6,1,5,1,2,1,6
+68	4,1,1,1,4,1,3,1,3,1,3,1,3,1,1,1,7,1,2,1,7,1,6,1,2,1,4,1,8
+69	4,1,1,1,4,1,3,1,3,1,3,1,3,1,1,1,11,1,6,1,23,1,4
+70	4,1,1,1,4,1,3,1,3,1,3,1,3,1,1,1,6,1,1,1,2,1,1,1,2,1,1,1,2,1,8,1,4,1,6,1,1,1,1,1,3,1,12,1,1,1,5,1,4
+71	4,1,1,1,6,1,8,1,1,1,4,1,4,1,9,1,6
+72	4,1,1,1,6,1,4,1,4,1,9,1,1,1,1,8,1,6,1,1,1,4
+73	4,1,1,1,6,1,6,1,4,1,7,1,30,1,2,1,2,1,2,1,2
+74	4,1,1,1,6,1,6,1,2,1,5,1,9,1,1,1,5,1,2,1,6,1,9,1,1,1,8,1,1,7,1,5,1,1,1,12,1,1,1,5
+75	4,1,1,1,6,1,6,1,2,1,9,1,6,1,5,1,7,1,1,1,4,1,4,1,5,1,2,1,5,1,5
+76	4,1,1,1,6,1,6,1,2,1,6,1,6,1,4,1,6,1,5
+77	1,1,1,1,9,1,4,1,8,1,4,1,1,6,1,1,7
+78	6,1,1,1
+79	6,1,17,1,1,4,1,3,1,1,7,1,4,1,1,14,1,1
+80	1,7,1,1,9,1,6,1,4,1,4,1,3,1
+81	1,1,1,1,11,1,5,1,3,1,7,1
+82	6,1,10,1,1,1,1,1,1,1,2,1,1
+83	1,1,1,1,9,1,4,1,8,1,4,1,1,6,1,1,7
+84	4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1,1,4,1
+85	4,1,12,1,1,1,5,1
+86	5,1,4,1,1,3,1,1,1,1,5,1,3,1,1
+87	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+88	1,1,1,1,10
+89	1,7,1,1,9,1,5,1,6,1,3,1
+90	1,3,1,5,1,1,1,6,1,2,1,3,1,11,1,1,1
+91	5,1,1,7,1,2,1,1
+92	1,1,1,1,3,1,1,13,1,1,3,1,1,3,1,1,9,1,1,1,1,1,1
+93	7,1
+94	6,1,1,10,1,6,1,1,12,1,1,4,1,1,1,5,1,5,1,1
+95	7,1,11,1,1,1,1,5,1,2,1,5,1,3,1,1,1,1,1,4,1,1,1,1,1,1,1,1
+96	3,1,1,8,1,7,1,1,5,1,3,1,1,11,1,4,1,1,10,1,1,5,1,1,1
+97	1,1,4,1,1
+98	1,11,1,1,1,1,1
+99	5,1,22,1,5,1,1,1,6,1,6,1,1,10,1,1
+100	1,1,1,2,1,8,1,1,14,1,1,3,1,1,1,4,1,4,1,1,1,2,1,4,1,1,3,1,1,1,7,1,1,2
+101	5,1,3
+102	7,1,1,1,7,1
+103	1,20,1,1
+104	9,1,4,1,2,1,1,1,6,1,6,1,1,1,1,1,1
+105	5,1,4,1,10,1,1,1,7,1,11,1,7,1,1,10,1
+106	5,1,4,1,4,1,1,1,1,1,1,1,1
+107	3,1,1,5,1,4,1,1,4,1,1,1,13,1,1,1,1,1
+108	9,1,7,1,1,5,1,1
+109	17,1,3,1,4,1,1
+110	4,1,6,1,1,1,3,1,1,15,1,3,1,1,3,1,1,5,1,1,20,1,1,1,1
+111	1,1,1,8,1,7,1,6,1,3,1,10,1,3,1,7,1,2,1,3,1,6,1,1,2
+112	1,7,1,1,7,1,6,1,15,1,3,1
+113	10,1,1,5,1,1,9,1,3,1,1,4,1,4,1,1,1,1,4,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,2,1,1
+114	9,1,21,1,1,2,1,1,3,1,1,1,6,1,9,1,4,1,5
+
+
+query
+SELECT id, split_text_icu(s, 'en_US_POSIX', break := 'graphic') AS tokens FROM tc_lines ORDER BY id;
+----
+id	tokens
+1	{Anarchists,employ,diverse,approaches,",",which,may,be,generally,divided,into,revolutionary,and,evolutionary,strategies,;,there,is,significant,overlap,between,the,two,.,Evolutionary,methods,try,to,simulate}
+2	{As,directed,by,a,Congressional,resolution,of,May,26,",",1783,",",all,non,-,commissioned,officers,and,enlisted,were,furloughed,"\\"",to,their,homes,"\\"",until,the,"\\"",definitive,treaty,of,peace,"\\"",",",when,they,would,be,automa}
+3	{1939,–,Alan,Ayckbourn,",",English,director,and,playwright}
+4	{Crowley,has,remained,an,influential,figure,",",both,amongst,occultists,and,in,popular,culture,",",particularly,that,of,Britain,",",but,also,of,other,parts,of,the,world,.,In,2002,",",a,BBC,poll,placed,Crowley,seven}
+5	{Julian,",",John,(,ed,.,),(,1892,),.,A,Dictionary,of,Hymnology,",",Charles,Scribner's,Sons,",",New,York,.}
+6	{Sacrificio,di,Ifigenia,",",by,Pietro,Testa,",",1640}
+7	{1963,–,March,on,Washington,for,Jobs,and,Freedom,:,Rev,.,Dr,.,Martin,Luther,King,Jr,.,gives,his,I,Have,a,Dream,speech,.}
+8	{During,projects,Mercury,and,Gemini,",",each,mission,had,a,prime,and,a,backup,crew,.,Apollo,9,commander,James,McDivitt,believed,meetings,that,required,a,member,of,the,flight,crew,were,being,missed,",",so,for}
+9	{As,early,Native,Americans,lacked,pottery,that,could,be,used,directly,over,a,fire,",",they,developed,a,technique,many,anthropologists,call,"\\"",stone,boiling,"\\"",.,They,heated,rocks,in,a,fire,",",then,added,the,rock}
+10	{In,the,league's,first,years,",",players,such,as,Oilers,',George,Blanda,",",Chargers,/,Bills,',Jack,Kemp,",",Texans,',Len,Dawson,",",the,NY,Titans,',Don,Maynard,",",Raiders,/,Patriots,/,Jets,',Babe,Parilli,",",Pats,',Bob,Dee,proved}
+11	{Agarose,gel,electrophoresis,is,the,routine,method,for,resolving,DNA,in,the,laboratory,.,Agarose,gels,have,lower,resolving,power,for,DNA,than,acrylamide,gels,",",but,they,have,greater,range,of,separation,","}
+12	{aim,:,goim,?,screenname,=,notarealuser,&,message,=,This,+,is,+,my,+,message}
+13	{A,number,of,musicians,from,a,variety,of,genres,have,joined,Guthrie,onstage,",",including,Pete,Seeger,",",David,Bromberg,",",Cyril,Neville,",",Emmylou,Harris,",",Willie,Nelson,",",Judy,Collins,",",John,Prine,",",Wesley,Gray,","}
+14	{The,Brazilian,Navy,which,is,the,oldest,of,the,Brazilian,Armed,Forces,",",includes,the,Brazilian,Marine,Corps,and,the,Brazilian,Naval,Aviation,.}
+15	{Dr,.,Strabismus,(,whom,God,preserve,),of,Utrecht,:,eccentric,scientist,and,inventor,.}
+16	{Therefore,",",to,get,a,grid,started,",",there,must,be,at,least,a,small,number,of,power,stations,that,can,start,entirely,on,their,own,.,A,black,start,is,the,process,of,restoring,a,power,station,to,operation,w}
+17	{Barcelona,is,an,internationally,renowned,tourist,destination,",",with,numerous,recreational,areas,",",one,of,the,best,beaches,in,the,world,",",mild,and,warm,climate,",",historical,monuments,",",including,eight,UNESC}
+18	{In,1982,",",Billy,Crystal,hosted,his,own,variety,show,",",The,Billy,Crystal,Comedy,Hour,on,NBC,.,When,Crystal,arrived,to,shoot,the,fifth,episode,",",he,learned,it,had,been,canceled,after,only,the,first,two,aire}
+19	{1971,Gold,Medal,Award,",",American,Psychological,Foundation}
+20	{Orlandis,",",Jose,",",A,Short,History,of,the,Catholic,Church,.,Scepter,Publishers,(,1993,)}
+21	{The,Cameroon,Armed,Forces,(,French,:,Forces,armées,camerounaises,",",FAC,),consists,of,the,country's,army,(,Armée,de,Terre,),",",the,country's,navy,(,Marine,Nationale,de,la,République,(,MNR,),",",includes,naval,infant}
+22	{Sometimes,because,of,guilt,or,other,reasons,cross,-,dressers,dispose,of,all,their,clothing,",",a,practice,called,"\\"",purging,"\\"",",",only,to,start,collecting,the,other,gender's,clothing,again,.}
+23	{Professor,Simpson,L,.,Brown,—,in,addition,to,his,teaching,and,research,work,in,the,Physics,Department,—,served,simultaneously,as,general,manager,",",technical,director,",",and,producer,.,Programs,were,aired}
+24	{1991,",",Yakir,Yerushalaim,(,Distinguished,Citizen,of,Jerusalem,)}
+25	{Midrash,Temurah,(,),",",one,of,the,smaller,midrashim,",",consisting,of,three,chapters,.}
+26	{Freedom,of,Expression,Award,–,Fear,and,Learning,at,Hoover,Elementary}
+27	{Introduction,to,Formal,Philosophy,[,edited,with,Sven,Ove,Hansson,and,Esther,Michelsen,Kjeldahl,],(,Dordrecht,:,Springer,",",2018,)}
+28	{MPMU,:,Musyawarah,Perwakilan,Mahasiswa,Universitas}
+29	{In,1670,",",Frederick,III,died,and,was,succeeded,by,her,eldest,son,Christian,V,.,Her,son,the,king,did,what,he,could,to,curb,her,influence,in,state,affairs,",",which,was,evidently,not,easy,:,in,1671,",",he,wrote}
+30	{In,1959,",",Newland,became,the,host,and,director,of,the,paranormal,television,series,One,Step,Beyond,.,The,series,ended,its,run,in,1961,and,Newland,later,hosted,its,short,-,lived,counterpart,The,Next,Step,B}
+31	{',Studio,portrait,",",Chelsea,',",",a,1911,self,-,portrait,(,1915,),kept,at,Art,Gallery,NSW,.}
+32	{31,January,1971,:,Leeds,United,now,have,a,five,-,point,lead,over,Arsenal,",",who,have,a,game,in,hand,",",at,the,top,of,the,First,Division,.,The,challenge,from,Tottenham,Hotspur,",",Chelsea,and,Wolverhampton,Wande}
+33	{Example,:,In,area,19,the,prefix,4001,was,located,to,Metropolitan,Region,of,Campinas,",",therefore,:}
+34	{It's,a,Love,Cult,is,the,tenth,full,-,length,studio,album,by,the,Norwegian,band,Motorpsycho,.,The,album,was,preceded,by,the,EP,release,of,"\\"",Serpentine,"\\"",",",for,which,also,a,video,was,made,.}
+35	{The,Market,Theatre,was,designed,by,Page,+,Steele,Architects,and,constructed,by,Aecon,Buildings,of,Aecon,Group,Inc,.,Named,the,Rose,Theatre,Brampton,",",it,opened,in,September,2006,.,The,theatre,included,an}
+36	{With,the,1994,book,Reinventing,Politics,",",the,Romanian,author,looked,into,the,European,revolutions,of,the,previous,decade,",",exploring,the,shades,of,repression,",",the,differences,in,political,culture,",",and}
+37	{Another,common,practice,is,special,second,letter,pair,for,taxi,service,cars,",",regional,independent,.,Like,PG,TX123,or,KO,TX456,.}
+38	{A,number,of,classes,inherited,by,the,LNER,were,not,formally,allocated,a,place,in,the,new,system,.,Most,of,these,were,one,-,off,or,departmental,engines,",",or,types,slated,for,early,withdrawal,",",although,some}
+39	{http,%,3A,%,252d01,.,adriver,.,ru,/,user_id,=,&,auto_in_my_ob,.,html_params}
+40	{http,%,3A,/,/,masterh5,.,adriver,.,ru,/,ishi_trailer,/,#,tab,-,70,-,kv,-,m,-,advert279025801517696,%,26sob,%,3D43,%,26bn,%,3D90}
+41	{http,%,3A,/,/,masterh5,.,adriver,.,ru,/,searchingXeIyw,&,where,=,all,&,film,/,48460,&,page,=,2,&,driver}
+42	{http,:,%,2F,%,23image,=,0,&,checked_auto_id,=,0,&,input_age2,/,2f2e1ff95c,-,41,.,html_param,=,0,&,userId,=,6TThrSuUXI,&,where,=,all,&,filmId,=,FVCfVXfJ0Cw,&,where,=,all,&,filmId,=,vL7s0Cw,&,where,=,all,&,filmId,=,R_M10,.,html,%,3Fhtml,?,1,=,1,&,cid,=,678}
+43	{http,:,%,2F,%,23image,=,0,&,engineVolumeFrom,=,&,power_name,=,Короткие}
+44	{http,:,%,2F,%,23image,=,1,&,expand_search,&,input_state,/,rent_aliance,/,search,?,where,=,all,&,filmId,=,P8pClxIMs3M,&,where,=,all,&,filmId}
+45	{http,:,%,2F,%,23image,=,1,&,with_photo,=,750,&,op_product_id,=,8460,&,lo,=,http,:,/,/,domkadrov,.,ru,/,bs,.,php,?,id,=,43149732854}
+46	{http,:,%,2F,%,23image,=,1,&,with_photo,=,750,&,op_product_id,=,8460,&,lo,=,http,:,/,/,pogoda,.,yandex,.,ru,/,cars,/,partner,=,17711945,-,4,-,obschentialAmount}
+47	{http,:,%,2F,%,23image,=,1,&,with_photo,=,750,&,op_product_id,=,8460,&,lo,=,http,:,/,/,wildberries,.,ru,/,search,&,input_action,.,ru,/,page2,/,#,overlay,-,phoney}
+48	{http,:,%,2F,%,23image,=,1,&,with_video,.,yandex,.,ru,%,2Fkatering,(,Record,.,ru,/,iframe,-,owa,.,html_param,=,0,&,user,=,user_id,=,3205,&,bt}
+49	{http,:,%,2F,%,23image,=,1,&,with_video,.,yandex,.,ru,%,2Fkatering,(,Record,.,ru,/,real,-,estate,/,out,-,of,-,town,/,houses,/,post_from,=,&,powerFrom,=,&,engineVolumeTo,=,&,raceFrom,=,&,raceTo,=,&,powerFrom,=,&,engineVolumeTo,=,&,fuelRateFrom,=,adwolf,.,ru}
+50	{http,:,%,2F,%,23image,=,1,&,with_video,.,yandex,.,ru,%,2Fkatering,(,Record,.,ru,/,search,?,text,=,как,хочу,телевизор,&,where,=,all,&,filmId,=,qB5i0A,%,26url,%,3D,/,/,ad,.,adriver,.,ru,/,catalog}
+51	{http,:,%,2F,%,2Fsport,-,pliazhnaya_istory,.,radiana1165_42427,&,pt,=,b,&,pd,=,6,&,pv,=,22,&,engineVolumeTo,=,&,power_name,=,Купально,смотреть}
+52	{http,:,%,2F,%,2Fvk,.,com,.,ua,/,sumi,/,veröffner,/,bmw,.,html,?,city,=,13333482}
+53	{http,:,%,2F,%,2Fvk,.,com,/,iframe,-,owa,.,html,#,404100,/,0,/,pol,-,1,/,bage,-,99fa,-,d61f,-,fea0,-,0140375330271,.,htm,?,from,=,&,engineVolumeTo,=,&,powerTo}
+54	{http,:,%,2F,%,2Fvk,.,com,/,iframe,-,owa,.,html,?,key,=,c92011,%,2F25.0,.,html,?,1,=,1,&,cid,=,577,&,oki,=,1,&,op_product,&,op_uid,=,135028159401090}
+55	{http,:,%,2F,%,2Fvk,.,com,/,iframe,/,iframe,/,iframe,/,Massadult,.,php,?,id,=,27888898173259045796,/,1,/,4,/,9186155,/,#,image}
+56	{http,:,%,2F,%,2Fwww,.,bonprix,.,ru,/,businessbar,.,ru,/,pramuse,/,1,.,php,?,tag,=,slide,-,id,=,3193522,],[,from,=,&,engineVolumeFrom,=,&,powerFrom,=,&,power,спринц,перевод,/,#,lingvo,/,?,page,=,33,&,city,=,0,&,po_yers,=,0,&,page3,/,#,overlay,-,photo}
+57	{http,:,%,2F,%,2Fwwww,.,bonprix,.,ru,%,26sid,%,3D0,%,26nid,%,3D0,%,26url,%,3D,/,/,ad,.,adriver,.,ru,/,index,.,ru,&,pvid,=,147518518,-,zhiens,.,ru,/,GameMain,.,aspx,?,d,=,7}
+58	{http,:,%,2F,%,2Fwwww,.,bonprix,.,ru,%,2Fproduct_price,/,artira,-,Nizhniynovgorod,/,search,?,text,=,смотреть,фильмы}
+59	{http,:,%,2F,%,2Fwwww,.,bonprix,.,ru,/,cars,/,page_len80,/,page,%,3D0,%,26nid}
+60	{http,:,%,2F,%,2Fwwww,.,bonprix,.,ru,/,real,-,estate,/,out,-,of,-,town,/,hotels,/,horesto,%,2F22.14,&,he,=,768,&,spn,=,0.016942554}
+61	{http,:,%,2F,%,2Fwwww,.,bonprix_ru_1_ru_1,"}",%,2Fcategory_id,=,0,&,last_auto}
+62	{http,:,%,2F,%,2Fwwwww,.,bonprix,.,ru,%,26sid,%,3DBlP_wWZXCI,&,where,=,all,&,filmId,=,pdq}
+63	{http,:,/,/,1.2022,.,radiorecord,.,ru,/,car,-,yar,.,ru,/,page,/,"150295,9592769",.,html,?,page,=,0,&,deletedAutoSearch,?,text,=,чемпионы,#,tab,=,com}
+64	{http,:,/,/,55love,.,ru,/,GameMain,.,aspx,#,comme,%,2F27.0.1364.172,YaBrowser,%,26pz,%,3D0,%,26ref,%,3D,%,26CompPath,%,3Dhttp}
+65	{http,:,/,/,8,-,41ee4a46c6537331480718,&,input_who1,=,2,&,input_online}
+66	{http,:,/,/,acat,.,php,?,cid,=,577,&,oki,=,1,&,op_page,.,aspx,#,location,/,drofor,.,ru,/,index,.,ru,/,news,/,38708,&,po_yers,=,0,&,price_ot,=,1490}
+67	{http,:,/,/,acat,.,php,?,cid,=,577,&,oki,=,1,&,op_page,=,1,&,fuelRateTo,=,&,power_name,=,1,&,ground,-,zakaz,.,ru,/,images}
+68	{http,:,/,/,acat,.,php,?,cid,=,577,&,oki,=,1,&,op_page,=,46,&,cmguide,.,travel,.,ru,/,real,-,estation}
+69	{http,:,/,/,acat,.,php,?,cid,=,577,&,oki,=,1,&,op_produkty,/,places,/,"10495,9592345bhfbhbif75",/,8eef}
+70	{http,:,/,/,acat,.,php,?,cid,=,577,&,oki,=,1,&,op_uid,=,1,&,bc,=,3,&,ct,=,1,&,pr,=,683661_2,.,html,%,3Fhtml,?,1,=,1,&,cid,=,514569494151,/,3,/,women,.,aspx}
+71	{http,:,/,/,ae5000,&,mm_count,=,2,&,sort,=,sale,/,secondary,/,detail}
+72	{http,:,/,/,afisha,.,mail,.,aspx,#,locations,[,0,],[,15339394,&,s_yers,=,0,&,with}
+73	{http,:,/,/,afisha,.,yandex,.,html,?,item_no,=,110000121662056612030882878183,/,10,/,07,/,16,/,19}
+74	{http,:,/,/,afisha,.,yandex,.,ru,%,26bid,%,3D1216629,/,0,/,index,.,ru,/,realty,/,lear_from,],=,&,price_ot,=,&,priceup,&,_suid,=,1,&,bodystyle_id,=,0,&,state}
+75	{http,:,/,/,afisha,.,yandex,.,ru,%,2Fproduct,&,op_uid,=,18497,&,po_yers,=,0,&,page,.,aspx,?,Topic,-,91,?,query,=,догов}
+76	{http,:,/,/,afisha,.,yandex,.,ru,/,albums,/,search,?,text,=,зловер,&,where}
+77	{/,/,/,Copyright,2026,SereneDB,GmbH,",",Berlin,",",Germany}
+78	{return,g,;}
+79	{return,SegmentReaderImpl,:,:,Open,(,dir,",",flushed,.,meta,",",reader_options,),;}
+80	{#,include,"\\"",iresearch,/,search,/,docs,/,plan,.,hpp,"\\""}
+81	{/,/,/,limitations,under,the,License,.}
+82	{return,FastpackAt,<,N,",",9,>,(,in,),;}
+83	{/,/,/,Copyright,2025,SereneDB,GmbH,",",Berlin,",",Germany}
+84	{0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x00,",",0x0a,",",0x0a,",",0x0a,",",0x0a,","}
+85	{bool,_leaf_scalar,=,false,;}
+86	{const,auto,&,doc,=,*,DocOf,(,own,),;}
+87	{/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/,/}
+88	{/,/,/,DISCLAIMER}
+89	{#,include,"\\"",iresearch,/,utils,/,shared,.,hpp,"\\""}
+90	{"\\"",For,large,T,better,to,use,NodeHashSet,.,"\\""}
+91	{_conn,"{",*,context,.,db,"}",","}
+92	{[,&,],(,irs,:,:,FieldInverter,&,fld,",",irs,:,:,TokenSink,&,w,),"{"}
+93	{context,","}
+94	{duckdb,:,:,unique_ptr,<,duckdb,:,:,FunctionData,>,Copy,(,),const,final,"{"}
+95	{ERR_MSG,(,kLayoutFile,",","\\"",names,no,terms,for,',"\\"",",",name,",","\\"",',"\\"",),),;}
+96	{std,:,:,optional,<,Ruleset,>,Parse,(,std,:,:,string_view,text,",",ParseError,&,error,),"{"}
+97	{"}",else,"{"}
+98	{.,typbasetype,=,0,","}
+99	{class,SereneDBCopyFileSystem,final,:,public,duckdb,:,:,FileSystem,"{"}
+100	{/,/,PG,conntype,(,parse_hba_line,",",hba,.,c,:,1362,-,1418,),.,An,enum,",",not,a,bitmask,:,PG}
+101	{UNION,ALL}
+102	{_values,=,nullptr,;}
+103	{"\\"",qay2hgfwvpq7e5ixtgby,"\\"",","}
+104	{constexpr,auto,kN,=,sizeof,(,kAlnum,),-,1,;}
+105	{const,auto,ring_union,=,coverer,.,GetCovering,(,polygon,),.,Difference,(}
+106	{const,auto,next,=,[,&,],"{"}
+107	{for,(,const,auto,*,spec,:,SelectedSpecs,(,),),"{"}
+108	{ASSERT_NE,(,nullptr,",",field,),;}
+109	{MemoryIndexOutput,out,"{",file,"}",;}
+110	{auto,reader,=,irs,:,:,DirectoryReader,(,dir,",",irs,:,:,tests,:,:,DefaultReaderOptions,(,),),;}
+111	{/,/,Segments,already,marked,for,compaction,are,skipped,by,the,policy,",",so}
+112	{#,include,"\\"",formats,/,column,/,test_cs_helpers,.,hpp,"\\""}
+113	{CheckQuery,(,*,tests,:,:,Optimized,(,std,:,:,move,(,root,),),",",Docs,"{",1,",",5,",",11,",",21,",",27,",",31,"}",","}
+114	{ASSERT_GT,(,finish_docs_with_term,",",0u,),;,/,/,scorer,collected,term,stats}
+
+
+query
+SELECT id, array_to_string(list_transform(split_text_icu(s, 'en', break := 'sentence'), lambda x: length(x)), ',') AS sentences FROM tc_lines ORDER BY id;
+----
+id	sentences
+1	162,36
+2	200
+3	54
+4	159,40
+5	19,6,61
+6	45
+7	53,3,55
+8	79,119
+9	151,48
+10	200
+11	86,112
+12	9,50
+13	199
+14	139
+15	3,76
+16	127,72
+17	200
+18	89,110
+19	56
+20	55,25
+21	200
+22	178
+23	20,157,19
+24	60
+25	79
+26	68
+27	122
+28	49
+29	76,122
+30	98,101
+31	80
+32	129,69
+33	94
+34	89,90
+35	114,61,23
+36	199
+37	98,26
+38	96,103
+39	60
+40	97
+41	78
+42	182,11
+43	56
+44	65,45
+45	83,14
+46	121
+47	122
+48	106
+49	198
+50	69,79
+51	113
+52	45,13
+53	87,29
+54	34,23,51
+55	53,42
+56	55,87,45
+57	119,3
+58	73,20
+59	57
+60	96
+61	60
+62	67
+63	65,25,21
+64	98
+65	57
+66	16,89
+67	16,71
+68	16,56
+69	16,61
+70	16,57,33
+71	51
+72	59
+73	26,50
+74	116
+75	67,9,11
+76	38,17
+77	49
+78	9
+79	66
+80	41
+81	34
+82	28
+83	49
+84	71
+85	26
+86	30
+87	80
+88	14
+89	37
+90	39,1
+91	19
+92	49
+93	8
+94	61
+95	58
+96	72
+97	8
+98	17
+99	64
+100	49,26
+101	9
+102	18
+103	23
+104	39
+105	53,11
+106	23
+107	42
+108	26
+109	28
+110	76
+111	71
+112	45
+113	74
+114	70
+
+
+statement ok
+DROP TABLE tc_lines;

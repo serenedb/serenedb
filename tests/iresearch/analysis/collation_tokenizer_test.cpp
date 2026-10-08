@@ -20,15 +20,13 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <unicode/coll.h>
-#include <unicode/locid.h>
-#include <unicode/sortkey.h>
-
+#include <collation_collator.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <span>
 #include <string>
+#include <text_locale.hpp>
 #include <vector>
 
 #include "tests_shared.hpp"
@@ -40,8 +38,17 @@ inline irs::analysis::Tokenizer::ptr MakeCollation(
   std::string_view locale_name) {
   return irs::analysis::CollationTokenizer::Make(
     irs::analysis::CollationTokenizer::Options{
-      .locale = icu::Locale::createFromName(locale_name.data()),
+      .locale = duckdb::text::Locale::FromName(locale_name),
     });
+}
+
+irs::bstring ReferenceKey(std::string_view locale_name, std::string_view data) {
+  std::string collation;
+  duckdb::text::Locale::FromName(locale_name).GetCollation(collation);
+  const duckdb::collation::Collator collator{collation};
+  duckdb::collation::CollationBuffer buffer;
+  collator.GetSortKey(data.data(), data.size(), buffer);
+  return irs::bstring{buffer.key.data(), buffer.key.size() - 1};
 }
 
 irs::bstring BlockTerm(irs::analysis::Tokenizer& stream,
@@ -131,385 +138,78 @@ TEST(collation_token_stream_test, construct_from_str) {
 }
 
 TEST(collation_token_stream_test, check_collation) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-
-  constexpr std::string_view kLocaleName = R"(en)";
-  const icu::Locale icu_locale =
-    icu::Locale::createFromName(kLocaleName.data());
-
-  std::unique_ptr<icu::Collator> coll{
-    icu::Collator::createInstance(icu_locale, err)};
-  ASSERT_NE(nullptr, coll);
-  ASSERT_TRUE(U_SUCCESS(err));
-
-  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
-    err = UErrorCode::U_ZERO_ERROR;
-    icu::CollationKey key;
-    coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
-                            data.data(), static_cast<int32_t>(data.size())}),
-                          key, err);
-    EXPECT_TRUE(U_SUCCESS(err));
-
-    int32_t size = 0;
-    const irs::byte_type* p = key.getByteArray(size);
-    EXPECT_NE(nullptr, p);
-    EXPECT_NE(0, size);
-    return irs::bstring{p, static_cast<size_t>(size - 1)};
-  };
-
   {
     auto stream = MakeCollation("en");
     ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"å b z a"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
+    constexpr std::string_view kData{"å b z a"};
+    ASSERT_EQ(ReferenceKey("en", kData), BlockTerm(*stream, kData));
   }
-
   {
     auto stream = MakeCollation("sv");
-
     ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"a å b z"};
-      ASSERT_NE(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
+    constexpr std::string_view kData{"a å b z"};
+    ASSERT_EQ(ReferenceKey("sv", kData), BlockTerm(*stream, kData));
+    ASSERT_NE(ReferenceKey("en", kData), BlockTerm(*stream, kData));
+  }
+  {
+    auto sv = MakeCollation("sv");
+    auto en = MakeCollation("en");
+    ASSERT_LT(BlockTerm(*sv, "z"), BlockTerm(*sv, "å"));
+    ASSERT_LT(BlockTerm(*en, "å"), BlockTerm(*en, "z"));
   }
 }
 
-TEST(collation_token_stream_test, check_collation_with_variant1) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-
-  constexpr std::string_view kLocaleName = R"(de@collation=phonebook)";
-  const icu::Locale icu_locale =
-    icu::Locale::createFromName(kLocaleName.data());
-
-  std::unique_ptr<icu::Collator> coll{
-    icu::Collator::createInstance(icu_locale, err)};
-  ASSERT_NE(nullptr, coll);
-  ASSERT_TRUE(U_SUCCESS(err));
-
-  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
-    err = UErrorCode::U_ZERO_ERROR;
-    icu::CollationKey key;
-    coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
-                            data.data(), static_cast<int32_t>(data.size())}),
-                          key, err);
-    EXPECT_TRUE(U_SUCCESS(err));
-
-    int32_t size = 0;
-    const irs::byte_type* p = key.getByteArray(size);
-    EXPECT_NE(nullptr, p);
-    EXPECT_NE(0, size);
-    return irs::bstring{p, static_cast<size_t>(size - 1)};
+TEST(collation_token_stream_test, locales_resolve_to_collations) {
+  const std::pair<std::string_view, std::string_view> kExpected[] = {
+    {"en", ""},
+    {"en_US.UTF-8", ""},
+    {"de_DE", ""},
+    {"sv_SE", "sv"},
+    {"zh", "zh"},
+    {"zh_TW", "zh_tw"},
+    {"zh_Hant_TW", "zh_tw"},
+    {"zh_Hans_CN", "zh_cn"},
+    {"sr_BA", "sr_ba"},
   };
-
-  {
-    auto stream = MakeCollation("de__pinyin");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_NE(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de_pinyan");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_NE(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de@pinyan");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_NE(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de@collation=pinyan");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_NE(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de__phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de_phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de@collation=phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de@collation=phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de_phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
+  for (const auto& [name, expected] : kExpected) {
+    SCOPED_TRACE(name);
+    std::string collation;
+    ASSERT_TRUE(duckdb::text::Locale::FromName(name).GetCollation(collation));
+    ASSERT_EQ(expected, collation);
   }
 }
 
-TEST(collation_token_stream_test, check_collation_with_variant2) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-
-  constexpr std::string_view kLocaleName = "de_phonebook";
-  const icu::Locale icu_locale =
-    icu::Locale::createFromName(kLocaleName.data());
-
-  std::unique_ptr<icu::Collator> coll{
-    icu::Collator::createInstance(icu_locale, err)};
-  ASSERT_NE(nullptr, coll);
-  ASSERT_TRUE(U_SUCCESS(err));
-
-  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
-    err = UErrorCode::U_ZERO_ERROR;
-    icu::CollationKey key;
-    coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
-                            data.data(), static_cast<int32_t>(data.size())}),
-                          key, err);
-    EXPECT_TRUE(U_SUCCESS(err));
-
-    int32_t size = 0;
-    const irs::byte_type* p = key.getByteArray(size);
-    EXPECT_NE(nullptr, p);
-    EXPECT_NE(0, size);
-    return irs::bstring{p, static_cast<size_t>(size - 1)};
-  };
-
-  {
-    auto stream = MakeCollation("de__pinyan");
-
+TEST(collation_token_stream_test, unsupported_collation_types) {
+  constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
+  for (auto name : {"de__phonebook", "de_phonebook", "de@collation=phonebook",
+                    "de@collation=pinyan", "es__traditional", "sr_Latn"}) {
+    SCOPED_TRACE(name);
+    std::string collation;
+    ASSERT_FALSE(duckdb::text::Locale::FromName(name).GetCollation(collation));
+    auto stream = MakeCollation(name);
     ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_NE(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de__phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de@collation=phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de_phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-  }
-
-  {
-    auto stream = MakeCollation("de@collation=phonebook");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      constexpr std::string_view kData{"Ärger Ast Aerosol Abbruch Aqua Afrika"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
+    ASSERT_EQ(ReferenceKey("", kData), BlockTerm(*stream, kData));
   }
 }
 
 TEST(collation_token_stream_test, check_tokens_utf8) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-
-  constexpr std::string_view kLocaleName = "en-EN.UTF-8";
-
-  const auto icu_locale = icu::Locale::createFromName(kLocaleName.data());
-
-  std::unique_ptr<icu::Collator> coll{
-    icu::Collator::createInstance(icu_locale, err)};
-  ASSERT_NE(nullptr, coll);
-  ASSERT_TRUE(U_SUCCESS(err));
-
-  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
-    err = UErrorCode::U_ZERO_ERROR;
-    icu::CollationKey key;
-    coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
-                            data.data(), static_cast<int32_t>(data.size())}),
-                          key, err);
-    EXPECT_TRUE(U_SUCCESS(err));
-
-    int32_t size = 0;
-    const irs::byte_type* p = key.getByteArray(size);
-    EXPECT_NE(nullptr, p);
-    EXPECT_NE(0, size);
-    return irs::bstring{p, static_cast<size_t>(size - 1)};
-  };
-
-  {
-    auto stream = MakeCollation("en");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      const std::string_view data{};
-      ASSERT_EQ(irs::bstring{get_collation_key(data)},
-                BlockTerm(*stream, data));
-    }
-
-    {
-      const std::string_view data{""};
-      ASSERT_EQ(irs::bstring{get_collation_key(data)},
-                BlockTerm(*stream, data));
-    }
-
-    {
-      constexpr std::string_view kData{"quick"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-
-    {
-      constexpr std::string_view kData{"foo"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
-
-    {
-      constexpr std::string_view kData{
-        "the quick Brown fox jumps over the lazy dog"};
-      ASSERT_EQ(irs::bstring{get_collation_key(kData)},
-                BlockTerm(*stream, kData));
-    }
+  auto stream = MakeCollation("en");
+  ASSERT_NE(nullptr, stream);
+  for (std::string_view data :
+       {std::string_view{}, std::string_view{""}, std::string_view{"quick"},
+        std::string_view{"foo"},
+        std::string_view{"the quick Brown fox jumps over the lazy dog"}}) {
+    SCOPED_TRACE(data);
+    ASSERT_EQ(ReferenceKey("en-EN.UTF-8", data), BlockTerm(*stream, data));
   }
 }
 
 TEST(collation_token_stream_test, check_tokens) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-
-  constexpr std::string_view kLocaleName = "de-DE";
-
-  const auto icu_locale = icu::Locale::createFromName(kLocaleName.data());
-
-  std::unique_ptr<icu::Collator> coll{
-    icu::Collator::createInstance(icu_locale, err)};
-
-  ASSERT_NE(nullptr, coll);
-  ASSERT_TRUE(U_SUCCESS(err));
-
-  auto get_collation_key = [&](std::string_view data) -> irs::bstring {
-    icu::CollationKey key;
-    err = UErrorCode::U_ZERO_ERROR;
-    coll->getCollationKey(icu::UnicodeString::fromUTF8(icu::StringPiece{
-                            data.data(), static_cast<int32_t>(data.size())}),
-                          key, err);
-    EXPECT_TRUE(U_SUCCESS(err));
-
-    int32_t size = 0;
-    const irs::byte_type* p = key.getByteArray(size);
-    EXPECT_NE(nullptr, p);
-    EXPECT_NE(0, size);
-    return irs::bstring{p, static_cast<size_t>(size - 1)};
-  };
-
-  {
-    auto stream = MakeCollation("de_DE");
-
-    ASSERT_NE(nullptr, stream);
-
-    {
-      std::string unicode_data = "\xE2\x82\xAC";
-
-      ASSERT_EQ(irs::bstring{get_collation_key(unicode_data)},
-                BlockTerm(*stream, unicode_data));
-    }
-  }
+  auto stream = MakeCollation("de_DE");
+  ASSERT_NE(nullptr, stream);
+  const std::string unicode_data = "\xE2\x82\xAC";
+  ASSERT_EQ(ReferenceKey("de-DE", unicode_data),
+            BlockTerm(*stream, unicode_data));
 }
 
 TEST(collation_token_stream_test, native_fills_match_pull) {

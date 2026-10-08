@@ -16,8 +16,11 @@ ts
 
 # DOCS_TEST: example_004
 # DOCS_TEST_BODY
-query error syntax error at or near "WITH"
+query
 SELECT TIMESTAMP WITH TIME ZONE '2001-02-16 20:38:40-05' AT TIME ZONE 'America/Denver' AS ts;
+----
+ts
+2001-02-16 18:38:40
 
 # DOCS_TEST: example_005
 # DOCS_TEST_BODY

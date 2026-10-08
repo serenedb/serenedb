@@ -1,0 +1,63 @@
+statement ok
+CREATE DATABASE ddb_rb;
+
+
+statement ok
+CREATE TABLE ddb_rb.public.ddb_t (a INTEGER);
+
+
+statement ok
+INSERT INTO ddb_rb.public.ddb_t VALUES (1), (2);
+
+
+statement ok
+BEGIN;
+
+
+statement error
+DROP DATABASE ddb_rb;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM ddb_rb.public.ddb_t;
+----
+n
+2
+
+
+statement ok
+BEGIN;
+
+
+statement error
+DETACH ddb_rb;
+----
+db error: ERROR: DROP DATABASE cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM ddb_rb.public.ddb_t;
+----
+n
+2
+
+
+statement ok
+DROP DATABASE ddb_rb;
+
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'ddb_rb';
+----
+n
+0

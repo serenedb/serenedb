@@ -36,6 +36,8 @@ statement error
 ALTER TABLE dre.t RENAME TO t2;
 ----
 db error: ERROR: Cannot alter entry "t" because there are entries that depend on it.
+view "v" depends on table "t".
+Drop the dependent entries first and recreate them after the change.
 
 
 
@@ -51,6 +53,8 @@ statement error
 ALTER VIEW dre.vbase RENAME TO vbase2;
 ----
 db error: ERROR: Cannot alter entry "vbase" because there are entries that depend on it.
+view "vtop" depends on view "vbase".
+Drop the dependent entries first and recreate them after the change.
 
 
 
@@ -66,6 +70,8 @@ statement error
 ALTER FUNCTION dre.f RENAME TO f2;
 ----
 db error: ERROR: Cannot alter entry "f" because there are entries that depend on it.
+view "fv" depends on macro function "f".
+Drop the dependent entries first and recreate them after the change.
 
 
 
@@ -251,7 +257,7 @@ CREATE SEQUENCE dre.gs;
 
 connection after_crash
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_after_catalog_before_data';
 
 connection after_crash
 statement error connection closed
@@ -301,17 +307,18 @@ statement error
 ALTER TABLE dre.pt RENAME TO pt2;
 ----
 db error: ERROR: Cannot alter entry "pt" because there are entries that depend on it.
+view "pv" depends on table "pt".
+Drop the dependent entries first and recreate them after the change.
 
 
+
+connection after_gap
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
 
 connection after_gap
 statement ok
 CREATE TABLE dre.compact_trigger(x INTEGER);
-
-connection after_gap
-statement ok
-CHECKPOINT;
-
 
 connection after_gap
 statement ok

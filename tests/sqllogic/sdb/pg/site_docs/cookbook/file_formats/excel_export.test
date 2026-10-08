@@ -54,7 +54,7 @@ Did you mean "csv"?
 statement error
 COPY (SELECT * FROM tbl) TO 'output.xlsx';
 ----
-db error: ERROR: Copy Function with name "xlsx" is not in the catalog, but it exists in the excel extension.
+db error: ERROR: Copy Function with name "xlsx" does not exist in SereneDB (DuckDB provides it in its excel extension). If you need it, tell us in https://github.com/serenedb/serenedb/issues/887.
 
 
 # DOCS_TEST: example_005

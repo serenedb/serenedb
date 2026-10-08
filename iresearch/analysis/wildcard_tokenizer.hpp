@@ -64,6 +64,10 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool FillTokens(std::span<const duckdb::string_t> tokens, TokenSink& sink,
                   FillCtx ctx) final;
 
+  void FillRow(const duckdb::UnifiedVectorFormat& values, duckdb::idx_t offset,
+               uint32_t count, doc_id_t doc, TokenSink& sink,
+               FillCtx ctx) final;
+
   TokenTraits Traits() const noexcept final { return {.store = true}; }
 
   BlockTraits WantedBlockTraits() const noexcept final {
@@ -85,10 +89,14 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   auto& ngram() noexcept { return _ngram; }
 
  private:
+  template<TokenLayout Layout, bool KnownAscii>
+  bool AppendValue(duckdb::string_t value, TokenSink& sink);
+
   template<TokenLayout Layout>
-  void EmitEncoded(TokenSink& sink, bool ascii);
+  void EmitEncoded(TokenSink& sink, size_t from, bool ascii);
   template<bool Identity, TokenLayout Layout>
-  void EmitTerms(TokenSink& sink);
+  void EmitTerms(TokenSink& sink, size_t from);
+  void StoreTerms(TokenSink& sink);
   template<bool Identity, TokenLayout Layout>
   void EmitTermGrams(TokenSink& sink, const byte_type* term, uint32_t size);
 
@@ -102,15 +110,6 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool _base_stable = false;
 };
 
-template<typename Context>
-void SerdeWrite(Context ctx, const WildcardTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(ctx, std::tie(o.base_analyzer, o.ngram_size));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, WildcardTokenizer::Options& o) {
-  auto refs = std::tie(o.base_analyzer, o.ngram_size);
-  irs::utils::ReadTupleOrObject(ctx, refs);
-}
+extern template class TypedTokenizer<WildcardTokenizer>;
 
 }  // namespace irs::analysis

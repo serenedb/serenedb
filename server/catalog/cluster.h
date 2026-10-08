@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
@@ -166,11 +167,25 @@ ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
 
-inline duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
-  std::string_view name) {
+inline bool ReadDatabase(
+  std::string_view name,
+  absl::FunctionRef<void(const DatabaseCatalogEntry&)> read) {
   auto& cluster = ClusterOf();
   return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{name});
+    .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
+               [&](duckdb::CatalogEntry& entry) {
+                 read(entry.Cast<DatabaseCatalogEntry>());
+               });
+}
+
+inline bool ReadRole(std::string_view name,
+                     absl::FunctionRef<void(const RoleCatalogEntry&)> read) {
+  auto& cluster = ClusterOf();
+  return cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
+    .ReadEntry(cluster.LoginTransaction(), duckdb::Identifier{name},
+               [&](duckdb::CatalogEntry& entry) {
+                 read(entry.Cast<RoleCatalogEntry>());
+               });
 }
 
 }  // namespace sdb::catalog

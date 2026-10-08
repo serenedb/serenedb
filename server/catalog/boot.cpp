@@ -342,7 +342,8 @@ void InitCatalog(std::string_view directory) {
   auto& manager = duckdb::DatabaseManager::Get(instance);
   for (const auto& db : manager.GetDatabases()) {
     if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
-        !FindDatabase(db->GetName().GetIdentifierName())) {
+        !ReadDatabase(db->GetName().GetIdentifierName(),
+                      [](const DatabaseCatalogEntry&) {})) {
       manager.DetachDatabase(context, db->GetName(),
                              duckdb::OnEntryNotFound::RETURN_NULL);
     }

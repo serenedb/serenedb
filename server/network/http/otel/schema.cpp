@@ -121,28 +121,31 @@ std::string InsertSql(std::string_view schema, std::string_view table,
 }
 
 absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
-  auto entry = catalog::FindDatabase(database);
-  if (!entry) {
+  std::string name;
+  duckdb::idx_t oid = 0;
+  const auto read = [&](const catalog::DatabaseCatalogEntry& entry) {
+    name = entry.name.GetIdentifierName();
+    oid = entry.oid;
+  };
+  if (!catalog::ReadDatabase(database, read)) {
     // CREATE DATABASE has to run somewhere: the default database always
     // exists and every role may connect to it.
-    auto home = catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
-    if (!home) {
+    if (!catalog::ReadDatabase(irs::StaticStrings::kDefaultDatabase, read)) {
       return absl::NotFoundError("default database not found");
     }
-    Creator bootstrap{home->name.GetIdentifierName(), home->oid};
+    Creator bootstrap{name, oid};
     if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
                                     network::http::SqlIdentifier(database)))) {
       return absl::InternalError(
         absl::StrCat("cannot create database '", database, "'"));
     }
-    entry = catalog::FindDatabase(database);
-    if (!entry) {
+    if (!catalog::ReadDatabase(database, read)) {
       return absl::InternalError(absl::StrCat(
         "database '", database, "' not visible after CREATE DATABASE"));
     }
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
-  Creator creator{entry->name.GetIdentifierName(), entry->oid, schema};
+  Creator creator{name, oid, schema};
   if (creator.Exists()) {
     SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database, ".",
              schema);

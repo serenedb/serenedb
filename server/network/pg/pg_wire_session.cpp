@@ -407,22 +407,22 @@ bool PgWireSession<Kind>::SetupConnection() {
   SDB_IF_FAILURE("setup_connection_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  auto& cluster = catalog::ClusterOf();
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{DatabaseName()});
-  if (!database) {
+  duckdb::idx_t database_id = 0;
+  duckdb::Permissions permissions;
+  if (!catalog::ReadDatabase(
+        DatabaseName(), [&](const catalog::DatabaseCatalogEntry& database) {
+          database_id = database.oid;
+          permissions = database.permissions;
+        })) {
     WriteFatalResponse(this->_send,
                        SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
                                       ERR_MSG("database \"", DatabaseName(),
                                               "\" is not accessible")));
     return false;
   }
-  const auto database_id = database->oid;
 
   const std::string_view user = UserName();
-  auto login =
-    sdb::pg::RequireLoginRole(user, DatabaseName(), database->permissions);
+  auto login = sdb::pg::RequireLoginRole(user, DatabaseName(), permissions);
   if (!login.role) {
     WriteFatalResponse(this->_send, login.error);
     return false;
@@ -902,18 +902,21 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   // for every connection, regardless of whether a stored credential exists.
   const hba::MembershipFn is_member = [](std::string_view user,
                                          std::string_view group) {
-    auto& cluster = catalog::ClusterOf();
-    const auto transaction = cluster.LoginTransaction();
-    auto& roles = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
-    auto user_role = roles.GetEntry(transaction, duckdb::Identifier{user});
-    auto group_role = roles.GetEntry(transaction, duckdb::Identifier{group});
-    if (!user_role || !group_role) {
+    duckdb::idx_t user_oid = 0;
+    duckdb::idx_t group_oid = 0;
+    if (!catalog::ReadRole(user,
+                           [&](const catalog::RoleCatalogEntry& role) {
+                             user_oid = role.oid;
+                           }) ||
+        !catalog::ReadRole(group, [&](const catalog::RoleCatalogEntry& role) {
+          group_oid = role.oid;
+        })) {
       return false;  // missing_ok: unknown login role or target group
     }
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_role->oid);
-    return std::ranges::binary_search(closure->closure, group_role->oid);
+    const auto closure = auth::ClosureFor(nullptr, user_oid);
+    return std::ranges::binary_search(closure->closure, group_oid);
   };
 
   hba::ClientInfo client;
@@ -1023,15 +1026,14 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  auto& cluster = catalog::ClusterOf();
-  auto entry =
-    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{UserName()});
-  const auto* login_role =
-    entry ? &entry->Cast<catalog::RoleCatalogEntry>() : nullptr;
-  if (login_role && login_role->HasValidUntil() &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >=
-        login_role->ValidUntil()) {
+  int64_t valid_until = 0;
+  catalog::ReadRole(UserName(), [&](const catalog::RoleCatalogEntry& role) {
+    if (role.HasValidUntil()) {
+      valid_until = role.ValidUntil();
+    }
+  });
+  if (valid_until != 0 &&
+      duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),

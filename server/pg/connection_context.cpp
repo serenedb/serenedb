@@ -38,17 +38,21 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
                             const duckdb::Permissions& perm) {
   // No ClientContext yet -- the connection is still being established -- so
   // this reads the committed cluster state.
-  auto& cluster = catalog::ClusterOf();
-  auto entry =
-    cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-      .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{user});
-  if (!entry) {
+  struct {
+    duckdb::idx_t oid = 0;
+    bool can_login = false;
+    bool superuser = false;
+  } role;
+  if (!catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& entry) {
+        role.oid = entry.oid;
+        role.can_login = entry.CanLogin();
+        role.superuser = entry.IsSuperuser();
+      })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" does not exist"))};
   }
-  const auto& role = entry->Cast<catalog::RoleCatalogEntry>();
-  if (!role.CanLogin()) {
+  if (!role.can_login) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
@@ -61,7 +65,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  return {.role = role.oid, .superuser = role.IsSuperuser()};
+  return {.role = role.oid, .superuser = role.superuser};
 }
 
 }  // namespace sdb::pg

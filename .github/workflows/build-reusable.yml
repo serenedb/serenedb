@@ -338,6 +338,10 @@ jobs:
           BIGLAKE_PRIVATE_KEY_ID: ${{ secrets.BIGLAKE_PRIVATE_KEY_ID }}
         run: BUILD_DIR=build CONFIG="${{ inputs.CONFIG }}" ./scripts/ci/steps/run-suites.sh
 
+      - name: Summary
+        if: always() && steps.build.outcome == 'success'
+        run: ./scripts/ci/steps/07-ci-summary.bash
+
       - name: Generate coverage report
         if: steps.build.outcome == 'success' && env.USE_COVERAGE != ''
         run: BUILD_DIR=build ./scripts/ci/steps/06-ci-in-docker-generate-coverage-report.bash

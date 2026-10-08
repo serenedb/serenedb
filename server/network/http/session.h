@@ -171,16 +171,19 @@ class HttpSession final
     if (!_conn) {
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      auto database = catalog::FindDatabase(dbname);
-      if (!database) {
+      duckdb::idx_t database_id = 0;
+      duckdb::Permissions permissions;
+      if (!catalog::ReadDatabase(
+            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
+              database_id = database.oid;
+              permissions = database.permissions;
+            })) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
                         ERR_MSG("database \"", dbname, "\" does not exist"));
       }
-      const auto database_id = database->oid;
       const std::string_view user =
         _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login =
-        sdb::pg::RequireLoginRole(user, dbname, database->permissions);
+      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
       if (!login.role) {
         THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
       }

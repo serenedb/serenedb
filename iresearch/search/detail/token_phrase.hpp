@@ -141,13 +141,7 @@ struct CompiledPhrase {
         visit(slot_ids[found->begin + i]);
       }
     }
-    const bool plain = Plain(view);
-    for (uint32_t i = 0; i != slots.size(); ++i) {
-      const auto& pattern = slots[i].pattern;
-      if (plain && pattern && pattern->Accepts(view)) {
-        visit(i);
-      }
-    }
+    ForEachPattern(view, visit);
   }
 
   std::vector<Slot> slots;
@@ -167,6 +161,18 @@ struct CompiledPhrase {
 
   bool Plain(bytes_view term) const noexcept {
     return separator.empty() || term.find(separator) == bytes_view::npos;
+  }
+
+  template<typename Visitor>
+  void ForEachPattern(bytes_view term, Visitor&& visit) const {
+    if (!Plain(term)) {
+      return;
+    }
+    for (uint32_t i = 0; i != slots.size(); ++i) {
+      if (slots[i].pattern && slots[i].pattern->Accepts(term)) {
+        visit(i);
+      }
+    }
   }
 
   void Init(const ByPhraseOptions& phrase,

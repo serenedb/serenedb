@@ -12,7 +12,7 @@ This page describes which SereneDB releases can read search indexes, meaning inv
 - **Breaks:** a release that can't read indexes from earlier releases says so in its release notes, together with the steps to move affected indexes and search tables to it.
 - **Integrity:** every index file records CRC32C checksums. The metadata of each file is verified whenever the file is opened, and a damaged file fails to open instead of returning wrong results.
 
-The write-ahead log of search tables follows the rules of the database file it belongs to.
+Search tables write their changes to the write-ahead log of the database file they belong to, so the rules for database files below cover those changes too.
 
 Database files hold the rows of tables. The catalog, meaning the definitions of roles, databases, schemas, tables, text search dictionaries, foreign servers, indexes and sequences, is one log for the whole instance: `engine_v1/catalog.wal` in the data directory, written in the same format as the write-ahead log of a database file. Database files, their write-ahead logs and the catalog log follow these rules:
 

@@ -1,7 +1,3 @@
-# A transaction that writes, truncates and writes again on a search table is
-# one WAL record: rows before the truncate (published earlier or written in the
-# same transaction) must not survive replay, rows after it must.
-
 control substitution on
 
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
@@ -21,7 +17,7 @@ statement ok
 VACUUM (REFRESH_TABLE) trt;
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement ok
 BEGIN;

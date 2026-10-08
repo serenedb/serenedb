@@ -278,7 +278,7 @@ DROP TABLE wmixb;
 ###############################################################################
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO wbuf VALUES (20001, 'small_a'), (20002, 'small_b');
@@ -315,7 +315,7 @@ SET threads = 1;
 
 connection small_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection small_after
 statement error connection closed
@@ -353,7 +353,7 @@ SET threads = 1;
 
 connection after_commit
 statement ok
-SET sdb_faults = 'crash_before_search_wal_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection after_commit
 statement error connection closed

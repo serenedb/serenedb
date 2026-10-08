@@ -1,0 +1,109 @@
+control substitution on
+
+# Fetch non-indexed columns back from an attached postgres table through a
+# BYTEA key_columns index ("frozen postings, live values").
+#
+# The key is a bytea reference. The external lookup ships
+# the surviving keys to the remote as $1::bytea[] and joins them back to the
+# source. Those keys must travel as a postgres BINARY bytea array; the old
+# path had no bytea array writer and fell back to a text array literal, where
+# each duckdb BLOB rendered in blob-text (\x13\x04..., backslash-escaped per
+# byte) that postgres rejects as a bytea hex literal ("invalid hexadecimal
+# digit"). The keys deliberately carry NUL and other non-printable bytes so a
+# text fallback is guaranteed to fail.
+#
+# >2048 matching docs so the key array is serialized across more than one
+# batch into the reused parameter buffer.
+#
+# Unique attach alias (pgbk_*) and remote schema (s*_bk) for parallel safety --
+# both carry ${__DATABASE__} because the remote postgres is shared and the runner
+# replays this file once per wire engine.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgbk_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CREATE SCHEMA pgbk_${__DATABASE__}.s${__DATABASE__}_bk;
+
+
+statement ok
+CREATE TABLE pgbk_${__DATABASE__}.s${__DATABASE__}_bk.docs (
+  ref  BYTEA,
+  code TEXT,
+  body TEXT
+);
+
+
+statement ok
+INSERT INTO pgbk_${__DATABASE__}.s${__DATABASE__}_bk.docs
+  SELECT decode(lpad(to_hex(g), 8, '0'), 'hex'),
+         'code-' || lpad(g::text, 4, '0'),
+         'servis doc ' || g
+  FROM generate_series(1, 2600) t(g);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pgbk_en_${__DATABASE__} AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE VIEW pgbk_v AS SELECT ref, code, body FROM pgbk_${__DATABASE__}.s${__DATABASE__}_bk.docs;
+
+
+statement ok
+CREATE INDEX pgbk_idx ON pgbk_v
+  USING inverted(body pgbk_en_${__DATABASE__})
+  WITH (key_columns = 'ref');
+
+
+# Every doc's code comes back exactly once through the bytea-keyed lookup.
+query
+SELECT count(*) AS total, count(DISTINCT code) AS distinct_codes
+FROM pgbk_idx WHERE body @@ ts_phrase('servis');
+----
+total	distinct_codes
+2600	2600
+
+
+# Specific keys resolve to the right row (filter runs on the fetched column).
+query
+SELECT code FROM pgbk_idx
+WHERE body @@ ts_phrase('servis') AND code IN ('code-0001', 'code-0007', 'code-2600')
+ORDER BY code;
+----
+code
+code-0001
+code-0007
+code-2600
+
+
+query
+SELECT code FROM pgbk_idx
+WHERE body @@ ts_phrase('servis') ORDER BY code LIMIT 3;
+----
+code
+code-0001
+code-0002
+code-0003
+
+
+statement ok
+DROP INDEX pgbk_idx;
+
+statement ok
+DROP VIEW pgbk_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pgbk_en_${__DATABASE__};
+
+statement ok
+DROP TABLE pgbk_${__DATABASE__}.s${__DATABASE__}_bk.docs;
+
+statement ok
+DROP SCHEMA pgbk_${__DATABASE__}.s${__DATABASE__}_bk;
+
+statement ok
+DETACH pgbk_${__DATABASE__};

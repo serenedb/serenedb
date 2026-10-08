@@ -37,13 +37,14 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
                    std::shared_ptr<const PhraseTokens> tokens,
                    const ColumnReader& column, const ByPhraseOptions& phrase,
                    std::span<const std::vector<bstring>> expanded,
+                   std::span<const CompiledPhrase::WordStat> words,
                    score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
       _approx{std::move(approx)},
       _reader{&reader},
       _tokens{std::move(tokens)},
       _column{&column},
-      _compiled{phrase, expanded, reader},
+      _compiled{phrase, expanded, words},
       _boost{boost} {
     _estimate_matches = _approx->EstimateMatches();
     _postings = _approx->Postings();

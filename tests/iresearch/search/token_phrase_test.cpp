@@ -29,7 +29,6 @@
 #include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/formats/empty_term_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
@@ -106,26 +105,48 @@ class StackedWords final : public irs::analysis::TypedTokenizer<StackedWords> {
   }
 };
 
-constexpr std::optional<irs::PhraseMatch> kMatches[] = {
-  std::nullopt,
-  irs::PhraseMatch::Anchor,
-  irs::PhraseMatch::Automaton,
-  irs::PhraseMatch::Positions,
+enum class PhraseMatch : uint8_t {
+  Anchor,
+  Automaton,
+  Positions,
 };
 
-std::string MatchName(std::optional<irs::PhraseMatch> match) {
+constexpr std::optional<PhraseMatch> kMatches[] = {
+  std::nullopt,
+  PhraseMatch::Anchor,
+  PhraseMatch::Automaton,
+  PhraseMatch::Positions,
+};
+
+std::string MatchName(std::optional<PhraseMatch> match) {
   if (!match) {
     return "auto";
   }
   switch (*match) {
-    case irs::PhraseMatch::Anchor:
+    case PhraseMatch::Anchor:
       return "anchor";
-    case irs::PhraseMatch::Automaton:
+    case PhraseMatch::Automaton:
       return "automaton";
-    case irs::PhraseMatch::Positions:
+    case PhraseMatch::Positions:
       return "positions";
   }
   return "?";
+}
+
+void Force(irs::CompiledPhrase& compiled, std::optional<PhraseMatch> match) {
+  if (match == PhraseMatch::Positions) {
+    compiled.anchor.reset();
+    compiled.automaton.reset();
+  } else if (match == PhraseMatch::Automaton && compiled.automaton) {
+    compiled.anchor.reset();
+  }
+}
+
+PhraseMatch RouteOf(const irs::CompiledPhrase& compiled) {
+  if (compiled.anchor) {
+    return PhraseMatch::Anchor;
+  }
+  return compiled.automaton ? PhraseMatch::Automaton : PhraseMatch::Positions;
 }
 
 irs::ByPhraseOptions Phrase(std::string_view text) {
@@ -153,7 +174,6 @@ struct Outcome {
   bool matched = false;
   uint32_t freq = 0;
   irs::score_t scale = irs::kNoBoost;
-  bool restarted = false;
 };
 
 template<typename Words>
@@ -178,15 +198,14 @@ bool CheckText(irs::PhraseCheck& check, std::string_view text,
 
 template<typename Words>
 Outcome Check(const irs::ByPhraseOptions& phrase, std::string_view text,
-              bool count, std::optional<irs::PhraseMatch> match,
+              bool count, std::optional<PhraseMatch> match,
               std::span<const std::vector<irs::bstring>> expanded) {
-  const irs::EmptyTermReader reader{0};
-  const irs::CompiledPhrase compiled{phrase, expanded, reader, match};
+  irs::CompiledPhrase compiled{phrase, expanded, {}};
+  Force(compiled, match);
   irs::PhraseCheck check{compiled, TextOf<Words>(), count};
   irs::PhraseVerdict verdict;
   Outcome out;
   out.matched = CheckText(check, text, verdict);
-  out.restarted = check.Restarted();
   out.freq = verdict.freq;
   out.scale = verdict.scale;
   return out;
@@ -462,9 +481,6 @@ TEST(PhraseCheckTest, adversarial_repetition_restarts) {
     }
   }
   EXPECT_EQ(expected, out.freq);
-  EXPECT_TRUE(
-    Check<DenseWords>(phrase, text, true, irs::PhraseMatch::Anchor, {})
-      .restarted);
 }
 
 TEST(PhraseCheckTest, empty_value_matches_nothing) {
@@ -474,36 +490,51 @@ TEST(PhraseCheckTest, empty_value_matches_nothing) {
 }
 
 TEST(PhraseCheckTest, routes) {
-  const irs::EmptyTermReader reader{0};
+  const std::span<const std::vector<irs::bstring>> expanded;
   const auto mode = [&](const irs::ByPhraseOptions& phrase,
-                        std::optional<irs::PhraseMatch> match = {}) {
-    const irs::CompiledPhrase compiled{phrase, {}, reader, match};
-    if (compiled.anchor) {
-      return irs::PhraseMatch::Anchor;
-    }
-    return compiled.automaton ? irs::PhraseMatch::Automaton
-                              : irs::PhraseMatch::Positions;
+                        std::optional<PhraseMatch> match = {}) {
+    irs::CompiledPhrase compiled{phrase, expanded, {}};
+    Force(compiled, match);
+    return RouteOf(compiled);
   };
-  EXPECT_EQ(irs::PhraseMatch::Anchor, mode(Phrase("a b")));
-  EXPECT_EQ(irs::PhraseMatch::Automaton,
-            mode(Phrase("a b"), irs::PhraseMatch::Automaton));
-  EXPECT_EQ(irs::PhraseMatch::Positions,
-            mode(Phrase("a b"), irs::PhraseMatch::Positions));
+  EXPECT_EQ(PhraseMatch::Anchor, mode(Phrase("a b")));
+  EXPECT_EQ(PhraseMatch::Automaton,
+            mode(Phrase("a b"), PhraseMatch::Automaton));
+  EXPECT_EQ(PhraseMatch::Positions,
+            mode(Phrase("a b"), PhraseMatch::Positions));
   auto sloppy = Phrase("a b");
   sloppy.set_slop(1);
-  EXPECT_EQ(irs::PhraseMatch::Positions, mode(sloppy));
-  EXPECT_EQ(irs::PhraseMatch::Positions,
-            mode(sloppy, irs::PhraseMatch::Automaton));
+  EXPECT_EQ(PhraseMatch::Positions, mode(sloppy));
+  EXPECT_EQ(PhraseMatch::Positions, mode(sloppy, PhraseMatch::Automaton));
   irs::ByPhraseOptions sets;
   sets.push_back<irs::TermSetOptions>().terms.emplace(Bytes("a"));
   sets.push_back<irs::TermSetOptions>().terms.emplace(Bytes("b"));
-  EXPECT_EQ(irs::PhraseMatch::Automaton, mode(sets));
+  EXPECT_EQ(PhraseMatch::Automaton, mode(sets));
   irs::ByPhraseOptions wide;
   PushTerm(wide, "a", 0, 0);
   PushTerm(wide, "b", 1, 70);
-  EXPECT_EQ(irs::PhraseMatch::Anchor, mode(wide));
-  const irs::CompiledPhrase compiled{wide, {}, reader};
+  EXPECT_EQ(PhraseMatch::Anchor, mode(wide));
+  const irs::CompiledPhrase compiled{wide, expanded, {}};
   EXPECT_FALSE(compiled.automaton.has_value());
+}
+
+TEST(PhraseCheckTest, anchor_is_the_rarest_word) {
+  const std::span<const std::vector<irs::bstring>> expanded;
+  const auto phrase = Phrase("a b c");
+  const irs::CompiledPhrase::WordStat stats[] = {{.docs = 10, .freq = 50},
+                                                 {.docs = 10, .freq = 12},
+                                                 {.docs = 4, .freq = 40}};
+  const irs::CompiledPhrase compiled{phrase, expanded, stats};
+  ASSERT_TRUE(compiled.anchor.has_value());
+  EXPECT_EQ(1U, compiled.anchor->slot);
+  EXPECT_TRUE(irs::CompiledPhrase::Anchored(phrase));
+  auto sloppy = phrase;
+  sloppy.set_slop(1);
+  EXPECT_FALSE(irs::CompiledPhrase::Anchored(sloppy));
+  irs::ByPhraseOptions stacked;
+  PushTerm(stacked, "a", 0, 0);
+  PushTerm(stacked, "b", 0, 0);
+  EXPECT_FALSE(irs::CompiledPhrase::Anchored(stacked));
 }
 
 TEST(PhraseCheckTest, standalone_parts) {
@@ -818,10 +849,12 @@ void ExpectDeferredLikeInline(const Index& index,
   const auto candidates = index.Docs(*conjunction);
   ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
   EXPECT_TRUE(std::ranges::includes(candidates, expected));
+  const auto stats =
+    irs::CompiledPhrase::WordStats(options, index.Reader(), kPlainId);
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
-    const irs::CompiledPhrase compiled{options, options.word_separator(),
-                                       index.Reader(), kPlainId, match};
+    irs::CompiledPhrase compiled{options, options.word_separator(), stats};
+    Force(compiled, match);
     irs::PhraseCheck check{compiled, *options.tokens(), false};
     duckdb::DataChunk chunk;
     chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
@@ -1215,8 +1248,9 @@ TEST(TokenPhraseIndexTest, standalone_patterns_skip_shingles) {
   const Index index{docs, std::type_identity<DenseWords>{}};
   auto phrase = Phrase("quick");
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
-  const irs::CompiledPhrase compiled{phrase, Bytes("_"), index.Reader(),
-                                     kPlainId};
+  const irs::CompiledPhrase compiled{
+    phrase, Bytes("_"),
+    irs::CompiledPhrase::WordStats(phrase, index.Reader(), kPlainId)};
   irs::PhraseCheck phrase_check{compiled, TextOf<DenseWords>(), true};
   const auto check = [&](std::string_view text) {
     irs::PhraseVerdict verdict;

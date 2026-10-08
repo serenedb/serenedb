@@ -109,7 +109,8 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
     return std::nullopt;
   }
   auto compiled = std::make_shared<const irs::CompiledPhrase>(
-    checked, options.word_separator(), ctx.reader, phrase.field_id());
+    checked, options.word_separator(),
+    irs::CompiledPhrase::WordStats(checked, ctx.reader, phrase.field_id()));
   return Split(filter, std::move(index), tokens->text, *type,
                "sdb_phrase_check", CheckPhrase,
                duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),

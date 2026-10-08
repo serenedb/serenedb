@@ -55,7 +55,7 @@ def test_flagfile_is_parsed(tmp_path: Path) -> None:
     ff.write_text("--version\n")
     r = _run([f"--flagfile={ff}"])
     assert r.returncode == 0, r.stderr
-    assert "Debug build" in r.stdout or "Release build" in r.stdout, r.stdout
+    assert r.stdout.splitlines()[0] == "serened", r.stdout
 
 
 def test_flagfile_tokens_reach_parser(tmp_path: Path) -> None:

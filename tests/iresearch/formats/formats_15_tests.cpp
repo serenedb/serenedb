@@ -268,7 +268,8 @@ class Format15TestCase : public tests::FormatTestCase {
   void AssertBackwardsNext(irs::PostingsReader& reader, DocsView docs,
                            irs::IndexFeatures field_features,
                            irs::IndexFeatures features,
-                           const irs::PostingMeta& meta);
+                           const irs::PostingMeta& meta, size_t part,
+                           size_t parts);
   void AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
                      irs::IndexFeatures field_features,
                      irs::IndexFeatures features, const irs::PostingMeta& meta);
@@ -281,10 +282,18 @@ class Format15TestCase : public tests::FormatTestCase {
                          irs::IndexFeatures features,
                          const irs::PostingMeta& meta);
   void AssertPostings(DocsView docs, irs::IndexFeatures field_features,
-                      irs::IndexFeatures features);
+                      irs::IndexFeatures features, size_t part = 0,
+                      size_t parts = 1);
   void AssertPruned(DocsView docs, uint32_t threshold);
   void AssertPrunedPostings(DocsView docs, uint32_t threshold);
   void AssertStressPostings(DocsView docs);
+  void AssertLongPostingsStress(irs::IndexFeatures field_features,
+                                irs::IndexFeatures features, size_t part,
+                                size_t parts) {
+    static constexpr size_t kCount = 10000;
+    AssertPostings(GenerateDocs(kCount, 50.f, 13.f, 1), field_features,
+                   features, part, parts);
+  }
 
  private:
   tests::SeekPostings::ptr GetIterator(irs::PostingsReader& reader,
@@ -416,17 +425,19 @@ void Format15TestCase::AssertBackwardsNext(irs::PostingsReader& reader,
                                            DocsView docs,
                                            irs::IndexFeatures field_features,
                                            irs::IndexFeatures features,
-                                           const irs::PostingMeta& meta) {
-  for (auto doc = docs.rbegin(), end = docs.rend(); doc != end; ++doc) {
+                                           const irs::PostingMeta& meta,
+                                           size_t part, size_t parts) {
+  for (size_t back = part; back < docs.size(); back += parts) {
+    const auto& doc = docs[docs.size() - 1 - back];
     TestPostings expected{docs, features};
 
     auto actual = GetIterator(reader, field_features, features, meta);
     ASSERT_NE(nullptr, actual);
 
     ASSERT_FALSE(irs::doc_limits::valid(actual->Value()));
-    ASSERT_EQ(doc->first, actual->Seek(doc->first));
+    ASSERT_EQ(doc.first, actual->Seek(doc.first));
 
-    ASSERT_EQ(doc->first, expected.SeekTo(doc->first));
+    ASSERT_EQ(doc.first, expected.SeekTo(doc.first));
     AssertFrequencyAndPositions(expected, *actual, features);
 
     while (!irs::doc_limits::eof(expected.Next())) {
@@ -569,7 +580,8 @@ void Format15TestCase::AssertCornerCases(irs::PostingsReader& reader,
 
 void Format15TestCase::AssertPostings(DocsView docs,
                                       irs::IndexFeatures field_features,
-                                      irs::IndexFeatures features) {
+                                      irs::IndexFeatures features, size_t part,
+                                      size_t parts) {
   FreqScorer scorer;
   const irs::Scorer* scorer_ptr = &scorer;
 
@@ -580,35 +592,38 @@ void Format15TestCase::AssertPostings(DocsView docs,
 
   ASSERT_EQ((field_features & features), features);
 
-  {
-    irs::FieldMeta field_meta;
-    field_meta.index_features = field_features;
-    MockPostingsField field{field_meta, reader->Handles(),
-                            HasScoreBounds(field_features), docs.size()};
-    const bool expected_pruned =
-      HasScoreBounds(field_features) && docs.size() > GetPostingsBlockSize();
-    irs::ColumnArgsFetcher fetcher;
-    ASSERT_EQ(expected_pruned,
-              MakePruned(field, meta, scorer, fetcher, 1) != nullptr);
+  if (part == 0) {
+    {
+      irs::FieldMeta field_meta;
+      field_meta.index_features = field_features;
+      MockPostingsField field{field_meta, reader->Handles(),
+                              HasScoreBounds(field_features), docs.size()};
+      const bool expected_pruned =
+        HasScoreBounds(field_features) && docs.size() > GetPostingsBlockSize();
+      irs::ColumnArgsFetcher fetcher;
+      ASSERT_EQ(expected_pruned,
+                MakePruned(field, meta, scorer, fetcher, 1) != nullptr);
+    }
+
+    AssertPostingsWalk(*reader, docs, field_features, features, meta);
+
+    AssertCornerCases(*reader, docs, field_features, features, meta);
+
+    AssertDocsSeq(*reader, docs, field_features, features, meta);
+
+    AssertDocsRandom(*reader, docs, field_features, features, meta,
+                     GetPostingsBlockSize() - 1, GetPostingsBlockSize());
+
+    AssertDocsRandom(*reader, docs, field_features, features, meta,
+                     GetPostingsBlockSize(), GetPostingsBlockSize());
+
+    AssertDocsRandom(*reader, docs, field_features, features, meta, 0, 1);
+
+    AssertDocsRandom(*reader, docs, field_features, features, meta, 0, 5);
   }
 
-  AssertPostingsWalk(*reader, docs, field_features, features, meta);
-
-  AssertCornerCases(*reader, docs, field_features, features, meta);
-
-  AssertDocsSeq(*reader, docs, field_features, features, meta);
-
-  AssertDocsRandom(*reader, docs, field_features, features, meta,
-                   GetPostingsBlockSize() - 1, GetPostingsBlockSize());
-
-  AssertDocsRandom(*reader, docs, field_features, features, meta,
-                   GetPostingsBlockSize(), GetPostingsBlockSize());
-
-  AssertDocsRandom(*reader, docs, field_features, features, meta, 0, 1);
-
-  AssertDocsRandom(*reader, docs, field_features, features, meta, 0, 5);
-
-  AssertBackwardsNext(*reader, docs, field_features, features, meta);
+  AssertBackwardsNext(*reader, docs, field_features, features, meta, part,
+                      parts);
 }
 
 void Format15TestCase::AssertPruned(DocsView docs, uint32_t threshold) {
@@ -746,11 +761,48 @@ TEST_P(Format15TestCase, LongPostingsPruneThreshold100) {
   AssertPrunedPostings(docs, kThreshold);
 }
 
-TEST_P(Format15TestCase, LongPostingsStress) {
-  static constexpr size_t kCount = 10000;
-  const auto docs = GenerateDocs(kCount, 50.f, 13.f, 1);
+TEST_P(Format15TestCase, LongPostingsStressNone) {
+  AssertLongPostingsStress(kNone, kNone, 0, 1);
+}
 
-  AssertStressPostings(docs);
+TEST_P(Format15TestCase, LongPostingsStressNoneOfOffs) {
+  AssertLongPostingsStress(kOffs, kNone, 0, 1);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressFreq) {
+  AssertLongPostingsStress(kFreq, kFreq, 0, 1);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressPos0) {
+  AssertLongPostingsStress(kPos, kPos, 0, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressPos1) {
+  AssertLongPostingsStress(kPos, kPos, 1, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressPos2) {
+  AssertLongPostingsStress(kPos, kPos, 2, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressPos3) {
+  AssertLongPostingsStress(kPos, kPos, 3, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressOffs0) {
+  AssertLongPostingsStress(kOffs, kOffs, 0, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressOffs1) {
+  AssertLongPostingsStress(kOffs, kOffs, 1, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressOffs2) {
+  AssertLongPostingsStress(kOffs, kOffs, 2, 4);
+}
+
+TEST_P(Format15TestCase, LongPostingsStressOffs3) {
+  AssertLongPostingsStress(kOffs, kOffs, 3, 4);
 }
 
 TEST_P(Format15TestCase, MediumPostings) {

@@ -139,6 +139,8 @@ uint64_t Seed();
 
 std::vector<const Spec*> SelectedSpecs();
 
+std::string_view Family(const Spec& spec);
+
 std::vector<const Spec*> SelectedFamilies();
 
 size_t ValueBudget(const Spec& spec, size_t base);

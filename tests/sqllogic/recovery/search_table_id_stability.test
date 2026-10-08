@@ -42,7 +42,7 @@ RESET sdb_faults;
 
 # Crash after the WAL commit so the instance restarts (row 3 replays too).
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO t VALUES (3, 'baz');

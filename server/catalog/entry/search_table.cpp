@@ -420,6 +420,41 @@ void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   }
 }
 
+void SearchTableEntry::ReplayInsert(duckdb::ClientContext& context,
+                                    duckdb::idx_t tick,
+                                    duckdb::DataChunk& chunk,
+                                    duckdb::optional_idx row_start) {
+  std::vector<connector::ColumnId> column_ids;
+  for (const auto& column : _columns.Logical()) {
+    column_ids.emplace_back(column.Oid());
+  }
+  _storage->ReplayInsert(context, catalog, column_ids, tick, chunk,
+                         row_start.GetIndex());
+}
+
+void SearchTableEntry::ReplayDelete(duckdb::ClientContext&, duckdb::idx_t tick,
+                                    duckdb::DataChunk& chunk) {
+  _storage->ReplayDelete(tick, chunk);
+}
+
+void SearchTableEntry::ReplayTruncate(duckdb::ClientContext&,
+                                      duckdb::idx_t tick) {
+  _storage->ReplayTruncate(tick);
+}
+
+void SearchTableEntry::ReplayAdoptSegments(
+  duckdb::ClientContext&, duckdb::idx_t tick,
+  duckdb::vector<std::string> segments) {
+  _storage->ReplayAdoptSegments(tick, std::move(segments));
+}
+
+void SearchTableEntry::FinishReplay() {
+  _storage->FinishReplay();
+  _storage->StartTasks();
+}
+
+void SearchTableEntry::Checkpoint() { _storage->Publish(); }
+
 void SearchTableEntry::BindUpdateConstraints(duckdb::Binder&,
                                              duckdb::LogicalGet& get,
                                              duckdb::LogicalProjection& proj,

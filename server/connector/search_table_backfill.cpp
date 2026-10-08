@@ -53,7 +53,6 @@
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "search/search_db_wal.h"
 #include "search/search_table.h"
 
 namespace sdb::connector {
@@ -143,16 +142,6 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     fed += chunk.size();
   }
   return fed;
-}
-
-void Publish(search::SearchTable& shard) {
-  search::RefreshResult code = search::RefreshResult::Undefined;
-  const auto result = shard.RefreshUnsafe(/*wait=*/true, nullptr, code);
-  if (!result.res.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("search-table build: publish failed: ", result.res.message()));
-  }
 }
 
 std::shared_ptr<SearchRemoveFilter> MakeRemoval(std::vector<int64_t> rowids) {
@@ -337,7 +326,7 @@ bool RebuildGroup(duckdb::ClientContext& context,
   // Need explicit call here so on Publish we don't have pending transactions.
   abort_all();
   if (swapped == SwapResult::Truncated) {
-    Publish(shard);
+    shard.Publish();
     return false;
   }
   if (swapped == SwapResult::Failed) {
@@ -350,7 +339,7 @@ bool RebuildGroup(duckdb::ClientContext& context,
               target.table_id));
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
-  Publish(shard);
+  shard.Publish();
   return true;
 }
 
@@ -382,7 +371,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   absl::Cleanup close_log = [&shard] { shard.CloseDeleteLog(); };
 
   shard.DrainPriorWriters(cancelled);
-  Publish(shard);
+  shard.Publish();
 
   irs::IndexWriter::CompactionFloorGuard floor;
   for (;;) {
@@ -412,7 +401,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   for (;;) {
     auto [reader, snapshot_tick] = shard.GetSnapshotWithTick();
     if (shard.TruncatedAfter(snapshot_tick)) {
-      Publish(shard);
+      shard.Publish();
       break;
     }
     std::vector<const irs::SubReader*> group;

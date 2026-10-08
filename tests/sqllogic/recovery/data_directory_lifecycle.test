@@ -1,11 +1,5 @@
 control substitution on
 
-# Every database is a directory named by its oid, holding its DuckDB file, its
-# search-table WAL and one directory per search storage, named by that object's
-# oid. A drop removes the directory once nothing uses it, and a crash that
-# comes first leaves the removal to the next boot. A create that never
-# committed leaves nothing behind either.
-
 
 statement ok
 CREATE DATABASE dlc_db;
@@ -72,11 +66,10 @@ tv_inv	t
 
 query
 SELECT count(*) AS database_files FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/*')
-WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/data.db'
-   OR file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/search.wal.%';
+WHERE file LIKE '%/engine_v1/' || (SELECT oid FROM dlc_oids WHERE name = 'db') || '/data.db';
 ----
 database_files
-2
+1
 
 
 # A committed DROP INDEX whose removal a crash cuts off: the next boot removes

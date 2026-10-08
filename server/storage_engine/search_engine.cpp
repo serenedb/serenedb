@@ -40,14 +40,12 @@
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
-#include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
-ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 
 namespace sdb::search {
 
@@ -75,13 +73,6 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
 
 void SearchEngine::start() {
   StartInvertedIndexTasks();
-  if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
-    RunSearchTableRecovery();
-  }
-  // Only now that every shard is fully replayed + committed do we start the
-  // search-table background loops -- never while recovery is still rebuilding a
-  // table, or a background commit's WAL GC could reclaim un-replayed chunks.
-  StartSearchTableMaintenance();
   SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 

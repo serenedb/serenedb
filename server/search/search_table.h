@@ -43,6 +43,7 @@
 #include <optional>
 #include <shared_mutex>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -50,11 +51,18 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "search/maintenance.h"
-#include "search/search_db_wal.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
 
+namespace duckdb {
+
+class Catalog;
+class ClientContext;
+class DataChunk;
+
+}  // namespace duckdb
 namespace sdb::search {
 
 class SearchTable final : public std::enable_shared_from_this<SearchTable> {
@@ -99,9 +107,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   static uint64_t ReadCommittedTick(duckdb::BinaryDeserializer& payload);
 
-  // A drop commits while readers may still hold this table; the destructor
-  // removes the index dir and the WAL shard once the last of them lets go.
-  // Never set on shutdown or detach, where both must survive.
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
@@ -129,18 +134,22 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // only: the refresh loop's periodic cleanup would get there a tick later.
   void FinishRecovery() { CleanupUnsafe(); }
 
+  void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
+                    std::span<const connector::ColumnId> column_ids,
+                    uint64_t tick, duckdb::DataChunk& chunk,
+                    uint64_t row_start);
+  void ReplayDelete(uint64_t tick, duckdb::DataChunk& chunk);
+  void ReplayTruncate(uint64_t tick);
+  void ReplayAdoptSegments(uint64_t tick, std::vector<std::string> segments);
+  void FinishReplay();
+
+  void Publish();
+
   irs::DirectoryReader GetDirectoryReader() noexcept {
     return _writer->GetSnapshot();
   }
 
-  void Commit() {
-    _writer->RefreshCommit();
-    _wal->OnShardCommit(GetTableId(), CommittedTick());
-  }
-
   void Clear(uint64_t tick) { _writer->Clear(tick); }
-
-  SearchDbWal& Wal() noexcept { return *_wal; }
 
   uint64_t CommittedTick() const noexcept {
     return _last_committed_tick.load(std::memory_order_acquire);
@@ -278,9 +287,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     duckdb::idx_t oid;
     std::shared_ptr<const catalog::InvertedIndexConfig> config;
   };
+  struct ReplaySession;
 
   void OpenWriter(bool in_memory);
   void RebuildConfig();
+  ReplaySession* BeginReplay(uint64_t tick);
 
   duckdb::idx_t _table_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
@@ -297,8 +308,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::shared_ptr<irs::IndexWriter> _writer;
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
-  SearchDbWal* _wal = nullptr;
   std::atomic<uint64_t> _last_committed_tick{0};
+  std::unique_ptr<ReplaySession> _replay;
 
   // Background maintenance state (mirrors InvertedIndexStorage). A zero
   // refresh/compaction interval disables the loops.

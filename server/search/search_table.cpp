@@ -28,9 +28,11 @@
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -48,9 +50,11 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "connector/search_sink_writer.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
+#include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -71,6 +75,18 @@ namespace {
 constexpr duckdb::field_id_t kFieldTick = 0;
 
 }  // namespace
+
+struct SearchTable::ReplaySession {
+  struct PendingAdopt {
+    std::string meta_file;
+    uint64_t queries_before;
+  };
+
+  irs::IndexWriter::Transaction trx;
+  std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
+  uint64_t max_tick = 0;
+  std::vector<PendingAdopt> adopts;
+};
 
 uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
   return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
@@ -107,12 +123,12 @@ void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
 }
 
 SearchTable::~SearchTable() {
+  _replay.reset();
   _writer.reset();
   _dir.reset();
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  _wal->DeregisterShard(_table_id);
   catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
 }
 
@@ -172,19 +188,12 @@ void SearchTable::OpenWriter(bool in_memory) {
     }
   }
 
-  _wal = &_directory->Wal();
-
   if (_is_new) {
-    // A brand-new shard has no WAL records, so seed its committed tick at the
-    // database WAL's current tick (not 0) -- otherwise an unused table would
-    // pin the shared WAL's GC floor.
-    _last_committed_tick.store(_wal->CurrentTick(), std::memory_order_release);
-  }
-  _wal->RegisterShard(GetTableId(), CommittedTick());
-
-  if (_is_new) {
+    _last_committed_tick.store(TickDomain::Instance().Current(),
+                               std::memory_order_release);
     _writer->RefreshCommit();
   }
+  TickDomain::Instance().SeedAtLeast(CommittedTick());
 }
 
 void SearchTable::StartTasks() {
@@ -193,9 +202,6 @@ void SearchTable::StartTasks() {
   SDB_ASSERT(!already, "SearchTable::StartTasks called twice for table ",
              GetTableId());
 #endif
-  // Launch this table's refresh + compaction loops on the shared background
-  // scheduler. Called only after recovery or CREATE/CTAS finalize, so a
-  // background commit's WAL GC never races replay.
   GetSearchEngine().StartTasks(shared_from_this());
 }
 
@@ -216,17 +222,9 @@ ResultWithTime SearchTable::RefreshUnsafe(
     }
     if (lock.owns_lock()) {
       _refresh_mutex.AssertHeld();
-      // Snapshot the WAL tick before publishing: a RefreshCommit that reports
-      // no changes proves this shard has nothing un-published up to that tick,
-      // and any later batch lands at a higher tick, so advancing to it never
-      // over-claims.
-      const auto tick_before = _wal->CurrentTick();
       SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
       if (_writer->RefreshCommit()) {
-        _wal->OnShardCommit(GetTableId(), CommittedTick());
         code = RefreshResult::Done;
-      } else {
-        _wal->OnShardCommit(GetTableId(), tick_before);
       }
     }
   } catch (const std::exception& e) {
@@ -428,6 +426,102 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
     }
   }
   CleanupUnsafe();
+}
+
+void SearchTable::Publish() {
+  RefreshResult code = RefreshResult::Undefined;
+  const auto result = RefreshUnsafe(/*wait=*/true, nullptr, code);
+  if (!result.res.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("search table ", _table_id,
+                            ": publish failed: ", result.res.message()));
+  }
+}
+
+SearchTable::ReplaySession* SearchTable::BeginReplay(uint64_t tick) {
+  if (tick <= CommittedTick()) {
+    return nullptr;
+  }
+  if (!_replay) {
+    _replay = std::make_unique<ReplaySession>(GetTransaction());
+  }
+  _replay->max_tick = std::max(_replay->max_tick, tick);
+  return _replay.get();
+}
+
+void SearchTable::ReplayInsert(duckdb::ClientContext& context,
+                               duckdb::Catalog& catalog,
+                               std::span<const connector::ColumnId> column_ids,
+                               uint64_t tick, duckdb::DataChunk& chunk,
+                               uint64_t row_start) {
+  auto* session = BeginReplay(tick);
+  if (!session) {
+    return;
+  }
+  if (!session->sink) {
+    session->sink = connector::MakeSearchTableInsertSink(session->trx, *this,
+                                                         catalog, context);
+  }
+  connector::WriteChunkToSearchSink(*session->sink, chunk, column_ids,
+                                    row_start, _table_id, context);
+}
+
+void SearchTable::ReplayDelete(uint64_t tick, duckdb::DataChunk& chunk) {
+  auto* session = BeginReplay(tick);
+  if (!session) {
+    return;
+  }
+  auto& rows = chunk.data[0];
+  rows.Flatten();
+  connector::RemoveGeneratedRows(
+    session->trx, std::span<const int64_t>{
+                    duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
+}
+
+void SearchTable::ReplayTruncate(uint64_t tick) {
+  if (auto* session = BeginReplay(tick)) {
+    session->trx.Remove(std::make_shared<irs::All>());
+  }
+}
+
+void SearchTable::ReplayAdoptSegments(uint64_t tick,
+                                      std::vector<std::string> segments) {
+  auto* session = BeginReplay(tick);
+  if (!session) {
+    return;
+  }
+  for (auto& segment : segments) {
+    session->adopts.push_back({std::move(segment), session->trx.GetQueries()});
+  }
+}
+
+void SearchTable::FinishReplay() {
+  if (_replay) {
+    auto& session = *_replay;
+    session.sink.reset();
+    const uint64_t queries = session.trx.GetQueries();
+    SDB_FATAL_IF(SEARCH, session.max_tick <= queries,
+                 "search-table WAL recovery: tick ", session.max_tick,
+                 " cannot cover ", queries, " removals for table ", _table_id);
+    const uint64_t first_tick = session.max_tick - queries;
+    for (const auto& pending : session.adopts) {
+      const uint64_t tick = first_tick + pending.queries_before;
+      const bool adopted = AdoptSegment(pending.meta_file, tick);
+      SDB_FATAL_IF(SEARCH, !adopted,
+                   "search-table WAL recovery: failed to adopt segment '",
+                   pending.meta_file, "' for table ", _table_id,
+                   " tick=", tick);
+    }
+    const bool committed = session.trx.Commit(session.max_tick);
+    SDB_FATAL_IF(SEARCH, !committed,
+                 "search-table WAL recovery: iresearch trx Commit failed for "
+                 "table ",
+                 _table_id, " tick=", session.max_tick);
+    _writer->RefreshCommit({.tick = session.max_tick});
+    TickDomain::Instance().SeedAtLeast(session.max_tick);
+    _replay.reset();
+  }
+  FinishRecovery();
 }
 
 }  // namespace sdb::search

@@ -26,8 +26,6 @@
 
 #include <cerrno>
 #include <cstring>
-#include <duckdb/common/file_system.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -88,7 +86,6 @@ DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
   : _path{std::move(path)} {}
 
 DatabaseDirectory::~DatabaseDirectory() {
-  _wal.reset();
   if (_dropped.load(std::memory_order_acquire)) {
     RunRemoval([path = std::move(_path)] { RemoveTree(path); });
   }
@@ -131,16 +128,6 @@ void DatabaseDirectory::RemoveStorage(
   RunRemoval([directory = std::move(directory), oid] {
     RemoveTree(directory->StoragePath(oid));
   });
-}
-
-search::SearchDbWal& DatabaseDirectory::Wal() {
-  absl::call_once(_wal_once, [this] {
-    _wal = std::make_unique<search::SearchDbWal>(
-      duckdb::FileSystem::GetFileSystem(
-        irs::DuckDBEngine::Instance().instance()),
-      _path);
-  });
-  return *_wal;
 }
 
 }  // namespace sdb::catalog

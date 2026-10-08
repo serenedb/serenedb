@@ -78,7 +78,7 @@ struct SearchInsertGlobalState final : duckdb::GlobalSinkState {
   std::optional<duckdb::ColumnDataCollection> returned;
 
   // Segments the sink threads flushed + fsynced, for the WAL to reference.
-  std::vector<search::SearchDbWal::SegmentRef> flushed_segments;
+  std::vector<std::string> flushed_segments;
 };
 
 struct SearchInsertSourceState final : duckdb::GlobalSourceState {
@@ -134,7 +134,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table, table->name);
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table, *table);
 
   const auto& columns = table->GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());
@@ -245,10 +245,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
 
   // On the worker, in parallel with the others, rather than deferring the tail
   // to the single-threaded refresh commit; the fsync is what lets the WAL
-  // reference these by name instead of copying the rows. The tick is still
-  // assigned serially in SearchTableTransaction::Commit -- so never
-  // FlushAndCommit -- and the returned span points into the segment context.
-  std::vector<search::SearchDbWal::SegmentRef> segments;
+  // reference these by name instead of copying the rows.
+  std::vector<std::string> segments;
   const bool owns_segment = lstate->bulk && lstate->search_trx != nullptr;
   if (owns_segment) {
     const auto flushed = lstate->search_trx->FlushAndFsync();
@@ -256,8 +254,7 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
                "sink thread with rows but no flushed segment");
     segments.reserve(flushed.size());
     for (const auto& segment : flushed) {
-      segments.push_back(
-        search::SearchDbWal::SegmentRef{.meta_file = segment.filename});
+      segments.push_back(segment.filename);
     }
   }
 

@@ -1416,13 +1416,17 @@ query
 EXPLAIN SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────╮
-│ Index: inc_e_read_idx                  │
-│ Lookup: table                          │
-│ Projections: id                        │
-│ Column Filter: lower(title) = 'boston' │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: inc_e_read_idx           │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Term ──────────────────────╮ │
+│ │ Field: lower(title)(string) │ │
+│ │ Value: boston               │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id                 │
+│ ~1 row                          │
+╰─────────────────────────────────╯
 
 query
 SELECT id FROM inc_e_read_idx WHERE lower(title) LIKE 'new%' ORDER BY id;
@@ -1624,8 +1628,12 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──┴───────────────────╮
 │ Index: inc_e_read_idx                 │
 │ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Term ──────────────────────╮       │
+│ │ Field: lower(title)(string) │       │
+│ │ Value: abc                  │       │
+│ ╰─────────────────────────────╯       │
 │ Projections: id (l), (n + 1) (i)      │
-│ Column Filter: lower(title) = 'abc'   │
 │ ~1 row                                │
 ╰───────────────────────────────────────╯
 
@@ -1687,13 +1695,172 @@ query
 EXPLAIN SELECT id, lower(title) FROM inc_e_search_idx WHERE lower(title) = 'boston';
 ----
 QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: inc_e_search_idx         │
+│ Lookup: search                  │
+│ Index Filter:                   │
+│ ╭─ Term ──────────────────────╮ │
+│ │ Field: lower(title)(string) │ │
+│ │ Value: boston               │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id, lower(title)   │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+
+# --- A stored value that depends on the session, not only on its row, is computed from the row instead.
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE inc_e_tz(id INT PRIMARY KEY, ts TIMESTAMPTZ, plain TIMESTAMP, v VARIANT);
+
+statement ok
+CREATE INDEX inc_e_tz_idx ON inc_e_tz USING inverted(
+    id, (ts::VARCHAR) included(), (ts::DATE) included(), (date_part('hour', ts)) included(),
+    (v::VARCHAR) included(), (epoch(plain)) included());
+
+statement ok
+INSERT INTO inc_e_tz VALUES (1, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_tz;
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT ts::VARCHAR AS s, ts::DATE AS d, date_part('hour', ts) AS h, v::VARCHAR AS vs, epoch(plain) AS e FROM inc_e_tz_idx;
+----
+s	d	h	vs	e
+2026-01-02 08:30:00+09	2026-01-02	8	2026-01-02 08:30:00+09	1767310200
+
+query
+SELECT ts::DATE AS d, count(*) AS c FROM inc_e_tz_idx GROUP BY ts::DATE;
+----
+d	c
+2026-01-02	1
+
+query
+SELECT id FROM inc_e_tz_idx WHERE ts::DATE = DATE '2026-01-02';
+----
+id
+1
+
+query
+EXPLAIN SELECT ts::VARCHAR, v::VARCHAR, epoch(plain) FROM inc_e_tz_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: CAST(ts AS VARCHAR), │
+│              CAST(v AS VARCHAR),  │
+│              #2                   │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: inc_e_tz_idx               │
+│ Lookup: table                     │
+│ Projections: ts (l), v (l),       │
+│              epoch(plain) (i)     │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+statement ok
+RESET TimeZone;
+
+# --- Geo predicates on an indexed expression.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY inc_e_geo_dict AS encode_geojson();
+
+statement ok
+CREATE TABLE inc_e_geo(id INT PRIMARY KEY, raw VARCHAR);
+
+statement ok
+INSERT INTO inc_e_geo VALUES (1, '{"type":"Point","coordinates":[37.615,55.705]}'), (2, '{"type":"Point","coordinates":[10,10]}');
+
+statement ok
+CREATE INDEX inc_e_geo_idx ON inc_e_geo USING inverted(id, (raw::JSON) inc_e_geo_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_geo;
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Intersects(raw::JSON, '{"type":"Polygon","coordinates":[[[37.61,55.70],[37.62,55.70],[37.62,55.71],[37.61,55.71],[37.61,55.70]]]}');
+----
+id
+1
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.61,55.70],[37.62,55.70],[37.62,55.71],[37.61,55.71],[37.61,55.70]]]}', raw::JSON);
+----
+id
+1
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Distance_Between(raw::JSON, '{"type":"Point","coordinates":[37.615,55.705]}', 0, 1000, true, true);
+----
+id
+1
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Distance_Centroid(raw::JSON, '{"type":"Point","coordinates":[37.615,55.705]}') < 1000;
+----
+id
+1
+
+query
+SELECT id, raw::JSON AS g FROM inc_e_geo_idx ORDER BY id;
+----
+id	g
+1	{"type":"Point","coordinates":[37.615,55.705]}
+2	{"type":"Point","coordinates":[10,10]}
+
+# --- A search argument keeps its whole expression, even when a part of it is stored.
+
+statement ok
+CREATE TABLE inc_e_nest(id INT PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_nest_idx ON inc_e_nest USING inverted(
+    id, (upper(lower(title))) verbatim_dict, (lower(title)) included());
+
+statement ok
+INSERT INTO inc_e_nest VALUES (1, 'New York'), (2, 'Boston');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_nest;
+
+query
+SELECT id, lower(title) AS l FROM inc_e_nest_idx WHERE upper(lower(title)) @@ 'BOSTON';
+----
+id	l
+2	boston
+
+query
+SELECT id FROM inc_e_nest_idx WHERE lower(title) = 'boston';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM inc_e_nest_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
-│ Index: inc_e_search_idx                │
-│ Lookup: search                         │
-│ Projections: id, lower(title)          │
+│ Index: inc_e_nest_idx                  │
+│ Lookup: table                          │
+│ Projections: id                        │
 │ Column Filter: lower(title) = 'boston' │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
+
+statement error
+SELECT id FROM inc_e_nest_idx WHERE lower(title) @@ 'boston';
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
 
 
 # --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.

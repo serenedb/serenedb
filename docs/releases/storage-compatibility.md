@@ -33,6 +33,4 @@ A server keeps everything it stores under `engine_v1` in its data directory:
 
 Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that, or crashes while an object is being created, it removes the leftover directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
 
-Data directories written by earlier releases keep their files in `engine_catalog`, `engine_duckdb` and `engine_search`. This release does not read them: a server started on such a directory starts with an empty catalog and leaves those files alone.
-
 For the meaning of version numbers and release lines, see [Versioning](./versioning.md).

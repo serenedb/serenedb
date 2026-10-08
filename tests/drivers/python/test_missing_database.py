@@ -6,8 +6,7 @@ loss. --missing_database=skip boots without attaching it, and
 --missing_database=drop removes it from the catalog.
 
 A missing catalog log beside database directories that hold data refuses to
-start too. Empty directories a crashed first boot left are removed, and the
-directories of an older layout are left alone.
+start too. Empty directories a crashed first boot left are removed.
 """
 
 from __future__ import annotations
@@ -156,9 +155,6 @@ def test_first_boot_leftovers(tmp_path: Path) -> None:
     engine = datadir / "engine_v1"
     (engine / "5").mkdir(parents=True)
     (engine / "4242").mkdir()
-    old = datadir / "engine_duckdb"
-    old.mkdir()
-    (old / "5.db").write_bytes(b"older layout")
 
     server = _Server(datadir)
     try:
@@ -168,7 +164,6 @@ def test_first_boot_leftovers(tmp_path: Path) -> None:
         server.stop()
     assert not (engine / "4242").exists()
     assert (engine / "5" / "data.db").exists()
-    assert (old / "5.db").read_bytes() == b"older layout"
 
 
 def _search_table_dir(server: _Server, datadir: Path, database: str,

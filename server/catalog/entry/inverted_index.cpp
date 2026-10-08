@@ -439,10 +439,6 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   return info;
 }
 
-std::string InvertedIndexEntry::ToSQL() const {
-  return duckdb::IndexCatalogEntry::GetInfo()->ToString();
-}
-
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {
   if (info) {
     return duckdb::DuckIndexEntry::GetTableName();
@@ -461,7 +457,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   auto& context = transaction.GetContext();
   auto result = Copy(context);
   auto& new_options = result->Cast<InvertedIndexEntry>().options;
-  const bool view_backed = ViewBacked();
+  const bool view_backed = !this->info && !_search_table;
   switch (index_alter.alter_index_type) {
     case duckdb::AlterIndexType::SET_INDEX_OPTIONS:
       for (const auto& [name, value] :

@@ -353,8 +353,6 @@ irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
                     kOperation);
 }
 
-std::string RenderChain(const Chain& chain);
-
 std::string RenderOption(const OptionGroup& group, std::string_view name,
                          const duckdb::Value& value) {
   const auto flat = group.FlatOptions();
@@ -367,32 +365,38 @@ std::string RenderOption(const OptionGroup& group, std::string_view name,
   return absl::StrCat(name, " := ", value.ToSQLString());
 }
 
-std::string RenderStage(const Stage& stage) {
-  switch (stage.kind) {
-    case Stage::Kind::Identity:
-      return absl::StrCat(kKeywordName, "()");
-    case Stage::Kind::Sql:
-      return absl::StrCat("(lambda ", kInput, ": ", stage.name, ")");
-    case Stage::Kind::Template:
-      break;
-  }
-  auto args = stage.children | std::views::transform(RenderChain) |
-              std::ranges::to<std::vector<std::string>>();
-  if (stage.name == kUnionName) {
-    return absl::StrCat("[", absl::StrJoin(args, ", "), "]");
-  }
-  const auto* group = FindTemplate(stage.name);
-  SDB_ASSERT(group);
-  for (const auto& [name, value] : stage.options) {
-    args.push_back(RenderOption(*group, name, value));
-  }
-  return absl::StrCat(stage.name, "(", absl::StrJoin(args, ", "), ")");
-}
-
 std::string RenderChain(const Chain& chain) {
-  return absl::StrJoin(chain, " | ", [](std::string* out, const Stage& stage) {
-    absl::StrAppend(out, RenderStage(stage));
-  });
+  std::vector<std::string> stages;
+  stages.reserve(chain.size());
+  for (const auto& stage : chain) {
+    switch (stage.kind) {
+      case Stage::Kind::Identity:
+        stages.push_back(absl::StrCat(kKeywordName, "()"));
+        continue;
+      case Stage::Kind::Sql:
+        stages.push_back(absl::StrCat("(lambda ", kInput, ": ", stage.name, ")"));
+        continue;
+      case Stage::Kind::Template:
+        break;
+    }
+    std::vector<std::string> args;
+    args.reserve(stage.children.size() + stage.options.size());
+    for (const auto& child : stage.children) {
+      args.push_back(RenderChain(child));
+    }
+    if (stage.name == kUnionName) {
+      stages.push_back(absl::StrCat("[", absl::StrJoin(args, ", "), "]"));
+      continue;
+    }
+    const auto* group = FindTemplate(stage.name);
+    SDB_ASSERT(group);
+    for (const auto& [name, value] : stage.options) {
+      args.push_back(RenderOption(*group, name, value));
+    }
+    stages.push_back(
+      absl::StrCat(stage.name, "(", absl::StrJoin(args, ", "), ")"));
+  }
+  return absl::StrJoin(stages, " | ");
 }
 
 class SpecCompiler {

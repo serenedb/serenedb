@@ -37,6 +37,14 @@ CREATE TABLE s1.typed (id INT, m s2.mood, p "Odd S"."My T", ms s2.mood[], arr s2
 
 
 statement ok
+CREATE FUNCTION s1.mf(m s2.mood) AS m::TEXT || '!';
+
+
+statement ok
+CREATE FUNCTION s1.mtf(m s2.mood) AS TABLE SELECT m::TEXT AS v;
+
+
+statement ok
 INSERT INTO s1.typed VALUES (1, 'y', {'a': 1, 'b': 'x'}, ['x', 'y'], ['y', 'x'], MAP {'q': 'a'}, {'k': 'y'}, '10.0.0.1');
 
 
@@ -84,9 +92,11 @@ EXPORT DATABASE '${__TEST_DIR__}/export_import_fidelity';
 
 
 query
-SELECT trim(line) AS line FROM (SELECT unnest(string_split(content, chr(10))) AS line FROM read_text('${__TEST_DIR__}/export_import_fidelity/schema.sql')) WHERE line LIKE 'CREATE TABLE s1.typed%' OR line LIKE 'CREATE TYPE "Odd S"%' OR line LIKE '%setval%' OR line LIKE 'CREATE SEQUENCE%' ORDER BY 1;
+SELECT trim(line) AS line FROM (SELECT unnest(string_split(content, chr(10))) AS line FROM read_text('${__TEST_DIR__}/export_import_fidelity/schema.sql')) WHERE line LIKE 'CREATE TABLE s1.typed%' OR line LIKE 'CREATE TYPE "Odd S"%' OR line LIKE '%setval%' OR line LIKE 'CREATE SEQUENCE%' OR line LIKE 'CREATE MACRO s1.m%' ORDER BY 1;
 ----
 line
+CREATE MACRO s1.mf (m s2.mood) AS ((CAST(m AS text) || '!'));
+CREATE MACRO s1.mtf (m s2.mood) AS TABLE (SELECT CAST(m AS text) AS v);
 CREATE SEQUENCE "Odd S"."q s" INCREMENT BY 2 MINVALUE 1 MAXVALUE 9223372036854775807 START 5 NO CYCLE;
 CREATE SEQUENCE s1.done INCREMENT BY 1 MINVALUE 1 MAXVALUE 2 START 1 NO CYCLE;
 CREATE SEQUENCE s1.fresh INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 9 NO CYCLE;

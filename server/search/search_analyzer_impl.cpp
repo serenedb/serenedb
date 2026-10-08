@@ -88,16 +88,6 @@ bool Features::Add(std::string_view feature_name) {
   return false;
 }
 
-std::vector<std::string_view> Features::Names() const {
-  std::vector<std::string_view> names;
-  for (const auto& feature : duckdb::TOKENIZER_FEATURES) {
-    if (HasFeatures(static_cast<irs::IndexFeatures>(feature.bit))) {
-      names.push_back(feature.name);
-    }
-  }
-  return names;
-}
-
 void Features::Validate(std::string_view type) const {
   if (HasFeatures(irs::IndexFeatures::Offs) &&
       !HasFeatures(irs::IndexFeatures::Pos)) {

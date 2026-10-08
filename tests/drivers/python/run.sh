@@ -58,33 +58,45 @@ mkdir -p "$JUNIT"
 # Each driver gets its own pytest invocation so JUnit output stays per-driver.
 # Failures in one driver should not prevent the others from being reported.
 final=0
-for driver in psycopg3 psycopg2 asyncpg; do
+if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
+	pytest_args=(-v -s)
+else
+	pytest_args=(-q)
+fi
+drivers=(psycopg3 psycopg2 asyncpg)
+extras=(test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest)
+
+if [[ "${SDB_DRV_EXCLUSIVE:-false}" == "true" ]]; then
+	for name in "${drivers[@]/#/test_}" "${extras[@]}"; do
+		test_file="${SCRIPT_DIR}/${name}.py"
+		grep -qs "pytest.mark.exclusive" "$test_file" || continue
+		echo "[python][$name] running alone"
+		if ! python3 -m pytest "${pytest_args[@]}" -m exclusive \
+			--junitxml="${JUNIT}/tests-drivers-python-${name}-exclusive-junit.xml" \
+			"$test_file"; then
+			final=1
+		fi
+	done
+	exit "$final"
+fi
+
+for driver in "${drivers[@]}"; do
 	# D1 ships psycopg3 only; psycopg2 and asyncpg are present in D3.
 	test_file="${SCRIPT_DIR}/test_${driver}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$driver] running"
-	if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
-		pytest_args=(-v -s)
-	else
-		pytest_args=(-q)
-	fi
-	if ! python3 -m pytest "${pytest_args[@]}" \
+	if ! python3 -m pytest "${pytest_args[@]}" -m "not exclusive" \
 		--junitxml="${JUNIT}/tests-drivers-python-${driver}-junit.xml" \
 		"$test_file"; then
 		final=1
 	fi
 done
 
-if [[ "${SDB_DRV_DEBUG:-false}" == "true" ]]; then
-	pytest_args=(-v -s)
-else
-	pytest_args=(-q)
-fi
-for extra in test_copy test_shell_copy test_psql_mode test_pgwire_raw test_search_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest; do
+for extra in "${extras[@]}"; do
 	test_file="${SCRIPT_DIR}/${extra}.py"
 	[[ -f "$test_file" ]] || continue
 	echo "[python][$extra] running"
-	if ! python3 -m pytest "${pytest_args[@]}" \
+	if ! python3 -m pytest "${pytest_args[@]}" -m "not exclusive" \
 		--junitxml="${JUNIT}/tests-drivers-python-${extra}-junit.xml" \
 		"$test_file"; then
 		final=1

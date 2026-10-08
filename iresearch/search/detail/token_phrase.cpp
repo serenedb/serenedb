@@ -172,6 +172,9 @@ void CompiledPhrase::AddPattern(uint32_t slot,
       }
     },
     part);
+  if (target.pattern) {
+    pattern_slots.push_back(slot);
+  }
 }
 
 bool CompiledPhrase::Accepts(uint32_t slot,
@@ -245,19 +248,10 @@ void CompiledPhrase::LayoutSlop() {
       groups[find(slot_ids[entry.begin + i])] = root;
     }
   }
-  std::optional<uint32_t> first_pattern;
-  for (uint32_t p = 0; p != n; ++p) {
-    const auto& pattern = slots[p].pattern;
-    if (!pattern) {
-      continue;
-    }
-    if (first_pattern) {
-      groups[find(p)] = find(*first_pattern);
-    } else {
-      first_pattern = p;
-    }
+  for (const auto p : pattern_slots) {
+    groups[find(p)] = find(pattern_slots.front());
     for (const auto& [term, entry] : accept) {
-      if (Plain(term) && pattern->Accepts(term)) {
+      if (Plain(term) && slots[p].pattern->Accepts(term)) {
         groups[find(slot_ids[entry.begin])] = find(p);
       }
     }

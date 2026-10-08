@@ -150,6 +150,7 @@ struct CompiledPhrase {
   bstring separator;
   containers::FlatHashMap<bytes_view, Accept> accept;
   std::vector<uint32_t> slot_ids;
+  std::vector<uint32_t> pattern_slots;
   std::optional<Anchor> anchor;
   std::optional<Automaton> automaton;
 
@@ -165,12 +166,12 @@ struct CompiledPhrase {
 
   template<typename Visitor>
   void ForEachPattern(bytes_view term, Visitor&& visit) const {
-    if (!Plain(term)) {
+    if (pattern_slots.empty() || !Plain(term)) {
       return;
     }
-    for (uint32_t i = 0; i != slots.size(); ++i) {
-      if (slots[i].pattern && slots[i].pattern->Accepts(term)) {
-        visit(i);
+    for (const auto slot : pattern_slots) {
+      if (slots[slot].pattern->Accepts(term)) {
+        visit(slot);
       }
     }
   }

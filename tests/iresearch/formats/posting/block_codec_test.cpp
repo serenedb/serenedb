@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <iresearch/formats/posting/block_codec.hpp>
+#include <iresearch/formats/posting/block_io.hpp>
 #include <iresearch/formats/posting/block_kernels.hpp>
 #include <random>
 #include <utility>
@@ -102,21 +103,6 @@ void CheckHorizontal(std::mt19937& rng) {
     bc::UnpackHorizontalDelta<B>(packed.data(), len, prev, docs.data());
     docs.resize(len);
     EXPECT_EQ(expected, docs) << "delta, width " << B << " len " << len;
-  }
-  if constexpr (B != 0) {
-    std::array<uint32_t, bc::kWideLanes> group;
-    for (auto& v : group) {
-      v = Draw<B>(rng);
-    }
-    std::array<irs::byte_type, 32> expected{};
-    bc::PackHorizontal<B>(group.data(), bc::kWideLanes, expected.data());
-    bc::U32x8 lanes;
-    std::memcpy(&lanes, group.data(), sizeof(lanes));
-    std::array<irs::byte_type, 32> actual{};
-    bc::PackGroupBits<(B > bc::kMaxPackGroupBits)>(B, lanes, actual.data());
-    EXPECT_TRUE(
-      std::equal(expected.begin(), expected.begin() + B, actual.begin()))
-      << "group, width " << B;
   }
 }
 
@@ -275,6 +261,16 @@ void CheckValues(const std::vector<uint32_t>& values,
   EXPECT_EQ(encoded.data() + size, end);
   out.resize(len);
   EXPECT_EQ(values, out) << "len " << len << " token " << uint32_t{encoded[0]};
+  std::vector<uint32_t> biased(len + bc::kOutSlack);
+  const auto* biased_end =
+    full
+      ? Codec::template DecodeValuesBlock<1>(encoded.data(), biased.data())
+      : Codec::template DecodeValuesTail<1>(encoded.data(), len, biased.data());
+  EXPECT_EQ(encoded.data() + size, biased_end);
+  for (uint32_t i = 0; i != len; ++i) {
+    EXPECT_EQ(values[i] + 1, biased[i])
+      << "biased, len " << len << " token " << uint32_t{encoded[0]};
+  }
 }
 
 template<typename Codec>
@@ -302,19 +298,14 @@ std::vector<uint32_t> Lengths() {
 std::vector<bc::EncodeOptions> AllOptions() {
   return {
     {},
-    {.patch16 = false, .patch32 = false, .patch_mixed = false},
-    {.patch16 = false,
-     .patch32 = false,
-     .patch_mixed = false,
-     .patch_bitmap = false},
-    {.patch16 = true, .patch32 = false, .patch_mixed = false},
-    {.patch16 = false, .patch32 = true, .patch_mixed = false},
-    {.patch16 = false, .patch32 = false, .patch_mixed = true},
-    {.patch_bitmap = false},
+    {.patch = false},
+    {.narrow_highs = true},
+    {.exception_cost_eighths = 12, .narrow_highs = true},
+    {.exception_cost_eighths = 64},
+    {.packed_cost_eighths = 64, .narrow_highs = true},
     {.bitset_margin_percent = 0},
     {.bitset_margin_percent = 1000},
     {.bitset = false},
-    {.minus_one = false},
   };
 }
 
@@ -467,39 +458,102 @@ TYPED_TEST(BlockCodecTest, ChosenEncodings) {
   EXPECT_TRUE(std::equal(docs.begin(), docs.end(), decoded.begin()));
 
   docs.assign({1U, 2'000'000'002U});
-  EXPECT_EQ(9U, TypeParam::EncodeDeltaTail(
-                  docs.data(), 2, 0, encoded.data(),
-                  {.patch16 = false, .patch32 = false, .patch_mixed = false}));
+  EXPECT_EQ(9U, TypeParam::EncodeDeltaTail(docs.data(), 2, 0, encoded.data(),
+                                           {.patch = false}));
   EXPECT_EQ(static_cast<uint32_t>(bc::DeltaEncoding::Pack) + 30, encoded[0]);
+  EXPECT_EQ(8U, TypeParam::EncodeDeltaTail(docs.data(), 2, 0, encoded.data()));
+  EXPECT_EQ(bc::Code(bc::DeltaEncoding::PatchBit), encoded[0]);
+  EXPECT_EQ(1U, encoded[1]);
+  EXPECT_EQ(31U, encoded[2]);
 
-  std::vector<uint32_t> freqs(kN, 1);
-  EXPECT_EQ(1U, TypeParam::EncodeValuesBlock(freqs.data(), encoded.data()));
-  EXPECT_EQ(static_cast<irs::byte_type>(bc::ValueEncoding::One), encoded[0]);
+  std::vector<uint32_t> values(kN, 0);
+  EXPECT_EQ(1U, TypeParam::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(static_cast<irs::byte_type>(bc::ValueEncoding::Zero), encoded[0]);
+
+  std::fill(values.begin(), values.end(), 1);
+  EXPECT_EQ(2U, TypeParam::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(static_cast<irs::byte_type>(bc::ValueEncoding::Same08), encoded[0]);
 
   for (uint32_t i = 0; i != kN; ++i) {
-    freqs[i] = 1 + i % 4;
+    values[i] = i % 4;
   }
-  freqs[17] = 40;
-  freqs[90] = 100;
+  values[17] = 39;
+  values[90] = 99;
   EXPECT_EQ(6 + kN / 4,
-            TypeParam::EncodeValuesBlock(freqs.data(), encoded.data()));
-  EXPECT_EQ(static_cast<irs::byte_type>(bc::ValueEncoding::Patch16MinusOne) + 2,
-            encoded[0]);
+            TypeParam::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(bc::Code(bc::ValueEncoding::PatchByte) + 2, encoded[0]);
+  EXPECT_EQ(2U, encoded[1]);
 
   for (uint32_t i = 0; i != kN; ++i) {
-    freqs[i] = 1 + i % 4;
+    values[i] = i % 4;
   }
   EXPECT_EQ(1 + kN / 4,
-            TypeParam::EncodeValuesBlock(freqs.data(), encoded.data()));
-  EXPECT_EQ(static_cast<uint32_t>(bc::ValueEncoding::PackMinusOne) + 1,
-            encoded[0]);
+            TypeParam::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(bc::Code(bc::ValueEncoding::Pack) + 1, encoded[0]);
 
   for (uint32_t i = 0; i != kN; ++i) {
-    freqs[i] = i % 3;
+    values[i] = i % 3;
   }
   EXPECT_EQ(1 + kN / 4,
-            TypeParam::EncodeValuesBlock(freqs.data(), encoded.data()));
-  EXPECT_EQ(static_cast<uint32_t>(bc::ValueEncoding::Pack) + 1, encoded[0]);
+            TypeParam::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(bc::Code(bc::ValueEncoding::Pack) + 1, encoded[0]);
+
+  for (uint32_t i = 0; i != kN; ++i) {
+    values[i] = i % 7 == 0 ? 1 + i % 3 : 0;
+  }
+  constexpr uint32_t kSparse = (kN + 6) / 7;
+  EXPECT_EQ(1 + kN / 4,
+            TypeParam::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(bc::Code(bc::ValueEncoding::Pack) + 1, encoded[0]);
+  EXPECT_EQ(3 + kSparse + (2 * kSparse + 7) / 8,
+            TypeParam::EncodeValuesBlock(values.data(), encoded.data(),
+                                         {.narrow_highs = true}));
+  EXPECT_EQ(bc::Code(bc::ValueEncoding::PatchBit), encoded[0]);
+  EXPECT_EQ(kSparse, encoded[1]);
+  EXPECT_EQ(2U, encoded[2]);
+}
+
+TEST(BlockIoTest, HolesBecomeBitset) {
+  namespace io = irs::block_io;
+  constexpr uint32_t kN = io::kBlock;
+  constexpr irs::doc_id_t kPrev = 100;
+  for (const bool narrow : {false, true}) {
+    for (const uint32_t len : {kN, 100U}) {
+      std::vector<irs::doc_id_t> docs(len);
+      irs::doc_id_t doc = kPrev;
+      for (uint32_t i = 0; i != len; ++i) {
+        doc += i % 23 == 5 ? 1 + i % 3 : 1;
+        docs[i] = doc;
+      }
+      const bc::EncodeOptions options{.narrow_highs = narrow, .bitset = false};
+      Buffer<io::Codec> encoded;
+      const auto size = len == kN
+                          ? io::Codec::EncodeDeltaBlock(docs.data(), kPrev,
+                                                        encoded.data(), options)
+                          : io::Codec::EncodeDeltaTail(docs.data(), len, kPrev,
+                                                       encoded.data(), options);
+      ASSERT_EQ(bc::Code(narrow ? bc::DeltaEncoding::PatchBit
+                                : bc::DeltaEncoding::PatchByte),
+                encoded[0])
+        << "len " << len << " narrow " << narrow;
+      std::array<uint64_t, io::kHoleWords> holes{};
+      std::vector<uint32_t> out(kN + bc::kOutSlack);
+      const irs::byte_type* end = nullptr;
+      const auto leaf =
+        io::FillAt(len, encoded.data(), holes.data(), out.data(), kPrev, end);
+      EXPECT_EQ(encoded.data() + size, end);
+      ASSERT_TRUE(leaf.IsBitset()) << "len " << len << " narrow " << narrow;
+      EXPECT_EQ(docs.back(), leaf.max);
+      std::vector<irs::doc_id_t> bits;
+      for (uint32_t w = 0; w != leaf.words; ++w) {
+        for (auto word = leaf.bitset[w]; word != 0; word &= word - 1) {
+          bits.push_back(kPrev + 1 + w * 64 +
+                         static_cast<uint32_t>(std::countr_zero(word)));
+        }
+      }
+      EXPECT_EQ(docs, bits) << "len " << len << " narrow " << narrow;
+    }
+  }
 }
 
 }  // namespace

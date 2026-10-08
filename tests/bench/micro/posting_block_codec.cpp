@@ -24,6 +24,7 @@
 
 #include <array>
 #include <iresearch/formats/posting/block_codec.hpp>
+#include <iresearch/formats/posting/block_io.hpp>
 #include <iresearch/formats/posting/common.hpp>
 #include <iresearch/search/detail/bitset_build.hpp>
 #include <map>
@@ -165,16 +166,11 @@ std::vector<uint32_t> RandomValues(std::mt19937& rng, uint32_t len,
 std::vector<bc::EncodeOptions> CheckedOptions() {
   return {
     {},
-    {.minus_one = false},
-    {.patch16 = false, .patch32 = false, .patch_mixed = false},
-    {.patch16 = false,
-     .patch32 = false,
-     .patch_mixed = false,
-     .patch_bitmap = false},
-    {.patch16 = true, .patch32 = false, .patch_mixed = false},
-    {.patch16 = false, .patch32 = true, .patch_mixed = false},
-    {.patch16 = false, .patch32 = false, .patch_mixed = true},
-    {.patch_bitmap = false},
+    {.patch = false},
+    {.narrow_highs = true},
+    {.exception_cost_eighths = 12, .narrow_highs = true},
+    {.exception_cost_eighths = 64},
+    {.packed_cost_eighths = 64, .narrow_highs = true},
     {.bitset_margin_percent = 0},
     {.bitset_margin_percent = 1000},
     {.bitset = false},
@@ -461,22 +457,27 @@ irs::bstring EncodeDocs(const std::vector<irs::doc_id_t>& docs) {
   return bytes;
 }
 
-template<typename Codec>
-irs::bstring EncodeValues(const std::vector<uint32_t>& values) {
+template<typename Codec, uint32_t Add = 0>
+irs::bstring EncodeValues(const std::vector<uint32_t>& values,
+                          const bc::EncodeOptions& options = {}) {
   constexpr uint32_t kN = Codec::kBlock;
   const auto blocks = static_cast<uint32_t>(values.size() / kN);
   irs::bstring bytes;
   std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<uint32_t, kN> stored;
   for (uint32_t b = 0; b != blocks; ++b) {
-    bytes.append(block.data(), Codec::EncodeValuesBlock(values.data() + b * kN,
-                                                        block.data()));
+    for (uint32_t i = 0; i != kN; ++i) {
+      stored[i] = values[b * kN + i] - Add;
+    }
+    bytes.append(block.data(), Codec::EncodeValuesBlock(stored.data(),
+                                                        block.data(), options));
   }
   bytes.append(kSlack, 0);
   const auto* p = bytes.data();
   std::array<uint32_t, kN + bc::kOutSlack> out;
   for (uint32_t b = 0; b != blocks; ++b) {
     const auto* first = values.data() + b * kN;
-    p = Codec::DecodeValuesBlock(p, out.data());
+    p = Codec::template DecodeValuesBlock<Add>(p, out.data());
     SDB_VERIFY(std::equal(first, first + kN, out.data()), "values, block ", b);
   }
   return bytes;
@@ -502,7 +503,8 @@ const irs::bstring& CachedFreqs(FreqShape shape, uint32_t values) {
   if (it == cache.end()) {
     it = cache
            .emplace(std::pair{shape, values},
-                    EncodeValues<Codec>(MakeFreqs(shape, values)))
+                    EncodeValues<Codec, irs::block_io::kFreqBias>(
+                      MakeFreqs(shape, values), irs::block_io::kFreqOptions))
            .first;
   }
   return it->second;
@@ -527,47 +529,30 @@ void Report(benchmark::State& state, size_t bytes, uint32_t values) {
     static_cast<double>(bytes - kSlack) * kBlock / static_cast<double>(values);
 }
 
-template<typename Encoding, typename Codec>
+template<typename Encoding>
 void CountPatches(benchmark::State& state, const irs::bstring& bytes,
                   uint32_t blocks, uint32_t (*size)(const irs::byte_type*)) {
   const auto* p = bytes.data();
   uint32_t patched = 0;
   uint32_t exceptions = 0;
   uint32_t bitsets = 0;
-  uint32_t minus_one = 0;
-  uint32_t bitmaps = 0;
+  uint32_t bit_highs = 0;
   for (uint32_t b = 0; b != blocks; ++b) {
     const uint32_t token = p[0];
     if constexpr (std::is_same_v<Encoding, bc::DeltaEncoding>) {
-      if (bc::IsTokenBitset(token)) {
-        ++bitsets;
-        p += size(p);
-        continue;
-      }
+      bitsets += bc::IsTokenBitset(token);
     }
-    if (token >= static_cast<uint32_t>(Encoding::Pack)) {
-      const auto shape = bc::ShapeOf<Encoding>(token);
-      minus_one += shape.add;
-      if (shape.family == bc::Family::PatchBitmap) {
-        ++patched;
-        ++bitmaps;
-        exceptions += bc::BitmapCount<Codec::kLanes>(
-          p + 2 + bc::PackedSize<Codec::kLanes>(Codec::kBlock, shape.bits));
-      } else if (shape.family == bc::Family::PatchMixed) {
-        ++patched;
-        exceptions += p[1] + p[2];
-      } else if (shape.family != bc::Family::Pack) {
-        ++patched;
-        exceptions += p[1];
-      }
+    if (bc::IsPatchToken<Encoding>(token)) {
+      ++patched;
+      exceptions += p[1];
+      bit_highs += bc::ShapeOf<Encoding>(token).family == bc::Family::PatchBit;
     }
     p += size(p);
   }
   state.counters["patched"] = static_cast<double>(patched) / blocks;
   state.counters["exceptions"] = static_cast<double>(exceptions) / blocks;
   state.counters["bitsets"] = static_cast<double>(bitsets) / blocks;
-  state.counters["bitmaps"] = static_cast<double>(bitmaps) / blocks;
-  state.counters["minus_one"] = static_cast<double>(minus_one) / blocks;
+  state.counters["bit_highs"] = static_cast<double>(bit_highs) / blocks;
 }
 
 template<typename Codec, bool Portable = false>
@@ -593,11 +578,11 @@ void BmDocs(benchmark::State& state) {
     benchmark::DoNotOptimize(prev);
   }
   Report(state, encoded.size(), values);
-  CountPatches<bc::DeltaEncoding, Codec>(state, encoded, blocks,
-                                         &Codec::DeltaBlockSize);
+  CountPatches<bc::DeltaEncoding>(state, encoded, blocks,
+                                  &Codec::DeltaBlockSize);
 }
 
-template<typename Codec>
+template<typename Codec, uint32_t Add = 0>
 void DecodeValueBlocks(benchmark::State& state, const irs::bstring& encoded,
                        uint32_t values) {
   constexpr uint32_t kN = Codec::kBlock;
@@ -606,20 +591,20 @@ void DecodeValueBlocks(benchmark::State& state, const irs::bstring& encoded,
   for (auto _ : state) {
     const auto* p = encoded.data();
     for (uint32_t b = 0; b != blocks; ++b) {
-      p = Codec::DecodeValuesBlock(p, out.data());
+      p = Codec::template DecodeValuesBlock<Add>(p, out.data());
     }
     benchmark::DoNotOptimize(out);
     benchmark::ClobberMemory();
   }
   Report(state, encoded.size(), values);
-  CountPatches<bc::ValueEncoding, Codec>(state, encoded, blocks,
-                                         &Codec::ValuesBlockSize);
+  CountPatches<bc::ValueEncoding>(state, encoded, blocks,
+                                  &Codec::ValuesBlockSize);
 }
 
 template<typename Codec>
 void BmFreqs(benchmark::State& state) {
   const auto values = static_cast<uint32_t>(state.range(1));
-  DecodeValueBlocks<Codec>(
+  DecodeValueBlocks<Codec, irs::block_io::kFreqBias>(
     state, CachedFreqs<Codec>(static_cast<FreqShape>(state.range(0)), values),
     values);
 }
@@ -706,13 +691,14 @@ void BmEncodeDocs(benchmark::State& state) {
 
 template<typename Codec>
 void EncodeValueBlocks(benchmark::State& state,
-                       const std::vector<uint32_t>& values) {
+                       const std::vector<uint32_t>& values,
+                       const bc::EncodeOptions& options = {}) {
   constexpr uint32_t kN = Codec::kBlock;
   std::vector<irs::byte_type> out(Codec::kMaxBlockBytes + kSlack);
   for (auto _ : state) {
     for (uint32_t b = 0; b != kEncodeValues / kN; ++b) {
       benchmark::DoNotOptimize(
-        Codec::EncodeValuesBlock(values.data() + b * kN, out.data()));
+        Codec::EncodeValuesBlock(values.data() + b * kN, out.data(), options));
     }
   }
   state.SetItemsProcessed(state.iterations() * kEncodeValues);
@@ -720,8 +706,11 @@ void EncodeValueBlocks(benchmark::State& state,
 
 template<typename Codec>
 void BmEncodeFreqs(benchmark::State& state) {
-  EncodeValueBlocks<Codec>(
-    state, MakeFreqs(static_cast<FreqShape>(state.range(0)), kEncodeValues));
+  auto freqs = MakeFreqs(static_cast<FreqShape>(state.range(0)), kEncodeValues);
+  for (auto& f : freqs) {
+    f -= irs::block_io::kFreqBias;
+  }
+  EncodeValueBlocks<Codec>(state, freqs, irs::block_io::kFreqOptions);
 }
 
 template<typename Codec>
@@ -962,37 +951,23 @@ const irs::bstring& CachedDensity(uint32_t percent, bool bitset) {
 const irs::byte_type* FillZeroBase(const irs::byte_type* p, irs::doc_id_t& prev,
                                    uint64_t* words) {
   constexpr uint32_t kN = bc::Codec256::kBlock;
-  const uint32_t token = p[0];
-  uint32_t c16 = 0;
-  uint32_t c32 = 0;
-  const auto* e = p + 1;
-  if (token == static_cast<uint32_t>(bc::DeltaEncoding::Patch16)) {
-    c16 = *e++;
-  } else if (token == static_cast<uint32_t>(bc::DeltaEncoding::Patch32)) {
-    c32 = *e++;
-  } else {
-    c16 = e[0];
-    c32 = e[1];
-    e += 2;
-  }
-  const auto* e16 = e;
-  const auto* e32 = e + 2 * c16;
+  const uint32_t n = p[1];
+  const bool bytes = p[0] == bc::Code(bc::DeltaEncoding::PatchByte);
+  const uint32_t high_bits = bytes ? 0 : p[2];
+  const auto* slots = p + (bytes ? 2 : 3);
+  const auto* highs = slots + n;
+  const uint64_t mask = (uint64_t{1} << high_bits) - 1;
   uint64_t next = uint64_t{prev} + 1;
   uint32_t done = 0;
-  uint32_t i16 = 0;
-  uint32_t i32 = 0;
-  while (i16 != c16 || i32 != c32) {
-    uint32_t slot;
-    uint32_t skip;
-    if (i32 == c32 || (i16 != c16 && e16[2 * i16] < e32[4 * i32])) {
-      slot = e16[2 * i16];
-      skip = e16[2 * i16 + 1];
-      ++i16;
-    } else {
-      slot = e32[4 * i32];
-      skip = absl::little_endian::Load32(e32 + 4 * i32) >> 8;
-      ++i32;
-    }
+  for (uint32_t i = 0; i != n; ++i) {
+    const uint32_t slot = bytes ? slots[2 * i] : slots[i];
+    const uint32_t at = i * high_bits;
+    const uint32_t skip =
+      bytes
+        ? slots[2 * i + 1]
+        : static_cast<uint32_t>(
+            (absl::little_endian::Load64(highs + at / 8) >> (at % 8)) & mask) +
+            1;
     if (slot != done) {
       irs::SetBitRange(words, next, next + slot - done);
     }
@@ -1001,53 +976,22 @@ const irs::byte_type* FillZeroBase(const irs::byte_type* p, irs::doc_id_t& prev,
   }
   irs::SetBitRange(words, next, next + kN - done);
   prev = static_cast<irs::doc_id_t>(next + kN - done - 1);
-  return e32 + 4 * c32;
+  return p + bc::Codec256::DeltaBlockSize(p);
 }
 
 const irs::byte_type* FillZeroBaseWords(const irs::byte_type* p,
                                         irs::doc_id_t& prev, uint64_t* words) {
   constexpr uint32_t kN = bc::Codec256::kBlock;
-  constexpr uint32_t kLocal = 8;
   constexpr auto kBits = irs::BitsRequired<uint64_t>();
-  const uint32_t token = p[0];
-  if (token != static_cast<uint32_t>(bc::DeltaEncoding::Patch16)) {
+  uint64_t local[irs::block_io::kHoleWords];
+  const auto span = irs::block_io::HolesToBitset(p, kN, local);
+  if (span == 0) {
     return FillZeroBase(p, prev, words);
   }
-  const uint32_t count = p[1];
-  const auto* e = p + 2;
-  uint32_t skipped = 0;
-  for (uint32_t i = 0; i != count; ++i) {
-    skipped += e[2 * i + 1];
-  }
-  const uint32_t range = kN + skipped;
-  if (range > kLocal * kBits) {
-    return FillZeroBase(p, prev, words);
-  }
-  const uint32_t n = (range + kBits - 1) / kBits;
-  uint64_t local[kLocal + 1];
-  for (uint32_t w = 0; w != kLocal + 1; ++w) {
-    local[w] = w < n ? ~uint64_t{0} : 0;
-  }
-  local[n - 1] = ~uint64_t{0} >> (n * kBits - range);
-  uint32_t running = 0;
-  for (uint32_t i = 0; i != count; ++i) {
-    const uint32_t at = e[2 * i] + running;
-    const uint32_t skip = e[2 * i + 1];
-    const auto mask = ((static_cast<unsigned __int128>(1) << skip) - 1)
-                      << (at % kBits);
-    local[at / kBits] &= ~static_cast<uint64_t>(mask);
-    local[at / kBits + 1] &= ~static_cast<uint64_t>(mask >> kBits);
-    running += skip;
-  }
-  irs::OrBitsetAt(words, uint64_t{prev} + 1, local, n);
-  prev += range;
-  return e + 2 * count;
-}
-
-bool IsZeroBasePatch(uint32_t token) {
-  return token == static_cast<uint32_t>(bc::DeltaEncoding::Patch16) ||
-         token == static_cast<uint32_t>(bc::DeltaEncoding::Patch32) ||
-         token == static_cast<uint32_t>(bc::DeltaEncoding::PatchMixed);
+  irs::OrBitsetAt(words, uint64_t{prev} + 1, local,
+                  static_cast<uint32_t>((span + kBits - 1) / kBits));
+  prev += static_cast<irs::doc_id_t>(span);
+  return p + bc::Codec256::DeltaBlockSize(p);
 }
 
 template<typename Codec>
@@ -1072,7 +1016,7 @@ void BmDensityFill(benchmark::State& state) {
         prev += 1 + (n - 1) * kBits + (kBits - 1) -
                 static_cast<uint32_t>(std::countl_zero(bits[n - 1]));
         p = raw + n * sizeof(uint64_t);
-      } else if (zero_base != 0 && IsZeroBasePatch(p[0])) {
+      } else if (zero_base != 0 && irs::block_io::HoleToken(p[0])) {
         p = zero_base == 1 ? FillZeroBase(p, prev, words.data())
                            : FillZeroBaseWords(p, prev, words.data());
       } else {
@@ -1209,8 +1153,8 @@ void BmBiasDecode(benchmark::State& state) {
     benchmark::DoNotOptimize(prev);
   }
   Report(state, encoded.size(), kBiasDocs);
-  CountPatches<bc::DeltaEncoding, Codec>(state, encoded, kBiasDocs / kN,
-                                         &Codec::DeltaBlockSize);
+  CountPatches<bc::DeltaEncoding>(state, encoded, kBiasDocs / kN,
+                                  &Codec::DeltaBlockSize);
 }
 
 template<typename Sink>

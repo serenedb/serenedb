@@ -223,13 +223,13 @@ class PostingPos {
       block_io::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = doc_limits::kBlockSize;
       _left_in_list -= doc_limits::kBlockSize;
-      block_io::ReadBlock(in, Enc(), _freqs.data);
+      block_io::ReadBlock<block_io::kFreqBias>(in, Enc(), _freqs.data);
     } else {
       const auto tail = _left_in_list;
       block_io::ReadTailDelta(tail, in, Enc(), _docs, prev);
       _left_in_leaf = tail;
       _left_in_list = 0;
-      block_io::ReadTail(tail, in, Enc(), _freqs.data);
+      block_io::ReadTail<block_io::kFreqBias>(tail, in, Enc(), _freqs.data);
     }
     _max_in_leaf = *(std::end(_docs) - 1);
   }

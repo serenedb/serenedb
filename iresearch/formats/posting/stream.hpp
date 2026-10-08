@@ -150,7 +150,7 @@ class PostingsStream : public TermPostings {
 
   void ReadLeafFreqs(uint32_t len) {
     if constexpr (IteratorTraits::Frequency()) {
-      block_io::ReadTail(len, In(), _enc_buf, _freqs);
+      block_io::ReadTail<block_io::kFreqBias>(len, In(), _enc_buf, _freqs);
     } else if constexpr (FieldTraits::Frequency()) {
       // Only a full block is followed by more of this term's documents, so
       // only a full block has to be stepped over.

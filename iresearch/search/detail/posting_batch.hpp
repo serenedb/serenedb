@@ -216,7 +216,7 @@ class PostingBatch {
 
   void ScoreBlock(const doc_id_t* docs, score_t* scores) {
     static_assert(Scored);
-    block_io::ReadBlock(In(), Enc(), _freqs.data);
+    block_io::ReadBlock<block_io::kFreqBias>(In(), Enc(), _freqs.data);
     _score.fetcher->FetchPostingBlock(
       std::span<const doc_id_t, kBlock>{docs, kBlock});
     _score.score.ScorePostingBlock(scores);
@@ -224,7 +224,7 @@ class PostingBatch {
 
   void ScoreTail(const doc_id_t* docs, score_t* scores, uint32_t len) {
     static_assert(Scored);
-    block_io::ReadTail(len, In(), Enc(), _freqs.data);
+    block_io::ReadTail<block_io::kFreqBias>(len, In(), Enc(), _freqs.data);
     _provider.freq.value = _freqs.data + (kBlock - len);
     _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
     _score.score.Score(scores, static_cast<scores_size_t>(len));

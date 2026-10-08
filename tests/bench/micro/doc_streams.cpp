@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "iresearch/formats/posting/block_codec.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/index/directory_reader.hpp"
 #include "iresearch/store/mmap_directory.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
@@ -267,6 +268,40 @@ void HuffmanGaps(const Histogram& h, const std::vector<uint32_t>& values,
     static_cast<unsigned long>(s2));
 }
 
+struct FreqPlan {
+  const char* name;
+  irs::block_codec::EncodeOptions options;
+  uint64_t bytes = 0;
+  std::vector<irs::byte_type> blocks;
+};
+
+std::vector<FreqPlan> FreqPlans() {
+  return {
+    {"freq options", irs::block_io::kFreqOptions},
+    {"default options", {}},
+    {"narrow highs", {.narrow_highs = true}},
+    {"exceptions 1.5, narrow highs",
+     {.exception_cost_eighths = 12, .narrow_highs = true}},
+    {"exceptions 1.5, packed 4",
+     {.exception_cost_eighths = 12,
+      .packed_cost_eighths = 32,
+      .narrow_highs = true}},
+    {"exceptions 1.5, packed 8",
+     {.exception_cost_eighths = 12,
+      .packed_cost_eighths = 64,
+      .narrow_highs = true}},
+    {"exceptions 1, packed 4",
+     {.exception_cost_eighths = 8,
+      .packed_cost_eighths = 32,
+      .narrow_highs = true}},
+    {"packed 2", {.packed_cost_eighths = 16, .narrow_highs = true}},
+    {"packed 4", {.packed_cost_eighths = 32, .narrow_highs = true}},
+    {"packed 8", {.packed_cost_eighths = 64, .narrow_highs = true}},
+    {"packed 16", {.packed_cost_eighths = 128, .narrow_highs = true}},
+    {"exceptions 0.5", {.exception_cost_eighths = 4}},
+  };
+}
+
 void Report(const char* name, const Totals& t) {
   const auto values = static_cast<double>(t.values);
   std::printf(
@@ -305,10 +340,8 @@ static int Main(int argc, char** argv) {
     Histogram term_freqs;
     Histogram block;
     std::map<uint32_t, std::pair<uint64_t, uint64_t>> shapes;
-    uint64_t unmargined = 0;
     uint64_t ones_split = 0;
-    std::vector<irs::byte_type> tight_blocks;
-    std::vector<irs::byte_type> loose_blocks;
+    auto plans = FreqPlans();
     std::vector<irs::byte_type> gap_blocks;
     std::vector<uint32_t> gap_prevs;
     std::vector<uint32_t> gap_values;
@@ -346,16 +379,23 @@ static int Main(int argc, char** argv) {
             const auto* f = tfs.data();
             const auto gap_bytes = Codec::EncodeDeltaBlock(d, prev, gap_out);
             gaps.bytes += gap_bytes;
-            const auto loose =
-              Codec::EncodeValuesBlock(f, out, {.bitmap_margin_percent = 0});
-            unmargined += loose;
-            if ((gaps.values / Codec::kBlock) % 8 == 0) {
-              loose_blocks.insert(loose_blocks.end(), out, out + loose);
+            uint32_t biased[Codec::kBlock];
+            for (uint32_t i = 0; i != Codec::kBlock; ++i) {
+              biased[i] = f[i] - irs::block_io::kFreqBias;
             }
-            const auto freq_bytes = Codec::EncodeValuesBlock(f, out);
+            const bool sample = (gaps.values / Codec::kBlock) % 8 == 0;
+            for (auto& plan : plans) {
+              const auto size =
+                Codec::EncodeValuesBlock(biased, out, plan.options);
+              plan.bytes += size;
+              if (sample) {
+                plan.blocks.insert(plan.blocks.end(), out, out + size);
+              }
+            }
+            const auto freq_bytes = Codec::EncodeValuesBlock(
+              biased, out, irs::block_io::kFreqOptions);
             freqs.bytes += freq_bytes;
-            if ((gaps.values / Codec::kBlock) % 8 == 0) {
-              tight_blocks.insert(tight_blocks.end(), out, out + freq_bytes);
+            if (sample) {
               ++sampled;
               gap_blocks.insert(gap_blocks.end(), gap_out, gap_out + gap_bytes);
               gap_prevs.push_back(prev);
@@ -372,8 +412,7 @@ static int Main(int argc, char** argv) {
               } else {
                 const auto shape =
                   irs::block_codec::ShapeOf<ValueEncoding>(out[0]);
-                key = static_cast<uint32_t>(shape.family) * 100 +
-                      shape.bits * 2 + shape.add;
+                key = static_cast<uint32_t>(shape.family) * 100 + shape.bits;
               }
               auto& slot = shapes[key];
               ++slot.first;
@@ -423,42 +462,36 @@ static int Main(int argc, char** argv) {
                 irs::doc_limits::kBlockSize);
     Report("gaps", gaps);
     Report("freqs", freqs);
-    std::printf("  freqs without the bitmap margin %7.3f bits\n",
-                8.0 * static_cast<double>(unmargined) /
-                  static_cast<double>(freqs.values));
     std::printf("  freqs as a bitmap of non-ones plus coded rest %7.3f bits\n",
                 8.0 * static_cast<double>(ones_split) /
                   static_cast<double>(freqs.values));
-    for (auto* blocks : {&tight_blocks, &loose_blocks}) {
-      blocks->resize(blocks->size() + irs::block_codec::kInSlack);
-    }
-    const auto decode = [&](const std::vector<irs::byte_type>& blocks) {
+    for (auto& plan : plans) {
+      plan.blocks.resize(plan.blocks.size() + irs::block_codec::kInSlack);
       alignas(64) uint32_t values[Codec::kBlock + 16];
       uint64_t sink = 0;
       double best = 1e30;
       for (int round = 0; round != 5; ++round) {
         const auto start = std::chrono::steady_clock::now();
-        const auto* p = blocks.data();
+        const auto* p = plan.blocks.data();
         for (uint64_t b = 0; b != sampled; ++b) {
-          p = Codec::DecodeValuesBlock(p, values);
+          p = Codec::DecodeValuesBlock<irs::block_io::kFreqBias>(p, values);
           sink += values[b % Codec::kBlock];
         }
         const std::chrono::duration<double, std::nano> took =
           std::chrono::steady_clock::now() - start;
         best = std::min(best, took.count());
       }
-      std::printf("    decode %.3f ns per value (%lu)\n",
+      std::printf("  freqs, %-30s %7.3f bits, decode %.4f ns per value (%lu)\n",
+                  plan.name,
+                  8.0 * static_cast<double>(plan.bytes) /
+                    static_cast<double>(freqs.values),
                   best / static_cast<double>(sampled * Codec::kBlock),
                   static_cast<unsigned long>(sink % 7));
-    };
-    std::printf("  freq decode, default plans:\n");
-    decode(tight_blocks);
-    std::printf("  freq decode, no bitmap margin:\n");
-    decode(loose_blocks);
+    }
     HuffmanGaps(gaps.global, gap_values, gap_prevs, gap_blocks, sampled);
     std::printf(
-      "  freq block shapes (family*100 + bits*2 + add, or 1000 + "
-      "token): blocks, bits per value\n");
+      "  freq block shapes (family*100 + bits, or 1000 + token): blocks, bits "
+      "per value\n");
     for (const auto& [key, slot] : shapes) {
       if (slot.first * 1000 >= freqs.values / Codec::kBlock) {
         std::printf("    %4u %10lu %.3f\n", key, slot.first,

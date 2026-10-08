@@ -299,7 +299,7 @@ class PruneLeafBase {
     _hint.Advance(in, in.Position());
     const auto len = std::min(_left_in_list, doc_limits::kBlockSize);
     block_io::ReadTailDelta(len, in, _enc.data, _docs, prev);
-    block_io::ReadTail(len, in, _enc.data, _freqs.data);
+    block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
     _left_in_leaf = len;
     _len = len;
     _left_in_list -= len;

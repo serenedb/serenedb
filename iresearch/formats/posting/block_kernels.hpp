@@ -212,29 +212,6 @@ void PackHorizontal(const uint32_t* IRS_RESTRICT in, uint32_t len,
   }
 }
 
-template<bool Wide>
-IRS_FORCE_INLINE void PackGroupBits(uint32_t bits, U32x8 values,
-                                    byte_type* IRS_RESTRICT out) noexcept {
-  const auto x = std::bit_cast<U64x4>(values);
-  const uint64_t pair = 2 * bits;
-  const U64x4 pairs = ((x >> 32) << bits) | (x & 0xFFFFFFFF);
-  const U64x4 shifted = pairs << U64x4{0, pair, 0, pair};
-  const uint64_t low = shifted[0] | shifted[1];
-  const uint64_t high = shifted[2] | shifted[3];
-  if constexpr (Wide) {
-    const U64x4 spill = pairs >> (64 - pair);
-    const uint64_t shift = 2 * pair - 64;
-    const uint64_t words[] = {low, spill[1] | (high << shift),
-                              (high >> (64 - shift)) | (spill[3] << shift),
-                              spill[3] >> (64 - shift)};
-    std::memcpy(out, words, sizeof(words));
-  } else {
-    const uint64_t words[] = {low | ((high << (2 * pair - 1)) << 1),
-                              high >> (64 - 2 * pair)};
-    std::memcpy(out, words, sizeof(words));
-  }
-}
-
 template<uint32_t B, uint32_t K>
 IRS_FORCE_INLINE uint32_t ExtractGroup(const byte_type* in) noexcept {
   constexpr uint32_t kBit = K * B;
@@ -400,36 +377,6 @@ void UnpackHorizontalDelta(const byte_type* IRS_RESTRICT in, uint32_t len,
   }
 }
 
-inline constexpr uint32_t kPatchGroup = 4;
-
-template<uint32_t B, typename Entry, uint32_t L = kLanes, bool Full = false>
-IRS_FORCE_INLINE void PatchGroup(const byte_type* IRS_RESTRICT p,
-                                 uint32_t count, uint32_t spare,
-                                 uint32_t* IRS_RESTRICT out) noexcept {
-  for (uint32_t k = 0; k != kPatchGroup; ++k) {
-    const auto* entry = p + k * sizeof(Entry);
-    uint32_t slot;
-    uint32_t high;
-    if constexpr (kSlotBitsOf<L> == 8) {
-      slot = entry[0];
-      if constexpr (sizeof(Entry) == sizeof(uint16_t)) {
-        high = entry[1];
-      } else {
-        high = absl::little_endian::Load32(entry) >> 8;
-      }
-    } else {
-      const uint32_t e = absl::little_endian::Load<Entry>(entry);
-      slot = e & (kBlockOf<L> - 1);
-      high = e >> kSlotBitsOf<L>;
-    }
-    if constexpr (Full) {
-      out[slot] += k < count ? high << B : 0;
-    } else {
-      out[k < count ? slot : spare + k] += high << B;
-    }
-  }
-}
-
 inline IRS_FORCE_INLINE U32x4 WordRow(const uint32_t* words,
                                       uint32_t row) noexcept {
   U32x4 v;
@@ -509,68 +456,6 @@ IRS_FORCE_INLINE void UnpackWide(const byte_type* IRS_RESTRICT in,
     v += add;
     std::memcpy(out + S * kWideLanes, &v, sizeof(v));
   });
-}
-
-inline constexpr uint64_t kNoLane = 0xFF;
-
-inline constexpr auto kExpandIndices = [] {
-  std::array<uint64_t, 256> table{};
-  for (uint32_t mask = 0; mask != table.size(); ++mask) {
-    uint32_t rank = 0;
-    for (uint32_t lane = 0; lane != kWideLanes; ++lane) {
-      table[mask] |= ((mask >> lane) & 1 ? uint64_t{rank++} : kNoLane)
-                     << (8 * lane);
-    }
-  }
-  return table;
-}();
-
-inline constexpr auto kLeftPackIndices = [] {
-  std::array<uint64_t, 256> table{};
-  for (uint32_t mask = 0; mask != table.size(); ++mask) {
-    uint32_t rank = 0;
-    for (uint32_t lane = 0; lane != kWideLanes; ++lane) {
-      if ((mask >> lane) & 1) {
-        table[mask] |= uint64_t{lane} << (8 * rank++);
-      }
-    }
-  }
-  return table;
-}();
-
-inline IRS_FORCE_INLINE U32x8 LeftPack(U32x8 v, uint32_t mask) noexcept {
-#ifdef __AVX2__
-  const __m256i indices = _mm256_cvtepu8_epi32(
-    _mm_cvtsi64_si128(static_cast<int64_t>(kLeftPackIndices[mask])));
-  return std::bit_cast<U32x8>(
-    _mm256_permutevar8x32_epi32(std::bit_cast<__m256i>(v), indices));
-#else
-  U32x8 packed{};
-  for (uint32_t lane = 0; lane != kWideLanes; ++lane) {
-    packed[lane] = v[(kLeftPackIndices[mask] >> (8 * lane)) & 0xFF];
-  }
-  return packed;
-#endif
-}
-
-inline IRS_FORCE_INLINE U32x8 ExpandLanes(const uint32_t* IRS_RESTRICT values,
-                                          uint32_t mask) noexcept {
-  U32x8 v;
-  std::memcpy(&v, values, sizeof(v));
-#ifdef __AVX2__
-  const __m256i indices = _mm256_cvtepi8_epi32(
-    _mm_cvtsi64_si128(static_cast<int64_t>(kExpandIndices[mask])));
-  return std::bit_cast<U32x8>(_mm256_and_si256(
-    _mm256_permutevar8x32_epi32(std::bit_cast<__m256i>(v), indices),
-    _mm256_cmpgt_epi32(indices, _mm256_set1_epi32(-1))));
-#else
-  U32x8 expanded{};
-  for (uint32_t lane = 0; lane != kWideLanes; ++lane) {
-    const auto index = (kExpandIndices[mask] >> (8 * lane)) & kNoLane;
-    expanded[lane] = index < kWideLanes ? v[index] : 0;
-  }
-  return expanded;
-#endif
 }
 
 template<uint32_t B, uint32_t L>
@@ -665,18 +550,6 @@ inline IRS_FORCE_INLINE void ScanDocs16(doc_id_t* docs,
     std::memcpy(&v, docs + i, sizeof(v));
     ScanRow16(v, carry, docs + i);
   }
-}
-
-template<uint32_t B, typename Entry, uint32_t L = kLanes, bool Full = false>
-IRS_FORCE_INLINE const byte_type* PatchValues(
-  const byte_type* IRS_RESTRICT p, uint32_t count, uint32_t spare,
-  uint32_t* IRS_RESTRICT out) noexcept {
-  static_assert(B < kMaxWidth);
-  PatchGroup<B, Entry, L, Full>(p, count, spare, out);
-  for (uint32_t i = kPatchGroup; i < count; i += kPatchGroup) {
-    PatchGroup<B, Entry, L, Full>(p + i * sizeof(Entry), count - i, spare, out);
-  }
-  return p + count * sizeof(Entry);
 }
 
 }  // namespace irs::block_codec

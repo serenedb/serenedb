@@ -52,7 +52,8 @@ struct DocBuffer {
   }
 
   void Push(doc_id_t doc, uint32_t freq) noexcept {
-    freqs[size] = freq;
+    SDB_ASSERT(freq >= block_io::kFreqBias);
+    freqs[size] = freq - block_io::kFreqBias;
     Push(doc);
   }
 
@@ -570,7 +571,8 @@ inline void PostingsWriter::FlushTailDoc() {
   block_io::WriteTailDelta(tail, *_doc_out, _doc.docs, _doc.block_last,
                            _enc_buf);
   if (_features.HasFrequency()) {
-    block_io::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf);
+    block_io::WriteTail(tail, *_doc_out, _doc.freqs, _enc_buf,
+                        block_io::kFreqOptions);
   }
 }
 
@@ -579,7 +581,8 @@ inline void PostingsWriter::AppendTailDoc(BytesOutput& out) {
   SDB_ASSERT(tail != 0);
   block_io::WriteTailDelta(tail, out, _doc.docs, _doc.block_last, _enc_buf);
   if (_features.HasFrequency()) {
-    block_io::WriteTail(tail, out, _doc.freqs, _enc_buf);
+    block_io::WriteTail(tail, out, _doc.freqs, _enc_buf,
+                        block_io::kFreqOptions);
   }
 }
 
@@ -799,7 +802,8 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
   if (_doc.Full()) {
     block_io::WriteBlockDelta(*_doc_out, _doc.docs, _doc.block_last, _enc_buf);
     if (has_freq) {
-      block_io::WriteBlock(*_doc_out, _doc.freqs, _enc_buf);
+      block_io::WriteBlock(*_doc_out, _doc.freqs, _enc_buf,
+                           block_io::kFreqOptions);
     }
     _doc.block_last = _doc.last;
     _doc.size = 0;

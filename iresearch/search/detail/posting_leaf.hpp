@@ -357,7 +357,7 @@ class PostingLeaf {
 
   IRS_FORCE_INLINE void TakeFreqs(uint32_t len) {
     if constexpr (Shape.freqs) {
-      block_io::ReadTail(len, In(), Enc(), _freqs.data);
+      block_io::ReadTail<block_io::kFreqBias>(len, In(), Enc(), _freqs.data);
     } else {
       SkipFreqs(len);
     }
@@ -396,7 +396,7 @@ class PostingLeaf {
       block_io::SkipTail(len, in);
       return false;
     }
-    block_io::ReadTail(len, in, _enc.data, _freqs.data);
+    block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
     ScoreLeaf(kBlock - len, len);
     return true;
   }

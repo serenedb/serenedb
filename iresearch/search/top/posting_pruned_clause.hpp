@@ -193,7 +193,7 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
       _lazy = in.Current();
       block_io::SkipTail(len, in);
     } else {
-      block_io::ReadTail(len, in, _enc.data, _freqs.data);
+      block_io::ReadTail<block_io::kFreqBias>(len, in, _enc.data, _freqs.data);
     }
     _base = prev;
     _max_in_leaf = leaf.max;
@@ -209,9 +209,10 @@ class PostingPrunedClause : public PruneLeafBase<InputType, false> {
   IRS_NO_INLINE void DecodeFreqs() noexcept {
     using Codec = block_io::Codec;
     if (_len == kBlock) {
-      Codec::DecodeValuesBlock(_lazy, _freqs.data);
+      Codec::DecodeValuesBlock<block_io::kFreqBias>(_lazy, _freqs.data);
     } else {
-      Codec::DecodeValuesTail(_lazy, _len, _freqs.data + (kBlock - _len));
+      Codec::DecodeValuesTail<block_io::kFreqBias>(
+        _lazy, _len, _freqs.data + (kBlock - _len));
     }
     _lazy = nullptr;
   }

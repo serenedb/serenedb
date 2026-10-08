@@ -1,0 +1,77 @@
+control substitution on
+
+statement ok
+CREATE TABLE melstroi_gen (a INT, s INT GENERATED ALWAYS AS (a * 3) STORED, b INT);
+
+
+statement ok
+INSERT INTO melstroi_gen (a, b) VALUES (1, 5), (2, 7);
+
+
+statement ok
+ALTER TABLE melstroi_gen DROP COLUMN s;
+
+
+statement ok
+INSERT INTO melstroi_gen (a, b) VALUES (3, 11);
+
+
+statement ok
+CREATE TABLE papich_gen (k INT, a INT, s INT GENERATED ALWAYS AS (a * 3) STORED, b INT);
+
+
+statement ok
+INSERT INTO papich_gen (k, a, b) VALUES (1, 1, 5), (2, 2, 7);
+
+
+statement ok
+ALTER TABLE papich_gen DROP COLUMN a CASCADE;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO melstroi_gen (a, b) VALUES (4, 13);
+
+
+statement ok
+INSERT INTO papich_gen (k, b) VALUES (3, 11);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT string_agg(a || ':' || b, ',' ORDER BY a) AS melstroi FROM melstroi_gen;
+----
+melstroi
+1:5,2:7,3:11,4:13
+
+
+connection after_crash
+query
+SELECT string_agg(k || ':' || b, ',' ORDER BY k) AS papich FROM papich_gen;
+----
+papich
+1:5,2:7,3:11
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM melstroi_gen) AS melstroi, (SELECT sum(b) FROM papich_gen) AS papich;
+----
+melstroi	papich
+4	23

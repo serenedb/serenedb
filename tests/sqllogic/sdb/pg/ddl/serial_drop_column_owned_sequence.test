@@ -1,0 +1,85 @@
+statement ok
+CREATE TABLE papich_serial (id SERIAL, x INT);
+
+
+statement ok
+ALTER TABLE papich_serial DROP COLUMN id;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'papich_serial_id_seq';
+----
+n
+0
+
+
+statement ok
+INSERT INTO papich_serial VALUES (7);
+
+
+query
+SELECT x FROM papich_serial;
+----
+x
+7
+
+
+statement ok
+CREATE TABLE melstroi_serials (a SERIAL, b SERIAL, x INT);
+
+
+statement ok
+ALTER TABLE melstroi_serials DROP COLUMN a;
+
+
+query
+SELECT string_agg(relname, ',' ORDER BY relname) AS sequences FROM pg_class WHERE relname IN ('melstroi_serials_a_seq', 'melstroi_serials_b_seq');
+----
+sequences
+melstroi_serials_b_seq
+
+
+statement ok
+INSERT INTO melstroi_serials (x) VALUES (1), (2);
+
+
+query
+SELECT b, x FROM melstroi_serials ORDER BY b;
+----
+b	x
+1	1
+2	2
+
+
+statement ok
+DROP TABLE melstroi_serials;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'melstroi_serials_b_seq';
+----
+n
+0
+
+
+statement ok
+CREATE SEQUENCE vjling_shared;
+
+
+statement ok
+CREATE TABLE vjling_plain (id BIGINT DEFAULT nextval('vjling_shared'), x INT);
+
+
+statement ok
+ALTER TABLE vjling_plain DROP COLUMN id;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'vjling_shared';
+----
+n
+1
+
+
+statement ok
+DROP SEQUENCE vjling_shared;

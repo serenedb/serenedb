@@ -16,23 +16,23 @@ page in the same change, following the **Documentation** section of
 
 ## Formatting
 
-serenedb's own code and the duckdb submodules are never formatted by hand: run
-the tools below and commit what they produce. Other submodules have no
-formatter set up; there, match the surrounding code by hand, and never run a
-formatter over their files.
+serenedb's own code and the DuckDB family are never formatted by hand: run the
+tools below and commit what they produce. Other submodules have no formatter
+set up; there, match the surrounding code by hand, and never run a formatter
+over their files.
 
 - serenedb's own code: `.clang-format` through pre-commit (see `CONTRIBUTING.md`).
-- The DuckDB fork, from `third_party/duckdb`, in this order:
-  1. `./scripts/parser/build_grammar.sh` -- the PEG grammar and transformer;
-     `make generate-files` does not regenerate the parser, so this goes first.
-  2. `make generate-files` -- settings, serialization, enum_util, functions,
-     metrics and storage info, then formats the tree.
-
-  Commit regenerated artifacts separately from the change that caused them
-  (`regen: ...`), as upstream does.
-- Then, from the repo root, `./scripts/format_duckdb.sh` -- clang-format 11.0.1
-  (in docker) over the changed files of every duckdb submodule and
-  `duckdb_clickhouse`, each with its own `.clang-format`.
+- The DuckDB family (the duckdb submodules, `database-connector`,
+  `duckdb_clickhouse`): `scripts/duckdb_family.sh`, which runs DuckDB's own
+  format.py, generators and Makefile targets with their pinned tools; `--help`
+  describes every mode. Never run a generator, format.py or clang-format there
+  by hand.
+  - `format` before every commit, and `format --check --range <a>..<b> <dir>`
+    before pushing a series: every commit, merges included, formatted on its
+    own.
+  - `regen` builds the duckdb fork's `regen:` commit, a DuckDB update's one or
+    a pull request's own, with DuckDB's generators in DuckDB's order;
+    `regen --check` proves it is current.
 
 ## Before writing tests
 

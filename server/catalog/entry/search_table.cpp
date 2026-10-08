@@ -54,7 +54,6 @@
 #include <vector>
 
 #include "catalog/catalog.h"
-#include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
@@ -105,7 +104,7 @@ void BindOptions(duckdb::ClientContext& context, WithOptions& options) {
     } else {
       context.TryGetCurrentSetting(duckdb::Identifier{name}, value);
     }
-    options[std::string{name}] = OptionConstant(value);
+    options.insert_or_assign(name, OptionConstant(value));
   }
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     search::ParseScorerExpression(
@@ -211,24 +210,17 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
-  if (const auto tag = tags.find(std::string{kGeneratedPkSequenceTag});
-      tag != tags.end()) {
+  if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
     _pk_sequence = duckdb::Identifier{tag->second};
   } else if (base.oid == 0) {
     _pk_sequence = FreePkSequenceName(transaction, schema, name);
-    tags[std::string{kGeneratedPkSequenceTag}] =
-      _pk_sequence.GetIdentifierName();
+    tags.insert_or_assign(kGeneratedPkSequenceTag,
+                          _pk_sequence.GetIdentifierName());
   }
   if (!_storage) {
-    if (base.oid == 0) {
-      ClusterOf(catalog.GetDatabase())
-        .LogArtifact(
-          duckdb::CatalogType::TABLE_ENTRY, catalog.GetOid(), oid,
-          {search::SearchTable::GetPath(catalog.GetOid(), schema.oid, oid)},
-          false);
-    }
     _storage = search::SearchTable::Create(
-      catalog.GetOid(), schema.oid, oid, base.oid == 0, _options,
+      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(), oid,
+      base.oid == 0, _options,
       search::SearchTable::DeclaredCompression(GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
@@ -264,7 +256,7 @@ void AppendIResearchBlockRows(
     info.column_id = column_id;
     info.column_path = path_str;
     info.segment_idx = segment;
-    info.segment_type = std::string{type_name};
+    info.segment_type.assign(type_name);
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
     info.compression_type =
@@ -420,12 +412,7 @@ SearchTableEntry::GeneratedPkSequence(duckdb::ClientContext& context) const {
   return entry ? &entry->Cast<duckdb::SequenceCatalogEntry>() : nullptr;
 }
 
-void SearchTableEntry::OnDrop() {
-  ClusterOf(catalog.GetDatabase())
-    .NoteDroppedArtifact(duckdb::CatalogType::TABLE_ENTRY, catalog.GetOid(),
-                         oid, {_storage->Path()});
-  _storage->MarkDropped();
-}
+void SearchTableEntry::OnDrop() { _storage->MarkDropped(); }
 
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (prev_entry.type == duckdb::CatalogType::INVALID) {
@@ -454,9 +441,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   auto info = duckdb::TableCatalogEntry::GetInfo();
   auto& options = info->Cast<duckdb::CreateTableInfo>().options;
   const auto set = [&](std::string_view name, const duckdb::Value& value) {
-    options[std::string{name}] = OptionConstant(value);
+    options.insert_or_assign(name, OptionConstant(value));
   };
-  set(kStorageOption, duckdb::Value{std::string{kEngineSearch}});
+  set(kStorageOption, duckdb::Value{kEngineSearch});
   set(kRefreshIntervalSetting,
       duckdb::Value::UINTEGER(_options.refresh_interval_ms));
   set(kCompactionIntervalSetting,
@@ -556,10 +543,16 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     }
     case duckdb::AlterTableType::SET_DEFAULT: {
       auto& set_default = alter.Cast<duckdb::SetDefaultInfo>();
+      if (set_default.column_path.size() > 1) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG(
+            "Setting a default value on a nested field is not yet supported"));
+      }
       auto create = GetInfo();
       auto& column =
         create->Cast<duckdb::CreateTableInfo>().columns.GetColumnMutable(
-          GetColumnIndex(set_default.column_name));
+          GetColumnIndex(set_default.column_path[0]));
       if (column.Generated()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("cannot set a default for generated column \"",
@@ -573,9 +566,17 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
     case duckdb::AlterTableType::DROP_NOT_NULL: {
       const bool set =
         alter.alter_table_type == duckdb::AlterTableType::SET_NOT_NULL;
-      const auto index =
-        GetColumnIndex(set ? alter.Cast<duckdb::SetNotNullInfo>().column_name
-                           : alter.Cast<duckdb::DropNotNullInfo>().column_name);
+      auto& column_path = set
+                            ? alter.Cast<duckdb::SetNotNullInfo>().column_path
+                            : alter.Cast<duckdb::DropNotNullInfo>().column_path;
+      if (column_path.size() > 1) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                        ERR_MSG(set ? "Setting a NOT NULL constraint on a "
+                                      "nested field is not yet supported"
+                                    : "Dropping a NOT NULL constraint on a "
+                                      "nested field is not yet supported"));
+      }
+      const auto index = GetColumnIndex(column_path[0]);
       auto create = GetInfo();
       auto& constraints = create->Cast<duckdb::CreateTableInfo>().constraints;
       const auto existing = absl::c_find_if(constraints, [&](const auto& c) {

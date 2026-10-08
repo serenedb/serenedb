@@ -83,7 +83,7 @@ void ApplyTextCopyOption(TextCopyOptions& out, std::string_view key,
     }
     out.delim = value.front();
   } else if (key == "null" || key == "nullstr") {
-    out.null_str = std::string{value};
+    out.null_str.assign(value);
   } else if (key == "header") {
     out.header = ParseCopyBool(value);
   } else if (key == "quote" || key == "escape" || key == "force_quote" ||

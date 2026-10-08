@@ -326,7 +326,7 @@ void CreateTextIndex(duckdb::ClientContext& context,
   info.index_type = InvertedStoreIndex::kTypeName;
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions;
   for (const auto name : text_columns) {
-    const duckdb::Identifier column{std::string{name}};
+    const duckdb::Identifier column{name};
     SDB_ASSERT(table.GetColumns().ColumnExists(column));
     const auto& definition = table.GetColumns().GetColumn(column);
     bound_expressions.emplace_back(
@@ -378,7 +378,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   {
     duckdb::CreateSchemaInfo info;
-    info.SetSchema(duckdb::Identifier{std::string{kEsSchema}});
+    info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
     db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
@@ -517,7 +517,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
   sb.append_raw("}}");
 
   output.SetChildCardinality(1);
-  output.SetValue(0, 0, duckdb::Value{std::string{sb.view().value()}});
+  output.SetValue(0, 0, duckdb::Value{sb.view().value()});
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> EsCatIndicesBind(

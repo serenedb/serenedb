@@ -312,7 +312,7 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
                                                 const BuildContext& ctx) {
   Options options;
   const auto put = [&](std::string_view name, duckdb::Value value) {
-    options.try_emplace(std::string{name},
+    options.try_emplace(name,
                         std::make_unique<duckdb::Value>(std::move(value)));
   };
   std::string_view type;
@@ -364,7 +364,7 @@ class SpecCompiler {
   irs::analysis::TokenizerConfig Compile(std::string_view spec) {
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
     try {
-      exprs = duckdb::Parser::ParseExpressionList(std::string{spec});
+      exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(spec);
     } catch (const std::exception& e) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(kOperation, ": ", e.what()));
@@ -552,7 +552,7 @@ class SpecCompiler {
       expr, [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
         if (IsParameterRef(*child, param)) {
           child = duckdb::make_uniq<duckdb::ColumnRefExpression>(
-            duckdb::Identifier{std::string{kInput}});
+            duckdb::Identifier{kInput});
           return;
         }
         SubstituteParameter(*child, param);
@@ -604,7 +604,7 @@ class SpecCompiler {
     auto& args = copy->Cast<duckdb::FunctionExpression>().GetArgumentsMutable();
     args.insert(args.begin(), duckdb::FunctionArgument{
                                 duckdb::make_uniq<duckdb::ColumnRefExpression>(
-                                  duckdb::Identifier{std::string{kInput}})});
+                                  duckdb::Identifier{kInput})});
     return {.kind = Stage::Kind::Sql, .name = copy->ToString()};
   }
 
@@ -684,8 +684,8 @@ class SpecCompiler {
           ERR_HINT(group.name, "(lambda x: length(x) > 2)"));
       }
       stage.options.emplace_back(
-        std::string{name}, duckdb::Value{CompilePredicate(
-                             group, value.Cast<duckdb::LambdaExpression>())});
+        name, duckdb::Value{CompilePredicate(
+                group, value.Cast<duckdb::LambdaExpression>())});
       return;
     }
     if (value.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF ||
@@ -706,7 +706,7 @@ class SpecCompiler {
     if (folded.IsNull()) {
       return;
     }
-    stage.options.emplace_back(std::string{name}, std::move(folded));
+    stage.options.emplace_back(name, std::move(folded));
   }
 
   duckdb::Value Fold(const OptionGroup& group, std::string_view name,

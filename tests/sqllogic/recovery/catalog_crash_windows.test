@@ -77,6 +77,29 @@ count
 2
 
 
+connection after_create
+statement ok
+SET debug_force_commit_failure = true;
+
+connection after_create
+statement error
+CREATE TABLE cw_forced (a INTEGER);
+----
+db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
+
+
+connection after_create
+statement ok
+SET debug_force_commit_failure = false;
+
+connection after_create
+query
+SELECT count(*) FROM pg_class WHERE relname = 'cw_forced';
+----
+count
+0
+
+
 # Crash after the catalog append and before the data commit, for a create. The
 # database's position is behind the log tail by that one frame; boot replays it
 # and the table is there, complete and usable.
@@ -94,6 +117,13 @@ SELECT count(*) FROM pg_class WHERE relname = 'cw2';
 ----
 count
 1
+
+connection after_gap_create
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('cw_refused', 'cw_forced');
+----
+count
+0
 
 connection after_gap_create
 statement ok

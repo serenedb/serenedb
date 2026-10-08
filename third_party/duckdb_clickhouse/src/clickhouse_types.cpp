@@ -64,7 +64,7 @@ static int64_t FloorDiv(int64_t value, int64_t divisor) {
 // Both decode paths (bulk scan and per-row lookup) must agree on the same
 // bytes, so both reject invalid payloads with the same escape hatch.
 static void VerifyStringUtf8(const char *data, size_t size) {
-	if (Utf8Proc::Analyze(data, size) == UnicodeType::INVALID) {
+	if (!Utf8Proc::IsValid(data, size)) {
 		throw InvalidInputException("ClickHouse String value contains invalid UTF-8; set "
 		                            "ch_binary_as_blob=true to read String columns as BLOB");
 	}

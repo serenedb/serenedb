@@ -283,6 +283,27 @@ while [[ ${#remaining[@]} -gt 0 ]]; do
 	done
 done
 
+if [[ -n "${lang_rc[python]:-}" ]]; then
+	log="$buffer_dir/python-exclusive.log"
+	started="$(date +%s)"
+	rc=0
+	(
+		cd "$(dirname "${lang_runner[python]}")"
+		SDB_DRV_EXCLUSIVE=true "${lang_runner[python]}" 2>&1
+	) >"$log" 2>&1 || rc=$?
+	secs=$(($(date +%s) - started))
+	lang_secs[python]=$((lang_secs[python] + secs))
+	status=$([[ $rc -eq 0 ]] && echo PASS || echo "FAIL rc=$rc")
+	printf '\n===== [python exclusive] BEGIN =====\n'
+	cat "$log"
+	printf '===== [python exclusive] END (%s, %ss) =====\n' "$status" "$secs"
+	rm -f "$log"
+	if [[ $rc -ne 0 ]]; then
+		lang_rc[python]=$rc
+		final_exit=1
+	fi
+fi
+
 # Compact summary table at the end so the operator doesn't have to scroll
 # back through each block. Test counts come from the junit XMLs each runner
 # produced; some emitters (mvn -q, go-junit-report, vitest --reporter=junit)

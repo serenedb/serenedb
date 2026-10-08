@@ -32,7 +32,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -45,7 +44,6 @@
 #include <iresearch/utils/type_limits.hpp>
 #include <limits>
 #include <mutex>
-#include <system_error>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -54,30 +52,9 @@
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
-#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
-
-std::filesystem::path SearchTable::GetPath(duckdb::idx_t db_id,
-                                           duckdb::idx_t schema_id,
-                                           duckdb::idx_t table_id) {
-  SDB_ASSERT(db_id != 0);
-  SDB_ASSERT(schema_id != 0);
-  SDB_ASSERT(table_id != 0);
-  // Same on-disk layout as an inverted index minus the trailing index level --
-  // reuse its path generator with the index unset.
-  // TODO(Dronplane): unify as generic SearchStorage with all common stuff
-  return InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
-                                       /*index_id=*/0);
-}
-
-std::filesystem::path SearchTable::GetWalPath(duckdb::idx_t db_id) {
-  SDB_ASSERT(db_id != 0);
-  auto path = GetSearchEngine().GetPersistedPath(db_id);
-  path /= "wal";
-  return path;
-}
 
 catalog::CompressionByColumn SearchTable::DeclaredCompression(
   const duckdb::ColumnList& columns) {
@@ -100,13 +77,12 @@ uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
   return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
 }
 
-SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
-                         duckdb::idx_t table_id, bool is_new,
+SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
+                         bool in_memory, duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
   : _table_id{table_id},
-    _db_id{db_id},
-    _schema_id{schema_id},
+    _directory{std::move(directory)},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
@@ -116,7 +92,7 @@ SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig();
-  OpenWriter();
+  OpenWriter(in_memory);
   ApplyOptions(options);
 }
 
@@ -137,40 +113,21 @@ SearchTable::~SearchTable() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  if (!lifecycle::IsStopping()) {
-    GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
-  }
-  RemoveDroppedStorageDir(GetPath(_db_id, _schema_id, _table_id), 2);
+  _wal->DeregisterShard(_table_id);
+  catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
 }
 
-void SearchTable::OpenWriter() {
-  auto path = GetPath(_db_id, _schema_id, GetTableId());
+void SearchTable::OpenWriter(bool in_memory) {
+  irs::ResourceManagementOptions resource_manager;
+  auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
+                                     in_memory, resource_manager);
+  _dir = std::move(opened.directory);
+  _absent = opened.absent;
 
-  std::error_code ec;
-  bool path_exists = std::filesystem::exists(path, ec);
-  if (ec) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
-                            path.string(),
-                            "' while initializing search table for table ",
-                            GetTableId(), ": ", ec.message()));
-  }
-  if (!path_exists) {
-    std::filesystem::create_directories(path, ec);
-    if (ec) {
-      THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
-                              "' while initializing search table for table ",
-                              GetTableId(), ": ", ec.message()));
-    }
-  }
-
-  const bool reopen = path_exists && !_is_new;
+  const bool reopen = opened.on_disk && !_is_new;
   const auto open_mode =
     reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
            : irs::OpenMode::kOmCreate;
-
-  irs::ResourceManagementOptions resource_manager;
-  _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
-                                              resource_manager);
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
@@ -214,7 +171,7 @@ void SearchTable::OpenWriter() {
     }
   }
 
-  _wal = &GetSearchEngine().GetDbWal(_db_id);
+  _wal = &_directory->Wal();
 
   if (_is_new) {
     // A brand-new shard has no WAL records, so seed its committed tick at the
@@ -257,11 +214,12 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
     if (lock.owns_lock()) {
+      _refresh_mutex.AssertHeld();
       // Snapshot the WAL tick before publishing: a RefreshCommit that reports
       // no changes proves this shard has nothing un-published up to that tick,
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
-      const auto tick_before = _wal->CurrentTick();
+      const auto tick_before = std::min(_wal->CurrentTick(), _clear_bound);
       SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
       if (tick_before != irs::writer_limits::kMinTick &&
           _writer->RefreshCommit({.tick = tick_before})) {

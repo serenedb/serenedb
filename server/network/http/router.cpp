@@ -45,7 +45,7 @@ size_t HttpRouter::HandlersOf(std::string_view pattern) {
     return it->second;
   }
   ada::url_pattern_init init{};
-  init.pathname = std::string{pattern};
+  init.pathname.emplace(pattern);
   auto parsed = ada::parse_url_pattern<AdaRe2Provider>(std::move(init));
   SDB_VERIFY(parsed.has_value(), "invalid HTTP route pattern: '", pattern, "'");
   auto& path = parsed->pathname_component;

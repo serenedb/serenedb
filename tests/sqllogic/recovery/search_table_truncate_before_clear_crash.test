@@ -1,0 +1,71 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE ttbc (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO ttbc VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) ttbc;
+
+statement ok
+INSERT INTO ttbc VALUES (3, 'c');
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_delete_log';
+
+connection truncater
+statement async error connection closed
+TRUNCATE ttbc;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) ttbc;
+
+connection default
+query
+SELECT count(*) AS n FROM ttbc;
+----
+n
+3
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ttbc;
+----
+n
+0
+
+connection after_crash
+statement ok
+INSERT INTO ttbc VALUES (4, 'd');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) ttbc;
+
+connection after_crash
+query
+SELECT id, tag FROM ttbc ORDER BY id;
+----
+id	tag
+4	d

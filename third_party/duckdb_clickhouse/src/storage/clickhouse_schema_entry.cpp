@@ -442,7 +442,7 @@ ClickHouseTableEntry &ClickHouseSchemaEntry::LoadTableEntry(optional_ptr<ClientC
 						string default_expr(def_exprs->At(row));
 						if (!default_expr.empty()) {
 							try {
-								auto expressions = Parser::ParseExpressionList(default_expr);
+								auto expressions = Parser::GetBuiltinParser().ParseExpressionList(default_expr);
 								// Constants only: a ClickHouse-dialect function default
 								// (today(), toDecimal128(...)) neither parses nor binds as
 								// DuckDB SQL; dropping it means an omitted column fills with

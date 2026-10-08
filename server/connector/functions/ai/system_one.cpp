@@ -611,7 +611,7 @@ duckdb::Value ParseAnswer(const Question& question,
     return duckdb::Value::STRUCT(
       AnswerType(SystemOneType::Choice),
       {
-        duckdb::Value{std::string{choice}},
+        duckdb::Value{choice},
         duckdb::Value::LIST(ChoiceProbabilityType(), std::move(list)),
         duckdb::Value::DOUBLE(confidence),
       });

@@ -142,7 +142,7 @@ PhysicalOperator &ClickHouseCatalog::PlanDelete(ClientContext &context, Physical
 	auto &ch_table = op.table.Cast<ClickHouseTableEntry>();
 	string pk_column;
 	if (!ch_table.TryGetRowIdColumn(pk_column)) {
-		throw BinderException("Cannot DELETE from ClickHouse table \"%s\": it has no single integer PRIMARY KEY to "
+		throw BinderException("Cannot DELETE from ClickHouse table %s: it has no single integer PRIMARY KEY to "
 		                      "use as a row identifier",
 		                      ch_table.name);
 	}

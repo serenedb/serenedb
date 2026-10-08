@@ -289,6 +289,24 @@ statement ok
 ALTER TABLE search_dml ALTER COLUMN b DROP NOT NULL;
 
 
+statement error
+ALTER TABLE search_dml ALTER COLUMN b.x SET DEFAULT 'dflt';
+----
+db error: ERROR: Setting a default value on a nested field is not yet supported
+
+
+statement error
+ALTER TABLE search_dml ALTER COLUMN b.x SET NOT NULL;
+----
+db error: ERROR: Setting a NOT NULL constraint on a nested field is not yet supported
+
+
+statement error
+ALTER TABLE search_dml ALTER COLUMN b.x DROP NOT NULL;
+----
+db error: ERROR: Dropping a NOT NULL constraint on a nested field is not yet supported
+
+
 statement ok
 ALTER TABLE search_dml ADD CONSTRAINT search_dml_a_positive CHECK (a > 0);
 

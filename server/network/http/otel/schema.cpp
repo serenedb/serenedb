@@ -62,8 +62,8 @@ class Creator {
     return !result->HasError() && result->RowCount() == 1;
   }
 
-  bool Run(std::string sql) {
-    auto result = _conn->Query(std::move(sql));
+  bool Run(std::string_view sql) {
+    auto result = _conn->Query(sql);
     if (result->HasError()) {
       SDB_WARN(STARTUP, "OpenTelemetry schema: ", result->GetError());
       return false;
@@ -78,7 +78,7 @@ class Creator {
       return false;
     }
     for (const auto statement : kSchemaStatements) {
-      if (!Run(std::string{statement})) {
+      if (!Run(statement)) {
         return false;
       }
     }

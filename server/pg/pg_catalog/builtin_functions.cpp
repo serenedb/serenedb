@@ -193,12 +193,12 @@ bool TypeIsComplete(const duckdb::LogicalType& type) {
     case MAP:
     case UNION:
     case ENUM:
-      return type.AuxInfo();
+      return type.HasParameters();
     case LIST:
-      return type.AuxInfo() &&
+      return type.HasParameters() &&
              TypeIsComplete(duckdb::ListType::GetChildType(type));
     case ARRAY:
-      return type.AuxInfo() &&
+      return type.HasParameters() &&
              TypeIsComplete(duckdb::ArrayType::GetChildType(type));
     default:
       return true;

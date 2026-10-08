@@ -1,0 +1,54 @@
+control substitution on
+
+statement ok
+CREATE TABLE dcsv_t (a INT, s INT GENERATED ALWAYS AS (a * 2) STORED, b INT, c TEXT);
+
+
+statement ok
+INSERT INTO dcsv_t (a, b, c) VALUES (1, 10, 'one'), (2, 20, 'two'), (3, 30, 'three');
+
+
+statement ok
+ALTER TABLE dcsv_t DROP COLUMN b;
+
+
+statement ok
+INSERT INTO dcsv_t (a, c) VALUES (4, 'four');
+
+
+query
+SELECT a, s, c FROM dcsv_t ORDER BY a;
+----
+a	s	c
+1	2	one
+2	4	two
+3	6	three
+4	8	four
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO dcsv_t (a, c) VALUES (5, 'five');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a, s, c FROM dcsv_t ORDER BY a;
+----
+a	s	c
+1	2	one
+2	4	two
+3	6	three
+4	8	four
+5	10	five

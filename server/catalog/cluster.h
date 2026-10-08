@@ -30,13 +30,10 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
-#include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
-#include <unordered_set>
-#include <vector>
 
 #include "auth/role_closure.h"
 #include "catalog/entry/database.h"
@@ -72,17 +69,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
                       bool compactable);
   void MaybeCompactCatalogLog();
-
-  void LogArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
-                   duckdb::idx_t oid,
-                   const std::vector<std::filesystem::path>& paths, bool drop);
-  void NoteDroppedArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
-                           duckdb::idx_t oid,
-                           const std::vector<std::filesystem::path>& paths);
-  void ReplayArtifact(duckdb::CatalogType type, duckdb::idx_t catalog_oid,
-                      duckdb::idx_t oid,
-                      duckdb::vector<std::string> paths) final;
-  void ResolveArtifacts();
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
     duckdb::CreateRoleInfo& info) final {
@@ -148,16 +134,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                     duckdb::DropInfo& info);
 
  private:
-  struct Artifact {
-    duckdb::CatalogType type;
-    duckdb::idx_t catalog_oid;
-    duckdb::idx_t oid;
-    duckdb::vector<std::string> paths;
-    bool drop;
-  };
-
   void CompactCatalogLog();
-  bool IsLive(const Artifact& artifact);
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
   void SyncCatalogLogLoop();
   bool SyncPending() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_sync_mutex) {
@@ -183,9 +160,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
     _closures;
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
-  std::mutex _artifacts_mutex;
-  std::vector<Artifact> _artifacts;
-  std::unordered_set<duckdb::idx_t> _replayed_drops;
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

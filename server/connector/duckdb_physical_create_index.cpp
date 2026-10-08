@@ -173,7 +173,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
   state->schema_name = _schema_entry.name.GetIdentifierName();
-  state->table_name = std::string{_relation.name.GetIdentifierName()};
+  state->table_name = _relation.name.GetIdentifierName();
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
@@ -654,10 +654,15 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   inverted_storage.Refresh();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   inverted_storage.FinishCreation();
+  if (IsDuckDBTable() && !IsReindexPass()) {
+    GetSereneDBContext(context).AddCreatedIndex(
+      _relation.ParentCatalog().GetAttached().oid, gstate.index_storage);
+  }
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
+  SDB_WAIT_ON_FAILURE("pause_create_index_before_commit");
   if (!IsReindexPass()) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }

@@ -97,6 +97,12 @@ class Transaction : public Config {
     _on_commit.push_back(std::move(action));
   }
 
+  void AddCreatedIndex(duckdb::idx_t database,
+                       std::shared_ptr<search::InvertedIndexStorage> storage) {
+    _created_indexes.emplace_back(database, std::move(storage));
+  }
+  void RefreshCreatedIndexes(duckdb::idx_t database);
+
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
   // ISOLATION LEVEL changes.
@@ -174,13 +180,16 @@ class Transaction : public Config {
     }
   }
 
-  const duckdb::Vector& FeedColumn(const void* table, duckdb::row_t first_row,
-                                   duckdb::idx_t count, duckdb::idx_t column,
+  const duckdb::Vector& FeedColumn(const void* database,
+                                   duckdb::idx_t table_oid,
+                                   duckdb::row_t first_row, duckdb::idx_t count,
+                                   duckdb::idx_t column,
                                    const duckdb::Vector& source);
 
  private:
   struct FeedColumns {
-    const void* table = nullptr;
+    const void* database = nullptr;
+    duckdb::idx_t table_oid = 0;
     duckdb::row_t first_row = 0;
     duckdb::idx_t count = 0;
     std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
@@ -206,6 +215,9 @@ class Transaction : public Config {
   // commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
   std::vector<absl::AnyInvocable<void()>> _on_commit;
+  std::vector<
+    std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
+    _created_indexes;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

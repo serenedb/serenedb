@@ -1,0 +1,138 @@
+control substitution on
+
+statement ok
+CREATE TABLE pudge_hook (id INT, b INT);
+
+
+statement ok
+CREATE INDEX pudge_hook_expr ON pudge_hook ((b + 1));
+
+
+statement ok
+INSERT INTO pudge_hook VALUES (1, 10), (2, 20);
+
+
+statement ok
+ALTER TABLE pudge_hook RENAME COLUMN b TO bb;
+
+
+statement ok
+ALTER TABLE pudge_hook RENAME TO pudge_rot;
+
+
+statement ok
+CREATE TABLE donsimon_tilt (id INT, b INT, junk INT);
+
+
+statement ok
+CREATE INDEX donsimon_tilt_expr ON donsimon_tilt ((b * 2));
+
+
+statement ok
+INSERT INTO donsimon_tilt VALUES (1, 10, 0), (2, 20, 0);
+
+
+statement ok
+ALTER TABLE donsimon_tilt DROP COLUMN junk;
+
+
+statement ok
+ALTER TABLE donsimon_tilt RENAME TO donsimon_calm;
+
+
+statement ok
+CREATE TABLE goshandr_bunker (id INT, b INT);
+
+
+statement ok
+CREATE INDEX goshandr_bunker_expr ON goshandr_bunker ((b - 1));
+
+
+statement ok
+INSERT INTO goshandr_bunker VALUES (1, 10);
+
+
+statement ok
+ALTER TABLE goshandr_bunker ADD COLUMN note TEXT DEFAULT 'kringe';
+
+
+statement ok
+ALTER TABLE goshandr_bunker RENAME TO goshandr_base;
+
+
+statement ok
+CREATE TABLE vjling_chat (id INT, b INT, n INT);
+
+
+statement ok
+CREATE INDEX vjling_chat_expr ON vjling_chat ((b + 7));
+
+
+statement ok
+INSERT INTO vjling_chat VALUES (1, 10, 5);
+
+
+statement ok
+ALTER TABLE vjling_chat ALTER COLUMN n TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE vjling_chat RENAME TO vjling_stream;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM pudge_rot WHERE bb + 1 = 21;
+----
+id
+2
+
+
+connection after_crash
+query
+SELECT id FROM donsimon_calm WHERE b * 2 = 40;
+----
+id
+2
+
+
+connection after_crash
+query
+SELECT id, note FROM goshandr_base WHERE b - 1 = 9;
+----
+id	note
+1	kringe
+
+
+connection after_crash
+query
+SELECT id, n FROM vjling_stream WHERE b + 7 = 17;
+----
+id	n
+1	5
+
+
+connection after_crash
+statement ok
+INSERT INTO pudge_rot VALUES (3, 30);
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pudge_rot WHERE bb + 1 = 31;
+----
+n
+1

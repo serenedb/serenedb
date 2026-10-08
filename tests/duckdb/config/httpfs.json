@@ -12,12 +12,6 @@
       "paths": [
         "test/sql/curl_client/test_load_other_extensions.test"
       ]
-    },
-    {
-      "reason": "SereneDB's httpfs is curl-only (build: remove the httplib client backend): `SET httpfs_client_implementation='httplib'` is rejected with `Unsupported option for httpfs_client_implementation, only curl and default are currently supported`, and the whole file is about the httplib backend's connection handling.",
-      "paths": [
-        "test/sql/connection_caching_httplib.test"
-      ]
     }
   ]
 }

@@ -378,7 +378,21 @@ void SearchTableTransaction::Commit() {
     }
   };
 
+  std::vector<SearchTable*> clearing;
+  for (auto& [table_id, w] : _writes) {
+    if (auto cit = _changes.find(table_id);
+        cit != _changes.end() && cit->second.ClearsShard()) {
+      w.shard->BeginClear();
+      clearing.push_back(w.shard.get());
+    }
+  }
+  absl::Cleanup abandon_clears = [&clearing] {
+    for (auto* shard : clearing) {
+      shard->AbandonClear();
+    }
+  };
   const uint64_t record_tick = AppendCommit();
+  std::move(abandon_clears).Cancel();
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_delete_log");
 

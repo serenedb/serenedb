@@ -1045,7 +1045,8 @@ void AddModels(std::vector<Spec>& out) {
                   .model_location = ModelLocation(), .top_k = 2}};
               },
             .dict = WordDict(),
-            .cost = 16});
+            .cost = 16,
+            .load_parts = 4});
 }
 
 void AddGeo(std::vector<Spec>& out) {

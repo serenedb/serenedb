@@ -137,6 +137,7 @@
 [submodule "third_party/clickhouse-cpp"]
 	path = third_party/clickhouse-cpp
 	url = https://github.com/serenedb/clickhouse-cpp.git
+	shallow = true
 [submodule "third_party/OpenBLAS"]
 	path = third_party/OpenBLAS
 	url = https://github.com/serenedb/OpenBLAS.git
@@ -176,6 +177,7 @@
 [submodule "third_party/cmark-gfm"]
 	path = third_party/cmark-gfm
 	url = https://github.com/serenedb/cmark-gfm.git
+	shallow = true
 [submodule "third_party/stringzilla"]
 	path = third_party/stringzilla
 	url = https://github.com/serenedb/StringZilla.git
@@ -187,6 +189,12 @@
 [submodule "third_party/protozero"]
 	path = third_party/protozero
 	url = https://github.com/serenedb/protozero.git
+	shallow = true
 [submodule "third_party/zxc"]
 	path = third_party/zxc
 	url = https://github.com/serenedb/zxc.git
+	shallow = true
+[submodule "third_party/geographiclib-c"]
+	path = third_party/geographiclib-c
+	url = https://github.com/serenedb/geographiclib-c.git
+	shallow = true

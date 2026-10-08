@@ -68,6 +68,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   static duckdb::IndexType GetInvertedIndexType();
 
   InvertedStoreIndex(duckdb::CreateIndexInput& input, duckdb::idx_t index_id,
+                     duckdb::idx_t table_oid,
                      std::shared_ptr<search::InvertedIndexStorage> storage,
                      std::shared_ptr<const InvertedIndexConfig> config,
                      catalog::IndexTokenizers tokenizers, bool has_predicate);
@@ -173,6 +174,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                          const search::WalCursor* cursor);
 
   duckdb::idx_t _index_id = 0;
+  duckdb::idx_t _table_oid = 0;
 
   std::shared_ptr<search::InvertedIndexStorage> _storage;
   std::shared_ptr<const InvertedIndexConfig> _config;

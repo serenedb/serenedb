@@ -590,7 +590,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
   // rows by run flag). Bare null checks keep the validity-only arm below, and
   // null-bearing spans keep the decode arm.
   const bool codec_filter =
-    within_segment && codec.filter &&
+    within_segment && codec.filter && !filter_state.can_throw &&
     (self_valid || (null_check == NullCheckKind::None &&
                     ValiditySpanAllValid(s, anchor, span)));
   if (codec_filter) {

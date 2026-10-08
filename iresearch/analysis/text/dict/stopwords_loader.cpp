@@ -47,7 +47,7 @@ bool LoadStopwordsFile(const std::filesystem::path& file,
          ++i) {
     }
     if (i > 0) {
-      buf.Insert(std::string{line.data(), i});
+      buf.Insert(std::string_view{line.data(), i});
     }
   }
   return true;

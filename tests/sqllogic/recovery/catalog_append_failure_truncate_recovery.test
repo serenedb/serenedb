@@ -1,0 +1,46 @@
+control substitution on
+
+statement ok
+CREATE ROLE cwt_r1;
+
+
+statement ok
+CREATE ROLE cwt_r2;
+
+
+statement ok
+CREATE ROLE cwt_r3;
+
+
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+
+statement error
+CREATE TABLE cwt_refused (a INTEGER);
+----
+db error: ERROR: Failed to commit: catalog log: could not append the transaction
+
+
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+
+statement ok
+CREATE TABLE cwt_after (a INTEGER);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relname IN ('cwt_refused', 'cwt_after') ORDER BY relname;
+----
+relname
+cwt_after

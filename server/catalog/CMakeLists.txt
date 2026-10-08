@@ -4,6 +4,7 @@ target_sources(
         boot.cpp
         catalog.cpp
         cluster.cpp
+        database_directory.cpp
         entry/database.cpp
         entry/foreign_server.cpp
         entry/inverted_index.cpp

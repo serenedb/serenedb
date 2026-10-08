@@ -567,7 +567,7 @@ struct BlobText {
   }
 };
 
-duckdb::unique_ptr<duckdb::Calendar> MakeCalendar(std::string tz_name) {
+duckdb::unique_ptr<duckdb::Calendar> MakeCalendar(std::string_view tz_name) {
   auto tz = duckdb::ICUHelpers::TryGetTimeZone(tz_name);
   if (!tz) {
     return nullptr;
@@ -582,7 +582,7 @@ duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   if (it->second) {
     return it->second.get();
   }
-  it->second = MakeCalendar(std::string{tz_name});
+  it->second = MakeCalendar(tz_name);
   return it->second.get();
 }
 
@@ -858,7 +858,7 @@ struct BitBin {
 bool DeserializeTextDefaultInto(std::string_view data,
                                 const duckdb::LogicalType& type,
                                 duckdb::Value& out) {
-  auto casted = duckdb::Value{std::string{data}}.DefaultTryCastAs(
+  auto casted = duckdb::Value{data}.DefaultTryCastAs(
     type, /*error_message=*/nullptr, /*strict=*/true);
   if (!casted) {
     return false;

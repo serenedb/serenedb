@@ -74,7 +74,7 @@ suite_filter() {
 	if [[ "$1" == "core" ]]; then
 		echo 'test/*'
 	elif [[ "$1" == "cpp" ]]; then
-		echo '~"*.test" ~"*.test_slow" ~"*.test_coverage" ~[.]'
+		echo '~"*.test" ~"*.test_slow" ~"*.test_coverage",[.] ~"*.test" ~"*.test_slow" ~"*.test_coverage"'
 	else
 		echo "${SUITE_DIR[$1]}/test/*"
 	fi

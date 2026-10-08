@@ -1,0 +1,176 @@
+statement ok
+CREATE SEQUENCE srcv_c1;
+
+
+statement ok
+CREATE SEQUENCE srcv_c10 CACHE 10;
+
+
+statement ok
+CREATE SEQUENCE srcv_c100 CACHE 100;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE srcv_c1 RESTART WITH 500;
+
+
+query
+SELECT nextval('srcv_c1') AS n;
+----
+n
+500
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT nextval('srcv_c1') AS n;
+----
+n
+1
+
+
+query
+SELECT nextval('srcv_c10') AS a, nextval('srcv_c10') AS b;
+----
+a	b
+1	2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE srcv_c10 RESTART WITH 1000;
+
+
+query
+SELECT nextval('srcv_c10') AS a, nextval('srcv_c10') AS b;
+----
+a	b
+1000	1001
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT nextval('srcv_c10') AS n;
+----
+n
+11
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE srcv_c100 RESTART WITH 7;
+
+
+query
+SELECT nextval('srcv_c100') AS n;
+----
+n
+7
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE srcv_c100 RESTART WITH 70;
+
+
+query
+SELECT nextval('srcv_c100') AS n;
+----
+n
+70
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT nextval('srcv_c100') AS n;
+----
+n
+71
+
+
+connection other
+query
+SELECT nextval('srcv_c10') > 3 AS fresh;
+----
+fresh
+t
+
+
+connection other
+statement ok
+BEGIN;
+
+
+connection other
+statement ok
+ALTER SEQUENCE srcv_c10 RESTART WITH 5000;
+
+
+connection other
+query
+SELECT nextval('srcv_c10') AS n;
+----
+n
+5000
+
+
+connection other
+statement ok
+ROLLBACK;
+
+
+connection other
+query
+SELECT nextval('srcv_c10') < 5000 AS old_counter;
+----
+old_counter
+t
+
+
+connection default
+query
+SELECT nextval('srcv_c10') < 5000 AS old_counter;
+----
+old_counter
+t
+
+
+statement ok
+CREATE TABLE srcv_t (v BIGINT);
+
+
+statement ok
+INSERT INTO srcv_t SELECT nextval('srcv_c1') FROM generate_series(1, 20);
+
+
+query
+SELECT count(DISTINCT v) AS n FROM srcv_t;
+----
+n
+20

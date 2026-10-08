@@ -1,0 +1,102 @@
+control substitution on
+
+statement ok
+CREATE TABLE crd_docs (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO crd_docs VALUES (1, 'beta'), (2, 'beta'), (3, 'gamma');
+
+
+statement ok
+CREATE INDEX crd_docs_idx ON crd_docs USING inverted (body);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) crd_docs;
+
+
+statement ok
+SET debug_force_commit_failure = true;
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+DROP INDEX crd_docs_idx;
+
+
+connection victim
+statement ok
+CREATE TABLE crd_other (a INTEGER);
+
+
+connection victim
+statement error Forced commit failure
+COMMIT;
+
+
+connection default
+statement ok
+SET debug_force_commit_failure = false;
+
+
+connection victim
+query
+SELECT count(*) AS n FROM crd_docs_idx WHERE body @@ 'beta';
+----
+n
+2
+
+
+connection victim
+statement ok
+INSERT INTO crd_docs VALUES (4, 'beta');
+
+
+connection victim
+statement ok
+VACUUM (REFRESH_TABLE) crd_docs;
+
+
+connection victim
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection victim
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM crd_docs;
+----
+n
+4
+
+
+connection after_restart
+statement ok
+VACUUM (REFRESH_TABLE) crd_docs;
+
+
+connection after_restart
+query
+SELECT count(*) AS n FROM crd_docs_idx WHERE body @@ 'beta';
+----
+n
+3
+
+
+connection after_restart
+query
+SELECT (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'crd_other') AS t;
+----
+t
+0

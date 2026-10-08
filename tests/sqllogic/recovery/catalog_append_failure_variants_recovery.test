@@ -1,0 +1,162 @@
+control substitution on
+
+statement ok
+CREATE DATABASE cafv_other;
+
+
+statement ok
+CREATE TABLE cafv_t (a INTEGER);
+
+
+statement ok
+INSERT INTO cafv_t VALUES (1);
+
+
+statement ok
+CREATE TABLE cafv_other.public.cafv_r (b INTEGER);
+
+
+statement ok
+CREATE ROLE cafv_r1;
+
+
+statement ok
+CREATE ROLE cafv_r2;
+
+
+statement ok
+CREATE ROLE cafv_r3;
+
+
+statement ok
+CREATE ROLE cafv_r4;
+
+
+statement ok
+CREATE SEQUENCE cafv_seq;
+
+
+query
+SELECT nextval('cafv_seq') AS n;
+----
+n
+1
+
+
+statement ok
+SET sdb_faults = 'catalog_append_fails';
+
+
+statement error could not append the transaction
+CREATE TABLE cafv_refused1 (a INTEGER);
+
+
+statement error could not append the transaction
+CREATE DATABASE cafv_refused_db;
+
+
+statement error could not append the transaction
+DROP TABLE cafv_t;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO cafv_t VALUES (2);
+
+
+statement ok
+INSERT INTO cafv_other.public.cafv_r VALUES (2);
+
+
+statement error could not append the transaction
+COMMIT;
+
+
+statement error could not append the transaction
+CREATE ROLE cafv_refused_role;
+
+
+statement ok
+SET sdb_faults = '-catalog_append_fails';
+
+
+query
+SELECT (SELECT count(*) FROM cafv_t) AS t, (SELECT count(*) FROM cafv_other.public.cafv_r) AS r;
+----
+t	r
+1	0
+
+
+statement ok
+CREATE TABLE cafv_ok1 (a INTEGER);
+
+
+statement ok
+INSERT INTO cafv_t VALUES (3);
+
+
+statement ok
+CREATE ROLE cafv_ok_role;
+
+
+query
+SELECT nextval('cafv_seq') AS n;
+----
+n
+2
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT a FROM cafv_t ORDER BY a;
+----
+a
+1
+3
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'cafv_refused%' OR relname = 'cafv_ok1' ORDER BY relname;
+----
+relname
+cafv_ok1
+
+
+connection after_crash
+query
+SELECT rolname FROM pg_roles WHERE rolname LIKE 'cafv_%' ORDER BY rolname;
+----
+rolname
+cafv_ok_role
+cafv_r1
+cafv_r2
+cafv_r3
+cafv_r4
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'cafv_refused_db';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT nextval('cafv_seq') > 2 AS fresh;
+----
+fresh
+t

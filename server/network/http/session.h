@@ -197,7 +197,7 @@ class HttpSession final
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
-      _conn->context->session_user = std::string{user};
+      _conn->context->session_user.assign(user);
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }
@@ -307,6 +307,7 @@ class HttpSession final
   using Transport<Kind, HttpSession<Kind>>::_stopping;
   using Transport<Kind, HttpSession<Kind>>::_producer_gate;
   using Transport<Kind, HttpSession<Kind>>::_task;
+  using Transport<Kind, HttpSession<Kind>>::_handed_off;
   using Transport<Kind, HttpSession<Kind>>::KickSend;
   using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
   using Transport<Kind, HttpSession<Kind>>::SendBroken;
@@ -432,14 +433,9 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    _task = duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(
-        irs::DuckDBEngine::Instance().instance()),
-      *_ioexec);
-    // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
-    // it onto a duck worker.
     cpu = SessionMain();
-    _task->RequestRun();
+    _handed_off = true;
+    _task->Start();
 
     for (;;) {
       _deadline.expires_after(_idle.load(std::memory_order_acquire)

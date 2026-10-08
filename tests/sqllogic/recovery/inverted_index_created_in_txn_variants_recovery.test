@@ -1,0 +1,225 @@
+control substitution on
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE iciv_new (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX iciv_new_idx ON iciv_new USING inverted (body);
+
+
+statement ok
+INSERT INTO iciv_new VALUES (1, 'red'), (2, 'red'), (3, 'blue');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE iciv_old (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO iciv_old VALUES (1, 'red'), (2, 'green');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO iciv_old VALUES (3, 'red');
+
+
+statement ok
+CREATE INDEX iciv_old_idx ON iciv_old USING inverted (body);
+
+
+statement ok
+INSERT INTO iciv_old VALUES (4, 'red'), (5, 'green');
+
+
+statement ok
+DELETE FROM iciv_old WHERE id = 2;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE iciv_two (id INT PRIMARY KEY, x TEXT, y TEXT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX iciv_two_x ON iciv_two USING inverted (x);
+
+
+statement ok
+CREATE INDEX iciv_two_y ON iciv_two USING inverted (y);
+
+
+statement ok
+INSERT INTO iciv_two VALUES (1, 'a', 'b'), (2, 'a', 'c');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE iciv_gone (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE INDEX iciv_gone_idx ON iciv_gone USING inverted (body);
+
+
+statement ok
+INSERT INTO iciv_gone VALUES (1, 'red');
+
+
+statement ok
+DROP INDEX iciv_gone_idx;
+
+
+statement ok
+INSERT INTO iciv_gone VALUES (2, 'red');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE iciv_art (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE UNIQUE INDEX iciv_art_body ON iciv_art (body);
+
+
+statement ok
+INSERT INTO iciv_art VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CREATE INDEX iciv_art_inv ON iciv_art USING inverted (body);
+
+
+statement ok
+INSERT INTO iciv_art VALUES (3, 'three');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) iciv_new;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) iciv_old;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) iciv_two;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) iciv_art;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM iciv_new_idx) AS n, (SELECT count(*) FROM iciv_new_idx WHERE body @@ 'red') AS red;
+----
+n	red
+3	2
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM iciv_old) AS t, (SELECT count(*) FROM iciv_old_idx) AS i, (SELECT count(*) FROM iciv_old_idx WHERE body @@ 'red') AS red, (SELECT count(*) FROM iciv_old_idx WHERE body @@ 'green') AS green;
+----
+t	i	red	green
+4	4	3	1
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM iciv_two_x WHERE x @@ 'a') AS x, (SELECT count(*) FROM iciv_two_y WHERE y @@ 'c') AS y;
+----
+x	y
+2	1
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM iciv_gone) AS t, (SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'iciv_gone_idx') AS i;
+----
+t	i
+2	0
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM iciv_art_inv) AS i, (SELECT count(*) FROM iciv_art_inv WHERE body @@ 'two') AS two;
+----
+i	two
+3	1
+
+
+connection after_crash
+statement error
+INSERT INTO iciv_art VALUES (9, 'one');
+----
+db error: ERROR: Duplicate key "body: one" violates unique constraint.
+
+
+connection after_crash
+statement ok
+INSERT INTO iciv_new VALUES (4, 'red');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) iciv_new;
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM iciv_new_idx WHERE body @@ 'red';
+----
+n
+3

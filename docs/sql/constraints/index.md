@@ -63,6 +63,12 @@ You can also define a uniqueness constraint on multiple columns:
 
 <SqlLogicTest id="sql/constraints/index/example_007" />
 
+### Deferred Checking
+
+A primary key or unique constraint is checked by every statement that changes the table. Write `DEFERRED` after `PRIMARY KEY` or `UNIQUE` to check it when the transaction commits instead: in between, the transaction may hold duplicate keys, and the commit fails if any are left. `IMMEDIATE`, the default, can be written out the same way. The PostgreSQL form `DEFERRABLE INITIALLY DEFERRED` is not supported.
+
+<SqlLogicTest id="sql/constraints/index/example_009" />
+
 ## Foreign Keys
 
 Foreign keys define a column, or set of columns, that refer to a primary key or unique constraint from _another_ table. The constraint enforces that the key exists in the other table.

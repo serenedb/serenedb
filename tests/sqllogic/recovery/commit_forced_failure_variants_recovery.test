@@ -1,0 +1,189 @@
+control substitution on
+
+statement ok
+CREATE DATABASE cfv_other;
+
+
+statement ok
+CREATE TABLE cfv_base (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO cfv_base VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CREATE TABLE cfv_other.public.cfv_remote (id INTEGER);
+
+
+statement ok
+INSERT INTO cfv_other.public.cfv_remote VALUES (1);
+
+
+statement ok
+CREATE TABLE cfv_drop_me (a INTEGER);
+
+
+statement ok
+INSERT INTO cfv_drop_me VALUES (7);
+
+
+statement ok
+SET debug_force_commit_failure = true;
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+CREATE INDEX cfv_body_idx ON cfv_base (body);
+
+
+connection victim
+statement ok
+INSERT INTO cfv_base VALUES (3, 'three');
+
+
+connection victim
+statement error Forced commit failure
+COMMIT;
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+DROP TABLE cfv_drop_me;
+
+
+connection victim
+statement ok
+INSERT INTO cfv_base VALUES (4, 'four');
+
+
+connection victim
+statement error Forced commit failure
+COMMIT;
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+CREATE ROLE cfv_role;
+
+
+connection victim
+statement ok
+CREATE TABLE cfv_new (a INTEGER);
+
+
+connection victim
+statement error Forced commit failure
+COMMIT;
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+INSERT INTO cfv_base VALUES (5, 'five');
+
+
+connection victim
+statement ok
+INSERT INTO cfv_other.public.cfv_remote VALUES (5);
+
+
+connection victim
+statement error Forced commit failure
+COMMIT;
+
+
+connection default
+statement ok
+SET debug_force_commit_failure = false;
+
+
+connection victim
+query
+SELECT id FROM cfv_base ORDER BY id;
+----
+id
+1
+2
+
+
+connection victim
+query
+SELECT (SELECT count(*) FROM cfv_drop_me) AS d, (SELECT count(*) FROM cfv_other.public.cfv_remote) AS r, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cfv_new') AS n, (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_role') AS ro, (SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'cfv_body_idx') AS i;
+----
+d	r	n	ro	i
+1	1	0	0	0
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+CREATE TABLE cfv_after (a INTEGER);
+
+
+connection victim
+statement ok
+INSERT INTO cfv_base VALUES (6, 'six');
+
+
+connection victim
+statement ok
+COMMIT;
+
+
+connection victim
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection victim
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM cfv_base ORDER BY id;
+----
+id
+1
+2
+6
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM cfv_drop_me) AS d, (SELECT count(*) FROM cfv_other.public.cfv_remote) AS r, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cfv_new') AS n, (SELECT count(*) FROM pg_roles WHERE rolname = 'cfv_role') AS ro, (SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'cfv_body_idx') AS i, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cfv_after') AS a;
+----
+d	r	n	ro	i	a
+1	1	0	0	0	1
+
+
+connection after_crash
+statement error
+INSERT INTO cfv_base VALUES (1, 'dup');
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.

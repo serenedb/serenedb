@@ -239,7 +239,13 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
         return yaclib::MakeFuture(false);
       }
       SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-      auto policy = MakeTierPolicy(idx->GetTasksSettings(), small);
+      SDB_WAIT_ON_FAILURE("pause_compaction_run");
+      const auto& settings = idx->GetTasksSettings();
+      if (settings.compaction_interval_msec == 0) {
+        engine.ReleaseCompaction();
+        return yaclib::MakeFuture(false);
+      }
+      auto policy = MakeTierPolicy(settings, small);
       return DoCompaction(std::move(idx), std::move(policy), engine);
     }));
   }

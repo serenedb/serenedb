@@ -314,14 +314,14 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   return it->second;
 }
 
-const duckdb::Vector& Transaction::FeedColumn(const void* table,
-                                              duckdb::row_t first_row,
-                                              duckdb::idx_t count,
-                                              duckdb::idx_t column,
-                                              const duckdb::Vector& source) {
-  if (_feed_columns.table != table || _feed_columns.first_row != first_row ||
-      _feed_columns.count != count) {
-    _feed_columns.table = table;
+const duckdb::Vector& Transaction::FeedColumn(
+  const void* database, duckdb::idx_t table_oid, duckdb::row_t first_row,
+  duckdb::idx_t count, duckdb::idx_t column, const duckdb::Vector& source) {
+  if (_feed_columns.database != database ||
+      _feed_columns.table_oid != table_oid ||
+      _feed_columns.first_row != first_row || _feed_columns.count != count) {
+    _feed_columns.database = database;
+    _feed_columns.table_oid = table_oid;
     _feed_columns.first_row = first_row;
     _feed_columns.count = count;
     _feed_columns.columns.clear();
@@ -339,12 +339,21 @@ const duckdb::Vector& Transaction::FeedColumn(const void* table,
   return copy;
 }
 
+void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
+  for (const auto& [owner, storage] : _created_indexes) {
+    if (owner == database) {
+      storage->Refresh();
+    }
+  }
+}
+
 void Transaction::Destroy() noexcept {
   _search_transactions.clear();
   _search_snapshots.clear();
   _feed_columns = {};
   _search_txn.reset();
   _on_commit.clear();
+  _created_indexes.clear();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;
   _had_dml = false;

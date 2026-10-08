@@ -30,8 +30,9 @@ over their files.
   - `format` before every commit, and `format --check --range <a>..<b> <dir>`
     before pushing a series: every commit, merges included, formatted on its
     own.
-  - `regen` builds the duckdb fork's final `regen:` commit with DuckDB's
-    generators in DuckDB's order; `regen --check` proves it is current.
+  - `regen` builds the duckdb fork's `regen:` commit, a DuckDB update's one or
+    a pull request's own, with DuckDB's generators in DuckDB's order;
+    `regen --check` proves it is current.
 
 ## Before writing tests
 

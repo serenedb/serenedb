@@ -28,18 +28,22 @@
 #   merge the lines that match none of its parents (its conflict resolution). Upstream's lines,
 #   including everything a merge brings in, and `duckdb ext patch:` commits (DuckDB's own patches,
 #   kept verbatim so `git patch-id` finds them upstream) are never reported. For a DuckDB update,
-#   check from upstream main's tip to HEAD: the merges, the patchset and the regen: commit.
+#   check from upstream main's tip to HEAD: the merges, the patchset and the regen: commit; for a
+#   pull request into a version branch, from the branch's head.
 #
 # scripts/duckdb_family.sh regen [--check]
-#   duckdb only. Builds the final regen: commit from the last patch commit (HEAD, or HEAD~1 when HEAD
-#   is a regen: commit) in a scratch clone, with DuckDB's generators in DuckDB's order: `make
-#   generate-files` (C API v1, functions, metrics, settings, serialization, util, storage info, enum
-#   util, HTML template, the PEG grammar and transformer, then format-main), then
-#   scripts/capi_v2_regen.sh (C API v2) and scripts/generate_enums.py (the json enums), the generators
-#   DuckDB runs outside generate-files. In the clone `main` is that commit, so format-main formats
-#   exactly the files the generators wrote. All run a second time, which must change nothing. The new
-#   regen: commit replaces the old one or goes on top, and the generated files in the work tree are
-#   updated to it; the work tree must be clean. --check only compares with the existing regen: commit.
+#   duckdb only. Builds the regen: commit of the patch commits under it (HEAD, or HEAD~1 when HEAD is
+#   a regen: commit) in a scratch clone: a DuckDB update's one regen: commit, or a pull request's own
+#   on top of a version branch. DuckDB's generators run in DuckDB's order: `make generate-files` (C
+#   API v1, functions, metrics, settings, serialization, util, storage info, enum util, HTML template,
+#   the PEG grammar and transformer, then format-main), then scripts/capi_v2_regen.sh (C API v2) and
+#   scripts/generate_enums.py (the json enums), the generators DuckDB runs outside generate-files. In
+#   the clone `main` is that commit, so format-main formats exactly the files the generators wrote.
+#   All run a second time, which must change nothing. The new regen: commit replaces the old one or
+#   goes on top, and the generated files in the work tree are updated to it; the work tree must be
+#   clean. When the generators change nothing there is no regen: commit, and an old one is dropped.
+#   --check compares with the existing regen: commit, or, when HEAD is not one, checks that the
+#   generators change nothing.
 #
 # Tools live under ~/.cache/serenedb-duckdb: DuckDB's Makefile creates its format venv (clang_format
 # 11.0.1, black 24, cmake-format), its capigen venv and the generator dependencies there, the format
@@ -300,21 +304,37 @@ regen() {
 	local untracked
 	untracked=$(git -C "$scratch/duckdb" ls-files --others --exclude-standard | grep -v '^api_spec/uv.lock$' || true)
 	[[ -z "$untracked" ]] || die "the generators created untracked files: $untracked"
+	local base_tree
+	base_tree=$(git -C "$DUCKDB" rev-parse "$base^{tree}")
 	if [[ -n "$check" ]]; then
-		[[ -n "$old_regen" ]] || die "HEAD is not a regen: commit"
-		if [[ "$tree" != "$(git -C "$DUCKDB" rev-parse "$old_regen^{tree}")" ]]; then
+		local expected=$head
+		[[ -n "$old_regen" ]] && expected=$old_regen
+		if [[ "$tree" != "$(git -C "$DUCKDB" rev-parse "$expected^{tree}")" ]]; then
 			mkdir -p "$CACHE"
-			git -C "$scratch/duckdb" diff "$old_regen" "$tree" >"$CACHE/regen-check.diff"
-			git -C "$scratch/duckdb" diff --stat "$old_regen" "$tree"
+			git -C "$scratch/duckdb" diff "$expected" "$tree" >"$CACHE/regen-check.diff"
+			git -C "$scratch/duckdb" diff --stat "$expected" "$tree"
+			[[ -n "$old_regen" ]] ||
+				die "HEAD needs a regen: commit: the generators change the files above; the diff is in $CACHE/regen-check.diff"
 			die "the regen: commit differs from what the generators produce; the diff is in $CACHE/regen-check.diff"
 		fi
-		echo "regen: commit matches the generators"
+		if [[ -z "$old_regen" ]]; then
+			echo "nothing to regenerate"
+		elif [[ "$tree" == "$base_tree" ]]; then
+			die "the regen: commit is empty; scripts/duckdb_family.sh regen drops it"
+		else
+			echo "regen: commit matches the generators"
+		fi
 		return 0
 	fi
-	local commit
-	commit=$(git -C "$scratch/duckdb" commit-tree "$tree" -p "$base" -m "$message")
-	git -C "$scratch/duckdb" update-ref refs/heads/regen "$commit"
-	git -C "$DUCKDB" fetch --quiet --no-tags "$scratch/duckdb" refs/heads/regen
+	local commit=$base
+	if [[ "$tree" != "$base_tree" ]]; then
+		commit=$(git -C "$scratch/duckdb" commit-tree "$tree" -p "$base" -m "$message")
+		git -C "$scratch/duckdb" update-ref refs/heads/regen "$commit"
+		git -C "$DUCKDB" fetch --quiet --no-tags "$scratch/duckdb" refs/heads/regen
+	elif [[ -z "$old_regen" ]]; then
+		echo "nothing to regenerate"
+		return 0
+	fi
 	git -C "$DUCKDB" update-ref -m "duckdb_family.sh regen" HEAD "$commit" "$head"
 	local path
 	git -C "$DUCKDB" diff --name-only "$head" "$commit" | while IFS= read -r path; do
@@ -326,6 +346,10 @@ regen() {
 		fi
 	done
 	git -C "$DUCKDB" diff --name-only "$head" "$commit" | git -C "$DUCKDB" update-index --add --remove --stdin
+	if [[ "$commit" == "$base" ]]; then
+		echo "the generators change nothing: the regen: commit is dropped"
+		return 0
+	fi
 	git -C "$DUCKDB" log -1 --stat --format='%h %s' "$commit" | tail -n 3
 }
 

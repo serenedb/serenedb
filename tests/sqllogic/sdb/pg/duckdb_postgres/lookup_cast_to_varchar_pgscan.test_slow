@@ -1,0 +1,93 @@
+control substitution on
+
+# Lookup fetch-back of macaddr / tsvector columns: types without a native reader,
+# mapped to VARCHAR. Like a table scan, the lookup casts them to varchar on the
+# remote; read in binary as is, they came back as their raw wire bytes.
+#
+# The remote table is created with postgres_execute because SereneDB's parser
+# has no macaddr / tsvector type.
+#
+# The attach alias and remote schema carry ${__DATABASE__}: the remote postgres
+# is shared and the runner replays this file once per wire engine.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgm_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('pgm_${__DATABASE__}', 'DROP SCHEMA IF EXISTS s${__DATABASE__}_cv CASCADE');
+
+
+statement ok
+CALL postgres_execute('pgm_${__DATABASE__}', 'CREATE SCHEMA s${__DATABASE__}_cv');
+
+
+statement ok
+CALL postgres_execute('pgm_${__DATABASE__}',
+  'CREATE TABLE s${__DATABASE__}_cv.docs (id bigint, mac macaddr, ts tsvector, body text)');
+
+
+statement ok
+CALL postgres_execute('pgm_${__DATABASE__}',
+  'INSERT INTO s${__DATABASE__}_cv.docs
+     SELECT g,
+            (''08:00:2b:01:02:''||lpad(to_hex(g),2,''0''))::macaddr,
+            (''servis''||g||'':1'')::tsvector,
+            ''servis doc ''||g
+     FROM generate_series(1,5) g');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pgm_en_${__DATABASE__} AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE VIEW pgm_v AS SELECT id, mac, ts, body FROM pgm_${__DATABASE__}.s${__DATABASE__}_cv.docs;
+
+
+statement ok
+CREATE INDEX pgm_idx ON pgm_v USING inverted(body pgm_en_${__DATABASE__}) WITH (key_columns = 'id');
+
+
+# The macaddr fetched back by the lookup is the server's text form, not its
+# 6 raw binary bytes.
+query
+SELECT id, mac FROM pgm_idx WHERE body @@ ts_phrase('servis') ORDER BY id;
+----
+id	mac
+1	08:00:2b:01:02:01
+2	08:00:2b:01:02:02
+3	08:00:2b:01:02:03
+4	08:00:2b:01:02:04
+5	08:00:2b:01:02:05
+
+
+# Every fetched value (macaddr and tsvector) equals what a plain scan of the
+# same rows returns.
+query
+SELECT count(*) AS mismatches FROM (
+  SELECT id, mac, ts FROM pgm_idx WHERE body @@ ts_phrase('servis')
+  EXCEPT
+  SELECT id, mac, ts FROM pgm_${__DATABASE__}.s${__DATABASE__}_cv.docs
+) q;
+----
+mismatches
+0
+
+
+statement ok
+DROP INDEX pgm_idx;
+
+statement ok
+DROP VIEW pgm_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pgm_en_${__DATABASE__};
+
+statement ok
+CALL postgres_execute('pgm_${__DATABASE__}', 'DROP SCHEMA s${__DATABASE__}_cv CASCADE');
+
+statement ok
+DETACH pgm_${__DATABASE__};

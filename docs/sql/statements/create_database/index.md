@@ -51,7 +51,7 @@ A database created inside a transaction is visible to other sessions only once t
 
 <SqlLogicTest id="sql/statements/create_database/index/example_005" />
 
-Only the owner of a database, or a member of the owning role, can drop it. A database that other sessions are connected to cannot be dropped, and neither can the database the session itself is connected to or has switched to with `USE`:
+Only the owner of a database, or a member of the owning role, can drop it. A database that other sessions are connected to cannot be dropped: as in PostgreSQL, `DROP DATABASE` gives them five seconds to disconnect and fails if any is still connected then. Neither can the database the session itself is connected to or has switched to with `USE` be dropped:
 
 <SqlLogicTest id="sql/statements/create_database/index/example_006" />
 

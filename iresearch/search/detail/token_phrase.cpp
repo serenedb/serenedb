@@ -140,21 +140,11 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
   }
   LayoutAutomaton();
   PickAnchor(readers);
-  if (!match) {
-    return;
-  }
-  switch (*match) {
-    case PhraseMatch::Anchor:
-      break;
-    case PhraseMatch::Automaton:
-      if (automaton) {
-        anchor.reset();
-      }
-      break;
-    case PhraseMatch::Positions:
-      anchor.reset();
-      automaton.reset();
-      break;
+  if (match == PhraseMatch::Positions) {
+    anchor.reset();
+    automaton.reset();
+  } else if (match == PhraseMatch::Automaton && automaton) {
+    anchor.reset();
   }
 }
 
@@ -206,14 +196,7 @@ uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
   if (const auto* found = Find(view)) {
     mask = found->mask;
   }
-  if (!Plain(view)) {
-    return mask;
-  }
-  for (const auto& slot : slots) {
-    if (slot.pattern && slot.pattern->Accepts(view)) {
-      mask |= slot.bit;
-    }
-  }
+  ForEachPattern(view, [&](uint32_t slot) { mask |= slots[slot].bit; });
   return mask;
 }
 
@@ -778,13 +761,7 @@ bool PhraseCheck::Finish(Positions& positions, PhraseVerdict& out) {
                      [](const auto& slot) { return slot.empty(); })) {
     return false;
   }
-  if (n == 1) {
-    out.freq =
-      _count ? std::saturate_cast<uint32_t>(positions.slots.front().size()) : 1;
-    return true;
-  }
-
-  if (phrase.slop.max != 0) {
+  if (n > 1 && phrase.slop.max != 0) {
     detail::slop::SpanCursors cursors{positions.slots, positions.scratch};
     const auto res = detail::slop::Sweep<0>(cursors, phrase.slop.offsets,
                                             phrase.slop.max, phrase.slop.pairs,
@@ -831,12 +808,10 @@ bool PhraseCheck::Finish(Positions& positions, PhraseVerdict& out) {
       return false;
     }
   }
-  uint64_t total = 0;
   for (const auto& way : valid) {
-    total += way.ways;
+    _freq += way.ways;
   }
-  out.freq = _count ? std::saturate_cast<uint32_t>(total) : 1;
-  return true;
+  return Counted(out);
 }
 
 }  // namespace irs

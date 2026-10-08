@@ -60,9 +60,11 @@ The first-parent history of a version branch, oldest first:
 2. DuckDB's own patches for that extension, the files under `.github/patches/extensions/<ext>/` of the new duckdb, one `duckdb ext patch: <file>` commit each, in file order. They adapt the extension to DuckDB `main`'s API, and upstream applies them itself sooner or later: a patch whose content upstream already has (`git patch-id --stable`) is dropped, never re-applied;
 3. real merges of the repo's release branches (`v2.0-cyanoptera`, then `v1.5-variegata`, where it has them), with every conflict resolved inside the merge commit. This tip is the **boundary**: `<boundary>..HEAD` is exactly our patchset;
 4. our patchset: linear, one concern per commit, conventional-commit subjects, every commit formatted on its own;
-5. duckdb only: one final `regen:` commit with everything the generators produce.
+5. duckdb only: one `regen:` commit with everything the generators produce.
 
 Upstream merges pull requests as merge commits (duckdb's PR titles are the merge subjects), so `git log --first-parent` reads as one entry per PR.
+
+Between updates, our changes go into the current version branch as pull requests on top of its head, and in duckdb each one ends with its own `regen:` commit (`scripts/duckdb_family.sh regen`). The next update replays all of them, from the boundary to the version branch's head, and makes one `regen:` commit in place of every `regen:` commit it leaves out.
 
 ### Review PRs
 
@@ -138,7 +140,7 @@ for p in <new duckdb>/.github/patches/extensions/<ext>/*.patch; do    # skip wha
 done
 git merge upstream/v2.0-cyanoptera                  # duckdb only
 git merge upstream/v1.5-variegata
-git cherry-pick <previous boundary>..<previous vYYYY.MM.DD>   # duckdb: stop before its regen: commit
+git cherry-pick $(git rev-list --reverse --no-merges --invert-grep --grep='^regen:' <previous boundary>..<previous vYYYY.MM.DD>)
 ```
 
 Then regenerate, format, build, run every suite here and the serenedb sqllogic, recovery and gtest runs, and push the head and the boundary to the review PR's branches. Once the review and CI are done, the head becomes `vYYYY.MM.DD` (created, never forced) and serenedb's gitlinks move to it, before the serenedb PR merges.
@@ -146,9 +148,9 @@ Then regenerate, format, build, run every suite here and the serenedb sqllogic, 
 Rules for the rebuilt series:
 
 - Resolve conflicts toward the final state; history is free. Fold a fix into the commit that introduced the problem (`fixup!` + autosquash), drop what upstream has (compare content with `git patch-id --stable`, never reachability: rewritten copies of upstream commits are not reachable from upstream), and keep a commit we still need even when upstream has a similar change, reduced to what upstream lacks.
-- Nothing of ours is lost. Before pushing, account for every commit of the previous series in every fork: carried (same patch-id or subject), folded into another commit, or superseded by upstream, naming the upstream code that does the same. Then compare the two series as net diffs against their boundaries: a line ours added that is gone from the new tree needs one of those explanations, and passing tests are not one. Where upstream built the same thing as we did (WAL group commit, the curl client), keep upstream's design and port our improvements onto it (parallel syncs on network file systems, no body copies) instead of keeping only upstream's.
+- Nothing of ours is lost. Before pushing, account for every commit of the previous series in every fork, the pull requests merged after its update included: carried (same patch-id or subject), folded into another commit, or superseded by upstream, naming the upstream code that does the same. Then compare the two series as net diffs against their boundaries: a line ours added that is gone from the new tree needs one of those explanations, and passing tests are not one. Where upstream built the same thing as we did (WAL group commit, the curl client), keep upstream's design and port our improvements onto it (parallel syncs on network file systems, no body copies) instead of keeping only upstream's.
 - No settings or pragmas that do nothing. A setting that upstream keeps only for DuckDB compatibility (a deprecated no-op, one "kept for legacy compatibility", a selector with one choice in our build) is deleted, together with its tests, goldens and docs, so `SET` reports it as unknown.
-- Generated files never carry hand edits. In the merges and the cherry-picks, take upstream's side of a fully generated file; at the end, `scripts/duckdb_family.sh regen` runs DuckDB's generators in DuckDB's order on the last patch commit (`make generate-files`, then `scripts/capi_v2_regen.sh`) and commits everything they change as the one `regen:` commit. `regen --check` proves the commit is what the generators produce.
+- Generated files never carry hand edits. In the merges and the cherry-picks, take upstream's side of a fully generated file; at the end, `scripts/duckdb_family.sh regen` runs DuckDB's generators in DuckDB's order on the last patch commit (`make generate-files`, then `scripts/capi_v2_regen.sh`) and commits everything they change as the update's one `regen:` commit. `regen --check` proves the commit is what the generators produce.
 - Format each commit with `scripts/duckdb_family.sh format` before committing: DuckDB's own `scripts/format.py` with its pinned clang-format 11.0.1, black, cmake-format and typos. Before pushing, `scripts/duckdb_family.sh format --check --range <upstream main>..HEAD <fork>` proves every merge and commit of the series is formatted on its own. Upstream's own unformatted lines are left to a final `--all` pass.
 - Never derive a boundary from authorship or from a local `main`: those refs are stale, and `git merge-base main HEAD` answers far too early.
 

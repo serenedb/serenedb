@@ -20,9 +20,9 @@
 
 #include "auth/enforce.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/time/time.h>
 
 #include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
@@ -1330,13 +1330,9 @@ class Enforcer {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                       ERR_MSG("cannot drop the currently open database"));
     }
-    const auto self = _connection.GetBackendPid();
-    const auto others = absl::c_count_if(
-      pg::ProgressRegistry::Instance().GetSnapshots(),
-      [&](const pg::ProgressSnapshot& session) {
-        return session.datid == static_cast<int64_t>(database.oid) &&
-               session.pid != self;
-      });
+    const auto others = pg::ProgressRegistry::Instance().OtherSessions(
+      static_cast<int64_t>(database.oid), _connection.GetBackendPid(),
+      absl::Seconds(5));
     if (others == 0) {
       return;
     }

@@ -112,10 +112,7 @@ command: /sqllogic/_execute_tests_in_docker.sh --your-parameters-here
 
 ## Tests that run alone
 
-A test whose file has a `# exclusive` line runs after the parallel pool of its engine, by itself
-(`--jobs 1`). Use it for a test that leaves server-wide state other tests can observe, such as
-`catalog_listing_unreachable_iceberg.test_slow`, which keeps an unreachable catalog attached:
-while it is, a listing that is not scoped to one database fails in every session.
+A test whose file has a `# exclusive` line runs after the parallel pool of its engine, by itself (`--jobs 1`). Use it for a test that leaves server-wide state other tests can observe, or that breaks on other tests' server-wide activity, such as `detach_held_drop_database_pgscan.test_slow`: it drops a remote PostgreSQL database that only its own session may hold, while a listing in any other test that is not scoped to one database opens a session on every attached PostgreSQL catalog.
 
 ## Iceberg tests: fixture or Google BigLake
 

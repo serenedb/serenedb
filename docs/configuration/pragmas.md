@@ -58,7 +58,7 @@ Get the file and memory size of each database:
 
 <SqlLogicTest id="configuration/pragmas/example_008" />
 
-`database_size` returns information about the file and memory size of each database. The column types of the returned results are given below:
+`database_size` returns information about the file and memory size of each database. A database whose size cannot be read, such as an attached PostgreSQL database whose server is unreachable, is left out, and the other databases are still listed. The column types of the returned results are given below:
 
 <SqlLogicTest id="configuration/pragmas/example_009" hideResult />
 

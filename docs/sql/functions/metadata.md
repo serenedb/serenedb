@@ -43,6 +43,8 @@ The `sdb_views` _view_ returns views that are not marked as internal:
 
 <SqlLogicTest id="sql/functions/metadata/example_004" />
 
+The functions list every database the session can see, including [attached](../../sql/statements/attach/index.md) PostgreSQL, ClickHouse and Iceberg catalogs. A listing leaves out what it cannot read, at the smallest part it can: an attached catalog whose server is unreachable, a schema whose objects cannot be listed, or an object whose details cannot be read. Everything else is still listed, so a server that is down never fails a listing of the other databases. A filter on `database_name`, such as `WHERE database_name = current_database()`, makes a listing read only the databases it names.
+
 
 The following metadata functions are available:
 

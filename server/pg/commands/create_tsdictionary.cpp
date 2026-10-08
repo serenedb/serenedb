@@ -158,7 +158,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
   template<const OptionInfo& Info>
   duckdb::Value EraseValue() {
     auto entry = OptionsParser::EraseOption(Info, /*requires_parameter=*/true);
-    SDB_ASSERT(entry && *entry);
+    if (!entry) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.name, "\" was not found"));
+    }
+    SDB_ASSERT(*entry);
     return std::move(**entry);
   }
 

@@ -21,7 +21,7 @@ The pieces are emitted verbatim, so chain the template into a [`pipeline`](../..
 |---|---|---|---|
 | `DELIMITERS` | string | **required** | A list of delimiter strings (`[':', ';', ' ']`), or one string holding a comma-separated list of double-quoted delimiters (e.g., `'":", ";", " "'`). An entry may be a single character or a multi-character string. No entry may be a prefix of another |
 
-The string form is split on commas first, and each entry must then be wrapped in double quotes; whitespace around the commas is ignored. An unquoted entry fails with `Invalid format of list of words(should be comma-separated and quoted)`. Entries are taken verbatim — there is no escape processing — and empty entries (`""`) are dropped. Omitting the option fails with `split_by_delimiters(): required option "delimiters" not given`.
+The string form is split on commas first, and each entry must then be wrapped in double quotes; whitespace around the commas is ignored. An unquoted entry fails with `Invalid format of list of words(should be comma-separated and quoted)`. Entries are taken verbatim — there is no escape processing — and empty entries (`""`) are dropped. Omitting the option fails with `split_by_delimiters(): required option "delimiters" not given`, and setting it to `NULL` fails with `required parameter "delimiters" was not found`.
 
 No delimiter may be a prefix of another, so `'"ab", "abc"'` is rejected when the dictionary is created, with `multi_delimited: delimiters must not be prefixes of one another`. A string is a prefix of itself, so this rules out duplicates as well. Delimiters that merely share a suffix, such as `'"bc", "abc"'`, are accepted.
 

@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "pg/pg_catalog/pg_attribute.h"
 
+#include <deque>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -159,8 +160,9 @@ void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
 
 void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
                        duckdb::ClientContext& context,
+                       std::deque<std::string>& field_names,
                        std::vector<PgAttribute>& values) {
-  if (row_type.id() != duckdb::LogicalTypeId::STRUCT) {
+  if (!duckdb::StructType::IsStruct(row_type)) {
     return;
   }
   const auto& children = duckdb::StructType::GetChildTypes(row_type);
@@ -170,7 +172,10 @@ void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
     auto phys = GetPhysicalInfo(type_oid);
     PgAttribute row{
       .attrelid = relid,
-      .attname = children[i].first.GetIdentifierName(),
+      .attname =
+        row_type.id() == duckdb::LogicalTypeId::TUPLE
+          ? field_names.emplace_back(duckdb::TupleType::GetChildName(i))
+          : children[i].first.GetIdentifierName(),
       .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -199,6 +204,7 @@ void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
 template<>
 MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   std::vector<PgAttribute> values;
+  std::deque<std::string> field_names;
 
   auto& context = _context;
   VisitEntries<duckdb::TableCatalogEntry>(
@@ -211,11 +217,12 @@ MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   // reports).
   VisitEntries<duckdb::TypeCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TypeCatalogEntry& type) {
-      EmitStructColumns(type.oid, type.user_type, context, values);
+      EmitStructColumns(type.oid, type.user_type, context, field_names, values);
     });
 
   VisitSystemTables([&](const VirtualTable& table, Oid /*schema_oid*/) {
-    EmitStructColumns(table.Id(), table.RowType(), context, values);
+    EmitStructColumns(table.Id(), table.RowType(), context, field_names,
+                      values);
   });
 
   auto result = CreateColumns<PgAttribute>(values.size());

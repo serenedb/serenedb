@@ -299,7 +299,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
 
   VisitEntries<duckdb::TypeCatalogEntry>(
     context, database, [&](const duckdb::TypeCatalogEntry& type) {
-      if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
+      if (!duckdb::StructType::IsStruct(type.user_type)) {
         return;
       }
       auto row =

@@ -105,6 +105,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
     const bool nested = spec.row_gather || extract != nullptr || list_like ||
                         type_id == duckdb::LogicalTypeId::ARRAY ||
                         type_id == duckdb::LogicalTypeId::STRUCT ||
+                        type_id == duckdb::LogicalTypeId::TUPLE ||
                         type_id == duckdb::LogicalTypeId::UNION ||
                         type_id == duckdb::LogicalTypeId::VARIANT;
     _cols.push_back(Col{

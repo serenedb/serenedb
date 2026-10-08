@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
 #include <string>
@@ -50,8 +52,9 @@ template<typename T>
 duckdb::shared_ptr<const T> GetOrBuildModel(duckdb::SharedObjectCache& cache,
                                             std::string_view location) {
   try {
+    const auto key = absl::StrCat(Model::ObjectType(), ":", location);
     auto model = cache.GetOrBuild<Model>(
-      location, [&] { return duckdb::make_uniq<Model>(location); });
+      key, [&] { return duckdb::make_uniq<Model>(location); });
     const T* raw = model.get();
     return duckdb::shared_ptr<const T>{std::move(model), raw};
   } catch (const std::exception& e) {

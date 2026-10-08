@@ -1,0 +1,66 @@
+query
+SELECT ROW(42::VARIANT, union_value(num := 7), NULL) AS payload;
+----
+payload
+(42,7,)
+
+
+query
+SELECT struct_pack(payload := ROW(42::VARIANT, union_value(num := 7))) AS payload;
+----
+payload
+("(42,7)")
+
+
+query
+SELECT sdb_encode_key(ROW(1::BIGINT, 2::BIGINT)) = sdb_encode_key(struct_pack(a := 1::BIGINT, b := 2::BIGINT)) AS equal;
+----
+equal
+t
+
+
+query
+SELECT sdb_encode_key(ROW(1, ROW('a', NULL), [ROW(2, 3)])) = sdb_encode_key(struct_pack(a := 1, b := struct_pack(x := 'a', y := NULL), c := [struct_pack(x := 2, y := 3)])) AS equal;
+----
+equal
+t
+
+
+query
+SELECT sdb_encode_key(ROW(1, 2)) < sdb_encode_key(ROW(1, 3)) AS ordered;
+----
+ordered
+t
+
+
+statement ok
+CREATE TABLE tuple_search (id BIGINT PRIMARY KEY, payload TUPLE(BIGINT, BIGINT)) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO tuple_search VALUES (1, ROW(10, 20)), (2, NULL), (3, ROW(NULL, 30));
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tuple_search;
+
+
+query
+SELECT id, payload, payload[1] AS x, payload[2] AS y FROM tuple_search ORDER BY id;
+----
+id	payload	x	y
+1	(10,20)	10	20
+2	NULL	NULL	NULL
+3	(,30)	NULL	30
+
+
+query
+SELECT DISTINCT column_path, segment_type FROM pragma_storage_info('tuple_search') WHERE column_name = 'payload' AND segment_type = 'BIGINT' ORDER BY column_path;
+----
+column_path	segment_type
+[1, 1]	BIGINT
+[1, 2]	BIGINT
+
+
+statement ok
+DROP TABLE tuple_search;

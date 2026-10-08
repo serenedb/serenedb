@@ -529,7 +529,7 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
     SealVariant(type, chunks, row_count, skip_validity, forced, meta);
     return;
   }
-  if (type.id() == duckdb::LogicalTypeId::STRUCT ||
+  if (duckdb::StructType::IsStruct(type) ||
       type.id() == duckdb::LogicalTypeId::UNION) {
     SealStruct(type, chunks, row_count, skip_validity, forced, meta);
     return;

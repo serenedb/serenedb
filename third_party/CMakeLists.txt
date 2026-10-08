@@ -333,6 +333,11 @@ elseif(ARCH_AMD64)
 endif()
 add_subdirectory(OpenBLAS)
 target_link_libraries(sdb_blas INTERFACE openblas)
+if(ARCH_AMD64)
+    foreach(_core SKYLAKEX COOPERLAKE SAPPHIRERAPIDS)
+        target_compile_options(kernel_${_core} PRIVATE $<$<CONFIG:Debug>:-O2>)
+    endforeach()
+endif()
 
 ################################################################################
 ### faiss library
@@ -725,6 +730,11 @@ target_include_directories(
     duckdb_static
     SYSTEM
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
+)
+
+target_link_libraries(
+    iceberg_catalog_rest_storage_authorization
+    PRIVATE OpenSSL::Crypto
 )
 
 # Link extension objects that aren't automatically included in duckdb_static

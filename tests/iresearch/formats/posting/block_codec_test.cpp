@@ -453,22 +453,18 @@ TYPED_TEST(BlockCodecTest, ChosenEncodings) {
             TypeParam::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
   EXPECT_EQ(bc::Code(bc::DeltaEncoding::BitsetWords) + kN / 32 - 1, encoded[0]);
 
-  if constexpr (kN / 2 > bc::kTokenBitsetWords) {
-    for (uint32_t i = 0, doc = 0; i != kN; ++i) {
-      doc += i % 2 == 0 ? 25 : 23;
-      docs[i] = doc;
-    }
-    constexpr uint32_t kWords = (24 * kN + 63) / 64;
-    EXPECT_EQ(2 + 8 * kWords,
-              TypeParam::EncodeDeltaBlock(docs.data(), 0, encoded.data(),
-                                          {.bitset_margin_percent = 1000}));
-    EXPECT_EQ(static_cast<irs::byte_type>(bc::DeltaEncoding::Bitset),
-              encoded[0]);
-    EXPECT_EQ(kWords, encoded[1]);
-    std::vector<irs::doc_id_t> decoded(kN + bc::kOutSlack);
-    TypeParam::DecodeDeltaBlock(encoded.data(), 0, decoded.data());
-    EXPECT_TRUE(std::equal(docs.begin(), docs.end(), decoded.begin()));
+  for (uint32_t i = 0, doc = 0; i != kN; ++i) {
+    doc += i % 2 == 0 ? 25 : 23;
+    docs[i] = doc;
   }
+  static_assert((24 * kN + 63) / 64 > bc::kMaxBitsetWords);
+  EXPECT_EQ(1 + kN * 5 / 8,
+            TypeParam::EncodeDeltaBlock(docs.data(), 0, encoded.data(),
+                                        {.bitset_margin_percent = 1000}));
+  EXPECT_EQ(bc::Code(bc::DeltaEncoding::Pack) + 4, encoded[0]);
+  std::vector<irs::doc_id_t> decoded(kN + bc::kOutSlack);
+  TypeParam::DecodeDeltaBlock(encoded.data(), 0, decoded.data());
+  EXPECT_TRUE(std::equal(docs.begin(), docs.end(), decoded.begin()));
 
   docs.assign({1U, 2'000'000'002U});
   EXPECT_EQ(9U, TypeParam::EncodeDeltaTail(

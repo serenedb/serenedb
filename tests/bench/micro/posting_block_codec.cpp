@@ -539,8 +539,7 @@ void CountPatches(benchmark::State& state, const irs::bstring& bytes,
   for (uint32_t b = 0; b != blocks; ++b) {
     const uint32_t token = p[0];
     if constexpr (std::is_same_v<Encoding, bc::DeltaEncoding>) {
-      if (token == static_cast<uint32_t>(bc::DeltaEncoding::Bitset) ||
-          bc::IsTokenBitset(token)) {
+      if (bc::IsTokenBitset(token)) {
         ++bitsets;
         p += size(p);
         continue;
@@ -1066,8 +1065,7 @@ void BmDensityFill(benchmark::State& state) {
     const auto* p = encoded.data();
     irs::doc_id_t prev = 0;
     for (uint32_t b = 0; b != kDensityDocs / kN; ++b) {
-      if (p[0] == static_cast<irs::byte_type>(bc::DeltaEncoding::Bitset) ||
-          bc::IsTokenBitset(p[0])) {
+      if (bc::IsTokenBitset(p[0])) {
         const auto [raw, n] = bc::ParseBitset(p);
         const auto* bits = reinterpret_cast<const uint64_t*>(raw);
         irs::OrBitsetAt(words.data(), uint64_t{prev} + 1, bits, n);

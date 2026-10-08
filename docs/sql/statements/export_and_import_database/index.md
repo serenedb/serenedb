@@ -57,6 +57,18 @@ Schemas are written as `CREATE SCHEMA IF NOT EXISTS`, so the export loads into a
 
 The `load.sql` file contains a set of `COPY` statements that can be used to read the data from the CSV files again. The file contains a single `COPY` statement for every table found in the schema. Generated columns are not exported; their values are computed again on import. An empty string is written as a quoted empty field and `NULL` as an empty field, so both load back as they were. A search table exports the rows that queries see, that is, the rows as of its last refresh.
 
+### Data formats
+
+Use `FORMAT parquet`: it exports and imports far faster than the text formats and writes far smaller files. The schema round-trips in every format; the data files differ in which values they carry exactly. An export written in one format and imported with `IMPORT DATABASE` gives back:
+
+| `FORMAT` | Data after import |
+| :-- | :-- |
+| `parquet` | The same values. The export fails with `Parquet files do not support negative intervals` when a table holds a negative `INTERVAL`, because the Parquet interval type has no sign. |
+| `csv` (the default), `text`, `binary` | The same values, for every type. |
+| `json` | The same values, except: a `NUMERIC` passes through a double, so digits beyond its precision change (`1234567890.0123456789` loads as `1234567890.0123457536`); a `BYTEA` loads as the bytes of its escaped text (`\x00\xFF`) rather than the bytes themselves; a `JSON` value loads without its insignificant whitespace, and a JSON `null` loads as SQL `NULL`. |
+
+Fall back to `csv`, `text` or `binary` for a database that holds negative intervals.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />

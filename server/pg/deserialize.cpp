@@ -553,7 +553,7 @@ struct VarcharText {
 struct BlobText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    if (data.size() > 2 && data.starts_with("\\x")) {
+    if (data.starts_with("\\x")) {
       std::string bytes;
       if (!absl::HexStringToBytes(data.substr(2), &bytes)) {
         return false;

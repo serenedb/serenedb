@@ -64,6 +64,8 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::virtual_column_map_t GetVirtualColumns() const final;
 
+  duckdb::Catalog& GetStorageCatalog(duckdb::ClientContext& context) final;
+
   const pg::VirtualTable& Table() const noexcept { return _table; }
 
  private:

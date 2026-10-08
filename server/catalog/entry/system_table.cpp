@@ -30,6 +30,7 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 
 #include "catalog/catalog.h"
@@ -200,6 +201,12 @@ duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
   return result;
+}
+
+duckdb::Catalog& SystemTableEntry::GetStorageCatalog(duckdb::ClientContext&) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied: \"", name.GetIdentifierName(),
+                          "\" is a system catalog"));
 }
 
 SystemViewEntry::SystemViewEntry(duckdb::Catalog& catalog,

@@ -760,6 +760,7 @@ void ValidateIncludedKey(std::string_view label,
     case ENUM:
     case LIST:
     case ARRAY:
+    case TUPLE:
     case STRUCT:
     case MAP:
     case VARIANT:

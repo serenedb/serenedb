@@ -1876,7 +1876,7 @@ MaterializedData SystemTableSnapshot<PgType>::GetTableData() {
     const auto& perm = type.permissions;
     const auto kind = type.user_type.id();
     const bool is_enum = kind == duckdb::LogicalTypeId::ENUM;
-    const bool is_composite = kind == duckdb::LogicalTypeId::STRUCT;
+    const bool is_composite = duckdb::StructType::IsStruct(type.user_type);
 
     const std::string_view type_name = type.name.GetIdentifierName();
     const auto type_oid = type.oid;

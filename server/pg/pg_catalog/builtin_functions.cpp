@@ -188,6 +188,7 @@ bool TypeIsComplete(const duckdb::LogicalType& type) {
   switch (type.id()) {
     using enum duckdb::LogicalTypeId;
     case DECIMAL:
+    case TUPLE:
     case STRUCT:
     case MAP:
     case UNION:

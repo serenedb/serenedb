@@ -283,7 +283,7 @@ void WalkIResearchColumn(const irs::ColumnReader& node, duckdb::idx_t column_id,
                              row_base, virtual_columns, out);
     path.pop_back();
   }
-  if (node.Type().id() == duckdb::LogicalTypeId::STRUCT) {
+  if (duckdb::StructType::IsStruct(node.Type())) {
     for (size_t i = 0; i < node.StructFieldCount(); ++i) {
       path.emplace_back(i + 1);
       WalkIResearchColumn(node.StructField(i), column_id, path, segment,

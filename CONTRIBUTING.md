@@ -103,6 +103,16 @@ When a change needs a test:
 - CMake-only changes: rely on CI.
 - Doc-only changes live in a separate repo and don't apply here.
 
+Races are testable in sqllogic, so a concurrency bug still gets a test:
+
+- `connection <name>` before a record runs it on that named session.
+- `statement async ok`, `statement async error`, `query async` and `system async ok` run the record in the background. On a named connection, async records keep that connection's order and overlap other connections. Without a connection, each async record gets a fresh one.
+- `wait` blocks until every background record has finished; a later synchronous record on a busy named connection waits for that connection only.
+- Records are dispatched in file order, and dispatching a record on a busy named connection first waits for that connection. To keep a step in flight while others run, put the steps that should overlap on different connections right after it, then `wait`.
+- `control max-async-connections N` caps parallel background records (default 10); `control always-async on` makes every record async.
+- There are no loops: widen a race window by repeating records.
+- `tests/sqllogic/pg/simple/async.test` is a minimal example.
+
 ```bash
 # All sqllogic tests
 ./tests/sqllogic/run.sh --single-port 7890 --debug true

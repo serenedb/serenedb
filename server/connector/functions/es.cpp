@@ -970,6 +970,23 @@ std::vector<BulkMorsel> SplitBulkBody(std::string_view body) {
   return bounds;
 }
 
+}  // namespace
+
+bool EsBulkSpansMorsels(std::string_view body) {
+  size_t pos = 0;
+  for (size_t line = 1; line < 2 * kBulkMorselDocs; ++line) {
+    const size_t nl = body.find('\n', pos);
+    if (nl == std::string_view::npos) {
+      return false;
+    }
+    pos = nl + 1;
+  }
+  const size_t nl = body.find('\n', pos);
+  return nl != std::string_view::npos && nl + 1 < body.size();
+}
+
+namespace {
+
 struct EsBulkState final : duckdb::GlobalTableFunctionState {
   std::string_view body;
   std::vector<std::string>* items = nullptr;
@@ -1327,11 +1344,17 @@ void RegisterEsFunctions(duckdb::DatabaseInstance& db) {
                              EsBulkState::Init, EsBulkLocalState::Init};
   bulk.get_partition_data = EsBulkPartitionData;
   loader.RegisterFunction(std::move(bulk));
-  duckdb::TableFunction bulk_source{"es_bulk_source",  {kVarchar},
-                                    EsBulkExecute,     EsBulkSourceBind,
-                                    EsBulkState::Init, EsBulkLocalState::Init};
-  bulk_source.get_partition_data = EsBulkPartitionData;
-  loader.RegisterFunction(std::move(bulk_source));
+  loader.RegisterFunction(duckdb::TableFunction{"es_bulk_source",
+                                                {kVarchar},
+                                                EsBulkExecute,
+                                                EsBulkSourceBind,
+                                                EsBulkState::Init,
+                                                EsBulkLocalState::Init});
+  duckdb::TableFunction bulk_source_parallel{
+    "es_bulk_source_parallel", {kVarchar},        EsBulkExecute,
+    EsBulkSourceBind,          EsBulkState::Init, EsBulkLocalState::Init};
+  bulk_source_parallel.get_partition_data = EsBulkPartitionData;
+  loader.RegisterFunction(std::move(bulk_source_parallel));
   loader.RegisterFunction(duckdb::TableFunction{"es_refresh",
                                                 {kVarchar},
                                                 EsRefreshExecute,

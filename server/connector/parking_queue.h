@@ -33,7 +33,11 @@
 
 namespace sdb::connector {
 
-enum class TakeResult : uint8_t { Item, End, Parked };
+enum class TakeResult : uint8_t {
+  Item,
+  End,
+  Parked,
+};
 
 template<typename T>
 class ParkingQueue {

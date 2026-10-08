@@ -22,10 +22,15 @@
 
 #include <emmintrin.h>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <utility>
+
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -203,5 +208,127 @@ void PrefixSum(U* v, size_t n, U base, U offset) noexcept {
     v[i] = acc;
   }
 }
+
+inline constexpr size_t kBlockValues = 1024;
+
+template<typename U>
+using LaneWord = std::conditional_t<sizeof(U) == 8, uint64_t, uint32_t>;
+
+template<typename U>
+inline constexpr unsigned kLanes = 1024 / (8 * sizeof(LaneWord<U>));
+
+template<typename U>
+inline constexpr unsigned kMaxBits = 8 * sizeof(U);
+
+template<typename U>
+constexpr unsigned BitsFor(U range) noexcept {
+  unsigned bits = 0;
+  while (bits < kMaxBits<U> && (range >> bits) != 0) {
+    ++bits;
+  }
+  return bits;
+}
+
+constexpr size_t PackedBytes(unsigned bits) noexcept {
+  return kBlockValues / 8 * bits;
+}
+
+template<typename U, unsigned W, unsigned J>
+IRS_FORCE_INLINE void PackStep(const U* IRS_RESTRICT in,
+                               LaneWord<U>* IRS_RESTRICT out, unsigned l,
+                               LaneWord<U>& acc) noexcept {
+  using Word = LaneWord<U>;
+  constexpr unsigned kWordBits = 8 * sizeof(Word);
+  constexpr unsigned kBit = J * W;
+  constexpr unsigned kShift = kBit % kWordBits;
+  const auto v = static_cast<Word>(in[J * kLanes<U> + l]);
+  if constexpr (kShift == 0) {
+    acc = v;
+  } else {
+    acc |= static_cast<Word>(v << kShift);
+  }
+  if constexpr (kShift + W >= kWordBits) {
+    out[kBit / kWordBits * kLanes<U> + l] = acc;
+    if constexpr (kShift + W > kWordBits) {
+      acc = static_cast<Word>(v >> (kWordBits - kShift));
+    }
+  }
+}
+
+template<typename U, unsigned W, unsigned... J>
+IRS_FORCE_INLINE void PackLane(const U* IRS_RESTRICT in,
+                               LaneWord<U>* IRS_RESTRICT out, unsigned l,
+                               std::integer_sequence<unsigned, J...>) noexcept {
+  LaneWord<U> acc = 0;
+  (PackStep<U, W, J>(in, out, l, acc), ...);
+}
+
+template<typename U, unsigned W>
+void PackBlock(const U* IRS_RESTRICT in,
+               LaneWord<U>* IRS_RESTRICT out) noexcept {
+  if constexpr (W != 0) {
+    constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
+    for (unsigned l = 0; l < kLanes<U>; ++l) {
+      PackLane<U, W>(in, out, l, std::make_integer_sequence<unsigned, kRows>{});
+    }
+  }
+}
+
+template<typename U, unsigned W, unsigned J>
+IRS_FORCE_INLINE void UnpackStep(const LaneWord<U>* IRS_RESTRICT in,
+                                 U* IRS_RESTRICT out, U base,
+                                 unsigned l) noexcept {
+  using Word = LaneWord<U>;
+  constexpr unsigned kWordBits = 8 * sizeof(Word);
+  constexpr unsigned kBit = J * W;
+  constexpr unsigned kWord = kBit / kWordBits;
+  constexpr unsigned kShift = kBit % kWordBits;
+  constexpr Word kMask =
+    W == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << W) - 1);
+  Word v = in[kWord * kLanes<U> + l] >> kShift;
+  if constexpr (kShift + W > kWordBits) {
+    v |= in[(kWord + 1) * kLanes<U> + l] << (kWordBits - kShift);
+  }
+  out[J * kLanes<U> + l] = static_cast<U>(static_cast<U>(v & kMask) + base);
+}
+
+template<typename U, unsigned W, unsigned... J>
+IRS_FORCE_INLINE void UnpackLane(
+  const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out, U base, unsigned l,
+  std::integer_sequence<unsigned, J...>) noexcept {
+  (UnpackStep<U, W, J>(in, out, base, l), ...);
+}
+
+template<typename U, unsigned W>
+void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
+                 U base) noexcept {
+  if constexpr (W == 0) {
+    std::fill_n(out, kBlockValues, base);
+  } else {
+    constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
+    for (unsigned l = 0; l < kLanes<U>; ++l) {
+      UnpackLane<U, W>(in, out, base, l,
+                       std::make_integer_sequence<unsigned, kRows>{});
+    }
+  }
+}
+
+template<typename U>
+using PackFn = void (*)(const U*, LaneWord<U>*) noexcept;
+
+template<typename U>
+using UnpackFn = void (*)(const LaneWord<U>*, U*, U) noexcept;
+
+template<typename U>
+inline constexpr auto kPack =
+  []<unsigned... W>(std::integer_sequence<unsigned, W...>) {
+    return std::array<PackFn<U>, sizeof...(W)>{&PackBlock<U, W>...};
+  }(std::make_integer_sequence<unsigned, kMaxBits<U> + 1>{});
+
+template<typename U>
+inline constexpr auto kUnpack =
+  []<unsigned... W>(std::integer_sequence<unsigned, W...>) {
+    return std::array<UnpackFn<U>, sizeof...(W)>{&UnpackBlock<U, W>...};
+  }(std::make_integer_sequence<unsigned, kMaxBits<U> + 1>{});
 
 }  // namespace irs::codecs::numeric

@@ -22,7 +22,6 @@
 
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <array>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
@@ -36,11 +35,9 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
-#include <limits>
 #include <optional>
 #include <string>
 #include <type_traits>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/numeric_decoder.hpp"
 #include "iresearch/formats/column/codecs/numeric_layout.hpp"
@@ -52,12 +49,19 @@ namespace {
 using duckdb::const_data_ptr_t;
 using duckdb::idx_t;
 
+NumericHeader SegmentHeader(const_data_ptr_t base,
+                            const duckdb::ColumnSegment& segment) {
+  const auto h = NumericHeader::Parse(base, segment.SegmentSize());
+  SDB_ENSURE(h.row_count == segment.count, "numeric codec: row count mismatch");
+  return h;
+}
+
 template<typename T>
 struct ScanState final : duckdb::SegmentScanState {
   ScanState(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle_p)
     : handle{std::move(handle_p)},
       base{handle.Ptr() + segment.GetBlockOffset()},
-      frames{base, NumericHeader::Parse(base, segment.SegmentSize())} {}
+      frames{base, SegmentHeader(base, segment)} {}
 
   duckdb::BufferHandle handle;
   const_data_ptr_t base;
@@ -77,26 +81,9 @@ template<typename T>
 void ScanPartial(duckdb::ColumnSegment&, duckdb::ColumnScanState& state,
                  idx_t scan_count, duckdb::Vector& result,
                  idx_t result_offset) {
-  auto& frames = state.scan_state->Cast<ScanState<T>>().frames;
-  auto* out = duckdb::FlatVector::GetDataMutable<T>(result) + result_offset;
-  uint64_t row = state.GetPositionInSegment();
-  idx_t done = 0;
-  while (done < scan_count) {
-    if constexpr (std::is_integral_v<T>) {
-      using U = numeric::Bits<sizeof(T)>;
-      if (const auto n = frames.DecodeDirect(
-            row, scan_count - done, reinterpret_cast<U*>(out + done))) {
-        done += n;
-        row += n;
-        continue;
-      }
-    }
-    frames.Seek(row);
-    const auto take = std::min<uint64_t>(scan_count - done, frames.End() - row);
-    frames.Copy(row, take, out + done);
-    done += take;
-    row += take;
-  }
+  state.scan_state->Cast<ScanState<T>>().frames.Read(
+    state.GetPositionInSegment(), scan_count,
+    duckdb::FlatVector::GetDataMutable<T>(result) + result_offset);
 }
 
 template<typename T>
@@ -124,12 +111,12 @@ bool MayMatch(const FrameDecoder<T>& frames, const duckdb::LogicalType& type,
               uint64_t begin, uint64_t end,
               const duckdb::ExpressionFilter& filter,
               duckdb::TableFilterState& filter_state) {
+  auto stats = duckdb::BaseStatistics::CreateEmpty(type);
+  stats.SetHasNoNull();
   const auto last = frames.FrameOf(end - 1);
   for (auto f = frames.FrameOf(begin); f <= last; ++f) {
-    auto stats = duckdb::BaseStatistics::CreateEmpty(type);
     duckdb::NumericStats::SetMin<T>(stats, frames.FrameMin(f));
     duckdb::NumericStats::SetMax<T>(stats, frames.FrameMax(f));
-    stats.SetHasNoNull();
     if (filter.CheckStatistics(stats, filter_state) !=
         duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE) {
       return true;
@@ -175,10 +162,9 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   }
   auto& cache = state.codec_state->Cast<FetchCache<T>>();
   if (const auto block = segment.GetBlockHandle()->BlockId();
-      cache.block != block || !cache.frames) {
+      cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();
-    cache.frames.emplace(base,
-                         NumericHeader::Parse(base, segment.SegmentSize()));
+    cache.frames.emplace(base, SegmentHeader(base, segment));
     cache.block = block;
   }
   auto& frames = *cache.frames;
@@ -195,12 +181,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   auto handle = buffer_manager.Pin(segment.GetBlockHandle());
   const auto h = NumericHeader::Parse(handle.Ptr() + segment.GetBlockOffset(),
                                       segment.SegmentSize());
-  constexpr std::array<std::string_view, 5> kTransforms{"raw", "for", "delta",
-                                                        "rle", "dict"};
   constexpr std::array<std::string_view, 3> kLeaves{"none", "lz4", "zstd"};
   duckdb::InsertionOrderPreservingMap<std::string> info;
-  info["transform"] =
-    std::string{kTransforms[static_cast<uint8_t>(h.transform)]};
+  info["transform"] = std::string{NumericTransformName(h.transform)};
   info["leaf"] = std::string{kLeaves[static_cast<uint8_t>(h.leaf)]};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   info["stored"] = absl::StrCat(static_cast<uint32_t>(h.stored));

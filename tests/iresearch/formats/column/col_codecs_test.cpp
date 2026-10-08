@@ -1259,6 +1259,73 @@ TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
   }
 }
 
+TEST_F(ColCodecsTest, SparseSelectionsFilterOnlyTheirEntries) {
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 17 == 0) {
+      return std::nullopt;
+    }
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "key-%06llu",
+                  static_cast<unsigned long long>((g * 7919) % 20000));
+    return std::string{buf};
+  };
+  constexpr uint64_t kRows = 60000;
+  irs::MemoryDirectory dir{};
+  Write(dir, duckdb::CompressionType::COMPRESSION_DICT_LZ4, {}, kRows, 65536,
+        value);
+  irs::ColReader r{dir, std::string{kSeg}, Db()};
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  duckdb::Connection con{_db};
+  for (const auto cmp : {duckdb::ExpressionType::COMPARE_EQUAL,
+                         duckdb::ExpressionType::COMPARE_NOTEQUAL}) {
+    for (const uint64_t stride : {uint64_t{9}, uint64_t{1}}) {
+      const std::string key = "key-012345";
+      const duckdb::ExpressionFilter filter{
+        duckdb::BoundComparisonExpression::Create(
+          cmp,
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            duckdb::LogicalType::VARCHAR, 0),
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(
+            duckdb::Value{key}))};
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        duckdb::idx_t offered = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          if ((anchor + i) % stride == 0) {
+            sel.set_index(offered++, i);
+          }
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, offered, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto g = anchor + i;
+          const auto v = value(g);
+          const bool expected =
+            g % stride == 0 && v &&
+            (cmp == duckdb::ExpressionType::COMPARE_EQUAL ? *v == key
+                                                          : *v != key);
+          const bool got = next < kept && sel.get_index(next) == i;
+          if (got) {
+            EXPECT_EQ(out.GetValue(i).ToString(), *v) << "row " << g;
+          }
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected) << "row " << g << " stride " << stride;
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, ZxcFramesAfterAnOversizedEntryCanBeEmpty) {
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     if (g == 0) {

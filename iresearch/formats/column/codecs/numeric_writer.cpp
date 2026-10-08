@@ -57,13 +57,6 @@ constexpr LeafOption kCompactionPlan[] = {
   {NumericLeaf::Zstd, 1, kZstdPenalty},
 };
 
-std::span<const LeafOption> Plan(bool leafless) noexcept {
-  if (leafless) {
-    return kLeaflessPlan;
-  }
-  return kCompactionPlan;
-}
-
 struct Candidate {
   NumericTransform transform = NumericTransform::Raw;
   uint8_t stored = 0;
@@ -156,18 +149,19 @@ class TypedSealer final : public NumericSealer {
   std::optional<NumericSegment> Seal(const ColCodecParams& params,
                                      uint64_t rival_bytes,
                                      NumericTuning& tuning, bool due) final {
-    return SealWith(
-      params.tier == WriteTier::Flush || std::is_floating_point_v<T>,
-      rival_bytes, tuning, due);
+    if (std::is_floating_point_v<T> || params.tier == WriteTier::Flush) {
+      return SealWith(kLeaflessPlan, rival_bytes, tuning, due);
+    }
+    return SealWith(kCompactionPlan, rival_bytes, tuning, due);
   }
 
-  std::optional<NumericSegment> SealWith(bool leafless, uint64_t rival_bytes,
+  std::optional<NumericSegment> SealWith(std::span<const LeafOption> plan,
+                                         uint64_t rival_bytes,
                                          NumericTuning& tuning, bool due) {
     if (!_any_valid || _values.size() > std::numeric_limits<uint32_t>::max()) {
       return std::nullopt;
     }
     const auto rows = static_cast<double>(_values.size());
-    const auto plan = Plan(leafless);
     if (!due) {
       if (!tuning.pick) {
         return std::nullopt;
@@ -188,7 +182,10 @@ class TypedSealer final : public NumericSealer {
           out.reset();
         }
       }
-      if (drift || !out) {
+      if (!out) {
+        return SealWith(plan, rival_bytes, tuning, true);
+      }
+      if (drift) {
         tuning.gap = 1;
         tuning.since = 0;
       }
@@ -205,6 +202,10 @@ class TypedSealer final : public NumericSealer {
         if (c.shuffled && option.leaf == NumericLeaf::None) {
           continue;
         }
+        if (c.transform == NumericTransform::Ffor &&
+            option.leaf != NumericLeaf::None) {
+          continue;
+        }
         const auto bytes = Estimate(c, option);
         const auto price = static_cast<double>(bytes) * (1.0 + option.penalty);
         if (price < best_price) {
@@ -213,6 +214,19 @@ class TypedSealer final : public NumericSealer {
           best = &c;
           best_leaf = option;
         }
+      }
+    }
+    std::optional<NumericSegment> out;
+    if (best) {
+      out = Emit(*best, best_leaf);
+      const auto bytes = out->bytes.size();
+      if (static_cast<double>(bytes) * (1.0 + best_leaf.penalty) >=
+          static_cast<double>(rival_bytes)) {
+        out.reset();
+        best = nullptr;
+        best_bytes = rival_bytes;
+      } else {
+        best_bytes = bytes;
       }
     }
     std::optional<NumericChoice> pick;
@@ -226,15 +240,20 @@ class TypedSealer final : public NumericSealer {
     tuning.calibrated = true;
     tuning.pick = pick;
     tuning.bytes_per_row = static_cast<double>(best_bytes) / rows;
-    if (!best) {
-      return std::nullopt;
-    }
-    return Emit(*best, best_leaf);
+    return out;
   }
 
  private:
   static constexpr uint32_t kMaxGap = 16;
-  static constexpr uint32_t kFrameBytes = uint32_t{1} << kNumericFrameLog2;
+
+  static constexpr uint8_t FrameLog2(const Candidate& c,
+                                     const LeafOption& option) noexcept {
+    if (c.transform == NumericTransform::Ffor) {
+      return kFforFrameLog2;
+    }
+    return option.leaf == NumericLeaf::None ? kNumericFrameLog2
+                                            : kNumericLeafFrameLog2;
+  }
 
   const Candidate* Find(const NumericChoice& choice) const noexcept {
     const auto it = std::ranges::find_if(_candidates, [&](const auto& c) {
@@ -320,6 +339,18 @@ class TypedSealer final : public NumericSealer {
       AddWithShuffle(c);
     }
 
+    if constexpr (std::is_integral_v<T>) {
+      if (wanted(NumericTransform::Ffor)) {
+        BuildFfor(n);
+        c.transform = NumericTransform::Ffor;
+        c.stored = kWidth;
+        c.base = 0;
+        c.values = raw;
+        c.shuffled = false;
+        _candidates.push_back(c);
+      }
+    }
+
     if (wanted(NumericTransform::Delta)) {
       _delta.resize(size_t{n} * delta_stored);
       std::vector<U> z(n);
@@ -388,6 +419,75 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
+  void BuildFfor(uint32_t n) {
+    const size_t blocks =
+      (size_t{n} + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    _ffor_base.resize(blocks);
+    _ffor_bits.resize(blocks);
+    for (size_t b = 0; b < blocks; ++b) {
+      const size_t begin = b * numeric::kBlockValues;
+      const size_t end = std::min<size_t>(n, begin + numeric::kBlockValues);
+      U lo = _values[begin];
+      U hi = lo;
+      for (size_t i = begin + 1; i < end; ++i) {
+        if (Less(_values[i], lo)) {
+          lo = _values[i];
+        }
+        if (Less(hi, _values[i])) {
+          hi = _values[i];
+        }
+      }
+      _ffor_base[b] = lo;
+      _ffor_bits[b] =
+        static_cast<uint8_t>(numeric::BitsFor<U>(static_cast<U>(hi - lo)));
+    }
+  }
+
+  uint64_t FforBytes(uint32_t frames) const noexcept {
+    uint64_t bytes = kNumericHeaderSize +
+                     uint64_t{frames} * kNumericFrameMetaSize +
+                     _ffor_bits.size() * kFforBlockMetaBytes;
+    for (const auto bits : _ffor_bits) {
+      bytes += numeric::PackedBytes(bits);
+    }
+    return bytes;
+  }
+
+  std::span<const uint8_t> FforFrame(uint32_t begin, uint32_t rows) {
+    using Word = numeric::LaneWord<U>;
+    const size_t first = begin / numeric::kBlockValues;
+    const size_t blocks =
+      (size_t{rows} + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    size_t off = blocks * kFforBlockMetaBytes;
+    size_t total = off;
+    for (size_t b = 0; b < blocks; ++b) {
+      total += numeric::PackedBytes(_ffor_bits[first + b]);
+    }
+    _frame.resize(total);
+    std::memset(_frame.data(), 0, off);
+    _ffor_block.resize(numeric::kBlockValues);
+    for (size_t b = 0; b < blocks; ++b) {
+      const auto base = _ffor_base[first + b];
+      const unsigned bits = _ffor_bits[first + b];
+      const uint64_t stored_base = base;
+      std::memcpy(_frame.data() + b * kFforBlockMetaBytes, &stored_base,
+                  sizeof(stored_base));
+      _frame[b * kFforBlockMetaBytes + sizeof(stored_base)] =
+        static_cast<uint8_t>(bits);
+      const size_t row = size_t{begin} + b * numeric::kBlockValues;
+      const size_t count = std::min(numeric::kBlockValues,
+                                    size_t{rows} - b * numeric::kBlockValues);
+      for (size_t i = 0; i < numeric::kBlockValues; ++i) {
+        _ffor_block[i] =
+          i < count ? static_cast<U>(_values[row + i] - base) : U{0};
+      }
+      numeric::kPack<U>[bits](_ffor_block.data(),
+                              reinterpret_cast<Word*>(_frame.data() + off));
+      off += numeric::PackedBytes(bits);
+    }
+    return _frame;
+  }
+
   bool BuildDictionary(uint32_t cap) {
     const auto n = static_cast<uint32_t>(_values.size());
     _dict_map.clear();
@@ -433,19 +533,26 @@ class TypedSealer final : public NumericSealer {
     }
   }
 
-  uint32_t ItemsPerFrame(const Candidate& c) const noexcept {
-    return kFrameBytes / c.ItemBytes();
+  static uint32_t ItemsPerFrame(const Candidate& c, uint8_t log2) noexcept {
+    if (c.transform == NumericTransform::Ffor) {
+      return kFforFrameRows;
+    }
+    return (uint32_t{1} << log2) / c.ItemBytes();
   }
 
-  uint32_t FrameCount(const Candidate& c) const noexcept {
-    const auto per = ItemsPerFrame(c);
+  static uint32_t FrameCount(const Candidate& c, uint8_t log2) noexcept {
+    const auto per = ItemsPerFrame(c, log2);
     return (c.items + per - 1) / per;
   }
 
-  std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f) {
-    const auto per = ItemsPerFrame(c);
+  std::span<const uint8_t> FrameRaw(const Candidate& c, uint32_t f,
+                                    uint8_t log2) {
+    const auto per = ItemsPerFrame(c, log2);
     const auto begin = f * per;
     const auto k = std::min(c.items - begin, per);
+    if (c.transform == NumericTransform::Ffor) {
+      return FforFrame(begin, k);
+    }
     const auto* values = c.values.data() + size_t{begin} * c.stored;
     if (c.transform == NumericTransform::Rle) {
       _frame.resize(size_t{k} * c.ItemBytes());
@@ -464,7 +571,11 @@ class TypedSealer final : public NumericSealer {
   }
 
   uint64_t Estimate(const Candidate& c, const LeafOption& option) {
-    const auto frames = FrameCount(c);
+    const auto log2 = FrameLog2(c, option);
+    const auto frames = FrameCount(c, log2);
+    if (c.transform == NumericTransform::Ffor) {
+      return FforBytes(frames);
+    }
     const uint64_t overhead = kNumericHeaderSize +
                               uint64_t{frames} * kNumericFrameMetaSize +
                               c.dict.size();
@@ -478,7 +589,7 @@ class TypedSealer final : public NumericSealer {
     const auto samples = std::min<uint32_t>(frames, kSampleFrames);
     for (uint32_t k = 0; k < samples; ++k) {
       const auto f = static_cast<uint32_t>(uint64_t{k} * frames / samples);
-      const auto bytes = FrameRaw(c, f);
+      const auto bytes = FrameRaw(c, f, log2);
       const auto n =
         leaves.Compress(option.leaf, option.level, bytes.data(), bytes.size());
       raw += bytes.size();
@@ -488,8 +599,9 @@ class TypedSealer final : public NumericSealer {
   }
 
   void Write(const Candidate& c, const LeafOption& option, std::string& out) {
-    const auto frames = FrameCount(c);
-    const auto per = ItemsPerFrame(c);
+    const auto log2 = FrameLog2(c, option);
+    const auto frames = FrameCount(c, log2);
+    const auto per = ItemsPerFrame(c, log2);
     NumericHeader h;
     h.width = kWidth;
     h.transform = c.transform;
@@ -498,7 +610,7 @@ class TypedSealer final : public NumericSealer {
     h.stored = c.stored;
     h.run_width = c.run_width;
     h.flags = c.shuffled ? kNumericShuffled : 0;
-    h.frame_log2 = kNumericFrameLog2;
+    h.frame_log2 = log2;
     h.row_count = static_cast<uint32_t>(_values.size());
     h.frame_count = frames;
     h.dict_count = c.dict_count;
@@ -524,7 +636,7 @@ class TypedSealer final : public NumericSealer {
         m.base =
           begin == 0 ? static_cast<U>(_values[0] - c.base) : _values[begin - 1];
       }
-      const auto bytes = FrameRaw(c, f);
+      const auto bytes = FrameRaw(c, f, log2);
       m.frame.comp_off = static_cast<uint32_t>(out.size() - h.off_data);
       m.frame.raw_len = static_cast<uint32_t>(bytes.size());
       if (option.leaf != NumericLeaf::None) {
@@ -583,6 +695,9 @@ class TypedSealer final : public NumericSealer {
   uint32_t _dict_count = 0;
   containers::FlatHashMap<U, uint32_t> _dict_map;
   std::vector<uint8_t> _frame;
+  std::vector<U> _ffor_base;
+  std::vector<uint8_t> _ffor_bits;
+  std::vector<U> _ffor_block;
 };
 
 }  // namespace
@@ -592,7 +707,7 @@ std::optional<NumericSegment> EncodeCodes(std::span<const uint32_t> codes,
                                           NumericTuning& tuning) {
   TypedSealer<uint32_t> sealer{duckdb::LogicalType::UINTEGER, codes.size()};
   sealer.AddCodes(codes);
-  return sealer.SealWith(true, rival_bytes, tuning, tuning.Due());
+  return sealer.SealWith(kLeaflessPlan, rival_bytes, tuning, tuning.Due());
 }
 
 bool NumericApplies(duckdb::PhysicalType physical) noexcept {

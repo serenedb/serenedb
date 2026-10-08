@@ -154,6 +154,33 @@ ChainEnd WalkChain(const FsstDecoder& fsst, const char* in,
   return {end, off, enc_off};
 }
 
+template<typename Visit>
+uint32_t WalkInPlace(const FsstDecoder& fsst, const char* in,
+                     PackedReader& lengths, PackedReader& lcps, uint32_t first,
+                     uint32_t end, uint64_t enc_off, uint64_t enc_end,
+                     std::string& buf, Visit&& visit) {
+  uint64_t len = 0;
+  for (auto e = first; e < end; ++e) {
+    const uint64_t lcp = e == first ? 0 : lcps.At(e);
+    const uint64_t enc = lengths.At(e);
+    SDB_ENSURE(lcp <= len && enc_off + enc <= enc_end,
+               "col codec: corrupted front coding");
+    if (const auto need = lcp + enc * kFsstMaxExpansion; buf.size() < need) {
+      buf.resize(std::max<uint64_t>(need, buf.size() * 2));
+    }
+    const auto room = buf.size() - lcp;
+    const auto dec =
+      enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, buf.data() + lcp, room);
+    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+    len = lcp + dec;
+    if (!visit(e, std::string_view{buf.data(), len})) {
+      return e;
+    }
+    enc_off += enc;
+  }
+  return end;
+}
+
 const ReadContext::CacheSlot& CacheSlotOf(
   duckdb::ColumnSegment& segment) noexcept {
   const auto& block = segment.GetBlockHandle();
@@ -267,6 +294,7 @@ std::string_view View(const string_t& s) noexcept {
 
 constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
 constexpr idx_t kSparseEntries = 64;
+constexpr uint32_t kLazyFilterEntries = 4096;
 
 struct ScanState final : duckdb::SegmentScanState {
   ScanState(duckdb::ColumnSegment& segment, duckdb::BufferHandle handle_p)
@@ -277,6 +305,9 @@ struct ScanState final : duckdb::SegmentScanState {
       trained{TrainedOf(segment, header)},
       length_reader{base + header.off_lengths, header.length_width},
       lcp_reader{base + header.off_lcps, header.lcp_width} {
+    SDB_ENSURE(header.row_count == segment.count &&
+                 (Dedup() || header.entry_count == header.row_count),
+               "col codec: corrupted segment header");
     const auto& slot = CacheSlotOf(segment);
     if (Dedup() && !slot.key.empty()) {
       cache = &segment.GetDatabase().GetObjectCache();
@@ -334,12 +365,12 @@ struct ScanState final : duckdb::SegmentScanState {
 
   void AdoptDictionary(const DecodedDictionary& cached) {
     const auto& owner = cached.Dictionary();
-    duckdb::Vector view{type, header.entry_count};
-    std::memcpy(duckdb::FlatVector::GetDataMutable<string_t>(view),
-                duckdb::FlatVector::GetData<string_t>(owner->data),
-                static_cast<size_t>(header.entry_count) * sizeof(string_t));
-    duckdb::FlatVector::SetSize(view, header.entry_count);
-    duckdb::FlatVector::ValidityMutable(view).SetInvalid(0);
+    duckdb::Vector view{type, duckdb::FlatVector::GetDataMutable(owner->data),
+                        header.entry_count};
+    auto& validity = duckdb::FlatVector::ValidityMutable(view);
+    validity.Initialize(header.entry_count);
+    validity.SetInvalid(0);
+    cold_entries = Sorted();
     duckdb::StringVector::AddAuxiliaryData(
       view, duckdb::make_uniq<duckdb::VectorBufferHolder>(
               owner->data.GetBufferRef()));
@@ -669,14 +700,12 @@ struct ScanState final : duckdb::SegmentScanState {
       EnsureGroupOffsets(f);
       enc_off = group_enc_off[group_base[f] + g];
     }
-    probe.resize(ChainCapacity(length_reader, lcp_reader, e, e + 1));
     std::string_view head;
-    WalkChain(*fsst, Data(), length_reader, lcp_reader, e, e + 1, enc_off,
-              header.data_size, probe.data(), probe.size(),
-              [&](uint32_t, std::string_view v) {
-                head = v;
-                return true;
-              });
+    WalkInPlace(*fsst, Data(), length_reader, lcp_reader, e, e + 1, enc_off,
+                header.data_size, probe, [&](uint32_t, std::string_view v) {
+                  head = v;
+                  return true;
+                });
     return head;
   }
 
@@ -735,12 +764,10 @@ struct ScanState final : duckdb::SegmentScanState {
       return end;
     }
     EnsureGroupOffsets(f);
-    probe.resize(ChainCapacity(length_reader, lcp_reader, first, end));
-    return WalkChain(*fsst, Data(), length_reader, lcp_reader, first, end,
-                     group_enc_off[group_base[f] + g], header.data_size,
-                     probe.data(), probe.size(),
-                     [&](uint32_t, std::string_view v) { return before(v); })
-      .stop;
+    return WalkInPlace(*fsst, Data(), length_reader, lcp_reader, first, end,
+                       group_enc_off[group_base[f] + g], header.data_size,
+                       probe,
+                       [&](uint32_t, std::string_view v) { return before(v); });
   }
 
   uint32_t Lower(std::string_view key) {
@@ -903,8 +930,21 @@ struct ScanState final : duckdb::SegmentScanState {
     return *sel;
   }
 
+  void WarmEntries() noexcept {
+    cold_entries = false;
+    constexpr uint32_t kPerLine = 64 / sizeof(string_t);
+    uint64_t bytes = 0;
+    for (uint32_t e = 0; e < header.entry_count; e += kPerLine) {
+      bytes += values[e].GetSize();
+    }
+    warmed_bytes = bytes;
+  }
+
   void WriteCodes(duckdb::Vector& result, idx_t result_offset,
                   const duckdb::SelectionVector& codes, idx_t count) {
+    if (cold_entries) {
+      WarmEntries();
+    }
     duckdb::StringVector::AddHeapReference(result, dictionary->data);
     auto writer =
       duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
@@ -984,6 +1024,8 @@ struct ScanState final : duckdb::SegmentScanState {
   std::string cache_key;
   std::atomic<bool>* touched = nullptr;
   bool full = false;
+  bool cold_entries = false;
+  uint64_t warmed_bytes = 0;
   duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
   string_t* values = nullptr;
   char* heap = nullptr;
@@ -1009,6 +1051,81 @@ struct ScanState final : duckdb::SegmentScanState {
   std::optional<FrameDecoder<uint32_t>> code_frames;
   duckdb::unsafe_unique_array<bool> filter_result;
   idx_t filter_match_count = 0;
+  std::vector<uint8_t> verdicts;
+  std::vector<uint32_t> pending;
+  uint64_t judged = 0;
+  bool lazy_filter = false;
+
+  void JudgeAll(duckdb::TableFilterState& filter_state) {
+    const auto dict_count = header.entry_count;
+    EnsureDictionary();
+    filter_result = duckdb::make_unsafe_uniq_array<bool>(dict_count);
+    std::memset(filter_result.get(), 0, dict_count);
+    duckdb::SelectionVector dict_sel;
+    idx_t filter_count = dict_count;
+    duckdb::ColumnSegment::FilterSelection(
+      dict_sel, dictionary->data, filter_state, dict_count, filter_count);
+    for (idx_t i = 0; i < filter_count; ++i) {
+      filter_result[dict_sel.get_index(i)] = true;
+    }
+    filter_match_count = filter_count;
+    lazy_filter = false;
+    verdicts = {};
+  }
+
+  void JudgeLazily(const duckdb::SelectionVector& codes,
+                   duckdb::SelectionVector& rows, idx_t& count,
+                   duckdb::TableFilterState& filter_state) {
+    constexpr uint8_t kRejected = 1;
+    constexpr uint8_t kAccepted = 2;
+    constexpr uint8_t kPending = 3;
+    pending.clear();
+    for (idx_t i = 0; i < count; ++i) {
+      const auto code = codes.get_index(rows.get_index(i));
+      if (verdicts[code] == 0) {
+        verdicts[code] = kPending;
+        pending.emplace_back(static_cast<uint32_t>(code));
+      }
+    }
+    if (!pending.empty()) {
+      EnsureEach<true>(pending.size(), [&](idx_t i) { return pending[i]; });
+      duckdb::Vector entries{type, pending.size()};
+      duckdb::StringVector::AddHeapReference(entries, dictionary->data);
+      {
+        auto writer =
+          duckdb::FlatVector::Writer<string_t>(entries, pending.size());
+        for (const auto code : pending) {
+          if (code == 0) {
+            writer.WriteNull();
+          } else {
+            writer.WriteStringRef(values[code]);
+          }
+        }
+      }
+      duckdb::SelectionVector kept;
+      idx_t kept_count = pending.size();
+      duckdb::ColumnSegment::FilterSelection(kept, entries, filter_state,
+                                             pending.size(), kept_count);
+      for (const auto code : pending) {
+        verdicts[code] = kRejected;
+      }
+      for (idx_t i = 0; i < kept_count; ++i) {
+        verdicts[pending[kept.get_index(i)]] = kAccepted;
+      }
+      judged += pending.size();
+    }
+    idx_t out = 0;
+    for (idx_t i = 0; i < count; ++i) {
+      const auto row = rows.get_index(i);
+      if (verdicts[codes.get_index(row)] == kAccepted) {
+        rows.set_index(out++, row);
+      }
+    }
+    count = out;
+    if (judged * 2 >= header.entry_count) {
+      JudgeAll(filter_state);
+    }
+  }
 
  private:
   void ReserveCodes(idx_t count) {
@@ -1023,16 +1140,7 @@ struct ScanState final : duckdb::SegmentScanState {
     if (code_frames) {
       ReserveCodes(count);
       auto* codes = sel->data();
-      uint64_t row = start;
-      idx_t done = 0;
-      while (done < count) {
-        code_frames->Seek(row);
-        const auto take =
-          std::min<uint64_t>(count - done, code_frames->End() - row);
-        code_frames->Copy(row, take, codes + done);
-        done += take;
-        row += take;
-      }
+      code_frames->Read(start, count, codes);
       duckdb::sel_t max_code = 0;
       for (idx_t i = 0; i < count; ++i) {
         max_code = std::max(max_code, codes[i]);
@@ -1137,36 +1245,33 @@ void Filter(duckdb::ColumnSegment& segment, duckdb::ColumnScanState& state,
     return;
   }
   const auto dict_count = scan.header.entry_count;
-  if (!scan.filter_result) {
-    scan.filter_result = duckdb::make_unsafe_uniq_array<bool>(dict_count);
-    std::memset(scan.filter_result.get(), 0, dict_count);
+  if (!scan.filter_result && !scan.lazy_filter) {
     if (const auto ranges = scan.ResolveFilter(filter)) {
+      scan.filter_result = duckdb::make_unsafe_uniq_array<bool>(dict_count);
+      std::memset(scan.filter_result.get(), 0, dict_count);
       idx_t matched = 0;
       for (const auto& [lo, hi] : *ranges) {
         std::memset(scan.filter_result.get() + lo, 1, hi - lo);
         matched += hi - lo;
       }
       scan.filter_match_count = matched;
+    } else if (dict_count < kLazyFilterEntries ||
+               sel_count * 4 >= vector_count) {
+      scan.JudgeAll(filter_state);
     } else {
-      scan.EnsureDictionary();
-      duckdb::SelectionVector dict_sel;
-      idx_t filter_count = dict_count;
-      duckdb::ColumnSegment::FilterSelection(dict_sel, scan.dictionary->data,
-                                             filter_state, dict_count,
-                                             filter_count);
-      for (idx_t i = 0; i < filter_count; ++i) {
-        scan.filter_result[dict_sel.get_index(i)] = true;
-      }
-      scan.filter_match_count = filter_count;
+      scan.lazy_filter = true;
+      scan.verdicts.assign(dict_count, 0);
     }
   }
-  if (scan.filter_match_count == 0) {
+  if (!scan.lazy_filter && scan.filter_match_count == 0) {
     sel_count = 0;
     return;
   }
   const auto start = state.GetPositionInSegment();
   const auto& codes = scan.Codes(start, vector_count);
-  if (scan.filter_match_count != dict_count) {
+  if (scan.lazy_filter) {
+    scan.JudgeLazily(codes, sel, sel_count, filter_state);
+  } else if (scan.filter_match_count != dict_count) {
     const auto* matches = scan.filter_result.get();
     idx_t kept = 0;
     while (kept < sel_count && matches[codes.get_index(sel.get_index(kept))]) {
@@ -1196,6 +1301,7 @@ struct FetchCache final : duckdb::SegmentScanState {
   uint32_t frame = std::numeric_limits<uint32_t>::max();
   uint32_t first_entry = 0;
   uint32_t hits = 0;
+  bool dense = false;
   size_t decoded = 0;
   size_t capacity = 0;
   duckdb::unsafe_unique_array<char> raw;
@@ -1215,6 +1321,41 @@ struct FetchCache final : duckdb::SegmentScanState {
   std::vector<uint64_t> fsst_offsets;
   std::string chain;
   std::optional<FrameDecoder<uint32_t>> code_frames;
+  PackedReader codes{nullptr, 0};
+  PackedReader ends{nullptr, 0};
+  PackedReader lengths{nullptr, 0};
+  PackedReader lcps{nullptr, 0};
+  idx_t run = 0;
+  uint64_t walked = 0;
+  std::string fsst_heap;
+  std::vector<uint32_t> fsst_ends;
+
+  void DecodeAllFsst(const Header& h, const_data_ptr_t base) {
+    const auto* frames = base + h.off_frames;
+    const auto* in = reinterpret_cast<const char*>(base + h.off_data);
+    fsst_ends.assign(h.entry_count + 1, 0);
+    fsst_heap.clear();
+    fsst_heap.reserve(h.raw_bytes);
+    for (uint32_t i = 0; i < h.frame_count; ++i) {
+      const auto f = FrameMeta::Load(frames + i * kFrameMetaSize);
+      const auto end =
+        i + 1 < h.frame_count
+          ? FrameMeta::Load(frames + (i + 1) * kFrameMetaSize).first_entry
+          : h.entry_count;
+      SDB_ENSURE(f.first_entry < end && end <= h.entry_count,
+                 "col codec: corrupted frame table");
+      const auto before = fsst_heap.size();
+      WalkInPlace(*fsst, in, lengths, lcps, f.first_entry, end, f.comp_off,
+                  static_cast<uint64_t>(f.comp_off) + f.comp_len, chain,
+                  [&](uint32_t e, std::string_view v) {
+                    fsst_heap.append(v);
+                    fsst_ends[e + 1] = static_cast<uint32_t>(fsst_heap.size());
+                    return true;
+                  });
+      SDB_ENSURE(fsst_heap.size() - before == f.raw_len,
+                 "col codec: corrupted frame");
+    }
+  }
 
   template<typename Decompressor>
   void Decode(Decompressor& d, const FrameMeta& f, const Header& h,
@@ -1290,8 +1431,7 @@ struct FetchCache final : duckdb::SegmentScanState {
 };
 
 FetchCache& CacheFor(duckdb::ColumnFetchState& state,
-                     duckdb::ColumnSegment& segment,
-                     duckdb::const_data_ptr_t base) {
+                     duckdb::ColumnSegment& segment, data_ptr_t base) {
   if (!state.codec_state) {
     state.codec_state = duckdb::make_uniq<FetchCache>();
   }
@@ -1305,6 +1445,15 @@ FetchCache& CacheFor(duckdb::ColumnFetchState& state,
     cache.fsst.reset();
     cache.fsst_group_base.clear();
     cache.code_frames.reset();
+    const auto& h = cache.header;
+    cache.codes = PackedReader{base + h.off_codes, h.code_width};
+    cache.ends = PackedReader{base + h.off_runs, h.run_width};
+    cache.lengths = PackedReader{base + h.off_lengths, h.length_width};
+    cache.lcps = PackedReader{base + h.off_lcps, h.lcp_width};
+    cache.run = 0;
+    cache.walked = 0;
+    cache.fsst_heap.clear();
+    cache.fsst_ends.clear();
   }
   return cache;
 }
@@ -1326,21 +1475,29 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       cache.code_frames->Seek(row);
       entry = cache.code_frames->At(row);
     } else if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Rle)) {
-      PackedReader ends{base + h.off_runs, h.run_width};
-      idx_t lo = 0;
-      idx_t hi = h.run_count;
-      while (lo < hi) {
-        const auto mid = lo + (hi - lo) / 2;
-        if (ends.At(mid) <= row) {
-          lo = mid + 1;
-        } else {
-          hi = mid;
+      auto& ends = cache.ends;
+      idx_t lo = cache.run;
+      if (lo < h.run_count && ends.At(lo) <= row) {
+        ++lo;
+      }
+      if (lo >= h.run_count || ends.At(lo) <= row ||
+          (lo != 0 && ends.At(lo - 1) > row)) {
+        lo = 0;
+        idx_t hi = h.run_count;
+        while (lo < hi) {
+          const auto mid = lo + (hi - lo) / 2;
+          if (ends.At(mid) <= row) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
         }
       }
       SDB_ENSURE(lo < h.run_count, "col codec: corrupted run ends");
-      entry = PackedReader{base + h.off_codes, h.code_width}.At(lo);
+      cache.run = lo;
+      entry = cache.codes.At(lo);
     } else {
-      entry = PackedReader{base + h.off_codes, h.code_width}.At(row);
+      entry = cache.codes.At(row);
     }
     if (entry == 0) {
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(result_idx);
@@ -1349,6 +1506,15 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   }
   SDB_ENSURE(entry < h.entry_count && h.frame_count != 0,
              "col codec: corrupted row codes");
+
+  auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
+  if (!cache.fsst_ends.empty()) {
+    const auto begin = cache.fsst_ends[entry];
+    out[result_idx] = duckdb::StringVector::AddStringOrBlob(
+      result, cache.fsst_heap.data() + begin,
+      cache.fsst_ends[entry + 1] - begin);
+    return;
+  }
 
   const auto* frames = base + h.off_frames;
   uint32_t lo = 0;
@@ -1364,8 +1530,7 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   const auto f = FrameMeta::Load(frames + lo * kFrameMetaSize);
   SDB_ENSURE(f.first_entry <= entry, "col codec: corrupted frame table");
 
-  PackedReader lengths{base + h.off_lengths, h.length_width};
-  auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
+  auto& lengths = cache.lengths;
   if (h.codec == static_cast<uint8_t>(ByteCodec::Fsst)) {
     if (!cache.fsst) {
       cache.fsst.emplace();
@@ -1375,7 +1540,7 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
             reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size}),
         "col codec: corrupted symbol table");
     }
-    PackedReader lcps{base + h.off_lcps, h.lcp_width};
+    auto& lcps = cache.lcps;
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     if (cache.fsst_group_base.empty()) {
       cache.fsst_group_base.resize(h.frame_count + 1);
@@ -1411,17 +1576,19 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
       }
       offsets[known] = off;
     }
-    auto& chain = cache.chain;
-    chain.resize(ChainCapacity(lengths, lcps, restart, entry + 1));
     std::string_view value;
-    WalkChain(*cache.fsst, in, lengths, lcps, restart, entry + 1,
-              offsets[group], h.data_size, chain.data(), chain.size(),
-              [&](uint32_t, std::string_view v) {
-                value = v;
-                return true;
-              });
+    WalkInPlace(*cache.fsst, in, lengths, lcps, restart, entry + 1,
+                offsets[group], h.data_size, cache.chain,
+                [&](uint32_t, std::string_view v) {
+                  value = v;
+                  return true;
+                });
     out[result_idx] =
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
+    cache.walked += entry + 1 - restart;
+    if (cache.walked >= h.entry_count) {
+      cache.DecodeAllFsst(h, base);
+    }
     return;
   }
 
@@ -1445,6 +1612,7 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
     }
     cache.frame = lo;
     cache.first_entry = f.first_entry;
+    cache.dense = cache.hits > 1;
     cache.hits = 0;
     cache.decoded = 0;
   }
@@ -1454,7 +1622,7 @@ void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
   const auto len = cache.offsets[k + 1] - offset;
   const size_t want = offset + len;
   if (cache.decoded < want) {
-    const size_t target = cache.hits > 1 ? f.raw_len : want;
+    const size_t target = cache.hits > 1 || cache.dense ? f.raw_len : want;
     const bool with_dictionary = h.flags == kFrameDictionary && lo != 0;
     const auto* trained = TrainedOf(segment, h);
     switch (static_cast<ByteCodec>(h.codec)) {
@@ -1502,11 +1670,9 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
                                                         "numeric"};
   info["codes"] = std::string{kCodesNames[h.codes_encoding]};
   if (h.codes_encoding == static_cast<uint8_t>(CodesEncoding::Numeric)) {
-    constexpr std::array<std::string_view, 5> kTransforms{"raw", "for", "delta",
-                                                          "rle", "dict"};
     const auto codes = CodesHeader(handle.Ptr() + segment.GetBlockOffset(), h);
     info["codes_transform"] =
-      std::string{kTransforms[static_cast<uint8_t>(codes.transform)]};
+      std::string{NumericTransformName(codes.transform)};
   }
   info["runs"] = absl::StrCat(h.run_count);
   info["entries"] = absl::StrCat(h.entry_count);

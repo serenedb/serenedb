@@ -364,6 +364,9 @@ class Encoder {
 
   void Finish(Segment& out) {
     SDB_ASSERT(_rows != 0);
+    if (_shape == Shape::Dedup) {
+      _codes.resize(_rows);
+    }
     std::string_view symtab;
     if constexpr (kFsst) {
       EncodeFsst();
@@ -541,7 +544,10 @@ class Encoder {
       ++_runs;
     }
     _last_code = code;
-    _codes.push_back(code);
+    if (_rows == _codes.size()) {
+      _codes.resize(std::max<size_t>(2 * _rows, STANDARD_VECTOR_SIZE));
+    }
+    _codes[_rows] = code;
   }
 
   void AddRow(uint64_t row) {
@@ -1301,17 +1307,20 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
   input.ToUnifiedFormat(vdata);
   const auto* strings = duckdb::UnifiedVectorFormat::GetData<string_t>(vdata);
   const auto count = input.size();
+  const auto base = codes.size();
+  codes.resize(base + count);
+  auto* out = codes.data() + base;
   for (idx_t i = 0; i < count; ++i) {
     const auto idx = vdata.sel->get_index(i);
     if (!vdata.validity.RowIsValid(idx)) {
-      codes.push_back(0);
+      out[i] = 0;
       ++null_count;
       continue;
     }
     const auto& value = strings[idx];
     const std::string_view sv{value.GetData(), value.GetSize()};
     if (_dedup && _last_code != 0 && value == _last) {
-      codes.push_back(_last_code);
+      out[i] = _last_code;
       continue;
     }
     const auto next = static_cast<uint32_t>(entries.size() + 1);
@@ -1319,14 +1328,14 @@ void StringAccumulator::Add(const duckdb::Vector& input) {
       const auto [it, inserted] = _map.try_emplace(sv, next);
       _last = value;
       _last_code = it->second;
-      codes.push_back(it->second);
+      out[i] = it->second;
       if (!inserted) {
         continue;
       }
     } else {
-      codes.push_back(next);
+      out[i] = next;
     }
-    entries.push_back(sv);
+    entries.emplace_back(sv);
   }
   row_count += count;
 }

@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
+#include <string_view>
 
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -36,6 +37,7 @@ enum class NumericTransform : uint8_t {
   Delta = 2,
   Rle = 3,
   Dict = 4,
+  Ffor = 5,
 };
 
 enum class NumericLeaf : uint8_t {
@@ -48,8 +50,12 @@ inline constexpr uint8_t kNumericVersion = 1;
 inline constexpr size_t kNumericHeaderSize = 64;
 inline constexpr size_t kNumericFrameMetaSize = 40;
 inline constexpr uint8_t kNumericFrameLog2 = 14;
+inline constexpr uint8_t kNumericLeafFrameLog2 = 14;
 inline constexpr uint32_t kNumericDictMax = 65536;
 inline constexpr uint8_t kNumericShuffled = 1;
+inline constexpr uint32_t kFforFrameRows = 16384;
+inline constexpr uint8_t kFforFrameLog2 = 18;
+inline constexpr size_t kFforBlockMetaBytes = 16;
 
 constexpr bool NumericWidth(uint64_t w) noexcept {
   return w == 1 || w == 2 || w == 4 || w == 8;
@@ -73,8 +79,11 @@ static_assert(offsetof(NumericFrameMeta, base) == 16);
 static_assert(offsetof(NumericFrameMeta, min) == 24);
 static_assert(offsetof(NumericFrameMeta, max) == 32);
 
-inline constexpr size_t kNumericFrameMinAt = offsetof(NumericFrameMeta, min);
-inline constexpr size_t kNumericFrameMaxAt = offsetof(NumericFrameMeta, max);
+constexpr std::string_view NumericTransformName(NumericTransform t) noexcept {
+  constexpr std::string_view kNames[] = {"raw", "for",  "delta",
+                                         "rle", "dict", "ffor"};
+  return kNames[static_cast<uint8_t>(t)];
+}
 
 struct NumericHeader {
   uint8_t version = kNumericVersion;
@@ -110,8 +119,12 @@ struct NumericHeader {
                "numeric codec: unsupported segment version ", h.version);
     SDB_ENSURE(
       NumericWidth(h.width) && NumericWidth(h.stored) && h.stored <= h.width &&
+        (h.transform != NumericTransform::Raw || h.stored == h.width) &&
         static_cast<uint8_t>(h.transform) <=
-          static_cast<uint8_t>(NumericTransform::Dict) &&
+          static_cast<uint8_t>(NumericTransform::Ffor) &&
+        (h.transform != NumericTransform::Ffor ||
+         (h.leaf == NumericLeaf::None && !h.Shuffled() && h.stored == h.width &&
+          h.frame_log2 == kFforFrameLog2)) &&
         static_cast<uint8_t>(h.leaf) <=
           static_cast<uint8_t>(NumericLeaf::Zstd) &&
         (h.transform != NumericTransform::Rle || NumericWidth(h.run_width)) &&

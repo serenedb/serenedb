@@ -360,6 +360,70 @@ TEST_F(ColNumericCodecTest, EveryTransformIsReachable) {
   }
 }
 
+TEST_F(ColNumericCodecTest, FforPacksEveryWidth) {
+  constexpr uint64_t kRows = 40000;
+  const std::pair<duckdb::LogicalType, std::vector<unsigned>> cases[] = {
+    {duckdb::LogicalType::TINYINT, {1, 3, 5, 7}},
+    {duckdb::LogicalType::UTINYINT, {1, 3, 6, 7}},
+    {duckdb::LogicalType::SMALLINT, {1, 5, 9, 13, 15}},
+    {duckdb::LogicalType::USMALLINT, {2, 11, 15}},
+    {duckdb::LogicalType::INTEGER, {1, 7, 13, 19, 25, 31}},
+    {duckdb::LogicalType::UINTEGER, {3, 17, 29, 31}},
+    {duckdb::LogicalType::BIGINT, {1, 9, 21, 33, 47, 63}},
+    {duckdb::LogicalType::UBIGINT, {5, 27, 41, 63}},
+  };
+  for (const auto& [type, widths] : cases) {
+    const bool is_signed = type.IsSigned();
+    for (const auto w : widths) {
+      SCOPED_TRACE(type.ToString() + " width " + std::to_string(w));
+      const Gen gen = [w, is_signed](uint64_t g) -> std::optional<int64_t> {
+        const auto block = g / 1024;
+        if (block % 5 == 3) {
+          return static_cast<int64_t>(block);
+        }
+        const unsigned bits = block % 2 == 0 ? w : (w + 1) / 2;
+        const auto off = static_cast<int64_t>(Mix(g) >> (64 - bits));
+        const auto shift = static_cast<int64_t>(block % 3);
+        return is_signed ? off - (int64_t{1} << (bits - 1)) + shift
+                         : off + shift;
+      };
+      irs::MemoryDirectory dir{};
+      Write(dir, type, {.tier = irs::WriteTier::Flush}, kRows, 32768, gen);
+      Verify(dir, type, kRows, gen);
+      const auto transforms = Transforms(dir);
+      EXPECT_TRUE(std::ranges::find(transforms, "ffor/none") !=
+                  transforms.end());
+    }
+  }
+}
+
+TEST_F(ColNumericCodecTest, RunsOfEveryLength) {
+  constexpr uint64_t kRows = 50000;
+  std::vector<int64_t> values;
+  values.reserve(kRows);
+  for (uint64_t run = 0; values.size() < kRows; ++run) {
+    const auto length = 1 + run % 17;
+    const auto v = static_cast<int64_t>(run % 4) * 1'000'003;
+    for (uint64_t i = 0; i < length && values.size() < kRows; ++i) {
+      values.push_back(v);
+    }
+  }
+  const Gen gen = [&](uint64_t g) -> std::optional<int64_t> {
+    return values[g];
+  };
+  const duckdb::LogicalType types[] = {duckdb::LogicalType::INTEGER,
+                                       duckdb::LogicalType::BIGINT};
+  for (const auto& type : types) {
+    SCOPED_TRACE(type.ToString());
+    irs::MemoryDirectory dir{};
+    Write(dir, type, {}, kRows, 32768, gen);
+    Verify(dir, type, kRows, gen);
+    const auto transforms = Transforms(dir);
+    EXPECT_TRUE(std::ranges::any_of(
+      transforms, [](const auto& t) { return t.starts_with("rle/"); }));
+  }
+}
+
 TEST_F(ColNumericCodecTest, CompactsClusteredTimestamps) {
   constexpr uint64_t kRows = 60000;
   const Gen clustered = [](uint64_t g) {

@@ -320,18 +320,20 @@ bool RebuildGroup(duckdb::ClientContext& context,
   // the delete-log rather than the adopt tick is what saves the row.
   SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
 
-  // Drain and swap under one hold of the delete log, so no removal can be
-  // lost while we are swapping
-  const auto swapped = shard.SwapWithDrainedDeletes(
-    [&](std::vector<int64_t> rowids, uint64_t truncate_tick) {
+  bool truncated = false;
+  const bool replaced_ok = shard.ReplaceSegments(
+    replaced, adopted, [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
+      auto [rowids, truncate_tick] = shard.DrainDeleteLog();
       if (truncate_tick > snapshot_tick) {
-        return SwapResult::Truncated;
+        truncated = true;
+        return false;
       }
-      return shard.ReplaceSegments(replaced, adopted,
-                                   MakeRemoval(std::move(rowids)))
-               ? SwapResult::Swapped
-               : SwapResult::Failed;
+      removal = MakeRemoval(std::move(rowids));
+      return true;
     });
+  const auto swapped = truncated     ? SwapResult::Truncated
+                       : replaced_ok ? SwapResult::Swapped
+                                     : SwapResult::Failed;
   // Need explicit call here so on Publish we don't have pending transactions.
   abort_all();
   if (swapped == SwapResult::Truncated) {

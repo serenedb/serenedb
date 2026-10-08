@@ -18,13 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/crc/crc32c.h>
 #include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
 #include <deque>
 #include <duckdb/common/allocator.hpp>
-#include <duckdb/common/checksum.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -262,6 +262,32 @@ TEST_F(SearchDbWalTest, InlineRoundTrip) {
   EXPECT_EQ(std::get<0>(got.chunks[0]), 1u);  // tick
   EXPECT_EQ(std::get<1>(got.chunks[0]), 5u);  // table_id
   EXPECT_EQ(std::get<2>(got.chunks[0]), (std::vector<int32_t>{10, 20, 30}));
+}
+
+TEST_F(SearchDbWalTest, RecordTickOfEveryVarintWidthRoundTrips) {
+  const std::vector<uint64_t> ticks{1, 200, uint64_t{1} << 32,
+                                    uint64_t{1} << 63};
+  {
+    SearchDbWal wal(Fs(), _dir);
+    uint64_t prev = 0;
+    for (const auto tick : ticks) {
+      auto cdc = MakeIntCdc(Alloc(), {static_cast<int32_t>(tick % 1000)});
+      auto sec = InlineSection(/*table=*/5, *cdc);
+      EXPECT_EQ(wal.AppendCommit(std::span{&sec, 1}, tick - prev), tick);
+      prev = tick;
+    }
+  }
+  Collected got;
+  SearchDbWal wal2(Fs(), _dir);
+  EXPECT_EQ(wal2.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                         NoDeletes(), NoTruncates(), NoAdopts()),
+            ticks.back());
+  ASSERT_EQ(got.chunks.size(), ticks.size());
+  for (size_t i = 0; i < ticks.size(); ++i) {
+    EXPECT_EQ(std::get<0>(got.chunks[i]), ticks[i]);
+    EXPECT_EQ(std::get<2>(got.chunks[i]),
+              (std::vector<int32_t>{static_cast<int32_t>(ticks[i] % 1000)}));
+  }
 }
 
 // A DELETE op round-trips its encoded PK byte strings (variable-width, incl.
@@ -915,37 +941,39 @@ TEST_F(SearchDbWalTest, SegmentRecordGcdWithoutTouchingSegmentFiles) {
   }
 }
 
-void AppendPayload(
-  const std::filesystem::path& path,
-  const std::function<void(duckdb::BinarySerializer&)>& fields) {
-  duckdb::MemoryStream payload;
-  {
-    duckdb::BinarySerializer record{payload};
-    record.Begin();
-    fields(record);
-    record.End();
-  }
-  const uint64_t size = payload.GetPosition();
-  const uint64_t checksum = duckdb::Checksum(payload.GetData(), size);
+void AppendFrame(const std::filesystem::path& path, uint64_t tick,
+                 std::string_view body, uint64_t crc_tick) {
+  const uint64_t size = body.size();
+  const auto crc = static_cast<uint32_t>(absl::ExtendCrc32c(
+    absl::ComputeCrc32c(std::string_view{
+      reinterpret_cast<const char*>(&crc_tick), sizeof(crc_tick)}),
+    body));
   std::filesystem::create_directories(path.parent_path());
   std::ofstream out{path, std::ios::binary | std::ios::app};
   out.write(reinterpret_cast<const char*>(&size), sizeof(size));
-  out.write(reinterpret_cast<const char*>(&checksum), sizeof(checksum));
-  out.write(reinterpret_cast<const char*>(payload.GetData()),
-            static_cast<std::streamsize>(size));
+  out.write(reinterpret_cast<const char*>(&crc), sizeof(crc));
+  out.write(reinterpret_cast<const char*>(&tick), sizeof(tick));
+  out.write(body.data(), static_cast<std::streamsize>(body.size()));
 }
 
 void AppendRecord(
   const std::filesystem::path& path, uint64_t tick,
   const std::function<void(duckdb::BinarySerializer&)>& fields) {
-  AppendPayload(path, [&](duckdb::BinarySerializer& record) {
-    record.WriteProperty<uint64_t>(0, "tick", tick);
-    fields(record);
-  });
+  duckdb::MemoryStream body;
+  {
+    duckdb::BinarySerializer body_record{body};
+    body_record.Begin();
+    fields(body_record);
+    body_record.End();
+  }
+  AppendFrame(path, tick,
+              std::string_view{reinterpret_cast<const char*>(body.GetData()),
+                               body.GetPosition()},
+              tick);
 }
 
 void NoSections(duckdb::BinarySerializer& record) {
-  record.WriteList(1, "sections", 0,
+  record.WriteList(0, "sections", 0,
                    [](duckdb::BinarySerializer::List&, duckdb::idx_t) {});
 }
 
@@ -969,13 +997,15 @@ TEST_F(SearchDbWalTest, RecordStartsWithItsTick) {
   EXPECT_TRUE(got.chunks.empty());
 }
 
-TEST_F(SearchDbWalTest, RecordWithoutATickIsRefused) {
-  AppendPayload(SegPath(1), [](duckdb::BinarySerializer& record) {
-    record.WriteProperty<uint64_t>(7, "added_by_a_newer_release", 1);
-  });
-  const auto error = ErrorOf([&] { SearchDbWal wal(Fs(), _dir); });
-  EXPECT_NE(error.find("cannot be read"), std::string::npos) << error;
-  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+TEST_F(SearchDbWalTest, FrameWhoseTickFailsTheChecksumIsTorn) {
+  AppendRecord(SegPath(1), 1, NoSections);
+  AppendFrame(SegPath(1), /*tick=*/3, {}, /*crc_tick=*/2);
+  SearchDbWal wal(Fs(), _dir);
+  EXPECT_EQ(wal.CurrentTick(), 1u);
+  Collected got;
+  EXPECT_EQ(wal.Recover(AllExist(), CommittedAll(0), MakeCollector(got),
+                        NoDeletes(), NoTruncates(), NoAdopts()),
+            1u);
 }
 
 TEST_F(SearchDbWalTest, RecordWithAnUnknownFieldIsRefused) {
@@ -997,7 +1027,7 @@ TEST_F(SearchDbWalTest, RecordWithAnUnknownFieldIsRefused) {
 TEST_F(SearchDbWalTest, RecordWithAnUnknownOpKindIsRefused) {
   AppendRecord(SegPath(1), 1, [](duckdb::BinarySerializer& record) {
     record.WriteList(
-      1, "sections", 1,
+      0, "sections", 1,
       [](duckdb::BinarySerializer::List& sections, duckdb::idx_t) {
         sections.WriteObject([](duckdb::BinarySerializer& section) {
           section.WriteProperty<uint64_t>(0, "table_id", 5);
@@ -1020,14 +1050,14 @@ TEST_F(SearchDbWalTest, RecordWithAnUnknownOpKindIsRefused) {
   EXPECT_NE(error.find("unknown op kind 9"), std::string::npos) << error;
 }
 
-TEST_F(SearchDbWalTest, GcKeepsASegmentItCannotRead) {
+TEST_F(SearchDbWalTest, GcDecidesOnFrameTicksWithoutParsingBodies) {
   SearchDbWal wal(Fs(), _dir);
   wal.RegisterShard(duckdb::idx_t{5}, 0);
-  AppendPayload(SegPath(1), [](duckdb::BinarySerializer& record) {
-    record.WriteProperty<uint64_t>(7, "added_by_a_newer_release", 1);
-  });
+  AppendFrame(SegPath(1), /*tick=*/1, "not a record body", /*crc_tick=*/1);
+  AppendFrame(SegPath(20), /*tick=*/20, "not a record body", /*crc_tick=*/20);
   wal.OnShardCommit(duckdb::idx_t{5}, 10);
-  EXPECT_TRUE(std::filesystem::exists(SegPath(1)));
+  EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
+  EXPECT_TRUE(std::filesystem::exists(SegPath(20)));
 }
 
 }  // namespace

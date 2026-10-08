@@ -159,7 +159,7 @@ class SearchTableTransaction {
   // Builds the shard sections, reserves the tick band (width = max over shards
   // of sum-over-trxs(GetQueries()+1)), appends the record, and returns the
   // record tick (the band top) -- the tick every shard's last trx commits at.
-  uint64_t AppendCommit();
+  uint64_t AppendCommit(absl::AnyInvocable<void(uint64_t) noexcept> on_durable);
 
   // Releases every writer registration this transaction holds. Idempotent, so
   // Commit / Abort / the destructor can all call it.

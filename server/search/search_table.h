@@ -135,32 +135,16 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   void Commit() {
     _writer->RefreshCommit();
-    _wal->OnShardCommit(GetTableId(), _last_committed_tick);
+    _wal->OnShardCommit(GetTableId(), CommittedTick());
   }
 
-  void BeginClear() {
-    absl::MutexLock lock{&_refresh_mutex};
-    SDB_ASSERT(_clear_bound == irs::writer_limits::kMaxTick);
-    _clear_bound = _wal->CurrentTick();
-  }
-
-  void AbandonClear() {
-    absl::MutexLock lock{&_refresh_mutex};
-    _clear_bound = irs::writer_limits::kMaxTick;
-  }
-
-  void Clear(uint64_t tick) {
-    absl::MutexLock lock{&_refresh_mutex};
-    _writer->Clear(tick);
-    if (tick > _last_committed_tick) {
-      _last_committed_tick = tick;
-    }
-    _clear_bound = irs::writer_limits::kMaxTick;
-  }
+  void Clear(uint64_t tick) { _writer->Clear(tick); }
 
   SearchDbWal& Wal() noexcept { return *_wal; }
 
-  uint64_t CommittedTick() const noexcept { return _last_committed_tick; }
+  uint64_t CommittedTick() const noexcept {
+    return _last_committed_tick.load(std::memory_order_acquire);
+  }
 
   // --- Background maintenance ---
   // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
@@ -266,24 +250,15 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     return _build_truncate_tick.load(std::memory_order_acquire) > tick;
   }
 
-  void EnterCommitGap() ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _commit_gap_mutex.ReaderLock();
-  }
-  void LeaveCommitGap() noexcept ABSL_NO_THREAD_SAFETY_ANALYSIS {
-    _commit_gap_mutex.ReaderUnlock();
-  }
-
-  template<typename Fn>
-  auto SwapWithDrainedDeletes(Fn&& swap) {
-    absl::WriterMutexLock gap{&_commit_gap_mutex};
+  std::pair<std::vector<int64_t>, uint64_t> DrainDeleteLog() {
     absl::MutexLock lock{&_delete_log_mutex};
-    return swap(std::exchange(_delete_log, {}),
-                _build_truncate_tick.load(std::memory_order_relaxed));
+    return {std::exchange(_delete_log, {}),
+            _build_truncate_tick.load(std::memory_order_relaxed)};
   }
 
   std::pair<irs::DirectoryReader, uint64_t> GetSnapshotWithTick() {
     absl::MutexLock lock{&_refresh_mutex};
-    return {_writer->GetSnapshot(), _last_committed_tick};
+    return {_writer->GetSnapshot(), CommittedTick()};
   }
   void CloseDeleteLog();
 
@@ -293,9 +268,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   bool ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
-    irs::IndexWriter::QueryContext::FilterPtr removal = nullptr) {
-    return _writer->ReplaceSegments(replaced, adopted_metas,
-                                    std::move(removal));
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
+      removal_provider) {
+    return _writer->ReplaceSegments(replaced, adopted_metas, removal_provider);
   }
 
  private:
@@ -323,15 +298,13 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::optional<irs::ScorerOptions> _topk_options;
   std::unique_ptr<irs::Scorer> _topk_scorer;
   SearchDbWal* _wal = nullptr;
-  uint64_t _last_committed_tick = 0;
+  std::atomic<uint64_t> _last_committed_tick{0};
 
   // Background maintenance state (mirrors InvertedIndexStorage). A zero
   // refresh/compaction interval disables the loops.
   TasksSettings _maint_settings;
   MaintenanceCounters _maintenance;
   absl::Mutex _refresh_mutex;
-  uint64_t _clear_bound ABSL_GUARDED_BY(_refresh_mutex) =
-    irs::writer_limits::kMaxTick;
 
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
@@ -342,7 +315,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   absl::Mutex _delete_log_mutex;
   std::vector<int64_t> _delete_log ABSL_GUARDED_BY(_delete_log_mutex);
   std::atomic<uint64_t> _build_truncate_tick{0};
-  absl::Mutex _commit_gap_mutex;
   // How often a waiting rebuild surfaces to check for cancellation. The
   // CondVar does the blocking; this only bounds how long a cancelled statement
   // keeps waiting.

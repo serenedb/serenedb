@@ -24,6 +24,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include <atomic>
 #include <cstdint>
@@ -457,9 +458,10 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t CurrentSegmentId() const noexcept;
 
-  bool ReplaceSegments(std::span<const std::string_view> replaced,
-                       std::span<const std::string_view> adopted_metas,
-                       QueryContext::FilterPtr removal = nullptr);
+  bool ReplaceSegments(
+    std::span<const std::string_view> replaced,
+    std::span<const std::string_view> adopted_metas,
+    absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
 
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});

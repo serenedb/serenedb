@@ -208,7 +208,7 @@ void SegmentReaderImpl::ColumnData::Open(const Directory& dir,
                                          const IndexReaderOptions& options) {
   SDB_ASSERT(options.db);
   col_reader =
-    std::make_unique<ColReader>(dir, meta.name, *options.db, IOAdvice::RANDOM);
+    std::make_unique<ColReader>(dir, meta.name, *options.db, IOAdvice::NORMAL);
   idx_reader = std::make_unique<IdxReader>(dir, meta.name);
 }
 

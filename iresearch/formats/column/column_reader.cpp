@@ -67,6 +67,8 @@
 namespace irs {
 namespace {
 
+constexpr duckdb::idx_t kSparseReadRatio = 32;
+
 void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
                               const ColumnBlockMeta& m) {
   s.WriteProperty(0, "compression_type", static_cast<uint8_t>(m.codec->type));
@@ -381,7 +383,17 @@ ColumnReader::ScanState ColumnReader::InitScan(ReadContext& ctx) const {
   return s;
 }
 
-void ColumnReader::BeginScanVector(ScanState& s) const {
+void ColumnReader::OpenBlock(ScanState& s, duckdb::idx_t reads) const {
+  s.segments.emplace_back(Open(s.window, *s.ctx, &s));
+  const auto rows = s.window.end - s.window.begin;
+  if (reads < STANDARD_VECTOR_SIZE && reads * kSparseReadRatio < rows) {
+    s.segments.back()->InitializeSparseScan(s.st);
+  } else {
+    s.segments.back()->InitializeScan(s.st);
+  }
+}
+
+void ColumnReader::BeginScanVector(ScanState& s, duckdb::idx_t reads) const {
   if (s.st.offset_in_column == s.window.end - s.window.begin &&
       NextSegment(s.window)) {
     s.initialized = false;
@@ -392,8 +404,7 @@ void ColumnReader::BeginScanVector(ScanState& s) const {
     if (s.st.scan_state) {
       s.st.previous_states.emplace_back(std::move(s.st.scan_state));
     }
-    s.segments.emplace_back(Open(s.window, *s.ctx, &s));
-    s.segments.back()->InitializeScan(s.st);
+    OpenBlock(s, reads);
     s.st.internal_index = 0;
     s.initialized = true;
   }
@@ -437,7 +448,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
                                        duckdb::idx_t remaining,
                                        duckdb::ScanVectorType scan_type,
                                        duckdb::idx_t base_result_offset) const {
-  BeginScanVector(s);
+  BeginScanVector(s, remaining);
   const auto initial = remaining;
   while (remaining > 0) {
     const auto scan_count = std::min<duckdb::idx_t>(
@@ -454,8 +465,7 @@ duckdb::idx_t ColumnReader::ScanVector(ScanState& s, duckdb::Vector& result,
         break;
       }
       s.st.previous_states.emplace_back(std::move(s.st.scan_state));
-      s.segments.emplace_back(Open(s.window, *s.ctx, &s));
-      s.segments.back()->InitializeScan(s.st);
+      OpenBlock(s, remaining);
       s.st.offset_in_column = 0;
       s.st.internal_index = 0;
     }
@@ -518,7 +528,7 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     ColumnReader::Scan(s, out, span);
     return;
   }
-  BeginScanVector(s);
+  BeginScanVector(s, hits);
   if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
     const auto codec = _segments[s.window.block].codec->type;
     const auto bands = column_internal::BandsFor(codec, _type);

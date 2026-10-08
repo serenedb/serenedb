@@ -108,6 +108,8 @@ class Psycopg2Driver:
 
 DRIVERS = [Psycopg3Driver(), Psycopg2Driver()]
 
+pytestmark = pytest.mark.exclusive
+
 
 @pytest.fixture(scope="module")
 def obs():

@@ -6,6 +6,7 @@ control substitution on
 # connection. The database's size does, so pragma_database_size leaves that
 # database out and lists the rest. The transaction then rolls back cleanly:
 # its remote transaction never began.
+# exclusive
 
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS lrda_${__DATABASE__} (TYPE postgres);

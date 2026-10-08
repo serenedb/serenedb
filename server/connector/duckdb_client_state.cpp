@@ -188,6 +188,10 @@ ConnectionContext* CurrentCommittingContext() noexcept {
 
 void SereneDBClientState::TransactionPreCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
+  // Revert SET LOCAL variables while the DuckDB transaction is still active
+  // so catalog lookups performed by custom-impl settings (e.g. search_path)
+  // can succeed via their normal set_local path.
+  _connection_ctx->PreCommit();
   // Pre-durability crash point: fires before the engine commit, so the
   // transaction must be absent after restart. Only write transactions
   // crash (the fault-arming SET itself must survive).
@@ -196,10 +200,6 @@ void SereneDBClientState::TransactionPreCommit(
       SDB_IMMEDIATE_ABORT();
     }
   }
-  // Revert SET LOCAL variables while the DuckDB transaction is still active
-  // so catalog lookups performed by custom-impl settings (e.g. search_path)
-  // can succeed via their normal set_local path.
-  _connection_ctx->PreCommit();
   if (InvertedStoreIndex::AnyBound()) {
     for (auto& db : transaction.OpenedTransactions()) {
       if (db.get().GetCatalog().GetCatalogType() !=

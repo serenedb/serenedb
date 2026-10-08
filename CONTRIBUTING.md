@@ -208,7 +208,7 @@ SQL examples are backed by sqllogic tests, so an example that stops working fail
 
 ## Storage compatibility
 
-These rules cover everything SereneDB writes: database files and their write-ahead logs, the search-table WAL and search index directories.
+These rules cover everything SereneDB writes: database files and their write-ahead logs, and search index directories.
 
 Files are not reproducible byte for byte, and making them so is not a goal. The same data and statements can write different bytes: hash tables iterate in a different order in every process, and parallel builds, checkpoints, refreshes and merges run in a different order every time. Compatibility is about what a reader gets back, so compatibility tests compare contents, never the bytes of a file.
 
@@ -216,7 +216,7 @@ A file never holds stale memory, though: a compression method writes every byte 
 
 Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
 
-- The headers of each database file (`engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.
+- The headers of each database file (`engine_duckdb/<oid>.db`). The file's write-ahead log follows it, including the entries of the database's search tables.
 - `segments_N` of each search index directory. The directory's other files are only reached through it.
 
 SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
@@ -260,11 +260,11 @@ A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`
 
 ### Serialized structs
 
-Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. An aggregate is a `BinarySerializer` object whose field ids are the positions of its members, and a member equal to its value in a value-initialized aggregate is not written. A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
+Blobs stored in catalog entries (tokenizer configs, the inverted index payload) and the view-backed index manifest are written with `irs::utils::WriteTuple` and read with `ReadTuple`. An aggregate is a `BinarySerializer` object whose field ids are the positions of its members, and a member equal to its value in a value-initialized aggregate is not written. A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
 
-### Search-table WAL
+### Search tables in the write-ahead log
 
-Each `.swal` frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
+A commit logs each search table it changed into its database's write-ahead log, inside the same commit as the rest of the transaction: `USE_TABLE` with the table's oid and the commit's `tick`, then the changes in the order they were made. `ADOPT_SEGMENTS` names the meta files of segments flushed and fsynced before the commit, `INSERT_TUPLE` carries the rows still buffered and, in its `row_start` field (id 16486), the generated key of its first row, one `DELETE_TUPLE` per removing statement carries the generated keys it removed, and `TRUNCATE_TABLE` empties the table. Replay applies a table's entries only when their `tick` is above the one its last refresh made durable, and a checkpoint refreshes every search table before it drops the log.
 
 ## VSCode Setup
 

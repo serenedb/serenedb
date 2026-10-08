@@ -230,16 +230,6 @@
           "categoryLabel": "Server"
         },
         {
-          "name": "skip_search_recovery",
-          "flag": "--skip_search_recovery",
-          "type": "",
-          "defaultValue": "false",
-          "description": "Do not replay the search-table WAL at startup; search tables come up with what their last refresh made durable.",
-          "source": "server",
-          "category": "server",
-          "categoryLabel": "Server"
-        },
-        {
           "name": "tls_ca",
           "flag": "--tls_ca",
           "type": "",

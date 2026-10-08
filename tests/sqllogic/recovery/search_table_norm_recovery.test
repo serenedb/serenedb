@@ -33,7 +33,7 @@ VACUUM (REFRESH_TABLE) nb;
 # never refresh-published; recovery must re-index it through the norm-featured
 # field (which needs field options).
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO nb VALUES (3, 'fox runs fast');

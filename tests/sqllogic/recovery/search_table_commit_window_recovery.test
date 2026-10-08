@@ -1,0 +1,83 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE cw_rows (id BIGINT PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE TABLE cw_search (id BIGINT, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+SET sdb_faults = 'crash_before_commit';
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO cw_rows VALUES (1, 'before');
+
+statement ok
+INSERT INTO cw_search VALUES (1, 'before');
+
+statement error connection closed
+COMMIT;
+
+connection after_before_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM cw_rows) AS r, (SELECT count(*) FROM cw_search) AS s;
+----
+r	s
+0	0
+
+connection after_before_commit
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_before_commit
+statement ok
+BEGIN;
+
+connection after_before_commit
+statement ok
+INSERT INTO cw_rows VALUES (2, 'after');
+
+connection after_before_commit
+statement ok
+INSERT INTO cw_search VALUES (2, 'after');
+
+connection after_before_commit
+statement error connection closed
+COMMIT;
+
+connection after_after_commit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM cw_rows) AS r, (SELECT count(*) FROM cw_search) AS s;
+----
+r	s
+1	1
+
+connection after_after_commit
+query
+SELECT id, body FROM cw_search;
+----
+id	body
+2	after
+
+connection after_after_commit
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_after_commit
+statement error connection closed
+INSERT INTO cw_search VALUES (3, 'alone');
+
+connection after_autocommit
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM cw_search ORDER BY id;
+----
+id	body
+2	after
+3	alone

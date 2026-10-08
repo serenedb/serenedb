@@ -43,15 +43,12 @@
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
 #include "search/inverted_index_storage.h"
-#include "search/search_db_wal.h"
-#include "search/search_table_recovery.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
 ABSL_DECLARE_FLAG(uint64_t, background_threads);
-ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 
 namespace sdb::search {
 
@@ -81,13 +78,6 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
 
 void SearchEngine::start() {
   StartInvertedIndexTasks();
-  if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
-    RunSearchTableRecovery();
-  }
-  // Only now that every shard is fully replayed + committed do we start the
-  // search-table background loops -- never while recovery is still rebuilding a
-  // table, or a background commit's WAL GC could reclaim un-replayed chunks.
-  StartSearchTableMaintenance();
   SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
@@ -95,9 +85,6 @@ void SearchEngine::stop() {
   _stopping.store(true, std::memory_order_release);
   _loops.Done();
   _loops.Wait();
-  // Close the per-database WALs (flush + release file handles) before shutdown.
-  absl::MutexLock lock(&_db_wals_mu);
-  _db_wals.clear();
 }
 
 template<class Storage>
@@ -122,23 +109,6 @@ std::filesystem::path SearchEngine::GetPersistedPath(
   path /= irs::StaticStrings::kSearchRoot;
   path /= absl::StrCat(database_id);
   return path;
-}
-
-SearchDbWal& SearchEngine::GetDbWal(duckdb::idx_t database_id) {
-  absl::MutexLock lock(&_db_wals_mu);
-  auto it = _db_wals.find(database_id);
-  if (it == _db_wals.end()) {
-    // Borrow the process-wide FileSystem (owned by the DuckDB instance, which
-    // outlives the engine). The WAL lives at GetPersistedPath(db)/wal/.
-    auto& fs = duckdb::FileSystem::GetFileSystem(
-      irs::DuckDBEngine::Instance().instance());
-    auto wal_dir = GetPersistedPath(database_id) / "wal";
-    it = _db_wals
-           .emplace(database_id,
-                    std::make_unique<SearchDbWal>(fs, std::move(wal_dir)))
-           .first;
-  }
-  return *it->second;
 }
 
 }  // namespace sdb::search

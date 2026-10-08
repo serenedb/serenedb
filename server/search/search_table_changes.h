@@ -22,19 +22,20 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "connector/column_id.h"
-#include "search/search_db_wal.h"
 
 namespace duckdb {
 
@@ -42,6 +43,11 @@ class Catalog;
 
 }  // namespace duckdb
 namespace sdb::search {
+
+struct InlinePk {
+  uint64_t base;
+  uint64_t count;
+};
 
 // Per-search-table, per-transaction write buffer.
 //
@@ -65,10 +71,11 @@ struct LocalTableChangesEntry {
   };
 
   using EmitFn = absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t) const>;
+  using ApplyFn = absl::AnyInvocable<void(Op&) const>;
 
   // The buffer. `pk_segments` bands it one entry per Sink chunk.
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
-  std::vector<SearchDbWal::InlinePk> pk_segments;
+  std::vector<InlinePk> pk_segments;
   // The shard's stored columns, in chunk order, and the catalog its sink is
   // built against -- both captured with the first buffered chunk so the rows
   // can be replayed into iresearch later, from a commit that never saw the
@@ -79,7 +86,7 @@ struct LocalTableChangesEntry {
   std::vector<Op> ops;
   size_t applied_ops = 0;
   // Segments a bulk statement flushed, for the record to reference by name.
-  std::vector<SearchDbWal::SegmentRef> segments;
+  std::vector<std::string> segments;
 
   void AppendInsertChunk(duckdb::BufferManager& bm,
                          const duckdb::vector<duckdb::LogicalType>& types,
@@ -123,7 +130,7 @@ struct LocalTableChangesEntry {
     op.clears_shard = clears_shard;
   }
 
-  void AppendSegments(std::vector<SearchDbWal::SegmentRef>&& refs) {
+  void AppendSegments(std::vector<std::string>&& refs) {
     if (refs.empty()) {
       return;
     }
@@ -146,13 +153,38 @@ struct LocalTableChangesEntry {
     return collection == nullptr ? 0 : collection->AllocationSize();
   }
 
-  // Replays the buffered rows in append order with the rowid each chunk was
-  // keyed from.
-  void VisitBufferedRows(const EmitFn& emit) const {
-    if (!HasBufferedRows()) {
-      return;
+  void Visit(size_t first_op, const EmitFn& emit, const ApplyFn& apply) {
+    auto op = ops.begin() + first_op;
+    auto apply_until = [&](size_t band) {
+      for (; op != ops.end() && op->band_watermark <= band; ++op) {
+        apply(*op);
+      }
+    };
+    size_t band = 0;
+    uint64_t band_rows = 0;
+    if (collection != nullptr) {
+      for (auto& chunk : collection->Chunks()) {
+        for (duckdb::idx_t offset = 0; offset < chunk.size();) {
+          if (band_rows == 0) {
+            apply_until(band);
+          }
+          const auto& pk = pk_segments[band];
+          const auto end = std::min<duckdb::idx_t>(
+            chunk.size(), offset + pk.count - band_rows);
+          duckdb::DataChunk slice;
+          slice.InitializeEmpty(collection->Types());
+          slice.Slice(chunk, offset, end);
+          emit(slice, pk.base + band_rows);
+          band_rows += end - offset;
+          offset = end;
+          if (band_rows == pk.count) {
+            ++band;
+            band_rows = 0;
+          }
+        }
+      }
     }
-    VisitInlineSegments(*collection, pk_segments, emit);
+    apply_until(std::numeric_limits<size_t>::max());
   }
 
   // Drops the buffered rows once a flush has taken ownership of them. The ops

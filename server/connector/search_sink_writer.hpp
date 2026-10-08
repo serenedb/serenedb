@@ -390,4 +390,7 @@ void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                                    duckdb::idx_t table_id,
                                    duckdb::ClientContext& context);
 
+void RemoveGeneratedRows(irs::IndexWriter::Transaction& trx,
+                         std::span<const int64_t> rows);
+
 }  // namespace sdb::connector

@@ -79,38 +79,6 @@ std::optional<persistence::InvertedIndexData> Unpack(
     "inverted index", index, duckdb::StringValue::Get(it->second));
 }
 
-std::string IndexSql(const duckdb::CreateIndexInfo& info, bool view_backed) {
-  auto copy = info.duckdb::CreateIndexInfo::Copy();
-  auto& index = copy->Cast<duckdb::CreateIndexInfo>();
-  index.options.erase(kPayloadOption);
-  if (!view_backed) {
-    index.options.erase(kReindexIntervalSetting);
-  }
-  return index.ToString();
-}
-
-class InvertedIndexInfo final : public duckdb::CreateIndexInfo {
- public:
-  InvertedIndexInfo(duckdb::CreateIndexInfo& info, bool view_backed)
-    : duckdb::CreateIndexInfo{info}, _view_backed{view_backed} {
-    info.CopyProperties(*this);
-    expressions = std::move(info.expressions);
-    parsed_expressions = std::move(info.parsed_expressions);
-    where_clause = std::move(info.where_clause);
-  }
-
-  duckdb::unique_ptr<duckdb::CreateInfo> Copy() const final {
-    auto copy = duckdb::CreateIndexInfo::Copy();
-    return duckdb::make_uniq<InvertedIndexInfo>(
-      copy->Cast<duckdb::CreateIndexInfo>(), _view_backed);
-  }
-
-  std::string ToString() const final { return IndexSql(*this, _view_backed); }
-
- private:
-  bool _view_backed;
-};
-
 std::string TopKScorerOption(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options) {
   const auto* value = FindOption(options, kOptimizeTopKSetting);
@@ -465,17 +433,14 @@ InvertedIndexEntry::InvertedIndexEntry(
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
-  auto base = duckdb::IndexCatalogEntry::GetInfo();
-  auto info = duckdb::make_uniq<InvertedIndexInfo>(
-    base->Cast<duckdb::CreateIndexInfo>(), ViewBacked());
-  info->options.insert_or_assign(kPayloadOption, Pack(ToPersisted()));
-  return std::move(info);
+  auto info = duckdb::IndexCatalogEntry::GetInfo();
+  info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
+    kPayloadOption, Pack(ToPersisted()));
+  return info;
 }
 
 std::string InvertedIndexEntry::ToSQL() const {
-  return IndexSql(
-    duckdb::IndexCatalogEntry::GetInfo()->Cast<duckdb::CreateIndexInfo>(),
-    ViewBacked());
+  return duckdb::IndexCatalogEntry::GetInfo()->ToString();
 }
 
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {

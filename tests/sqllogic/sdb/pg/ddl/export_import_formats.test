@@ -204,5 +204,3 @@ DROP DATABASE exf_parquet;
 
 statement ok
 DROP DATABASE exf_src;
-
-

@@ -374,7 +374,8 @@ std::string RenderChain(const Chain& chain) {
         stages.push_back(absl::StrCat(kKeywordName, "()"));
         continue;
       case Stage::Kind::Sql:
-        stages.push_back(absl::StrCat("(lambda ", kInput, ": ", stage.name, ")"));
+        stages.push_back(
+          absl::StrCat("(lambda ", kInput, ": ", stage.name, ")"));
         continue;
       case Stage::Kind::Template:
         break;

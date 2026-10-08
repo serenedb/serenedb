@@ -1,0 +1,89 @@
+control substitution on
+
+
+statement ok
+CREATE OR REPLACE SECRET iceberg_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+DETACH DATABASE IF EXISTS iceberg_${__DATABASE__};
+
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS iceberg_${__DATABASE__} (
+  TYPE ICEBERG,
+  URI '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'none'
+);
+
+
+statement ok
+CREATE SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE iceberg_${__DATABASE__}.${__DATABASE__}.stats (d DOUBLE, f FLOAT, s VARCHAR);
+
+
+statement ok
+SET enable_logging = true;
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+INSERT INTO iceberg_${__DATABASE__}.${__DATABASE__}.stats VALUES
+  ('NaN', 'NaN', 'pudge'), (1.5, 2.5, 'clickclack'), ('NaN', 3.5, NULL);
+
+
+query
+SELECT count(*) AS unknown_stats FROM duckdb_logs()
+WHERE message LIKE 'Did not write column stats%';
+----
+unknown_stats
+0
+
+
+query
+SELECT column_name, nan_value_count, null_value_count, value_count
+FROM iceberg_column_stats('iceberg_${__DATABASE__}.${__DATABASE__}.stats')
+ORDER BY column_name;
+----
+column_name	nan_value_count	null_value_count	value_count
+d	2	0	3
+f	1	0	3
+s	NULL	1	3
+
+
+statement ok
+RESET logging_storage;
+
+
+statement ok
+RESET enable_logging;
+
+
+statement ok
+DROP TABLE iceberg_${__DATABASE__}.${__DATABASE__}.stats;
+
+
+statement ok
+DROP SCHEMA iceberg_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DETACH DATABASE iceberg_${__DATABASE__};

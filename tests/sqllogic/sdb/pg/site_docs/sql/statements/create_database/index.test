@@ -72,3 +72,14 @@ n
 
 statement error db error: ERROR: cannot drop the currently open database
 DROP DATABASE app_production;
+
+# DOCS_TEST_END
+
+statement ok
+USE postgres;
+
+statement ok
+DROP DATABASE app_production;
+
+statement ok
+DROP DATABASE app_archive;

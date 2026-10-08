@@ -45,6 +45,11 @@ class TokenPhraseSlots {
  public:
   static constexpr size_t kMaxBatch = 512;
 
+  struct Hit {
+    doc_id_t doc;
+    PhraseVerdict verdict;
+  };
+
   template<typename ApproxArgs>
   TokenPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
                    const TokenPhraseQuery& query, bool count)
@@ -62,10 +67,11 @@ class TokenPhraseSlots {
   doc_id_t Seek(doc_id_t target)
     requires requires(Approx& approx, doc_id_t doc) { approx.Seek(doc); }
   {
-    const auto it = std::lower_bound(_docs.begin() + _pos, _docs.end(), target);
-    _pos = static_cast<size_t>(it - _docs.begin());
-    if (it != _docs.end()) {
-      return *it;
+    const auto it = std::ranges::lower_bound(std::span{_hits}.subspan(_pos),
+                                             target, {}, &Hit::doc);
+    _pos = static_cast<size_t>(it - std::span{_hits}.begin());
+    if (_pos != _hits.size()) {
+      return it->doc;
     }
     _batch = 1;
     return Fill(_end ? doc_limits::eof() : _approx.Seek(target));
@@ -74,8 +80,8 @@ class TokenPhraseSlots {
   doc_id_t Next(doc_id_t)
     requires requires(Approx& approx) { approx.Next(); }
   {
-    if (++_pos < _docs.size()) {
-      return _docs[_pos];
+    if (++_pos < _hits.size()) {
+      return _hits[_pos].doc;
     }
     _batch = std::min(_batch * 2, kMaxBatch);
     return Fill(_end ? doc_limits::eof() : _approx.Next());
@@ -88,10 +94,12 @@ class TokenPhraseSlots {
   }
 
   bool Match(doc_id_t doc) {
-    if (_pos < _docs.size() && _docs[_pos] == doc) {
-      _verdict = _verdicts[_pos];
+    if (_pos < _hits.size() && _hits[_pos].doc == doc) {
+      _verdict = _hits[_pos].verdict;
     } else {
-      Check({&doc, 1}, {&_verdict, 1});
+      Hit hit{.doc = doc};
+      Check({&hit, 1});
+      _verdict = hit.verdict;
     }
     return _verdict.freq != 0;
   }
@@ -106,46 +114,44 @@ class TokenPhraseSlots {
 
  private:
   doc_id_t Fill(doc_id_t first) {
-    _docs.clear();
+    _hits.clear();
     _pos = 0;
     if (doc_limits::eof(first)) {
       _end = true;
       return first;
     }
-    _docs.push_back(first);
-    while (_docs.size() < _batch) {
+    _hits.push_back({.doc = first});
+    while (_hits.size() < _batch) {
       const auto doc = _approx.Next();
       if (doc_limits::eof(doc)) {
         _end = true;
         break;
       }
-      _docs.push_back(doc);
+      _hits.push_back({.doc = doc});
     }
-    _verdicts.resize(_docs.size());
-    Check(_docs, _verdicts);
+    Check(_hits);
     return first;
   }
 
-  void Check(std::span<const doc_id_t> docs,
-             std::span<PhraseVerdict> verdicts) {
-    SDB_ASSERT(docs.size() <= STANDARD_VECTOR_SIZE);
-    auto n = docs.size();
-    while (n != 0 && docs[n - 1] - doc_limits::min() >= _column->RowCount()) {
+  void Check(std::span<Hit> hits) {
+    SDB_ASSERT(hits.size() <= STANDARD_VECTOR_SIZE);
+    auto n = hits.size();
+    while (n != 0 &&
+           hits[n - 1].doc - doc_limits::min() >= _column->RowCount()) {
       --n;
     }
-    std::ranges::fill(verdicts.subspan(n), PhraseVerdict{});
     if (n == 0) {
       return;
     }
-    const uint64_t anchor = docs.front() - doc_limits::min();
+    const auto first = hits.front().doc;
     for (size_t i = 0; i != n; ++i) {
-      _sel.set_index(i, docs[i] - docs.front());
+      _sel.set_index(i, hits[i].doc - first);
     }
     auto& out = _out.Reset();
-    _column->GatherScatter(_state, anchor, _sel, n, out, 0);
+    _column->GatherScatter(_state, first - doc_limits::min(), _sel, n, out, 0);
     _check.Bind(out, n);
     for (size_t i = 0; i != n; ++i) {
-      _check.Check(i, verdicts[i]);
+      _check.Check(i, hits[i].verdict);
     }
   }
 
@@ -157,8 +163,7 @@ class TokenPhraseSlots {
   duckdb::SelectionVector _sel;
   PhraseCheck _check;
   PhraseVerdict _verdict;
-  std::vector<doc_id_t> _docs;
-  std::vector<PhraseVerdict> _verdicts;
+  std::vector<Hit> _hits;
   size_t _pos = 0;
   size_t _batch = 1;
   bool _end = false;

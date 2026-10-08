@@ -29,9 +29,14 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/geo/coding.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
+#include <iresearch/utils/geo/shape_container.hpp>
 #include <memory>
 #include <optional>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 #include "geo_test_helpers.hpp"
 #include "tests_shared.hpp"
@@ -1925,6 +1930,62 @@ TEST(GeoJsonTokenizerShapeTest, rejectsShapeVsTypeMismatch) {
     .PutXY(0.0, 1.0)
     .PutXY(0.0, 0.0);
   EXPECT_FALSE(FillGeoTermsWKB(*geo, b.View()).has_value());
+}
+
+TEST(GeoJsonTokenizerShapeTest, storedShapeDecodesToTheParsedShape) {
+  constexpr std::string_view kShapes[] = {
+    R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[2,4],[4,4],[4,2],[2,2]]]})",
+    R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[2,2],[4,2],[4,4],[2,4],[2,2]]]})",
+    R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[1,1],[1,2],[2,2],[2,1],[1,1]],[[5,5],[5,6],[6,6],[6,5],[5,5]]]})",
+    R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[1,1],[1,2],[2,2],[2,1],[1,1]],[[5,5],[6,5],[6,6],[5,6],[5,5]],[[7,1],[7,2],[8,2],[8,1],[7,1]]]})",
+    R"({"type":"MultiPolygon","coordinates":[[[[0,0],[1,0],[1,1],[0,1],[0,0]]],[[[5,5],[6,5],[6,6],[5,6],[5,5]]]]})",
+    R"({"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[4,4],[4,6],[6,6],[6,4],[4,4]]]]})",
+    R"({"type":"MultiPolygon","coordinates":[[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[4,4],[4,6],[6,6],[6,4],[4,4]]],[[[20,20],[30,20],[30,30],[20,30],[20,20]]]]})",
+    R"({"type":"MultiLineString","coordinates":[[[0,0],[1,1],[2,0]]]})",
+    R"({"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[2,2],[3,3],[4,2]],[[5,5],[6,6],[7,5],[8,6],[9,5]]]})",
+    R"({"type":"MultiLineString","coordinates":[[[0,0],[1,1]],[[2,2],[3,3]]]})",
+    R"({"type":"LineString","coordinates":[[0,0],[1,1],[2,0]]})",
+    R"({"type":"MultiPoint","coordinates":[[0,0],[1,1],[2,0]]})",
+    R"({"type":"Point","coordinates":[1,2]})",
+  };
+  for (const auto coding : {GeoJsonTokenizer::Coding::S2Point,
+                            GeoJsonTokenizer::Coding::S2LatLngF64,
+                            GeoJsonTokenizer::Coding::S2LatLngU32}) {
+    GeoJsonTokenizer::Options opts;
+    opts.type = GeoJsonTokenizer::Type::Shape;
+    opts.coding = coding;
+    auto a = tests::MakeAnalyzer<irs::analysis::GeoJsonTokenizer>(opts);
+    ASSERT_NE(nullptr, a);
+    for (const auto shape : kShapes) {
+      SCOPED_TRACE(testing::Message()
+                   << "coding " << std::to_underlying(coding) << " " << shape);
+      irs::bstring store;
+      ASSERT_TRUE(CollectGeoTerms(
+                    [&](irs::TokenSink& sink) {
+                      return a->Fill(
+                        duckdb::string_t{shape.data(),
+                                         static_cast<uint32_t>(shape.size())},
+                        sink, {irs::TokenLayout::TermsPos});
+                    },
+                    &store)
+                    .has_value());
+      Decoder decoder{store.data(), store.size()};
+      irs::geo::ShapeContainer decoded;
+      std::vector<S2Point> points;
+      ASSERT_TRUE(decoded.Decode(decoder, points));
+      EXPECT_EQ(0U, decoder.avail());
+
+      simdjson::ondemand::parser parser;
+      const simdjson::padded_string json{shape};
+      auto doc = parser.iterate(json);
+      irs::geo::ShapeContainer expected;
+      std::vector<S2LatLng> cache;
+      ASSERT_TRUE(irs::geo::ParseShape<irs::geo::Parsing::GeoJson>(
+        doc.get_value(), expected, cache,
+        irs::geo::coding::Options{std::to_underlying(coding)}, nullptr));
+      EXPECT_TRUE(decoded.equals(expected));
+    }
+  }
 }
 
 TEST(GeoPointTokenizerShapeTest, tokenizePoint) {

@@ -47,6 +47,8 @@ class CompressionFunction;
 }  // namespace duckdb
 namespace irs {
 
+class BlockDictionaryCache;
+
 struct BlockWindow {
   size_t block = 0;
   duckdb::idx_t begin = 0;
@@ -149,12 +151,13 @@ class ColumnReader {
     ReadContext* ctx = nullptr;
     size_t opened_block = std::numeric_limits<size_t>::max();
     size_t advised_end = 0;
+    uint64_t lead = 0;
     bool initialized = false;
     duckdb::SelectionVector sel;
     std::unique_ptr<VectorScratch> list_offsets;
   };
 
-  virtual ~ColumnReader() = default;
+  virtual ~ColumnReader();
 
   static std::unique_ptr<ColumnReader> Make(ColumnMeta&& meta);
 
@@ -321,6 +324,15 @@ class ColumnReader {
   void FinishStats(duckdb::BaseStatistics stats);
 
   void SkipRows(ScanState& s, duckdb::idx_t count) const;
+  // GatherFilter for a sparse span crossing a block boundary: false (state
+  // untouched) unless every block it touches selects natively and describes
+  // its own nulls.
+  bool GatherFilterAcrossBlocks(ScanState& s, duckdb::idx_t span,
+                                duckdb::SelectionVector& sel,
+                                duckdb::idx_t sel_count,
+                                duckdb::TableFilterState& filter_state,
+                                duckdb::Vector& result,
+                                duckdb::idx_t& approved) const;
 
   duckdb::idx_t ScanVector(ScanState& s, duckdb::Vector& result,
                            duckdb::idx_t count,
@@ -342,6 +354,7 @@ class ColumnReader {
   uint64_t _array_size = 0;
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
+  std::unique_ptr<BlockDictionaryCache[]> _dictionary_caches;
 
  private:
   void Readahead(size_t block, ReadContext& ctx, ScanState* s) const noexcept;

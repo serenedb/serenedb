@@ -177,6 +177,24 @@ void ColFilterChain::FinishBind() {
   }
 }
 
+uint64_t ColFilterChain::WindowEnd(uint64_t row) const noexcept {
+  uint64_t end = std::numeric_limits<uint64_t>::max();
+  for (const auto& c : _cols) {
+    if (c.nested || c.row_gather || row >= c.reader->RowCount() ||
+        c.reader->Type().InternalType() != duckdb::PhysicalType::VARCHAR) {
+      continue;
+    }
+    end = std::min(end, c.reader->RowGroupEnd(row));
+  }
+  if (end == std::numeric_limits<uint64_t>::max()) {
+    const auto* column = WindowColumn();
+    if (column != nullptr && row < column->RowCount()) {
+      end = column->RowGroupEnd(row);
+    }
+  }
+  return end;
+}
+
 duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
                                            duckdb::SelectionVector& sel,
                                            duckdb::idx_t survivors,
@@ -519,6 +537,35 @@ duckdb::idx_t ColFilterChain::FilterMaskScores(
     }
     mask[w] = out;
     total += kept;
+  }
+  return total;
+}
+
+duckdb::idx_t ColFilterChain::CountRange(uint64_t begin, uint64_t end) {
+  if (_cols.empty()) {
+    return end > begin ? end - begin : 0;
+  }
+  if (!_sel_data) {
+    _sel_data =
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+  }
+  duckdb::idx_t total = 0;
+  uint64_t anchor = begin;
+  while (anchor < end) {
+    const auto dead_end = DeadUntil(anchor);
+    if (dead_end > anchor) {
+      anchor = dead_end;
+      continue;
+    }
+    const uint64_t stop = std::min<uint64_t>(
+      {end, anchor + STANDARD_VECTOR_SIZE, WindowEnd(anchor)});
+    const auto span = static_cast<duckdb::idx_t>(stop - anchor);
+    _sel.Initialize(_sel_data);
+    for (duckdb::idx_t k = 0; k < span; ++k) {
+      _sel.set_index(k, k);
+    }
+    total += FilterWindow(anchor, span, _sel, span, nullptr);
+    anchor = stop;
   }
   return total;
 }

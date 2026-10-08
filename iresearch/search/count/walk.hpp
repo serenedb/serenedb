@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <type_traits>
@@ -27,6 +28,7 @@
 
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/lead/all_docs.hpp"
 #include "iresearch/search/lead/concept.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,6 +46,16 @@ class Walk : public Root {
     : _node{std::forward<Args>(args)...}, _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
+    if constexpr (kTable && std::is_same_v<Node, lead::AllDocs>) {
+      const auto stop = std::min<doc_id_t>(max, _node.Last() + 1);
+      if (min >= stop) {
+        return 0;
+      }
+      if (const auto n = _table.CountRange(min, stop);
+          n != detail::TableFilter::kNoCountRange) {
+        return n;
+      }
+    }
     uint64_t total = 0;
     auto doc = _node.Seek(min);
     if constexpr (kTable) {

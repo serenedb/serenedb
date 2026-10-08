@@ -28,7 +28,9 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/function/scalar/generic_common.hpp>
+#include <duckdb/function/scalar/lower_equality_to_ilike.hpp>
 #include <duckdb/function/scalar_function.hpp>
+#include <duckdb/optimizer/expression_heuristics.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
@@ -102,6 +104,30 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL),
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL);
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
+}
+
+constexpr size_t kMaxExactInListSize = 32;
+
+duckdb::unique_ptr<duckdb::TableFilter> TryExactInListFilter(
+  const duckdb::Expression& expr) {
+  const auto child = duckdb::ExpressionFilter::GetOptionalFilterChild(expr);
+  if (!child ||
+      child->GetExpressionType() != duckdb::ExpressionType::COMPARE_IN ||
+      child->CanThrow()) {
+    return nullptr;
+  }
+  const auto& in = child->Cast<duckdb::BoundOperatorExpression>();
+  const auto& children = in.GetChildren();
+  if (children.size() < 2 || children.size() - 1 > kMaxExactInListSize) {
+    return nullptr;
+  }
+  for (size_t i = 1; i < children.size(); ++i) {
+    if (children[i]->GetExpressionClass() !=
+        duckdb::ExpressionClass::BOUND_CONSTANT) {
+      return nullptr;
+    }
+  }
+  return duckdb::make_uniq<duckdb::ExpressionFilter>(child->Copy());
 }
 
 irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
@@ -252,7 +278,23 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       cf.zonemap_only =
         duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
           entry.Filter());
-      cf.null_check = DetectNullCheck(expr);
+      if (cf.zonemap_only && !cf.is_dynamic) {
+        cf.exact = TryExactInListFilter(expr);
+        if (cf.exact) {
+          cf.filter = cf.exact.get();
+          cf.zonemap_only = false;
+        }
+      } else if (!cf.zonemap_only && !cf.is_dynamic) {
+        if (auto ilike = duckdb::LowerEqualityToILike::TryRewrite(expr)) {
+          cf.exact =
+            duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(ilike));
+          cf.filter = cf.exact.get();
+        }
+      }
+      cf.null_check =
+        DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
+                           *cf.filter, "BuildTableFilter")
+                           .expr);
       cf.type = bind_data.columns.types[bind_index];
       if (proj_idx < state.projected_column_indexes.size()) {
         const auto& column_index = state.projected_column_indexes[proj_idx];
@@ -262,8 +304,31 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
           cf.type = column_index.GetScanType();
         }
       }
-      cf.not_null = MakeNotNullReplacement(entry.Filter(), cf.type);
+      cf.not_null = MakeNotNullReplacement(*cf.filter, cf.type);
     }
+  }
+  // Each column filter only evaluates the rows the earlier ones kept, so run
+  // the cheap ones first; a throwing filter pins the pushed order.
+  const auto filter_expr = [](const ScanGlobalState::ColFilter& cf) -> auto& {
+    return *duckdb::ExpressionFilter::GetExpressionFilter(*cf.filter,
+                                                          "BuildTableFilter")
+              .expr;
+  };
+  if (absl::c_none_of(state.col_filters,
+                      [&](const ScanGlobalState::ColFilter& cf) {
+                        return filter_expr(cf).CanThrow();
+                      })) {
+    const auto cost =
+      [&](const ScanGlobalState::ColFilter& cf) -> duckdb::idx_t {
+      if (cf.is_dynamic || cf.zonemap_only) {
+        return 0;
+      }
+      return duckdb::ExpressionHeuristics::Cost(filter_expr(cf));
+    };
+    absl::c_stable_sort(
+      state.col_filters,
+      [&](const ScanGlobalState::ColFilter& a,
+          const ScanGlobalState::ColFilter& b) { return cost(a) < cost(b); });
   }
 }
 

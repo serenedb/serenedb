@@ -20,35 +20,30 @@
 
 #pragma once
 
-#include "iresearch/index/index_reader.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include <cstdint>
+#include <duckdb/storage/compression/dict_fsst/dictionary_cache.hpp>
 
-namespace irs::lead {
+namespace irs {
 
-class AllDocs {
+class BlockDictionaryCache final : public duckdb::DictFSSTDictionaryCache {
  public:
-  explicit AllDocs(const SubReader& segment) noexcept
-    : _last{static_cast<doc_id_t>(segment.docs_count())} {}
+  ~BlockDictionaryCache() override;
 
-  doc_id_t Next() noexcept {
-    if (_doc >= _last) {
-      return _doc = doc_limits::eof();
-    }
-    return ++_doc;
-  }
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> Get() override;
+  void Put(const duckdb::buffer_ptr<duckdb::DictionaryEntry>& dictionary,
+           duckdb::idx_t bytes) override;
 
-  doc_id_t Last() const noexcept { return _last; }
-
-  doc_id_t Seek(doc_id_t target) noexcept {
-    if (target <= _doc) {
-      return _doc;
-    }
-    return _doc = target > _last ? doc_limits::eof() : target;
-  }
+  static void SetLimit(int64_t bytes) noexcept;
+  static uint64_t Limit() noexcept;
+  static uint64_t Used() noexcept;
 
  private:
-  doc_id_t _last;
-  doc_id_t _doc = doc_limits::invalid();
+  friend struct DictionaryCacheLru;
+
+  BlockDictionaryCache* _prev = nullptr;
+  BlockDictionaryCache* _next = nullptr;
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> _dictionary;
+  uint64_t _bytes = 0;
 };
 
-}  // namespace irs::lead
+}  // namespace irs

@@ -1,0 +1,190 @@
+# Column filters over DICT_FSST strings whose dictionary is deferred: a
+# selective earlier filter leaves few rows per window, so the string filter
+# tests only the dictionary entries those rows reference, then windows turn
+# dense and the dictionary is materialized. Every result is checked against a
+# native copy of the rows, for a search table and a regular table.
+
+statement ok
+CREATE TABLE ssf_src AS
+SELECT i,
+       CASE WHEN i % 13 = 0 THEN NULL ELSE 'name ' || (i % 997)::VARCHAR END AS low,
+       'https://site' || (i % 211)::VARCHAR || '.example/' ||
+       CASE WHEN i % 3 = 0 THEN 'google' ELSE 'page' END || (i % 17)::VARCHAR AS url,
+       CASE WHEN i % 8 = 0 THEN 'phrase ' || (i % 101)::VARCHAR ELSE '' END AS phrase
+FROM generate_series(1, 30000) g(i);
+
+statement ok
+CREATE TABLE ssf (i BIGINT PRIMARY KEY,
+                  low VARCHAR USING COMPRESSION dict_fsst,
+                  url VARCHAR USING COMPRESSION dict_fsst,
+                  phrase VARCHAR USING COMPRESSION dict_fsst)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement count 30000
+INSERT INTO ssf SELECT i, low, url, phrase FROM ssf_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) ssf;
+
+statement ok
+CREATE TABLE ssf_reg (i BIGINT PRIMARY KEY,
+                      low VARCHAR USING COMPRESSION dict_fsst,
+                      url VARCHAR USING COMPRESSION dict_fsst,
+                      phrase VARCHAR USING COMPRESSION dict_fsst);
+
+statement count 30000
+INSERT INTO ssf_reg SELECT i, low, url, phrase FROM ssf_src;
+
+statement ok
+CHECKPOINT;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('ssf')
+WHERE column_name IN ('low', 'url', 'phrase') AND segment_type = 'VARCHAR' GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+low	DICT_FSST
+phrase	DICT_FSST
+url	DICT_FSST
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('ssf_reg')
+WHERE column_name IN ('low', 'url', 'phrase') AND segment_type = 'VARCHAR' GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+low	DICT_FSST
+phrase	DICT_FSST
+url	DICT_FSST
+
+# The ClickBench Q22 shape: a selective empty-string filter, then LIKE on a second string column.
+query
+SELECT count(*) AS n FROM (
+  SELECT phrase, min(url), count(*) FROM ssf WHERE url LIKE '%google%' AND phrase <> '' GROUP BY phrase
+  EXCEPT ALL
+  SELECT phrase, min(url), count(*) FROM ssf_src WHERE url LIKE '%google%' AND phrase <> '' GROUP BY phrase);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT phrase, min(url), count(*) FROM ssf_src WHERE url LIKE '%google%' AND phrase <> '' GROUP BY phrase
+  EXCEPT ALL
+  SELECT phrase, min(url), count(*) FROM ssf WHERE url LIKE '%google%' AND phrase <> '' GROUP BY phrase);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT phrase, min(url), count(*) FROM ssf_reg WHERE url LIKE '%google%' AND phrase <> '' GROUP BY phrase
+  EXCEPT ALL
+  SELECT phrase, min(url), count(*) FROM ssf_src WHERE url LIKE '%google%' AND phrase <> '' GROUP BY phrase);
+----
+n
+0
+
+query
+SELECT count(*) AS n, count(DISTINCT phrase) AS phrases FROM ssf WHERE url LIKE '%google%' AND phrase <> '';
+----
+n	phrases
+1250	101
+
+# Sparse windows with NULL codes on the filtered column.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, url FROM ssf WHERE i % 40 = 13 AND low IS NULL
+  EXCEPT ALL
+  SELECT i, low, url FROM ssf_src WHERE i % 40 = 13 AND low IS NULL);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, url FROM ssf_src WHERE i % 40 = 7 AND low <> 'name 7' AND url LIKE '%page%'
+  EXCEPT ALL
+  SELECT i, low, url FROM ssf WHERE i % 40 = 7 AND low <> 'name 7' AND url LIKE '%page%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, url FROM ssf WHERE i % 40 = 7 AND low <> 'name 7' AND url LIKE '%page%'
+  EXCEPT ALL
+  SELECT i, low, url FROM ssf_src WHERE i % 40 = 7 AND low <> 'name 7' AND url LIKE '%page%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, url FROM ssf_reg WHERE i % 40 = 7 AND low <> 'name 7' AND url LIKE '%page%'
+  EXCEPT ALL
+  SELECT i, low, url FROM ssf_src WHERE i % 40 = 7 AND low <> 'name 7' AND url LIKE '%page%');
+----
+n
+0
+
+# Sparse windows first, dense windows later in the same scan: the dictionary gets materialized mid-segment.
+query
+SELECT count(*) AS n FROM (
+  SELECT i, url, phrase FROM ssf WHERE (i % 50 = 1 OR i > 15000) AND url LIKE '%google1%'
+  EXCEPT ALL
+  SELECT i, url, phrase FROM ssf_src WHERE (i % 50 = 1 OR i > 15000) AND url LIKE '%google1%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, url, phrase FROM ssf_src WHERE (i % 50 = 1 OR i > 15000) AND url LIKE '%google1%'
+  EXCEPT ALL
+  SELECT i, url, phrase FROM ssf WHERE (i % 50 = 1 OR i > 15000) AND url LIKE '%google1%');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, url, phrase FROM ssf_reg WHERE (i % 50 = 1 OR i > 15000) AND url LIKE '%google1%'
+  EXCEPT ALL
+  SELECT i, url, phrase FROM ssf_src WHERE (i % 50 = 1 OR i > 15000) AND url LIKE '%google1%');
+----
+n
+0
+
+# Dense filters and full scans are unchanged.
+query
+SELECT count(*) AS n, count(DISTINCT low) AS lows FROM ssf WHERE low LIKE '%9%';
+----
+n	lows
+7430	268
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, url, phrase FROM ssf
+  EXCEPT ALL
+  SELECT i, low, url, phrase FROM ssf_src);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+  SELECT i, low, url, phrase FROM ssf_reg
+  EXCEPT ALL
+  SELECT i, low, url, phrase FROM ssf_src);
+----
+n
+0
+
+statement ok
+DROP TABLE ssf;
+
+statement ok
+DROP TABLE ssf_reg;
+
+statement ok
+DROP TABLE ssf_src;

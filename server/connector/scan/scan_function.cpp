@@ -25,6 +25,7 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/function/partition_stats.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -431,6 +432,24 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanCardinality(
   return bind_data->Cast<ScanBindData>().Cardinality(context);
 }
 
+duckdb::vector<duckdb::PartitionStatistics> ScanGetPartitionStats(
+  duckdb::ClientContext&, duckdb::GetPartitionStatsInput& input) {
+  duckdb::vector<duckdb::PartitionStatistics> result;
+  if (!input.bind_data) {
+    return result;
+  }
+  const auto& bind = input.bind_data->Cast<ScanBindData>();
+  if (bind.relation.kind != ScanEntryKind::SearchTable || bind.IsViewBacked() ||
+      !bind.IsMatchAll() || bind.score.text || bind.score.prune ||
+      bind.ts_dict.Active() || bind.offsets.Active() || !bind.search.snapshot) {
+    return result;
+  }
+  auto& stats = result.emplace_back();
+  stats.count = bind.search.snapshot->reader.live_docs_count();
+  stats.count_type = duckdb::CountType::COUNT_EXACT;
+  return result;
+}
+
 duckdb::virtual_column_map_t ScanGetVirtualColumns(
   duckdb::ClientContext&, duckdb::optional_ptr<duckdb::FunctionData> bind_p) {
   duckdb::virtual_column_map_t result;
@@ -496,6 +515,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   };
   func.init_local = IResearchScanInitLocal;
   func.cardinality = ScanCardinality;
+  func.get_partition_stats = ScanGetPartitionStats;
   func.get_metrics = IResearchScanGetMetrics;
   func.to_string_value = ScanToStringValue;
   func.table_scan_progress = IResearchScanProgress;

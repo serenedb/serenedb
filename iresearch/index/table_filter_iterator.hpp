@@ -158,6 +158,7 @@ class ColFilterChain {
   // The column whose blocks bound a window; null when only row-gather
   // columns are bound, which hold no rows past their last value.
   const irs::ColumnReader* WindowColumn() const noexcept;
+  uint64_t WindowEnd(uint64_t row) const noexcept;
 
   // Binds the non-score specs against this segment's columnstore (score specs
   // are the caller's -- they filter the computed score vector, not `.col`).
@@ -227,6 +228,8 @@ class ColFilterChain {
   // counted and cleared in one pass.
   duckdb::idx_t CountMask(irs::doc_id_t base, uint64_t* mask,
                           duckdb::idx_t words);
+
+  duckdb::idx_t CountRange(uint64_t begin, uint64_t end);
 
   // The computed-score filter over a window: clears the bits whose score fails
   // it. Unlike the run form it compacts nothing -- a window's scores are

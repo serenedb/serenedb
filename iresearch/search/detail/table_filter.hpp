@@ -42,6 +42,12 @@ struct TableFilter {
 
   virtual uint32_t Narrow(doc_id_t base, uint64_t* mask, score_t* scores,
                           uint32_t words) = 0;
+
+  static constexpr uint64_t kNoCountRange = ~uint64_t{0};
+
+  virtual uint64_t CountRange(doc_id_t /*min*/, doc_id_t /*max*/) {
+    return kNoCountRange;
+  }
 };
 
 template<typename Table>
@@ -82,6 +88,14 @@ class Narrowing {
       return _table->Narrow(docs, scores, n);
     } else {
       return n;
+    }
+  }
+
+  IRS_FORCE_INLINE uint64_t CountRange(doc_id_t min, doc_id_t max) const {
+    if constexpr (kTable) {
+      return _table->CountRange(min, max);
+    } else {
+      return max > min ? max - min : 0;
     }
   }
 

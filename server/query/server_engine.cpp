@@ -27,6 +27,7 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
+#include <iresearch/formats/column/dictionary_cache.hpp>
 
 #include "catalog/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
@@ -233,6 +234,11 @@ ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
           "replay (the prefetch window; bounds replay memory). 0 = auto "
           "(4 x cpu threads).");
 
+ABSL_FLAG(int64_t, search_dictionary_cache_bytes, -1,
+          "Memory for decoded string dictionaries of search-table blocks, "
+          "kept across queries so repeated scans skip FSST decoding. "
+          "-1 = 1/16 of physical memory, 0 = disabled.");
+
 ABSL_FLAG(bool, skip_search_recovery, false,
           "Do not replay the search-table WAL at startup; search tables come "
           "up with what their last refresh made durable.");
@@ -242,6 +248,8 @@ ABSL_DECLARE_FLAG(std::string, server_directory);
 namespace sdb::server::query {
 
 void ConfigureServerDBConfig(duckdb::DBConfig& config) {
+  irs::BlockDictionaryCache::SetLimit(
+    absl::GetFlag(FLAGS_search_dictionary_cache_bytes));
   // Server-mode DuckDB state lives under the datadir, never in cwd-relative
   // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
   // this mutator runs and keep DuckDB defaults).

@@ -1,0 +1,48 @@
+statement ok
+CREATE TABLE slq (i BIGINT PRIMARY KEY, s VARCHAR)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO slq VALUES (1, 'Google'), (2, 'GOOGLE'), (3, 'google'), (4, 'googlе'), (5, 'İstanbul'), (6, 'istanbul'),
+  (7, 'KELVIN'), (8, chr(8490) || 'elvin'), (9, NULL), (10, ''), (11, 'goo%gle'), (12, 'Привет'), (13, 'a_b');
+
+statement ok
+VACUUM (REFRESH_TABLE) slq;
+
+query
+SELECT array_agg(i ORDER BY i) AS ids FROM slq WHERE lower(s) = 'google';
+----
+ids
+{1,2,3}
+
+query
+SELECT array_agg(i ORDER BY i) AS ids FROM slq WHERE 'istanbul' = lower(s);
+----
+ids
+{5,6}
+
+query
+SELECT array_agg(i ORDER BY i) AS ids FROM slq WHERE lower(s) = 'kelvin';
+----
+ids
+{7,8}
+
+query
+SELECT array_agg(i ORDER BY i) AS ids FROM slq WHERE lower(s) <> 'google';
+----
+ids
+{4,5,6,7,8,10,11,12,13}
+
+query
+SELECT count(*) AS n FROM slq WHERE lower(s) = 'привет';
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM slq, (VALUES ('google'), ('istanbul'), ('kelvin'), (''), ('a_b')) v(p)
+WHERE (lower(s) = p) IS DISTINCT FROM CASE p WHEN 'google' THEN lower(s) = 'google' WHEN 'istanbul' THEN lower(s) = 'istanbul'
+  WHEN 'kelvin' THEN lower(s) = 'kelvin' WHEN '' THEN lower(s) = '' ELSE lower(s) = 'a_b' END;
+----
+n
+0

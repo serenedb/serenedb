@@ -25,6 +25,7 @@
 
 #include <fcntl.h>  // open/_wopen
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
@@ -158,6 +159,14 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
+inline constexpr size_t kMinReadahead = 128 * 1024;
+
+constexpr uint64_t NextReadahead(bool sequential, uint64_t lead) noexcept {
+  if (!sequential) {
+    return 0;
+  }
+  return std::clamp<uint64_t>(lead * 2, kMinReadahead, kMaxReadahead);
+}
 
 void Prefetch(const void* addr, size_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;

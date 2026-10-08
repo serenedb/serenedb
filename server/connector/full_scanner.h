@@ -29,6 +29,7 @@
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_extract.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -58,6 +59,14 @@ class FullScanner {
     return _filters.Empty() ? 0 : _filters.DeadUntil(row);
   }
 
+  uint64_t WindowEnd(uint64_t row) {
+    if (row >= _window_end) {
+      _window_end = _filters.Empty() ? std::numeric_limits<uint64_t>::max()
+                                     : _filters.WindowEnd(row);
+    }
+    return _window_end;
+  }
+
   duckdb::idx_t Scan(uint64_t start_row, duckdb::idx_t count,
                      duckdb::DataChunk& output,
                      const duckdb::SelectionVector* live = nullptr,
@@ -78,6 +87,7 @@ class FullScanner {
   duckdb::buffer_ptr<duckdb::SelectionData> _sel_data;
   duckdb::SelectionVector _sel;
   uint64_t _scanned_end = 0;
+  uint64_t _window_end = 0;
 };
 
 }  // namespace sdb::connector

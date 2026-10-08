@@ -91,6 +91,14 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
   return static_cast<uint64_t>(_chain.CountMask(base, mask, words));
 }
 
+uint64_t ColFilterVerify::CountRange(irs::doc_id_t min, irs::doc_id_t max) {
+  if (_score_filter != nullptr) {
+    return kNoCountRange;
+  }
+  return static_cast<uint64_t>(_chain.CountRange(min - irs::doc_limits::min(),
+                                                 max - irs::doc_limits::min()));
+}
+
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,
                                irs::ColFilterClassification& out) {

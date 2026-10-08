@@ -24,15 +24,13 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/typedefs.hpp>
 #include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
 
-#include "absl/synchronization/mutex.h"
 #include "rest_server/database_path_feature.h"
-#include "search/search_db_wal.h"
 
 namespace sdb {
 namespace search {
@@ -67,11 +65,6 @@ class SearchEngine final {
   void stop();
 
   std::filesystem::path GetPersistedPath(duckdb::idx_t database_id) const;
-
-  // The database's self-contained search WAL, lazily created on first use. ONE
-  // per database, shared by all of its search shards, so a transaction touching
-  // several search tables commits atomically.
-  SearchDbWal& GetDbWal(duckdb::idx_t database_id);
 
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them. Templated on the storage type
@@ -136,10 +129,6 @@ class SearchEngine final {
 
  private:
   DatabasePathFeature& _dir_feature;
-  // Per-database central WALs (see GetDbWal). Guarded by _db_wals_mu.
-  absl::Mutex _db_wals_mu;
-  irs::containers::FlatHashMap<duckdb::idx_t, std::unique_ptr<SearchDbWal>>
-    _db_wals;
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};

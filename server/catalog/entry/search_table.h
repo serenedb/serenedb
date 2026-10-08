@@ -30,6 +30,7 @@
 #include <duckdb/common/table_column.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
+#include <duckdb/storage/table/table_log_storage.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <memory>
 #include <string>
@@ -107,7 +108,8 @@ inline constexpr std::string_view kGeneratedPkSequenceTag =
 
 using persistence::SearchTableOptions;
 
-class SearchTableEntry final : public duckdb::TableCatalogEntry {
+class SearchTableEntry final : public duckdb::TableCatalogEntry,
+                               public duckdb::TableLogStorage {
  public:
   SearchTableEntry(
     duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
@@ -169,6 +171,21 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     return sequence.name == _pk_sequence &&
            sequence.ParentSchemaName() == ParentSchemaName();
   }
+
+  duckdb::optional_ptr<duckdb::TableLogStorage> GetLogStorage() final {
+    return this;
+  }
+
+  void ReplayInsert(duckdb::ClientContext& context, duckdb::idx_t tick,
+                    duckdb::DataChunk& chunk,
+                    duckdb::optional_idx row_start) final;
+  void ReplayDelete(duckdb::ClientContext& context, duckdb::idx_t tick,
+                    duckdb::DataChunk& chunk) final;
+  void ReplayTruncate(duckdb::ClientContext& context, duckdb::idx_t tick) final;
+  void ReplayAdoptSegments(duckdb::ClientContext& context, duckdb::idx_t tick,
+                           duckdb::vector<std::string> segments) final;
+  void FinishReplay() final;
+  void Checkpoint() final;
 
   const auto& Storage() const noexcept { return _storage; }
 

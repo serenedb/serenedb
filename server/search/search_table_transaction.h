@@ -35,15 +35,25 @@
 #include <vector>
 
 #include "connector/column_id.h"
-#include "search/search_db_wal.h"
 #include "search/search_table_changes.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
+namespace sdb::catalog {
+
+class SearchTableEntry;
+
+}  // namespace sdb::catalog
 namespace sdb::search {
 
 class SearchTable;
 
 struct SearchShardWrites {
   std::shared_ptr<SearchTable> shard;
+  const catalog::SearchTableEntry* table = nullptr;
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   // The transaction the write buffer flushes into once it has overrun, owned by
   // `transactions` above. Exclusive, so its segments can be named in the
@@ -69,7 +79,7 @@ class SearchTableTransaction {
   // the Combine that hands over its iresearch transaction, so registering any
   // later would let it straddle a swap unnoticed.
   void RegisterWriter(const std::shared_ptr<SearchTable>& shard,
-                      const duckdb::Identifier& table_name);
+                      const catalog::SearchTableEntry& table);
 
   // Whether this transaction has already written to `shard`. CREATE INDEX
   // refuses to run in such a transaction: the rebuild would wait for writers
@@ -86,7 +96,7 @@ class SearchTableTransaction {
   // The segments a bulk statement flushed + fsynced, for the WAL to reference
   // instead of a second copy of the rows.
   void AddSegments(const std::shared_ptr<SearchTable>& shard,
-                   std::vector<SearchDbWal::SegmentRef>&& segments);
+                   std::vector<std::string>&& segments);
 
   irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
     const std::shared_ptr<SearchTable>& shard,
@@ -136,16 +146,9 @@ class SearchTableTransaction {
 
   bool Empty() const noexcept { return _writes.empty(); }
 
-  void RegisterFlush() noexcept;
+  void PrepareCommit(duckdb::ClientContext& context);
 
-  // Replays whatever is left in every shard's buffer: into the exclusive
-  // transaction if the buffer ever overran, otherwise into a pooled one, whose
-  // rows the record then carries inline. Must run while the engine transaction
-  // is open (building a sink reads the catalog) and before Commit, which
-  // measures the tick band off the transactions' query counts.
   void FlushPending(duckdb::ClientContext& context);
-
-  void Commit();
 
   void Abort() noexcept;
 
@@ -156,13 +159,6 @@ class SearchTableTransaction {
   }
 
  private:
-  // Builds the shard sections, reserves the tick band (width = max over shards
-  // of sum-over-trxs(GetQueries()+1)), appends the record, and returns the
-  // record tick (the band top) -- the tick every shard's last trx commits at.
-  uint64_t AppendCommit();
-
-  // Releases every writer registration this transaction holds. Idempotent, so
-  // Commit / Abort / the destructor can all call it.
   void ReleaseWriters() noexcept;
 
   // Replays a buffer into `trx` in issue order, rows and removals interleaved

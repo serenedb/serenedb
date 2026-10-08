@@ -29,7 +29,7 @@ a	b
 ###############################################################################
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO s_wal VALUES (4, 'four'), (5, 'five');
@@ -59,7 +59,7 @@ VACUUM (REFRESH_TABLE) s_wal;
 
 connection after_commit
 statement ok
-SET sdb_faults = 'crash_before_search_wal_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection after_commit
 statement error connection closed
@@ -106,7 +106,7 @@ id	b
 # --- 3a. Crash AFTER the WAL commit -> survives via recovery replay. ---
 connection before_commit
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection before_commit
 statement error connection closed
@@ -141,7 +141,7 @@ VACUUM (REFRESH_TABLE) s_wal_pk;
 # --- 3b. Crash BEFORE the WAL commit -> lost (no record written). ---
 connection pk_after_commit
 statement ok
-SET sdb_faults = 'crash_before_search_wal_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection pk_after_commit
 statement error connection closed
@@ -184,7 +184,7 @@ COPY (SELECT i AS x, 'v' || i AS y FROM range(0, 12000) t(i))
 # --- 4a. Crash AFTER the WAL commit -> recovery replays from the chunk files. ---
 connection pk_before_commit
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection pk_before_commit
 statement error connection closed
@@ -211,11 +211,9 @@ connection ctas_after_conn
 statement ok
 VACUUM (REFRESH_TABLE) ctas_after;
 
-
-# --- 4b. Crash BEFORE the WAL commit -> table exists but is EMPTY (§12). ---
 connection ctas_after_conn
 statement ok
-SET sdb_faults = 'crash_before_search_wal_commit';
+SET sdb_faults = 'crash_before_commit';
 
 connection ctas_after_conn
 statement error connection closed
@@ -225,14 +223,10 @@ CREATE TABLE ctas_before WITH (storage = 'search') AS
 # --- restart ---
 connection ctas_before_conn
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(x) AS n FROM ctas_before;
+SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'ctas_before';
 ----
 n
 0
-
-connection ctas_before_conn
-statement ok
-DROP TABLE ctas_before;
 
 connection ctas_before_conn
 statement ok
@@ -249,7 +243,7 @@ CREATE TABLE mix_t (x INTEGER, y TEXT) WITH (storage = 'search');
 
 connection ctas_before_conn
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection ctas_before_conn
 statement ok
@@ -318,7 +312,7 @@ VACUUM (REFRESH_TABLE) del_t;
 
 connection mix_conn
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection mix_conn
 statement error connection closed
@@ -366,7 +360,7 @@ VACUUM (REFRESH_TABLE) del_g;
 
 connection del_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection del_after
 statement error connection closed
@@ -411,7 +405,7 @@ DELETE FROM reins WHERE id = 1;
 
 connection del_g_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection del_g_after
 statement error connection closed
@@ -461,7 +455,7 @@ VACUUM (REFRESH_TABLE) upd_t;
 
 connection reins_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection reins_after
 statement error connection closed
@@ -506,7 +500,7 @@ VACUUM (REFRESH_TABLE) upd_g;
 
 connection upd_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection upd_after
 statement error connection closed
@@ -548,7 +542,7 @@ VACUUM (REFRESH_TABLE) trunc_t;
 
 connection upd_g_after
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 connection upd_g_after
 statement error connection closed

@@ -1915,6 +1915,7 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
       duckdb::LogicalType::VARCHAR,
       CurrentSetting2Function};
     func.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    func.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
     loader.RegisterFunction(func);
   }
 

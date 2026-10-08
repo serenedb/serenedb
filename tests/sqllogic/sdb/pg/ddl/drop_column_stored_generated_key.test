@@ -1,0 +1,29 @@
+statement ok
+CREATE TABLE dcs_t (s INT GENERATED ALWAYS AS (1) STORED, a INT PRIMARY KEY, b INT);
+
+
+statement ok
+INSERT INTO dcs_t (a) VALUES (1);
+
+
+statement error
+INSERT INTO dcs_t (a) VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+
+
+statement ok
+ALTER TABLE dcs_t DROP COLUMN b;
+
+
+statement error
+INSERT INTO dcs_t (a) VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+
+
+query
+SELECT count(*) AS n FROM dcs_t WHERE a = 1;
+----
+n
+1

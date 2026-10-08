@@ -856,6 +856,7 @@ def test_portal_dropped_at_committing_sync(conn):
         conn.run_ok("drop table if exists t_pdrop")
 
 
+@pytest.mark.exclusive
 def test_implicit_block_commit_error_replaces_command_complete(conn):
     # PG commits the implicit block in finish_xact_command BEFORE EndCommand
     # (postgres.c:1304-1314), so a commit-time failure is reported as an
@@ -915,6 +916,7 @@ def test_copy_from_stdin_extended(conn):
         conn.run_ok("drop table if exists smoke_copy_ext")
 
 
+@pytest.mark.exclusive
 def test_copy_feeder_error_ends_the_copy(conn):
     # A throw in the COPY FROM STDIN feeder, the io coroutine that hands the
     # client's CopyData to the COPY, fails the COPY and closes the connection,

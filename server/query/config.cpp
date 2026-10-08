@@ -135,9 +135,7 @@ void Config::OnSet(std::string_view name, bool is_local,
   // (covers native DuckDB settings like default_transaction_isolation).
   auto canonical = GetOriginalName(name);
   std::string_view key_view = canonical.data() ? canonical : name;
-  std::string key_str{key_view};
-
-  auto [it, inserted] = _transaction.try_emplace(std::move(key_str));
+  auto [it, inserted] = _transaction.try_emplace(key_view);
   if (inserted) {
     // First event for this key. Skip tracking iff SET with the same value
     // (RESET events reaching here are guaranteed real -- DuckDB's gate

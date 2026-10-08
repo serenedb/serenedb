@@ -366,7 +366,7 @@ duckdb::unique_ptr<SourceBindData> BindSource(
   auto data = duckdb::make_uniq<SourceBindData>();
   data->slots.reserve(table.columns.size());
   for (const auto& column : table.columns) {
-    const auto it = target.columns.find(std::string{column.name});
+    const auto it = target.columns.find(column.name);
     if (it == target.columns.end()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_TABLE_DEFINITION),
@@ -952,7 +952,7 @@ void RegisterOtelFunctions(duckdb::DatabaseInstance& db) {
 
   const auto source = [&]<typename Source>(std::string_view name) {
     loader.RegisterFunction(duckdb::TableFunction{
-      duckdb::Identifier{std::string{name}},
+      duckdb::Identifier{name},
       duckdb::vector<duckdb::LogicalType>{duckdb::LogicalType::VARCHAR},
       SourceExecute<Source>, SourceBind<Source>, SourceState<Source>::Init});
   };

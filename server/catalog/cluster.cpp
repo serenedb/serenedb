@@ -21,13 +21,9 @@
 #include "catalog/cluster.h"
 
 #include <absl/algorithm/container.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <cstdlib>
-#include <cstring>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
@@ -36,7 +32,9 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/storage/checkpoint_manager.hpp>
+#include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -48,31 +46,17 @@
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/credentials.h"
 #include "pg/pg_types.h"
-#include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
 namespace {
 
 constexpr std::string_view kRootRole = "postgres";
 constexpr duckdb::idx_t kCompactionFloor = duckdb::idx_t{1} << 20;
-
-void SyncDirectory(const std::string& directory) {
-  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  const bool synced = fd >= 0 && ::fsync(fd) == 0;
-  const int error = errno;
-  if (fd >= 0) {
-    ::close(fd);
-  }
-  if (!synced) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("could not fsync directory \"", directory,
-                            "\": ", std::strerror(error)));
-  }
-}
 
 }  // namespace
 
@@ -166,6 +150,7 @@ void ClusterCatalog::OnCatalogLogPrepared() {
 void ClusterCatalog::OnCatalogLogDecided() {
   SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
+  SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
 
 void ClusterCatalog::BeginCatalogLogCommit() {
@@ -204,6 +189,25 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
       _commits_in_flight.load(std::memory_order_acquire) > 0) {
     return;
   }
+  std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> quiescent;
+  auto quiesce = [&](duckdb::AttachedDatabase& db) {
+    auto key = duckdb::DuckTransactionManager::Get(db).TryGetCheckpointLock();
+    if (!key) {
+      return false;
+    }
+    quiescent.push_back(std::move(key));
+    return true;
+  };
+  if (!quiesce(GetAttached())) {
+    return;
+  }
+  for (const auto& db :
+       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
+    if (db->GetCatalog().GetCatalogType() == SereneDBCatalog::kStorageType &&
+        !quiesce(*db)) {
+      return;
+    }
+  }
   try {
     CompactCatalogLog();
   } catch (const std::exception& e) {
@@ -227,25 +231,6 @@ void ClusterCatalog::CompactCatalogLog() {
       if (catalog.GetCatalogType() == SereneDBCatalog::kStorageType) {
         duckdb::WriteCatalogEntries(rewrite,
                                     catalog.Cast<duckdb::DuckCatalog>());
-      }
-    }
-    {
-      const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
-      std::lock_guard guard{_artifacts_mutex};
-      std::erase_if(_artifacts, [&](const Artifact& artifact) {
-        if (!artifact.drop && IsLive(artifact)) {
-          return true;
-        }
-        return absl::c_none_of(artifact.paths, [&](const std::string& path) {
-          std::error_code ec;
-          return std::filesystem::exists(root / path, ec) ||
-                 std::filesystem::exists(
-                   search::DroppedStoragePath(root / path), ec);
-        });
-      });
-      for (const auto& artifact : _artifacts) {
-        rewrite.WriteArtifact(artifact.type, artifact.catalog_oid, artifact.oid,
-                              artifact.paths);
       }
     }
     duckdb::DatabaseManager::Get(GetDatabase())
@@ -272,60 +257,7 @@ void ClusterCatalog::CompactCatalogLog() {
       storage, path, size, duckdb::WALInitState::UNINITIALIZED);
   }
   _live_bytes.store(size, std::memory_order_relaxed);
-  SyncDirectory(std::filesystem::path{path}.parent_path().string());
-}
-
-namespace {
-
-duckdb::vector<std::string> RelativePaths(
-  const std::filesystem::path& root,
-  const std::vector<std::filesystem::path>& paths) {
-  duckdb::vector<std::string> relative;
-  for (const auto& path : paths) {
-    relative.push_back(path.lexically_relative(root).string());
-  }
-  return relative;
-}
-
-}  // namespace
-
-void ClusterCatalog::NoteDroppedArtifact(
-  duckdb::CatalogType type, duckdb::idx_t catalog_oid, duckdb::idx_t oid,
-  const std::vector<std::filesystem::path>& paths) {
-  const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
-  std::lock_guard guard{_artifacts_mutex};
-  if (!CatalogLog()) {
-    _replayed_drops.insert(oid);
-    return;
-  }
-  _artifacts.push_back(
-    {type, catalog_oid, oid, RelativePaths(root, paths), true});
-}
-
-void ClusterCatalog::LogArtifact(
-  duckdb::CatalogType type, duckdb::idx_t catalog_oid, duckdb::idx_t oid,
-  const std::vector<std::filesystem::path>& paths, bool drop) {
-  if (!CatalogLog()) {
-    return;
-  }
-  const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
-  auto relative = RelativePaths(root, paths);
-  {
-    auto lock = GetAttached().GetStorageManager().GetCommitLock();
-    _catalog_log->WriteArtifact(type, catalog_oid, oid, relative);
-    _catalog_log->SyncUpTo(_catalog_log->FlushMarker());
-  }
-  std::lock_guard guard{_artifacts_mutex};
-  _artifacts.push_back({type, catalog_oid, oid, std::move(relative), drop});
-}
-
-void ClusterCatalog::ReplayArtifact(duckdb::CatalogType type,
-                                    duckdb::idx_t catalog_oid,
-                                    duckdb::idx_t oid,
-                                    duckdb::vector<std::string> paths) {
-  GetDatabase().GetDatabaseManager().ClaimOid(oid);
-  std::lock_guard guard{_artifacts_mutex};
-  _artifacts.push_back({type, catalog_oid, oid, std::move(paths), true});
+  SyncDirectory(std::filesystem::path{path}.parent_path());
 }
 
 bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,
@@ -348,54 +280,6 @@ bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,
            generation;
   }
   return true;
-}
-
-bool ClusterCatalog::IsLive(const Artifact& artifact) {
-  bool live = false;
-  if (artifact.type == duckdb::CatalogType::DATABASE_ENTRY) {
-    GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .Scan([&](duckdb::CatalogEntry& entry) {
-        live = live || entry.oid == artifact.oid;
-      });
-    return live;
-  }
-  bool attached = false;
-  for (const auto& db :
-       duckdb::DatabaseManager::Get(GetDatabase()).GetDatabases()) {
-    auto& catalog = db->GetCatalog();
-    if (db->oid != artifact.catalog_oid ||
-        catalog.GetCatalogType() != SereneDBCatalog::kStorageType) {
-      continue;
-    }
-    attached = true;
-    live = live || catalog.Cast<SereneDBCatalog>().FindEntryById(
-                     nullptr, artifact.type, artifact.oid);
-  }
-  return live || !attached;
-}
-
-void ClusterCatalog::ResolveArtifacts() {
-  const std::filesystem::path root{ClusterLayout(GetAttached()).directory};
-  std::lock_guard guard{_artifacts_mutex};
-  for (const auto& artifact : _artifacts) {
-    for (const auto& path : artifact.paths) {
-      std::error_code ec;
-      std::filesystem::remove_all(search::DroppedStoragePath(root / path), ec);
-    }
-    if (_replayed_drops.contains(artifact.oid) || IsLive(artifact)) {
-      continue;
-    }
-    for (const auto& path : artifact.paths) {
-      std::error_code ec;
-      std::filesystem::remove_all(root / path, ec);
-      if (ec) {
-        SDB_WARN(STARTUP, "could not remove '", (root / path).string(),
-                 "' of dropped object ", artifact.oid, ": ", ec.message());
-      }
-    }
-  }
-  _artifacts.clear();
-  _replayed_drops.clear();
 }
 
 void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
@@ -483,18 +367,17 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
   duckdb::CatalogTransaction transaction, duckdb::CreateDatabaseInfo& info) {
   DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateDatabase(transaction, info);
+  auto entry = duckdb::DuckCatalog::CreateDatabase(transaction, info);
+  if (entry) {
+    entry->Cast<DatabaseCatalogEntry>().Directory()->Create();
+  }
+  return entry;
 }
 
 void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
                                   duckdb::DropInfo& info) {
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-  if (auto entry = GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-                     .GetEntry(transaction, info.GetQualifiedName().Name())) {
-    LogArtifact(duckdb::CatalogType::DATABASE_ENTRY, GetAttached().oid,
-                entry->oid, DatabaseArtifacts(GetAttached(), entry->oid), true);
-  }
   duckdb::DuckCatalog::DropDatabase(transaction, info);
 }
 

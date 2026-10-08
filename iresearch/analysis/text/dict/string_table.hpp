@@ -279,16 +279,20 @@ template<typename LongKey>
 class StringSet
   : public detail::StringTable<irs::containers::FlatHashSet, LongKey> {
  public:
-  void Insert(LongKey word) {
-    detail::Dispatch(MakeTermView(std::string_view{word}),
-                     [&](const auto& key) {
-                       auto& table = this->TableFor(key);
-                       if constexpr (detail::kIsLongKey<decltype(key)>) {
-                         table.emplace(std::move(word));
-                       } else {
-                         table.emplace(key);
-                       }
-                     });
+  void Insert(const auto& word) {
+    detail::Dispatch(detail::TermOf(word), [&](const auto& key) {
+      this->TableFor(key).emplace(key);
+    });
+  }
+
+  void Insert(LongKey&& word) {
+    detail::Dispatch(detail::TermOf(word), [&](const auto& key) {
+      if constexpr (detail::kIsLongKey<decltype(key)>) {
+        this->TableFor(key).emplace(std::move(word));
+      } else {
+        this->TableFor(key).emplace(key);
+      }
+    });
   }
 };
 
@@ -296,8 +300,14 @@ template<typename LongKey, typename Mapped>
 class StringMap final
   : public detail::StringTable<irs::containers::FlatHashMap, LongKey, Mapped> {
  public:
-  Mapped& operator[](LongKey word) {
-    return detail::Dispatch(MakeTermView(std::string_view{word}),
+  Mapped& operator[](const auto& word) {
+    return detail::Dispatch(
+      detail::TermOf(word),
+      [&](const auto& key) -> Mapped& { return this->TableFor(key)[key]; });
+  }
+
+  Mapped& operator[](LongKey&& word) {
+    return detail::Dispatch(detail::TermOf(word),
                             [&](const auto& key) -> Mapped& {
                               auto& table = this->TableFor(key);
                               if constexpr (detail::kIsLongKey<decltype(key)>) {

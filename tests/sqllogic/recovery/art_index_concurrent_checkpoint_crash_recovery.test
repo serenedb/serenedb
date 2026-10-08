@@ -1,0 +1,105 @@
+control substitution on
+
+statement ok
+CREATE TABLE goshandr_wards (id INTEGER, a INTEGER);
+
+
+statement ok
+CREATE INDEX goshandr_wards_a ON goshandr_wards (a);
+
+
+statement ok
+INSERT INTO goshandr_wards SELECT i, i FROM range(0, 1000) r(i);
+
+
+statement ok
+CHECKPOINT;
+
+
+connection papich
+statement ok
+BEGIN;
+
+
+connection papich
+query
+SELECT count(*) AS n FROM goshandr_wards;
+----
+n
+1000
+
+
+connection default
+statement ok
+INSERT INTO goshandr_wards VALUES (1000, 1000);
+
+
+connection default
+statement ok
+SET debug_checkpoint_sleep_ms = 4000;
+
+
+connection donsimon
+statement async error connection closed
+CHECKPOINT;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
+----
+n
+1
+
+
+connection vjling
+statement ok
+DELETE FROM goshandr_wards WHERE a < 50;
+
+
+connection vjling
+statement ok
+INSERT INTO goshandr_wards SELECT i, i FROM range(2000, 2100) r(i);
+
+
+connection vjling
+statement ok
+DELETE FROM goshandr_wards WHERE a >= 2050;
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection default
+wait
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM goshandr_wards;
+----
+n
+1001
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM goshandr_wards WHERE a = 10) AS deleted_old, (SELECT count(*) FROM goshandr_wards WHERE a = 500) AS kept_old, (SELECT count(*) FROM goshandr_wards WHERE a = 2060) AS deleted_new, (SELECT count(*) FROM goshandr_wards WHERE a = 2010) AS kept_new;
+----
+deleted_old	kept_old	deleted_new	kept_new
+0	1	0	1
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM goshandr_wards WHERE a = 7;
+----
+n
+0

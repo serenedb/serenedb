@@ -49,6 +49,8 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/database_directory.h"
+
 namespace sdb::search {
 namespace {
 
@@ -73,7 +75,7 @@ constexpr duckdb::field_id_t kRowsSlices = 0;
 constexpr duckdb::field_id_t kSliceBase = 0;
 constexpr duckdb::field_id_t kSliceChunk = 1;
 
-constexpr std::string_view kSegSuffix = ".swal";
+constexpr std::string_view kSegPrefix = "search.wal.";
 
 constexpr duckdb::idx_t kAppendFlags =
   duckdb::FileOpenFlags::FILE_FLAGS_WRITE |
@@ -83,7 +85,7 @@ constexpr duckdb::idx_t kAppendFlags =
 
 // PostgreSQL-style fixed-width 16-hex names: lexicographic order == numeric.
 std::string SegmentName(uint64_t first_tick) {
-  return absl::StrFormat("%016x%s", first_tick, kSegSuffix);
+  return absl::StrFormat("%s%016x", kSegPrefix, first_tick);
 }
 
 bool ParseHex(std::string_view s, uint64_t& out) {
@@ -107,12 +109,9 @@ bool ParseHex(std::string_view s, uint64_t& out) {
   return true;
 }
 
-// "<016x>.swal" -> first_tick.
-bool ParseName(std::string_view name, std::string_view suffix, uint64_t& out) {
-  if (name.size() <= suffix.size() || !name.ends_with(suffix)) {
-    return false;
-  }
-  return ParseHex(name.substr(0, name.size() - suffix.size()), out);
+bool ParseName(std::string_view name, uint64_t& out) {
+  return name.starts_with(kSegPrefix) &&
+         ParseHex(name.substr(kSegPrefix.size()), out);
 }
 
 // Central segments under `wal_dir`, sorted by first_tick (== tick order).
@@ -128,7 +127,7 @@ std::vector<std::pair<uint64_t, std::filesystem::path>> EnumerateSegments(
       continue;
     }
     uint64_t first_tick = 0;
-    if (ParseName(entry.path().filename().string(), kSegSuffix, first_tick)) {
+    if (ParseName(entry.path().filename().string(), first_tick)) {
       out.emplace_back(first_tick, entry.path());
     }
   }
@@ -388,9 +387,6 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
   if (_active) {
     return;
   }
-  std::error_code ec;
-  std::filesystem::create_directories(_wal_dir, ec);
-  SDB_ENSURE(!ec, "create wal dir '", _wal_dir.string(), "': ", ec.message());
   auto seg_path = _wal_dir / SegmentName(first_tick);
   std::error_code exists_ec;
   SDB_ENSURE(!std::filesystem::exists(seg_path, exists_ec),
@@ -398,6 +394,7 @@ void SearchDbWal::EnsureActiveSegmentLocked(uint64_t first_tick) {
              "' already exists -- tick seed regressed");
   _active = std::make_unique<duckdb::BufferedFileWriter>(_fs, seg_path.string(),
                                                          kAppendFlags);
+  catalog::SyncDirectory(_wal_dir);
   _active_first_tick = first_tick;
 }
 

@@ -512,9 +512,7 @@ void RegisterTSQueryTypes(duckdb::ExtensionLoader& loader) {
       // 'keyword' so the filter builder's existing identity branch
       // handles it without a separate null-check path.
       auto resolved =
-        v.IsNull()
-          ? duckdb::Value(std::string{irs::KeywordTokenizer::type_name()})
-          : v;
+        v.IsNull() ? duckdb::Value(irs::KeywordTokenizer::type_name()) : v;
       // Return TSQUERY_MODIFIER (distinct alias from TSQUERY) so a
       // `<TSQ-typed expr>::tokenize(...)` cast doesn't get short-
       // circuited by DuckDB's same-alias cast elision. Modifier types

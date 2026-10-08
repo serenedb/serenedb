@@ -721,7 +721,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     // ExtractPlan may throw duckdb::Exception on binding errors. We want
     // those surfaced into the test result, not swallowed.
     try {
-      (void)_conn.ExtractPlan(std::string{sql});
+      (void)_conn.ExtractPlan(sql);
     } catch (const std::exception& e) {
       if (must_succeed) {
         FAIL() << "ExtractPlan threw: " << e.what();
@@ -816,8 +816,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     if (!expected_error.empty()) {
       ASSERT_FALSE(caught_message.empty())
         << "expected MakeSearchFilter to throw";
-      ASSERT_NE(caught_message.find(std::string{expected_error}),
-                std::string::npos)
+      ASSERT_NE(caught_message.find(expected_error), std::string::npos)
         << "exception message: <" << caught_message << ">\n"
         << "expected substring: <" << expected_error << ">";
       return;

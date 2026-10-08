@@ -63,7 +63,7 @@ one
 connection after_shutdown
 query
 SELECT count(*) > 0 AS has_files
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_duckdb/*.db');
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db');
 ----
 has_files
 t
@@ -74,7 +74,7 @@ t
 connection after_shutdown
 query
 SELECT count(*) AS wals
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_duckdb/*.wal');
+FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal');
 ----
 wals
 0

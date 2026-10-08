@@ -65,6 +65,8 @@ Two of [PostgreSQL's transaction isolation levels](https://www.postgresql.org/do
 
 Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused with `transaction isolation level "serializable" is not supported`.
 
+`ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
+
 ## Example
 
 We illustrate the use of transactions through a simple example.

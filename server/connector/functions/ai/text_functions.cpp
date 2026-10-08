@@ -237,7 +237,7 @@ std::vector<Criterion> ParseLabels(const duckdb::Value& value,
   auto criteria = ParseCriteria(value, spec.name, spec.second);
   irs::containers::FlatHashSet<std::string> seen;
   for (auto& criterion : criteria) {
-    criterion.label = std::string{absl::StripAsciiWhitespace(criterion.label)};
+    absl::StripAsciiWhitespace(&criterion.label);
     if (criterion.label.empty()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG(spec.name, ": \"", spec.second,
@@ -353,7 +353,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   auto& system = bind->system;
   switch (spec.kind) {
     case TextKind::Generate:
-      system = option.value_or(std::string{kDefaultSystemPrompt});
+      system.assign(option ? *option : kDefaultSystemPrompt);
       break;
     case TextKind::Classify:
     case TextKind::ClassifyLabels: {
@@ -393,10 +393,9 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
       if (categories.empty()) {
         categories.assign(std::begin(kDefaultPii), std::end(kDefaultPii));
       }
-      system = absl::Substitute(
-        kRedactPrompt,
-        ToJson(option.value_or(std::string{kDefaultReplacement})),
-        absl::StrJoin(categories, ", "));
+      system = absl::Substitute(kRedactPrompt,
+                                ToJson(option ? *option : kDefaultReplacement),
+                                absl::StrJoin(categories, ", "));
       break;
     }
     case TextKind::Score:
@@ -538,7 +537,7 @@ duckdb::Value ExtractSchemaReply(const TextBindData& bind,
     builder.append_raw(MinifyJson(raw));
   }
   builder.end_object();
-  return duckdb::Value{std::string{builder.view().value()}}.WithType(
+  return duckdb::Value{builder.view().value()}.WithType(
     duckdb::LogicalType::JSON());
 }
 
@@ -566,7 +565,7 @@ duckdb::Value ExtractReply(const TextBindData& bind, std::string_view text) {
   if (text.empty() || absl::EqualsIgnoreCase(Unquote(text), "NONE")) {
     return duckdb::Value{duckdb::LogicalType::VARCHAR};
   }
-  return duckdb::Value{std::string{text}};
+  return duckdb::Value{text};
 }
 
 duckdb::Value FilterReply(std::string_view text) {
@@ -601,7 +600,7 @@ duckdb::Value Interpret(const TextBindData& bind, std::string_view text) {
     case TextKind::Generate:
     case TextKind::Translate:
     case TextKind::Redact:
-      return duckdb::Value{std::string{text}};
+      return duckdb::Value{text};
     case TextKind::Classify:
       return ClassifyReply(bind, text);
     case TextKind::ClassifyLabels:

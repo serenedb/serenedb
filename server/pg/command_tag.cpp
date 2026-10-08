@@ -20,6 +20,8 @@
 
 #include "pg/command_tag.h"
 
+#include <absl/strings/match.h>
+
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/enums/set_type.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -30,12 +32,15 @@
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
+#include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
+
+#include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
@@ -60,6 +65,8 @@ std::string_view CreateObjectTag(duckdb::CatalogType type) {
       return "CREATE FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "CREATE DATABASE";
+    case CatalogType::TRIGGER_ENTRY:
+      return "CREATE TRIGGER";
     default:
       return "CREATE";
   }
@@ -85,6 +92,10 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
       return "DROP FUNCTION";
     case CatalogType::DATABASE_ENTRY:
       return "DROP DATABASE";
+    case CatalogType::TRIGGER_ENTRY:
+      return "DROP TRIGGER";
+    case CatalogType::TOKENIZER_ENTRY:
+      return "DROP TEXT SEARCH DICTIONARY";
     default:
       return "DROP";
   }
@@ -157,6 +168,16 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
     case StatementType::ANALYZE_STATEMENT:
       return make("ANALYZE");
     case StatementType::ATTACH_STATEMENT:
+      if (unbound) {
+        const auto& options =
+          unbound->Cast<duckdb::AttachStatement>().info->options;
+        const auto type = options.find("type");
+        if (type != options.end() &&
+            absl::EqualsIgnoreCase(type->second.ToString(),
+                                   catalog::SereneDBCatalog::kStorageType)) {
+          return make("CREATE DATABASE");
+        }
+      }
       return make("ATTACH");
     case StatementType::DETACH_STATEMENT:
       return make("DETACH");

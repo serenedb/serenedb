@@ -41,6 +41,7 @@ struct Spec {
   std::function<std::vector<irs::analysis::Tokenizer::ptr>()> model_children;
   bool utf8_only = false;
   uint32_t cost = 1;
+  uint32_t load_parts = 1;
 };
 
 const std::vector<Spec>& AllSpecs();

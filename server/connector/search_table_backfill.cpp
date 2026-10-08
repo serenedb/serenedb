@@ -213,10 +213,11 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       snapshot_tick{snapshot_tick_in},
       progress{progress_in} {}
 
-  void ExecuteTask() final {
-    for (const auto* sub : slice.segments) {
-      const auto fed = FeedSegment(context, *sub, slice.source, *slice.sink,
-                                   target, snapshot_tick);
+  duckdb::TaskExecutionResult ExecuteTaskStep() final {
+    if (next < slice.segments.size()) {
+      const auto fed =
+        FeedSegment(context, *slice.segments[next++], slice.source, *slice.sink,
+                    target, snapshot_tick);
       if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
@@ -226,15 +227,17 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
           ERR_CODE(ERRCODE_QUERY_CANCELED),
           ERR_MSG("canceled while rebuilding search table ", target.table_id));
       }
+      return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
     }
     if (target.shard->TruncatedAfter(snapshot_tick)) {
-      return;
+      return duckdb::TaskExecutionResult::TASK_FINISHED;
     }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
     // costs more than the feeding it follows.
     for (const auto& segment : slice.trx.FlushAndFsync()) {
       slice.adopted.push_back(segment.filename);
     }
+    return duckdb::TaskExecutionResult::TASK_FINISHED;
   }
 
   std::string TaskType() const final { return "SearchBackfillSlice"; }
@@ -244,6 +247,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
   Slice& slice;
   uint64_t snapshot_tick;
   pg::ProgressMetrics* progress;
+  size_t next = 0;
 };
 
 enum class SwapResult {

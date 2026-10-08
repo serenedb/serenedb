@@ -1,0 +1,42 @@
+statement ok
+CREATE TABLE stco_t (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search');
+
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conrelid = 'stco_t'::regclass AND contype = 'p';
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conrelid = 'stco_t'::regclass AND oid = 0;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = 'stco_t'::regclass AND c.oid <> 0;
+----
+n
+1
+
+
+statement ok
+CREATE TABLE stco_u (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search');
+
+
+query
+SELECT count(DISTINCT oid) AS n FROM pg_constraint WHERE conrelid IN ('stco_t'::regclass, 'stco_u'::regclass) AND contype = 'p';
+----
+n
+2
+
+
+statement ok
+DROP TABLE stco_t;
+
+
+statement ok
+DROP TABLE stco_u;

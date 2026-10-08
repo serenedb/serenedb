@@ -182,7 +182,7 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictAggregate(
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
   auto& entry = sys.GetEntry<duckdb::AggregateFunctionCatalogEntry>(
     context, duckdb::QualifiedName(sys.GetName(), DEFAULT_SCHEMA,
-                                   duckdb::Identifier{std::string{agg_name}}));
+                                   duckdb::Identifier{agg_name}));
   duckdb::vector<
     std::pair<duckdb::Identifier, duckdb::unique_ptr<duckdb::Expression>>>
     args;
@@ -203,9 +203,9 @@ duckdb::unique_ptr<duckdb::Expression> BuildTsDictListAggregate(
   duckdb::ClientContext& context, std::string_view name,
   const duckdb::LogicalType& type, duckdb::ColumnBinding binding) {
   auto ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{std::string{name}}, type, binding);
+    duckdb::Identifier{name}, type, binding);
   auto filter_ref = duckdb::make_uniq<duckdb::BoundColumnRefExpression>(
-    duckdb::Identifier{std::string{name}}, type, binding);
+    duckdb::Identifier{name}, type, binding);
   auto is_not_null = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL, duckdb::LogicalType::BOOLEAN);
   is_not_null->GetChildrenMutable().push_back(std::move(filter_ref));

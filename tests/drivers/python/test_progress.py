@@ -108,6 +108,8 @@ class Psycopg2Driver:
 
 DRIVERS = [Psycopg3Driver(), Psycopg2Driver()]
 
+pytestmark = pytest.mark.exclusive
+
 
 @pytest.fixture(scope="module")
 def obs():
@@ -377,6 +379,9 @@ def va_schema(obs, faults) -> str:
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_recompute_stats_progress(obs, faults, va_schema, driver):
+    if not faults:
+        pytest.skip("recomputing statistics of a test-sized table ends before "
+                    "the observer can poll it; needs SDB_FAULT_INJECTION")
     table = f"{va_schema}.t0"
     relid = relid_of(obs, table)
     obs.execute(
@@ -404,7 +409,7 @@ def test_vacuum_progress(obs, faults, va_schema, driver):
         obs, fault_name=VACUUM_FAULT, use_fault=faults, run=run,
         view_sql=(
             f"SELECT phase, indexes_total FROM pg_stat_progress_vacuum "
-            f"WHERE indexes_processed <= indexes_total"),
+            f"WHERE indexes_total > 0 AND indexes_processed <= indexes_total"),
         expect=("vacuuming indexes", VA_TABLES),
         empty_sql="SELECT count(*) FROM pg_stat_progress_vacuum")
 
@@ -527,6 +532,9 @@ def test_cancel_create_index(obs, faults, src, driver):
 
 @pytest.mark.parametrize("driver", DRIVERS, ids=lambda d: d.name)
 def test_cancel_recompute_stats(obs, faults, va_schema, driver):
+    if not faults:
+        pytest.skip("recomputing statistics of test-sized tables ends before "
+                    "the observer can poll it; needs SDB_FAULT_INJECTION")
     for i in range(VA_TABLES):
         obs.execute(
             f"INSERT INTO {va_schema}.t{i} "

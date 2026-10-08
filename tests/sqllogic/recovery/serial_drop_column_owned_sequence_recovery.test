@@ -1,0 +1,101 @@
+control substitution on
+
+statement ok
+CREATE TABLE pudge_serial (id SERIAL, hook INT);
+
+
+statement ok
+INSERT INTO pudge_serial (hook) VALUES (1), (2);
+
+
+statement ok
+CREATE TABLE donsimon_serial (id SERIAL, tilt INT);
+
+
+statement ok
+ALTER TABLE pudge_serial DROP COLUMN id;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE donsimon_serial DROP COLUMN id;
+
+
+statement ok
+INSERT INTO donsimon_serial VALUES (5);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM pudge_serial) AS pudge, (SELECT count(*) FROM donsimon_serial) AS donsimon, (SELECT count(*) FROM pg_class WHERE relname IN ('pudge_serial_id_seq', 'donsimon_serial_id_seq')) AS sequences;
+----
+pudge	donsimon	sequences
+2	1	0
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_crash
+statement ok
+CREATE TABLE goshandr_serial (id SERIAL, x INT);
+
+
+connection after_crash
+statement ok
+ALTER TABLE goshandr_serial DROP COLUMN id;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM pudge_serial) AS pudge, (SELECT count(*) FROM goshandr_serial) AS goshandr, (SELECT count(*) FROM pg_class WHERE relname LIKE '%serial_id_seq') AS sequences;
+----
+pudge	goshandr	sequences
+2	0	0
+
+
+connection after_second_crash
+statement ok
+INSERT INTO pudge_serial VALUES (3);
+
+
+connection after_second_crash
+query
+SELECT hook FROM pudge_serial ORDER BY hook;
+----
+hook
+1
+2
+3

@@ -170,6 +170,7 @@ class SearchDbWalTest : public ::testing::Test {
       std::filesystem::path(::testing::TempDir()) /
       absl::StrFormat("sdbwal_%s_%s", info->test_suite_name(), info->name());
     std::filesystem::remove_all(_dir);
+    std::filesystem::create_directories(_dir);
   }
   void TearDown() override { std::filesystem::remove_all(_dir); }
 
@@ -177,7 +178,7 @@ class SearchDbWalTest : public ::testing::Test {
   duckdb::Allocator& Alloc() { return duckdb::Allocator::DefaultAllocator(); }
 
   std::filesystem::path SegPath(uint64_t first_tick) const {
-    return _dir / (Hex16(first_tick) + ".swal");
+    return _dir / ("search.wal." + Hex16(first_tick));
   }
 
   // A section is one collection plus the ops that order everything else
@@ -501,6 +502,31 @@ TEST_F(SearchDbWalTest, MinTickGcDeletesConsumedSealedSegments) {
   EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
   EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
   EXPECT_TRUE(std::filesystem::exists(SegPath(3)));
+}
+
+TEST_F(SearchDbWalTest, SharesItsDirectoryWithTheDatabaseFiles) {
+  std::ofstream{_dir / "data.db"} << "pages";
+  std::ofstream{_dir / "data.db.wal"} << "log";
+  std::filesystem::create_directory(_dir / "7");
+  std::ofstream{_dir / "7" / "segment"} << "rows";
+  {
+    SearchDbWal wal(Fs(), _dir, /*seal_threshold=*/1);
+    for (int i = 1; i <= 3; ++i) {
+      auto c = MakeIntCdc(Alloc(), {i});
+      auto sec = InlineSection(7, *c);
+      wal.AppendCommit(std::span{&sec, 1}, /*tick_span=*/1);
+    }
+    wal.RegisterShard(duckdb::idx_t{7}, 0);
+    wal.OnShardCommit(duckdb::idx_t{7}, 2);
+    EXPECT_FALSE(std::filesystem::exists(SegPath(1)));
+    EXPECT_FALSE(std::filesystem::exists(SegPath(2)));
+    EXPECT_TRUE(std::filesystem::exists(SegPath(3)));
+  }
+  EXPECT_TRUE(std::filesystem::exists(_dir / "data.db"));
+  EXPECT_TRUE(std::filesystem::exists(_dir / "data.db.wal"));
+  EXPECT_TRUE(std::filesystem::exists(_dir / "7" / "segment"));
+  SearchDbWal reopened(Fs(), _dir);
+  EXPECT_EQ(reopened.CurrentTick(), 3u);
 }
 
 TEST_F(SearchDbWalTest, IdleShardPinsLogUntilDeregister) {

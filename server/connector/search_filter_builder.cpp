@@ -1154,7 +1154,7 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSStartsWith(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQPrefix, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(std::string{literal}))));
+                  duckdb::Value(literal))));
 }
 
 void AppendEscapedLikePattern(std::string_view s, std::string& out) {
@@ -1193,14 +1193,14 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSRegexp(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQRegexp, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                  duckdb::Value(std::string{literal}))));
+                  duckdb::Value(literal))));
 }
 
 duckdb::unique_ptr<duckdb::BoundFunctionExpression> BuildTSLike(
   std::string_view literal) {
   return MakeTSQueryCall(
     kTSQLike, MakeChildren(duckdb::make_uniq<duckdb::BoundConstantExpression>(
-                duckdb::Value(std::string{literal}))));
+                duckdb::Value(literal))));
 }
 
 using AnalyzerPredicate = bool (*)(irs::TypeInfo::type_id);
@@ -1523,8 +1523,8 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
       ERR_HINT("Use ::score(...) inside a WHERE predicate on an inverted "
                "index."));
   }
-  auto owned = search::MakeScorer(search::ParseScorerExpression(
-    &ctx.client_context, std::string{expr}, "::score"));
+  auto owned = search::MakeScorer(
+    search::ParseScorerExpression(&ctx.client_context, expr, "::score"));
   if (!owned) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("::score(...) is not a known scorer"));

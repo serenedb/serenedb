@@ -1,0 +1,155 @@
+statement ok
+SET threads = 4;
+
+
+statement ok
+CREATE TABLE ift_a1 (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ift_a1_idx ON ift_a1 USING inverted (body);
+
+
+statement ok
+CREATE TABLE ift_b1 (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ift_b1_idx ON ift_b1 USING inverted (body);
+
+
+statement ok
+INSERT INTO ift_b1 SELECT i, 'beta' FROM range(0, 30720) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ift_a1 SELECT i, 'alpha' FROM range(0, 32768) t(i);
+
+
+statement ok
+INSERT INTO ift_b1 SELECT i, 'beta' FROM range(30720, 63488) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ift_a1;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ift_b1;
+
+
+statement ok
+CREATE TABLE ift_a2 (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ift_a2_idx ON ift_a2 USING inverted (body);
+
+
+statement ok
+CREATE TABLE ift_b2 (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ift_b2_idx ON ift_b2 USING inverted (body);
+
+
+statement ok
+INSERT INTO ift_b2 SELECT i, 'beta' FROM range(0, 30720) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ift_a2 SELECT i, 'alpha' FROM range(0, 32768) t(i);
+
+
+statement ok
+INSERT INTO ift_b2 SELECT i, 'beta' FROM range(30720, 63488) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ift_a2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ift_b2;
+
+
+statement ok
+CREATE TABLE ift_a3 (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ift_a3_idx ON ift_a3 USING inverted (body);
+
+
+statement ok
+CREATE TABLE ift_b3 (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ift_b3_idx ON ift_b3 USING inverted (body);
+
+
+statement ok
+INSERT INTO ift_b3 SELECT i, 'beta' FROM range(0, 30720) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ift_a3 SELECT i, 'alpha' FROM range(0, 32768) t(i);
+
+
+statement ok
+INSERT INTO ift_b3 SELECT i, 'beta' FROM range(30720, 63488) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ift_a3;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ift_b3;
+
+
+query
+SELECT (SELECT count(*) FROM ift_b1_idx WHERE body @@ 'alpha') AS b_alpha, (SELECT count(*) FROM ift_a1_idx WHERE body @@ 'beta') AS a_beta, (SELECT count(*) FROM ift_a1_idx WHERE body @@ 'alpha') AS a_alpha, (SELECT count(*) FROM ift_b1_idx WHERE body @@ 'beta') AS b_beta;
+----
+b_alpha	a_beta	a_alpha	b_beta
+0	0	32768	63488
+
+
+query
+SELECT (SELECT count(*) FROM ift_b2_idx WHERE body @@ 'alpha') AS b_alpha, (SELECT count(*) FROM ift_a2_idx WHERE body @@ 'beta') AS a_beta, (SELECT count(*) FROM ift_a2_idx WHERE body @@ 'alpha') AS a_alpha, (SELECT count(*) FROM ift_b2_idx WHERE body @@ 'beta') AS b_beta;
+----
+b_alpha	a_beta	a_alpha	b_beta
+0	0	32768	63488
+
+
+query
+SELECT (SELECT count(*) FROM ift_b3_idx WHERE body @@ 'alpha') AS b_alpha, (SELECT count(*) FROM ift_a3_idx WHERE body @@ 'beta') AS a_beta, (SELECT count(*) FROM ift_a3_idx WHERE body @@ 'alpha') AS a_alpha, (SELECT count(*) FROM ift_b3_idx WHERE body @@ 'beta') AS b_beta;
+----
+b_alpha	a_beta	a_alpha	b_beta
+0	0	32768	63488

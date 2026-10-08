@@ -20,6 +20,8 @@
 
 #include "pg/progress_registry.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_context.hpp>
 
@@ -154,6 +156,20 @@ void ProgressRegistry::Register(std::shared_ptr<ProgressSource> source) {
 void ProgressRegistry::Unregister(const ProgressSource* source) {
   absl::MutexLock lock{&_mu};
   _sources.erase(source);
+}
+
+size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,
+                                       absl::Duration wait) const {
+  const auto count = [&] {
+    return static_cast<size_t>(
+      absl::c_count_if(_sources, [&](const auto& entry) {
+        return entry.second->datid == datid && entry.second->pid != pid;
+      }));
+  };
+  const auto none = [&] { return count() == 0; };
+  absl::MutexLock lock{&_mu};
+  _mu.AwaitWithTimeout(absl::Condition{&none}, wait);
+  return count();
 }
 
 std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {

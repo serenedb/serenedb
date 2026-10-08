@@ -250,8 +250,7 @@ class Loader {
         database, database_id, nullptr, 0, nullptr)},
       _docs{docs} {
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
-    _conn->context->session_user =
-      std::string{irs::StaticStrings::kDefaultUser};
+    _conn->context->session_user.assign(irs::StaticStrings::kDefaultUser);
     connector::SetDefaultSearchPath(*_conn->context, database);
   }
 
@@ -330,10 +329,10 @@ class Loader {
       duckdb::vector<duckdb::Value> values;
       values.reserve(batch.size() * kInsertColumns);
       for (const auto& doc : batch) {
-        values.emplace_back(std::string{doc.path});
-        values.emplace_back(std::string{doc.title});
-        values.emplace_back(std::string{doc.breadcrumb});
-        values.emplace_back(std::string{doc.content});
+        values.emplace_back(doc.path);
+        values.emplace_back(doc.title);
+        values.emplace_back(doc.breadcrumb);
+        values.emplace_back(doc.content);
       }
       auto& statement = tail ? *tail : *full;
       auto result = statement.Execute(values);
@@ -416,9 +415,7 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                 table_name, " is not a search table in the catalog");
       return;
     }
-    const auto store = search::SearchTable::GetPath(
-      table->ParentCatalog().GetAttached().oid,
-      table->ParentSchema(context).oid, table->oid);
+    const auto store = table->Storage()->Path();
     for (const auto& file : std::filesystem::directory_iterator{store}) {
       if (file.is_regular_file()) {
         image.push_back(

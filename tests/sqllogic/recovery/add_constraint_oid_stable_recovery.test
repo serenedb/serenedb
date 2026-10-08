@@ -1,0 +1,78 @@
+control substitution on
+
+statement ok
+CREATE TABLE acos_oids (kind TEXT, name TEXT, oid BIGINT);
+
+
+statement ok
+CREATE TABLE acos_t (id INT, v INT, w INT);
+
+
+statement ok
+ALTER TABLE acos_t ADD PRIMARY KEY (id);
+
+
+statement ok
+ALTER TABLE acos_t ADD UNIQUE (w);
+
+
+statement ok
+ALTER TABLE acos_t ALTER COLUMN v SET NOT NULL;
+
+
+statement ok
+INSERT INTO acos_oids SELECT 'constraint', conname, oid FROM pg_constraint WHERE conrelid = 'acos_t'::regclass;
+
+
+statement ok
+INSERT INTO acos_oids SELECT 'index', c.relname, c.oid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = 'acos_t'::regclass;
+
+
+query
+SELECT kind, count(*) AS n FROM acos_oids GROUP BY kind ORDER BY kind;
+----
+kind	n
+constraint	4
+index	2
+
+
+statement ok
+INSERT INTO acos_t VALUES (1, 1, 1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_constraint c JOIN acos_oids o ON o.kind = 'constraint' AND c.conname = o.name AND c.oid = o.oid WHERE c.conrelid = 'acos_t'::regclass;
+----
+n
+4
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN acos_oids o ON o.kind = 'index' AND c.relname = o.name AND c.oid = o.oid WHERE i.indrelid = 'acos_t'::regclass;
+----
+n
+2
+
+
+connection after_crash
+statement error
+INSERT INTO acos_t VALUES (1, 2, 2);
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+connection after_crash
+statement error
+INSERT INTO acos_t VALUES (2, 2, 1);
+----
+db error: ERROR: Duplicate key "w: 1" violates unique constraint.

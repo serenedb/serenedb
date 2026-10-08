@@ -43,7 +43,6 @@
 #include <string>
 
 #include "catalog/catalog.h"
-#include "catalog/cluster.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
 #include "connector/column_id.h"
@@ -176,8 +175,7 @@ void BindInvertedIndexOptions(
       if (name == kReindexIntervalSetting && !view_backed) {
         continue;
       }
-      context.TryGetCurrentSetting(duckdb::Identifier{name},
-                                   options[std::string{name}]);
+      context.TryGetCurrentSetting(duckdb::Identifier{name}, options[name]);
     } else {
       RequireViewBackedOption(name, view_backed);
       it->second = connector::ValidateSetting(context, name, it->second);
@@ -436,8 +434,8 @@ InvertedIndexEntry::InvertedIndexEntry(
 
 duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   auto info = duckdb::IndexCatalogEntry::GetInfo();
-  info->Cast<duckdb::CreateIndexInfo>().options[std::string{kPayloadOption}] =
-    Pack(ToPersisted());
+  info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
+    kPayloadOption, Pack(ToPersisted()));
   return info;
 }
 
@@ -510,9 +508,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
 
 void InvertedIndexEntry::OnDrop() {
   if (_storage) {
-    ClusterOf(catalog.GetDatabase())
-      .NoteDroppedArtifact(duckdb::CatalogType::INDEX_ENTRY, catalog.GetOid(),
-                           oid, {_storage->Path()});
     _storage->MarkDropped();
   }
   if (_search_table) {

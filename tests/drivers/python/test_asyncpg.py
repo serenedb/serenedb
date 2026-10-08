@@ -162,3 +162,22 @@ def _coerce_for_asyncpg(pg_typname: str, sample):
             return bytes.fromhex(s[2:])
         return s.encode("utf-8")
     return s
+
+
+@pytest.mark.asyncio
+async def test_fixed_size_array_parameters(conn):
+    assert await conn.fetchval("SELECT $1::FLOAT[3]", [1.0, 2.0, 3.0]) == [
+        1.0,
+        2.0,
+        3.0,
+    ]
+    assert await conn.fetchval("SELECT $1::INTEGER[2]", [4, None]) == [4, None]
+    assert await conn.fetchval(
+        "SELECT $1::FLOAT[3] <-> [0, 0, 0]::FLOAT[3]", [3.0, 4.0, 0.0]
+    ) == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
+async def test_fixed_size_array_parameter_of_the_wrong_length(conn):
+    with pytest.raises(asyncpg.exceptions.InvalidBinaryRepresentationError):
+        await conn.fetchval("SELECT $1::FLOAT[3]", [1.0, 2.0])

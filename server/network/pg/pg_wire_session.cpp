@@ -60,13 +60,18 @@ inline constexpr uint32_t kMaxAuthToken = 65535;
 inline constexpr uint32_t kMaxSaslMessage = 1024;
 
 inline duckdb::LogicalType ResolveExpectedType(
-  const duckdb::PreparedStatement& prepared, uint16_t id) {
+  const duckdb::PreparedStatement& prepared,
+  const duckdb::case_insensitive_map_t<duckdb::LogicalType>& hints,
+  uint16_t id) {
+  const auto key = absl::StrCat(id + 1);
   duckdb::LogicalType type;
-  if (prepared.TryGetParameterType(duckdb::Identifier{absl::StrCat(id + 1)},
-                                   type) &&
+  if (prepared.TryGetParameterType(duckdb::Identifier{key}, type) &&
       type.id() != duckdb::LogicalTypeId::UNKNOWN &&
       type.id() != duckdb::LogicalTypeId::INVALID) {
     return type;
+  }
+  if (const auto hint = hints.find(key); hint != hints.end()) {
+    return hint->second;
   }
   return duckdb::LogicalTypeId::VARCHAR;
 }
@@ -1914,9 +1919,12 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   }
 
   duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
+  std::vector<uint64_t> param_oids;
+  param_oids.reserve(num_params);
   for (uint16_t i = 0; i < num_params; ++i) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
+    param_oids.push_back(oid);
     if (oid != 0) {
       type_hints.emplace(
         absl::StrCat(i + 1),
@@ -2001,6 +2009,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     }
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
+    statement.SetParamOids(std::move(param_oids));
   } else {
     // One user command expanded into several statements (wrap_multi=false left
     // the body bare, no BEGIN/COMMIT). Keep them UNPREPARED: a later
@@ -2062,7 +2071,7 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                       ERR_MSG("invalid parameter length: ", length));
     }
     const auto format = FormatFor(input_formats, i);
-    const auto type = ResolveExpectedType(prepared, i);
+    const auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
     const auto field = cursor.substr(0, length);
     const auto fn =
       sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format);
@@ -2213,10 +2222,16 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
   }
   stmt.MarkDescribed(prepared);
   const auto param_count = prepared.GetNamedParameterMap().size();
+  const auto& client_oids = stmt.ParamOids();
   std::vector<uint64_t> oids;
   oids.reserve(param_count);
   for (uint16_t i = 0; i < param_count; ++i) {
-    oids.emplace_back(sdb::pg::Type2Oid(ResolveExpectedType(prepared, i)));
+    if (i < client_oids.size() && client_oids[i] != 0) {
+      oids.emplace_back(client_oids[i]);
+      continue;
+    }
+    oids.emplace_back(
+      sdb::pg::Type2Oid(ResolveExpectedType(prepared, stmt.TypeHints(), i)));
   }
   WriteParameterDescription(this->_send, oids);
 
@@ -2263,7 +2278,8 @@ PlanPtr PgWireSession<Kind>::ResolvePlan(Statement& stmt, const PlanPtr& plan) {
   auto hints = stmt.TypeHints();
   const auto param_count = plan->GetNamedParameterMap().size();
   for (size_t i = 0; i < param_count; ++i) {
-    hints.emplace(absl::StrCat(i + 1), ResolveExpectedType(*plan, i));
+    hints.emplace(absl::StrCat(i + 1),
+                  ResolveExpectedType(*plan, stmt.TypeHints(), i));
   }
   auto resolved = _conn->Prepare(stmt.Source()->Copy(), &hints);
   if (resolved->HasError()) {

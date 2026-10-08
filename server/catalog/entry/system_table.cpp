@@ -56,15 +56,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeView(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  const pg::StaticView& view) {
-  if (!view.info) {
+  const pg::StaticView* view) {
+  if (!view) {
     return nullptr;
   }
-  auto info = view.info->Copy();
-  info->oid = view.oid;
-  auto entry = duckdb::make_uniq<duckdb::ViewCatalogEntry>(
-    catalog, schema, info->Cast<duckdb::CreateViewInfo>());
-  entry->permissions = view.permissions;
+  auto info = view->info->Copy();
+  info->oid = view->oid;
+  auto entry = duckdb::make_uniq<SystemViewEntry>(
+    catalog, schema, info->Cast<duckdb::CreateViewInfo>(), view->binding);
+  entry->permissions = view->permissions;
   return entry;
 }
 
@@ -200,6 +200,38 @@ duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
   return result;
+}
+
+SystemViewEntry::SystemViewEntry(duckdb::Catalog& catalog,
+                                 duckdb::SchemaCatalogEntry& schema,
+                                 duckdb::CreateViewInfo& info,
+                                 std::shared_ptr<pg::ViewBinding> binding)
+  : duckdb::ViewCatalogEntry{catalog, schema, info},
+    _binding{std::move(binding)} {}
+
+duckdb::shared_ptr<duckdb::ViewColumnInfo> SystemViewEntry::GetColumnInfo()
+  const {
+  return _binding->columns.atomic_load();
+}
+
+void SystemViewEntry::BindView(duckdb::ClientContext& context,
+                               duckdb::BindViewAction action) {
+  if (action == duckdb::BindViewAction::BIND_IF_UNBOUND && GetColumnInfo()) {
+    return;
+  }
+  duckdb::ViewCatalogEntry::BindView(context, action);
+  _binding->columns.atomic_store(duckdb::ViewCatalogEntry::GetColumnInfo());
+}
+
+void SystemViewEntry::UpdateBinding(
+  const duckdb::vector<duckdb::LogicalType>& types,
+  const duckdb::vector<duckdb::Identifier>& names) {
+  const auto columns = GetColumnInfo();
+  if (columns && columns->types == types && columns->names == names) {
+    return;
+  }
+  duckdb::ViewCatalogEntry::UpdateBinding(types, names);
+  _binding->columns.atomic_store(duckdb::ViewCatalogEntry::GetColumnInfo());
 }
 
 void MountSystemSchemas(SereneDBCatalog& catalog) {

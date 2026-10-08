@@ -21,7 +21,11 @@
 #pragma once
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
+#include <memory>
+
+#include "pg/system_catalog.h"
 
 namespace duckdb {
 
@@ -65,6 +69,24 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
  private:
   duckdb::ColumnList _columns;
   const pg::VirtualTable& _table;
+};
+
+class SystemViewEntry final : public duckdb::ViewCatalogEntry {
+ public:
+  SystemViewEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
+                  duckdb::CreateViewInfo& info,
+                  std::shared_ptr<pg::ViewBinding> binding);
+
+  duckdb::shared_ptr<duckdb::ViewColumnInfo> GetColumnInfo() const final;
+
+  void BindView(duckdb::ClientContext& context,
+                duckdb::BindViewAction action) final;
+
+  void UpdateBinding(const duckdb::vector<duckdb::LogicalType>& types,
+                     const duckdb::vector<duckdb::Identifier>& names) final;
+
+ private:
+  std::shared_ptr<pg::ViewBinding> _binding;
 };
 
 void MountSystemSchemas(SereneDBCatalog& catalog);

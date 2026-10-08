@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
@@ -37,10 +38,15 @@ namespace sdb::pg {
 // A built-in pg_catalog / information_schema function as the static schema
 // serves it: there is no catalog entry behind these, so the definition and the
 // permissions travel together.
+struct ViewBinding {
+  duckdb::shared_ptr<duckdb::ViewColumnInfo> columns;
+};
+
 struct StaticView {
   std::shared_ptr<const duckdb::CreateViewInfo> info;
   duckdb::Permissions permissions;
   Oid oid = 0;
+  std::shared_ptr<ViewBinding> binding;
 };
 using StaticFunction = std::pair<std::shared_ptr<const duckdb::CreateMacroInfo>,
                                  duckdb::Permissions>;
@@ -52,7 +58,8 @@ void InitSystemFunctions(duckdb::Parser& parser);
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name);
 const VirtualTable* GetTable(std::string_view name);
-StaticView GetSystemView(std::string_view schema, std::string_view name);
+const StaticView* GetSystemView(std::string_view schema,
+                                std::string_view name);
 StaticFunction GetSystemFunction(std::string_view schema,
                                  std::string_view name);
 

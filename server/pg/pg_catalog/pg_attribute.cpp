@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/constraints/list.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -199,6 +200,42 @@ void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
   }
 }
 
+void EmitColumnsForView(duckdb::ViewCatalogEntry& view,
+                        duckdb::ClientContext& context,
+                        std::deque<std::string>& names,
+                        std::vector<PgAttribute>& values) {
+  const auto columns = GetViewColumns(context, view);
+  if (!columns.info) {
+    return;
+  }
+  for (size_t i = 0; i < columns.names.size(); ++i) {
+    auto type_oid = Type2Oid(columns.info->types[i]);
+    auto phys = GetPhysicalInfo(type_oid);
+    values.push_back(PgAttribute{
+      .attrelid = view.oid,
+      .attname = names.emplace_back(columns.names[i].GetIdentifierName()),
+      .atttypid = type_oid,
+      .attlen = phys.attlen,
+      .attnum = static_cast<int16_t>(i + 1),
+      .atttypmod = -1,
+      .attndims = 0,
+      .attbyval = phys.attbyval,
+      .attalign = phys.attalign,
+      .attstorage = phys.attstorage,
+      .attcompression = PgAttribute::Attcompression::None,
+      .attnotnull = false,
+      .atthasdef = false,
+      .atthasmissing = false,
+      .attidentity = PgAttribute::Attidentity::None,
+      .attgenerated = PgAttribute::Attgenerated::None,
+      .attisdropped = false,
+      .attislocal = true,
+      .attinhcount = 0,
+      .attcollation = GetCollationForType(type_oid),
+    });
+  }
+}
+
 }  // namespace
 
 template<>
@@ -210,6 +247,10 @@ MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   VisitEntries<duckdb::TableCatalogEntry>(
     context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
       EmitColumnsForTable(table, context, values);
+    });
+  VisitEntries<duckdb::ViewCatalogEntry>(
+    context, GetDatabase(), [&](duckdb::ViewCatalogEntry& view) {
+      EmitColumnsForView(view, context, field_names, values);
     });
   // Emit pg_attribute rows for composite (record) types so that drivers can
   // introspect the field list via the standard `attrelid = $oid` lookup. The

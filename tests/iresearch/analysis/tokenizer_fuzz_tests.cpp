@@ -471,9 +471,9 @@ TEST_P(TokenizerFuzzLoad, ManyValues) {
         term_bytes += t.term.size();
         max_term = std::max(max_term, t.term.size());
       }
-      corpus.Offer(chunk[i], BehaviourClass(
-                               got[i].tokens.empty(), got[i].tokens.size(),
-                               term_bytes, max_term, got[i].store.size(), 0));
+      corpus.Offer(
+        chunk[i], BehaviourClass(got[i].tokens.empty(), got[i].tokens.size(),
+                                 term_bytes, max_term, got[i].store.size(), 0));
     }
     produced += chunk_bytes;
     rows += chunk.size();

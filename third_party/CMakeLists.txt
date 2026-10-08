@@ -231,7 +231,11 @@ target_include_directories(
 ################################################################################
 
 sdb_update_module(${GIT_EXECUTABLE} "geographiclib-c" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_library(geographiclib STATIC "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src/geodesic.c")
+add_library(
+    geographiclib
+    STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/geographiclib-c/src/geodesic.c"
+)
 target_include_directories(
     geographiclib
     SYSTEM
@@ -326,7 +330,10 @@ set(BUILD_SINGLE 1 CACHE BOOL "" FORCE) # only sgemm_ is ever called; drops DOUB
 set(NO_CBLAS 1 CACHE BOOL "" FORCE) # only the Fortran-ABI sgemm_ is called, never cblas_sgemm
 set(CMAKE_Fortran_COMPILER NOTFOUND CACHE FILEPATH "" FORCE)
 if(SDB_SANITIZE MATCHES "^Memory")
-    message(STATUS "OpenBLAS: MSan build, building the generic C kernels instead of the assembly")
+    message(
+        STATUS
+        "OpenBLAS: MSan build, building the generic C kernels instead of the assembly"
+    )
     set(DYNAMIC_ARCH OFF CACHE BOOL "" FORCE)
     set(TARGET GENERIC CACHE STRING "" FORCE)
 else()

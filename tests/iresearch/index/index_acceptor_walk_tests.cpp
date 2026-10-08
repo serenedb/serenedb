@@ -1041,13 +1041,21 @@ void AcceptorWalkIndexTestCase::AssertRe2Perl(size_t part, size_t parts) {
   }
 }
 
-TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl0) { AssertRe2Perl(0, 4); }
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl0) {
+  AssertRe2Perl(0, 4);
+}
 
-TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl1) { AssertRe2Perl(1, 4); }
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl1) {
+  AssertRe2Perl(1, 4);
+}
 
-TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl2) { AssertRe2Perl(2, 4); }
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl2) {
+  AssertRe2Perl(2, 4);
+}
 
-TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl3) { AssertRe2Perl(3, 4); }
+TEST_P(AcceptorWalkIndexTestCase, walks_match_re2_perl3) {
+  AssertRe2Perl(3, 4);
+}
 
 TEST_P(AcceptorWalkIndexTestCase, walks_match_re2) {
   AddTerms(kRe2Terms);

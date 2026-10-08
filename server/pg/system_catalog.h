@@ -58,8 +58,7 @@ void InitSystemFunctions(duckdb::Parser& parser);
 const VirtualTable* GetSystemTable(std::string_view schema,
                                    std::string_view name);
 const VirtualTable* GetTable(std::string_view name);
-const StaticView* GetSystemView(std::string_view schema,
-                                std::string_view name);
+const StaticView* GetSystemView(std::string_view schema, std::string_view name);
 StaticFunction GetSystemFunction(std::string_view schema,
                                  std::string_view name);
 

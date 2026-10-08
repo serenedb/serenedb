@@ -548,8 +548,10 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
   irs::pg::SqlErrorData data{
     .errcode = DuckExceptionToErrcode(error),
-    .errmsg = interrupted ? "canceling statement due to user request"
-                          : error.RawMessage(),
+    .errmsg = !interrupted ? error.RawMessage()
+              : error.RawMessage() == "Query exceeded maximum execution time"
+                ? "canceling statement due to statement timeout"
+                : "canceling statement due to user request",
   };
   // PG's error Position is a 1-based offset into the query; DuckDB records a
   // 0-based one in extra_info["position"]. This is a byte offset -- exact for

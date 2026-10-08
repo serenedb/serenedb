@@ -248,7 +248,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `server_version_num` | Shows the server version as an integer. | `INTEGER` |  |
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SETTING` |
 | `standard_conforming_strings` | Causes '...' strings to treat backslashes literally. | `BOOLEAN` | `on` |
-| `statement_timeout` | Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced. | `VARCHAR` | `0` |
+| `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `0` |
 | `table_function_identifier_conversion` | Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone`                                    | The current time zone                                                                                                                                                                                          | `VARCHAR`   | System (locale) timezone                            |
 

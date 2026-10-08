@@ -1,0 +1,116 @@
+query
+SHOW statement_timeout;
+----
+statement_timeout
+0
+
+
+statement ok
+SET statement_timeout = 1000;
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+1s
+
+
+statement ok
+SET statement_timeout = '90s';
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+90s
+
+
+statement ok
+SET statement_timeout = '1.5s';
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+1500ms
+
+
+statement ok
+SET statement_timeout = '120min';
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+2h
+
+
+statement error
+SET statement_timeout = -1;
+----
+db error: ERROR: -1 ms is outside the valid range for parameter "statement_timeout" (0 .. 2147483647)
+
+
+statement error
+SET statement_timeout = '5 parsecs';
+----
+db error: ERROR: invalid value for parameter "statement_timeout": "5 parsecs"<slt:ignore>
+
+
+statement ok
+SET statement_timeout = '100ms';
+
+
+statement error
+SELECT pg_sleep(5);
+----
+db error: ERROR: canceling statement due to statement timeout
+
+
+query
+SELECT 1 AS still_usable;
+----
+still_usable
+1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL statement_timeout = '1d';
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+1d
+
+
+statement ok
+SELECT pg_sleep(0.2);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+100ms
+
+
+statement ok
+RESET statement_timeout;
+
+
+statement ok
+SELECT pg_sleep(0.2);

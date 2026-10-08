@@ -95,7 +95,10 @@ is_present() {
 	fi
 }
 
+format_tools_ready=""
+
 setup_format_tools() {
+	[[ -z "$format_tools_ready" ]] || return 0
 	[[ -e "$DUCKDB/.git" ]] || die "third_party/duckdb is not checked out; its format.py and Makefile are needed"
 	make -s -C "$DUCKDB" FORMAT_VENV="$FORMAT_VENV" format_venv >/dev/null
 	local version
@@ -104,6 +107,7 @@ setup_format_tools() {
 	if [[ "$("$FORMAT_VENV/bin/typos" --version 2>/dev/null)" != "typos-cli $version" ]]; then
 		"$FORMAT_PYTHON" -m pip install --quiet "typos==$version"
 	fi
+	format_tools_ready=1
 }
 
 setup_regen_tools() {
@@ -125,6 +129,7 @@ setup_regen_tools() {
 run_format_py() {
 	local dir=$1 work=$2
 	shift 2
+	setup_format_tools
 	case "$dir" in
 	duckdb)
 		(cd "$work" && "$FORMAT_PYTHON" scripts/format.py "$@")
@@ -366,7 +371,6 @@ done
 
 case "$mode" in
 format)
-	setup_format_tools
 	if [[ -n "$range" ]]; then
 		[[ -n "$check" ]] || die "--range only checks: add --check"
 		[[ ${#dirs[@]} -eq 1 ]] || die "--range needs exactly one directory"

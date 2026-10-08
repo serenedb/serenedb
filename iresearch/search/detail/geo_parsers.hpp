@@ -25,6 +25,7 @@
 #include <s2/s2point_region.h>
 
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
@@ -210,5 +211,18 @@ struct S2PointParser {
     return r;
   }
 };
+
+template<typename Parser>
+void SeedShape(const Parser&, irs::geo::ShapeContainer& shape) {
+  if constexpr (std::is_same_v<Parser, S2PointParser>) {
+    shape.reset(S2Point{1, 0, 0});
+  }
+}
+
+template<typename Parser, typename Acceptor>
+bool MatchShape(const Parser& parser, bytes_view value,
+                irs::geo::ShapeContainer& shape, const Acceptor& acceptor) {
+  return !value.empty() && parser(value, shape) && acceptor(shape);
+}
 
 }  // namespace irs

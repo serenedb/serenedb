@@ -54,9 +54,7 @@ struct GeoCheckBind final : duckdb::FunctionData {
 
 struct GeoCheckState final : duckdb::FunctionLocalState {
   explicit GeoCheckState(const GeoCheckBind& bind) : parser{bind.parser} {
-    if (std::holds_alternative<irs::S2PointParser>(parser)) {
-      shape.reset(S2Point{1, 0, 0});
-    }
+    std::visit([&](const auto& p) { irs::SeedShape(p, shape); }, parser);
   }
 
   irs::GeoParser parser;
@@ -80,11 +78,11 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     [&](const auto& parser, const auto& acceptor) {
       duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
         args.data[0], result, args.size(), [&](duckdb::string_t value) {
-          const irs::bytes_view bytes{
-            reinterpret_cast<const irs::byte_type*>(value.GetData()),
-            value.GetSize()};
-          return !bytes.empty() && parser(bytes, local.shape) &&
-                 acceptor(local.shape);
+          return irs::MatchShape(
+            parser,
+            {reinterpret_cast<const irs::byte_type*>(value.GetData()),
+             value.GetSize()},
+            local.shape, acceptor);
         });
     },
     local.parser, bind.acceptor);
@@ -95,21 +93,22 @@ std::optional<DeferredCheck> DeferGeoOf(irs::Filter::ptr& filter,
                                         const DeferContext& ctx) {
   const auto& geo = irs::utils::downCast<GeoFilter>(*filter);
   const auto& options = geo.options();
-  auto plan = irs::PlanGeo(options);
-  if (plan.kind != irs::GeoPlan::Kind::Cells) {
-    return std::nullopt;
-  }
   const auto type = StoredType(ctx.reader, options.store_field_id);
   if (!type || type->InternalType() != duckdb::PhysicalType::VARCHAR) {
     return std::nullopt;
   }
+  auto plan = irs::PlanGeo(options);
+  if (plan->kind != irs::GeoPlan::Kind::Cells) {
+    return std::nullopt;
+  }
   auto index = std::make_unique<GeoFilter>(geo);
   index->mutable_options()->store_field_id = irs::field_limits::invalid();
-  return Split(
-    filter, std::move(index), options.store_field_id, *type, "sdb_geo_check",
-    CheckGeo,
-    duckdb::make_uniq<GeoCheckBind>(geo, irs::ParserOf(options), plan.acceptor),
-    InitGeoCheck);
+  index->mutable_options()->plan = plan;
+  return Split(filter, std::move(index), options.store_field_id, *type,
+               "sdb_geo_check", CheckGeo,
+               duckdb::make_uniq<GeoCheckBind>(geo, irs::ParserOf(options),
+                                               plan->acceptor),
+               InitGeoCheck);
 }
 
 }  // namespace

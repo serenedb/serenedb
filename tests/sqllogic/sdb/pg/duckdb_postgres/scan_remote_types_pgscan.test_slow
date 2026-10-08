@@ -1,0 +1,70 @@
+control substitution on
+
+# Scan of an array of a custom type (1-D and 2-D), an enum and a composite from an
+# attached postgres table -- the scan-side counterpart to
+# lookup_remote_types_pgscan. A composite holding a custom-type field fails
+# cleanly.
+#
+# The remote table is created with postgres_execute because SereneDB's parser has
+# no macaddr type.
+#
+# The attach alias and remote schema carry ${__DATABASE__}: the remote postgres
+# is shared and the runner replays this file once per wire engine.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgst_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}', 'DROP SCHEMA IF EXISTS s${__DATABASE__}_st CASCADE');
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}', 'CREATE SCHEMA s${__DATABASE__}_st');
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}', 'CREATE TYPE s${__DATABASE__}_st.mood AS ENUM (''sad'', ''happy'')');
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}', 'CREATE TYPE s${__DATABASE__}_st.pair AS (n int, s text)');
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}', 'CREATE TYPE s${__DATABASE__}_st.macpair AS (m macaddr, n int)');
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}',
+  'CREATE TABLE s${__DATABASE__}_st.docs (id bigint, macs macaddr[], grid macaddr[][],
+     mood s${__DATABASE__}_st.mood, p s${__DATABASE__}_st.pair, q s${__DATABASE__}_st.macpair)');
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}',
+  'INSERT INTO s${__DATABASE__}_st.docs VALUES
+     (1, ''{08:00:2b:01:02:01,08:00:2b:01:02:02}'',
+         ''{{08:00:2b:01:02:01,08:00:2b:01:02:02},{08:00:2b:01:02:03,08:00:2b:01:02:04}}'',
+         ''happy'', ROW(7, ''x''), ROW(''08:00:2b:01:02:01'', 7)),
+     (2, ''{08:00:2b:01:02:05}'', ''{{08:00:2b:01:02:05}}'',
+         ''sad'', ROW(8, ''y''), ROW(''08:00:2b:01:02:02'', 8))');
+
+
+query
+SELECT id, macs, grid, mood, p FROM pgst_${__DATABASE__}.s${__DATABASE__}_st.docs ORDER BY id;
+----
+id	macs	grid	mood	p
+1	{08:00:2b:01:02:01,08:00:2b:01:02:02}	{{08:00:2b:01:02:01,08:00:2b:01:02:02},{08:00:2b:01:02:03,08:00:2b:01:02:04}}	happy	(7,x)
+2	{08:00:2b:01:02:05}	{{08:00:2b:01:02:05}}	sad	(8,y)
+
+
+statement error Error reading table "docs" - cast to varchar not implemented for composite column "q"
+SELECT id, q FROM pgst_${__DATABASE__}.s${__DATABASE__}_st.docs;
+
+
+statement ok
+CALL postgres_execute('pgst_${__DATABASE__}', 'DROP SCHEMA s${__DATABASE__}_st CASCADE');
+
+statement ok
+DETACH pgst_${__DATABASE__};

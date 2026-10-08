@@ -1680,10 +1680,10 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
   const bool pending = _pending_state.Valid();
-  auto ctx = GetFlushContext();
-  lock.unlock();
   // Guard against concurrent Commit/etc
   if (pending) {
+    auto ctx = GetFlushContext();
+    lock.unlock();
     // after some transaction was started:
     if (committed_reader != current_committed_reader) {
       // If some segment already not in current reader
@@ -1768,6 +1768,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   }
 
   auto refs = dir.GetRefs();
+  auto ctx = GetFlushContext();
   std::lock_guard ctx_lock{ctx->pending_mutex};
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
@@ -1928,6 +1929,11 @@ bool IndexWriter::ReplaceSegments(
 
   _commit_lock.ForgetDeadlockInfo();
   std::shared_lock commit_lock{_commit_lock};
+  if (_pending_state.Valid()) {
+    SDB_WARN(IRESEARCH,
+             "Cannot replace segments while a begun commit is not finished");
+    return false;
+  }
 
   // Pin the committed state: the candidate names are masked as string_views
   // into its metas, so it has to outlive the flush context that holds them --

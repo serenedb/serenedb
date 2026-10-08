@@ -837,6 +837,41 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsProviderCanCancel) {
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
 }
 
+TEST_F(IndexAdoptTest, ReplaceSegmentsRefusesABegunCommit) {
+  Restart(/*cleanup_on_open=*/false);
+
+  auto seed = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(seed, "source"));
+  ASSERT_TRUE(seed.Commit(10));
+  ASSERT_TRUE(_writer->RefreshCommit());
+  const auto sources = CommittedNames(*_writer);
+  ASSERT_EQ(1, sources.size());
+
+  auto build = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(build, "rebuilt"));
+  const auto replacement = MetaFilesOf(build.FlushAndFsync());
+  build.Abort();
+
+  auto pending = _writer->GetBatch(/*exclusive_segment=*/true);
+  ASSERT_TRUE(InsertDoc(pending, "pending"));
+  ASSERT_TRUE(pending.Commit(20));
+  ASSERT_TRUE(_writer->RefreshBegin());
+
+  bool asked = false;
+  EXPECT_FALSE(
+    _writer->ReplaceSegments(Views(sources), Views(replacement),
+                             [&](irs::IndexWriter::QueryContext::FilterPtr&) {
+                               asked = true;
+                               return true;
+                             }));
+  EXPECT_FALSE(asked);
+
+  _writer->RefreshCommit();
+  EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
+  const auto after = CommittedNames(*_writer);
+  EXPECT_NE(after.end(), std::ranges::find(after, sources.front()));
+}
+
 // A source that is no longer in the index is what a concurrent DELETE of every
 // row the build was rebuilding looks like: a removal taking a segment's last
 // live doc masks the whole segment out instead of giving it a docs_mask. So the

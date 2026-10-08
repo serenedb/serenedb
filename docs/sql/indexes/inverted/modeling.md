@@ -32,7 +32,7 @@ You can index an **expression** over one or more columns, not just a bare column
 
 To keep an indexed expression's value in the index, list it a second time with `included()`, as in `(lower(s)) words, (lower(s)) included()`. The index then stores the value like an `INCLUDE` column. A query that returns, groups, sorts or filters on the same expression reads the stored value instead of computing it from the columns, so those columns don't have to be in the index, and [phrases without positions](./full-text-search.md#phrases-without-positions) check it directly. A filter the index can answer, such as `lower(s) = 'boston'` on a keyword expression, still looks the value up in the index.
 
-An expression whose value depends on the session and not only on its row is always computed from its columns: functions and casts over `TIMESTAMPTZ`, `TIMETZ` and `VARIANT` values follow the `TimeZone` setting. A search on such an expression matches the value computed when the row was written.
+An expression whose value depends on the session and not only on its row is always computed from its columns: functions and casts over `TIMESTAMPTZ`, `TIMETZ` and `VARIANT` values follow the `TimeZone` setting, a cast of a `bytea` value to text follows `bytea_output`, and `regclass`, `regtype` and the other `reg*` types resolve names through the catalog and `search_path`. A search on such an expression matches the value computed when the row was written.
 
 Indexed expressions must be deterministic and reference at least one column. Aggregates, subqueries and volatile functions are rejected at `CREATE INDEX`:
 

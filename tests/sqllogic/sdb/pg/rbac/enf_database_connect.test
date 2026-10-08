@@ -83,5 +83,17 @@ ok
 
 # ---- cleanup
 connection default
+query
+SELECT count(*) AS terminated FROM pg_stat_activity
+WHERE datname = 'dbc_vault' AND pg_terminate_backend(pid);
+----
+terminated
+2
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE dbc_vault;
+
+
 statement ok
 DROP ROLE dbc_vedernikoff;

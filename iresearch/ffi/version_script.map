@@ -1,0 +1,6 @@
+{
+    global:
+        irs_ffi_*;
+    local:
+        *;
+};

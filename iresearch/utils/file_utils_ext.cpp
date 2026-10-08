@@ -277,7 +277,12 @@ bool IsResident(const void* addr, size_t size) noexcept {
   auto [aligned, total] = PageRange(addr, size);
   total = std::min(total, kMaxPages * kPage);
   unsigned char resident[kMaxPages];
-  if (::mincore(reinterpret_cast<void*>(aligned), total, resident) != 0) {
+#ifdef __APPLE__
+  const auto vec = reinterpret_cast<char*>(resident);
+#else
+  const auto vec = resident;
+#endif
+  if (::mincore(reinterpret_cast<void*>(aligned), total, vec) != 0) {
     return false;
   }
   return std::all_of(resident, resident + (total + kPage - 1) / kPage,

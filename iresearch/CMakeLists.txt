@@ -404,12 +404,12 @@ find_package(BISON)
 
 set_directory_properties(PROPERTIES CLEAN_NO_CUSTOM "On")
 
-if(FLEX_FOUND AND BISON_FOUND)
+if(FLEX_FOUND AND BISON_FOUND AND NOT SDB_BUILD_IRESEARCH_ONLY)
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.cpp
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
         COMMAND
-            ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${FLEX_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/generate_c.sh ${FLEX_EXECUTABLE}
             iresearch/parser/lucene_lexer.cpp iresearch/parser/lucene_lexer.l
         MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_lexer.l
         VERBATIM
@@ -417,14 +417,14 @@ if(FLEX_FOUND AND BISON_FOUND)
 
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.cpp
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
         COMMAND
-            ${CMAKE_SOURCE_DIR}/scripts/generate_c.sh ${BISON_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/generate_c.sh ${BISON_EXECUTABLE}
             iresearch/parser/lucene_parser.cpp iresearch/parser/lucene_parser.y
         MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/parser/lucene_parser.y
         VERBATIM
     )
-else()
+elseif(NOT SDB_BUILD_IRESEARCH_ONLY)
     set(_missing_tools "")
     if(NOT FLEX_FOUND)
         list(APPEND _missing_tools "FLEX")
@@ -460,9 +460,9 @@ set_source_files_properties(
 
 target_include_directories(
     iresearch-static
-    PUBLIC ${CMAKE_SOURCE_DIR}
-    PUBLIC ${CMAKE_BINARY_DIR}
-    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/magic_enum
+    PUBLIC ${PROJECT_SOURCE_DIR}
+    PUBLIC ${PROJECT_BINARY_DIR}
+    PUBLIC ${PROJECT_SOURCE_DIR}/third_party/magic_enum
 )
 
 target_include_directories(
@@ -472,10 +472,12 @@ target_include_directories(
     PUBLIC
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
-    PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
+    PRIVATE ${PROJECT_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
+    PUBLIC ${PROJECT_SOURCE_DIR}/third_party/stringzilla/include
     PUBLIC
-        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
+        ${PROJECT_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 
 if(ARCH_AMD64)
@@ -505,12 +507,8 @@ target_link_libraries(
     PUBLIC absl::statusor
     PUBLIC absl::strings
     PUBLIC absl::synchronization
-    PUBLIC fmt::fmt
     PUBLIC yaclib
-    PUBLIC zlib
     PUBLIC zstd::zstd
-    PUBLIC OpenSSL::Crypto
-    PUBLIC OpenSSL::SSL
     PRIVATE absl::failure_signal_handler
     PRIVATE absl::stacktrace
     PRIVATE absl::symbolize
@@ -525,10 +523,94 @@ target_link_libraries(
     PUBLIC s2
     PUBLIC streamvbyte
     PUBLIC duckdb_static
-    PRIVATE lz4_static
     PRIVATE stemmer-static
 )
 
 if(uring_FOUND)
     target_link_libraries(iresearch-static PRIVATE uring::uring)
+endif()
+
+if(SDB_BUILD_IRESEARCH_ONLY)
+    target_link_libraries(iresearch-static PRIVATE iresearch-html)
+endif()
+
+add_library(iresearch-ffi SHARED ./ffi/iresearch_ffi.cpp)
+add_library(iresearch::ffi ALIAS iresearch-ffi)
+
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+target_include_directories(
+    iresearch-ffi
+    INTERFACE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ffi>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
+set_target_properties(iresearch-ffi PROPERTIES EXPORT_NAME ffi)
+
+install(
+    TARGETS iresearch-ffi
+    EXPORT IResearchFFITargets
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT IResearchFFI
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT IResearchFFI
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT IResearchFFI
+)
+install(
+    FILES ffi/iresearch_ffi.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    COMPONENT IResearchFFI
+)
+set(_iresearch_package_dir ${CMAKE_INSTALL_LIBDIR}/cmake/IResearchFFI)
+configure_package_config_file(
+    ${PROJECT_SOURCE_DIR}/cmake/IResearchFFIConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/IResearchFFIConfig.cmake
+    INSTALL_DESTINATION ${_iresearch_package_dir}
+)
+install(
+    EXPORT IResearchFFITargets
+    FILE IResearchFFITargets.cmake
+    NAMESPACE iresearch::
+    DESTINATION ${_iresearch_package_dir}
+    COMPONENT IResearchFFI
+)
+install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/IResearchFFIConfig.cmake
+    DESTINATION ${_iresearch_package_dir}
+    COMPONENT IResearchFFI
+)
+
+set_target_properties(
+    iresearch-ffi
+    PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON
+)
+
+target_link_libraries(iresearch-ffi PRIVATE iresearch-static)
+
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_link_duckdb_extensions(iresearch-ffi PRIVATE)
+endif()
+
+if(APPLE)
+    target_link_options(
+        iresearch-ffi
+        PRIVATE
+            -Wl,-U,_duckdb_external_types
+            "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/ffi/exported_symbols.txt"
+    )
+    set_property(
+        TARGET iresearch-ffi
+        APPEND
+        PROPERTY
+            LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ffi/exported_symbols.txt
+    )
+else()
+    target_link_options(
+        iresearch-ffi
+        PRIVATE
+            "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/ffi/version_script.map"
+    )
+    set_property(
+        TARGET iresearch-ffi
+        APPEND
+        PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/ffi/version_script.map
+    )
 endif()

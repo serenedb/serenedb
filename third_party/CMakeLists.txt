@@ -9,7 +9,10 @@ set(CMAKE_CXX_FLAGS
 include(ExternalProject)
 include(UpdateModule)
 
-sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "sqllogictest-rs" ${CMAKE_SOURCE_DIR}/third_party "README.md")
+endif()
+
 sdb_update_module(${GIT_EXECUTABLE} "stringzilla" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
 ################################################################################
@@ -84,39 +87,41 @@ add_subdirectory(yaclib)
 ## openssl
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "openssl" ${CMAKE_CURRENT_SOURCE_DIR} "README")
-add_subdirectory(openssl-cmake)
-set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
-set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "openssl" ${CMAKE_CURRENT_SOURCE_DIR} "README")
+    add_subdirectory(openssl-cmake)
+    set(OPENSSL_INCLUDE_DIR ${OPENSSL_INCLUDE_DIR} PARENT_SCOPE)
+    set(OPENSSL_LIBRARIES ${OPENSSL_LIBRARIES} PARENT_SCOPE)
 
-# Repeating the trick done by NuRaft that helped our build survive folly.
-# Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
-# nested find_package(OpenSSL) (folly, curl, ...) short-circuits onto our vendored
-# OpenSSL instead of silently linking against the system libssl/libcrypto and
-# producing an ABI-mismatched binary. OPENSSL_INCLUDE_DIR was already set above
-# by openssl-cmake's PARENT_SCOPE export; we only need to promote it to CACHE.
-# OPENSSL_LIBRARIES is exported as the target names OpenSSL::{Crypto,SSL}, but
-# FindOpenSSL's find_library() short-circuit needs file paths, so spell those
-# out here.
-set(OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}" CACHE PATH "" FORCE)
-set(OPENSSL_CRYPTO_LIBRARY
-    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
-    CACHE FILEPATH
-    ""
-    FORCE
-)
-set(OPENSSL_SSL_LIBRARY
-    "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
-    CACHE FILEPATH
-    ""
-    FORCE
-)
+    # Repeating the trick done by NuRaft that helped our build survive folly.
+    # Pre-seed the cache variables that cmake's FindOpenSSL.cmake consumes so any
+    # nested find_package(OpenSSL) (folly, curl, ...) short-circuits onto our vendored
+    # OpenSSL instead of silently linking against the system libssl/libcrypto and
+    # producing an ABI-mismatched binary. OPENSSL_INCLUDE_DIR was already set above
+    # by openssl-cmake's PARENT_SCOPE export; we only need to promote it to CACHE.
+    # OPENSSL_LIBRARIES is exported as the target names OpenSSL::{Crypto,SSL}, but
+    # FindOpenSSL's find_library() short-circuit needs file paths, so spell those
+    # out here.
+    set(OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}" CACHE PATH "" FORCE)
+    set(OPENSSL_CRYPTO_LIBRARY
+        "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libcrypto.a"
+        CACHE FILEPATH
+        ""
+        FORCE
+    )
+    set(OPENSSL_SSL_LIBRARY
+        "${CMAKE_BINARY_DIR}/third_party/openssl-cmake/libssl.a"
+        CACHE FILEPATH
+        ""
+        FORCE
+    )
 
-# Snapshot the pre-seeded values so we can verify at the end of this file that
-# no later add_subdirectory() has silently re-pointed OpenSSL at a system copy.
-set(_sdb_expected_OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}")
-set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
-set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
+    # Snapshot the pre-seeded values so we can verify at the end of this file that
+    # no later add_subdirectory() has silently re-pointed OpenSSL at a system copy.
+    set(_sdb_expected_OPENSSL_INCLUDE_DIR "${OPENSSL_INCLUDE_DIR}")
+    set(_sdb_expected_OPENSSL_CRYPTO_LIBRARY "${OPENSSL_CRYPTO_LIBRARY}")
+    set(_sdb_expected_OPENSSL_SSL_LIBRARY "${OPENSSL_SSL_LIBRARY}")
+endif()
 
 ################################################################################
 ## liburing
@@ -206,25 +211,27 @@ target_link_libraries(absl_strings PUBLIC simdutf)
 ### response content-coding
 ################################################################################
 
-set(ZXC_BUILD_CLI OFF CACHE BOOL "" FORCE)
-set(ZXC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(ZXC_INSTALL OFF CACHE BOOL "" FORCE)
-set(ZXC_NATIVE_ARCH OFF CACHE BOOL "" FORCE)
-set(ZXC_ENABLE_LTO OFF CACHE BOOL "" FORCE)
-sdb_update_module(${GIT_EXECUTABLE} "zxc" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_subdirectory(zxc)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    set(ZXC_BUILD_CLI OFF CACHE BOOL "" FORCE)
+    set(ZXC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ZXC_INSTALL OFF CACHE BOOL "" FORCE)
+    set(ZXC_NATIVE_ARCH OFF CACHE BOOL "" FORCE)
+    set(ZXC_ENABLE_LTO OFF CACHE BOOL "" FORCE)
+    sdb_update_module(${GIT_EXECUTABLE} "zxc" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    add_subdirectory(zxc)
 
-################################################################################
-### protozero library -- header-only protobuf wire format, used for OTLP
-################################################################################
+    ################################################################################
+    ### protozero library -- header-only protobuf wire format, used for OTLP
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "protozero" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-add_library(protozero INTERFACE)
-target_include_directories(
-    protozero
-    SYSTEM
-    INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protozero/include"
-)
+    sdb_update_module(${GIT_EXECUTABLE} "protozero" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    add_library(protozero INTERFACE)
+    target_include_directories(
+        protozero
+        SYSTEM
+        INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/protozero/include"
+    )
+endif()
 
 ################################################################################
 ### re2 library
@@ -248,20 +255,22 @@ endif()
 ### googletest library
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
-add_subdirectory(googletest)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "googletest" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    set(GTEST_HAS_ABSL ON CACHE BOOL "" FORCE)
+    add_subdirectory(googletest)
 
-################################################################################
-### benchmark library
-################################################################################
+    ################################################################################
+    ### benchmark library
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "benchmark" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
-add_subdirectory(benchmark)
+    sdb_update_module(${GIT_EXECUTABLE} "benchmark" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
+    add_subdirectory(benchmark)
+endif()
 
 ################################################################################
 ### streamvbyte library
@@ -369,13 +378,19 @@ add_subdirectory(libstemmer_c-cmake)
 ## LZ4
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "lz4" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "lz4" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
-set(LZ4_POSITION_INDEPENDENT_LIB OFF CACHE BOOL "" FORCE)
-add_subdirectory(lz4/build/cmake)
+    set(LZ4_BUILD_CLI OFF CACHE BOOL "" FORCE)
+    set(LZ4_POSITION_INDEPENDENT_LIB OFF CACHE BOOL "" FORCE)
+    add_subdirectory(lz4/build/cmake)
 
-get_target_property(LZ4_INCLUDE_DIR lz4_static INTERFACE_INCLUDE_DIRECTORIES)
+    get_target_property(
+        LZ4_INCLUDE_DIR
+        lz4_static
+        INTERFACE_INCLUDE_DIRECTORIES
+    )
+endif()
 
 ################################################################################
 ## ZSTD
@@ -396,23 +411,25 @@ add_library(zstd::zstd ALIAS libzstd_static)
 ## SNAPPY
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "snappy" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-set(SNAPPY_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(SNAPPY_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(SNAPPY_INSTALL OFF CACHE BOOL "" FORCE)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "snappy" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    set(SNAPPY_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SNAPPY_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(SNAPPY_INSTALL OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(snappy)
+    add_subdirectory(snappy)
 
-################################################################################
-## BROTLI
-################################################################################
+    ################################################################################
+    ## BROTLI
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "brotli" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(BROTLI_DISABLE_TESTS ON CACHE BOOL "" FORCE)
-set(BROTLI_BUNDLED_MODE ON CACHE BOOL "" FORCE)
+    sdb_update_module(${GIT_EXECUTABLE} "brotli" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    set(BROTLI_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(BROTLI_DISABLE_TESTS ON CACHE BOOL "" FORCE)
+    set(BROTLI_BUNDLED_MODE ON CACHE BOOL "" FORCE)
 
-add_subdirectory(brotli)
+    add_subdirectory(brotli)
+endif()
 
 ################################################################################
 ## Google S2
@@ -428,117 +445,119 @@ add_subdirectory(s2geometry)
 # llhttp
 ################################################################################
 
-set(LLHTTP_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/llhttp/src/api.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/llhttp/src/http.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/llhttp/src/llhttp.c
-)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    set(LLHTTP_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/llhttp/src/api.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/llhttp/src/http.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/llhttp/src/llhttp.c
+    )
 
-add_library(llhttp STATIC ${LLHTTP_SOURCES})
+    add_library(llhttp STATIC ${LLHTTP_SOURCES})
 
-target_include_directories(
-    llhttp
-    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/llhttp/include"
-)
+    target_include_directories(
+        llhttp
+        PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/llhttp/include"
+    )
 
-################################################################################
-## CURL (required by DuckDB's httpfs extension for S3 I/O)
-################################################################################
+    ################################################################################
+    ## CURL (required by DuckDB's httpfs extension for S3 I/O)
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "curl" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "curl" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-# Force static HTTP(S)-only build, using our vendored OpenSSL.
-set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
-set(HTTP_ONLY ON CACHE BOOL "" FORCE)
-# nghttp2 was removed from third_party; force HTTP/2 off so curl does not pick
-# up a system libnghttp2.
-set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
-set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
-set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
-set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
-set(CURL_USE_LIBSSH OFF CACHE BOOL "" FORCE)
-set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
-set(ENABLE_UNIX_SOCKETS OFF CACHE BOOL "" FORCE)
-set(PICKY_COMPILER OFF CACHE BOOL "" FORCE)
-set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
-# Pre-answer all of curl's check_symbol_exists() tests that link OpenSSL.
-# Those tests pass OpenSSL::SSL / OpenSSL::Crypto via CMAKE_REQUIRED_LIBRARIES,
-# but those are ALIAS targets from our vendored OpenSSL and don't propagate
-# into a fresh try_compile subproject. We know the flavor and version of the
-# OpenSSL we link, so pre-answer and skip the detection.
-# Keep this list in sync with curl's CMakeLists.txt if curl is bumped.
-set(HAVE_BORINGSSL 0 CACHE INTERNAL "")
-set(HAVE_AWSLC 0 CACHE INTERNAL "")
-set(HAVE_LIBRESSL 0 CACHE INTERNAL "")
-set(HAVE_DES_ECB_ENCRYPT 1 CACHE INTERNAL "")
-set(HAVE_SSL_SET0_WBIO 1 CACHE INTERNAL "")
-set(HAVE_OPENSSL_SRP 0 CACHE INTERNAL "")
-set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
-set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
-set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
+    # Force static HTTP(S)-only build, using our vendored OpenSSL.
+    set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
+    set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+    # nghttp2 was removed from third_party; force HTTP/2 off so curl does not pick
+    # up a system libnghttp2.
+    set(USE_NGHTTP2 OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_LIBSSH OFF CACHE BOOL "" FORCE)
+    set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
+    set(ENABLE_UNIX_SOCKETS OFF CACHE BOOL "" FORCE)
+    set(PICKY_COMPILER OFF CACHE BOOL "" FORCE)
+    set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
+    # Pre-answer all of curl's check_symbol_exists() tests that link OpenSSL.
+    # Those tests pass OpenSSL::SSL / OpenSSL::Crypto via CMAKE_REQUIRED_LIBRARIES,
+    # but those are ALIAS targets from our vendored OpenSSL and don't propagate
+    # into a fresh try_compile subproject. We know the flavor and version of the
+    # OpenSSL we link, so pre-answer and skip the detection.
+    # Keep this list in sync with curl's CMakeLists.txt if curl is bumped.
+    set(HAVE_BORINGSSL 0 CACHE INTERNAL "")
+    set(HAVE_AWSLC 0 CACHE INTERNAL "")
+    set(HAVE_LIBRESSL 0 CACHE INTERNAL "")
+    set(HAVE_DES_ECB_ENCRYPT 1 CACHE INTERNAL "")
+    set(HAVE_SSL_SET0_WBIO 1 CACHE INTERNAL "")
+    set(HAVE_OPENSSL_SRP 0 CACHE INTERNAL "")
+    set(HAVE_SSL_SET_QUIC_TLS_CBS 0 CACHE INTERNAL "")
+    set(HAVE_SSL_SET_QUIC_USE_LEGACY_CODEPOINT 0 CACHE INTERNAL "")
+    set(HAVE_SSL_SET1_ECH_CONFIG_LIST 0 CACHE INTERNAL "")
 
-add_subdirectory(curl)
+    add_subdirectory(curl)
 
-# Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
-# FindCURL.cmake short-circuits when these variables are already set.
-if(NOT TARGET CURL::libcurl)
-    add_library(CURL::libcurl ALIAS libcurl_static)
+    # Expose curl to downstream find_package(CURL) consumers (duckdb/httpfs).
+    # FindCURL.cmake short-circuits when these variables are already set.
+    if(NOT TARGET CURL::libcurl)
+        add_library(CURL::libcurl ALIAS libcurl_static)
+    endif()
+    set(CURL_FOUND TRUE CACHE INTERNAL "")
+    set(CURL_INCLUDE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
+        CACHE INTERNAL
+        ""
+    )
+    set(CURL_INCLUDE_DIRS
+        "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
+        CACHE INTERNAL
+        ""
+    )
+    set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
+    set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
+
+    ################################################################################
+    ## clickhouse-cpp (submodule; compiled into our own static lib; do NOT
+    ## add_subdirectory its CMakeLists -- that bundles contrib/{absl,lz4,zstd}
+    ## and collides with ours)
+    ################################################################################
+
+    sdb_update_module(${GIT_EXECUTABLE} "clickhouse-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+
+    file(
+        GLOB_RECURSE CLICKHOUSE_CPP_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/*.cpp"
+    )
+    list(
+        APPEND CLICKHOUSE_CPP_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash/city.cc"
+    )
+
+    add_library(clickhouse_cpp STATIC ${CLICKHOUSE_CPP_SOURCES})
+
+    target_include_directories(
+        clickhouse_cpp
+        SYSTEM
+        PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash"
+    )
+
+    target_compile_definitions(
+        clickhouse_cpp
+        PUBLIC WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
+    )
+
+    target_link_libraries(
+        clickhouse_cpp
+        PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
+    )
 endif()
-set(CURL_FOUND TRUE CACHE INTERNAL "")
-set(CURL_INCLUDE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
-    CACHE INTERNAL
-    ""
-)
-set(CURL_INCLUDE_DIRS
-    "${CMAKE_CURRENT_SOURCE_DIR}/curl/include"
-    CACHE INTERNAL
-    ""
-)
-set(CURL_LIBRARIES CURL::libcurl CACHE INTERNAL "")
-set(CURL_LIBRARY CURL::libcurl CACHE INTERNAL "")
-
-################################################################################
-## clickhouse-cpp (submodule; compiled into our own static lib; do NOT
-## add_subdirectory its CMakeLists -- that bundles contrib/{absl,lz4,zstd}
-## and collides with ours)
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "clickhouse-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-
-file(
-    GLOB_RECURSE CLICKHOUSE_CPP_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/clickhouse/*.cpp"
-)
-list(
-    APPEND CLICKHOUSE_CPP_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash/city.cc"
-)
-
-add_library(clickhouse_cpp STATIC ${CLICKHOUSE_CPP_SOURCES})
-
-target_include_directories(
-    clickhouse_cpp
-    SYSTEM
-    PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/clickhouse-cpp/contrib/cityhash/cityhash"
-)
-
-target_compile_definitions(
-    clickhouse_cpp
-    PUBLIC WITH_OPENSSL=1 CH_MAP_BOOL_TO_UINT8=1
-)
-
-target_link_libraries(
-    clickhouse_cpp
-    PUBLIC lz4_static zstd::zstd absl::int128 OpenSSL::SSL OpenSSL::Crypto
-)
 
 ###############################################################################
 ## ada (WHATWG URL parsing) -- comes after simdutf (ADA_USE_SIMDUTF can use it)
@@ -571,66 +590,68 @@ add_subdirectory(fmt)
 ## jansson
 ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "jansson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "jansson" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-set(JANSSON_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(JANSSON_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(JANSSON_WITHOUT_TESTS ON CACHE BOOL "" FORCE)
-set(JANSSON_INSTALL OFF CACHE BOOL "" FORCE)
-add_subdirectory(jansson)
+    set(JANSSON_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(JANSSON_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(JANSSON_WITHOUT_TESTS ON CACHE BOOL "" FORCE)
+    set(JANSSON_INSTALL OFF CACHE BOOL "" FORCE)
+    add_subdirectory(jansson)
 
-################################################################################
-## AVRO
-################################################################################
+    ################################################################################
+    ## AVRO
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
-set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
-set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
-set(THREADSAFE ON CACHE BOOL "" FORCE)
-add_subdirectory(avro/lang/c)
+    set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
+    set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
+    set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
+    set(THREADSAFE ON CACHE BOOL "" FORCE)
+    add_subdirectory(avro/lang/c)
 
-################################################################################
-## libxml2
-################################################################################
+    ################################################################################
+    ## libxml2
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "libxml2" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-add_subdirectory(libxml2-cmake)
+    add_subdirectory(libxml2-cmake)
 
-################################################################################
-## Azure SDK (monolithic build)
-################################################################################
+    ################################################################################
+    ## Azure SDK (monolithic build)
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "azure-sdk-for-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-add_subdirectory(azure-cmake)
+    add_subdirectory(azure-cmake)
 
-################################################################################
-## cmark-gfm
-################################################################################
+    ################################################################################
+    ## cmark-gfm
+    ################################################################################
 
-sdb_update_module(${GIT_EXECUTABLE} "cmark-gfm" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "cmark-gfm" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
-set(CMARK_TESTS OFF CACHE BOOL "" FORCE)
-set(CMARK_SHARED OFF CACHE BOOL "" FORCE)
-set(CMARK_STATIC ON CACHE BOOL "" FORCE)
+    set(CMARK_TESTS OFF CACHE BOOL "" FORCE)
+    set(CMARK_SHARED OFF CACHE BOOL "" FORCE)
+    set(CMARK_STATIC ON CACHE BOOL "" FORCE)
 
-add_subdirectory(cmark-gfm)
+    add_subdirectory(cmark-gfm)
 
-target_include_directories(
-    libcmark-gfm_static
-    SYSTEM
-    INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
-        ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
-)
-target_include_directories(
-    libcmark-gfm-extensions_static
-    SYSTEM
-    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
-)
+    target_include_directories(
+        libcmark-gfm_static
+        SYSTEM
+        INTERFACE
+            ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/src
+            ${CMAKE_CURRENT_BINARY_DIR}/cmark-gfm/src
+    )
+    target_include_directories(
+        libcmark-gfm-extensions_static
+        SYSTEM
+        INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/cmark-gfm/extensions
+    )
+endif()
 
 ################################################################################
 ## duckdb
@@ -638,23 +659,37 @@ target_include_directories(
 
 set(DUCKDB_OPTIMIZATION_PROFILE NONE CACHE STRING "" FORCE)
 set(BUILD_SHELL FALSE CACHE BOOL "" FORCE)
-set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(BUILD_SHELL_STATIC_LIB FALSE CACHE BOOL "" FORCE)
+else()
+    set(BUILD_SHELL_STATIC_LIB TRUE CACHE BOOL "" FORCE)
+endif()
 option(
     SDB_BUILD_DUCKDB_UNITTESTS
     "Build DuckDB's unittest binary for vendored-extension test suites"
     ON
 )
-set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
-set(ENABLE_UNITTEST_CPP_TESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
 option(
     SDB_BUILD_DUCKDB_BENCHMARKS
     "Build DuckDB's benchmark_runner for its benchmark suites"
     ON
 )
-set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(BUILD_UNITTESTS FALSE CACHE BOOL "" FORCE)
+    set(ENABLE_UNITTEST_CPP_TESTS FALSE CACHE BOOL "" FORCE)
+    set(BUILD_BENCHMARKS FALSE CACHE BOOL "" FORCE)
+else()
+    set(BUILD_UNITTESTS ${SDB_BUILD_DUCKDB_UNITTESTS} CACHE BOOL "" FORCE)
+    set(ENABLE_UNITTEST_CPP_TESTS
+        ${SDB_BUILD_DUCKDB_UNITTESTS}
+        CACHE BOOL
+        ""
+        FORCE
+    )
+    set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
+endif()
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
-# Keep builtin extensions (core_functions, parquet, json, etc.)
 set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
 set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
 # No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set).
@@ -672,40 +707,56 @@ set(VCPKG_BUILD ON CACHE BOOL "" FORCE)
 set(SPATIAL_USE_GEOS FALSE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_BOOST TRUE CACHE BOOL "" FORCE)
 set(SPATIAL_USE_RTREE FALSE CACHE BOOL "" FORCE)
-set(BUILD_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
-    CACHE STRING
-    ""
-    FORCE
-)
-set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
-    CACHE STRING
-    ""
-    FORCE
-)
-# Extensions whose build config lives NEXT TO the extension instead of as a
-# shim inside the duckdb fork (.github/config/extensions/): duckdb includes
-# these files after the BUILD_EXTENSIONS list is resolved.
-set(DUCKDB_EXTENSION_CONFIGS
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
-    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
-    CACHE STRING
-    ""
-    FORCE
-)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    set(BUILD_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial"
+        CACHE STRING
+        ""
+        FORCE
+    )
+    set(STATICALLY_LINK_EXTENSIONS
+        "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+        CACHE STRING
+        ""
+        FORCE
+    )
+    # Extensions whose build config lives NEXT TO the extension instead of as a
+    # shim inside the duckdb fork (.github/config/extensions/): duckdb includes
+    # these files after the BUILD_EXTENSIONS list is resolved.
+    set(DUCKDB_EXTENSION_CONFIGS
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+        CACHE STRING
+        ""
+        FORCE
+    )
+endif()
 
 sdb_update_module(${GIT_EXECUTABLE} "duckdb" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_azure" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
-sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_httpfs" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_azure" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_avro" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_iceberg" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+else()
+    set(BUILD_EXTENSIONS "")
+    set(STATICALLY_LINK_EXTENSIONS "none")
+    set(DUCKDB_EXTENSION_CONFIGS "")
+    set(SKIP_EXTENSIONS "core_functions;parquet;json;icu")
+    sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+    add_library(iresearch-html STATIC duckdb_inet/src/inet_html_table.cpp)
+    target_include_directories(
+        iresearch-html
+        SYSTEM
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb_inet/src
+    )
+endif()
 
 # duckdb's in-tree extensions resolve their includes from directory scope (not from duckdb_static's
 # INTERFACE), so expose simdutf's header to the whole duckdb subtree here. The duckdb_static PUBLIC link
@@ -732,35 +783,46 @@ target_include_directories(
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/src/include
 )
 
-target_link_libraries(
-    iceberg_catalog_rest_storage_authorization
-    PRIVATE OpenSSL::Crypto
-)
+if(TARGET iceberg_catalog_rest_storage_authorization)
+    target_link_libraries(
+        iceberg_catalog_rest_storage_authorization
+        PRIVATE OpenSSL::Crypto
+    )
+endif()
 
 # Link extension objects that aren't automatically included in duckdb_static
-target_link_libraries(
-    duckdb_static
-    PUBLIC
-        core_functions_extension
-        parquet_extension
-        tpch_extension
-        tpcds_extension
-        json_extension
-        httpfs_extension
-        azure_extension
-        avro_extension
-        iceberg_extension
-        postgres_scanner_extension
-        autocomplete_extension
-        icu_extension
-        inet_extension
-        markdown_extension
-        spatial_extension
-        # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
-        # one PUBLIC edge propagates the simdutf include to duckdb core and to
-        # every static extension (they each link duckdb_static).
-        simdutf
-)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    target_link_libraries(
+        duckdb_static
+        PUBLIC
+            core_functions_extension
+            parquet_extension
+            tpch_extension
+            tpcds_extension
+            json_extension
+            httpfs_extension
+            azure_extension
+            avro_extension
+            iceberg_extension
+            postgres_scanner_extension
+            clickhouse_scanner_extension
+            autocomplete_extension
+            icu_extension
+            inet_extension
+            markdown_extension
+            spatial_extension
+            # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
+            # one PUBLIC edge propagates the simdutf include to duckdb core and to
+            # every static extension (they each link duckdb_static).
+            simdutf
+    )
+endif()
+
+if(SDB_BUILD_IRESEARCH_ONLY)
+    include(${PROJECT_SOURCE_DIR}/cmake/IResearchICU.cmake)
+    target_link_libraries(duckdb_static PUBLIC simdutf)
+    return()
+endif()
 
 # !!! KEEP THIS LAST !!!
 # Guard against a future add_subdirectory() in this file re-pointing OpenSSL at

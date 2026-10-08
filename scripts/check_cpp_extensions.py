@@ -50,6 +50,10 @@ for path in sys.argv[1:]:
     # Choose rule set based on the directory the file lives in, not on a
     # substring: server/connector/optimizer/iresearch_plan.h is server code.
     norm = path.replace(os.sep, "/").lstrip("./")
+    if norm == "iresearch/ffi/iresearch_ffi.h" or (
+        norm.startswith("examples/iresearch-ffi/") and norm.endswith(".c")
+    ):
+        continue
     if norm.startswith("iresearch/") or norm.startswith("tests/iresearch/"):
         disallowed = IRESEARCH_DISALLOWED
     elif norm.startswith("server/connector/"):

@@ -32,6 +32,22 @@ option(SDB_IOURING "allow to use iouring" ON)
 
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serened" ON)
 
+option(
+    SDB_BUILD_IRESEARCH_ONLY
+    "Build only the embeddable IResearch C library"
+    OFF
+)
+
+if(SDB_BUILD_IRESEARCH_ONLY)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    if(STATIC_EXECUTABLES)
+        message(
+            FATAL_ERROR
+            "Library-only mode requires position-independent shared libraries"
+        )
+    endif()
+endif()
+
 option(SDB_GTEST "build the gtest suites under tests/" OFF)
 
 set(SDB_ALLOC
@@ -658,7 +674,9 @@ endif()
 ## PATHS, installation, packages, frontend
 ################################################################################
 
-include(SereneDBInstall)
+if(NOT SDB_BUILD_IRESEARCH_ONLY)
+    include(SereneDBInstall)
+endif()
 
 ################################################################################
 ## SUB-PROJECTS
@@ -667,6 +685,10 @@ include(SereneDBInstall)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/")
 
 add_subdirectory(iresearch)
+if(SDB_BUILD_IRESEARCH_ONLY)
+    return()
+endif()
+
 add_subdirectory(server/utils)
 add_subdirectory(server)
 add_subdirectory(tests)

@@ -30,6 +30,7 @@
 #include <utility>
 
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 
 namespace irs {
 

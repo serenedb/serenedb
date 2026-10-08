@@ -32,6 +32,8 @@ target_link_libraries(
         llhttp
         duckdb_static
         ZLIB::ZLIB
+        OpenSSL::Crypto
+        OpenSSL::SSL
         zstd::zstd
         lz4_static
         zxc::zxc_lib

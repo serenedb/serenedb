@@ -49,8 +49,10 @@
 #include <stringzilla/utf8_tokens/sve2.h>
 #include <stringzilla/utf8_uncased_fold/neon.h>
 #include <stringzilla/utf8_uncased_fold/sve2.h>
+#if defined(__linux__)
 #include <sys/auxv.h>
 #include <sys/prctl.h>
+#endif
 #endif
 
 #include <cstddef>
@@ -78,7 +80,7 @@ inline bool HasAvx512Bw() noexcept {
                            __builtin_cpu_supports("avx512bw");
   return kHas;
 }
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) && defined(__linux__)
 inline bool HasSve() noexcept {
   static const bool kHas = (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
   return kHas;
@@ -101,6 +103,10 @@ inline bool HasWideSve2() noexcept {
   }();
   return kHas;
 }
+#elif defined(__aarch64__)
+inline constexpr bool HasSve() noexcept { return false; }
+inline constexpr bool HasSve2() noexcept { return false; }
+inline constexpr bool HasWideSve2() noexcept { return false; }
 #endif
 
 inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,

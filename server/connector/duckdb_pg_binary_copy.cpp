@@ -622,7 +622,7 @@ void ScanFrom(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
     if (local.Exhausted()) {
-      if (row != 0 || !local.Claim(g)) {
+      if (row != 0 || local.Claim(g, input) != TakeResult::Item) {
         break;
       }
       continue;

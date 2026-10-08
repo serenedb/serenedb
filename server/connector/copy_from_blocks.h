@@ -30,13 +30,14 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
-#include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "connector/copy_byte_source.h"
+#include "connector/parking_queue.h"
 #include "pg/deserialize.h"
 
 namespace sdb::connector {
@@ -46,8 +47,6 @@ inline constexpr size_t kCopyBlockBytes = 1 << 20;
 struct CopyBlock {
   std::string data;
   duckdb::idx_t batch = 0;
-
-  bool Empty() const noexcept { return data.empty(); }
 };
 
 struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
@@ -58,19 +57,19 @@ struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
   duckdb::idx_t MaxThreads() const final { return _max_threads; }
 
   void StartParallel(duckdb::ClientContext& context) {
-    _first = Numbered(CutBlock());
+    if (auto first = NextBlock()) {
+      _blocks.Push(std::move(*first));
+    } else {
+      _blocks.Close();
+    }
     if (!finished) {
       _max_threads =
         duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
     }
   }
 
-  CopyBlock NextBlock() {
-    std::lock_guard lock{_mu};
-    if (!_first.Empty()) {
-      return std::exchange(_first, {});
-    }
-    return Numbered(CutBlock());
+  TakeResult Claim(duckdb::TableFunctionInput& input, CopyBlock& out) {
+    return _blocks.Take(input, out, [this] { return NextBlock(); });
   }
 
  protected:
@@ -91,15 +90,15 @@ struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
   }
 
  private:
-  CopyBlock Numbered(std::string data) {
+  std::optional<CopyBlock> NextBlock() {
+    auto data = CutBlock();
     if (data.empty()) {
-      return {};
+      return std::nullopt;
     }
-    return {std::move(data), _next_batch++};
+    return CopyBlock{std::move(data), _next_batch++};
   }
 
-  std::mutex _mu;
-  CopyBlock _first;
+  ParkingQueue<CopyBlock> _blocks;
   duckdb::idx_t _next_batch = 0;
   duckdb::idx_t _max_threads = 1;
 };
@@ -111,10 +110,11 @@ struct CopyFromLocalState : public duckdb::LocalTableFunctionState {
 
   bool Exhausted() const noexcept { return pos >= block.data.size(); }
 
-  bool Claim(CopyFromGlobalState& global) {
-    block = global.NextBlock();
+  TakeResult Claim(CopyFromGlobalState& global,
+                   duckdb::TableFunctionInput& input) {
     pos = 0;
-    return !block.Empty();
+    block = {};
+    return global.Claim(input, block);
   }
 };
 

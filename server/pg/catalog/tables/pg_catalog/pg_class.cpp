@@ -150,10 +150,10 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
  public:
   PgClass(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
     : SystemTableScan{context, input} {
-    if (Needs<"relhasindex">()) {
+    if (Reads<"relhasindex">()) {
       CollectIndexed();
     }
-    if (Needs<"relhastriggers">()) {
+    if (Reads<"relhastriggers">()) {
       CollectTriggered();
     }
     if (VisibleOnly()) {
@@ -327,7 +327,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       Emit<kOrdinary>(
         {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)});
     if (Allows<"relkind">('i')) {
-      if (emitted && Needs<"relowner">()) {
+      if (emitted && Reads<"relowner">()) {
         _owners.emplace(table.oid, table.permissions.owner);
       }
       for (const auto& key : KeyIndexes(table)) {

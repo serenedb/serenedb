@@ -198,6 +198,12 @@ struct SessionSchema {
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> entry;
 };
 
+struct RegOutRecent {
+  uint64_t oid = 0;
+  uint8_t kind = 0;
+  std::string_view text;
+};
+
 struct Session {
   duckdb::ClientContext* context;
   catalog::SereneDBCatalog* database;
@@ -206,6 +212,7 @@ struct Session {
   mutable irs::containers::NodeHashMap<std::pair<uint8_t, uint64_t>,
                                        std::string>
     reg_out;
+  mutable std::array<RegOutRecent, 64> reg_out_recent;
 };
 
 duckdb::optional_ptr<catalog::SereneDBCatalog> SessionCatalog(

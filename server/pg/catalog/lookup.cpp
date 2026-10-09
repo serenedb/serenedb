@@ -353,7 +353,8 @@ Session MakeSession(duckdb::ClientContext* context) {
     .database = context ? SessionCatalog(*context).get() : nullptr,
     .transaction = std::nullopt,
     .search_path = {},
-    .reg_out = {}};
+    .reg_out = {},
+    .reg_out_recent = {}};
   if (!context) {
     return session;
   }

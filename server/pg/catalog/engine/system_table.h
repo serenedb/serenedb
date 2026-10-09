@@ -443,6 +443,10 @@ struct SystemRange {
   bool exact;
 };
 
+struct SystemStableText {
+  std::string_view text;
+};
+
 std::optional<SystemRange> RangeOf(const duckdb::Expression& expr);
 std::optional<bool> BooleanOf(const duckdb::Expression& expr);
 bool IsVisibility(const duckdb::Expression& expr,
@@ -697,6 +701,10 @@ class SystemScan {
         scan.template PutDefault<T::kSql, kColumn>();
       }
       return true;
+    } else if constexpr (std::is_lvalue_reference_v<decltype(value)> &&
+                         std::is_same_v<std::remove_cvref_t<decltype(value)>,
+                                        duckdb::Identifier>) {
+      return put(SystemStableText{value.GetIdentifierName()});
     } else {
       return put(value);
     }
@@ -757,6 +765,8 @@ class SystemScan {
       return filter.chars[value ? static_cast<unsigned char>(value) : 256];
     } else if constexpr (std::is_same_v<V, duckdb::Identifier>) {
       return filter.texts.Passes(value.GetIdentifierName());
+    } else if constexpr (std::is_same_v<V, SystemStableText>) {
+      return filter.texts.Passes(value.text);
     } else if constexpr (std::is_convertible_v<const V&, std::string_view>) {
       return filter.texts.Passes(std::string_view{value});
     } else {
@@ -809,6 +819,9 @@ class SystemScan {
         PutText(target, row, std::string_view{&value, value ? 1U : 0U});
       } else if constexpr (std::is_same_v<V, duckdb::Identifier>) {
         PutText(target, row, value.GetIdentifierName());
+      } else if constexpr (std::is_same_v<V, SystemStableText>) {
+        Cells<duckdb::string_t>(target)[row] = duckdb::string_t{
+          value.text.data(), static_cast<uint32_t>(value.text.size())};
       } else if constexpr (std::is_same_v<V, duckdb::AclItem>) {
         PutAcl(target, row, value);
       } else {

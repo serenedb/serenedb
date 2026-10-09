@@ -12,7 +12,6 @@ target_sources(
         catalog/functions/ruleutils.cpp
         catalog/lookup.cpp
         catalog/tables/information_schema/columns.cpp
-        catalog/tables/information_schema/sql_tables.cpp
         catalog/tables/pg_catalog/pg_aggregate.cpp
         catalog/tables/pg_catalog/pg_am.cpp
         catalog/tables/pg_catalog/pg_attrdef.cpp

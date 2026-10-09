@@ -48,6 +48,7 @@ class LogicalInsert;
 class LogicalCreateTable;
 class LogicalMergeInto;
 class UniqueConstraint;
+class ColumnDefinition;
 struct CreateJobInfo;
 struct DropInfo;
 
@@ -68,6 +69,10 @@ struct CatalogSnapshot {
     keys;
   mutable std::once_flag triggers_once;
   mutable std::vector<duckdb::idx_t> triggered;
+  mutable std::once_flag defaults_once;
+  mutable irs::containers::FlatHashMap<const duckdb::ColumnDefinition*,
+                                       std::string>
+    defaults;
 };
 
 class SereneDBCatalog final : public duckdb::DuckCatalog {

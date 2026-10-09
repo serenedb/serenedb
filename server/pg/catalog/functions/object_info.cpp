@@ -553,9 +553,9 @@ std::optional<duckdb::Permissions> PrivilegeTargetByName(
 }
 
 std::optional<duckdb::Permissions> PrivilegeTargetByOid(
-  duckdb::ClientContext& context, PrivilegeObject object, int64_t oid) {
+  const pg::Session& session, PrivilegeObject object, int64_t oid) {
   if (object == PrivilegeObject::ForeignServer) {
-    if (auto entry = EntryByOid(pg::MakeSession(&context), oid);
+    if (auto entry = EntryByOid(session, oid);
         entry && entry->type == CatalogType::FOREIGN_SERVER_ENTRY) {
       return entry->permissions;
     }
@@ -629,13 +629,14 @@ void RegisterPrivilegeFunctions(duckdb::ExtensionLoader& loader,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
       auto& context = state.GetContext();
+      const auto session = pg::MakeSession(&context);
       duckdb::VariadicExecutor::Execute<bool, duckdb::string_t, int64_t,
                                         duckdb::string_t>(
         args, result,
         [&](duckdb::string_t role, int64_t target, duckdb::string_t priv) {
           const auto role_id = RoleByName(context, View(role));
           return HasPrivilege(context, Object, role_id,
-                              PrivilegeTargetByOid(context, Object, target),
+                              PrivilegeTargetByOid(session, Object, target),
                               View(priv));
         });
     }}));
@@ -660,11 +661,12 @@ void RegisterPrivilegeFunctions(duckdb::ExtensionLoader& loader,
     [](duckdb::DataChunk& args, duckdb::ExpressionState& state,
        duckdb::Vector& result) {
       auto& context = state.GetContext();
+      const auto session = pg::MakeSession(&context);
       duckdb::VariadicExecutor::Execute<bool, int64_t, int64_t,
                                         duckdb::string_t>(
         args, result, [&](int64_t role, int64_t target, duckdb::string_t priv) {
           return HasPrivilege(context, Object, static_cast<duckdb::idx_t>(role),
-                              PrivilegeTargetByOid(context, Object, target),
+                              PrivilegeTargetByOid(session, Object, target),
                               View(priv));
         });
     }}));
@@ -690,10 +692,11 @@ void RegisterPrivilegeFunctions(duckdb::ExtensionLoader& loader,
        duckdb::Vector& result) {
       auto& context = state.GetContext();
       const auto role_id = CurrentRole(context);
+      const auto session = pg::MakeSession(&context);
       duckdb::VariadicExecutor::Execute<bool, int64_t, duckdb::string_t>(
         args, result, [&](int64_t target, duckdb::string_t priv) {
           return HasPrivilege(context, Object, role_id,
-                              PrivilegeTargetByOid(context, Object, target),
+                              PrivilegeTargetByOid(session, Object, target),
                               View(priv));
         });
     }}));

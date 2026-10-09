@@ -53,14 +53,6 @@ DROP TABLE mtr_http_mark;
 
 
 statement ok
-RESET logging_level;
-
-
-statement ok
-RESET logging_storage;
-
-
-statement ok
 DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.mtr_pudge;
 
 

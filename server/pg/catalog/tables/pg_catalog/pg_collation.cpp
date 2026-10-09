@@ -29,13 +29,9 @@ SystemRows<BuiltinCollation> LoadCollations(SystemScan&) {
   return BuiltinCollations();
 }
 
-std::optional<std::string_view> CollationLocale(
-  const BuiltinCollation& collation) {
-  if (collation.locale.empty()) {
-    return std::nullopt;
-  }
-  return collation.locale;
-}
+constexpr auto kLocale = [](const BuiltinCollation& collation) {
+  return NonEmpty(collation.locale);
+};
 
 class PgCollation final : public SystemTableScan<kPgCollationSql> {
  public:
@@ -50,7 +46,7 @@ class PgCollation final : public SystemTableScan<kPgCollationSql> {
     Col<"collnamespace">([](const auto&) { return kPgCatalogSchema; }),
     Col<"collowner">([](const auto&) { return kRootUser; }),
     Col<"collprovider">(&BuiltinCollation::provider),
-    Col<"collcollate">(&CollationLocale), Col<"collctype">(&CollationLocale));
+    Col<"collcollate">(kLocale), Col<"collctype">(kLocale));
 
   void Row(const BuiltinCollation& collation) { Emit<kCollation>(collation); }
 };

@@ -22,7 +22,6 @@
 
 #include <optional>
 #include <ranges>
-#include <string_view>
 
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/system_table.h"
@@ -40,6 +39,19 @@ std::optional<T> NonEmpty(T value) {
   }
   return value;
 }
+
+template<const auto& Rows>
+SystemRows<std::ranges::range_value_t<decltype(Rows)>> LoadStatic(SystemScan&) {
+  return {Rows};
+}
+
+inline constexpr auto kOwner = [](const auto& entry) {
+  return entry.permissions.owner;
+};
+
+inline constexpr auto kAcl = [](const auto& entry) -> const auto& {
+  return entry.permissions.acl;
+};
 
 using Builtins = SystemRows<BuiltinFunction, BuiltinFunctions>;
 

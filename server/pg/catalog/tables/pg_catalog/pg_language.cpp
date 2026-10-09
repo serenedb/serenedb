@@ -37,14 +37,12 @@ constexpr std::array kLanguages{
   Language{kPgSqlLanguage, "sql", true, kPgSqlLanguageValidator},
 };
 
-SystemRows<Language> LoadLanguages(SystemScan&) { return {kLanguages}; }
-
 class PgLanguage final : public SystemTableScan<kPgLanguageSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Language>{&LoadLanguages, {}}};
+    ArraySource<Language>{&LoadStatic<kLanguages>, {}}};
 
   static constexpr auto kLanguage = Shape<kSql, const Language>(
     Col<"oid">(&Language::oid), Col<"lanname">(&Language::name),

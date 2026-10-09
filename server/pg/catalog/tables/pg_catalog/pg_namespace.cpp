@@ -41,10 +41,8 @@ class PgNamespace final : public SystemTableScan<kPgNamespaceSql> {
 
   static constexpr auto kSchema = Shape<kSql, const duckdb::SchemaCatalogEntry>(
     Col<"oid">(&duckdb::CatalogEntry::oid),
-    Col<"nspname">(&duckdb::CatalogEntry::name),
-    Col<"nspowner">([](const auto& s) { return s.permissions.owner; }),
-    Col<"nspacl">(
-      [](const auto& s) -> const auto& { return s.permissions.acl; }));
+    Col<"nspname">(&duckdb::CatalogEntry::name), Col<"nspowner">(kOwner),
+    Col<"nspacl">(kAcl));
 
   void Row(const duckdb::SchemaCatalogEntry& schema) { Emit<kSchema>(schema); }
 };

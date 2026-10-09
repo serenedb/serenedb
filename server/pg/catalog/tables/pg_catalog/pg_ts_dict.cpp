@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <string_view>
-
 #include "catalog/entry/tokenizer.h"
 #include "pg/catalog/tables/tables.h"
 
@@ -46,8 +44,7 @@ class PgTsDict final : public SystemTableScan<kPgTsDictSql> {
       Col<"oid">(&duckdb::CatalogEntry::oid),
       Col<"dictname">(&duckdb::CatalogEntry::name),
       Col<"dictnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-      Col<"dictowner">(
-        [](const auto& tokenizer) { return tokenizer.permissions.owner; }));
+      Col<"dictowner">(kOwner));
 
   void Row(const catalog::TokenizerCatalogEntry& tokenizer) {
     Emit<kDictionary>(tokenizer);

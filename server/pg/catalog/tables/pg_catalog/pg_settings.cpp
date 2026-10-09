@@ -66,13 +66,6 @@ std::string_view VarType(const duckdb::LogicalType& type) {
   return "string";
 }
 
-std::optional<std::string_view> Text(std::string_view value) {
-  if (value.empty()) {
-    return std::nullopt;
-  }
-  return value;
-}
-
 std::optional<std::string> Display(duckdb::ClientContext& context,
                                    const duckdb::Value& value) {
   if (value.IsNull()) {
@@ -206,17 +199,6 @@ struct Setting {
 
 constexpr std::tuple kSettingColumns{
   Col<"name">([](const auto& row) -> const auto& { return row.name; }),
-  Col<"setting">([](const auto& row) {
-    return row.guc ? InBaseUnit(Display(row.context, row.Current()), *row.guc)
-                   : Display(row.context, row.Current());
-  }),
-  Col<"short_desc">([](const auto& row) -> std::string_view {
-    if (row.guc) {
-      return row.guc->short_desc;
-    }
-    return row.option ? std::string_view{row.option->description}
-                      : std::string_view{row.extension.description};
-  }),
   Col<"source">([](const auto& row) {
     return std::string_view{row.Session() ? "session" : "default"};
   }),
@@ -232,27 +214,31 @@ class PgSettings final : public SystemTableScan<kPgSettingsSql> {
     ArraySource<duckdb::Identifier>{&LoadSettings, kKeys}};
 
   static constexpr auto kGuc = Shape<kSql, const Setting>(
-    kSettingColumns,
-    Col<"unit">([](const auto& row) { return Text(row.guc->unit); }),
+    kSettingColumns, Col<"setting">([](const auto& row) {
+      return InBaseUnit(Display(row.context, row.Current()), *row.guc);
+    }),
+    Col<"short_desc">([](const auto& row) { return row.guc->short_desc; }),
+    Col<"unit">([](const auto& row) { return NonEmpty(row.guc->unit); }),
     Col<"category">([](const auto& row) { return row.guc->category; }),
     Col<"extra_desc">(
-      [](const auto& row) { return Text(row.guc->extra_desc); }),
+      [](const auto& row) { return NonEmpty(row.guc->extra_desc); }),
     Col<"context">([](const auto& row) { return row.guc->context; }),
     Col<"vartype">([](const auto& row) { return row.guc->vartype; }),
-    Col<"min_val">([](const auto& row) { return Text(row.guc->min_val); }),
-    Col<"max_val">([](const auto& row) { return Text(row.guc->max_val); }),
+    Col<"min_val">([](const auto& row) { return NonEmpty(row.guc->min_val); }),
+    Col<"max_val">([](const auto& row) { return NonEmpty(row.guc->max_val); }),
     Col<"enumvals">(
-      [](const auto& row) -> std::optional<std::span<const std::string_view>> {
-        if (row.guc->enumvals.empty()) {
-          return std::nullopt;
-        }
-        return row.guc->enumvals;
-      }));
+      [](const auto& row) { return NonEmpty(row.guc->enumvals); }));
 
   static constexpr auto kCustom = Shape<kSql, const Setting>(
-    kSettingColumns, Col<"category">([](const auto&) {
-      return std::string_view{"Customized Options"};
+    kSettingColumns, Col<"setting">([](const auto& row) {
+      return Display(row.context, row.Current());
     }),
+    Col<"short_desc">([](const auto& row) {
+      return row.option ? std::string_view{row.option->description}
+                        : std::string_view{row.extension.description};
+    }),
+    Col<"category">(
+      [](const auto&) { return std::string_view{"Customized Options"}; }),
     Col<"context">([](const auto& row) {
       return std::string_view{
         IsUnchangeableSetting(row.name.GetIdentifierName()) ? "internal"

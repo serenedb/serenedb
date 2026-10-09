@@ -45,8 +45,6 @@
 namespace duckdb {
 
 class IndexCatalogEntry;
-class TriggerCatalogEntry;
-struct DefaultAcl;
 
 }  // namespace duckdb
 namespace sdb {
@@ -164,12 +162,13 @@ std::vector<int16_t> ExpressionAttnums(
 
 std::string ExpressionText(const duckdb::ParsedExpression& expression);
 
+duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
+  duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
+  const duckdb::Identifier& name);
+
 duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
   const SystemScan& scan, const duckdb::TableCatalogEntry& table,
   const duckdb::ForeignKeyConstraint& fk);
-
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> TriggerTable(
-  const SystemScan& scan, const duckdb::TriggerCatalogEntry& trigger);
 
 const duckdb::UniqueConstraint* ReferencedKey(
   const duckdb::TableCatalogEntry& target, std::span<const int16_t> attnums);
@@ -250,6 +249,7 @@ struct SubObject {
   const duckdb::UniqueConstraint* key_index = nullptr;
 };
 
+SubObject FindKeyIndex(const Session& session, uint64_t oid);
 SubObject FindKeyIndex(duckdb::ClientContext& context,
                        duckdb::SchemaCatalogEntry& schema,
                        std::string_view name);

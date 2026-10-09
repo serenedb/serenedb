@@ -748,18 +748,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
       WHERE false;
   END;)"},
 
-  {"pg_catalog", "pg_show_replication_origin_status",
-   R"(()
-  RETURNS TABLE( local_id BIGINT,
-                 external_id TEXT,
-                 remote_lsn TEXT,
-                 local_lsn TEXT)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT NULL::BIGINT, NULL::TEXT, NULL::TEXT, NULL::TEXT
-      WHERE false;
-  END;)"},
-
   {"pg_catalog", "pg_stat_get_subscription_stats",
    R"((subid OID)
   RETURNS TABLE( subid BIGINT,

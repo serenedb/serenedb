@@ -39,6 +39,7 @@
 #include "pg/pg_catalog/pg_foreign_server.h"
 #include "pg/pg_catalog/pg_namespace.h"
 #include "pg/pg_catalog/pg_proc.h"
+#include "pg/pg_catalog/pg_subscription.h"
 #include "pg/pg_catalog/pg_ts_dict.h"
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_types.h"
@@ -140,6 +141,11 @@ void VisitDatabase(duckdb::ClientContext& context,
     .Scan(database.GetCatalogTransaction(context),
           [&](duckdb::CatalogEntry& entry) {
             emitter.Entry(PgForeignServer::kId, entry);
+          });
+  database.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+    .Scan(database.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            emitter.Entry(PgSubscription::kId, entry);
           });
   auto& cluster = catalog::ClusterOf(context);
   auto entry =

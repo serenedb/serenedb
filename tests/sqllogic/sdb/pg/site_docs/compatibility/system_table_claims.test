@@ -9,6 +9,9 @@
 control substitution on
 
 statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
+
+statement ok
 DROP SCHEMA IF EXISTS stc_s CASCADE
 
 statement ok
@@ -94,6 +97,9 @@ INSERT INTO stc_parent VALUES (1, 'a')
 
 statement ok
 INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')
+
+statement ok
+CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION stc_pub WITH (connect = false, slot_name = NONE)
 
 # sys_tables: pg_aggregate (🟢)
 query
@@ -314,9 +320,12 @@ SELECT * FROM pg_catalog."pg_publication_rel" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_range" LIMIT 0;
 
-# sys_tables: pg_replication_origin (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_replication_origin" LIMIT 0;
+# sys_tables: pg_replication_origin (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_replication_origin";
+----
+populated
+t
 
 # sys_tables: pg_rewrite (🟢)
 query
@@ -363,9 +372,12 @@ SELECT * FROM pg_catalog."pg_statistic_ext" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_statistic_ext_data" LIMIT 0;
 
-# sys_tables: pg_subscription (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_subscription" LIMIT 0;
+# sys_tables: pg_subscription (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_subscription";
+----
+populated
+t
 
 # sys_tables: pg_subscription_rel (🟡)
 statement ok
@@ -493,9 +505,12 @@ SELECT * FROM pg_catalog."pg_prepared_xacts" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_publication_tables" LIMIT 0;
 
-# sys_views: pg_replication_origin_status (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_replication_origin_status" LIMIT 0;
+# sys_views: pg_replication_origin_status (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_replication_origin_status";
+----
+populated
+t
 
 # sys_views: pg_replication_slots (🟡)
 statement ok
@@ -946,6 +961,9 @@ SELECT count(*) > 0 AS populated FROM information_schema."views";
 ----
 populated
 t
+
+statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
 
 statement ok
 DROP SCHEMA IF EXISTS stc_s CASCADE

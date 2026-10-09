@@ -1,0 +1,173 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rstr_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rstr\_%''');
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rstr_pub; DROP TABLE IF EXISTS rstr_big, rstr_added, rstr_nocopy, rstr_late; END $$');
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'ALTER SYSTEM SET logical_decoding_work_mem = ''64kB''', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT pg_reload_conf()');
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rstr_big (id int PRIMARY KEY, v text); CREATE TABLE rstr_added (id int PRIMARY KEY, v text); CREATE TABLE rstr_nocopy (id int PRIMARY KEY); CREATE TABLE rstr_late (id int PRIMARY KEY); INSERT INTO rstr_late SELECT generate_series(1, 5); INSERT INTO rstr_added SELECT g, ''before'' FROM generate_series(1, 1000) g; INSERT INTO rstr_nocopy SELECT generate_series(1, 10); CREATE PUBLICATION rstr_pub FOR TABLE rstr_big; END $$');
+
+
+statement ok
+CREATE TABLE rstr_big (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rstr_added (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rstr_nocopy (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rstr_late (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE SUBSCRIPTION rstr_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rstr_pub WITH (slot_name = 'rstr_sub', streaming = on, origin = none);
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_subscription WHERE subname = 'rstr_sub';
+----
+n
+1
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'INSERT INTO rstr_big SELECT g, repeat(''x'', 100) FROM generate_series(1, 20000) g');
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM rstr_big;
+----
+n	lo	hi
+20000	1	20000
+
+
+query ok retry 120 backoff 250ms
+SELECT * FROM postgres_query('rstr_${__DATABASE__}', 'SELECT stream_txns > 0 AS streamed FROM pg_stat_replication_slots WHERE slot_name = ''rstr_sub''');
+----
+streamed
+t
+
+
+statement error
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rstr_big SELECT g, repeat(''y'', 100) FROM generate_series(100001, 120000) g; RAISE EXCEPTION ''abort the streamed transaction''; END $$');
+----
+<slt:ignore>abort the streamed transaction<slt:ignore>
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rstr_big SELECT g, ''kept'' FROM generate_series(200001, 210000) g; BEGIN INSERT INTO rstr_big SELECT g, ''rolled back'' FROM generate_series(300001, 310000) g; RAISE EXCEPTION ''abort the subtransaction''; EXCEPTION WHEN raise_exception THEN NULL; END; INSERT INTO rstr_big SELECT g, ''kept'' FROM generate_series(400001, 410000) g; END $$');
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'INSERT INTO rstr_big VALUES (500001, ''marker'')');
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) FILTER (WHERE id <= 20000) AS first, count(*) FILTER (WHERE id BETWEEN 100001 AND 120000) AS aborted, count(*) FILTER (WHERE v = 'kept') AS kept, count(*) FILTER (WHERE v = 'rolled back') AS rolled_back, count(*) FILTER (WHERE v = 'marker') AS marker FROM rstr_big;
+----
+first	aborted	kept	rolled_back	marker
+20000	0	20000	0	1
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'ALTER PUBLICATION rstr_pub ADD TABLE rstr_added, rstr_nocopy');
+
+
+statement ok
+ALTER SUBSCRIPTION rstr_sub REFRESH PUBLICATION;
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, count(*) FILTER (WHERE v = 'before') AS copied FROM rstr_added;
+----
+n	copied
+1000	1000
+
+
+query
+SELECT c.relname, r.srsubstate, r.srsublsn IS NOT NULL AS has_lsn FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid ORDER BY c.relname;
+----
+relname	srsubstate	has_lsn
+rstr_added	r	t
+rstr_big	r	t
+rstr_nocopy	r	t
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rstr_added VALUES (1001, ''after''); UPDATE rstr_added SET v = ''changed'' WHERE id = 1; INSERT INTO rstr_nocopy VALUES (11); END $$');
+
+
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM rstr_added) AS added, (SELECT v FROM rstr_added WHERE id = 1) AS first, (SELECT count(*) FROM rstr_nocopy) AS nocopy;
+----
+added	first	nocopy
+1001	changed	11
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN ALTER PUBLICATION rstr_pub DROP TABLE rstr_nocopy; ALTER PUBLICATION rstr_pub ADD TABLE rstr_late; END $$');
+
+
+statement ok
+ALTER SUBSCRIPTION rstr_sub REFRESH PUBLICATION WITH (copy_data = false);
+
+
+query ok retry 120 backoff 250ms
+SELECT c.relname, r.srsubstate FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid ORDER BY c.relname;
+----
+relname	srsubstate
+rstr_added	r
+rstr_big	r
+rstr_late	r
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rstr_nocopy VALUES (12); INSERT INTO rstr_late VALUES (6); INSERT INTO rstr_added VALUES (1002, ''last''); END $$');
+
+
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM rstr_added) AS added, (SELECT count(*) FROM rstr_nocopy) AS nocopy, (SELECT list(id) FROM rstr_late) AS late;
+----
+added	nocopy	late
+1002	11	{6}
+
+
+statement ok
+DROP SUBSCRIPTION rstr_sub;
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'ALTER SYSTEM RESET logical_decoding_work_mem', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT pg_reload_conf()');
+
+
+statement ok
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rstr_pub; DROP TABLE rstr_big, rstr_added, rstr_nocopy, rstr_late; END $$');
+
+
+statement ok
+DETACH rstr_${__DATABASE__};

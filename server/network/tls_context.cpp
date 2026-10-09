@@ -83,4 +83,28 @@ asio_ns::ssl::context BuildServerTlsContext(const TlsOptions& options) {
   return ctx;
 }
 
+asio_ns::ssl::context BuildClientTlsContext(const TlsClientOptions& options) {
+  asio_ns::ssl::context ctx{asio_ns::ssl::context::tls_client};
+  auto* native = ctx.native_handle();
+  SSL_CTX_set_min_proto_version(native, TLS1_2_VERSION);
+  SSL_CTX_set_options(native, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION);
+  if (!options.cert_file.empty()) {
+    ctx.use_certificate_chain_file(options.cert_file);
+    ctx.use_private_key_file(
+      options.key_file.empty() ? options.cert_file : options.key_file,
+      asio_ns::ssl::context::pem);
+  }
+  if (!options.verify_peer) {
+    ctx.set_verify_mode(asio_ns::ssl::verify_none);
+    return ctx;
+  }
+  if (options.root_cert.empty() || options.root_cert == "system") {
+    ctx.set_default_verify_paths();
+  } else {
+    ctx.load_verify_file(options.root_cert);
+  }
+  ctx.set_verify_mode(asio_ns::ssl::verify_peer);
+  return ctx;
+}
+
 }  // namespace sdb::network

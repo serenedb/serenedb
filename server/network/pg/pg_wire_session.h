@@ -147,7 +147,7 @@ enum class CopyFormat : uint8_t {
 // that own them).
 
 template<SocketKind Kind>
-class PgWireSession final
+class PgWireSession
   : public Transport<Kind, PgWireSession<Kind>>,
     public duckdb::enable_shared_from_this<PgWireSession<Kind>> {
  public:
@@ -227,7 +227,24 @@ class PgWireSession final
     }
   }
 
- private:
+  // Everything below is protected (not private) so the outbound replication
+  // subscriber (PgReplicationClient) can reuse the frame assembler, the recv/
+  // send transport, the CpuResumer split, the copy-in feeder and the
+  // local-apply drive while it substitutes its own client startup and
+  // stream-consume loop.
+ protected:
+  // Client-mode construction (outbound subscriber): only the transport + frame
+  // assembler are wired up; the server-config members keep their defaults.
+  // There is no RecvLoop: the client reads the socket itself.
+  struct ClientTag {};
+  PgWireSession(IoExecutor& exec, asio_ns::ssl::context& ssl, ClientTag)
+    requires(Kind == SocketKind::MaybeTls)
+    : Transport<Kind, PgWireSession<Kind>>{exec, ssl},
+      _io{exec.Context()},
+      _deadline{exec.Context()},
+      _frames{this->_recv},
+      _client{true} {}
+
   // The session owner. Starts the writer, negotiates startup+auth, hands off to
   // the cpu task, pumps recv, then stops everything and joins the cpu + writer
   // futures before its frame (and the session) is destroyed.
@@ -318,6 +335,7 @@ class PgWireSession final
     duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format);
   yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBridge& bridge,
                                  CopyFormat format);
+  yaclib::Task<> WaitCopyInput();
   void HandleParse(std::string_view payload);
   void HandleBind(std::string_view payload);
   void HandleDescribe(std::string_view payload);
@@ -435,6 +453,7 @@ class PgWireSession final
   std::atomic_bool _copy_route = false;
   Gate _copy_gate;
   std::atomic_bool _feeder_done = false;
+  const bool _client = false;
   // Prepared-statement + portal stores (named + anon slots) and the cross-store
   // close cascade; see ProtocolState.
   ProtocolState _proto;

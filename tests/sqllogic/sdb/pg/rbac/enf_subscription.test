@@ -1,0 +1,151 @@
+statement ok
+DROP DATABASE IF EXISTS subenf_vault;
+
+
+statement ok
+DROP ROLE IF EXISTS subenf_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS subenf_clickclack;
+
+
+statement ok
+CREATE ROLE subenf_vedernikoff LOGIN PASSWORD 'subenf_pw';
+
+
+statement ok
+CREATE ROLE subenf_clickclack LOGIN PASSWORD 'subenf_pw';
+
+
+statement ok
+CREATE DATABASE subenf_vault;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION subenf_pub WITH (connect = false);
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
+connection c_vault_admin database=subenf_vault
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+
+
+connection default
+statement ok
+GRANT CREATE ON DATABASE subenf_vault TO subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION subenf_pub WITH (connect = false);
+----
+db error: ERROR: password is required
+DETAIL: Non-superuser subscriptions must set a password in the connection string.
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement ok
+CREATE SUBSCRIPTION subenf_sub1 CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION subenf_pub WITH (connect = false, slot_name = NONE);
+
+
+connection c_vault_admin database=subenf_vault
+query
+SELECT r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'subenf_sub1';
+----
+rolname
+subenf_vedernikoff
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_pr CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION subenf_pub WITH (connect = false, password_required = false);
+----
+db error: ERROR: password_required=false is superuser-only
+HINT: Subscriptions with the password_required option set to false may only be created or modified by the superuser.
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_sub1 SKIP (lsn = '0/10');
+----
+db error: ERROR: must be superuser to skip transaction
+
+
+connection c_other user=subenf_clickclack password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_sub1 DISABLE;
+----
+db error: ERROR: must be owner of subscription subenf_sub1
+
+
+connection c_other user=subenf_clickclack password=subenf_pw database=subenf_vault
+statement error
+DROP SUBSCRIPTION subenf_sub1;
+----
+db error: ERROR: must be owner of subscription subenf_sub1
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_sub1 OWNER TO subenf_clickclack;
+----
+db error: ERROR: must be able to SET ROLE "subenf_clickclack"
+
+
+connection default
+statement ok
+REVOKE CREATE ON DATABASE subenf_vault FROM subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+CREATE SUBSCRIPTION subenf_sub2 CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION subenf_pub WITH (connect = false);
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
+connection default
+statement error
+DROP ROLE subenf_vedernikoff;
+----
+db error: ERROR: role "subenf_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+connection default
+statement error
+DROP DATABASE subenf_vault;
+----
+db error: ERROR: database "subenf_vault" is being used by logical replication subscription
+DETAIL: There is 1 subscription.
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement ok
+DROP SUBSCRIPTION subenf_sub1;
+
+
+connection default
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE datname = 'subenf_vault' AND pg_terminate_backend(pid);
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE subenf_vault;
+
+
+statement ok
+DROP ROLE subenf_vedernikoff;
+
+
+statement ok
+DROP ROLE subenf_clickclack;

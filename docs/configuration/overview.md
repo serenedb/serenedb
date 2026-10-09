@@ -10,7 +10,7 @@ SereneDB has a number of configuration options that can be used to change the be
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md).
 They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
-The values of configuration options can be queried via the [`current_setting()` scalar function](../sql/functions/utility.md) or the `pg_settings` view. For example:
+The values of configuration options can be queried via the [`current_setting()` scalar function](../sql/functions/utility.md) or the `pg_settings` table, which also lists the PostgreSQL settings clients read. For example:
 
 <SqlLogicTest id="configuration/overview/example_001" />
 
@@ -253,16 +253,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `table_function_identifier_conversion` | Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone`                                    | The current time zone                                                                                                                                                                                          | `VARCHAR`   | System (locale) timezone                            |
 
-#### Logical replication
-
-Server-wide settings of [subscriptions](../sql/statements/create_subscription/index.md). Only a superuser may set them, and a change applies to running subscriptions too.
-
-| Name                                          | Description                                                                                                                                                                                                    | Type        | Default value                                       |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
-| `max_sync_workers_per_subscription` | How many tables one subscription copies at the same time during its initial synchronization, each over its own publisher connection (a walsender on the publisher). | `UINTEGER` | `2` |
-| `wal_receiver_status_interval` | How often a subscription reports its position to the publisher (seconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`). 0 disables the periodic reports. | `VARCHAR` | `10s` |
-| `wal_receiver_timeout` | A subscription whose publisher sends nothing for this long drops the connection and reconnects (milliseconds without a unit). 0 disables the timeout. | `VARCHAR` | `1min` |
-| `wal_retrieve_retry_interval` | How long a failed subscription waits before it reconnects (milliseconds without a unit). | `VARCHAR` | `5s` |
+The other PostgreSQL settings that `pg_settings` lists, such as `work_mem`, `lock_timeout`, `max_connections` and `wal_level`, report PostgreSQL's defaults through `SHOW`, `current_setting()` and `pg_settings`. Settings a PostgreSQL session may change accept `SET` with a warning that the value is not enforced; the rest are read-only and `SET` fails with `cannot be changed`.
 
 #### Security
 

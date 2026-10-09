@@ -76,6 +76,26 @@ macOS has no linker scripts, so there `serened` reserves a fixed 4 MiB region in
 
 Steps 3 and 4 run every time `serened` is linked, which includes every change to `docs/`. So the image always matches the server it lives in, and there is nothing to keep in sync by hand. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
 
+### PostgreSQL catalog code
+
+Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: built-in types and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL, default and lookup key), `pg_catalog` and `information_schema` view definitions, the rows of the `information_schema.sql_*` tables, setting descriptions for `pg_settings`, the keyword list `quote_ident` uses, and the signatures of stub set-returning functions. The output is `server/pg/catalog/**/*.gen.inc`.
+
+`scripts/generate_pg_catalog.py` reads a running PostgreSQL and its source tree of the same version:
+
+```bash
+docker run -d --name pg18 -e POSTGRES_HOST_AUTH_METHOD=trust -p 55433:5432 postgres:18.3
+git clone --depth 1 -b REL_18_3 https://github.com/postgres/postgres pg-src
+python3 scripts/generate_pg_catalog.py --pg 127.0.0.1:55433 --pg-src pg-src
+```
+
+What SereneDB decides on its own is kept apart from the generated output:
+
+- `scripts/pg_catalog/config.py` lists the views SereneDB implements natively as tables, SereneDB's own `sdb_*` tables, how each PostgreSQL column type is stored, the row estimates the planner sees, the settings it exposes, and the few PostgreSQL types it substitutes in stub functions.
+- `server/pg/catalog/views/overrides/<schema>.<view>.sql` holds a view body SereneDB rewrites; the generator uses it in place of PostgreSQL's.
+- `server/pg/catalog/tables/*.cpp` produce the rows of each catalog and set SereneDB's constant column values. A catalog without a file there exists with no rows.
+
+To move to a new PostgreSQL release, rerun the generator against that release and fix what no longer compiles. Column names are checked at compile time, and a debug build checks every column's storage type at startup.
+
 ### Launch
 
 ```bash

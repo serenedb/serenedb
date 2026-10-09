@@ -1,0 +1,86 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS invoker_tsmap_tornado;
+
+
+statement ok
+DROP ROLE IF EXISTS invoker_tsmap_wex;
+
+
+statement ok
+CREATE ROLE invoker_tsmap_wex LOGIN PASSWORD 'invoker_tsmap_wex_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_ts_config_map'::regclass;
+----
+oid	relname	relkind	relnatts
+3603	pg_ts_config_map	r	4
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_ts_config_map'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+mapcfg	oid	t
+maptokentype	integer	t
+mapseqno	integer	t
+mapdict	oid	t
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY invoker_tsmap_tornado AS keyword() WITH (frequency);
+
+
+query
+SELECT * FROM pg_ts_config_map;
+----
+mapcfg	maptokentype	mapseqno	mapdict
+
+
+query
+SELECT mapcfg, maptokentype FROM pg_ts_config_map WHERE mapdict = 'invoker_tsmap_tornado'::regdictionary;
+----
+mapcfg	maptokentype
+
+
+query
+SELECT mapdict FROM pg_ts_config_map WHERE mapcfg = 3748 AND maptokentype = 1 AND mapseqno = 1;
+----
+mapdict
+
+
+query
+SELECT count(*) AS n
+FROM pg_ts_config_map m
+JOIN pg_ts_config c ON c.oid = m.mapcfg
+JOIN pg_ts_dict d ON d.oid = m.mapdict;
+----
+n
+0
+
+
+connection invoker_conn user=invoker_tsmap_wex password=invoker_tsmap_wex_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_ts_config_map', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection invoker_conn user=invoker_tsmap_wex password=invoker_tsmap_wex_pw
+query
+SELECT mapcfg, mapdict FROM pg_ts_config_map;
+----
+mapcfg	mapdict
+
+
+connection default
+statement ok
+DROP TEXT SEARCH DICTIONARY invoker_tsmap_tornado;
+
+
+statement ok
+DROP ROLE invoker_tsmap_wex;

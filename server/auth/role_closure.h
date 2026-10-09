@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -60,6 +61,12 @@ struct RoleGraph {
   const Node* Find(duckdb::idx_t role) const {
     auto it = nodes.find(role);
     return it == nodes.end() ? nullptr : &it->second;
+  }
+
+  const decltype(nodes)::value_type* FindByName(std::string_view name) const {
+    const auto it = absl::c_find_if(
+      nodes, [&](const auto& entry) { return entry.second.name == name; });
+    return it == nodes.end() ? nullptr : &*it;
   }
 
   std::string_view NameOf(duckdb::idx_t role) const {

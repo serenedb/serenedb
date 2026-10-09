@@ -10,6 +10,7 @@ binary result format.
 
 from __future__ import annotations
 
+import json
 import socket
 import struct
 import time
@@ -540,6 +541,34 @@ def test_char_oid18_param_roundtrip(conn):
     cols = row_description(m)
     assert cols and cols[0][1] == 18, cols  # result type oid 18 ("char")
     assert first_field(m) == b"A"
+
+
+def test_parse_param_oid_unknown_is_inferred(conn):
+    conn.parse("", "select $1::int4 + 1", oids=(705,))
+    conn.bind("", "", params=(b"41",))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert first_field(m) == b"42"
+
+
+@pytest.mark.parametrize(
+    "oid, param, check",
+    [
+        (1700, b"1.5", lambda value: float(value) == 1.5),
+        (1042, b"ab", lambda value: value == b"ab"),
+        (3802, b'{"a": 1}', lambda value: json.loads(value) == {"a": 1}),
+    ],
+)
+def test_parse_param_oid_numeric_bpchar_jsonb(conn, oid, param, check):
+    conn.parse("", "select $1", oids=(oid,))
+    conn.bind("", "", params=(param,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert check(first_field(m)), first_field(m)
 
 
 def test_describe_resolves_deferred_param_output(conn):

@@ -1,0 +1,180 @@
+statement ok
+DROP ROLE IF EXISTS invoker_drs_quas;
+
+
+statement ok
+DROP ROLE IF EXISTS invoker_drs_wex;
+
+
+statement ok
+DROP ROLE IF EXISTS invoker_drs_exort;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_db_role_setting'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+2964	pg_db_role_setting	r	pg_catalog	3
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_db_role_setting'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+setdatabase	oid	t
+setrole	oid	t
+setconfig	text[]	f
+
+
+statement ok
+CREATE ROLE invoker_drs_quas;
+
+
+statement ok
+CREATE ROLE invoker_drs_wex;
+
+
+statement ok
+CREATE ROLE invoker_drs_exort LOGIN PASSWORD 'sunstrike';
+
+
+query
+SELECT count(*) FROM pg_db_role_setting
+WHERE setrole IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'invoker\_drs\_%');
+----
+count
+0
+
+
+statement ok
+ALTER ROLE invoker_drs_quas SET work_mem = '16MB';
+
+
+statement ok
+ALTER ROLE invoker_drs_quas SET search_path = 'sunstrike', public;
+
+
+statement ok
+ALTER ROLE invoker_drs_quas SET statement_timeout = 1000;
+
+
+statement ok
+ALTER ROLE invoker_drs_wex SET work_mem = '64MB';
+
+
+query
+SELECT setdatabase, setrole::regrole::text AS role, setconfig
+FROM pg_db_role_setting
+WHERE setrole IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'invoker\_drs\_%')
+ORDER BY 2;
+----
+setdatabase	role	setconfig
+0	invoker_drs_quas	{work_mem=16MB,"search_path=sunstrike, public",statement_timeout=1000}
+0	invoker_drs_wex	{work_mem=64MB}
+
+
+query
+SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'invoker_drs_wex'::regrole;
+----
+setconfig
+{work_mem=64MB}
+
+
+query
+SELECT setconfig FROM pg_db_role_setting WHERE setrole IN (SELECT 'invoker_drs_wex'::regrole::oid) AND setdatabase = 0;
+----
+setconfig
+{work_mem=64MB}
+
+
+query
+SELECT r.rolname, r.rolconfig = s.setconfig AS same_config
+FROM pg_roles r JOIN pg_db_role_setting s ON s.setrole = r.oid AND s.setdatabase = 0
+WHERE r.rolname LIKE 'invoker\_drs\_%' ORDER BY r.rolname;
+----
+rolname	same_config
+invoker_drs_quas	t
+invoker_drs_wex	t
+
+
+statement ok
+ALTER ROLE invoker_drs_quas SET work_mem = '32MB';
+
+
+query
+SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'invoker_drs_quas'::regrole;
+----
+setconfig
+{work_mem=32MB,"search_path=sunstrike, public",statement_timeout=1000}
+
+
+statement ok
+ALTER ROLE invoker_drs_quas RESET search_path;
+
+
+query
+SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'invoker_drs_quas'::regrole;
+----
+setconfig
+{work_mem=32MB,statement_timeout=1000}
+
+
+connection c_invoker_drs user=invoker_drs_exort password=sunstrike
+query
+SELECT setrole::regrole::text AS role, setconfig FROM pg_db_role_setting
+WHERE setrole IN (SELECT oid FROM pg_roles WHERE rolname LIKE 'invoker\_drs\_%')
+ORDER BY 1;
+----
+role	setconfig
+invoker_drs_quas	{work_mem=32MB,statement_timeout=1000}
+invoker_drs_wex	{work_mem=64MB}
+
+
+connection default
+statement ok
+ALTER ROLE invoker_drs_quas RESET ALL;
+
+
+query
+SELECT count(*) FROM pg_db_role_setting WHERE setrole = 'invoker_drs_quas'::regrole;
+----
+count
+0
+
+
+query
+SELECT rolconfig FROM pg_roles WHERE rolname = 'invoker_drs_quas';
+----
+rolconfig
+NULL
+
+
+statement ok
+DROP ROLE invoker_drs_wex;
+
+
+query
+SELECT count(*) FROM pg_db_role_setting s LEFT JOIN pg_authid a ON a.oid = s.setrole
+WHERE s.setrole <> 0 AND a.oid IS NULL;
+----
+count
+0
+
+
+statement ok
+DROP ROLE invoker_drs_quas;
+
+
+statement ok
+DROP ROLE invoker_drs_exort;
+
+
+query
+SELECT count(*) FROM pg_db_role_setting
+WHERE setrole IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'invoker\_drs\_%');
+----
+count
+0

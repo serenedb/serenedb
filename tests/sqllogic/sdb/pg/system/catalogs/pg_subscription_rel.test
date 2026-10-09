@@ -1,0 +1,85 @@
+statement ok
+DROP TABLE IF EXISTS zeus_subrel_bolts;
+
+
+statement ok
+DROP ROLE IF EXISTS zeus_subrel_arc;
+
+
+statement ok
+CREATE ROLE zeus_subrel_arc LOGIN PASSWORD 'zeus_subrel_arc_pw';
+
+
+statement ok
+CREATE TABLE zeus_subrel_bolts (id int PRIMARY KEY, damage int);
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_subscription_rel'::regclass;
+----
+oid	relname	relkind	relnatts
+6102	pg_subscription_rel	r	4
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_subscription_rel'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+srsubid	oid	t
+srrelid	oid	t
+srsubstate	"char"	t
+srsublsn	pg_lsn	f
+
+
+query
+SELECT * FROM pg_subscription_rel;
+----
+srsubid	srrelid	srsubstate	srsublsn
+
+
+query
+SELECT srsubid FROM pg_subscription_rel WHERE srrelid = 'zeus_subrel_bolts'::regclass;
+----
+srsubid
+
+
+query
+SELECT srrelid FROM pg_subscription_rel WHERE srsubid = 64208;
+----
+srrelid
+
+
+query
+SELECT count(*) AS n
+FROM pg_subscription_rel sr
+JOIN pg_class c ON c.oid = sr.srrelid;
+----
+n
+0
+
+
+connection zeus_conn user=zeus_subrel_arc password=zeus_subrel_arc_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_subscription_rel', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection zeus_conn user=zeus_subrel_arc password=zeus_subrel_arc_pw
+query
+SELECT srsubid, srrelid, srsubstate FROM pg_subscription_rel;
+----
+srsubid	srrelid	srsubstate
+
+
+connection default
+statement ok
+DROP TABLE zeus_subrel_bolts;
+
+
+statement ok
+DROP ROLE zeus_subrel_arc;

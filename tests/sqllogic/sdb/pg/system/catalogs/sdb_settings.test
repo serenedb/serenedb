@@ -1,0 +1,141 @@
+statement ok
+DROP ROLE IF EXISTS courier_settings_shield;
+
+
+statement ok
+CREATE ROLE courier_settings_shield LOGIN PASSWORD 'courier_settings_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sdb_settings';
+----
+relkind	nspname	relnatts
+r	pg_catalog	13
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'sdb_settings'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+name	text	f
+setting	text	f
+unit	text	f
+category	text	f
+short_desc	text	f
+context	text	f
+vartype	text	f
+source	text	f
+min_val	text	f
+max_val	text	f
+boot_val	text	f
+reset_val	text	f
+pending_restart	boolean	f
+
+
+query
+SELECT name, vartype, context, boot_val, pending_restart
+FROM sdb_settings
+WHERE name IN ('log_level', 'tls_min_version', 'auth_timeout', 'missing_database',
+               'pg_max_message_bytes', 'remap_executable', 'io_threads',
+               's2shape_index_min_short_edge_fraction', 'skip_search_recovery')
+ORDER BY name;
+----
+name	vartype	context	boot_val	pending_restart
+auth_timeout	string	postmaster	30s	f
+io_threads	integer	postmaster	0	f
+log_level	string	postmaster	info	f
+missing_database	string	postmaster	refuse	f
+pg_max_message_bytes	integer	postmaster	67108864	f
+remap_executable	bool	postmaster	true	f
+s2shape_index_min_short_edge_fraction	real	postmaster	0.2	f
+skip_search_recovery	bool	postmaster	false	f
+tls_min_version	string	postmaster	1.2	f
+
+
+query
+SELECT count(*) = count(DISTINCT name) AS unique_names,
+       count(*) FILTER (WHERE context <> 'postmaster') AS not_postmaster,
+       count(*) FILTER (WHERE pending_restart) AS pending,
+       count(*) FILTER (WHERE boot_val IS DISTINCT FROM reset_val) AS reset_differs,
+       count(*) FILTER (WHERE unit IS NOT NULL OR category IS NOT NULL
+                        OR min_val IS NOT NULL OR max_val IS NOT NULL) AS with_pg_metadata,
+       count(*) FILTER (WHERE short_desc IS NULL) AS undocumented
+FROM sdb_settings;
+----
+unique_names	not_postmaster	pending	reset_differs	with_pg_metadata	undocumented
+t	0	0	0	0	0
+
+
+query
+SELECT count(*) FILTER (WHERE source NOT IN ('default', 'command line')) AS bad_source,
+       count(*) FILTER (WHERE source = 'default' AND setting IS DISTINCT FROM boot_val) AS default_changed,
+       count(*) FILTER (WHERE vartype NOT IN ('bool', 'integer', 'real', 'string')) AS bad_vartype
+FROM sdb_settings;
+----
+bad_source	default_changed	bad_vartype
+0	0	0
+
+
+query
+SELECT count(*) AS leaked
+FROM sdb_settings
+WHERE name IN ('auth_api_key', 'auth_bearer_token', 'auth_password')
+  AND coalesce(setting, '') NOT IN ('', '***');
+----
+leaked
+0
+
+
+query
+SELECT name, short_desc
+FROM sdb_settings
+WHERE name IN ('tls_min_version', 'missing_database')
+ORDER BY name;
+----
+name	short_desc
+missing_database	What boot does with a database whose data file is missing: 'refuse' (default) stops the server, 'skip' leaves it unattached, 'drop' removes it from the catalog.
+tls_min_version	Minimum TLS version: 1.2 or 1.3 (legacy TLS is not supported).
+
+
+query
+SELECT name FROM sdb_settings WHERE name = 'pudge_rot';
+----
+name
+
+
+query
+SELECT count(*) AS pg_names
+FROM sdb_settings s JOIN pg_settings p USING (name)
+WHERE s.name IN ('log_level', 'tls_min_version', 'missing_database');
+----
+pg_names
+0
+
+
+connection courier_settings user=courier_settings_shield password=courier_settings_pw
+query
+SELECT name, vartype FROM sdb_settings WHERE name = 'log_level';
+----
+name	vartype
+log_level	string
+
+
+connection courier_settings user=courier_settings_shield password=courier_settings_pw
+query
+SELECT count(*) AS leaked
+FROM sdb_settings
+WHERE name IN ('auth_api_key', 'auth_bearer_token', 'auth_password')
+  AND coalesce(setting, '') NOT IN ('', '***');
+----
+leaked
+0
+
+
+connection default
+statement ok
+DROP ROLE courier_settings_shield;

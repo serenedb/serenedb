@@ -33,7 +33,7 @@
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
+#include "pg/types.h"
 
 namespace sdb::catalog {
 

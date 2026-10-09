@@ -1,0 +1,84 @@
+statement ok
+DROP ROLE IF EXISTS zeus_sub_wrath;
+
+
+statement ok
+CREATE ROLE zeus_sub_wrath LOGIN PASSWORD 'zeus_sub_wrath_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_subscription'::regclass;
+----
+oid	relname	relkind	relnatts
+6100	pg_subscription	r	18
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_subscription'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+subdbid	oid	t
+subskiplsn	pg_lsn	t
+subname	name	t
+subowner	oid	t
+subenabled	boolean	t
+subbinary	boolean	t
+substream	"char"	t
+subtwophasestate	"char"	t
+subdisableonerr	boolean	t
+subpasswordrequired	boolean	t
+subrunasowner	boolean	t
+subfailover	boolean	t
+subconninfo	text	t
+subslotname	name	f
+subsynccommit	text	t
+subpublications	text[]	t
+suborigin	text	f
+
+
+query
+SELECT * FROM pg_subscription;
+----
+oid	subdbid	subskiplsn	subname	subowner	subenabled	subbinary	substream	subtwophasestate	subdisableonerr	subpasswordrequired	subrunasowner	subfailover	subconninfo	subslotname	subsynccommit	subpublications	suborigin
+
+
+query
+SELECT subname FROM pg_subscription WHERE subdbid = (SELECT oid FROM pg_database WHERE datname = current_database());
+----
+subname
+
+
+query
+SELECT subname FROM pg_subscription WHERE oid = 53197;
+----
+subname
+
+
+query
+SELECT oid FROM pg_subscription WHERE subname = 'zeus_sub_wrath';
+----
+oid
+
+
+connection zeus_conn user=zeus_sub_wrath password=zeus_sub_wrath_pw
+query
+SELECT has_column_privilege('pg_catalog.pg_subscription', 'subname', 'SELECT') AS subname, has_column_privilege('pg_catalog.pg_subscription', 'subpublications', 'SELECT') AS subpublications;
+----
+subname	subpublications
+t	t
+
+
+connection zeus_conn user=zeus_sub_wrath password=zeus_sub_wrath_pw
+query
+SELECT oid, subdbid, subname, subowner, subenabled, subslotname, subpublications FROM pg_subscription;
+----
+oid	subdbid	subname	subowner	subenabled	subslotname	subpublications
+
+
+connection default
+statement ok
+DROP ROLE zeus_sub_wrath;

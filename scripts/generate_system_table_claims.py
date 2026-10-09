@@ -40,7 +40,7 @@ EXEMPT = {
 }
 
 FIXTURE = """statement ok
-DROP SUBSCRIPTION IF EXISTS stc_sub
+DROP TEXT SEARCH DICTIONARY IF EXISTS stc_dict
 
 statement ok
 DROP SCHEMA IF EXISTS stc_s CASCADE
@@ -124,6 +124,18 @@ statement ok
 GRANT SELECT ON stc_parent TO stc_role
 
 statement ok
+ALTER ROLE stc_role SET statement_timeout = 5000
+
+statement ok
+ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO stc_role
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY stc_dict AS keyword() WITH (frequency)
+
+statement ok
+PREPARE stc_prep AS SELECT 1
+
+statement ok
 INSERT INTO stc_parent VALUES (1, 'a')
 
 statement ok
@@ -134,7 +146,13 @@ CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION s
 """
 
 TEARDOWN = """statement ok
-DROP SUBSCRIPTION IF EXISTS stc_sub
+DEALLOCATE stc_prep
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS stc_dict
+
+statement ok
+ALTER DEFAULT PRIVILEGES REVOKE SELECT ON TABLES FROM stc_role
 
 statement ok
 DROP SCHEMA IF EXISTS stc_s CASCADE

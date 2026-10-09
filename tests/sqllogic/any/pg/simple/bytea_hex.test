@@ -409,3 +409,9 @@ SELECT ARRAY['\121\121'::bytea, '\121\121'::bytea];
 ----
 array
 {"\\\\x5151","\\\\x5151"}
+
+query
+SELECT length('\x0102'::bytea) AS len, length(''::bytea) AS empty, octet_length('\x0102'::bytea) AS octets;
+----
+len	empty	octets
+2	0	2

@@ -1,0 +1,272 @@
+statement ok
+DROP TABLE IF EXISTS tango_seq_tree;
+
+
+statement ok
+DROP TABLE IF EXISTS tango_seq_search;
+
+
+statement ok
+DROP TABLE IF EXISTS tango_seq_moved;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_seq_fake_pk_seq;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_seq_plain;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_seq_custom;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_seq_down;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_seq_int;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS tango_seq_small;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_sequence';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+2224	r	8	f	10105	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_sequence'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+seqrelid	oid	t
+seqtypid	oid	t
+seqstart	bigint	t
+seqincrement	bigint	t
+seqmax	bigint	t
+seqmin	bigint	t
+seqcache	bigint	t
+seqcycle	boolean	t
+
+
+statement ok
+CREATE SEQUENCE tango_seq_plain;
+
+
+statement ok
+CREATE SEQUENCE tango_seq_custom INCREMENT BY 5 MINVALUE 10 MAXVALUE 1000 START WITH 20 CACHE 1 CYCLE;
+
+
+statement ok
+CREATE SEQUENCE tango_seq_down INCREMENT BY -2;
+
+
+statement ok
+CREATE SEQUENCE tango_seq_int AS integer;
+
+
+statement ok
+CREATE SEQUENCE tango_seq_small AS smallint START 7;
+
+
+statement ok
+CREATE TABLE tango_seq_tree (id SERIAL, big BIGSERIAL, small SMALLSERIAL);
+
+
+query
+SELECT s.seqrelid::regclass::text AS seq, s.seqstart, s.seqincrement, s.seqmax,
+       s.seqmin, s.seqcache, s.seqcycle
+FROM pg_sequence s
+JOIN pg_class c ON c.oid = s.seqrelid
+WHERE c.relname LIKE 'tango_seq%'
+ORDER BY 1;
+----
+seq	seqstart	seqincrement	seqmax	seqmin	seqcache	seqcycle
+tango_seq_custom	20	5	1000	10	1	t
+tango_seq_down	-1	-2	-1	-9223372036854775808	1	f
+tango_seq_int	1	1	2147483647	1	1	f
+tango_seq_plain	1	1	9223372036854775807	1	1	f
+tango_seq_small	7	1	32767	1	1	f
+tango_seq_tree_big_seq	1	1	9223372036854775807	1	1	f
+tango_seq_tree_id_seq	1	1	2147483647	1	1	f
+tango_seq_tree_small_seq	1	1	32767	1	1	f
+
+
+query
+SELECT s.seqrelid::regclass::text AS seq, s.seqtypid::regtype::text AS type
+FROM pg_sequence s
+WHERE s.seqrelid IN ('tango_seq_plain'::regclass, 'tango_seq_custom'::regclass,
+                     'tango_seq_down'::regclass, 'tango_seq_tree_big_seq'::regclass)
+ORDER BY 1;
+----
+seq	type
+tango_seq_custom	bigint
+tango_seq_down	bigint
+tango_seq_plain	bigint
+tango_seq_tree_big_seq	bigint
+
+
+query
+SELECT seqstart, seqincrement, seqmax, seqmin, seqcycle
+FROM pg_sequence
+WHERE seqrelid = 'tango_seq_custom'::regclass;
+----
+seqstart	seqincrement	seqmax	seqmin	seqcycle
+20	5	1000	10	t
+
+
+query
+SELECT count(*) AS n
+FROM (SELECT * FROM pg_sequence OFFSET 0) s
+WHERE s.seqrelid = 'tango_seq_custom'::regclass;
+----
+n
+1
+
+
+query
+SELECT c.relname, c.relkind
+FROM pg_class c
+JOIN pg_sequence s ON s.seqrelid = c.oid
+WHERE c.relname LIKE 'tango_seq%'
+ORDER BY 1;
+----
+relname	relkind
+tango_seq_custom	S
+tango_seq_down	S
+tango_seq_int	S
+tango_seq_plain	S
+tango_seq_small	S
+tango_seq_tree_big_seq	S
+tango_seq_tree_id_seq	S
+tango_seq_tree_small_seq	S
+
+
+query
+SELECT nextval('tango_seq_custom') AS a, nextval('tango_seq_custom') AS b;
+----
+a	b
+20	25
+
+
+query
+SELECT seqstart FROM pg_sequence WHERE seqrelid = 'tango_seq_custom'::regclass;
+----
+seqstart
+20
+
+
+query
+SELECT s.sequencename, s.start_value = q.seqstart AS start_ok,
+       s.increment_by = q.seqincrement AS inc_ok, s.max_value = q.seqmax AS max_ok,
+       s.min_value = q.seqmin AS min_ok, s.cycle = q.seqcycle AS cycle_ok
+FROM pg_sequences s
+JOIN pg_sequence q ON q.seqrelid = (quote_ident(s.schemaname) || '.' || quote_ident(s.sequencename))::regclass
+WHERE s.sequencename LIKE 'tango_seq%'
+ORDER BY 1;
+----
+sequencename	start_ok	inc_ok	max_ok	min_ok	cycle_ok
+tango_seq_custom	t	t	t	t	t
+tango_seq_down	t	t	t	t	t
+tango_seq_int	t	t	t	t	t
+tango_seq_plain	t	t	t	t	t
+tango_seq_small	t	t	t	t	t
+tango_seq_tree_big_seq	t	t	t	t	t
+tango_seq_tree_id_seq	t	t	t	t	t
+tango_seq_tree_small_seq	t	t	t	t	t
+
+
+statement ok
+DROP SEQUENCE tango_seq_down;
+
+
+query
+SELECT count(*) AS n
+FROM pg_sequence s
+JOIN pg_class c ON c.oid = s.seqrelid
+WHERE c.relname = 'tango_seq_down';
+----
+n
+0
+
+
+statement ok
+DROP TABLE tango_seq_tree;
+
+
+query
+SELECT c.relname
+FROM pg_sequence s
+JOIN pg_class c ON c.oid = s.seqrelid
+WHERE c.relname LIKE 'tango_seq%'
+ORDER BY 1;
+----
+relname
+tango_seq_custom
+tango_seq_int
+tango_seq_plain
+tango_seq_small
+
+
+statement ok
+DROP SEQUENCE tango_seq_plain;
+
+
+statement ok
+DROP SEQUENCE tango_seq_custom;
+
+
+statement ok
+DROP SEQUENCE tango_seq_int;
+
+
+statement ok
+DROP SEQUENCE tango_seq_small;
+
+
+statement ok
+CREATE TABLE tango_seq_search (txt text) WITH (storage = 'search');
+
+
+query
+SELECT count(*) AS n FROM pg_sequence WHERE seqrelid = 'tango_seq_search_pk_seq'::regclass;
+----
+n
+0
+
+
+statement ok
+ALTER TABLE tango_seq_search RENAME TO tango_seq_moved;
+
+
+statement ok
+CREATE SEQUENCE tango_seq_fake_pk_seq;
+
+
+query
+SELECT c.relname, count(s.seqrelid) AS listed
+FROM pg_class c LEFT JOIN pg_sequence s ON s.seqrelid = c.oid
+WHERE c.relkind = 'S' AND c.relname IN ('tango_seq_search_pk_seq', 'tango_seq_fake_pk_seq')
+GROUP BY c.relname ORDER BY c.relname;
+----
+relname	listed
+tango_seq_fake_pk_seq	1
+
+
+statement ok
+DROP SEQUENCE tango_seq_fake_pk_seq;
+
+
+statement ok
+DROP TABLE tango_seq_moved;

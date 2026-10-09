@@ -1,6 +1,6 @@
 # Driver-test type matrix. Source of truth for which PG types every driver
 # harness must round-trip and in which formats. Reconciled against
-# server/pg/pg_types.h `enum PgTypeOID` by gen/oids_from_pg_types.py (CI gate).
+# server/pg/catalog/builtin/type_oids.gen.inc (`enum PgTypeOID`) by gen/oids_from_pg_types.py (CI gate).
 #
 # Schema:
 #   oid:            postgres OID (must match pg_types.h)
@@ -1964,3 +1964,227 @@
   samples: []
   skip:
     all: ["TODO: triage Int8MultirangeArray"]
+
+# --- auto-stubbed by oids_from_pg_types.py ---
+
+- oid: 628
+  name: line
+  pg_typname: line
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage Line"]
+
+- oid: 629
+  name: line_array
+  pg_typname: line_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage LineArray"]
+
+- oid: 13306
+  name: cardinal_number_array
+  pg_typname: cardinal_number_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CardinalNumberArray"]
+
+- oid: 13307
+  name: cardinal_number
+  pg_typname: cardinal_number
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CardinalNumber"]
+
+- oid: 13309
+  name: character_data_array
+  pg_typname: character_data_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CharacterDataArray"]
+
+- oid: 13310
+  name: character_data
+  pg_typname: character_data
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage CharacterData"]
+
+- oid: 13311
+  name: sql_identifier_array
+  pg_typname: sql_identifier_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage SqlIdentifierArray"]
+
+- oid: 13312
+  name: sql_identifier
+  pg_typname: sql_identifier
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage SqlIdentifier"]
+
+- oid: 13317
+  name: time_stamp_array
+  pg_typname: time_stamp_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimeStampArray"]
+
+- oid: 13318
+  name: time_stamp
+  pg_typname: time_stamp
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage TimeStamp"]
+
+- oid: 13319
+  name: yes_or_no_array
+  pg_typname: yes_or_no_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage YesOrNoArray"]
+
+- oid: 13320
+  name: yes_or_no
+  pg_typname: yes_or_no
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage YesOrNo"]
+
+# --- auto-stubbed by oids_from_pg_types.py ---
+
+- oid: 1248
+  name: pg_database_rowtype
+  pg_typname: pg_database_rowtype
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgDatabaseRowtype"]
+
+- oid: 2842
+  name: pg_authid_rowtype
+  pg_typname: pg_authid_rowtype
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAuthidRowtype"]
+
+- oid: 2843
+  name: pg_auth_members_rowtype
+  pg_typname: pg_auth_members_rowtype
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAuthMembersRowtype"]
+
+- oid: 4066
+  name: pg_shseclabel_rowtype
+  pg_typname: pg_shseclabel_rowtype
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgShseclabelRowtype"]
+
+- oid: 6101
+  name: pg_subscription_rowtype
+  pg_typname: pg_subscription_rowtype
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgSubscriptionRowtype"]
+
+- oid: 10052
+  name: pg_database_rowtype_array
+  pg_typname: pg_database_rowtype_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgDatabaseRowtypeArray"]
+
+- oid: 10057
+  name: pg_authid_rowtype_array
+  pg_typname: pg_authid_rowtype_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAuthidRowtypeArray"]
+
+- oid: 10058
+  name: pg_auth_members_rowtype_array
+  pg_typname: pg_auth_members_rowtype_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgAuthMembersRowtypeArray"]
+
+- oid: 10093
+  name: pg_shseclabel_rowtype_array
+  pg_typname: pg_shseclabel_rowtype_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgShseclabelRowtypeArray"]
+
+- oid: 10112
+  name: pg_subscription_rowtype_array
+  pg_typname: pg_subscription_rowtype_array
+  binary: false
+  text: false
+  array: false
+  samples: []
+  skip:
+    all: ["TODO: triage PgSubscriptionRowtypeArray"]

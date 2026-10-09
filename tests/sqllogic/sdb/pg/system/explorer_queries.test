@@ -45,7 +45,7 @@ id	name
 
 # catalogs: list catalog schemas
 
-query
+query ?? rowsort
 SELECT
     n.oid AS id,
     s.schema_name as name
@@ -58,7 +58,7 @@ WHERE (s.schema_name IN ('information_schema')
 ----
 id	name
 11	pg_catalog
-16387	information_schema
+13293	information_schema
 
 
 # tables: list tables in a schema
@@ -174,7 +174,7 @@ WHERE i.indrelid = (SELECT oid FROM pg_class WHERE relname = 'explorer_t1'));
 t
 
 
-query
+query ?? rowsort
 SELECT
     n.oid AS id,
         s.schema_name as name
@@ -187,4 +187,4 @@ SELECT
 ----
 id	name
 11	pg_catalog
-16387	information_schema
+13293	information_schema

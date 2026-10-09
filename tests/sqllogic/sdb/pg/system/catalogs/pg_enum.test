@@ -1,0 +1,201 @@
+statement ok
+DROP TABLE IF EXISTS chin_enm_wards;
+
+
+statement ok
+DROP TABLE IF EXISTS chin_enm_saved;
+
+
+statement ok
+DROP TYPE IF EXISTS chin_enm_lane;
+
+
+statement ok
+DROP TYPE IF EXISTS chin_enm_role;
+
+
+statement ok
+DROP TYPE IF EXISTS chin_enm_empty;
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_enum'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+enumtypid	oid	t
+enumsortorder	real	t
+enumlabel	name	t
+
+
+query
+SELECT count(*) AS builtin FROM pg_enum WHERE enumtypid < 16384;
+----
+builtin
+0
+
+
+statement ok
+CREATE TYPE chin_enm_lane AS ENUM ('safe', 'mid', 'off', 'Roshan Pit');
+
+
+statement ok
+CREATE TYPE chin_enm_role AS ENUM ('carry');
+
+
+statement ok
+CREATE TYPE chin_enm_empty AS ENUM ();
+
+
+query
+SELECT enumtypid::regtype::text AS typ, enumsortorder, enumlabel
+FROM pg_enum
+WHERE enumtypid = 'chin_enm_lane'::regtype
+ORDER BY enumsortorder;
+----
+typ	enumsortorder	enumlabel
+chin_enm_lane	1	safe
+chin_enm_lane	2	mid
+chin_enm_lane	3	off
+chin_enm_lane	4	Roshan Pit
+
+
+query
+SELECT enumtypid::regtype::text AS typ, enumsortorder, enumlabel
+FROM pg_enum
+WHERE enumtypid IN ('chin_enm_lane'::regtype, 'chin_enm_role'::regtype, 'chin_enm_empty'::regtype, 23)
+ORDER BY typ, enumsortorder;
+----
+typ	enumsortorder	enumlabel
+chin_enm_lane	1	safe
+chin_enm_lane	2	mid
+chin_enm_lane	3	off
+chin_enm_lane	4	Roshan Pit
+chin_enm_role	1	carry
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT oid, enumtypid, enumsortorder, enumlabel FROM pg_enum
+   WHERE enumtypid IN ('chin_enm_lane'::regtype, 'chin_enm_role'::regtype)
+   EXCEPT
+   SELECT oid, enumtypid, enumsortorder, enumlabel FROM pg_enum
+   WHERE enumtypid::int8 + 0 IN ('chin_enm_lane'::regtype::int8, 'chin_enm_role'::regtype::int8))
+  UNION ALL
+  (SELECT oid, enumtypid, enumsortorder, enumlabel FROM pg_enum
+   WHERE enumtypid::int8 + 0 IN ('chin_enm_lane'::regtype::int8, 'chin_enm_role'::regtype::int8)
+   EXCEPT
+   SELECT oid, enumtypid, enumsortorder, enumlabel FROM pg_enum
+   WHERE enumtypid IN ('chin_enm_lane'::regtype, 'chin_enm_role'::regtype))
+) d;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS n, count(DISTINCT oid) AS distinct_oids, bool_and(oid >= 16384) AS user_range, bool_and(oid NOT IN (SELECT oid FROM pg_type)) AS not_type_oids
+FROM pg_enum
+WHERE enumtypid IN ('chin_enm_lane'::regtype, 'chin_enm_role'::regtype);
+----
+n	distinct_oids	user_range	not_type_oids
+5	5	t	t
+
+
+query
+SELECT t.typname, t.typtype, t.typcategory, count(e.oid) AS labels
+FROM pg_type t LEFT JOIN pg_enum e ON e.enumtypid = t.oid
+WHERE t.typname LIKE 'chin\_enm\_%' AND t.typtype = 'e'
+GROUP BY t.typname, t.typtype, t.typcategory
+ORDER BY t.typname;
+----
+typname	typtype	typcategory	labels
+chin_enm_empty	e	E	0
+chin_enm_lane	e	E	4
+chin_enm_role	e	E	1
+
+
+query
+SELECT count(*) AS orphans
+FROM pg_enum e
+WHERE NOT EXISTS (SELECT 1 FROM pg_type t WHERE t.oid = e.enumtypid AND t.typtype = 'e');
+----
+orphans
+0
+
+
+query
+SELECT enum_range(NULL::chin_enm_lane) AS all_labels, enum_first(NULL::chin_enm_lane) AS first, enum_last(NULL::chin_enm_lane) AS last, enum_range(NULL::chin_enm_empty) AS none, 'mid'::chin_enm_lane < 'Roshan Pit'::chin_enm_lane AS ordered;
+----
+all_labels	first	last	none	ordered
+{safe,mid,off,"Roshan Pit"}	safe	Roshan Pit	{}	t
+
+
+query
+SELECT array_agg(e.enumlabel::text ORDER BY e.enumsortorder) =(SELECT enum_range(NULL::chin_enm_lane)::text[]) AS same_order
+FROM pg_enum e
+WHERE e.enumtypid = 'chin_enm_lane'::regtype;
+----
+same_order
+t
+
+
+statement ok
+CREATE TABLE chin_enm_wards (lane chin_enm_lane);
+
+
+statement ok
+INSERT INTO chin_enm_wards VALUES ('off'), ('safe'), ('Roshan Pit'), ('mid');
+
+
+query
+SELECT w.lane::text AS lane, e.enumsortorder
+FROM chin_enm_wards w JOIN pg_enum e ON e.enumlabel = w.lane::text AND e.enumtypid = 'chin_enm_lane'::regtype
+ORDER BY w.lane;
+----
+lane	enumsortorder
+safe	1
+mid	2
+off	3
+Roshan Pit	4
+
+
+statement error
+SELECT 'jungle'::chin_enm_lane;
+
+
+statement ok
+CREATE TABLE chin_enm_saved AS SELECT 'chin_enm_lane'::regtype::oid AS lane, 'chin_enm_role'::regtype::oid AS role;
+
+
+statement ok
+DROP TABLE chin_enm_wards;
+
+
+statement ok
+DROP TYPE chin_enm_lane;
+
+
+statement ok
+DROP TYPE chin_enm_role;
+
+
+statement ok
+DROP TYPE chin_enm_empty;
+
+
+query
+SELECT count(*) AS left_over
+FROM pg_enum
+WHERE enumtypid IN (SELECT lane FROM chin_enm_saved UNION ALL SELECT role FROM chin_enm_saved);
+----
+left_over
+0
+
+
+statement ok
+DROP TABLE chin_enm_saved;

@@ -1,0 +1,85 @@
+statement ok
+DROP SCHEMA IF EXISTS courier_pubns_shop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS courier_pubns_haste;
+
+
+statement ok
+CREATE ROLE courier_pubns_haste LOGIN PASSWORD 'courier_pubns_haste_pw';
+
+
+statement ok
+CREATE SCHEMA courier_pubns_shop;
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_publication_namespace'::regclass;
+----
+oid	relname	relkind	relnatts
+6237	pg_publication_namespace	r	3
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_publication_namespace'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+pnpubid	oid	t
+pnnspid	oid	t
+
+
+query
+SELECT * FROM pg_publication_namespace;
+----
+oid	pnpubid	pnnspid
+
+
+query
+SELECT pnpubid FROM pg_publication_namespace WHERE pnnspid = 'courier_pubns_shop'::regnamespace;
+----
+pnpubid
+
+
+query
+SELECT pnnspid FROM pg_publication_namespace WHERE oid = 86420;
+----
+pnnspid
+
+
+query
+SELECT count(*) AS n
+FROM pg_publication_namespace pn
+JOIN pg_publication p ON p.oid = pn.pnpubid
+JOIN pg_namespace n ON n.oid = pn.pnnspid;
+----
+n
+0
+
+
+connection courier_conn user=courier_pubns_haste password=courier_pubns_haste_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_publication_namespace', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection courier_conn user=courier_pubns_haste password=courier_pubns_haste_pw
+query
+SELECT pnpubid, pnnspid FROM pg_publication_namespace;
+----
+pnpubid	pnnspid
+
+
+connection default
+statement ok
+DROP SCHEMA courier_pubns_shop;
+
+
+statement ok
+DROP ROLE courier_pubns_haste;

@@ -1,0 +1,546 @@
+statement ok
+DROP SCHEMA IF EXISTS chopa_dep_lair CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS roshan_dep_pit CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS roshan_dep_lair;
+
+
+statement ok
+DROP FUNCTION IF EXISTS roshan_dep_bash(int);
+
+
+statement ok
+DROP TABLE IF EXISTS roshan_dep_search;
+
+
+statement ok
+DROP TABLE IF EXISTS roshan_dep_virtual;
+
+
+statement ok
+DROP TABLE IF EXISTS roshan_dep_trig_log;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_depend';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+2608	r	7	f	10051	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_depend'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+classid	oid	t
+objid	oid	t
+objsubid	integer	t
+refclassid	oid	t
+refobjid	oid	t
+refobjsubid	integer	t
+deptype	"char"	t
+
+
+statement ok
+CREATE SCHEMA chopa_dep_lair;
+
+
+statement ok
+CREATE TYPE chopa_dep_lair.mood AS ENUM ('fed', 'hungry');
+
+
+statement ok
+CREATE TABLE chopa_dep_lair.meat (id SERIAL PRIMARY KEY, kg INT UNIQUE, m chopa_dep_lair.mood);
+
+
+statement ok
+CREATE INDEX chopa_dep_kg_idx ON chopa_dep_lair.meat (kg);
+
+
+statement ok
+CREATE VIEW chopa_dep_lair.v AS SELECT id, kg FROM chopa_dep_lair.meat;
+
+
+statement ok
+CREATE SEQUENCE chopa_dep_lair.seq OWNED BY chopa_dep_lair.meat.kg;
+
+
+statement ok
+CREATE FUNCTION chopa_dep_lair.eat(x INT) RETURNS INT LANGUAGE sql AS 'SELECT x + 1';
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass,
+       CASE d.refclassid
+         WHEN 'pg_namespace'::regclass THEN d.refobjid::regnamespace::text
+         WHEN 'pg_type'::regclass THEN d.refobjid::regtype::text
+       END AS ref,
+       d.objsubid, d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.meat'::regclass
+ORDER BY 1, 2, 3;
+----
+refclass	ref	objsubid	refobjsubid	deptype
+pg_namespace	chopa_dep_lair	0	0	n
+pg_type	chopa_dep_lair.mood	3	0	n
+
+
+query
+SELECT d.classid::regclass::text AS class,
+       CASE d.classid
+         WHEN 'pg_class'::regclass THEN d.objid::regclass::text
+         WHEN 'pg_type'::regclass THEN d.objid::regtype::text
+         WHEN 'pg_constraint'::regclass THEN (SELECT conname::text FROM pg_constraint WHERE oid = d.objid)
+         WHEN 'pg_attrdef'::regclass THEN 'default'
+       END AS obj,
+       d.objsubid, d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.refclassid = 'pg_class'::regclass
+  AND d.refobjid = 'chopa_dep_lair.meat'::regclass
+  AND d.classid <> 'pg_rewrite'::regclass
+  AND d.objid <> 'chopa_dep_lair.seq'::regclass
+ORDER BY 1, 2, 4;
+----
+class	obj	objsubid	refobjsubid	deptype
+pg_attrdef	default	0	1	a
+pg_class	chopa_dep_lair.chopa_dep_kg_idx	0	2	a
+pg_class	chopa_dep_lair.meat_id_seq	0	1	a
+pg_constraint	meat_id_not_null	0	1	a
+pg_constraint	meat_kg_key	0	2	a
+pg_constraint	meat_pkey	0	1	a
+pg_type	chopa_dep_lair.meat	0	0	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass,
+       CASE d.refclassid
+         WHEN 'pg_namespace'::regclass THEN d.refobjid::regnamespace::text
+         WHEN 'pg_class'::regclass THEN d.refobjid::regclass::text
+       END AS ref,
+       d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.meat_id_seq'::regclass
+ORDER BY 1, 2;
+----
+refclass	ref	refobjsubid	deptype
+pg_class	chopa_dep_lair.meat	1	a
+pg_namespace	chopa_dep_lair	0	n
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objsubid, d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.refclassid = 'pg_class'::regclass AND d.refobjid = 'chopa_dep_lair.meat_id_seq'::regclass;
+----
+class	objsubid	refobjsubid	deptype
+pg_attrdef	0	0	n
+
+
+query
+SELECT DISTINCT
+       CASE d.refclassid
+         WHEN 'pg_namespace'::regclass THEN d.refobjid::regnamespace::text
+         WHEN 'pg_class'::regclass THEN d.refobjid::regclass::text
+       END AS ref,
+       d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.seq'::regclass
+ORDER BY 1;
+----
+ref	deptype
+chopa_dep_lair	n
+chopa_dep_lair.meat	a
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass,
+       (SELECT conname::text FROM pg_constraint WHERE oid = d.refobjid) AS ref,
+       d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.meat_pkey'::regclass;
+----
+refclass	ref	deptype
+pg_constraint	meat_pkey	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass,
+       (SELECT conname::text FROM pg_constraint WHERE oid = d.refobjid) AS ref,
+       d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.meat_kg_key'::regclass;
+----
+refclass	ref	deptype
+pg_constraint	meat_kg_key	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.refobjid::regnamespace::text AS ref, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.v'::regclass;
+----
+refclass	ref	deptype
+pg_namespace	chopa_dep_lair	n
+
+
+query
+SELECT DISTINCT d.refclassid::regclass::text AS refclass, d.refobjid::regclass::text AS ref, d.deptype
+FROM pg_rewrite r
+JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+WHERE r.ev_class = 'chopa_dep_lair.v'::regclass
+ORDER BY 2;
+----
+refclass	ref	deptype
+pg_class	chopa_dep_lair.meat	n
+pg_class	chopa_dep_lair.v	i
+
+
+statement ok
+CREATE VIEW chopa_dep_lair.v2 AS SELECT id FROM chopa_dep_lair.v;
+
+
+statement ok
+CREATE VIEW chopa_dep_lair.v3 AS SELECT count(*) AS n FROM chopa_dep_lair.meat;
+
+
+query
+SELECT r.ev_class::regclass::text AS view, d.refobjid::regclass::text AS ref, d.refobjsubid, d.deptype
+FROM pg_rewrite r
+JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
+WHERE r.ev_class IN ('chopa_dep_lair.v'::regclass, 'chopa_dep_lair.v2'::regclass, 'chopa_dep_lair.v3'::regclass)
+  AND d.deptype = 'n'
+ORDER BY 1, 2, 3;
+----
+view	ref	refobjsubid	deptype
+chopa_dep_lair.v	chopa_dep_lair.meat	1	n
+chopa_dep_lair.v	chopa_dep_lair.meat	2	n
+chopa_dep_lair.v2	chopa_dep_lair.v	1	n
+chopa_dep_lair.v3	chopa_dep_lair.meat	0	n
+
+
+statement ok
+DROP VIEW chopa_dep_lair.v3;
+
+
+statement ok
+DROP VIEW chopa_dep_lair.v2;
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objid::regtype::text AS obj, d.deptype
+FROM pg_depend d
+WHERE d.refclassid = 'pg_class'::regclass AND d.refobjid = 'chopa_dep_lair.v'::regclass
+  AND d.classid = 'pg_type'::regclass;
+----
+class	obj	deptype
+pg_type	chopa_dep_lair.v	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.refobjid::regnamespace::text AS ref, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_type'::regclass AND d.objid = 'chopa_dep_lair.mood'::regtype;
+----
+refclass	ref	deptype
+pg_namespace	chopa_dep_lair	n
+
+
+query
+SELECT d.classid::regclass::text AS class,
+       CASE d.classid
+         WHEN 'pg_class'::regclass THEN d.objid::regclass::text
+         WHEN 'pg_type'::regclass THEN d.objid::regtype::text
+       END AS obj,
+       d.objsubid, d.deptype
+FROM pg_depend d
+WHERE d.refclassid = 'pg_type'::regclass AND d.refobjid = 'chopa_dep_lair.mood'::regtype
+ORDER BY 1, 2;
+----
+class	obj	objsubid	deptype
+pg_class	chopa_dep_lair.meat	3	n
+pg_type	chopa_dep_lair.mood[]	0	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.refobjid::regclass::text AS ref, d.deptype
+FROM (SELECT * FROM pg_depend OFFSET 0) d
+WHERE d.classid = 'pg_type'::regclass AND d.objid = 'chopa_dep_lair.meat'::regtype;
+----
+refclass	ref	deptype
+pg_class	chopa_dep_lair.meat	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.refobjid::regtype::text AS ref, d.deptype
+FROM (SELECT * FROM pg_depend OFFSET 0) d
+WHERE d.classid = 'pg_type'::regclass AND d.objid = 'chopa_dep_lair.meat[]'::regtype;
+----
+refclass	ref	deptype
+pg_type	chopa_dep_lair.meat	i
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.refobjid::regnamespace::text AS ref, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_proc'::regclass AND d.objid = 'chopa_dep_lair.eat'::regproc;
+----
+refclass	ref	deptype
+pg_namespace	chopa_dep_lair	n
+
+
+query
+SELECT count(*) AS n
+FROM pg_depend
+WHERE refclassid = 'pg_class'::regclass AND refobjid = 'chopa_dep_lair.meat'::regclass
+  AND classid <> 'pg_rewrite'::regclass;
+----
+n
+8
+
+
+query
+SELECT count(*) AS n
+FROM (SELECT * FROM pg_depend OFFSET 0) d
+WHERE d.refclassid = 'pg_class'::regclass AND d.refobjid = 'chopa_dep_lair.meat'::regclass
+  AND d.classid <> 'pg_rewrite'::regclass;
+----
+n
+8
+
+
+query
+SELECT count(*) AS n
+FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND objid = 'chopa_dep_lair.meat_id_seq'::regclass;
+----
+n
+2
+
+
+query
+SELECT count(*) AS n
+FROM (SELECT * FROM pg_depend OFFSET 0) d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'chopa_dep_lair.meat_id_seq'::regclass;
+----
+n
+2
+
+
+statement error
+DROP TABLE chopa_dep_lair.meat;
+
+
+statement error
+DROP TYPE chopa_dep_lair.mood;
+
+
+statement ok
+DROP TABLE chopa_dep_lair.meat CASCADE;
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'chopa_dep_lair'::regnamespace ORDER BY 1;
+----
+relname
+
+
+query
+SELECT d.classid::regclass::text AS class,
+       CASE d.classid
+         WHEN 'pg_type'::regclass THEN d.objid::regtype::text
+         WHEN 'pg_proc'::regclass THEN d.objid::regproc::text
+       END AS obj,
+       d.deptype
+FROM (SELECT * FROM pg_depend OFFSET 0) d
+WHERE d.refclassid = 'pg_namespace'::regclass AND d.refobjid = 'chopa_dep_lair'::regnamespace
+ORDER BY 1, 2;
+----
+class	obj	deptype
+pg_proc	chopa_dep_lair.eat	n
+pg_type	chopa_dep_lair.mood	n
+
+
+query
+SELECT d.classid::regclass::text AS class, d.objsubid, d.deptype
+FROM pg_depend d
+WHERE d.refclassid = 'pg_type'::regclass AND d.refobjid = 'chopa_dep_lair.mood'::regtype;
+----
+class	objsubid	deptype
+pg_type	0	i
+
+
+statement ok
+DROP SCHEMA chopa_dep_lair CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'chopa_dep_lair';
+----
+n
+0
+
+
+statement ok
+CREATE SCHEMA roshan_dep_pit;
+
+
+statement ok
+CREATE TYPE roshan_dep_pit.aegis AS ENUM ('held', 'lost');
+
+
+statement ok
+CREATE TABLE roshan_dep_pit.lair (a int, b int, g int GENERATED ALWAYS AS (a + b) STORED, drops roshan_dep_pit.aegis[], CONSTRAINT roshan_dep_order CHECK (b > a AND a > 0), CONSTRAINT roshan_dep_always CHECK (true));
+
+
+query
+SELECT (SELECT conname::text FROM pg_constraint WHERE oid = d.objid) AS con, d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_constraint'::regclass AND d.refobjid = 'roshan_dep_pit.lair'::regclass
+ORDER BY 1, 2, 3;
+----
+con	refobjsubid	deptype
+roshan_dep_always	0	a
+roshan_dep_order	1	a
+roshan_dep_order	1	n
+roshan_dep_order	2	a
+roshan_dep_order	2	n
+
+
+query
+SELECT d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_attrdef'::regclass AND d.refobjid = 'roshan_dep_pit.lair'::regclass
+ORDER BY 1, 2;
+----
+refobjsubid	deptype
+1	n
+2	n
+3	i
+
+
+query
+SELECT d.objsubid, d.refobjid::regtype::text AS ref, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'roshan_dep_pit.lair'::regclass
+  AND d.refclassid = 'pg_type'::regclass
+ORDER BY 1;
+----
+objsubid	ref	deptype
+4	roshan_dep_pit.aegis[]	n
+
+
+statement ok
+CREATE TABLE roshan_dep_lair (a int, b int);
+
+
+statement ok
+CREATE FUNCTION roshan_dep_bash(x INT) AS x + 1;
+
+
+statement ok
+CREATE INDEX roshan_dep_bash_idx ON roshan_dep_lair (roshan_dep_bash(a));
+
+
+query
+SELECT d.refclassid::regclass::text AS refclass, d.refobjsubid, d.deptype
+FROM pg_depend d
+WHERE d.classid = 'pg_class'::regclass AND d.objid = 'roshan_dep_bash_idx'::regclass
+ORDER BY 1, 2;
+----
+refclass	refobjsubid	deptype
+pg_class	0	a
+pg_class	1	a
+pg_proc	0	n
+
+
+statement ok
+CREATE TABLE roshan_dep_search (txt text) WITH (storage = 'search');
+
+
+query
+SELECT count(*) AS n
+FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND objid = 'roshan_dep_search_pk_seq'::regclass;
+----
+n
+0
+
+
+statement ok
+DROP TABLE roshan_dep_search;
+
+
+statement ok
+CREATE TABLE roshan_dep_virtual (a int, b int GENERATED ALWAYS AS (a + 1) VIRTUAL, c int);
+
+
+statement ok
+CREATE INDEX roshan_dep_virtual_idx ON roshan_dep_virtual (c);
+
+
+query
+SELECT refobjsubid, deptype
+FROM pg_depend
+WHERE objid = 'roshan_dep_virtual_idx'::regclass AND refobjid = 'roshan_dep_virtual'::regclass
+ORDER BY 1;
+----
+refobjsubid	deptype
+3	a
+
+
+statement ok
+DROP TABLE roshan_dep_virtual;
+
+
+statement ok
+CREATE TABLE roshan_dep_trig_log (msg text);
+
+
+statement ok
+CREATE TRIGGER roshan_dep_trig AFTER UPDATE OF b ON roshan_dep_lair FOR EACH STATEMENT
+  INSERT INTO roshan_dep_trig_log VALUES ('upd');
+
+
+query
+SELECT d.refobjid::regclass::text AS ref, d.refobjsubid, d.deptype
+FROM pg_depend d JOIN pg_trigger t ON t.oid = d.objid
+WHERE d.classid = 'pg_trigger'::regclass AND t.tgname = 'roshan_dep_trig'
+ORDER BY 2, 3;
+----
+ref	refobjsubid	deptype
+roshan_dep_lair	0	a
+roshan_dep_lair	2	n
+
+
+query
+SELECT count(*) AS n FROM pg_depend
+WHERE classid = 'pg_trigger'::regclass AND objid = (SELECT oid FROM pg_trigger WHERE tgname = 'roshan_dep_trig');
+----
+n
+2
+
+
+statement ok
+DROP TABLE roshan_dep_lair;
+
+
+statement ok
+DROP TABLE roshan_dep_trig_log;
+
+
+statement ok
+DROP FUNCTION roshan_dep_bash(int);
+
+
+statement ok
+DROP SCHEMA roshan_dep_pit CASCADE;

@@ -1,0 +1,196 @@
+statement ok
+DROP ROLE IF EXISTS meepo_aum_poof;
+
+
+statement ok
+DROP ROLE IF EXISTS meepo_aum_net;
+
+
+statement ok
+DROP ROLE IF EXISTS meepo_aum_clone;
+
+
+statement ok
+DROP ROLE IF EXISTS meepo_aum_prime;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_auth_members'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+1261	pg_auth_members	r	pg_catalog	7
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_auth_members'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+roleid	oid	t
+member	oid	t
+grantor	oid	t
+admin_option	boolean	t
+inherit_option	boolean	t
+set_option	boolean	t
+
+
+statement ok
+CREATE ROLE meepo_aum_prime LOGIN PASSWORD 'divided_we_stand';
+
+
+statement ok
+CREATE ROLE meepo_aum_clone;
+
+
+statement ok
+CREATE ROLE meepo_aum_net;
+
+
+statement ok
+CREATE ROLE meepo_aum_poof NOINHERIT;
+
+
+query
+SELECT count(*) FROM pg_auth_members
+WHERE roleid IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'meepo\_aum\_%')
+   OR member IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'meepo\_aum\_%');
+----
+count
+0
+
+
+statement ok
+GRANT meepo_aum_clone TO meepo_aum_prime WITH ADMIN OPTION, INHERIT FALSE, SET FALSE;
+
+
+statement ok
+GRANT meepo_aum_net TO meepo_aum_clone;
+
+
+statement ok
+GRANT meepo_aum_net TO meepo_aum_poof;
+
+
+query
+SELECT roleid::regrole::text AS role, member::regrole::text AS member,
+       grantor::regrole::text AS grantor, admin_option, inherit_option, set_option
+FROM pg_auth_members
+WHERE member IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'meepo\_aum\_%')
+ORDER BY 1, 2;
+----
+role	member	grantor	admin_option	inherit_option	set_option
+meepo_aum_clone	meepo_aum_prime	postgres	t	f	f
+meepo_aum_net	meepo_aum_clone	postgres	f	t	t
+meepo_aum_net	meepo_aum_poof	postgres	f	f	t
+
+
+query
+SELECT count(*) FROM pg_auth_members WHERE roleid = 'meepo_aum_net'::regrole;
+----
+count
+2
+
+
+query
+SELECT count(*) FROM pg_auth_members WHERE roleid IN (SELECT 'meepo_aum_net'::regrole::oid);
+----
+count
+2
+
+
+query
+SELECT roleid::regrole::text AS role FROM pg_auth_members WHERE member = 'meepo_aum_prime'::regrole;
+----
+role
+meepo_aum_clone
+
+
+query
+SELECT count(DISTINCT oid) FROM pg_auth_members
+WHERE member IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'meepo\_aum\_%');
+----
+count
+3
+
+
+query
+SELECT pg_has_role('meepo_aum_prime', 'meepo_aum_clone', 'MEMBER') AS member,
+       pg_has_role('meepo_aum_prime', 'meepo_aum_clone', 'USAGE') AS usage,
+       pg_has_role('meepo_aum_clone', 'meepo_aum_net', 'USAGE') AS clone_usage;
+----
+member	usage	clone_usage
+t	f	t
+
+
+statement ok
+REVOKE ADMIN OPTION FOR meepo_aum_clone FROM meepo_aum_prime;
+
+
+query
+SELECT admin_option, inherit_option, set_option FROM pg_auth_members
+WHERE roleid = 'meepo_aum_clone'::regrole AND member = 'meepo_aum_prime'::regrole;
+----
+admin_option	inherit_option	set_option
+f	f	f
+
+
+statement ok
+REVOKE meepo_aum_net FROM meepo_aum_poof;
+
+
+query
+SELECT member::regrole::text AS member FROM pg_auth_members WHERE roleid = 'meepo_aum_net'::regrole;
+----
+member
+meepo_aum_clone
+
+
+connection c_meepo_aum user=meepo_aum_prime password=divided_we_stand
+query
+SELECT roleid::regrole::text AS role, member::regrole::text AS member, admin_option
+FROM pg_auth_members
+WHERE member IN (SELECT oid FROM pg_roles WHERE rolname LIKE 'meepo\_aum\_%')
+ORDER BY 1, 2;
+----
+role	member	admin_option
+meepo_aum_clone	meepo_aum_prime	f
+meepo_aum_net	meepo_aum_clone	f
+
+
+connection default
+statement ok
+DROP ROLE meepo_aum_net;
+
+
+query
+SELECT roleid::regrole::text AS role, member::regrole::text AS member
+FROM pg_auth_members
+WHERE member IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'meepo\_aum\_%');
+----
+role	member
+meepo_aum_clone	meepo_aum_prime
+
+
+statement ok
+DROP ROLE meepo_aum_clone;
+
+
+statement ok
+DROP ROLE meepo_aum_poof;
+
+
+statement ok
+DROP ROLE meepo_aum_prime;
+
+
+query
+SELECT count(*) FROM pg_auth_members m
+LEFT JOIN pg_authid r ON r.oid = m.roleid
+LEFT JOIN pg_authid u ON u.oid = m.member
+WHERE r.oid IS NULL OR u.oid IS NULL;
+----
+count
+0

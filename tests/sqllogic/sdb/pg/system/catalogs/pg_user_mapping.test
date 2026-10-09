@@ -1,0 +1,87 @@
+statement ok
+DROP ROLE IF EXISTS rubick_um_spellsteal;
+
+
+statement ok
+CREATE ROLE rubick_um_spellsteal LOGIN PASSWORD 'rubick_um_spellsteal_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_user_mapping'::regclass;
+----
+oid	relname	relkind	relnatts
+1418	pg_user_mapping	r	4
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_user_mapping'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+umuser	oid	t
+umserver	oid	t
+umoptions	text[]	f
+
+
+query
+SELECT umserver FROM pg_user_mapping WHERE umuser = (SELECT oid FROM pg_roles WHERE rolname = 'rubick_um_spellsteal');
+----
+umserver
+
+
+query
+SELECT umuser FROM pg_user_mapping WHERE oid = 31415;
+----
+umuser
+
+
+query
+SELECT count(*) AS n FROM pg_user_mapping m JOIN pg_foreign_server s ON s.oid = m.umserver WHERE s.srvname = 'rubick_um_spellsteal';
+----
+n
+0
+
+
+query
+SELECT has_table_privilege('pg_catalog.pg_user_mapping', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection rubick_conn user=rubick_um_spellsteal password=rubick_um_spellsteal_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_user_mapping', 'SELECT') AS can_select;
+----
+can_select
+f
+
+
+connection rubick_conn user=rubick_um_spellsteal password=rubick_um_spellsteal_pw
+statement error
+SELECT * FROM pg_user_mapping;
+----
+db error: ERROR: permission denied for table pg_user_mapping<slt:ignore>
+
+
+connection rubick_conn user=rubick_um_spellsteal password=rubick_um_spellsteal_pw
+statement error
+SELECT umoptions FROM pg_user_mapping WHERE oid = 31415;
+----
+db error: ERROR: permission denied for table pg_user_mapping<slt:ignore>
+
+
+connection rubick_conn user=rubick_um_spellsteal password=rubick_um_spellsteal_pw
+query
+SELECT count(*) AS n FROM pg_user_mappings WHERE usename = 'rubick_um_spellsteal';
+----
+n
+0
+
+
+connection default
+statement ok
+DROP ROLE rubick_um_spellsteal;

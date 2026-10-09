@@ -1082,6 +1082,10 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
                                                  {duckdb::LogicalType::VARCHAR},
                                                  duckdb::LogicalType::BIGINT,
                                                  OctetLengthFunction});
+  loader.RegisterFunction(duckdb::ScalarFunction{"length",
+                                                 {duckdb::LogicalType::BLOB},
+                                                 duckdb::LogicalType::BIGINT,
+                                                 OctetLengthFunction});
 
   // to_bin(int32), to_bin(int64)
   loader.RegisterFunction(duckdb::ScalarFunction{"to_bin",

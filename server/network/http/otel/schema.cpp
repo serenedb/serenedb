@@ -39,7 +39,7 @@
 #include "network/http/common.h"
 #include "otel/schema_sql.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
+#include "pg/types.h"
 
 namespace sdb::otel {
 namespace {

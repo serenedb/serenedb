@@ -1,0 +1,239 @@
+statement ok
+DROP TABLE IF EXISTS sven_relations;
+
+
+statement ok
+DROP TABLE IF EXISTS sven_storm_hammer;
+
+
+statement ok
+DROP TABLE IF EXISTS sven_gods_strength;
+
+
+statement ok
+DROP ROLE IF EXISTS sven_metrics_cleave;
+
+
+statement ok
+CREATE ROLE sven_metrics_cleave LOGIN PASSWORD 'sven_metrics_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sdb_metrics';
+----
+relkind	nspname	relnatts
+r	pg_catalog	4
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'sdb_metrics'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+metric	text	f
+value	bigint	f
+description	text	f
+relation_id	oid	f
+
+
+query
+SELECT metric, description
+FROM sdb_metrics
+WHERE relation_id IS NULL
+ORDER BY metric;
+----
+metric	description
+catalog_wal_appended_bytes	bytes appended to the catalog wal since start
+catalog_wal_size_on_disk	current catalog wal file size in bytes
+cleanup_active	Search cleanup tasks currently running
+cleanup_pending	Search cleanup tasks waiting to run
+compaction_active	Search compaction tasks currently running
+compaction_pending	Search compaction tasks waiting to run
+http_connections	Open HTTP client connections
+pg_connections	Open pg-wire client connections
+refresh_active	Search refresh tasks currently running
+refresh_pending	Search refresh tasks waiting to run
+
+
+query
+SELECT count(*) FILTER (WHERE value IS NULL OR value < 0) AS bad_values,
+       count(*) FILTER (WHERE metric IS NULL OR description IS NULL) AS unnamed
+FROM sdb_metrics;
+----
+bad_values	unnamed
+0	0
+
+
+query
+SELECT value >= 1 AS counts_me FROM sdb_metrics WHERE metric = 'pg_connections';
+----
+counts_me
+t
+
+
+statement ok
+CREATE TABLE sven_storm_hammer (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX sven_storm_hammer_idx ON sven_storm_hammer USING inverted (body);
+
+
+statement ok
+INSERT INTO sven_storm_hammer VALUES (1, 'pudge hook'), (2, 'sven cleave'), (3, 'roshan aegis');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sven_storm_hammer;
+
+
+query
+SELECT metric, value
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer'::regclass
+  AND metric IN ('num_docs', 'num_live_docs', 'num_buffered_docs', 'num_segments',
+                 'num_failed_commits', 'num_failed_cleanups', 'num_failed_consolidations')
+ORDER BY metric;
+----
+metric	value
+num_buffered_docs	0
+num_docs	3
+num_failed_cleanups	0
+num_failed_commits	0
+num_failed_consolidations	0
+num_live_docs	3
+num_segments	1
+
+
+query
+SELECT metric, description
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer'::regclass
+ORDER BY metric;
+----
+metric	description
+avg_cleanup_time_ms	average time of the last few cleanups, in ms
+avg_commit_time_ms	average time of the last few commits, in ms
+avg_consolidation_time_ms	average time of the last few consolidations, in ms
+index_size	on-disk index size in bytes
+num_buffered_docs	documents buffered in the writer, not yet committed
+num_docs	documents in the index (including deleted)
+num_failed_cleanups	failed cleanup operations
+num_failed_commits	failed commit operations
+num_failed_consolidations	failed consolidation operations
+num_files	files backing the index
+num_live_docs	live (non-deleted) documents
+num_segments	index segments
+
+
+query
+SELECT count(*) FILTER (WHERE metric IN ('index_size', 'num_files') AND value > 0) AS sized
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer'::regclass;
+----
+sized
+2
+
+
+query
+SELECT count(*) AS storage_less_index_rows
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer_idx'::regclass;
+----
+storage_less_index_rows
+0
+
+
+statement ok
+DELETE FROM sven_storm_hammer WHERE id = 3;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sven_storm_hammer;
+
+
+query
+SELECT metric, value
+FROM sdb_metrics
+WHERE relation_id = 'sven_storm_hammer'::regclass AND metric = 'num_live_docs';
+----
+metric	value
+num_live_docs	2
+
+
+statement ok
+CREATE TABLE sven_gods_strength (id BIGINT PRIMARY KEY, body TEXT);
+
+
+statement ok
+INSERT INTO sven_gods_strength VALUES (1, 'divine rapier'), (2, 'tango');
+
+
+statement ok
+CREATE INDEX sven_gods_strength_idx ON sven_gods_strength USING inverted (body);
+
+
+query
+SELECT count(*) AS index_rows
+FROM sdb_metrics
+WHERE relation_id = 'sven_gods_strength_idx'::regclass;
+----
+index_rows
+12
+
+
+query
+SELECT count(*) AS table_rows
+FROM sdb_metrics
+WHERE relation_id = 'sven_gods_strength'::regclass;
+----
+table_rows
+0
+
+
+connection sven_metrics user=sven_metrics_cleave password=sven_metrics_pw
+query
+SELECT count(*) > 0 AS readable FROM sdb_metrics WHERE relation_id IS NULL;
+----
+readable
+t
+
+
+connection default
+statement ok
+CREATE TEMP TABLE sven_relations AS
+SELECT oid FROM pg_class WHERE relname IN ('sven_storm_hammer', 'sven_gods_strength_idx');
+
+
+connection default
+statement ok
+DROP TABLE sven_storm_hammer;
+
+
+connection default
+statement ok
+DROP TABLE sven_gods_strength;
+
+
+connection default
+query
+SELECT count(*) AS orphan_rows
+FROM sdb_metrics
+WHERE relation_id IN (SELECT oid FROM sven_relations);
+----
+orphan_rows
+0
+
+
+connection default
+statement ok
+DROP TABLE sven_relations;
+
+
+connection default
+statement ok
+DROP ROLE sven_metrics_cleave;

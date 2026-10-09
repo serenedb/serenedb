@@ -1,0 +1,58 @@
+statement ok
+DROP ROLE IF EXISTS meepo_shseclabel_role;
+
+
+query
+SELECT oid, relkind, relnatts, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_shseclabel';
+----
+oid	relkind	relnatts	reltype	nsp
+3592	r	4	4066	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_shseclabel'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+objoid	oid	t
+classoid	oid	t
+provider	text	t
+label	text	t
+
+
+statement ok
+CREATE ROLE meepo_shseclabel_role;
+
+
+query
+SELECT objoid, classoid, provider, label
+FROM pg_shseclabel
+WHERE objoid = 'meepo_shseclabel_role'::regrole;
+----
+objoid	classoid	provider	label
+
+
+query
+SELECT count(*) AS n
+FROM pg_shseclabel
+WHERE classoid = 'pg_database'::regclass
+  AND objoid = (SELECT oid FROM pg_database WHERE datname = current_database());
+----
+n
+0
+
+
+query
+SELECT objname, provider, label
+FROM pg_seclabels
+WHERE objtype = 'role' AND objname = 'meepo_shseclabel_role';
+----
+objname	provider	label
+
+
+statement ok
+DROP ROLE meepo_shseclabel_role;

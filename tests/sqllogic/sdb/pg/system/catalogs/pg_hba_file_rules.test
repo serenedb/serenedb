@@ -1,0 +1,105 @@
+statement ok
+DROP ROLE IF EXISTS zeus_hba_bolt;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_hba_file_rules'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+12114	pg_hba_file_rules	v	pg_catalog	11
+
+
+query
+SELECT schemaname, viewname FROM pg_views WHERE viewname = 'pg_hba_file_rules';
+----
+schemaname	viewname
+pg_catalog	pg_hba_file_rules
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_hba_file_rules'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+rule_number	integer	f
+file_name	text	f
+line_number	integer	f
+type	text	f
+database	text[]	f
+user_name	text[]	f
+address	text	f
+netmask	text	f
+auth_method	text	f
+options	text[]	f
+error	text	f
+
+
+query
+SELECT count(*) > 0 AS has_rules,
+       bool_and(rule_number > 0) AS numbered,
+       bool_and(error IS NULL) AS no_errors,
+       bool_and(type IN ('local', 'host', 'hostssl', 'hostnossl', 'hostgssenc', 'hostnogssenc')) AS known_types,
+       bool_and(auth_method IS NOT NULL) AS has_method,
+       bool_and(cardinality(database) > 0 AND cardinality(user_name) > 0) AS has_targets,
+       count(DISTINCT rule_number) = count(*) AS unique_numbers
+FROM pg_hba_file_rules;
+----
+has_rules	numbered	no_errors	known_types	has_method	has_targets	unique_numbers
+t	t	t	t	t	t	t
+
+
+query
+SELECT count(*) AS local_with_address FROM pg_hba_file_rules WHERE type = 'local' AND address IS NOT NULL;
+----
+local_with_address
+0
+
+
+query
+SELECT type, address, netmask, line_number, file_name
+FROM pg_hba_file_rules WHERE rule_number <= 3 ORDER BY rule_number;
+----
+type	address	netmask	line_number	file_name
+local	NULL	NULL	NULL	NULL
+host	127.0.0.1	255.255.255.255	NULL	NULL
+host	::1	ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff	NULL	NULL
+
+
+query
+SELECT min(rule_number) AS first_rule FROM pg_hba_file_rules;
+----
+first_rule
+1
+
+
+statement ok
+CREATE ROLE zeus_hba_bolt LOGIN PASSWORD 'thundergods_wrath';
+
+
+connection c_zeus_hba user=zeus_hba_bolt password=thundergods_wrath
+statement error
+SELECT count(*) FROM pg_hba_file_rules;
+----
+db error: ERROR: permission denied for <slt:ignore>
+
+
+connection c_zeus_hba user=zeus_hba_bolt password=thundergods_wrath
+query
+SELECT has_table_privilege('pg_hba_file_rules', 'SELECT') AS readable;
+----
+readable
+f
+
+
+connection default
+query
+SELECT has_table_privilege('zeus_hba_bolt', 'pg_hba_file_rules', 'SELECT') AS bolt, has_table_privilege('pg_hba_file_rules', 'SELECT') AS superuser;
+----
+bolt	superuser
+f	t
+
+
+statement ok
+DROP ROLE zeus_hba_bolt;

@@ -1,0 +1,59 @@
+statement ok
+DROP TABLE IF EXISTS aegis_inh_holder;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_inherits';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+2611	r	4	f	10005	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_inherits'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+inhrelid	oid	t
+inhparent	oid	t
+inhseqno	integer	t
+inhdetachpending	boolean	t
+
+
+statement ok
+CREATE TABLE aegis_inh_holder (id INT, lives INT);
+
+
+query
+SELECT inhrelid, inhparent, inhseqno, inhdetachpending
+FROM pg_inherits
+WHERE inhrelid = 'aegis_inh_holder'::regclass OR inhparent = 'aegis_inh_holder'::regclass;
+----
+inhrelid	inhparent	inhseqno	inhdetachpending
+
+
+query
+SELECT relhassubclass, relispartition
+FROM pg_class
+WHERE oid = 'aegis_inh_holder'::regclass;
+----
+relhassubclass	relispartition
+f	f
+
+
+query
+SELECT count(*) AS n
+FROM pg_class c
+JOIN pg_inherits i ON i.inhparent = c.oid
+WHERE c.relname = 'aegis_inh_holder';
+----
+n
+0
+
+
+statement ok
+DROP TABLE aegis_inh_holder;

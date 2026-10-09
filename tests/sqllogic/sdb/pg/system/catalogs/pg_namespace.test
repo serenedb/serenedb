@@ -1,0 +1,257 @@
+statement ok
+DROP SCHEMA IF EXISTS rubick_nsp_steal CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rubick_nsp_telekinesis CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rubick_nsp_lift CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS rubick_nsp_grand_magus;
+
+
+statement ok
+DROP ROLE IF EXISTS rubick_nsp_apprentice;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_namespace'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+2615	pg_namespace	r	pg_catalog	4
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_namespace'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+nspname	name	t
+nspowner	oid	t
+nspacl	aclitem[]	f
+
+
+query
+SELECT oid, nspname FROM pg_namespace WHERE oid IN (11, 2200, 13293) ORDER BY oid;
+----
+oid	nspname
+11	pg_catalog
+2200	public
+13293	information_schema
+
+
+query
+SELECT oid, nspname FROM pg_namespace WHERE nspname IN ('pg_catalog', 'public', 'information_schema') ORDER BY oid;
+----
+oid	nspname
+11	pg_catalog
+2200	public
+13293	information_schema
+
+
+query
+SELECT oid, nspname FROM pg_namespace WHERE nspname || '' IN ('pg_catalog', 'public', 'information_schema') ORDER BY oid;
+----
+oid	nspname
+11	pg_catalog
+2200	public
+13293	information_schema
+
+
+query
+SELECT 'pg_catalog'::regnamespace::oid AS pg_catalog, 'public'::regnamespace::oid AS public,
+       'information_schema'::regnamespace::oid AS information_schema;
+----
+pg_catalog	public	information_schema
+11	2200	13293
+
+
+query
+SELECT nspname, nspowner::regrole::text AS owner, nspacl
+FROM pg_namespace WHERE nspname IN ('pg_catalog', 'information_schema') ORDER BY oid;
+----
+nspname	owner	nspacl
+pg_catalog	postgres	{postgres=UC/postgres,=U/postgres}
+information_schema	postgres	{postgres=UC/postgres,=U/postgres}
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'rubick\_nsp\_%';
+----
+count
+0
+
+
+statement ok
+CREATE ROLE rubick_nsp_grand_magus;
+
+
+statement ok
+CREATE ROLE rubick_nsp_apprentice LOGIN PASSWORD 'spell_steal';
+
+
+statement ok
+CREATE SCHEMA rubick_nsp_steal;
+
+
+statement ok
+CREATE SCHEMA rubick_nsp_telekinesis AUTHORIZATION rubick_nsp_grand_magus;
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS rubick_nsp_steal;
+
+
+query
+SELECT nspname, nspowner::regrole::text AS owner, nspacl
+FROM pg_namespace WHERE nspname LIKE 'rubick\_nsp\_%' ORDER BY nspname;
+----
+nspname	owner	nspacl
+rubick_nsp_steal	postgres	NULL
+rubick_nsp_telekinesis	rubick_nsp_grand_magus	NULL
+
+
+query
+SELECT nspname FROM pg_namespace WHERE oid = 'rubick_nsp_telekinesis'::regnamespace;
+----
+nspname
+rubick_nsp_telekinesis
+
+
+query
+SELECT nspname FROM pg_namespace WHERE oid IN (SELECT 'rubick_nsp_telekinesis'::regnamespace::oid);
+----
+nspname
+rubick_nsp_telekinesis
+
+
+query
+SELECT n.oid = 'rubick_nsp_steal'::regnamespace AS same_oid FROM pg_namespace n WHERE n.nspname = 'rubick_nsp_steal';
+----
+same_oid
+t
+
+
+query
+SELECT count(*) FROM pg_namespace a JOIN pg_namespace b ON a.oid = b.oid
+WHERE a.nspname LIKE 'rubick\_nsp\_%' AND a.nspname = b.nspname;
+----
+count
+2
+
+
+statement ok
+ALTER SCHEMA rubick_nsp_steal OWNER TO rubick_nsp_grand_magus;
+
+
+statement ok
+GRANT USAGE ON SCHEMA rubick_nsp_steal TO rubick_nsp_apprentice;
+
+
+statement ok
+GRANT CREATE ON SCHEMA rubick_nsp_steal TO rubick_nsp_apprentice WITH GRANT OPTION;
+
+
+query
+SELECT nspname, nspowner::regrole::text AS owner, nspacl
+FROM pg_namespace WHERE nspname = 'rubick_nsp_steal';
+----
+nspname	owner	nspacl
+rubick_nsp_steal	rubick_nsp_grand_magus	{rubick_nsp_grand_magus=UC/rubick_nsp_grand_magus,rubick_nsp_apprentice=UC*/rubick_nsp_grand_magus}
+
+
+query
+SELECT a.grantee::regrole::text AS grantee, a.grantor::regrole::text AS grantor, a.privilege_type, a.is_grantable
+FROM pg_namespace n, aclexplode(n.nspacl) a
+WHERE n.nspname = 'rubick_nsp_steal'
+ORDER BY 1, 3;
+----
+grantee	grantor	privilege_type	is_grantable
+rubick_nsp_apprentice	rubick_nsp_grand_magus	CREATE	t
+rubick_nsp_apprentice	rubick_nsp_grand_magus	USAGE	f
+rubick_nsp_grand_magus	rubick_nsp_grand_magus	CREATE	f
+rubick_nsp_grand_magus	rubick_nsp_grand_magus	USAGE	f
+
+
+query
+SELECT has_schema_privilege('rubick_nsp_apprentice', 'rubick_nsp_steal', 'USAGE') AS steal_usage,
+       has_schema_privilege('rubick_nsp_apprentice', 'rubick_nsp_telekinesis', 'USAGE') AS tk_usage;
+----
+steal_usage	tk_usage
+t	f
+
+
+connection c_rubick_nsp user=rubick_nsp_apprentice password=spell_steal
+query
+SELECT nspname, nspowner::regrole::text AS owner FROM pg_namespace
+WHERE nspname LIKE 'rubick\_nsp\_%' ORDER BY nspname;
+----
+nspname	owner
+rubick_nsp_steal	rubick_nsp_grand_magus
+rubick_nsp_telekinesis	rubick_nsp_grand_magus
+
+
+connection default
+statement ok
+REVOKE CREATE ON SCHEMA rubick_nsp_steal FROM rubick_nsp_apprentice;
+
+
+query
+SELECT nspacl FROM pg_namespace WHERE nspname = 'rubick_nsp_steal';
+----
+nspacl
+{rubick_nsp_grand_magus=UC/rubick_nsp_grand_magus,rubick_nsp_apprentice=U/rubick_nsp_grand_magus}
+
+
+statement ok
+ALTER SCHEMA rubick_nsp_telekinesis RENAME TO rubick_nsp_lift;
+
+
+query
+SELECT nspname, nspowner::regrole::text AS owner FROM pg_namespace
+WHERE nspname LIKE 'rubick\_nsp\_%' ORDER BY nspname;
+----
+nspname	owner
+rubick_nsp_lift	rubick_nsp_grand_magus
+rubick_nsp_steal	rubick_nsp_grand_magus
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname = 'rubick_nsp_telekinesis';
+----
+count
+0
+
+
+statement ok
+REVOKE ALL ON SCHEMA rubick_nsp_steal FROM rubick_nsp_apprentice;
+
+
+statement ok
+DROP SCHEMA rubick_nsp_steal;
+
+
+statement ok
+DROP SCHEMA rubick_nsp_lift;
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'rubick\_nsp\_%';
+----
+count
+0
+
+
+statement ok
+DROP ROLE rubick_nsp_apprentice;
+
+
+statement ok
+DROP ROLE rubick_nsp_grand_magus;

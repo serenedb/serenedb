@@ -1,0 +1,74 @@
+statement ok
+DROP ROLE IF EXISTS techies_evt_mine;
+
+
+statement ok
+CREATE ROLE techies_evt_mine LOGIN PASSWORD 'techies_evt_mine_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_event_trigger'::regclass;
+----
+oid	relname	relkind	relnatts
+3466	pg_event_trigger	r	7
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_event_trigger'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+evtname	name	t
+evtevent	name	t
+evtowner	oid	t
+evtfoid	oid	t
+evtenabled	"char"	t
+evttags	text[]	f
+
+
+query
+SELECT * FROM pg_event_trigger;
+----
+oid	evtname	evtevent	evtowner	evtfoid	evtenabled	evttags
+
+
+query
+SELECT evtname FROM pg_event_trigger WHERE evtname = 'techies_evt_mine';
+----
+evtname
+
+
+query
+SELECT evtname FROM pg_event_trigger WHERE oid = 24680;
+----
+evtname
+
+
+query
+SELECT count(*) AS n FROM pg_event_trigger t JOIN pg_proc p ON p.oid = t.evtfoid;
+----
+n
+0
+
+
+connection techies_conn user=techies_evt_mine password=techies_evt_mine_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_event_trigger', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection techies_conn user=techies_evt_mine password=techies_evt_mine_pw
+query
+SELECT evtname, evtevent, evtenabled FROM pg_event_trigger;
+----
+evtname	evtevent	evtenabled
+
+
+connection default
+statement ok
+DROP ROLE techies_evt_mine;

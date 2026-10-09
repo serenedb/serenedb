@@ -13,6 +13,9 @@ BEGIN ATOMIC
 END;
 
 statement ok
+CREATE PROCEDURE pudge_hook(x INTEGER) LANGUAGE SQL AS 'SELECT x';
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 statement error connection closed
@@ -40,6 +43,24 @@ SELECT * FROM vedernikoff() ORDER BY score;
 name	score
 kostya	322
 deadinside	993
+
+connection after_crash
+query
+SELECT proname, prokind, prorettype::regtype::text AS ret, proretset,
+       coalesce(pg_get_function_result(oid), 'NULL') AS result
+FROM pg_proc
+WHERE proname IN ('babsky', 'clickclack', 'vedernikoff', 'pudge_hook')
+ORDER BY 1;
+----
+proname	prokind	ret	proretset	result
+babsky	f	integer	f	integer
+clickclack	f	integer	f	integer
+pudge_hook	p	void	f	NULL
+vedernikoff	f	record	t	TABLE(name text, score integer)
+
+connection after_crash
+statement ok
+DROP PROCEDURE pudge_hook;
 
 connection after_crash
 statement ok

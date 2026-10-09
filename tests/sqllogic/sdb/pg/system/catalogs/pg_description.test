@@ -1,0 +1,298 @@
+statement ok
+DROP SCHEMA IF EXISTS courier_desc CASCADE;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_description';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+2609	r	4	f	10041	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_description'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+objoid	oid	t
+classoid	oid	t
+objsubid	integer	t
+description	text	t
+
+
+statement ok
+CREATE SCHEMA courier_desc;
+
+
+statement ok
+CREATE TABLE courier_desc.bottle (speed INT, haste INT, shield INT);
+
+
+statement ok
+CREATE VIEW courier_desc.flying AS SELECT speed FROM courier_desc.bottle;
+
+
+statement ok
+CREATE SEQUENCE courier_desc.respawn;
+
+
+statement ok
+CREATE INDEX courier_desc_haste_idx ON courier_desc.bottle (haste);
+
+
+statement ok
+CREATE TYPE courier_desc.item AS ENUM ('tango', 'salve', 'clarity');
+
+
+statement ok
+CREATE FUNCTION courier_desc.deliver(x INT) RETURNS INT LANGUAGE sql AS 'SELECT x + 1';
+
+
+query
+SELECT count(*) AS n
+FROM pg_description
+WHERE objoid = 'courier_desc.bottle'::regclass;
+----
+n
+0
+
+
+statement ok
+COMMENT ON TABLE courier_desc.bottle IS 'empty bottle';
+
+
+statement ok
+COMMENT ON COLUMN courier_desc.bottle.haste IS 'speed burst';
+
+
+statement ok
+COMMENT ON COLUMN courier_desc.bottle.shield IS 'flying shield';
+
+
+statement ok
+COMMENT ON VIEW courier_desc.flying IS 'flying courier';
+
+
+statement ok
+COMMENT ON SEQUENCE courier_desc.respawn IS 'courier respawn';
+
+
+statement ok
+COMMENT ON INDEX courier_desc.courier_desc_haste_idx IS 'haste index';
+
+
+statement ok
+COMMENT ON TYPE courier_desc.item IS 'consumables';
+
+
+statement ok
+COMMENT ON FUNCTION courier_desc.deliver IS 'deliver items';
+
+
+query
+SELECT d.objoid::regclass::text AS obj, d.classoid::regclass::text AS class,
+       d.objsubid, d.description
+FROM pg_description d
+JOIN pg_class c ON c.oid = d.objoid
+WHERE d.classoid = 'pg_class'::regclass AND c.relnamespace = 'courier_desc'::regnamespace
+ORDER BY 1, 3;
+----
+obj	class	objsubid	description
+courier_desc.bottle	pg_class	0	empty bottle
+courier_desc.bottle	pg_class	2	speed burst
+courier_desc.bottle	pg_class	3	flying shield
+courier_desc.courier_desc_haste_idx	pg_class	0	haste index
+courier_desc.flying	pg_class	0	flying courier
+courier_desc.respawn	pg_class	0	courier respawn
+
+
+query
+SELECT d.classoid::regclass::text AS class, d.objsubid, d.description
+FROM pg_description d
+WHERE d.objoid = 'courier_desc.item'::regtype;
+----
+class	objsubid	description
+pg_type	0	consumables
+
+
+query
+SELECT d.classoid::regclass::text AS class, d.objsubid, d.description
+FROM pg_description d
+WHERE d.objoid = 'courier_desc.deliver'::regproc;
+----
+class	objsubid	description
+pg_proc	0	deliver items
+
+
+query
+SELECT objsubid, description
+FROM pg_description
+WHERE objoid = 'courier_desc.bottle'::regclass AND classoid = 'pg_class'::regclass
+ORDER BY 1;
+----
+objsubid	description
+0	empty bottle
+2	speed burst
+3	flying shield
+
+
+query
+SELECT d.classoid::regclass::text AS class, d.objsubid, d.description
+FROM pg_description d
+WHERE d.classoid = 'pg_class'::regclass
+  AND d.description IN ('empty bottle', 'speed burst', 'consumables', 'deliver items')
+ORDER BY 2;
+----
+class	objsubid	description
+pg_class	0	empty bottle
+pg_class	2	speed burst
+
+
+query
+SELECT d.classoid::regclass::text AS class, d.description
+FROM pg_description d
+WHERE d.classoid IN ('pg_type'::regclass, 'pg_proc'::regclass)
+  AND d.description IN ('empty bottle', 'speed burst', 'consumables', 'deliver items')
+ORDER BY 1;
+----
+class	description
+pg_proc	deliver items
+pg_type	consumables
+
+
+query
+SELECT count(*) AS n FROM pg_description WHERE classoid = 'pg_am'::regclass;
+----
+n
+0
+
+
+query
+SELECT objsubid, description
+FROM (SELECT * FROM pg_description OFFSET 0) d
+WHERE d.objoid = 'courier_desc.bottle'::regclass AND d.classoid = 'pg_class'::regclass
+ORDER BY 1;
+----
+objsubid	description
+0	empty bottle
+2	speed burst
+3	flying shield
+
+
+query
+SELECT obj_description('courier_desc.bottle'::regclass, 'pg_class') AS tbl,
+       obj_description('courier_desc.bottle'::regclass) AS tbl_any,
+       col_description('courier_desc.bottle'::regclass, 2) AS col2,
+       col_description('courier_desc.bottle'::regclass, 1) IS NULL AS col1_none,
+       obj_description('courier_desc.flying'::regclass, 'pg_class') AS view,
+       obj_description('courier_desc.item'::regtype, 'pg_type') AS type,
+       obj_description('courier_desc.deliver'::regproc, 'pg_proc') AS func;
+----
+tbl	tbl_any	col2	col1_none	view	type	func
+empty bottle	empty bottle	speed burst	t	flying courier	consumables	deliver items
+
+
+query
+SELECT obj_description('courier_desc.bottle'::regclass, 'pg_type') IS NULL AS wrong_catalog;
+----
+wrong_catalog
+t
+
+
+statement ok
+COMMENT ON TABLE courier_desc.bottle IS 'filled bottle';
+
+
+query
+SELECT obj_description('courier_desc.bottle'::regclass, 'pg_class') AS tbl;
+----
+tbl
+filled bottle
+
+
+statement ok
+COMMENT ON COLUMN courier_desc.bottle.haste IS NULL;
+
+
+statement ok
+COMMENT ON TABLE courier_desc.bottle IS '';
+
+
+query
+SELECT objsubid, description
+FROM pg_description
+WHERE objoid = 'courier_desc.bottle'::regclass AND classoid = 'pg_class'::regclass
+ORDER BY 1;
+----
+objsubid	description
+3	flying shield
+
+
+statement ok
+ALTER TABLE courier_desc.bottle RENAME COLUMN shield TO barrier;
+
+
+query
+SELECT col_description('courier_desc.bottle'::regclass, 3) AS col3;
+----
+col3
+flying shield
+
+
+statement ok
+ALTER TABLE courier_desc.bottle DROP COLUMN barrier;
+
+
+query
+SELECT count(*) AS n
+FROM pg_description
+WHERE objoid = 'courier_desc.bottle'::regclass AND classoid = 'pg_class'::regclass;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n
+FROM pg_description
+WHERE objoid IN ('pg_catalog.pg_class'::regclass, 'pg_catalog.int4'::regtype,
+                 'pg_catalog'::regnamespace, 'pg_catalog.lower(text)'::regprocedure);
+----
+n
+0
+
+
+statement ok
+CREATE TABLE courier_desc.gone (a INT);
+
+
+statement ok
+COMMENT ON TABLE courier_desc.gone IS 'lost courier';
+
+
+statement ok
+DROP TABLE courier_desc.gone;
+
+
+query
+SELECT count(*) AS n FROM pg_description WHERE description = 'lost courier';
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA courier_desc CASCADE;
+
+
+query
+SELECT count(*) AS n
+FROM pg_description
+WHERE description IN ('flying courier', 'courier respawn', 'haste index', 'consumables', 'deliver items');
+----
+n
+0

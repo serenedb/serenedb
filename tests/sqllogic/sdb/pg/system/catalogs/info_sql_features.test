@@ -1,0 +1,171 @@
+statement ok
+DROP ROLE IF EXISTS roshan_sql_features_aegis;
+
+
+statement ok
+CREATE ROLE roshan_sql_features_aegis LOGIN PASSWORD 'roshan_sql_features_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sql_features';
+----
+relkind	nspname	relnatts
+r	information_schema	7
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'information_schema.sql_features'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+feature_id	information_schema.character_data	f
+feature_name	information_schema.character_data	f
+sub_feature_id	information_schema.character_data	f
+sub_feature_name	information_schema.character_data	f
+is_supported	information_schema.yes_or_no	f
+is_verified_by	information_schema.character_data	f
+comments	information_schema.character_data	f
+
+
+query
+SELECT count(*) AS features,
+       count(DISTINCT feature_id) AS feature_ids,
+       count(*) FILTER (WHERE sub_feature_id = '') AS top_level,
+       count(*) FILTER (WHERE is_supported = 'YES') AS supported,
+       count(is_verified_by) AS verified,
+       count(*) FILTER (WHERE comments <> '') AS commented
+FROM information_schema.sql_features;
+----
+features	feature_ids	top_level	supported	verified	commented
+755	615	615	459	0	36
+
+
+query
+SELECT count(*) AS n FROM information_schema.sql_features;
+----
+n
+755
+
+
+query
+SELECT (SELECT count(*) FROM information_schema.sql_features) = (SELECT count(feature_id) FROM information_schema.sql_features) AS same;
+----
+same
+t
+
+
+query
+SELECT left(feature_id, 1) AS part, count(*) AS features, count(*) FILTER (WHERE is_supported = 'YES') AS supported
+FROM information_schema.sql_features
+GROUP BY 1
+ORDER BY 1;
+----
+part	features	supported
+B	44	3
+E	107	107
+F	199	165
+M	25	0
+R	3	0
+S	50	14
+T	190	122
+X	137	48
+
+
+query
+SELECT feature_id, feature_name, sub_feature_id, sub_feature_name, is_supported, is_verified_by, comments
+FROM information_schema.sql_features
+WHERE feature_id IN ('E011', 'F031', 'T321')
+ORDER BY feature_id::text, sub_feature_id::text;
+----
+feature_id	feature_name	sub_feature_id	sub_feature_name	is_supported	is_verified_by	comments
+E011	Numeric data types	(empty)	(empty)	YES	NULL	(empty)
+E011	Numeric data types	01	INTEGER and SMALLINT data types	YES	NULL	(empty)
+E011	Numeric data types	02	REAL, DOUBLE PRECISION, and FLOAT data types	YES	NULL	(empty)
+E011	Numeric data types	03	DECIMAL and NUMERIC data types	YES	NULL	(empty)
+E011	Numeric data types	04	Arithmetic operators	YES	NULL	(empty)
+E011	Numeric data types	05	Numeric comparison	YES	NULL	(empty)
+E011	Numeric data types	06	Implicit casting among the numeric data types	YES	NULL	(empty)
+F031	Basic schema manipulation	(empty)	(empty)	YES	NULL	(empty)
+F031	Basic schema manipulation	01	CREATE TABLE statement to create persistent base tables	YES	NULL	(empty)
+F031	Basic schema manipulation	02	CREATE VIEW statement	YES	NULL	(empty)
+F031	Basic schema manipulation	03	GRANT statement	YES	NULL	(empty)
+F031	Basic schema manipulation	04	ALTER TABLE statement: ADD COLUMN clause	YES	NULL	(empty)
+F031	Basic schema manipulation	13	DROP TABLE statement: RESTRICT clause	YES	NULL	(empty)
+F031	Basic schema manipulation	16	DROP VIEW statement: RESTRICT clause	YES	NULL	(empty)
+F031	Basic schema manipulation	19	REVOKE statement: RESTRICT clause	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	(empty)	(empty)	NO	NULL	partially supported
+T321	Basic SQL-invoked routines	01	User-defined functions with no overloading	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	02	User-defined stored procedures with no overloading	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	03	Function invocation	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	04	CALL statement	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	05	RETURN statement	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	06	ROUTINES view	YES	NULL	(empty)
+T321	Basic SQL-invoked routines	07	PARAMETERS view	YES	NULL	(empty)
+
+
+query
+SELECT feature_id, sub_feature_id, sub_feature_name, is_supported, comments
+FROM information_schema.sql_features
+WHERE (feature_id, sub_feature_id) IN (('F031', '01'), ('E021', '12'), ('T611', ''), ('S023', ''), ('B011', ''))
+ORDER BY feature_id::text;
+----
+feature_id	sub_feature_id	sub_feature_name	is_supported	comments
+B011	(empty)	(empty)	NO	(empty)
+E021	12	Character comparison	YES	(empty)
+F031	01	CREATE TABLE statement to create persistent base tables	YES	(empty)
+S023	(empty)	(empty)	NO	(empty)
+T611	(empty)	(empty)	YES	(empty)
+
+
+query
+SELECT feature_id, feature_name, comments
+FROM information_schema.sql_features
+WHERE is_supported = 'NO' AND sub_feature_id = '' AND feature_id LIKE 'T1%'
+ORDER BY feature_id::text;
+----
+feature_id	feature_name	comments
+T101	Enhanced nullability determination	(empty)
+T111	Updatable joins, unions, and columns	(empty)
+T175	Generated columns	mostly supported
+T176	Sequence generator support	supported except for NEXT VALUE FOR
+T180	System-versioned tables	(empty)
+T181	Application-time period tables	(empty)
+
+
+query
+SELECT count(*) AS duplicates
+FROM (
+  SELECT feature_id, sub_feature_id
+  FROM information_schema.sql_features
+  GROUP BY 1, 2
+  HAVING count(*) > 1
+) AS d;
+----
+duplicates
+0
+
+
+query
+SELECT has_table_privilege('roshan_sql_features_aegis', 'information_schema.sql_features', 'SELECT') AS can_read;
+----
+can_read
+t
+
+
+connection roshan_sql_features user=roshan_sql_features_aegis password=roshan_sql_features_pw
+query
+SELECT feature_name, is_supported
+FROM information_schema.sql_features
+WHERE feature_id = 'E011' AND sub_feature_id = '';
+----
+feature_name	is_supported
+Numeric data types	YES
+
+
+connection default
+statement ok
+DROP ROLE roshan_sql_features_aegis;

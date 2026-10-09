@@ -1,0 +1,109 @@
+statement ok
+DROP TABLE IF EXISTS invoker_quas;
+
+
+statement ok
+DROP ROLE IF EXISTS invoker_statistic_ext_orb;
+
+
+statement ok
+CREATE ROLE invoker_statistic_ext_orb LOGIN PASSWORD 'invoker_statistic_ext_pw';
+
+
+statement ok
+CREATE TABLE invoker_quas (wex int, exort int);
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, relpersistence, reltype
+FROM pg_class
+WHERE relname = 'pg_statistic_ext';
+----
+oid	relkind	relnatts	relisshared	relpersistence	reltype
+3381	r	9	f	p	10031
+
+
+query
+SELECT attname, atttypid, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_statistic_ext'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	atttypid	attnotnull
+oid	26	t
+stxrelid	26	t
+stxname	19	t
+stxnamespace	26	t
+stxowner	26	t
+stxkeys	22	t
+stxstattarget	21	f
+stxkind	1002	t
+stxexprs	194	f
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'pg_statistic_ext'::regclass AND attnum > 0 AND attname <> 'stxkeys'
+ORDER BY attnum;
+----
+attname	type
+oid	oid
+stxrelid	oid
+stxname	name
+stxnamespace	oid
+stxowner	oid
+stxstattarget	smallint
+stxkind	"char"[]
+stxexprs	pg_node_tree
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic_ext;
+----
+readable
+t
+
+
+query
+SELECT oid, stxname FROM pg_statistic_ext WHERE stxrelid = 'invoker_quas'::regclass;
+----
+oid	stxname
+
+
+query
+SELECT stxname FROM pg_statistic_ext WHERE oid = 0;
+----
+stxname
+
+
+query
+SELECT has_table_privilege('invoker_statistic_ext_orb', 'pg_statistic_ext', 'SELECT') AS can_read;
+----
+can_read
+t
+
+
+connection invoker_statistic_ext user=invoker_statistic_ext_orb password=invoker_statistic_ext_pw
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic_ext;
+----
+readable
+t
+
+
+connection invoker_statistic_ext user=invoker_statistic_ext_orb password=invoker_statistic_ext_pw
+query
+SELECT oid, stxname FROM pg_statistic_ext WHERE stxrelid = 'invoker_quas'::regclass;
+----
+oid	stxname
+
+
+connection default
+statement ok
+DROP TABLE invoker_quas;
+
+
+connection default
+statement ok
+DROP ROLE invoker_statistic_ext_orb;

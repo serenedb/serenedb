@@ -37,6 +37,8 @@ Three `WITH` options control the background lifecycle of an inverted index (set 
 
 View-backed indexes have a fourth interval, `reindex_interval`, which re-scans the view's *source* for new, changed and removed data — see [Refreshing the index](./views.md#refreshing-the-index).
 
+An inverted index on a search table has no storage or background tasks of its own: the table's options run refresh and compaction for every index on it. Set them on the table, in `CREATE TABLE … WITH` or with [`ALTER TABLE … SET`](../../statements/alter_table/index.md#set--reset-storage-options), whether or not it has indexes. `CREATE INDEX … WITH` and `ALTER INDEX … SET` reject them for an index on a search table, and `segment_docs_max` too.
+
 ## Background compaction
 
 Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments of similar size into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:

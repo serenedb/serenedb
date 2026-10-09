@@ -25,6 +25,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_join.h>
+#include <absl/strings/strip.h>
 
 #include <algorithm>
 #include <array>
@@ -33,13 +34,13 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/string_util.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <iresearch/utils/system_compiler.hpp>
 #include <limits>
 #include <ranges>
 #include <span>
@@ -47,11 +48,9 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
-#include "connector/functions/ts_query_codec.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/format_type.h"
 #include "pg/catalog/lookup.h"
 #include "pg/sql_utils.h"
@@ -59,9 +58,6 @@
 namespace sdb::pg {
 
 const RegType* FindRegType(const duckdb::LogicalType& type) {
-  if (type.id() != duckdb::LogicalTypeId::BIGINT) {
-    return nullptr;
-  }
   const auto it = absl::c_find_if(kRegTypes, [&](const RegType& reg) {
     return type.GetAlias() == reg.alias;
   });
@@ -75,19 +71,21 @@ duckdb::LogicalType RegLogicalType(const RegType& reg) {
 
 namespace {
 
+constexpr std::array kRelationSets{duckdb::CatalogType::TABLE_ENTRY,
+                                   duckdb::CatalogType::SEQUENCE_ENTRY,
+                                   duckdb::CatalogType::INDEX_ENTRY};
+
+}  // namespace
+
 std::string QualifiedOutName(std::string_view schema, std::string_view name) {
   return absl::StrCat(QuoteIdentifier(schema), ".", QuoteIdentifier(name));
 }
-
-}  // namespace
 
 uint64_t ResolveRelation(duckdb::ClientContext& context,
                          const duckdb::QualifiedName& name) {
   // Every half of the relation namespace, in the order postgres resolves them
   // -- a table and a view share duckdb's set, so the first lookup covers both.
-  for (const auto type :
-       {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY,
-        duckdb::CatalogType::INDEX_ENTRY}) {
+  for (const auto type : kRelationSets) {
     if (auto entry = duckdb::Catalog::GetEntry(
           context, duckdb::EntryLookupInfo{type, name},
           duckdb::OnEntryNotFound::RETURN_NULL)) {
@@ -113,15 +111,12 @@ uint64_t ResolveRelation(duckdb::ClientContext& context,
       return key.key_index ? key.key_index->index_oid : kInvalidOid;
     };
     if (!name.Schema().empty()) {
-      if (const auto oid = key_index(name.Schema()); oid != kInvalidOid) {
+      return key_index(name.Schema());
+    }
+    for (const auto& path :
+         duckdb::ClientData::Get(context).catalog_search_path->Get()) {
+      if (const auto oid = key_index(path.GetSchema()); oid != kInvalidOid) {
         return oid;
-      }
-    } else {
-      for (const auto& path :
-           duckdb::ClientData::Get(context).catalog_search_path->Get()) {
-        if (const auto oid = key_index(path.GetSchema()); oid != kInvalidOid) {
-          return oid;
-        }
       }
     }
   }
@@ -178,11 +173,17 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
   return entry;
 }
 
-bool SchemaExists(const Session& session, std::string_view schema) {
-  if (FindSystemNamespace(schema)) {
-    return true;
+std::optional<uint64_t> SchemaOid(const Session& session,
+                                  std::string_view schema, bool missing_ok) {
+  if (const auto* system = FindSystemNamespace(schema)) {
+    return system->oid;
   }
-  return static_cast<bool>(FindSchema(session, schema));
+  if (auto entry = FindSchema(session, schema)) {
+    return entry->oid;
+  }
+  return Miss(missing_ok, SQL_ERROR_DATA(
+                            ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
+                            ERR_MSG("schema \"", schema, "\" does not exist")));
 }
 
 bool RelationIn(const Session& session, const SessionSchema& schema,
@@ -195,23 +196,16 @@ bool RelationIn(const Session& session, const SessionSchema& schema,
     return false;
   }
   const duckdb::Identifier identifier{name};
-  return absl::c_any_of(std::array{duckdb::CatalogType::TABLE_ENTRY,
-                                   duckdb::CatalogType::SEQUENCE_ENTRY,
-                                   duckdb::CatalogType::INDEX_ENTRY},
-                        [&](duckdb::CatalogType type) {
-                          const auto member = FindMember(
-                            *session.transaction, *entry, type, identifier);
-                          return member && !member->internal;
-                        });
+  return absl::c_any_of(kRelationSets, [&](duckdb::CatalogType type) {
+    const auto member =
+      FindMember(*session.transaction, *entry, type, identifier);
+    return member && !member->internal;
+  });
 }
 
 bool IsWordStart(char c) {
   return absl::ascii_isalpha(c) || c == '_' ||
          static_cast<unsigned char>(c) >= 0x80;
-}
-
-bool IsWordChar(char c) {
-  return IsWordStart(c) || absl::ascii_isdigit(c) || c == '$';
 }
 
 void TruncateIdentifier(std::string& name) {
@@ -232,28 +226,6 @@ std::string DowncaseIdentifier(std::string_view ident) {
   return name;
 }
 
-std::string NameListString(std::span<const std::string> names) {
-  return absl::StrJoin(names, ".");
-}
-
-std::optional<std::string> ReadQuoted(std::string_view text, size_t& pos) {
-  std::string name;
-  ++pos;
-  while (true) {
-    const auto end = text.find('"', pos);
-    if (end == std::string_view::npos) {
-      return std::nullopt;
-    }
-    name.append(text.substr(pos, end - pos));
-    pos = end + 1;
-    if (pos == text.size() || text[pos] != '"') {
-      return name;
-    }
-    name += '"';
-    ++pos;
-  }
-}
-
 std::optional<NameList> SplitNames(std::string_view text) {
   NameList names;
   size_t pos = 0;
@@ -269,11 +241,10 @@ std::optional<NameList> SplitNames(std::string_view text) {
   while (true) {
     std::string name;
     if (text[pos] == '"') {
-      auto quoted = ReadQuoted(text, pos);
-      if (!quoted || quoted->empty()) {
+      if (!duckdb::StringUtil::TryParseQuotedString(text, pos, name) ||
+          name.empty()) {
         return std::nullopt;
       }
-      name = std::move(*quoted);
       TruncateIdentifier(name);
     } else {
       const auto start = pos;
@@ -310,31 +281,25 @@ std::optional<NameList> ParseNames(std::string_view text, bool missing_ok) {
 
 std::optional<std::string> ParseSingleName(std::string_view text,
                                            bool missing_ok) {
-  auto names = ParseNames(text, missing_ok);
-  if (!names) {
-    return std::nullopt;
-  }
-  if (names->size() != 1) {
+  auto names = SplitNames(text);
+  if (!names || names->size() != 1) {
     return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_NAME),
                                            ERR_MSG("invalid name syntax")));
   }
   return std::move(names->front());
 }
 
-bool IsCurrentDatabase(duckdb::ClientContext& context, std::string_view name) {
-  return duckdb::DatabaseManager::TryGetDefaultDatabase(context) == name;
-}
-
 ObjectName Deconstruct(const Session& session, const NameList& names) {
   if (names.size() > 3) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                     ERR_MSG("improper qualified name (too many dotted names): ",
-                            NameListString(names)));
+                            absl::StrJoin(names, ".")));
   }
-  if (names.size() == 3 && !IsCurrentDatabase(*session.context, names[0])) {
+  if (names.size() == 3 && duckdb::DatabaseManager::TryGetDefaultDatabase(
+                             *session.context) != names[0]) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("cross-database references are not implemented: ",
-                            NameListString(names)));
+                            absl::StrJoin(names, ".")));
   }
   if (names.size() == 1) {
     return {.schema = {}, .name = names.front()};
@@ -376,24 +341,25 @@ std::vector<Token> Tokenize(std::string_view text) {
     }
     const char c = text[pos];
     if (c == '"') {
-      const auto start = pos;
-      auto name = ReadQuoted(text, pos);
-      if (!name) {
+      std::string name;
+      if (!duckdb::StringUtil::TryParseQuotedString(text, pos, name)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("unterminated quoted identifier at or near \"",
-                                text.substr(start), "\""));
+                                text.substr(pos), "\""));
       }
-      if (name->empty()) {
+      if (name.empty()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("zero-length delimited identifier at or near \"\"\"\""));
       }
-      TruncateIdentifier(*name);
+      TruncateIdentifier(name);
       tokens.emplace_back(
-        Token{.kind = TokenKind::Quoted, .text = std::move(*name)});
+        Token{.kind = TokenKind::Quoted, .text = std::move(name)});
     } else if (IsWordStart(c)) {
       const auto start = pos;
-      while (pos < text.size() && IsWordChar(text[pos])) {
+      while (pos < text.size() &&
+             (IsWordStart(text[pos]) || absl::ascii_isdigit(text[pos]) ||
+              text[pos] == '$')) {
         ++pos;
       }
       tokens.emplace_back(
@@ -524,7 +490,7 @@ class TypeParser {
   }
 
   std::optional<ParsedType> KeywordType() {
-    const auto word = Peek(0).text;
+    const auto& word = Peek(0).text;
     if (word == "int" || word == "integer") {
       ++_pos;
       return Keyword("int4");
@@ -626,12 +592,8 @@ class TypeParser {
       typmods.emplace_back(ExpectNumber());
       ExpectSymbol(')');
     }
-    bool zone = false;
-    if (AcceptWord("with")) {
-      zone = true;
-      ExpectWord("time");
-      ExpectWord("zone");
-    } else if (AcceptWord("without")) {
+    const bool zone = AcceptWord("with");
+    if (zone || AcceptWord("without")) {
       ExpectWord("time");
       ExpectWord("zone");
     }
@@ -641,8 +603,8 @@ class TypeParser {
     return type;
   }
 
-  std::optional<size_t> IntervalFieldAt(size_t ahead) const {
-    const auto& token = Peek(ahead);
+  std::optional<size_t> IntervalField() const {
+    const auto& token = Peek(0);
     if (token.kind != TokenKind::Word) {
       return std::nullopt;
     }
@@ -659,8 +621,7 @@ class TypeParser {
     if (kIntervalFields[first].mask == kIntervalYear) {
       return kIntervalFields[last].mask == kIntervalMonth;
     }
-    return kIntervalFields[first].mask != kIntervalMonth &&
-           kIntervalFields[first].mask != kIntervalSecond && last > first;
+    return kIntervalFields[first].mask != kIntervalMonth && last > first;
   }
 
   ParsedType Interval() {
@@ -671,14 +632,14 @@ class TypeParser {
       type.typmods = {kIntervalFullRange, precision};
       return type;
     }
-    const auto first = IntervalFieldAt(0);
+    const auto first = IntervalField();
     if (!first) {
       return type;
     }
     ++_pos;
     auto last = *first;
     if (AcceptWord("to")) {
-      const auto to = IntervalFieldAt(0);
+      const auto to = IntervalField();
       if (!to || !IntervalRangeAllowed(*first, *to)) {
         ThrowSyntaxError(Peek(0));
       }
@@ -751,7 +712,7 @@ int32_t LengthTypmod(std::span<const int32_t> typmods, std::string_view name,
 }
 
 int32_t NumericTypmodIn(std::span<const int32_t> typmods) {
-  if (typmods.empty() || typmods.size() > 2) {
+  if (typmods.size() > 2) {
     ThrowInvalidTypmod("invalid NUMERIC type modifier");
   }
   const auto precision = typmods[0];
@@ -784,7 +745,7 @@ int32_t TimeTypmod(std::span<const int32_t> typmods, std::string_view name,
 }
 
 int32_t IntervalTypmod(std::span<const int32_t> typmods) {
-  if (typmods.empty() || typmods.size() > 2 ||
+  if (typmods.size() > 2 ||
       (typmods[0] != kIntervalFullRange &&
        absl::c_none_of(kIntervalRanges, [&](const IntervalRange& range) {
          return range.mask == typmods[0];
@@ -812,7 +773,6 @@ int32_t TypmodIn(uint64_t oid, std::span<const int32_t> typmods,
   const auto is = [&](PgTypeOID type) {
     return oid == static_cast<uint64_t>(type);
   };
-  using enum PgTypeOID;
   if (is(kBpchar)) {
     return LengthTypmod(typmods, "char", kMaxAttrSize, kVarHdrSz);
   }
@@ -857,8 +817,7 @@ uint64_t FindTypeIn(const Session& session, std::string_view schema,
         FindInSchema(session, schema, duckdb::CatalogType::TABLE_ENTRY, name)) {
     return RowTypeOid(entry->oid);
   }
-  for (size_t strip = 1;
-       strip < name.size() && name[strip - 1] == '_' && session.database;
+  for (size_t strip = 1; strip < name.size() && name[strip - 1] == '_';
        ++strip) {
     for (const auto type :
          {duckdb::CatalogType::TYPE_ENTRY, duckdb::CatalogType::TABLE_ENTRY}) {
@@ -913,7 +872,7 @@ std::optional<ResolvedType> ResolveType(const Session& session,
     return invalid();
   }
   const auto display =
-    absl::StrCat(NameListString(parsed->names), parsed->array ? "[]" : "");
+    absl::StrCat(absl::StrJoin(parsed->names, "."), parsed->array ? "[]" : "");
   const auto not_found = [&] {
     return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                            ERR_MSG("type \"", display,
@@ -929,10 +888,8 @@ std::optional<ResolvedType> ResolveType(const Session& session,
     const auto object = Deconstruct(session, parsed->names);
     if (object.schema.empty()) {
       element = FindVisibleType(session, object.name);
-    } else if (!SchemaExists(session, object.schema)) {
-      return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                                             ERR_MSG("schema \"", object.schema,
-                                                     "\" does not exist")));
+    } else if (!SchemaOid(session, object.schema, missing_ok)) {
+      return std::nullopt;
     } else {
       element = FindTypeIn(session, object.schema, object.name);
     }
@@ -952,7 +909,6 @@ std::optional<ResolvedType> ResolveType(const Session& session,
 }
 
 std::string_view SqlTypeName(int32_t oid) {
-  using enum PgTypeOID;
   if (oid == kBool) {
     return "boolean";
   }
@@ -1007,11 +963,6 @@ std::string_view SqlTypeName(int32_t oid) {
   return {};
 }
 
-ObjectName NameOf(const duckdb::CatalogEntry& entry) {
-  return {.schema = entry.ParentSchemaName().GetIdentifierName(),
-          .name = entry.name.GetIdentifierName()};
-}
-
 std::optional<std::string> FormatUserType(const Session& session,
                                           uint64_t oid) {
   if (!session.context) {
@@ -1049,7 +1000,7 @@ std::string FormatType(const Session& session, uint64_t oid) {
       return std::string{name};
     }
     if (builtin->nsp == kPgCatalogSchema ||
-        (session.context && FindVisibleType(session, builtin->name) == oid)) {
+        FindVisibleType(session, builtin->name) == oid) {
       return std::string{builtin->name};
     }
     return QualifiedOutName(FindSystemNamespace(builtin->nsp)->name,
@@ -1061,8 +1012,10 @@ std::string FormatType(const Session& session, uint64_t oid) {
   return absl::StrCat(oid);
 }
 
-std::optional<ObjectName> CompositeTypeObject(const Session& session,
-                                              uint64_t oid) {
+std::optional<ObjectName> ClassObject(const Session& session, uint64_t oid) {
+  if (auto object = RelationObject(session, oid)) {
+    return object;
+  }
   auto entry = EntryByOid(session, oid);
   if (!entry || entry->type != duckdb::CatalogType::TYPE_ENTRY ||
       !duckdb::StructType::IsStruct(
@@ -1076,10 +1029,7 @@ std::string ClassOut(const Session& session, uint64_t oid) {
   if (!session.context) {
     return absl::StrCat(oid);
   }
-  auto object = RelationObject(session, oid);
-  if (!object) {
-    object = CompositeTypeObject(session, oid);
-  }
+  const auto object = ClassObject(session, oid);
   if (!object) {
     return absl::StrCat(oid);
   }
@@ -1095,14 +1045,14 @@ std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
   if (names->size() > 3) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                     ERR_MSG("improper relation name (too many dotted names): ",
-                            NameListString(*names)));
+                            absl::StrJoin(*names, ".")));
   }
   const auto database =
     duckdb::DatabaseManager::TryGetDefaultDatabase(*session.context);
-  if (names->size() == 3 && !(database == names->front())) {
+  if (names->size() == 3 && database != names->front()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("cross-database references are not implemented: \"",
-                            NameListString(*names), "\""));
+                            absl::StrJoin(*names, "."), "\""));
   }
   const duckdb::Identifier name{names->back()};
   const auto qualified =
@@ -1116,7 +1066,7 @@ std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
   }
   return Miss(missing_ok,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                             ERR_MSG("relation \"", NameListString(*names),
+                             ERR_MSG("relation \"", absl::StrJoin(*names, "."),
                                      "\" does not exist")));
 }
 
@@ -1313,18 +1263,10 @@ std::optional<Signature> ParseSignature(const Session& session,
   if (!names) {
     return std::nullopt;
   }
-  auto rest = text.substr(open + 1);
-  if (rest.empty()) {
+  auto rest = absl::StripTrailingAsciiWhitespace(text.substr(open + 1));
+  if (!absl::ConsumeSuffix(&rest, ")")) {
     return invalid("expected a right parenthesis");
   }
-  auto last = rest.size() - 1;
-  while (last > 0 && absl::ascii_isspace(rest[last])) {
-    --last;
-  }
-  if (rest[last] != ')') {
-    return invalid("expected a right parenthesis");
-  }
-  rest = rest.substr(0, last);
   std::vector<duckdb::idx_t> args;
   size_t pos = 0;
   bool had_comma = false;
@@ -1339,7 +1281,6 @@ std::optional<Signature> ParseSignature(const Session& session,
       break;
     }
     const auto start = pos;
-    quoted = false;
     int depth = 0;
     for (; pos < rest.size(); ++pos) {
       const char c = rest[pos];
@@ -1356,13 +1297,11 @@ std::optional<Signature> ParseSignature(const Session& session,
     if (quoted || depth != 0) {
       return invalid("improper type name");
     }
-    auto type_name = rest.substr(start, pos - start);
+    const auto type_name =
+      absl::StripTrailingAsciiWhitespace(rest.substr(start, pos - start));
     had_comma = pos < rest.size();
     if (had_comma) {
       ++pos;
-    }
-    while (!type_name.empty() && absl::ascii_isspace(type_name.back())) {
-      type_name.remove_suffix(1);
     }
     if (args.size() >= kMaxFunctionArgs) {
       return invalid("too many arguments");
@@ -1405,7 +1344,7 @@ std::optional<uint64_t> OperIn(const Session& session, std::string_view text,
   Deconstruct(session, *names);
   return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
                                          ERR_MSG("operator does not exist: ",
-                                                 NameListString(*names))));
+                                                 absl::StrJoin(*names, "."))));
 }
 
 std::optional<uint64_t> OperatorIn(const Session& session,
@@ -1442,10 +1381,9 @@ std::optional<uint64_t> CollationIn(const Session& session,
     return std::nullopt;
   }
   const auto object = Deconstruct(session, *names);
-  if (!object.schema.empty() && !SchemaExists(session, object.schema)) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                                           ERR_MSG("schema \"", object.schema,
-                                                   "\" does not exist")));
+  if (!object.schema.empty() &&
+      !SchemaOid(session, object.schema, missing_ok)) {
+    return std::nullopt;
   }
   if (object.schema.empty() ||
       object.schema == irs::StaticStrings::kPgCatalogSchema) {
@@ -1461,7 +1399,7 @@ std::optional<uint64_t> CollationIn(const Session& session,
   return Miss(
     missing_ok,
     SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                   ERR_MSG("collation \"", NameListString(*names),
+                   ERR_MSG("collation \"", absl::StrJoin(*names, "."),
                            "\" for encoding \"UTF8\" does not exist")));
 }
 
@@ -1481,7 +1419,7 @@ std::optional<uint64_t> ConfigIn(const Session& session, std::string_view text,
   Deconstruct(session, *names);
   return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                          ERR_MSG("text search configuration \"",
-                                                 NameListString(*names),
+                                                 absl::StrJoin(*names, "."),
                                                  "\" does not exist")));
 }
 
@@ -1507,10 +1445,8 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
         oid != kInvalidOid) {
       return oid;
     }
-  } else if (!SchemaExists(session, object.schema)) {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                                           ERR_MSG("schema \"", object.schema,
-                                                   "\" does not exist")));
+  } else if (!SchemaOid(session, object.schema, missing_ok)) {
+    return std::nullopt;
   } else if (auto entry = FindInSchema(session, object.schema,
                                        duckdb::CatalogType::TOKENIZER_ENTRY,
                                        object.name)) {
@@ -1518,14 +1454,11 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
   }
   return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                                          ERR_MSG("text search dictionary \"",
-                                                 NameListString(*names),
+                                                 absl::StrJoin(*names, "."),
                                                  "\" does not exist")));
 }
 
 std::string DictionaryOut(const Session& session, uint64_t oid) {
-  if (!session.context) {
-    return absl::StrCat(oid);
-  }
   auto entry = EntryByOid(session, oid);
   if (!entry || entry->type != duckdb::CatalogType::TOKENIZER_ENTRY) {
     return absl::StrCat(oid);
@@ -1543,10 +1476,9 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
   if (!name) {
     return std::nullopt;
   }
-  if (const auto graph = auth::RolesOf(session.context)) {
-    if (const auto* role = graph->FindByName(*name)) {
-      return role->first;
-    }
+  const auto graph = auth::RolesOf(session.context);
+  if (const auto* role = graph->FindByName(*name)) {
+    return role->first;
   }
   return Miss(missing_ok,
               SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1555,10 +1487,9 @@ std::optional<uint64_t> RoleIn(const Session& session, std::string_view text,
 
 std::string RoleOut(const Session& session, uint64_t oid) {
   if (session.context) {
-    if (const auto graph = auth::RolesOf(session.context)) {
-      if (const auto name = graph->NameOf(oid); !name.empty()) {
-        return QuoteIdentifier(name);
-      }
+    const auto graph = auth::RolesOf(session.context);
+    if (const auto name = graph->NameOf(oid); !name.empty()) {
+      return QuoteIdentifier(name);
     }
   }
   return absl::StrCat(oid);
@@ -1570,15 +1501,7 @@ std::optional<uint64_t> NamespaceIn(const Session& session,
   if (!name) {
     return std::nullopt;
   }
-  if (const auto* system = FindSystemNamespace(*name)) {
-    return system->oid;
-  }
-  if (auto schema = FindSchema(session, *name)) {
-    return schema->oid;
-  }
-  return Miss(missing_ok,
-              SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                             ERR_MSG("schema \"", *name, "\" does not exist")));
+  return SchemaOid(session, *name, missing_ok);
 }
 
 std::string NamespaceOut(const Session& session, uint64_t oid) {
@@ -1595,9 +1518,7 @@ std::string NamespaceOut(const Session& session, uint64_t oid) {
 }
 
 std::optional<uint64_t> ParseOid(std::string_view text) {
-  if (text.empty() || !absl::c_all_of(text, [](char c) {
-        return absl::ascii_isdigit(static_cast<unsigned char>(c));
-      })) {
+  if (text.empty() || !absl::c_all_of(text, absl::ascii_isdigit)) {
     return std::nullopt;
   }
   uint64_t oid = 0;
@@ -1622,8 +1543,10 @@ std::string IntervalTypmodOut(int32_t typmod) {
   return out;
 }
 
-std::string FormatTypeExtended(const Session& session, uint64_t oid,
-                               int32_t typmod, bool typmod_given) {
+}  // namespace
+
+std::string FormatTypeOut(const Session& session, uint64_t oid,
+                          std::optional<int32_t> typmod) {
   if (oid == kInvalidOid) {
     return FormatType(session, oid);
   }
@@ -1636,13 +1559,10 @@ std::string FormatTypeExtended(const Session& session, uint64_t oid,
   }
   if (builtin->IsArray()) {
     return absl::StrCat(
-      FormatTypeExtended(session, static_cast<uint64_t>(builtin->elem), typmod,
-                         typmod_given),
+      FormatTypeOut(session, static_cast<uint64_t>(builtin->elem), typmod),
       "[]");
   }
-  const bool with_typmod = typmod_given && typmod >= 0;
-  using enum PgTypeOID;
-  if (typmod_given && !with_typmod) {
+  if (typmod && *typmod < 0) {
     if (builtin->oid == kBit) {
       return "\"bit\"";
     }
@@ -1650,43 +1570,31 @@ std::string FormatTypeExtended(const Session& session, uint64_t oid,
       return "bpchar";
     }
   }
-  if (with_typmod) {
+  if (typmod && *typmod >= 0) {
     const auto sql = SqlTypeName(builtin->oid);
     switch (builtin->oid) {
       case kBit:
       case kVarbit:
-        return absl::StrCat(sql, "(", typmod, ")");
+        return absl::StrCat(sql, "(", *typmod, ")");
       case kBpchar:
       case kVarchar:
-        return absl::StrCat(sql, "(", typmod - kVarHdrSz, ")");
+        return absl::StrCat(sql, "(", *typmod - kVarHdrSz, ")");
       case kNumeric:
-        return absl::StrCat(sql, "(", NumericTypmodPrecision(typmod), ",",
-                            NumericTypmodScale(typmod), ")");
+        return absl::StrCat(sql, "(", NumericTypmodPrecision(*typmod), ",",
+                            NumericTypmodScale(*typmod), ")");
       case kTime:
       case kTimetz:
       case kTimestamp:
       case kTimestamptz: {
         const auto space = sql.find(' ');
-        return absl::StrCat(sql.substr(0, space), "(", typmod, ")",
+        return absl::StrCat(sql.substr(0, space), "(", *typmod, ")",
                             sql.substr(space));
       }
       case kInterval:
-        return absl::StrCat(sql, IntervalTypmodOut(typmod));
+        return absl::StrCat(sql, IntervalTypmodOut(*typmod));
     }
   }
-  auto name = FormatType(session, oid);
-  if (with_typmod && builtin->modout != 0) {
-    absl::StrAppend(&name, "(", typmod, ")");
-  }
-  return name;
-}
-
-}  // namespace
-
-std::string FormatTypeOut(const Session& session, uint64_t oid,
-                          std::optional<int32_t> typmod) {
-  return FormatTypeExtended(session, oid, typmod.value_or(-1),
-                            typmod.has_value());
+  return FormatType(session, oid);
 }
 
 template<RegKind Kind>
@@ -1830,10 +1738,7 @@ std::string RelationName(const Session& session, std::string_view schema,
 }
 
 std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid) {
-  auto object = RelationObject(session, oid);
-  if (!object) {
-    object = CompositeTypeObject(session, oid);
-  }
+  const auto object = ClassObject(session, oid);
   if (!object) {
     return std::nullopt;
   }

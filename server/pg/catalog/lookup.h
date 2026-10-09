@@ -188,6 +188,11 @@ struct ObjectName {
   std::string name;
 };
 
+inline ObjectName NameOf(const duckdb::CatalogEntry& entry) {
+  return {.schema = entry.ParentSchemaName().GetIdentifierName(),
+          .name = entry.name.GetIdentifierName()};
+}
+
 struct SessionSchema {
   std::string name;
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> entry;

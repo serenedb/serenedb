@@ -101,6 +101,10 @@ Every applied remote transaction records the publisher position it reached, its 
 
 Conflicts follow PostgreSQL: an `UPDATE` or `DELETE` whose row does not exist locally is skipped and counted as `update_missing` or `delete_missing`; an `INSERT` or `UPDATE` that hits an existing unique key fails the apply as `insert_exists` or `update_exists`. When applying fails, the worker reconnects after 5 seconds and resumes from the recorded position, unless `disable_on_error` is set, in which case the subscription is disabled. A write conflict with a concurrent local transaction is retried right away.
 
+A remote `TRUNCATE` is applied like PostgreSQL applies it: `CASCADE` also truncates the local tables that reference the truncated ones through foreign keys, and `RESTART IDENTITY` restarts the sequences their columns own.
+
+The worker reports its position to the publisher every 10 seconds. When the publisher sends nothing for 60 seconds, not even a keepalive, the worker drops the connection with `terminating logical replication worker due to timeout` and reconnects, like PostgreSQL with the default `wal_receiver_timeout`.
+
 <DocCallout type="attention">
 
 Local tables are not created for you. Create every published table locally before creating the subscription, with the same name and column names, and with types that can hold the published values.
@@ -124,5 +128,8 @@ SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat
 ## Limitations
 
 - Prepared transactions (`two_phase`) are not replicated as such; they are applied when they commit.
-- `TRUNCATE ... RESTART IDENTITY` is applied as a plain `TRUNCATE`.
 - A change that violates a local constraint other than a unique key fails the apply, and the worker retries it until the conflict is fixed locally or the transaction is skipped with `SKIP`.
+- Changes are applied to the local table with the published table's schema and name; there is no routing of rows into local partitions.
+- `pg_subscription_rel` shows only the states `i` and `r`, because all pending tables are copied in one snapshot; `pg_stat_subscription` has no table synchronization or parallel apply rows.
+- The counters in `pg_stat_subscription_stats` are kept in memory and start from zero when the server restarts; `pg_stat_reset_subscription_stats()` is not available, and `confl_update_origin_differs`, `confl_delete_origin_differs` and `confl_multiple_unique_conflicts` stay zero.
+- The replication origin functions (`pg_replication_origin_advance()` and the like) are not available, and `local_lsn` in `pg_replication_origin_status` is always `0/0`.

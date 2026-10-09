@@ -140,7 +140,7 @@ class PgReplicationClient final : public PublisherSession {
   yaclib::Task<bool> CopyTable(const SyncTable& table, bool binary);
   yaclib::Task<bool> StartReplication();
   yaclib::Task<> Feeder();
-  yaclib::Task<> FeedbackLoop();
+  yaclib::Future<> FeedbackLoop();
   yaclib::Task<bool> RunJob(Job job);
   yaclib::Task<bool> Publish(std::span<const PgOutputMessage> messages);
   bool Stage(std::string_view payload, bool in_stream);
@@ -197,6 +197,8 @@ class PgReplicationClient final : public PublisherSession {
   irs::pg::SqlErrorData _apply_error;
   bool _publishing = false;
   bool _published = false;
+  int64_t _last_activity = 0;
+  std::optional<asio_ns::steady_timer> _feedback_timer;
   std::string _arena;
   std::vector<PgOutputMessage> _outbox;
 

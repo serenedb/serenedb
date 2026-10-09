@@ -9,7 +9,7 @@ CALL postgres_execute('rapp_${__DATABASE__}', 'SELECT pg_drop_replication_slot(s
 
 
 statement ok
-CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rapp_text_pub; DROP PUBLICATION IF EXISTS rapp_bin_pub; DROP PUBLICATION IF EXISTS rapp_pub; DROP SCHEMA IF EXISTS rapp_text CASCADE; DROP SCHEMA IF EXISTS rapp_bin CASCADE; DROP TABLE IF EXISTS rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter; DROP TYPE IF EXISTS rapp_mood; END $$');
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rapp_text_pub; DROP PUBLICATION IF EXISTS rapp_bin_pub; DROP PUBLICATION IF EXISTS rapp_pub; DROP SCHEMA IF EXISTS rapp_text CASCADE; DROP SCHEMA IF EXISTS rapp_bin CASCADE; DROP TABLE IF EXISTS rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter, rapp_tparent, rapp_tseq; DROP TYPE IF EXISTS rapp_mood; END $$');
 
 
 statement ok
@@ -68,7 +68,7 @@ differences
 
 
 statement ok
-CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rapp_full (a int, b text); ALTER TABLE rapp_full REPLICA IDENTITY FULL; CREATE TABLE rapp_index (a int NOT NULL, b int NOT NULL, v text); CREATE UNIQUE INDEX rapp_index_ab ON rapp_index (a, b); ALTER TABLE rapp_index REPLICA IDENTITY USING INDEX rapp_index_ab; CREATE TABLE rapp_toast (id int PRIMARY KEY, big text, small int); CREATE TABLE rapp_conflict (id int PRIMARY KEY, v text); CREATE TABLE rapp_owned (id int PRIMARY KEY); CREATE TABLE rapp_alter (id int PRIMARY KEY, n int); INSERT INTO rapp_alter VALUES (1, 7); CREATE TYPE rapp_mood AS ENUM (''sad'', ''happy''); CREATE PUBLICATION rapp_pub FOR TABLE rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter; END $$');
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rapp_full (a int, b text); ALTER TABLE rapp_full REPLICA IDENTITY FULL; CREATE TABLE rapp_index (a int NOT NULL, b int NOT NULL, v text); CREATE UNIQUE INDEX rapp_index_ab ON rapp_index (a, b); ALTER TABLE rapp_index REPLICA IDENTITY USING INDEX rapp_index_ab; CREATE TABLE rapp_toast (id int PRIMARY KEY, big text, small int); CREATE TABLE rapp_conflict (id int PRIMARY KEY, v text); CREATE TABLE rapp_owned (id int PRIMARY KEY); CREATE TABLE rapp_alter (id int PRIMARY KEY, n int); INSERT INTO rapp_alter VALUES (1, 7); CREATE TYPE rapp_mood AS ENUM (''sad'', ''happy''); CREATE TABLE rapp_tparent (id int PRIMARY KEY); CREATE TABLE rapp_tseq (id int PRIMARY KEY, v text); CREATE PUBLICATION rapp_pub FOR TABLE rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter, rapp_tparent, rapp_tseq; END $$');
 
 
 statement ok
@@ -89,6 +89,18 @@ CREATE TABLE rapp_conflict (id INTEGER PRIMARY KEY, v TEXT);
 
 statement ok
 CREATE TABLE rapp_alter (id INTEGER PRIMARY KEY, n BIGINT, m TEXT);
+
+
+statement ok
+CREATE TABLE rapp_tparent (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rapp_tchild (id INTEGER, parent INTEGER REFERENCES rapp_tparent (id));
+
+
+statement ok
+CREATE TABLE rapp_tseq (id SERIAL PRIMARY KEY, v TEXT);
 
 
 statement ok
@@ -123,7 +135,7 @@ query ok retry 120 backoff 250ms
 SELECT count(*) AS ready FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid = r.srsubid WHERE s.subname = 'rapp_sub' AND r.srsubstate = 'r' AND r.srsublsn IS NOT NULL;
 ----
 ready
-6
+8
 
 
 statement ok
@@ -310,6 +322,57 @@ id	n	m
 
 
 statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rapp_tparent VALUES (1), (2); INSERT INTO rapp_tseq VALUES (1, ''a''), (2, ''b''); END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rapp_tparent) AS parents, (SELECT count(*) FROM rapp_tseq) AS seqs;
+----
+parents	seqs
+2	2
+
+
+statement ok
+INSERT INTO rapp_tchild VALUES (10, 1);
+
+
+query
+SELECT nextval('rapp_tseq_id_seq') + nextval('rapp_tseq_id_seq') AS n;
+----
+n
+3
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'TRUNCATE rapp_tparent CASCADE');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rapp_tparent) AS parents, (SELECT count(*) FROM rapp_tchild) AS children;
+----
+parents	children
+0	0
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'TRUNCATE rapp_tseq RESTART IDENTITY');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rapp_tseq;
+----
+n
+0
+
+
+query
+SELECT nextval('rapp_tseq_id_seq') AS n;
+----
+n
+1
+
+
+statement ok
 ALTER SUBSCRIPTION rapp_sub SET (disable_on_error = true);
 
 
@@ -426,7 +489,7 @@ DROP ROLE rapp_table_owner;
 
 
 statement ok
-CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rapp_text_pub; DROP PUBLICATION rapp_bin_pub; DROP PUBLICATION rapp_pub; DROP SCHEMA rapp_text CASCADE; DROP SCHEMA rapp_bin CASCADE; DROP TABLE rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter; DROP TYPE rapp_mood; END $$');
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rapp_text_pub; DROP PUBLICATION rapp_bin_pub; DROP PUBLICATION rapp_pub; DROP SCHEMA rapp_text CASCADE; DROP SCHEMA rapp_bin CASCADE; DROP TABLE rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter, rapp_tparent, rapp_tseq; DROP TYPE rapp_mood; END $$');
 
 
 statement ok

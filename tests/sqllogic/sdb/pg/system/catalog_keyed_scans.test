@@ -950,6 +950,154 @@ count
 
 
 statement ok
+CREATE TABLE pudge_keyed.pudgekey_cleaver (id INT CONSTRAINT pudgekey_chopped PRIMARY KEY, x INT)
+
+
+statement ok
+CREATE TABLE pudge_keyed.pudgekey_old (id INT PRIMARY KEY)
+
+
+statement ok
+ALTER TABLE pudge_keyed.pudgekey_old RENAME TO pudgekey_new
+
+
+query
+WITH keyed AS (SELECT * FROM pg_class WHERE relname = 'pudgekey_chopped'),
+     whole AS (SELECT * FROM pg_class WHERE relname || '' = 'pudgekey_chopped')
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+1	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_class WHERE relname = 'pudgekey_old_pkey'),
+     whole AS (SELECT * FROM pg_class WHERE relname || '' = 'pudgekey_old_pkey')
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+1	0
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TABLE pudge_keyed.pudgekey_fresh_meat (id INT CONSTRAINT pudgekey_uncommitted PRIMARY KEY)
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname = 'pudgekey_uncommitted';
+----
+relname	relkind
+pudgekey_uncommitted	i
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT count(*) FROM pg_class WHERE relname = 'pudgekey_uncommitted';
+----
+count
+0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_class WHERE relname = 'pudgekey_hook' OR relname = 'pudgekey_rot'),
+     whole AS (SELECT * FROM pg_class WHERE relname || '' IN ('pudgekey_hook', 'pudgekey_rot'))
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+2	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_class WHERE relname = 'pudgekey_hook' OR relkind = 'v'),
+     whole AS (SELECT * FROM pg_class WHERE relname || '' = 'pudgekey_hook' OR relkind || '' = 'v')
+SELECT (SELECT count(*) FROM keyed) > 1 AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_type WHERE typtype = 'e'),
+     whole AS (SELECT * FROM pg_type WHERE typtype || '' = 'e')
+SELECT (SELECT count(*) FROM keyed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_type WHERE typtype = 'c' AND typnamespace = 'pudge_keyed'::regnamespace),
+     whole AS (SELECT * FROM pg_type WHERE typtype || '' = 'c' AND typnamespace::text = 'pudge_keyed'::regnamespace::oid::text)
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+<slt:ignore>	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_type WHERE typrelid = 'pudge_keyed.pudgekey_hook'::regclass),
+     whole AS (SELECT * FROM pg_type WHERE typrelid::text = 'pudge_keyed.pudgekey_hook'::regclass::oid::text)
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+1	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_type WHERE typelem = 'pudge_keyed.pudgekey_mood'::regtype),
+     whole AS (SELECT * FROM pg_type WHERE typelem::text = 'pudge_keyed.pudgekey_mood'::regtype::oid::text)
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+1	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_type WHERE typelem = 23),
+     whole AS (SELECT * FROM pg_type WHERE typelem::text = '23')
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+1	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_type WHERE typelem = (SELECT reltype FROM pg_class WHERE oid = 'pudge_keyed.pudgekey_hook'::regclass)),
+     whole AS (SELECT * FROM pg_type WHERE typelem::text = (SELECT reltype::text FROM pg_class WHERE oid = 'pudge_keyed.pudgekey_hook'::regclass))
+SELECT (SELECT count(*) FROM keyed) AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+1	0
+
+
+statement ok
 DROP SCHEMA pudge_keyed CASCADE
 
 

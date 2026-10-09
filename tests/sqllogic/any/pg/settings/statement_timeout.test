@@ -52,7 +52,7 @@ statement_timeout
 statement error
 SET statement_timeout = -1;
 ----
-db error: ERROR: -1 ms is outside the valid range for parameter "statement_timeout" (0 .. 2147483647)
+db error: ERROR: -1 ms is outside the valid range for parameter "statement_timeout" (0 ms .. 2147483647 ms)
 
 
 statement error

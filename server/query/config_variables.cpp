@@ -192,7 +192,7 @@ int64_t ParseStatementTimeout(std::string_view text) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(absl::StrFormat("%g", ms),
                             " ms is outside the valid range for parameter "
-                            "\"statement_timeout\" (0 .. 2147483647)"));
+                            "\"statement_timeout\" (0 ms .. 2147483647 ms)"));
   }
   return static_cast<int64_t>(ms);
 }

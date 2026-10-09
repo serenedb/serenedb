@@ -545,12 +545,26 @@ bool ArrayTypeNames::Unprefixed(const duckdb::CatalogEntry& element) {
   if (!names.unprefixed && ++names.looked_up > kLookupsBeforeScan) {
     const auto transaction = _scan.Transaction();
     auto& schema = element.ParentSchema(transaction);
+    auto* serene =
+      dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
     bool prefixed = false;
+    const auto check = [&](duckdb::CatalogEntry& entry) {
+      prefixed = prefixed || entry.name.GetIdentifierName().starts_with('_');
+    };
     for (const auto type :
          {duckdb::CatalogType::TYPE_ENTRY, duckdb::CatalogType::TABLE_ENTRY}) {
-      schema.Scan(transaction, type, [&](duckdb::CatalogEntry& entry) {
-        prefixed = prefixed || entry.name.GetIdentifierName().starts_with('_');
-      });
+      if (const auto snapshot =
+            serene
+              ? serene->Snapshot(
+                  _scan.Context(),
+                  schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type))
+              : nullptr) {
+        for (auto* entry : snapshot->entries) {
+          check(*entry);
+        }
+      } else {
+        schema.Scan(transaction, type, check);
+      }
     }
     names.unprefixed = !prefixed;
   }

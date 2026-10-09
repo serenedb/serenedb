@@ -26,6 +26,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
@@ -34,7 +35,6 @@
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/search/detail/posting_skip.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -139,7 +139,16 @@ class PostingBatch {
   uint32_t Left() const noexcept { return _left_in_list; }
 
   bool Step(doc_id_t live) {
-    return StepToLive(_walk, In(), live, _left_in_list, _last);
+    if (live - _last <= kBlock || !_walk.Armed()) {
+      return true;
+    }
+    _left_in_list = _walk.Seek(live, In());
+    if (_left_in_list == 0) {
+      return false;
+    }
+    In().Seek(_walk.Landing().doc_ptr);
+    _last = _walk.Landing().doc;
+    return true;
   }
 
   bool Start(doc_id_t min) {
@@ -166,7 +175,7 @@ class PostingBatch {
     if (const auto extent = DocExtent(meta); extent != 0) {
       _hint.Arm(meta.doc_start, meta.doc_start + extent);
     }
-    if (meta.docs_count < kBlock) {
+    if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
     }
     _left_in_list = meta.docs_count;

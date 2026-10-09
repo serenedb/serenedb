@@ -42,7 +42,7 @@ class PackedU32Column : util::Noncopyable {
 
  public:
   static constexpr size_t kBlockValues = 1024;
-  static constexpr size_t kSimdValues = block_codec::kWideBlock;
+  static constexpr size_t kSimdValues = block_codec::kBlock;
   static constexpr uint32_t kRawBits = 32;
 
   static_assert(kBlockValues % kSimdValues == 0);
@@ -140,14 +140,12 @@ class PackedU32Column : util::Noncopyable {
       block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
         blk.bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
-            block_codec::WideRows<B>(
+            block_codec::VerticalRows<B>(
               src, [&]<uint32_t S>(block_codec::U32x8 v) IRS_FORCE_INLINE {
                 v += base;
-                std::memcpy(out + at + S * block_codec::kWideLanes, &v,
-                            sizeof(v));
+                std::memcpy(out + at + S * block_codec::kLanes, &v, sizeof(v));
               });
-            src +=
-              block_codec::PackedSize<block_codec::kWideLanes>(kSimdValues, B);
+            src += block_codec::PackedSize(kSimdValues, B);
           }
         });
     }
@@ -218,10 +216,8 @@ class PackedU32Column : util::Noncopyable {
       block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
         bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
-            block_codec::PackVertical<B, block_codec::kWideLanes, false>(
-              _staging + at, dst);
-            dst +=
-              block_codec::PackedSize<block_codec::kWideLanes>(kSimdValues, B);
+            block_codec::PackVertical<B, false>(_staging + at, dst);
+            dst += block_codec::PackedSize(kSimdValues, B);
           }
         });
       out = buf;

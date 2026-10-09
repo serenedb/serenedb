@@ -46,8 +46,9 @@ struct BlockIndexShape {
 
 IRS_FORCE_INLINE constexpr BlockIndexShape BlockIndexShapeOf(
   IndexFeatures layout, bool bounds) noexcept {
-  const auto skip = ToSkipLayout(layout);
-  return {.pos = skip.pos, .offs = skip.offs, .bounds = bounds};
+  return {.pos = IndexFeatures::None != (layout & IndexFeatures::Pos),
+          .offs = IndexFeatures::None != (layout & IndexFeatures::Offs),
+          .bounds = bounds};
 }
 
 struct BoundPair {
@@ -395,7 +396,7 @@ class BlockCursor {
 
   uint32_t Block() const noexcept { return _block; }
 
-  const SkipState& Landing() const noexcept { return _landing; }
+  const BlockLanding& Landing() const noexcept { return _landing; }
 
   const BlockIndex& Index() const noexcept { return _index; }
 
@@ -483,7 +484,7 @@ class BlockCursor {
 
   BlockIndex _index;
   std::unique_ptr<uint32_t[]> _owned;
-  SkipState _landing;
+  BlockLanding _landing;
   uint64_t _doc_start = 0;
   uint64_t _pos_start = 0;
   uint64_t _pay_start = 0;
@@ -540,9 +541,7 @@ class BlockIndexWriter {
       flags |= BlockIndex::kNarrowBounds;
     }
     const auto m = Size() - 1;
-    if (m == 0) {
-      return flags;
-    }
+    SDB_ASSERT(m != 0);
     if (NarrowRuns()) {
       flags |= BlockIndex::kNarrowRuns;
     } else if (_end[m - 1] > std::numeric_limits<uint16_t>::max()) {

@@ -204,7 +204,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
                  bool has_score_bounds, bool has_freq, Sink& sink) {
   SDB_ASSERT(meta.docs_count > 1);
 
-  if (meta.docs_count < doc_limits::kBlockSize) {
+  if (meta.docs_count <= doc_limits::kBlockSize) {
     SkipScoreBounds(has_score_bounds, in);
   }
 
@@ -280,12 +280,6 @@ class PostingReader {
     return *_in;
   }
 
-  uint32_t* Enc() noexcept { return EncOf<Input>(_enc); }
-
-  uint64_t* Holes() noexcept { return _holes.data; }
-
-  doc_id_t* Docs() noexcept { return _buf; }
-
   template<typename Sink>
   void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
             Sink& sink) {
@@ -303,6 +297,12 @@ class PostingReader {
   }
 
  private:
+  uint32_t* Enc() noexcept { return EncOf<Input>(_enc); }
+
+  uint64_t* Holes() noexcept { return _holes.data; }
+
+  doc_id_t* Docs() noexcept { return _buf; }
+
   const IndexInput* _doc;
   IndexInput::ptr _owned;
   Input* _in = nullptr;

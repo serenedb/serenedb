@@ -223,7 +223,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint32_t kRowGroupSize = 64;  // 4 row groups
     {
       irs::ColWriter w{dir, "dup_zero", Db()};
-      auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
+      auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, /*value=*/0);
       }
@@ -249,7 +249,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint32_t kRowGroupSize = 1024;
     {
       irs::ColWriter w{dir, "dup_value", Db()};
-      auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
+      auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
       }
@@ -280,7 +280,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint32_t kRowGroupSize = 100;
     {
       irs::ColWriter w{dir, "dup_rg", Db()};
-      auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
+      auto& nw = w.OpenNormColumn(9, kRowGroupSize);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, kRepeatedValue);
       }
@@ -318,7 +318,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   irs::MemoryDirectory dir;
   {
     irs::ColWriter w{dir, "rare", Db()};
-    auto& nw = w.OpenNormColumn(/*id=*/9, kRowGroupSize);
+    auto& nw = w.OpenNormColumn(9, kRowGroupSize);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
     }
@@ -352,7 +352,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
     irs::MemoryDirectory dir;
     {
       irs::ColWriter w{dir, "rare_all", Db()};
-      auto& nw = w.OpenNormColumn(/*id=*/9, row_group_size);
+      auto& nw = w.OpenNormColumn(9, row_group_size);
       for (uint64_t i = 0; i < kRowCount; ++i) {
         nw.Append(i, expected[i]);
       }
@@ -385,7 +385,7 @@ TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
   irs::MemoryDirectory dir;
   {
     irs::ColWriter w{dir, "crowded", Db()};
-    auto& nw = w.OpenNormColumn(/*id=*/9, kRowCount);
+    auto& nw = w.OpenNormColumn(9, kRowCount);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
     }
@@ -419,7 +419,7 @@ TEST_P(BufferedColumnTestCase, WideRegions) {
   irs::MemoryDirectory dir;
   {
     irs::ColWriter w{dir, "wide", Db()};
-    auto& nw = w.OpenNormColumn(/*id=*/9, 2048);
+    auto& nw = w.OpenNormColumn(9, 2048);
     for (uint64_t i = 0; i < kRowCount; ++i) {
       nw.Append(i, expected[i]);
     }
@@ -452,7 +452,7 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
   irs::MemoryDirectory dir;
   {
     irs::ColWriter w{dir, "streamed", Db()};
-    auto& nw = w.StreamNormColumn(/*id=*/9);
+    auto& nw = w.StreamNormColumn(9);
     const auto write = [&](uint64_t from, uint64_t to, uint64_t skip) {
       irs::NormStats planned;
       std::vector<uint32_t> all;

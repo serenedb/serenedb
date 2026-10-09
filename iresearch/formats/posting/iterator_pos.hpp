@@ -57,7 +57,7 @@ class PositionImpl final : public PosAttr {
       _pend_pos = freq;
     }
     while (_value < target && _pend_pos) {
-      if (_buf_pos == doc_limits::kBlockSize) {
+      if (_buf_pos == pos_limits::kBlockSize) {
         ReadBlock();
         _buf_pos = 0;
       }
@@ -88,7 +88,7 @@ class PositionImpl final : public PosAttr {
       _pend_pos = freq;
     }
 
-    if (_buf_pos == doc_limits::kBlockSize) {
+    if (_buf_pos == pos_limits::kBlockSize) {
       ReadBlock();
       _buf_pos = 0;
     }
@@ -146,7 +146,7 @@ class PositionImpl final : public PosAttr {
   }
 
   // notifies iterator that doc iterator has skipped to a new block
-  void Prepare(const SkipState& state) noexcept {
+  void Prepare(const BlockLanding& state) noexcept {
     Land(state.pos_ptr, state.pay_ptr, state.pos_offset);
   }
 
@@ -240,7 +240,7 @@ class PositionImpl final : public PosAttr {
       _cookie.pay_group = pay_group;
     }
     _next = 0;
-    _buf_pos = doc_limits::kBlockSize;
+    _buf_pos = pos_limits::kBlockSize;
     _pend_pos = pend;
     _cookie.pend_pos = pend;
   }
@@ -267,20 +267,20 @@ class PositionImpl final : public PosAttr {
 
   void Skip(uint64_t count) {
     SDB_ASSERT(count != 0);
-    const uint64_t left = doc_limits::kBlockSize - _buf_pos;
+    const uint64_t left = pos_limits::kBlockSize - _buf_pos;
     if (count > left) {
       count -= left;
-      Enter(_next + count / doc_limits::kBlockSize);
-      count %= doc_limits::kBlockSize;
+      Enter(_next + count / pos_limits::kBlockSize);
+      count %= pos_limits::kBlockSize;
       if (count == 0) {
-        _buf_pos = doc_limits::kBlockSize;
+        _buf_pos = pos_limits::kBlockSize;
       } else {
         ReadBlock();
         _buf_pos = 0;
       }
     }
     _buf_pos += count;
-    SDB_ASSERT(_buf_pos <= doc_limits::kBlockSize);
+    SDB_ASSERT(_buf_pos <= pos_limits::kBlockSize);
     Clear();
   }
 
@@ -348,16 +348,16 @@ class PositionImpl final : public PosAttr {
   template<typename T>
   using ForOffset = utils::Need<IteratorTraits::Offset(), T>;
 
-  uint32_t _pos_deltas[doc_limits::kBlockSize];
-  [[no_unique_address]] ForOffset<uint32_t[doc_limits::kBlockSize]>
+  uint32_t _pos_deltas[pos_limits::kBlockSize];
+  [[no_unique_address]] ForOffset<uint32_t[pos_limits::kBlockSize]>
     _offs_start_deltas;
-  [[no_unique_address]] ForOffset<uint32_t[doc_limits::kBlockSize]>
+  [[no_unique_address]] ForOffset<uint32_t[pos_limits::kBlockSize]>
     _offs_lengths;
   uint32_t _freq = 0;  // length of the posting list for a document
   uint32_t _next = 0;
   uint32_t* _enc_buf;      // auxillary buffer to decode data
   uint64_t _pend_pos = 0;  // how many positions "behind" we are
-  uint64_t _buf_pos = doc_limits::kBlockSize;  // position in pos_deltas_
+  uint64_t _buf_pos = pos_limits::kBlockSize;  // position in pos_deltas_
   Cookie _cookie;
   Stream _pos;
   [[no_unique_address]] ForOffset<Stream> _pay;

@@ -29,13 +29,14 @@
 #include <iresearch/search/detail/bitset_build.hpp>
 #include <map>
 #include <random>
-#include <tuple>
 #include <utility>
 #include <vector>
 
 namespace {
 
 namespace bc = irs::block_codec;
+
+using Codec = bc::BlockCodec;
 
 constexpr uint32_t kBlock = bc::kBlock;
 constexpr uint32_t kSlack = 64;
@@ -68,20 +69,17 @@ class Guarded {
   size_t _size;
 };
 
-template<typename Codec>
 struct Guards {
-  Guarded encoded{Codec::kMaxBlockBytes};
-  Guarded in{Codec::kMaxBlockBytes + bc::kInSlack};
-  Guarded out{(Codec::kBlock + bc::kOutSlack) * sizeof(uint32_t)};
+  Guarded encoded{bc::kMaxBlockBytes};
+  Guarded in{bc::kMaxBlockBytes + bc::kInSlack};
+  Guarded out{(kBlock + bc::kOutSlack) * sizeof(uint32_t)};
 };
 
-template<typename Codec>
-void CheckDocsBlock(Guards<Codec>& guards,
-                    const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
-                    const bc::EncodeOptions& options) {
+void CheckDocsBlock(Guards& guards, const std::vector<irs::doc_id_t>& docs,
+                    irs::doc_id_t prev, const bc::EncodeOptions& options) {
   const auto len = static_cast<uint32_t>(docs.size());
-  const bool full = len == Codec::kBlock;
-  auto* encoded = guards.encoded.Bytes(Codec::kMaxBlockBytes);
+  const bool full = len == kBlock;
+  auto* encoded = guards.encoded.Bytes(bc::kMaxBlockBytes);
   const auto size =
     full ? Codec::EncodeDeltaBlock(docs.data(), prev, encoded, options)
          : Codec::EncodeDeltaTail(docs.data(), len, prev, encoded, options);
@@ -99,20 +97,17 @@ void CheckDocsBlock(Guards<Codec>& guards,
              " token ", uint32_t{encoded[0]});
   std::fill_n(out, len, 0);
   const auto* portable =
-    full
-      ? bc::kDeltaBlockDecoders<Codec::kLanes, false>[in[0]](in, prev, out)
-      : bc::kDeltaTailDecoders<Codec::kLanes, false>[in[0]](in, len, prev, out);
+    full ? bc::kDeltaBlockDecoders<false>[in[0]](in, prev, out)
+         : bc::kDeltaTailDecoders<false>[in[0]](in, len, prev, out);
   SDB_VERIFY(portable == in + size && std::equal(docs.begin(), docs.end(), out),
              "portable docs, len ", len, " token ", uint32_t{encoded[0]});
 }
 
-template<typename Codec>
-void CheckValuesBlock(Guards<Codec>& guards,
-                      const std::vector<uint32_t>& values,
+void CheckValuesBlock(Guards& guards, const std::vector<uint32_t>& values,
                       const bc::EncodeOptions& options) {
   const auto len = static_cast<uint32_t>(values.size());
-  const bool full = len == Codec::kBlock;
-  auto* encoded = guards.encoded.Bytes(Codec::kMaxBlockBytes);
+  const bool full = len == kBlock;
+  auto* encoded = guards.encoded.Bytes(bc::kMaxBlockBytes);
   const auto size =
     full ? Codec::EncodeValuesBlock(values.data(), encoded, options)
          : Codec::EncodeValuesTail(values.data(), len, encoded, options);
@@ -166,14 +161,9 @@ std::vector<uint32_t> RandomValues(std::mt19937& rng, uint32_t len,
 std::vector<bc::EncodeOptions> CheckedOptions() {
   return {
     {},
-    {.patch = false},
     {.narrow_highs = true},
     {.exception_cost_eighths = 12, .narrow_highs = true},
     {.exception_cost_eighths = 64},
-    {.packed_cost_eighths = 64, .narrow_highs = true},
-    {.bitset_margin_percent = 0},
-    {.bitset_margin_percent = 1000},
-    {.bitset = false},
   };
 }
 
@@ -193,9 +183,8 @@ std::vector<uint32_t> WidthEdges() {
   return edges;
 }
 
-template<typename Codec>
 uint64_t SelfCheck() {
-  Guards<Codec> guards;
+  Guards guards;
   std::mt19937 rng{42};
   uint64_t checked = 0;
   const auto edges = WidthEdges();
@@ -208,15 +197,15 @@ uint64_t SelfCheck() {
       ++checked;
     }
   }
-  for (size_t begin = 0; begin < edges.size(); begin += Codec::kBlock) {
-    const auto end = std::min<size_t>(edges.size(), begin + Codec::kBlock);
+  for (size_t begin = 0; begin < edges.size(); begin += kBlock) {
+    const auto end = std::min<size_t>(edges.size(), begin + kBlock);
     CheckValuesBlock(
       guards, std::vector<uint32_t>(edges.begin() + begin, edges.begin() + end),
       {});
     ++checked;
   }
   for (const auto& options : CheckedOptions()) {
-    for (uint32_t len = 1; len <= Codec::kBlock; ++len) {
+    for (uint32_t len = 1; len <= kBlock; ++len) {
       for (const irs::doc_id_t prev : {0U, 1000U, 50'000'000U}) {
         for (const uint32_t max_gap : {1U, 2U, 3U, 64U, 70'000U}) {
           for (const uint32_t outliers : {0U, 1U, 5U}) {
@@ -251,8 +240,7 @@ uint64_t SelfCheck() {
 void BmSelfCheck(benchmark::State& state) {
   uint64_t checked = 0;
   for (auto _ : state) {
-    checked += SelfCheck<bc::Codec128>();
-    checked += SelfCheck<bc::Codec256>();
+    checked += SelfCheck();
   }
   state.counters["checked"] = static_cast<double>(checked);
 }
@@ -424,100 +412,95 @@ std::vector<uint32_t> MakePositions(PosShape shape, uint32_t count) {
   return values;
 }
 
-template<typename Codec>
 irs::doc_id_t ListPrev(uint32_t block, irs::doc_id_t prev) {
-  return block * Codec::kBlock % kListDocs == 0 ? 0 : prev;
+  return block * kBlock % kListDocs == 0 ? 0 : prev;
 }
 
-template<typename Codec>
 irs::bstring EncodeDocs(const std::vector<irs::doc_id_t>& docs) {
-  constexpr uint32_t kN = Codec::kBlock;
-  const auto blocks = static_cast<uint32_t>(docs.size() / kN);
+  const auto blocks = static_cast<uint32_t>(docs.size() / kBlock);
   irs::bstring bytes;
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   irs::doc_id_t prev = 0;
   for (uint32_t b = 0; b != blocks; ++b) {
-    const auto* first = docs.data() + b * kN;
-    prev = ListPrev<Codec>(b, prev);
+    const auto* first = docs.data() + b * kBlock;
+    prev = ListPrev(b, prev);
     bytes.append(block.data(),
                  Codec::EncodeDeltaBlock(first, prev, block.data()));
-    prev = first[kN - 1];
+    prev = first[kBlock - 1];
   }
   bytes.append(kSlack, 0);
   const auto* p = bytes.data();
-  std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
+  std::array<irs::doc_id_t, kBlock + bc::kOutSlack> out;
   prev = 0;
   for (uint32_t b = 0; b != blocks; ++b) {
-    const auto* first = docs.data() + b * kN;
-    prev = ListPrev<Codec>(b, prev);
+    const auto* first = docs.data() + b * kBlock;
+    prev = ListPrev(b, prev);
     p = Codec::DecodeDeltaBlock(p, prev, out.data());
-    SDB_VERIFY(std::equal(first, first + kN, out.data()), "docs, block ", b);
-    prev = first[kN - 1];
+    SDB_VERIFY(std::equal(first, first + kBlock, out.data()), "docs, block ",
+               b);
+    prev = first[kBlock - 1];
   }
   return bytes;
 }
 
-template<typename Codec, uint32_t Add = 0>
+template<uint32_t Add = 0>
 irs::bstring EncodeValues(const std::vector<uint32_t>& values,
                           const bc::EncodeOptions& options = {}) {
-  constexpr uint32_t kN = Codec::kBlock;
-  const auto blocks = static_cast<uint32_t>(values.size() / kN);
+  const auto blocks = static_cast<uint32_t>(values.size() / kBlock);
   irs::bstring bytes;
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
-  std::array<uint32_t, kN> stored;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
+  std::array<uint32_t, kBlock> stored;
   for (uint32_t b = 0; b != blocks; ++b) {
-    for (uint32_t i = 0; i != kN; ++i) {
-      stored[i] = values[b * kN + i] - Add;
+    for (uint32_t i = 0; i != kBlock; ++i) {
+      stored[i] = values[b * kBlock + i] - Add;
     }
     bytes.append(block.data(), Codec::EncodeValuesBlock(stored.data(),
                                                         block.data(), options));
   }
   bytes.append(kSlack, 0);
   const auto* p = bytes.data();
-  std::array<uint32_t, kN + bc::kOutSlack> out;
+  std::array<uint32_t, kBlock + bc::kOutSlack> out;
   for (uint32_t b = 0; b != blocks; ++b) {
-    const auto* first = values.data() + b * kN;
-    p = Codec::template DecodeValuesBlock<Add>(p, out.data());
-    SDB_VERIFY(std::equal(first, first + kN, out.data()), "values, block ", b);
+    const auto* first = values.data() + b * kBlock;
+    p = Codec::DecodeValuesBlock<Add>(p, out.data());
+    SDB_VERIFY(std::equal(first, first + kBlock, out.data()), "values, block ",
+               b);
   }
   return bytes;
 }
 
-template<typename Codec>
 const irs::bstring& CachedDocs(DocShape shape, uint32_t values) {
   static std::map<std::pair<DocShape, uint32_t>, irs::bstring> cache;
   auto it = cache.find({shape, values});
   if (it == cache.end()) {
-    it = cache
-           .emplace(std::pair{shape, values},
-                    EncodeDocs<Codec>(MakeDocs(shape, values)))
-           .first;
+    it =
+      cache
+        .emplace(std::pair{shape, values}, EncodeDocs(MakeDocs(shape, values)))
+        .first;
   }
   return it->second;
 }
 
-template<typename Codec>
 const irs::bstring& CachedFreqs(FreqShape shape, uint32_t values) {
   static std::map<std::pair<FreqShape, uint32_t>, irs::bstring> cache;
   auto it = cache.find({shape, values});
   if (it == cache.end()) {
     it = cache
            .emplace(std::pair{shape, values},
-                    EncodeValues<Codec, irs::block_io::kFreqBias>(
+                    EncodeValues<irs::block_io::kFreqBias>(
                       MakeFreqs(shape, values), irs::block_io::kFreqOptions))
            .first;
   }
   return it->second;
 }
 
-template<typename Codec>
 const irs::bstring& CachedPositions(PosShape shape, uint32_t values) {
   static std::map<std::pair<PosShape, uint32_t>, irs::bstring> cache;
   auto it = cache.find({shape, values});
   if (it == cache.end()) {
     it = cache
            .emplace(std::pair{shape, values},
-                    EncodeValues<Codec>(MakePositions(shape, values)))
+                    EncodeValues(MakePositions(shape, values)))
            .first;
   }
   return it->second;
@@ -525,7 +508,7 @@ const irs::bstring& CachedPositions(PosShape shape, uint32_t values) {
 
 void Report(benchmark::State& state, size_t bytes, uint32_t values) {
   state.SetItemsProcessed(state.iterations() * values);
-  state.counters["bytes_per_128"] =
+  state.counters["bytes_per_block"] =
     static_cast<double>(bytes - kSlack) * kBlock / static_cast<double>(values);
 }
 
@@ -539,13 +522,13 @@ void CountPatches(benchmark::State& state, const irs::bstring& bytes,
   uint32_t bit_highs = 0;
   for (uint32_t b = 0; b != blocks; ++b) {
     const uint32_t token = p[0];
-    if constexpr (std::is_same_v<Encoding, bc::DeltaEncoding>) {
-      bitsets += bc::IsTokenBitset(token);
-    }
-    if (bc::IsPatchToken<Encoding>(token)) {
+    if (std::is_same_v<Encoding, bc::DeltaEncoding> &&
+        bc::IsTokenBitset(token)) {
+      ++bitsets;
+    } else if (token >= bc::Code(Encoding::PatchByte)) {
       ++patched;
       exceptions += p[1];
-      bit_highs += bc::ShapeOf<Encoding>(token).family == bc::Family::PatchBit;
+      bit_highs += token >= bc::Code(Encoding::PatchBit);
     }
     p += size(p);
   }
@@ -555,25 +538,24 @@ void CountPatches(benchmark::State& state, const irs::bstring& bytes,
   state.counters["bit_highs"] = static_cast<double>(bit_highs) / blocks;
 }
 
-template<typename Codec, bool Portable = false>
-void BmDocs(benchmark::State& state) {
-  constexpr uint32_t kN = Codec::kBlock;
+template<bool Portable>
+void DecodeDocs(benchmark::State& state) {
   const auto shape = static_cast<DocShape>(state.range(0));
   const auto values = static_cast<uint32_t>(state.range(1));
-  const auto blocks = values / kN;
-  const auto& encoded = CachedDocs<Codec>(shape, values);
-  alignas(64) std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
+  const auto blocks = values / kBlock;
+  const auto& encoded = CachedDocs(shape, values);
+  alignas(64) std::array<irs::doc_id_t, kBlock + bc::kOutSlack> out;
   for (auto _ : state) {
     const auto* p = encoded.data();
     irs::doc_id_t prev = 0;
     for (uint32_t b = 0; b != blocks; ++b) {
       if constexpr (Portable) {
-        p = bc::kDeltaBlockDecoders<Codec::kLanes, false>[p[0]](
-          p, ListPrev<Codec>(b, prev), out.data());
+        p = bc::kDeltaBlockDecoders<false>[p[0]](p, ListPrev(b, prev),
+                                                 out.data());
       } else {
-        p = Codec::DecodeDeltaBlock(p, ListPrev<Codec>(b, prev), out.data());
+        p = Codec::DecodeDeltaBlock(p, ListPrev(b, prev), out.data());
       }
-      prev = out[kN - 1];
+      prev = out[kBlock - 1];
     }
     benchmark::DoNotOptimize(prev);
   }
@@ -582,16 +564,15 @@ void BmDocs(benchmark::State& state) {
                                   &Codec::DeltaBlockSize);
 }
 
-template<typename Codec, uint32_t Add = 0>
+template<uint32_t Add = 0>
 void DecodeValueBlocks(benchmark::State& state, const irs::bstring& encoded,
                        uint32_t values) {
-  constexpr uint32_t kN = Codec::kBlock;
-  const auto blocks = values / kN;
-  alignas(64) std::array<uint32_t, kN + bc::kOutSlack> out;
+  const auto blocks = values / kBlock;
+  alignas(64) std::array<uint32_t, kBlock + bc::kOutSlack> out;
   for (auto _ : state) {
     const auto* p = encoded.data();
     for (uint32_t b = 0; b != blocks; ++b) {
-      p = Codec::template DecodeValuesBlock<Add>(p, out.data());
+      p = Codec::DecodeValuesBlock<Add>(p, out.data());
     }
     benchmark::DoNotOptimize(out);
     benchmark::ClobberMemory();
@@ -601,35 +582,21 @@ void DecodeValueBlocks(benchmark::State& state, const irs::bstring& encoded,
                                   &Codec::ValuesBlockSize);
 }
 
-template<typename Codec>
+void BmDocs(benchmark::State& state) { DecodeDocs<false>(state); }
+
+void BmDocsPortable(benchmark::State& state) { DecodeDocs<true>(state); }
+
 void BmFreqs(benchmark::State& state) {
   const auto values = static_cast<uint32_t>(state.range(1));
-  DecodeValueBlocks<Codec, irs::block_io::kFreqBias>(
-    state, CachedFreqs<Codec>(static_cast<FreqShape>(state.range(0)), values),
-    values);
+  DecodeValueBlocks<irs::block_io::kFreqBias>(
+    state, CachedFreqs(static_cast<FreqShape>(state.range(0)), values), values);
 }
 
-template<typename Codec>
 void BmPositions(benchmark::State& state) {
   const auto values = static_cast<uint32_t>(state.range(1));
-  DecodeValueBlocks<Codec>(
-    state,
-    CachedPositions<Codec>(static_cast<PosShape>(state.range(0)), values),
+  DecodeValueBlocks(
+    state, CachedPositions(static_cast<PosShape>(state.range(0)), values),
     values);
-}
-
-void BmDocs128(benchmark::State& state) { BmDocs<bc::Codec128>(state); }
-void BmDocs256(benchmark::State& state) { BmDocs<bc::Codec256>(state); }
-void BmDocs256Portable(benchmark::State& state) {
-  BmDocs<bc::Codec256, true>(state);
-}
-void BmFreqs128(benchmark::State& state) { BmFreqs<bc::Codec128>(state); }
-void BmFreqs256(benchmark::State& state) { BmFreqs<bc::Codec256>(state); }
-void BmPositions128(benchmark::State& state) {
-  BmPositions<bc::Codec128>(state);
-}
-void BmPositions256(benchmark::State& state) {
-  BmPositions<bc::Codec256>(state);
 }
 
 constexpr std::array<int, 3> kValueCounts = {256, 4096 * 128, 262144 * 128};
@@ -661,89 +628,58 @@ void PosShapes(benchmark::internal::Benchmark* b) {
   }
 }
 
-BENCHMARK(BmDocs128)->Apply(DocShapes);
-BENCHMARK(BmDocs256)->Apply(DocShapes);
-BENCHMARK(BmDocs256Portable)->Apply(DocShapes);
-BENCHMARK(BmFreqs128)->Apply(FreqShapes);
-BENCHMARK(BmFreqs256)->Apply(FreqShapes);
-BENCHMARK(BmPositions128)->Apply(PosShapes);
-BENCHMARK(BmPositions256)->Apply(PosShapes);
+BENCHMARK(BmDocs)->Apply(DocShapes);
+BENCHMARK(BmDocsPortable)->Apply(DocShapes);
+BENCHMARK(BmFreqs)->Apply(FreqShapes);
+BENCHMARK(BmPositions)->Apply(PosShapes);
 
 constexpr uint32_t kEncodeValues = 1024 * kBlock;
 
-template<typename Codec>
 void BmEncodeDocs(benchmark::State& state) {
-  constexpr uint32_t kN = Codec::kBlock;
   const auto docs =
     MakeDocs(static_cast<DocShape>(state.range(0)), kEncodeValues);
-  std::vector<irs::byte_type> out(Codec::kMaxBlockBytes + kSlack);
+  std::vector<irs::byte_type> out(bc::kMaxBlockBytes + kSlack);
   for (auto _ : state) {
     irs::doc_id_t prev = 0;
-    for (uint32_t b = 0; b != kEncodeValues / kN; ++b) {
-      const auto* first = docs.data() + b * kN;
+    for (uint32_t b = 0; b != kEncodeValues / kBlock; ++b) {
+      const auto* first = docs.data() + b * kBlock;
       benchmark::DoNotOptimize(
         Codec::EncodeDeltaBlock(first, prev, out.data()));
-      prev = first[kN - 1];
+      prev = first[kBlock - 1];
     }
   }
   state.SetItemsProcessed(state.iterations() * kEncodeValues);
 }
 
-template<typename Codec>
 void EncodeValueBlocks(benchmark::State& state,
                        const std::vector<uint32_t>& values,
                        const bc::EncodeOptions& options = {}) {
-  constexpr uint32_t kN = Codec::kBlock;
-  std::vector<irs::byte_type> out(Codec::kMaxBlockBytes + kSlack);
+  std::vector<irs::byte_type> out(bc::kMaxBlockBytes + kSlack);
   for (auto _ : state) {
-    for (uint32_t b = 0; b != kEncodeValues / kN; ++b) {
-      benchmark::DoNotOptimize(
-        Codec::EncodeValuesBlock(values.data() + b * kN, out.data(), options));
+    for (uint32_t b = 0; b != kEncodeValues / kBlock; ++b) {
+      benchmark::DoNotOptimize(Codec::EncodeValuesBlock(
+        values.data() + b * kBlock, out.data(), options));
     }
   }
   state.SetItemsProcessed(state.iterations() * kEncodeValues);
 }
 
-template<typename Codec>
 void BmEncodeFreqs(benchmark::State& state) {
   auto freqs = MakeFreqs(static_cast<FreqShape>(state.range(0)), kEncodeValues);
   for (auto& f : freqs) {
     f -= irs::block_io::kFreqBias;
   }
-  EncodeValueBlocks<Codec>(state, freqs, irs::block_io::kFreqOptions);
+  EncodeValueBlocks(state, freqs, irs::block_io::kFreqOptions);
 }
 
-template<typename Codec>
 void BmEncodePositions(benchmark::State& state) {
-  EncodeValueBlocks<Codec>(
+  EncodeValueBlocks(
     state, MakePositions(static_cast<PosShape>(state.range(0)), kEncodeValues));
 }
 
-void BmEncodeDocs128(benchmark::State& state) {
-  BmEncodeDocs<bc::Codec128>(state);
-}
-void BmEncodeDocs256(benchmark::State& state) {
-  BmEncodeDocs<bc::Codec256>(state);
-}
-void BmEncodeFreqs128(benchmark::State& state) {
-  BmEncodeFreqs<bc::Codec128>(state);
-}
-void BmEncodeFreqs256(benchmark::State& state) {
-  BmEncodeFreqs<bc::Codec256>(state);
-}
-void BmEncodePositions128(benchmark::State& state) {
-  BmEncodePositions<bc::Codec128>(state);
-}
-void BmEncodePositions256(benchmark::State& state) {
-  BmEncodePositions<bc::Codec256>(state);
-}
-
-BENCHMARK(BmEncodeDocs128)->DenseRange(0, 5);
-BENCHMARK(BmEncodeDocs256)->DenseRange(0, 5);
-BENCHMARK(BmEncodeFreqs128)->DenseRange(0, 4);
-BENCHMARK(BmEncodeFreqs256)->DenseRange(0, 4);
-BENCHMARK(BmEncodePositions128)->DenseRange(0, 5);
-BENCHMARK(BmEncodePositions256)->DenseRange(0, 5);
+BENCHMARK(BmEncodeDocs)->DenseRange(0, 5);
+BENCHMARK(BmEncodeFreqs)->DenseRange(0, 4);
+BENCHMARK(BmEncodePositions)->DenseRange(0, 5);
 
 constexpr uint32_t kTails = 1024;
 
@@ -769,23 +705,22 @@ void ReportTails(benchmark::State& state, size_t bytes, uint32_t len) {
     static_cast<double>(bytes) / (kTails * static_cast<double>(len));
 }
 
-template<typename Codec, bool Portable = false>
-void BmTailDocs(benchmark::State& state) {
+template<bool Portable>
+void DecodeTailDocs(benchmark::State& state) {
   const auto len = static_cast<uint32_t>(state.range(0));
   const auto docs = MakeTails(len, static_cast<uint32_t>(state.range(1)), true);
   irs::bstring bytes;
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   for (uint32_t t = 0; t != kTails; ++t) {
     bytes.append(block.data(), Codec::EncodeDeltaTail(docs.data() + t * len,
                                                       len, 0, block.data()));
   }
   const auto size = bytes.size();
   bytes.append(kSlack, 0);
-  alignas(64) std::array<irs::doc_id_t, Codec::kBlock + bc::kOutSlack> out;
+  alignas(64) std::array<irs::doc_id_t, kBlock + bc::kOutSlack> out;
   const auto decode = [&](const irs::byte_type* in) {
     if constexpr (Portable) {
-      return bc::kDeltaTailDecoders<Codec::kLanes, false>[in[0]](in, len, 0,
-                                                                 out.data());
+      return bc::kDeltaTailDecoders<false>[in[0]](in, len, 0, out.data());
     } else {
       return Codec::DecodeDeltaTail(in, len, 0, out.data());
     }
@@ -808,20 +743,25 @@ void BmTailDocs(benchmark::State& state) {
   ReportTails(state, size, len);
 }
 
-template<typename Codec>
+void BmTailDocs(benchmark::State& state) { DecodeTailDocs<false>(state); }
+
+void BmTailDocsPortable(benchmark::State& state) {
+  DecodeTailDocs<true>(state);
+}
+
 void BmTailValues(benchmark::State& state) {
   const auto len = static_cast<uint32_t>(state.range(0));
   const auto values =
     MakeTails(len, static_cast<uint32_t>(state.range(1)), false);
   irs::bstring bytes;
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   for (uint32_t t = 0; t != kTails; ++t) {
     bytes.append(block.data(), Codec::EncodeValuesTail(values.data() + t * len,
                                                        len, block.data()));
   }
   const auto size = bytes.size();
   bytes.append(kSlack, 0);
-  alignas(64) std::array<uint32_t, Codec::kBlock + bc::kOutSlack> out;
+  alignas(64) std::array<uint32_t, kBlock + bc::kOutSlack> out;
   const auto* p = bytes.data();
   for (uint32_t t = 0; t != kTails; ++t) {
     p = Codec::DecodeValuesTail(p, len, out.data());
@@ -840,11 +780,10 @@ void BmTailValues(benchmark::State& state) {
   ReportTails(state, size, len);
 }
 
-template<typename Codec>
 void BmEncodeTailDocs(benchmark::State& state) {
   const auto len = static_cast<uint32_t>(state.range(0));
   const auto docs = MakeTails(len, static_cast<uint32_t>(state.range(1)), true);
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   for (auto _ : state) {
     for (uint32_t t = 0; t != kTails; ++t) {
       benchmark::DoNotOptimize(
@@ -854,12 +793,11 @@ void BmEncodeTailDocs(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * kTails * len);
 }
 
-template<typename Codec>
 void BmEncodeTailValues(benchmark::State& state) {
   const auto len = static_cast<uint32_t>(state.range(0));
   const auto values =
     MakeTails(len, static_cast<uint32_t>(state.range(1)), false);
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   for (auto _ : state) {
     for (uint32_t t = 0; t != kTails; ++t) {
       benchmark::DoNotOptimize(
@@ -867,20 +805,6 @@ void BmEncodeTailValues(benchmark::State& state) {
     }
   }
   state.SetItemsProcessed(state.iterations() * kTails * len);
-}
-
-void BmTailDocs256(benchmark::State& state) { BmTailDocs<bc::Codec256>(state); }
-void BmTailDocs256Portable(benchmark::State& state) {
-  BmTailDocs<bc::Codec256, true>(state);
-}
-void BmTailValues256(benchmark::State& state) {
-  BmTailValues<bc::Codec256>(state);
-}
-void BmEncodeTailDocs256(benchmark::State& state) {
-  BmEncodeTailDocs<bc::Codec256>(state);
-}
-void BmEncodeTailValues256(benchmark::State& state) {
-  BmEncodeTailValues<bc::Codec256>(state);
 }
 
 void TailShapes(benchmark::internal::Benchmark* b) {
@@ -891,179 +815,18 @@ void TailShapes(benchmark::internal::Benchmark* b) {
   }
 }
 
-BENCHMARK(BmTailDocs256)->Apply(TailShapes);
-BENCHMARK(BmTailDocs256Portable)->Apply(TailShapes);
-BENCHMARK(BmTailValues256)->Apply(TailShapes);
-BENCHMARK(BmEncodeTailDocs256)->Apply(TailShapes);
-BENCHMARK(BmEncodeTailValues256)->Apply(TailShapes);
-
-constexpr uint32_t kDensityDocs = 4096 * 256;
-
-const std::vector<irs::doc_id_t>& CachedDensityDocs(uint32_t percent) {
-  static std::map<uint32_t, std::vector<irs::doc_id_t>> cache;
-  auto it = cache.find(percent);
-  if (it == cache.end()) {
-    std::mt19937 rng{400 + percent};
-    std::vector<irs::doc_id_t> docs;
-    docs.reserve(kDensityDocs);
-    for (irs::doc_id_t id = 1; docs.size() != kDensityDocs; ++id) {
-      if (rng() % 100 < percent) {
-        docs.push_back(id);
-      }
-    }
-    it = cache.emplace(percent, std::move(docs)).first;
-  }
-  return it->second;
-}
-
-template<typename Codec>
-const irs::bstring& CachedDensity(uint32_t percent, bool bitset) {
-  constexpr uint32_t kN = Codec::kBlock;
-  static std::map<std::pair<uint32_t, bool>, irs::bstring> cache;
-  auto it = cache.find({percent, bitset});
-  if (it != cache.end()) {
-    return it->second;
-  }
-  const auto& docs = CachedDensityDocs(percent);
-  irs::bstring bytes;
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
-  irs::doc_id_t prev = 0;
-  for (uint32_t b = 0; b != kDensityDocs / kN; ++b) {
-    bytes.append(block.data(),
-                 Codec::EncodeDeltaBlock(docs.data() + b * kN, prev,
-                                         block.data(), {.bitset = bitset}));
-    prev = docs[b * kN + kN - 1];
-  }
-  bytes.append(kSlack, 0);
-  const auto* p = bytes.data();
-  std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
-  prev = 0;
-  for (uint32_t b = 0; b != kDensityDocs / kN; ++b) {
-    p = Codec::DecodeDeltaBlock(p, prev, out.data());
-    SDB_VERIFY(std::equal(out.begin(), out.begin() + kN, docs.data() + b * kN),
-               "density block ", b);
-    prev = out[kN - 1];
-  }
-  return cache.emplace(std::pair{percent, bitset}, std::move(bytes))
-    .first->second;
-}
-
-const irs::byte_type* FillZeroBase(const irs::byte_type* p, irs::doc_id_t& prev,
-                                   uint64_t* words) {
-  constexpr uint32_t kN = bc::Codec256::kBlock;
-  const uint32_t n = p[1];
-  const bool bytes = p[0] == bc::Code(bc::DeltaEncoding::PatchByte);
-  const uint32_t high_bits = bytes ? 0 : p[2];
-  const auto* slots = p + (bytes ? 2 : 3);
-  const auto* highs = slots + n;
-  const uint64_t mask = (uint64_t{1} << high_bits) - 1;
-  uint64_t next = uint64_t{prev} + 1;
-  uint32_t done = 0;
-  for (uint32_t i = 0; i != n; ++i) {
-    const uint32_t slot = bytes ? slots[2 * i] : slots[i];
-    const uint32_t at = i * high_bits;
-    const uint32_t skip =
-      bytes
-        ? slots[2 * i + 1]
-        : static_cast<uint32_t>(
-            (absl::little_endian::Load64(highs + at / 8) >> (at % 8)) & mask) +
-            1;
-    if (slot != done) {
-      irs::SetBitRange(words, next, next + slot - done);
-    }
-    next += slot - done + skip;
-    done = slot;
-  }
-  irs::SetBitRange(words, next, next + kN - done);
-  prev = static_cast<irs::doc_id_t>(next + kN - done - 1);
-  return p + bc::Codec256::DeltaBlockSize(p);
-}
-
-const irs::byte_type* FillZeroBaseWords(const irs::byte_type* p,
-                                        irs::doc_id_t& prev, uint64_t* words) {
-  constexpr uint32_t kN = bc::Codec256::kBlock;
-  constexpr auto kBits = irs::BitsRequired<uint64_t>();
-  uint64_t local[irs::block_io::kHoleWords];
-  const auto span = irs::block_io::HolesToBitset(p, kN, local);
-  if (span == 0) {
-    return FillZeroBase(p, prev, words);
-  }
-  irs::OrBitsetAt(words, uint64_t{prev} + 1, local,
-                  static_cast<uint32_t>((span + kBits - 1) / kBits));
-  prev += static_cast<irs::doc_id_t>(span);
-  return p + bc::Codec256::DeltaBlockSize(p);
-}
-
-template<typename Codec>
-void BmDensityFill(benchmark::State& state) {
-  constexpr uint32_t kN = Codec::kBlock;
-  constexpr auto kBits = irs::BitsRequired<uint64_t>();
-  const auto percent = static_cast<uint32_t>(state.range(0));
-  const bool bitset = state.range(1) != 0;
-  const auto zero_base = static_cast<uint32_t>(state.range(2));
-  const auto& encoded = CachedDensity<Codec>(percent, bitset);
-  const auto& docs_ref = CachedDensityDocs(percent);
-  std::vector<uint64_t> words(docs_ref.back() / kBits + 2 * kN);
-  alignas(64) std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
-  for (auto _ : state) {
-    const auto* p = encoded.data();
-    irs::doc_id_t prev = 0;
-    for (uint32_t b = 0; b != kDensityDocs / kN; ++b) {
-      if (bc::IsTokenBitset(p[0])) {
-        const auto [raw, n] = bc::ParseBitset(p);
-        const auto* bits = reinterpret_cast<const uint64_t*>(raw);
-        irs::OrBitsetAt(words.data(), uint64_t{prev} + 1, bits, n);
-        prev += 1 + (n - 1) * kBits + (kBits - 1) -
-                static_cast<uint32_t>(std::countl_zero(bits[n - 1]));
-        p = raw + n * sizeof(uint64_t);
-      } else if (zero_base != 0 && irs::block_io::HoleToken(p[0])) {
-        p = zero_base == 1 ? FillZeroBase(p, prev, words.data())
-                           : FillZeroBaseWords(p, prev, words.data());
-      } else {
-        p = Codec::DecodeDeltaBlock(p, prev, out.data());
-        for (uint32_t i = 0; i != kN; ++i) {
-          irs::SetBit(words[out[i] / kBits], out[i] % kBits);
-        }
-        prev = out[kN - 1];
-      }
-    }
-    benchmark::DoNotOptimize(words.data());
-    benchmark::ClobberMemory();
-  }
-  SDB_VERIFY(std::all_of(docs_ref.begin(), docs_ref.end(),
-                         [&](irs::doc_id_t doc) {
-                           return (words[doc / kBits] >> (doc % kBits)) & 1;
-                         }),
-             "density fill");
-  uint64_t set = 0;
-  for (const auto word : words) {
-    set += std::popcount(word);
-  }
-  SDB_VERIFY(set == kDensityDocs, "density fill sets ", set);
-  Report(state, encoded.size(), kDensityDocs);
-}
-
-void BmDensityFill256(benchmark::State& state) {
-  BmDensityFill<bc::Codec256>(state);
-}
-
-void DensityFillArgs(benchmark::internal::Benchmark* b) {
-  for (const int percent : {50, 70, 80, 85, 88, 90, 92, 94, 96, 98}) {
-    b->Args({percent, 1, 0});
-    for (const int zero_base : {0, 1, 2}) {
-      b->Args({percent, 0, zero_base});
-    }
-  }
-}
-
-BENCHMARK(BmDensityFill256)->Apply(DensityFillArgs);
+BENCHMARK(BmTailDocs)->Apply(TailShapes);
+BENCHMARK(BmTailDocsPortable)->Apply(TailShapes);
+BENCHMARK(BmTailValues)->Apply(TailShapes);
+BENCHMARK(BmEncodeTailDocs)->Apply(TailShapes);
+BENCHMARK(BmEncodeTailValues)->Apply(TailShapes);
 
 enum class GapShape : uint8_t {
   Geometric,
   Mixed,
 };
 
-constexpr uint32_t kBiasDocs = 1024 * bc::Codec256::kBlock;
+constexpr uint32_t kBiasDocs = 1024 * kBlock;
 
 const std::vector<irs::doc_id_t>& CachedGapDocs(GapShape shape,
                                                 uint32_t mean_x10) {
@@ -1090,84 +853,64 @@ const std::vector<irs::doc_id_t>& CachedGapDocs(GapShape shape,
     .first->second;
 }
 
-bc::EncodeOptions BiasOptions(uint32_t variant) {
-  switch (variant) {
-    case 0:
-      return {.bitset = false};
-    case 1:
-      return {};
-    default:
-      return {.bitset_margin_percent = 1'000'000};
-  }
-}
-
-const irs::bstring& CachedBias(GapShape shape, uint32_t mean_x10,
-                               uint32_t variant) {
-  using Codec = bc::Codec256;
-  constexpr uint32_t kN = Codec::kBlock;
-  static std::map<std::tuple<GapShape, uint32_t, uint32_t>, irs::bstring> cache;
-  auto it = cache.find({shape, mean_x10, variant});
+const irs::bstring& CachedBias(GapShape shape, uint32_t mean_x10) {
+  static std::map<std::pair<GapShape, uint32_t>, irs::bstring> cache;
+  auto it = cache.find({shape, mean_x10});
   if (it != cache.end()) {
     return it->second;
   }
   const auto& docs = CachedGapDocs(shape, mean_x10);
-  const auto options = BiasOptions(variant);
   irs::bstring bytes;
-  std::array<irs::byte_type, Codec::kMaxBlockBytes> block;
+  std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   irs::doc_id_t prev = 0;
-  for (uint32_t b = 0; b != kBiasDocs / kN; ++b) {
-    bytes.append(block.data(),
-                 Codec::EncodeDeltaBlock(docs.data() + b * kN, prev,
-                                         block.data(), options));
-    prev = docs[b * kN + kN - 1];
+  for (uint32_t b = 0; b != kBiasDocs / kBlock; ++b) {
+    bytes.append(block.data(), Codec::EncodeDeltaBlock(docs.data() + b * kBlock,
+                                                       prev, block.data()));
+    prev = docs[b * kBlock + kBlock - 1];
   }
   bytes.append(kSlack, 0);
   const auto* p = bytes.data();
-  std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
+  std::array<irs::doc_id_t, kBlock + bc::kOutSlack> out;
   prev = 0;
-  for (uint32_t b = 0; b != kBiasDocs / kN; ++b) {
+  for (uint32_t b = 0; b != kBiasDocs / kBlock; ++b) {
     p = Codec::DecodeDeltaBlock(p, prev, out.data());
-    SDB_VERIFY(std::equal(out.begin(), out.begin() + kN, docs.data() + b * kN),
-               "bias block ", b);
-    prev = out[kN - 1];
+    SDB_VERIFY(
+      std::equal(out.begin(), out.begin() + kBlock, docs.data() + b * kBlock),
+      "bias block ", b);
+    prev = out[kBlock - 1];
   }
-  return cache.emplace(std::tuple{shape, mean_x10, variant}, std::move(bytes))
+  return cache.emplace(std::pair{shape, mean_x10}, std::move(bytes))
     .first->second;
 }
 
 void BmBiasDecode(benchmark::State& state) {
-  using Codec = bc::Codec256;
-  constexpr uint32_t kN = Codec::kBlock;
   const auto shape = static_cast<GapShape>(state.range(0));
   const auto mean_x10 = static_cast<uint32_t>(state.range(1));
-  const auto& encoded =
-    CachedBias(shape, mean_x10, static_cast<uint32_t>(state.range(2)));
-  alignas(64) std::array<irs::doc_id_t, kN + bc::kOutSlack> out;
+  const auto& encoded = CachedBias(shape, mean_x10);
+  alignas(64) std::array<irs::doc_id_t, kBlock + bc::kOutSlack> out;
   for (auto _ : state) {
     const auto* p = encoded.data();
     irs::doc_id_t prev = 0;
-    for (uint32_t b = 0; b != kBiasDocs / kN; ++b) {
+    for (uint32_t b = 0; b != kBiasDocs / kBlock; ++b) {
       p = Codec::DecodeDeltaBlock(p, prev, out.data());
-      prev = out[kN - 1];
+      prev = out[kBlock - 1];
     }
     benchmark::DoNotOptimize(prev);
   }
   Report(state, encoded.size(), kBiasDocs);
-  CountPatches<bc::DeltaEncoding>(state, encoded, kBiasDocs / kN,
+  CountPatches<bc::DeltaEncoding>(state, encoded, kBiasDocs / kBlock,
                                   &Codec::DeltaBlockSize);
 }
 
 template<typename Sink>
 void BmBiasSink(benchmark::State& state) {
-  using Codec = bc::Codec256;
   constexpr auto kBits = irs::BitsRequired<uint64_t>();
   const auto shape = static_cast<GapShape>(state.range(0));
   const auto mean_x10 = static_cast<uint32_t>(state.range(1));
-  const auto& encoded =
-    CachedBias(shape, mean_x10, static_cast<uint32_t>(state.range(2)));
+  const auto& encoded = CachedBias(shape, mean_x10);
   const auto& docs = CachedGapDocs(shape, mean_x10);
   constexpr bool kClear = std::is_same_v<Sink, irs::detail::ClearBits>;
-  std::vector<uint64_t> words(docs.back() / kBits + 2 * Codec::kBlock,
+  std::vector<uint64_t> words(docs.back() / kBits + 2 * kBlock,
                               kClear ? ~uint64_t{0} : 0);
   irs::PostingMeta meta;
   meta.docs_count = kBiasDocs;
@@ -1203,9 +946,7 @@ void BiasArgs(benchmark::internal::Benchmark* b) {
   for (const int shape : {0, 1}) {
     for (const int mean_x10 :
          {12, 15, 20, 25, 30, 40, 50, 60, 80, 100, 120, 160, 200, 250, 320}) {
-      for (const int variant : {0, 1, 2}) {
-        b->Args({shape, mean_x10, variant});
-      }
+      b->Args({shape, mean_x10});
     }
   }
 }

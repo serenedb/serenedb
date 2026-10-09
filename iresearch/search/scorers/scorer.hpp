@@ -80,8 +80,6 @@ struct ScoreBoundSource : AttributeProvider {
 struct ScoreBoundWriter {
   using ptr = std::unique_ptr<ScoreBoundWriter>;
 
-  static constexpr byte_type kMaxSize = 127;
-
   virtual ~ScoreBoundWriter() = default;
 
   virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
@@ -91,10 +89,10 @@ struct ScoreBoundWriter {
 
   virtual void Update() = 0;
 
-  virtual void WriteRoot(size_t level, DataOutput& out) = 0;
+  virtual void WriteRoot(DataOutput& out) = 0;
   virtual void Take(size_t level, uint32_t* out) = 0;
 
-  virtual byte_type SizeRoot(size_t level) = 0;
+  virtual byte_type SizeRoot() const = 0;
 };
 
 struct ScoreContext {

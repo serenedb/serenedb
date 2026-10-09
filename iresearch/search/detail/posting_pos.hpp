@@ -59,9 +59,8 @@ class PostingPos {
                IndexFeatures layout, const IndexInput& pos_in,
                const IndexInput* pay_in) {
     SDB_ASSERT(meta.docs_count != 0);
-    const auto skip = ToSkipLayout(layout);
-    SDB_ASSERT(skip.pos);
-    SDB_ASSERT(!Offs || skip.offs);
+    SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, layout));
+    SDB_ASSERT(!Offs || IsSubsetOf(IndexFeatures::Offs, layout));
     _docs_count = meta.docs_count;
 
     if (meta.docs_count == 1) {
@@ -76,7 +75,7 @@ class PostingPos {
       if (const auto extent = DocExtent(meta); extent != 0) {
         _hint.Arm(meta.doc_start, meta.doc_start + extent);
       }
-      if (meta.docs_count < doc_limits::kBlockSize) {
+      if (meta.docs_count <= doc_limits::kBlockSize) {
         SkipScoreBounds(Bounds, in);
       }
       _left_in_list = meta.docs_count;

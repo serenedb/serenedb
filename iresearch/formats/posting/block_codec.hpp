@@ -82,14 +82,14 @@ inline constexpr uint32_t kOutSlack = 16;
 
 inline constexpr uint32_t kMaxExceptions =
   std::numeric_limits<byte_type>::max();
+inline constexpr uint32_t kBitsetMarginPercent = 60;
+inline constexpr uint32_t kMaxBlockBytes = 1 + PackedSize(kBlock, kMaxWidth);
+
+static_assert(kBlock == kMaxExceptions + 1);
 
 struct EncodeOptions {
-  uint32_t bitset_margin_percent = 60;
   uint32_t exception_cost_eighths = 0;
-  uint32_t packed_cost_eighths = 0;
   bool narrow_highs = false;
-  bool patch = true;
-  bool bitset = true;
 };
 
 inline constexpr uint32_t kMaskBits = BitsRequired<uint64_t>();
@@ -100,7 +100,7 @@ inline constexpr uint32_t PaddedLen(uint32_t len) noexcept {
 
 inline IRS_FORCE_INLINE U32x8 LoadFirst(const uint32_t* in,
                                         uint32_t count) noexcept {
-  SDB_ASSERT(count < kWideLanes);
+  SDB_ASSERT(count < kLanes);
 #ifdef __AVX2__
   const __m256i lanes = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
   const __m256i mask =
@@ -119,7 +119,7 @@ inline IRS_FORCE_INLINE U32x8 LoadFirst(const uint32_t* in,
 inline IRS_FORCE_INLINE void PadTail(const uint32_t* in, uint32_t len,
                                      uint32_t* out) noexcept {
   uint32_t i = 0;
-  for (; i + kWideLanes <= len; i += kWideLanes) {
+  for (; i + kLanes <= len; i += kLanes) {
     U32x8 v;
     std::memcpy(&v, in + i, sizeof(v));
     v = Opaque(v);
@@ -128,10 +128,10 @@ inline IRS_FORCE_INLINE void PadTail(const uint32_t* in, uint32_t len,
   if (i != len) {
     const U32x8 v = LoadFirst(in + i, len - i);
     std::memcpy(out + i, &v, sizeof(v));
-    i += kWideLanes;
+    i += kLanes;
   }
   const U32x8 zero = Opaque(U32x8{});
-  for (const uint32_t end = PaddedLen(len); i != end; i += kWideLanes) {
+  for (const uint32_t end = PaddedLen(len); i != end; i += kLanes) {
     std::memcpy(out + i, &zero, sizeof(zero));
   }
 }
@@ -225,11 +225,6 @@ constexpr TokenShape ShapeOf(uint32_t token) noexcept {
   return {Family::Pack, token - Code(Encoding::Pack) + 1};
 }
 
-template<typename Encoding>
-constexpr bool IsPatchToken(uint32_t token) noexcept {
-  return token - Code(Encoding::PatchByte) < 2 * kMaxWidth;
-}
-
 using I8x8 = int8_t __attribute__((vector_size(8)));
 using I8x16 = int8_t __attribute__((vector_size(16)));
 using I8x32 = int8_t __attribute__((vector_size(32)));
@@ -301,10 +296,10 @@ IRS_FORCE_INLINE I8x32 Gather32(const uint32_t* values, Lanes lanes) noexcept {
                                  24, 25, 26, 27, 28, 29, 30, 31);
 }
 
-template<uint32_t L, bool Full>
+template<bool Full>
 class Stats {
  public:
-  static constexpr uint32_t kVectors = kBlockOf<L> / sizeof(I8x32);
+  static constexpr uint32_t kVectors = kBlock / sizeof(I8x32);
 
   IRS_FORCE_INLINE Stats(const uint32_t* values, uint32_t len,
                          uint32_t width) noexcept
@@ -380,30 +375,21 @@ class Stats {
   I8x32 _widths[kVectors];
 };
 
-inline IRS_FORCE_INLINE uint32_t TailPacked(uint32_t len,
-                                            uint32_t bits) noexcept {
-  return (len * bits + 7) / 8;
-}
-
-template<uint32_t L, bool Full>
-Plan ChoosePlan(const Stats<L, Full>& stats, uint32_t max,
+template<bool Full>
+Plan ChoosePlan(const Stats<Full>& stats, uint32_t max,
                 const EncodeOptions& options) noexcept {
   constexpr uint32_t kByteMax = std::numeric_limits<byte_type>::max();
   const uint32_t len = stats.Len();
   const uint32_t width = stats.Width();
-  Plan best{.family = Family::Pack,
-            .bits = width,
-            .size = 1 + PackedSize<L>(len, width)};
-  if (!options.patch) {
-    return best;
-  }
+  Plan best{
+    .family = Family::Pack, .bits = width, .size = 1 + PackedSize(len, width)};
   uint64_t best_cost = uint64_t{best.size} * 8;
   for (uint32_t w = width; w-- != 0;) {
     const uint32_t n = stats.Above(w);
     if (n > kMaxExceptions || uint64_t{2 + n} * 8 >= best_cost) {
       break;
     }
-    const uint32_t lows = PackedSize<L>(len, w);
+    const uint32_t lows = PackedSize(len, w);
     const uint32_t top = max >> w;
     const uint64_t extra = uint64_t{options.exception_cost_eighths} * n;
     if (top <= kByteMax) {
@@ -416,10 +402,8 @@ Plan ChoosePlan(const Stats<L, Full>& stats, uint32_t max,
     }
     if (options.narrow_highs || top > kByteMax) {
       const auto high = static_cast<uint32_t>(std::bit_width(top - 1));
-      const uint32_t size = 3 + lows + n + TailPacked(n, high);
-      if (const uint64_t cost =
-            uint64_t{size} * 8 + extra + options.packed_cost_eighths;
-          cost < best_cost) {
+      const uint32_t size = 3 + lows + n + PackedSize(n, high);
+      if (const uint64_t cost = uint64_t{size} * 8 + extra; cost < best_cost) {
         best = {.family = Family::PatchBit,
                 .bits = w,
                 .count = n,
@@ -432,31 +416,31 @@ Plan ChoosePlan(const Stats<L, Full>& stats, uint32_t max,
   return best;
 }
 
-template<uint32_t B, bool Full, uint32_t L, bool Mask>
+template<uint32_t B, bool Full, bool Mask>
 IRS_NO_INLINE void PackWidth(const uint32_t* in, uint32_t len,
                              byte_type* out) noexcept {
   if constexpr (Full) {
-    PackVertical<B, L, Mask>(in, out);
+    PackVertical<B, Mask>(in, out);
   } else {
     PackHorizontal<B>(in, len, out);
   }
 }
 
-template<bool Full, uint32_t L, bool Mask>
+template<bool Full, bool Mask>
 void PackBits(uint32_t bits, const uint32_t* in, uint32_t len,
               byte_type* out) noexcept {
   ResolveByte<kMaxWidth + 1>(bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
-    PackWidth<B, Full, L, Mask>(in, len, out);
+    PackWidth<B, Full, Mask>(in, len, out);
   });
 }
 
-template<typename Encoding, bool Full, uint32_t L>
-uint32_t WritePlan(const uint32_t* values, const Stats<L, Full>& stats,
+template<typename Encoding, bool Full>
+uint32_t WritePlan(const uint32_t* values, const Stats<Full>& stats,
                    const Plan& plan, byte_type* out) noexcept {
-  const uint32_t len = Full ? kBlockOf<L> : stats.Len();
+  const uint32_t len = Full ? kBlock : stats.Len();
   if (plan.family == Family::Pack) {
     out[0] = static_cast<byte_type>(Code(Encoding::Pack) + plan.bits - 1);
-    PackBits<Full, L, false>(plan.bits, values, len, out + 1);
+    PackBits<Full, false>(plan.bits, values, len, out + 1);
     return plan.size;
   }
   const uint32_t w = plan.bits;
@@ -469,9 +453,9 @@ uint32_t WritePlan(const uint32_t* values, const Stats<L, Full>& stats,
     out[2] = static_cast<byte_type>(plan.high);
     ++p;
   }
-  PackBits<Full, L, true>(w, values, len, p);
-  p += PackedSize<L>(len, w);
-  uint32_t highs[kMaxExceptions + 1 + kWideLanes];
+  PackBits<Full, true>(w, values, len, p);
+  p += PackedSize(len, w);
+  uint32_t highs[kMaxExceptions];
   uint32_t n = 0;
   for (uint32_t word = 0; word != stats.Words(); ++word) {
     for (auto mask = stats.Mask(w, word); mask != 0; mask &= mask - 1) {
@@ -493,9 +477,8 @@ uint32_t WritePlan(const uint32_t* values, const Stats<L, Full>& stats,
     p += 2 * n;
   } else {
     p += n;
-    std::fill_n(highs + n, kWideLanes, 0U);
-    PackBits<false, L, true>(plan.high, highs, n, p);
-    p += TailPacked(n, plan.high);
+    PackBits<false, true>(plan.high, highs, n, p);
+    p += PackedSize(n, plan.high);
   }
   SDB_ASSERT(static_cast<uint32_t>(p - out) == plan.size);
   return plan.size;
@@ -518,11 +501,11 @@ uint32_t WriteSame(uint32_t value, byte_type* out) noexcept {
   return 5;
 }
 
-template<bool Full, uint32_t L>
+template<bool Full>
 uint32_t WriteBitset(const doc_id_t* docs, uint32_t len, doc_id_t prev,
                      uint32_t words, byte_type* out) noexcept {
   if constexpr (Full) {
-    len = kBlockOf<L>;
+    len = kBlock;
   }
   SDB_ASSERT(1 <= words && words <= kMaxBitsetWords);
   out[0] = static_cast<byte_type>(Code(DeltaEncoding::BitsetWords) + words - 1);
@@ -546,13 +529,13 @@ uint32_t WriteBitset(const doc_id_t* docs, uint32_t len, doc_id_t prev,
   };
   const doc_id_t base = prev + 1;
   uint32_t i = 0;
-  for (; i + kWideLanes <= len; i += kWideLanes) {
+  for (; i + kLanes <= len; i += kLanes) {
     U32x8 v;
     std::memcpy(&v, docs + i, sizeof(v));
     v -= base;
     const uint32_t first = v[0];
     const U32x8 offsets = v - first;
-    if (offsets[kWideLanes - 1] < BitsRequired<uint64_t>()) {
+    if (offsets[kLanes - 1] < BitsRequired<uint64_t>()) {
       const U64x4 one = U64x4{} + 1;
       const U64x4 masks =
         (one << __builtin_convertvector(
@@ -561,7 +544,7 @@ uint32_t WriteBitset(const doc_id_t* docs, uint32_t len, doc_id_t prev,
            __builtin_shufflevector(offsets, offsets, 4, 5, 6, 7), U64x4));
       deposit(first, masks[0] | masks[1] | masks[2] | masks[3]);
     } else {
-      for (uint32_t k = 0; k != kWideLanes; ++k) {
+      for (uint32_t k = 0; k != kLanes; ++k) {
         deposit(v[k], 1);
       }
     }
@@ -580,13 +563,11 @@ inline IRS_FORCE_INLINE void FillProgression(doc_id_t* out, uint32_t len,
   }
 }
 
-template<uint32_t B, uint32_t Add, bool Full, uint32_t L>
+template<uint32_t B, uint32_t Add, bool Full>
 IRS_FORCE_INLINE void Unpack(const byte_type* in, uint32_t len,
                              uint32_t* out) noexcept {
-  if constexpr (Full && L == kWideLanes) {
-    UnpackWide<B, Add>(in, out);
-  } else if constexpr (Full) {
-    UnpackVertical<B, Add, L>(in, out);
+  if constexpr (Full) {
+    UnpackVertical<B, Add>(in, out);
   } else {
     UnpackHorizontal<B, Add>(in, len, out);
   }
@@ -636,25 +617,25 @@ inline constexpr auto kSizeShapes = [] {
   return shapes;
 }();
 
-template<typename Encoding, uint32_t L>
+template<typename Encoding>
 IRS_FORCE_INLINE uint32_t BlockBytes(const byte_type* in,
                                      uint32_t len) noexcept {
   const auto& s = kSizeShapes<Encoding>[in[0]];
   const uint32_t n = in[1];
-  return s.fixed + TailPacked(len, s.bits) + n * s.per +
-         TailPacked(n, in[2] & s.highs);
+  return s.fixed + PackedSize(len, s.bits) + n * s.per +
+         PackedSize(n, in[2] & s.highs);
 }
 
 inline constexpr uint32_t kPatchGroup = 4;
 
 static_assert(kOutSlack >= kPatchGroup);
 
-template<bool Full, uint32_t L>
+template<bool Full>
 IRS_FORCE_INLINE void AddHigh(uint32_t* out, uint32_t len, uint32_t k,
-                              bool keep, uint32_t slot,
+                              bool keep, byte_type slot,
                               uint32_t value) noexcept {
   if constexpr (Full) {
-    out[slot % kBlockOf<L>] += keep ? value : 0;
+    out[slot] += keep ? value : 0;
   } else {
     out[keep ? slot : len + k] += value;
   }
@@ -670,37 +651,37 @@ IRS_FORCE_INLINE void PatchGroups(const byte_type* first, const byte_type* last,
   }
 }
 
-template<uint32_t W, uint32_t Add, bool Full, uint32_t L>
+template<uint32_t W, uint32_t Add, bool Full>
 IRS_FORCE_INLINE const byte_type* DecodePairs(const byte_type* in, uint32_t len,
                                               uint32_t* out) noexcept {
   if constexpr (Full) {
-    len = kBlockOf<L>;
+    len = kBlock;
   }
   const uint32_t n = in[1];
-  Unpack<W, Add, Full, L>(in + 2, len, out);
-  const auto* p = in + 2 + PackedSize<L>(len, W);
+  Unpack<W, Add, Full>(in + 2, len, out);
+  const auto* p = in + 2 + PackedSize(len, W);
   const auto* end = p + 2 * n;
   const auto group = [&](const byte_type* e, uint32_t left) IRS_FORCE_INLINE {
     for (uint32_t k = 0; k != kPatchGroup; ++k) {
-      AddHigh<Full, L>(out, len, k, k < left, e[2 * k],
-                       uint32_t{e[2 * k + 1]} << W);
+      AddHigh<Full>(out, len, k, k < left, e[2 * k],
+                    uint32_t{e[2 * k + 1]} << W);
     }
   };
   PatchGroups(p, end, 2, group);
   return end;
 }
 
-template<uint32_t W, uint32_t Add, bool Full, uint32_t L>
+template<uint32_t W, uint32_t Add, bool Full>
 IRS_FORCE_INLINE const byte_type* DecodePacked(const byte_type* in,
                                                uint32_t len,
                                                uint32_t* out) noexcept {
   if constexpr (Full) {
-    len = kBlockOf<L>;
+    len = kBlock;
   }
   const uint32_t n = in[1];
   const uint32_t high_bits = in[2];
-  Unpack<W, Add, Full, L>(in + 3, len, out);
-  const auto* slots = in + 3 + PackedSize<L>(len, W);
+  Unpack<W, Add, Full>(in + 3, len, out);
+  const auto* slots = in + 3 + PackedSize(len, W);
   const auto* highs = slots + n;
   const uint32_t mask = (1U << high_bits) - 1;
   const auto group = [&](const byte_type* s, uint32_t left) IRS_FORCE_INLINE {
@@ -710,19 +691,19 @@ IRS_FORCE_INLINE const byte_type* DecodePacked(const byte_type* in,
       const auto word =
         absl::little_endian::Load64(highs + bit / 8) >> (bit % 8);
       const auto high = (static_cast<uint32_t>(word) & mask) + 1;
-      AddHigh<Full, L>(out, len, k, k < left, s[k], high << W);
+      AddHigh<Full>(out, len, k, k < left, s[k], high << W);
     }
   };
   PatchGroups(slots, highs, 1, group);
-  return highs + TailPacked(n, high_bits);
+  return highs + PackedSize(n, high_bits);
 }
 
-template<typename Encoding, bool Full>
+template<bool Full>
 consteval bool Inlined(uint32_t token) noexcept {
-  if (token < Code(Encoding::Pack)) {
+  if (token < Code(ValueEncoding::Pack)) {
     return true;
   }
-  const auto family = ShapeOf<Encoding>(token).family;
+  const auto family = ShapeOf<ValueEncoding>(token).family;
   return family == Family::Pack || (Full && family == Family::PatchByte);
 }
 
@@ -879,7 +860,7 @@ inline IRS_FORCE_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitset64(
 
 inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetBlock64(
   const byte_type* in, doc_id_t prev, doc_id_t* out) noexcept {
-  return DecodeBitset64(in, kWideBlock, prev, out);
+  return DecodeBitset64(in, kBlock, prev, out);
 }
 
 inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetTail64(
@@ -887,13 +868,12 @@ inline IRS_NO_INLINE IRS_BLOCK_CODEC_VBMI2 const byte_type* DecodeBitsetTail64(
   return DecodeBitset64(in, len, prev, out);
 }
 
-template<uint32_t Token, bool Full, uint32_t L, bool Wide = false>
+template<uint32_t Token, bool Full, bool Avx512 = false>
 IRS_FORCE_INLINE const byte_type* DecodeDeltaBody(const byte_type* in,
                                                   uint32_t len, doc_id_t prev,
                                                   doc_id_t* out) noexcept {
-  static_assert(!Wide || L == kWideLanes);
   if constexpr (Full) {
-    len = kBlockOf<L>;
+    len = kBlock;
   }
   if constexpr (Token == Code(DeltaEncoding::Run)) {
     FillProgression(out, len, prev, 1);
@@ -920,27 +900,27 @@ IRS_FORCE_INLINE const byte_type* DecodeDeltaBody(const byte_type* in,
   } else {
     constexpr auto kShape = ShapeOf<DeltaEncoding>(Token);
     if constexpr (Full && kShape.family == Family::Pack) {
-      if constexpr (Wide) {
+      if constexpr (Avx512) {
         UnpackVerticalDelta16<kShape.bits>(in + 1, prev, out);
       } else {
-        UnpackVerticalDelta<kShape.bits, L>(in + 1, prev, out);
+        UnpackVerticalDelta<kShape.bits>(in + 1, prev, out);
       }
-      return in + 1 + PackedSize<L>(kBlockOf<L>, kShape.bits);
+      return in + 1 + PackedSize(kBlock, kShape.bits);
     } else if constexpr (kShape.family == Family::Pack) {
-      if constexpr (Wide && kShape.bits <= kMaxPackGroupBits) {
+      if constexpr (Avx512 && kShape.bits <= kMaxPackGroupBits) {
         UnpackHorizontalDelta16<kShape.bits>(in + 1, len, prev, out);
       } else {
         UnpackHorizontalDelta<kShape.bits>(in + 1, len, prev, out);
       }
-      return in + 1 + PackedSize<L>(len, kShape.bits);
+      return in + 1 + PackedSize(len, kShape.bits);
     } else {
       const byte_type* end;
       if constexpr (kShape.family == Family::PatchByte) {
-        end = DecodePairs<kShape.bits, 0, Full, L>(in, len, out);
+        end = DecodePairs<kShape.bits, 0, Full>(in, len, out);
       } else {
-        end = DecodePacked<kShape.bits, 0, Full, L>(in, len, out);
+        end = DecodePacked<kShape.bits, 0, Full>(in, len, out);
       }
-      if constexpr (Wide && Full) {
+      if constexpr (Avx512 && Full) {
         ScanDocs16(out, prev);
       } else {
         ScanDocs(out, len, prev);
@@ -950,23 +930,23 @@ IRS_FORCE_INLINE const byte_type* DecodeDeltaBody(const byte_type* in,
   }
 }
 
-template<uint32_t Token, bool Full, uint32_t L>
-IRS_NO_INLINE const byte_type* DecodeDeltaToken(const byte_type* in,
-                                                uint32_t len, doc_id_t prev,
-                                                doc_id_t* out) noexcept {
-  return DecodeDeltaBody<Token, Full, L>(in, len, prev, out);
-}
-
 using DeltaBlockDecoder = const byte_type* (*)(const byte_type*, doc_id_t,
                                                doc_id_t*) noexcept;
 using DeltaTailDecoder = const byte_type* (*)(const byte_type*, uint32_t,
                                               doc_id_t, doc_id_t*) noexcept;
 
-template<uint32_t Token, uint32_t L>
+template<uint32_t Token>
 IRS_NO_INLINE const byte_type* DecodeDeltaBlockToken(const byte_type* in,
                                                      doc_id_t prev,
                                                      doc_id_t* out) noexcept {
-  return DecodeDeltaBody<Token, true, L>(in, kBlockOf<L>, prev, out);
+  return DecodeDeltaBody<Token, true>(in, kBlock, prev, out);
+}
+
+template<uint32_t Token>
+IRS_NO_INLINE const byte_type* DecodeDeltaTailToken(const byte_type* in,
+                                                    uint32_t len, doc_id_t prev,
+                                                    doc_id_t* out) noexcept {
+  return DecodeDeltaBody<Token, false>(in, len, prev, out);
 }
 
 template<uint32_t Token>
@@ -974,10 +954,9 @@ IRS_NO_INLINE IRS_BLOCK_CODEC_AVX512 const byte_type*
 DecodeDeltaBlockTokenAvx512(const byte_type* in, doc_id_t prev,
                             doc_id_t* out) noexcept {
   if constexpr (IsTokenBitset(Token)) {
-    return DecodeBitset16(in, kWideBlock, prev, out);
+    return DecodeBitset16(in, kBlock, prev, out);
   } else {
-    return DecodeDeltaBody<Token, true, kWideLanes, true>(in, kWideBlock, prev,
-                                                          out);
+    return DecodeDeltaBody<Token, true, true>(in, kBlock, prev, out);
   }
 }
 
@@ -988,11 +967,11 @@ DecodeDeltaTailTokenAvx512(const byte_type* in, uint32_t len, doc_id_t prev,
   if constexpr (IsTokenBitset(Token)) {
     return DecodeBitset16(in, len, prev, out);
   } else {
-    return DecodeDeltaBody<Token, false, kWideLanes, true>(in, len, prev, out);
+    return DecodeDeltaBody<Token, false, true>(in, len, prev, out);
   }
 }
 
-consteval bool WideTail(uint32_t token) noexcept {
+consteval bool Avx512Tail(uint32_t token) noexcept {
   if (IsTokenBitset(token)) {
     return true;
   }
@@ -1003,48 +982,48 @@ consteval bool WideTail(uint32_t token) noexcept {
   return shape.family == Family::Pack && shape.bits <= kMaxPackGroupBits;
 }
 
-template<uint32_t Token, uint32_t L, bool Wide, bool Bytes>
+template<uint32_t Token, bool Avx512, bool Vbmi2>
 consteval DeltaBlockDecoder DeltaBlockDecoderOf() noexcept {
   if constexpr (IsTokenBitset(Token) &&
                 Token != Code(DeltaEncoding::BitsetWords)) {
-    return DeltaBlockDecoderOf<Code(DeltaEncoding::BitsetWords), L, Wide,
-                               Bytes>();
-  } else if constexpr (Bytes && IsTokenBitset(Token)) {
+    return DeltaBlockDecoderOf<Code(DeltaEncoding::BitsetWords), Avx512,
+                               Vbmi2>();
+  } else if constexpr (Vbmi2 && IsTokenBitset(Token)) {
     return &DecodeBitsetBlock64;
-  } else if constexpr (Wide && Token >= Code(DeltaEncoding::Pack)) {
+  } else if constexpr (Avx512 && Token >= Code(DeltaEncoding::Pack)) {
     return &DecodeDeltaBlockTokenAvx512<Token>;
   } else {
-    return &DecodeDeltaBlockToken<Token, L>;
+    return &DecodeDeltaBlockToken<Token>;
   }
 }
 
-template<uint32_t Token, uint32_t L, bool Wide, bool Bytes>
+template<uint32_t Token, bool Avx512, bool Vbmi2>
 consteval DeltaTailDecoder DeltaTailDecoderOf() noexcept {
   if constexpr (IsTokenBitset(Token) &&
                 Token != Code(DeltaEncoding::BitsetWords)) {
-    return DeltaTailDecoderOf<Code(DeltaEncoding::BitsetWords), L, Wide,
-                              Bytes>();
-  } else if constexpr (Bytes && IsTokenBitset(Token)) {
+    return DeltaTailDecoderOf<Code(DeltaEncoding::BitsetWords), Avx512,
+                              Vbmi2>();
+  } else if constexpr (Vbmi2 && IsTokenBitset(Token)) {
     return &DecodeBitsetTail64;
-  } else if constexpr (Wide && WideTail(Token)) {
+  } else if constexpr (Avx512 && Avx512Tail(Token)) {
     return &DecodeDeltaTailTokenAvx512<Token>;
   } else {
-    return &DecodeDeltaToken<Token, false, L>;
+    return &DecodeDeltaTailToken<Token>;
   }
 }
 
-template<uint32_t L, bool Wide, bool Bytes = false>
+template<bool Avx512, bool Vbmi2 = false>
 inline constexpr auto kDeltaBlockDecoders =
   []<uint32_t... Token>(std::integer_sequence<uint32_t, Token...>) {
     return std::array<DeltaBlockDecoder, sizeof...(Token)>{
-      DeltaBlockDecoderOf<Token, L, Wide, Bytes>()...};
+      DeltaBlockDecoderOf<Token, Avx512, Vbmi2>()...};
   }(std::make_integer_sequence<uint32_t, Code(DeltaEncoding::End)>{});
 
-template<uint32_t L, bool Wide, bool Bytes = false>
+template<bool Avx512, bool Vbmi2 = false>
 inline constexpr auto kDeltaTailDecoders =
   []<uint32_t... Token>(std::integer_sequence<uint32_t, Token...>) {
     return std::array<DeltaTailDecoder, sizeof...(Token)>{
-      DeltaTailDecoderOf<Token, L, Wide, Bytes>()...};
+      DeltaTailDecoderOf<Token, Avx512, Vbmi2>()...};
   }(std::make_integer_sequence<uint32_t, Code(DeltaEncoding::End)>{});
 
 struct DeltaDecoders {
@@ -1052,36 +1031,36 @@ struct DeltaDecoders {
   const DeltaTailDecoder* tails;
 };
 
-template<bool Wide, bool Bytes = false>
-inline constexpr DeltaDecoders kWideDeltaDecodersOf{
-  .blocks = kDeltaBlockDecoders<kWideLanes, Wide, Bytes>.data(),
-  .tails = kDeltaTailDecoders<kWideLanes, Wide, Bytes>.data(),
+template<bool Avx512, bool Vbmi2 = false>
+inline constexpr DeltaDecoders kDeltaDecodersOf{
+  .blocks = kDeltaBlockDecoders<Avx512, Vbmi2>.data(),
+  .tails = kDeltaTailDecoders<Avx512, Vbmi2>.data(),
 };
 
-inline const DeltaDecoders kWideDeltaDecoders = [] {
+inline const DeltaDecoders kDeltaDecoders = [] {
 #ifdef __AVX2__
   __builtin_cpu_init();
   if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") &&
       __builtin_cpu_supports("avx512bw") &&
       __builtin_cpu_supports("avx512dq")) {
     if (__builtin_cpu_supports("avx512vbmi2")) {
-      return kWideDeltaDecodersOf<true, true>;
+      return kDeltaDecodersOf<true, true>;
     }
-    return kWideDeltaDecodersOf<true>;
+    return kDeltaDecodersOf<true>;
   }
 #endif
-  return kWideDeltaDecodersOf<false>;
+  return kDeltaDecodersOf<false>;
 }();
 
-template<uint32_t Token, uint32_t Add, bool Full, uint32_t L>
+template<uint32_t Token, uint32_t Add, bool Full>
 IRS_FORCE_INLINE const byte_type* DecodeValuesBody(const byte_type* in,
                                                    uint32_t len,
                                                    uint32_t* out) noexcept {
   if constexpr (Full) {
-    len = kBlockOf<L>;
+    len = kBlock;
   }
   if constexpr (Token == Code(ValueEncoding::Zero)) {
-    Unpack<0, Add, Full, L>(in + 1, len, out);
+    Unpack<0, Add, Full>(in + 1, len, out);
     return in + 1;
   } else if constexpr (Token == Code(ValueEncoding::Same08)) {
     std::fill_n(out, len, in[1] + Add);
@@ -1095,63 +1074,62 @@ IRS_FORCE_INLINE const byte_type* DecodeValuesBody(const byte_type* in,
   } else {
     constexpr auto kShape = ShapeOf<ValueEncoding>(Token);
     if constexpr (kShape.family == Family::Pack) {
-      Unpack<kShape.bits, Add, Full, L>(in + 1, len, out);
-      return in + 1 + PackedSize<L>(len, kShape.bits);
+      Unpack<kShape.bits, Add, Full>(in + 1, len, out);
+      return in + 1 + PackedSize(len, kShape.bits);
     } else if constexpr (kShape.family == Family::PatchByte) {
-      return DecodePairs<kShape.bits, Add, Full, L>(in, len, out);
+      return DecodePairs<kShape.bits, Add, Full>(in, len, out);
     } else {
-      return DecodePacked<kShape.bits, Add, Full, L>(in, len, out);
+      return DecodePacked<kShape.bits, Add, Full>(in, len, out);
     }
   }
 }
 
-template<uint32_t Token, uint32_t Add, bool Full, uint32_t L>
+template<uint32_t Token, uint32_t Add, bool Full>
 IRS_NO_INLINE const byte_type* DecodeValuesToken(const byte_type* in,
                                                  uint32_t len,
                                                  uint32_t* out) noexcept {
-  return DecodeValuesBody<Token, Add, Full, L>(in, len, out);
+  return DecodeValuesBody<Token, Add, Full>(in, len, out);
 }
 
-template<uint32_t Add, bool Full, uint32_t L>
+template<uint32_t Add, bool Full>
 const byte_type* DispatchValues(const byte_type* in, uint32_t len,
                                 uint32_t* out) noexcept {
   return ResolveByte<Code(ValueEncoding::End)>(
     in[0], [&]<uint32_t Token>() IRS_FORCE_INLINE {
-      if constexpr (Inlined<ValueEncoding, Full>(Token)) {
-        return DecodeValuesBody<Token, Add, Full, L>(in, len, out);
+      if constexpr (Inlined<Full>(Token)) {
+        return DecodeValuesBody<Token, Add, Full>(in, len, out);
       } else {
-        return DecodeValuesToken<Token, Add, Full, L>(in, len, out);
+        return DecodeValuesToken<Token, Add, Full>(in, len, out);
       }
     });
 }
 
-template<uint32_t L>
-IRS_FORCE_INLINE uint32_t BitsetWords(const doc_id_t* docs, uint32_t len,
-                                      doc_id_t prev, uint32_t plan_size,
-                                      const EncodeOptions& options) noexcept {
+inline IRS_FORCE_INLINE uint32_t BitsetWords(const doc_id_t* docs, uint32_t len,
+                                             doc_id_t prev,
+                                             uint32_t plan_size) noexcept {
   const uint64_t range = uint64_t{docs[len - 1]} - prev;
   const uint64_t words =
     (range + BitsRequired<uint64_t>() - 1) / BitsRequired<uint64_t>();
-  if (options.bitset && words <= kMaxBitsetWords &&
+  if (words <= kMaxBitsetWords &&
       (1 + words * sizeof(uint64_t)) * 100 <=
-        uint64_t{plan_size} * (100 + options.bitset_margin_percent)) {
+        uint64_t{plan_size} * (100 + kBitsetMarginPercent)) {
     return static_cast<uint32_t>(words);
   }
   return 0;
 }
 
-template<bool Full, uint32_t L>
+template<bool Full>
 IRS_NO_INLINE uint32_t EncodeDelta(const doc_id_t* docs, uint32_t len,
                                    doc_id_t prev, byte_type* out,
                                    const EncodeOptions& options) noexcept {
-  constexpr uint32_t kN = kBlockOf<L>;
+  constexpr uint32_t kN = kBlock;
   if constexpr (Full) {
     len = kN;
   }
   SDB_ASSERT(prev < docs[0]);
   SDB_ASSERT(std::adjacent_find(docs, docs + len, std::greater_equal<>{}) ==
              docs + len);
-  uint32_t gaps[kN + kWideLanes];
+  uint32_t gaps[kN + kLanes];
   const uint32_t first = docs[0] - prev - 1;
   U32x8 before = U32x8{} + prev;
   U32x8 max8{};
@@ -1191,33 +1169,24 @@ IRS_NO_INLINE uint32_t EncodeDelta(const doc_id_t* docs, uint32_t len,
   }
   if constexpr (!Full) {
     const U32x8 zero = Opaque(U32x8{});
-    for (uint32_t i = len; i < PaddedLen(len); i += kWideLanes) {
+    for (uint32_t i = len; i < PaddedLen(len); i += kLanes) {
       std::memcpy(gaps + i, &zero, sizeof(zero));
     }
   }
-  const Stats<L, Full> stats{gaps, len,
-                             static_cast<uint32_t>(std::bit_width(max))};
+  const Stats<Full> stats{gaps, len,
+                          static_cast<uint32_t>(std::bit_width(max))};
   const auto plan = ChoosePlan(stats, max, options);
-  if (const auto words = BitsetWords<L>(docs, len, prev, plan.size, options)) {
-    return WriteBitset<Full, L>(docs, len, prev, words, out);
+  if (const auto words = BitsetWords(docs, len, prev, plan.size)) {
+    return WriteBitset<Full>(docs, len, prev, words, out);
   }
   return WritePlan<DeltaEncoding>(gaps, stats, plan, out);
 }
 
-template<bool Full, uint32_t L>
-IRS_FORCE_INLINE uint32_t DeltaSize(const byte_type* in,
-                                    uint32_t len) noexcept {
-  if constexpr (Full) {
-    len = kBlockOf<L>;
-  }
-  return BlockBytes<DeltaEncoding, L>(in, len);
-}
-
-template<bool Full, uint32_t L>
+template<bool Full>
 IRS_NO_INLINE uint32_t EncodeValues(const uint32_t* values, uint32_t len,
                                     byte_type* out,
                                     const EncodeOptions& options) noexcept {
-  constexpr uint32_t kN = kBlockOf<L>;
+  constexpr uint32_t kN = kBlock;
   if constexpr (Full) {
     len = kN;
   }
@@ -1240,49 +1209,30 @@ IRS_NO_INLINE uint32_t EncodeValues(const uint32_t* values, uint32_t len,
     PadTail(values, len, padded);
     raw = padded;
   }
-  const Stats<L, Full> stats{raw, len,
-                             static_cast<uint32_t>(std::bit_width(max))};
+  const Stats<Full> stats{raw, len, static_cast<uint32_t>(std::bit_width(max))};
   return WritePlan<ValueEncoding>(raw, stats, ChoosePlan(stats, max, options),
                                   out);
 }
 
-template<bool Full, uint32_t L>
-IRS_FORCE_INLINE uint32_t ValuesSize(const byte_type* in,
-                                     uint32_t len) noexcept {
-  if constexpr (Full) {
-    len = kBlockOf<L>;
-  }
-  return BlockBytes<ValueEncoding, L>(in, len);
-}
-
-template<uint32_t L>
 struct BlockCodec {
-  static constexpr uint32_t kLanes = L;
-  static constexpr uint32_t kBlock = kBlockOf<L>;
-  static constexpr uint32_t kMaxBlockBytes = 3 + 4 * L * kMaxWidth + 4 * kBlock;
-
   static uint32_t EncodeDeltaBlock(const doc_id_t* docs, doc_id_t prev,
                                    byte_type* out,
                                    const EncodeOptions& options = {}) {
-    return EncodeDelta<true, L>(docs, kBlock, prev, out, options);
+    return EncodeDelta<true>(docs, kBlock, prev, out, options);
   }
 
   static uint32_t EncodeDeltaTail(const doc_id_t* docs, uint32_t len,
                                   doc_id_t prev, byte_type* out,
                                   const EncodeOptions& options = {}) {
     SDB_ASSERT(1 <= len && len < kBlock);
-    return EncodeDelta<false, L>(docs, len, prev, out, options);
+    return EncodeDelta<false>(docs, len, prev, out, options);
   }
 
   IRS_FORCE_INLINE static const byte_type* DecodeDeltaBlock(const byte_type* in,
                                                             doc_id_t prev,
                                                             doc_id_t* out) {
     SDB_ASSERT(in[0] < Code(DeltaEncoding::End));
-    if constexpr (L == kWideLanes) {
-      return kWideDeltaDecoders.blocks[in[0]](in, prev, out);
-    } else {
-      return kDeltaBlockDecoders<L, false>[in[0]](in, prev, out);
-    }
+    return kDeltaDecoders.blocks[in[0]](in, prev, out);
   }
 
   IRS_FORCE_INLINE static const byte_type* DecodeDeltaTail(const byte_type* in,
@@ -1291,38 +1241,34 @@ struct BlockCodec {
                                                            doc_id_t* out) {
     SDB_ASSERT(1 <= len && len < kBlock);
     SDB_ASSERT(in[0] < Code(DeltaEncoding::End));
-    if constexpr (L == kWideLanes) {
-      return kWideDeltaDecoders.tails[in[0]](in, len, prev, out);
-    } else {
-      return kDeltaTailDecoders<L, false>[in[0]](in, len, prev, out);
-    }
+    return kDeltaDecoders.tails[in[0]](in, len, prev, out);
   }
 
   static uint32_t DeltaBlockSize(const byte_type* in) {
-    return DeltaSize<true, L>(in, kBlock);
+    return BlockBytes<DeltaEncoding>(in, kBlock);
   }
 
   static uint32_t DeltaTailSize(const byte_type* in, uint32_t len) {
     SDB_ASSERT(1 <= len && len < kBlock);
-    return DeltaSize<false, L>(in, len);
+    return BlockBytes<DeltaEncoding>(in, len);
   }
 
   static uint32_t EncodeValuesBlock(const uint32_t* values, byte_type* out,
                                     const EncodeOptions& options = {}) {
-    return EncodeValues<true, L>(values, kBlock, out, options);
+    return EncodeValues<true>(values, kBlock, out, options);
   }
 
   static uint32_t EncodeValuesTail(const uint32_t* values, uint32_t len,
                                    byte_type* out,
                                    const EncodeOptions& options = {}) {
     SDB_ASSERT(1 <= len && len < kBlock);
-    return EncodeValues<false, L>(values, len, out, options);
+    return EncodeValues<false>(values, len, out, options);
   }
 
   template<uint32_t Add = 0>
   IRS_FORCE_INLINE static const byte_type* DecodeValuesBlock(
     const byte_type* in, uint32_t* out) {
-    return DispatchValues<Add, true, L>(in, kBlock, out);
+    return DispatchValues<Add, true>(in, kBlock, out);
   }
 
   template<uint32_t Add = 0>
@@ -1330,16 +1276,16 @@ struct BlockCodec {
                                                             uint32_t len,
                                                             uint32_t* out) {
     SDB_ASSERT(1 <= len && len < kBlock);
-    return DispatchValues<Add, false, L>(in, len, out);
+    return DispatchValues<Add, false>(in, len, out);
   }
 
   static uint32_t ValuesBlockSize(const byte_type* in) {
-    return ValuesSize<true, L>(in, kBlock);
+    return BlockBytes<ValueEncoding>(in, kBlock);
   }
 
   static uint32_t ValuesTailSize(const byte_type* in, uint32_t len) {
     SDB_ASSERT(1 <= len && len < kBlock);
-    return ValuesSize<false, L>(in, len);
+    return BlockBytes<ValueEncoding>(in, len);
   }
 
   static uint32_t DeltaPrefix(uint32_t token) {
@@ -1350,8 +1296,5 @@ struct BlockCodec {
     return kSizeShapes<ValueEncoding>[token].fixed;
   }
 };
-
-using Codec128 = BlockCodec<kLanes>;
-using Codec256 = BlockCodec<kWideLanes>;
 
 }  // namespace irs::block_codec

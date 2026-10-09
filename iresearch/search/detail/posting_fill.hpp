@@ -329,7 +329,7 @@ class PostingFill : public PostingLeaf<InputType, kWindowShape> {
                    uint32_t len) noexcept {
     auto* const out = std::end(_docs) - len;
     if (leaf.IsRun()) {
-      block_io::FillSameDelta(out, len, base, 1);
+      block_codec::FillProgression(out, len, base, 1);
       return;
     }
     SDB_ASSERT(leaf.IsBitset());

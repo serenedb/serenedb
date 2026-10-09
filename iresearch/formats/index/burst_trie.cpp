@@ -288,13 +288,19 @@ class Entry : private util::Noncopyable {
     PostingMeta _term;
     ::Block _block;
   };
+  std::array<byte_type, PostingMeta::kInlineBytes> _inline;
   EntryType _type;
 };
 
 Entry::Entry(bytes_view term, PostingMeta&& attrs, bool volatile_term)
   : _type{EntryType::Term} {
   _data.Assign(term, volatile_term);
+  SDB_ASSERT(attrs.inline_size <= _inline.size());
+  if (attrs.inline_size != 0) {
+    std::memcpy(_inline.data(), attrs.inline_data, attrs.inline_size);
+  }
   new (&_term) PostingMeta{std::move(attrs)};
+  _term.inline_data = _inline.data();
 }
 
 Entry::Entry(bytes_view prefix, Block::BlockIndex&& index, uint64_t block_start,
@@ -328,6 +334,8 @@ void Entry::MoveUnion(Entry&& rhs) noexcept {
     case EntryType::Term:
       new (&_term) PostingMeta{std::move(rhs._term)};
       rhs._term.~PostingMeta();
+      _inline = rhs._inline;
+      _term.inline_data = _inline.data();
       break;
     case EntryType::Block:
       new (&_block)::Block{std::move(rhs._block)};
@@ -701,7 +709,7 @@ FieldWriter::Impl::Impl(bool compaction, IResourceManager& rm,
     _blocks{ManagedTypedAllocator<Entry>{rm}},
     _suffix{rm},
     _stats{rm},
-    _pw{compaction, rm},
+    _pw{compaction},
     _stack{ManagedTypedAllocator<Entry>{rm}},
     _fst_buf{new FstBuffer{rm}},
     _prefixes{kDefaultSize, 0},

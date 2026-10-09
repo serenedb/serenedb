@@ -140,6 +140,8 @@ class PrunedDisjunction : public Root {
 
  private:
   struct Entry {
+    static constexpr bool kDefaultInit = true;
+
     Leaf leaf;
     uint32_t cost = 1;
     score_t max_score = 0;

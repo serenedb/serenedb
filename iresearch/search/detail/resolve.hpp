@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"

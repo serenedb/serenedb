@@ -39,21 +39,13 @@
 namespace irs::block_codec {
 
 inline constexpr uint32_t kRows = 32;
-inline constexpr uint32_t kLanes = 4;
-inline constexpr uint32_t kWideLanes = 8;
+inline constexpr uint32_t kLanes = 8;
+inline constexpr uint32_t kBlock = kRows * kLanes;
 inline constexpr uint32_t kMaxWidth = 31;
 
-template<uint32_t L>
-inline constexpr uint32_t kBlockOf = kRows * L;
-
-template<uint32_t L>
-inline constexpr uint32_t kSlotBitsOf = std::bit_width(kBlockOf<L> - 1);
-
-inline constexpr uint32_t kBlock = kBlockOf<kLanes>;
-inline constexpr uint32_t kWideBlock = kBlockOf<kWideLanes>;
-
-using U32x4 = uint32_t __attribute__((vector_size(16)));
+using U32x8 = uint32_t __attribute__((vector_size(32)));
 using I32x8 = int32_t __attribute__((vector_size(32)));
+using U64x4 = uint64_t __attribute__((vector_size(32)));
 
 static_assert(std::endian::native == std::endian::little,
               "vector loads and stores read the on-disk words natively");
@@ -64,14 +56,10 @@ consteval uint32_t LowMask() {
   return (uint32_t{1} << B) - 1;
 }
 
-template<uint32_t L = kLanes>
 IRS_FORCE_INLINE constexpr uint32_t PackedSize(uint32_t len,
                                                uint32_t bits) noexcept {
-  return len == kBlockOf<L> ? 4 * L * bits : (len * bits + 7) / 8;
+  return (len * bits + 7) / 8;
 }
-
-template<uint32_t L>
-using LaneVector = uint32_t __attribute__((vector_size(L * sizeof(uint32_t))));
 
 template<typename Vector>
 IRS_FORCE_INLINE Vector Opaque(Vector v) noexcept {
@@ -83,15 +71,14 @@ IRS_FORCE_INLINE Vector Opaque(Vector v) noexcept {
   return v;
 }
 
-template<uint32_t B, uint32_t L, bool Mask, uint32_t S>
+template<uint32_t B, bool Mask, uint32_t S>
 IRS_FORCE_INLINE void PackLanes(const uint32_t* IRS_RESTRICT in,
-                                byte_type* IRS_RESTRICT out,
-                                LaneVector<L>& word,
-                                LaneVector<L> mask) noexcept {
+                                byte_type* IRS_RESTRICT out, U32x8& word,
+                                U32x8 mask) noexcept {
   constexpr uint32_t kBit = S * B;
   constexpr uint32_t kShift = kBit % 32;
-  LaneVector<L> v;
-  std::memcpy(&v, in + S * L, sizeof(v));
+  U32x8 v;
+  std::memcpy(&v, in + S * kLanes, sizeof(v));
   if constexpr (Mask) {
     v &= mask;
   }
@@ -108,51 +95,18 @@ IRS_FORCE_INLINE void PackLanes(const uint32_t* IRS_RESTRICT in,
   }
 }
 
-template<uint32_t B, uint32_t L = kLanes, bool Mask = true>
+template<uint32_t B, bool Mask = true>
 IRS_FORCE_INLINE void PackVertical(const uint32_t* IRS_RESTRICT in,
                                    byte_type* IRS_RESTRICT out) noexcept {
   static_assert(B <= kMaxWidth);
   if constexpr (B != 0) {
-    LaneVector<L> word{};
-    const auto mask = Opaque(LaneVector<L>{} + LowMask<B>());
+    U32x8 word{};
+    const auto mask = Opaque(U32x8{} + LowMask<B>());
     [&]<uint32_t... S>(std::integer_sequence<uint32_t, S...>) IRS_FORCE_INLINE {
-      (PackLanes<B, L, Mask, S>(in, out, word, mask), ...);
+      (PackLanes<B, Mask, S>(in, out, word, mask), ...);
     }(std::make_integer_sequence<uint32_t, kRows>{});
   }
 }
-
-template<uint32_t B, uint32_t Add, uint32_t S, uint32_t L = kLanes>
-IRS_FORCE_INLINE void UnpackRow(const uint32_t* IRS_RESTRICT words,
-                                uint32_t* IRS_RESTRICT out) noexcept {
-  constexpr uint32_t kBit = S * B;
-  constexpr uint32_t kWord = kBit / 32;
-  constexpr uint32_t kShift = kBit % 32;
-  for (uint32_t lane = 0; lane != L; ++lane) {
-    uint32_t v = words[kWord * L + lane] >> kShift;
-    if constexpr (kShift + B > 32) {
-      v |= words[(kWord + 1) * L + lane] << (32 - kShift);
-    }
-    out[S * L + lane] = (v & LowMask<B>()) + Add;
-  }
-}
-
-template<uint32_t B, uint32_t Add, uint32_t L = kLanes>
-IRS_FORCE_INLINE void UnpackVertical(const byte_type* IRS_RESTRICT in,
-                                     uint32_t* IRS_RESTRICT out) noexcept {
-  static_assert(B <= kMaxWidth);
-  if constexpr (B == 0) {
-    std::fill_n(out, kRows * L, Add);
-  } else {
-    uint32_t words[L * B];
-    std::memcpy(words, in, sizeof(words));
-    [&]<uint32_t... S>(std::integer_sequence<uint32_t, S...>) IRS_FORCE_INLINE {
-      (UnpackRow<B, Add, S, L>(words, out), ...);
-    }(std::make_integer_sequence<uint32_t, kRows>{});
-  }
-}
-
-using U32x8 = uint32_t __attribute__((vector_size(32)));
-using U64x4 = uint64_t __attribute__((vector_size(32)));
 
 inline constexpr uint32_t kGroup = 8;
 inline constexpr uint32_t kMaxPackGroupBits = 16;
@@ -335,7 +289,7 @@ inline IRS_FORCE_INLINE void ScanDocs(doc_id_t* IRS_RESTRICT docs, uint32_t len,
                                       doc_id_t prev) noexcept {
   U32x8 carry = U32x8{} + prev;
   uint32_t i = 0;
-  for (; i + kWideLanes <= len; i += kWideLanes) {
+  for (; i + kLanes <= len; i += kLanes) {
     U32x8 v;
     std::memcpy(&v, docs + i, sizeof(v));
     v = InclusiveScan(v) + kSteps;
@@ -377,63 +331,30 @@ void UnpackHorizontalDelta(const byte_type* IRS_RESTRICT in, uint32_t len,
   }
 }
 
-inline IRS_FORCE_INLINE U32x4 WordRow(const uint32_t* words,
-                                      uint32_t row) noexcept {
-  U32x4 v;
-  std::memcpy(&v, words + row * kLanes, sizeof(v));
-  return v;
-}
-
-inline IRS_FORCE_INLINE U32x8 Concat(U32x4 lo, U32x4 hi) noexcept {
-  return __builtin_shufflevector(lo, hi, 0, 1, 2, 3, 4, 5, 6, 7);
-}
-
-template<uint32_t B, uint32_t S>
-IRS_FORCE_INLINE U32x8 UnpackPair(const uint32_t* words) noexcept {
-  constexpr uint32_t kBit0 = S * B;
-  constexpr uint32_t kBit1 = (S + 1) * B;
-  constexpr uint32_t kShift0 = kBit0 % 32;
-  constexpr uint32_t kShift1 = kBit1 % 32;
-  constexpr bool kSpan0 = kShift0 + B > 32;
-  constexpr bool kSpan1 = kShift1 + B > 32;
-  U32x8 v = Concat(WordRow(words, kBit0 / 32), WordRow(words, kBit1 / 32)) >>
-            U32x8{kShift0, kShift0, kShift0, kShift0,
-                  kShift1, kShift1, kShift1, kShift1};
-  if constexpr (kSpan0 || kSpan1) {
-    constexpr uint32_t kBack0 = kSpan0 ? 32 - kShift0 : 0;
-    constexpr uint32_t kBack1 = kSpan1 ? 32 - kShift1 : 0;
-    const U32x4 next0 = kSpan0 ? WordRow(words, kBit0 / 32 + 1) : U32x4{};
-    const U32x4 next1 = kSpan1 ? WordRow(words, kBit1 / 32 + 1) : U32x4{};
-    v |= Concat(next0, next1) << U32x8{kBack0, kBack0, kBack0, kBack0,
-                                       kBack1, kBack1, kBack1, kBack1};
-  }
-  return v & LowMask<B>();
-}
-
-inline IRS_FORCE_INLINE U32x8 LoadWide(const byte_type* in,
-                                       uint32_t word) noexcept {
+inline IRS_FORCE_INLINE U32x8 LoadRow(const byte_type* in,
+                                      uint32_t word) noexcept {
   U32x8 v;
   std::memcpy(&v, in + word * sizeof(U32x8), sizeof(v));
   return v;
 }
 
 template<uint32_t B, typename Row>
-IRS_FORCE_INLINE void WideRows(const byte_type* IRS_RESTRICT in,
-                               Row&& row) noexcept {
+IRS_FORCE_INLINE void VerticalRows(const byte_type* IRS_RESTRICT in,
+                                   Row&& row) noexcept {
   static_assert(B <= kMaxWidth);
   if constexpr (B == 0) {
     [&]<uint32_t... S>(std::integer_sequence<uint32_t, S...>) IRS_FORCE_INLINE {
       (row.template operator()<S>(U32x8{}), ...);
     }(std::make_integer_sequence<uint32_t, kRows>{});
   } else {
-    U32x8 word = LoadWide(in, 0);
+    U32x8 word = LoadRow(in, 0);
     [&]<uint32_t... S>(std::integer_sequence<uint32_t, S...>) IRS_FORCE_INLINE {
       (([&] IRS_FORCE_INLINE {
          constexpr uint32_t kBit = S * B;
          constexpr uint32_t kShift = kBit % 32;
          U32x8 v = word >> kShift;
          if constexpr (kShift + B >= 32 && S + 1 != kRows) {
-           word = LoadWide(in, kBit / 32 + 1);
+           word = LoadRow(in, kBit / 32 + 1);
          }
          if constexpr (kShift + B > 32) {
            v |= word << (32 - kShift);
@@ -449,39 +370,26 @@ IRS_FORCE_INLINE void WideRows(const byte_type* IRS_RESTRICT in,
 }
 
 template<uint32_t B, uint32_t Add>
-IRS_FORCE_INLINE void UnpackWide(const byte_type* IRS_RESTRICT in,
-                                 uint32_t* IRS_RESTRICT out) noexcept {
+IRS_FORCE_INLINE void UnpackVertical(const byte_type* IRS_RESTRICT in,
+                                     uint32_t* IRS_RESTRICT out) noexcept {
   const U32x8 add = B == 0 ? Opaque(U32x8{} + Add) : U32x8{} + Add;
-  WideRows<B>(in, [&]<uint32_t S>(U32x8 v) IRS_FORCE_INLINE {
+  VerticalRows<B>(in, [&]<uint32_t S>(U32x8 v) IRS_FORCE_INLINE {
     v += add;
-    std::memcpy(out + S * kWideLanes, &v, sizeof(v));
+    std::memcpy(out + S * kLanes, &v, sizeof(v));
   });
 }
 
-template<uint32_t B, uint32_t L>
+template<uint32_t B>
 IRS_FORCE_INLINE void UnpackVerticalDelta(const byte_type* IRS_RESTRICT in,
                                           doc_id_t prev,
                                           doc_id_t* IRS_RESTRICT out) noexcept {
-  static_assert(B <= kMaxWidth);
-  constexpr uint32_t kChunk = sizeof(U32x8) / sizeof(uint32_t);
   U32x8 carry = U32x8{} + prev;
-  const auto chunk = [&]<uint32_t C>(U32x8 gaps) IRS_FORCE_INLINE {
+  VerticalRows<B>(in, [&]<uint32_t S>(U32x8 gaps) IRS_FORCE_INLINE {
     const U32x8 v = InclusiveScan(gaps) + kSteps;
     const U32x8 docs = v + carry;
-    std::memcpy(out + C * kChunk, &docs, sizeof(docs));
+    std::memcpy(out + S * kLanes, &docs, sizeof(docs));
     carry += BroadcastLast(v);
-  };
-  if constexpr (L == kWideLanes) {
-    WideRows<B>(in, chunk);
-  } else {
-    static_assert(L == kLanes);
-    [&]<uint32_t... C>(std::integer_sequence<uint32_t, C...>) IRS_FORCE_INLINE {
-      (chunk.template operator()<C>(
-         B == 0 ? U32x8{}
-                : UnpackPair<B, 2 * C>(reinterpret_cast<const uint32_t*>(in))),
-       ...);
-    }(std::make_integer_sequence<uint32_t, kBlockOf<L> / kChunk>{});
-  }
+  });
 }
 
 using U32x16 = uint32_t __attribute__((vector_size(64)));
@@ -510,13 +418,13 @@ IRS_FORCE_INLINE void UnpackVerticalDelta16(
   doc_id_t* IRS_RESTRICT out) noexcept {
   U32x16 carry = U32x16{} + prev;
   U32x8 low{};
-  WideRows<B>(in, [&]<uint32_t S>(U32x8 v) IRS_FORCE_INLINE {
+  VerticalRows<B>(in, [&]<uint32_t S>(U32x8 v) IRS_FORCE_INLINE {
     if constexpr (S % 2 == 0) {
       low = v;
     } else {
       U32x16 gaps = __builtin_shufflevector(low, v, 0, 1, 2, 3, 4, 5, 6, 7, 8,
                                             9, 10, 11, 12, 13, 14, 15);
-      ScanRow16(gaps, carry, out + (S - 1) * kWideLanes);
+      ScanRow16(gaps, carry, out + (S - 1) * kLanes);
     }
   });
 }
@@ -545,7 +453,7 @@ IRS_FORCE_INLINE void UnpackHorizontalDelta16(
 inline IRS_FORCE_INLINE void ScanDocs16(doc_id_t* docs,
                                         doc_id_t prev) noexcept {
   U32x16 carry = U32x16{} + prev;
-  for (uint32_t i = 0; i != kWideBlock; i += 16) {
+  for (uint32_t i = 0; i != kBlock; i += 16) {
     U32x16 v;
     std::memcpy(&v, docs + i, sizeof(v));
     ScanRow16(v, carry, docs + i);

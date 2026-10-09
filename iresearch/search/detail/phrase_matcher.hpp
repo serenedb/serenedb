@@ -28,7 +28,6 @@
 #include <memory>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"

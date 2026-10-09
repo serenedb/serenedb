@@ -439,7 +439,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
     << "BM25 score set diverged across multi-RG compaction";
 }
 
-TEST_P(ScorePruneNormMergeCase, NormMixedByteWidthsMerge) {
+TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
   static constexpr uint32_t kA[] = {10, 50, 100, 200};
   static constexpr uint32_t kB[] = {300, 1000, 65000};
 
@@ -607,9 +607,8 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
 // 16 source segments compacted in one shot. Mirrors the
 // search-benchmark-game ingest pattern: ~15-17 commit-per-batch segments,
 // then a single `CompactionCount` merges them all. If any cross-source
-// state in the norm merge (running merged_row,
-// per-source NormColumnReader cache) gets confused with more than 2
-// sources, this is where it surfaces.
+// state in the norm merge gets confused with more than 2 sources, this is
+// where it surfaces.
 // -------------------------------------------------------------------------
 TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   static constexpr size_t kSegments = 16;

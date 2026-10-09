@@ -57,7 +57,7 @@ class Format10TestCase : public tests::FormatTestCase {
     auto dir = get_directory(*this);
 
     // attributes for term
-    irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+    irs::PostingsWriter writer{false};
     irs::PostingMeta posting_meta;
 
     // write postings for field
@@ -258,7 +258,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer{false};
   irs::PostingMeta meta0, meta1;
 
   // write postings
@@ -408,8 +408,9 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer{false};
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
+  irs::bstring inline0, inline1;
 
   // write postings
   {
@@ -437,6 +438,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       // write attributes to out
       writer.Encode(*out, meta0);
       out->WriteData(meta0.inline_data, meta0.inline_size);
+      inline0.assign(meta0.Inline());
+      meta0.inline_data = inline0.data();
     }
     // write postings for term1
     {
@@ -446,6 +449,8 @@ TEST_P(Format10TestCase, postings_read_write) {
       // write attributes to out
       writer.Encode(*out, meta1);
       out->WriteData(meta1.inline_data, meta1.inline_size);
+      inline1.assign(meta1.Inline());
+      meta1.inline_data = inline1.data();
     }
 
     ASSERT_NE(0, meta0.inline_size);
@@ -535,7 +540,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer{false};
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
   irs::doc_id_t i = (irs::doc_limits::min)();
@@ -935,7 +940,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+      irs::PostingsWriter writer{false};
       irs::PostingMeta posting_meta;
 
       // write postings

@@ -261,7 +261,9 @@ struct PackedColumn {
   void Build(const std::vector<uint32_t>& values) {
     irs::MemoryIndexOutput out{file};
     irs::NormColumnWriter writer{1, kRgRows, out};
-    writer.AppendValues(0, values);
+    for (size_t i = 0; i != values.size(); ++i) {
+      writer.Append(i, values[i]);
+    }
     writer.Finalize();
     out.Flush();
     for (const auto& region : writer.Meta().regions) {

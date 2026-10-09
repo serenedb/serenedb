@@ -34,11 +34,11 @@
 
 namespace irs::block_io {
 
-using Codec = block_codec::Codec256;
+using Codec = block_codec::BlockCodec;
 
-inline constexpr uint32_t kBlock = Codec::kBlock;
+inline constexpr uint32_t kBlock = block_codec::kBlock;
 inline constexpr uint32_t kEncBytes =
-  Codec::kMaxBlockBytes + block_codec::kInSlack;
+  block_codec::kMaxBlockBytes + block_codec::kInSlack;
 inline constexpr uint32_t kEncWords =
   (kEncBytes + sizeof(uint32_t) - 1) / sizeof(uint32_t);
 inline constexpr uint32_t kStreamAhead = 128;
@@ -53,7 +53,6 @@ inline constexpr block_codec::EncodeOptions kFreqOptions{
 static_assert(kBlock == doc_limits::kBlockSize);
 static_assert(kBlock == pos_limits::kBlockSize);
 static_assert(block_codec::kOutSlack <= doc_limits::kDocsSlack);
-static_assert(block_codec::kSlotBitsOf<Codec::kLanes> == 8);
 
 IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
   __builtin_prefetch(at + kStreamAhead);
@@ -84,7 +83,7 @@ const byte_type* Fetch(InputType& in, uint32_t* buf, Prefix&& prefix,
     in.ReadData(data + 1, head - 1);
   }
   const uint32_t total = size(data);
-  SDB_ASSERT(head <= total && total <= Codec::kMaxBlockBytes);
+  SDB_ASSERT(head <= total && total <= block_codec::kMaxBlockBytes);
   if (total > head) {
     in.ReadData(data + head, total - head);
   }
@@ -126,23 +125,18 @@ void WriteSlack(Output& out) {
   out.WriteData(kZeros, sizeof(kZeros));
 }
 
-IRS_FORCE_INLINE inline void WriteBlockDelta(BufferedOutput& out,
-                                             const uint32_t* in, uint32_t prev,
-                                             uint32_t* buf) {
-  auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, Codec::EncodeDeltaBlock(in, prev, bytes));
-}
-
 template<typename Output>
 IRS_FORCE_INLINE void WriteTailDelta(uint32_t len, Output& out,
                                      const uint32_t* in, uint32_t prev,
                                      uint32_t* buf) {
-  SDB_ASSERT(1 <= len && len < kBlock);
+  SDB_ASSERT(1 <= len && len <= kBlock);
   SDB_ASSERT(std::is_sorted(in, in + len));
   SDB_ASSERT(std::adjacent_find(in, in + len) == in + len);
   SDB_ASSERT(prev < in[0]);
   auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, Codec::EncodeDeltaTail(in, len, prev, bytes));
+  out.WriteData(bytes, len == kBlock
+                         ? Codec::EncodeDeltaBlock(in, prev, bytes)
+                         : Codec::EncodeDeltaTail(in, len, prev, bytes));
 }
 
 IRS_FORCE_INLINE inline uint32_t EncodeBlock(
@@ -152,20 +146,15 @@ IRS_FORCE_INLINE inline uint32_t EncodeBlock(
                                   options);
 }
 
-IRS_FORCE_INLINE inline void WriteBlock(
-  BufferedOutput& out, const uint32_t* in, uint32_t* buf,
-  const block_codec::EncodeOptions& options = {}) {
-  out.WriteData(reinterpret_cast<byte_type*>(buf),
-                EncodeBlock(in, buf, options));
-}
-
 template<typename Output>
 IRS_FORCE_INLINE void WriteTail(
   uint32_t len, Output& out, const uint32_t* in, uint32_t* buf,
   const block_codec::EncodeOptions& options = {}) {
-  SDB_ASSERT(1 <= len && len < kBlock);
+  SDB_ASSERT(1 <= len && len <= kBlock);
   auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, Codec::EncodeValuesTail(in, len, bytes, options));
+  out.WriteData(bytes, len == kBlock
+                         ? Codec::EncodeValuesBlock(in, bytes, options)
+                         : Codec::EncodeValuesTail(in, len, bytes, options));
 }
 
 struct FillLeaf {
@@ -197,14 +186,6 @@ IRS_FORCE_INLINE inline uint32_t* MaterializeBitsetFrom(
       return out;
     }
     word = bitset[i];
-  }
-}
-
-IRS_FORCE_INLINE inline void FillSameDelta(uint32_t* IRS_RESTRICT out,
-                                           uint32_t len, uint32_t prev,
-                                           uint32_t value) {
-  for (uint32_t i = 0; i != len; ++i) {
-    out[i] = prev + value + value * i;
   }
 }
 
@@ -243,7 +224,7 @@ IRS_FORCE_INLINE uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev, uint32_t len,
       range(first, first + inside);
     }
     const auto live = len - inside;
-    FillSameDelta(docs_end - live, live, max - 1, 1);
+    block_codec::FillProgression(docs_end - live, live, max - 1, 1);
     return live;
   }
 

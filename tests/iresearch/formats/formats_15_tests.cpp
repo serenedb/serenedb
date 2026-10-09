@@ -335,7 +335,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
-  irs::PostingsWriter writer{false, irs::IResourceManager::gNoop};
+  irs::PostingsWriter writer{false};
   irs::PostingMeta posting_meta;
 
   {

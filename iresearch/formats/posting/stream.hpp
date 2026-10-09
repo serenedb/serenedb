@@ -40,10 +40,6 @@
 
 namespace irs {
 
-// One term's posting list read front to back, which is the whole of what
-// re-writing it needs: the block after the one in hand is always the next
-// one, so there is no skip list here and nothing seeks. `IteratorTraits` says
-// what is decoded, `FieldTraits` what is stepped over.
 template<typename IteratorTraits, typename FieldTraits, typename InputType>
 class PostingsStream : public TermPostings {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
@@ -68,10 +64,7 @@ class PostingsStream : public TermPostings {
 
       auto& in = In();
       PrefetchDocs(in, meta);
-      // A term short enough to have no skip list carries its score bound
-      // ahead of the one block it does have; a longer one carries it past
-      // the blocks, where nothing reading forward ever reaches it.
-      if (meta.docs_count < doc_limits::kBlockSize) {
+      if (meta.docs_count <= doc_limits::kBlockSize) {
         SkipScoreBounds(has_score_bounds, in);
       }
       _left_in_list = meta.docs_count;

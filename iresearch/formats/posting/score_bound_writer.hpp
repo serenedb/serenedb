@@ -31,11 +31,10 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/fixed_buffer.hpp"
 
 namespace irs {
 
@@ -64,10 +63,8 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     _producer.Produce(_levels.front());
   }
 
-  void WriteRoot(size_t level, DataOutput& out) final {
-    SDB_ASSERT(level < _levels.size());
-    auto& entry = _levels[level];
-    Producer::Write(entry, out);
+  void WriteRoot(DataOutput& out) final {
+    Producer::Write(_levels.front(), out);
   }
 
   void Take(size_t level, uint32_t* out) final {
@@ -80,14 +77,8 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     entry = {};
   }
 
-  uint8_t SizeRoot(size_t level) noexcept final {
-    SDB_ASSERT(level < _levels.size());
-    auto it = _levels.begin();
-    for (auto end = it + level; it != end;) {
-      const auto& from = *it;
-      _producer.Produce(from, *++it);
-    }
-    return Producer::Size(*it);
+  uint8_t SizeRoot() const noexcept final {
+    return Producer::Size(_levels.front());
   }
 
  private:

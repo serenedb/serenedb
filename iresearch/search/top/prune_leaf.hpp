@@ -134,7 +134,7 @@ class PruneLeafBase {
       _cursor.Load(in);
       _root_score = BoundScore(_cursor.Index().Root());
       _upper_bound = doc_limits::invalid();
-    } else if (meta.docs_count < doc_limits::kBlockSize) {
+    } else {
       const auto size = in.ReadByte();
       _bound_source->Read(in, size);
       _root_score = _bound_func.Score();

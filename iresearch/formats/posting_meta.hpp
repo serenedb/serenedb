@@ -50,13 +50,6 @@ struct PostingMeta {
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
   const byte_type* inline_data = nullptr;
-  // A delta whose base `docs_count` decides, and the only field of this record
-  // that means two things. A single-document term has no `.doc` data, so it
-  // carries its document as a delta from `doc_limits::min()`; a term long
-  // enough to carry skip data carries where that data starts as a delta from
-  // `doc_start`, which bounds it by the term's own `.doc` footprint rather than
-  // by the file -- `EndTerm` refuses a term that does not fit. For the lengths
-  // in between it is neither written nor read.
   uint32_t doc_delta = 0;
   uint32_t pos_extent = 0;
   uint32_t pay_extent = 0;

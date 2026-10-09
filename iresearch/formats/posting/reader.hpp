@@ -21,7 +21,6 @@
 #pragma once
 
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/stream.hpp"
 #include "iresearch/formats/posting/writer.hpp"
@@ -79,10 +78,6 @@ class PostingsReader final {
   size_t decode(const byte_type* in, IndexFeatures field_features,
                 PostingMeta& state);
 
-  // One term's whole posting list as the write side reads it: front to back,
-  // with the frequency and the positions the field stores. Nothing here
-  // seeks, so no skip list is parsed. `required_features` narrows what is
-  // decoded; what the field carries beyond that is stepped over.
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
                              const PostingMeta& meta,

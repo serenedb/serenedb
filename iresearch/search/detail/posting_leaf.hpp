@@ -68,7 +68,6 @@ inline constexpr LeafShape kWindowShape{.delta = true, .holes = true};
 
 inline constexpr LeafShape kCountShape{
   .delta = true,
-  .holes = true,
   .reads = LeafReads::Whole,
 };
 
@@ -245,7 +244,7 @@ class PostingLeaf {
         _hint.Arm(meta.doc_start, meta.doc_start + extent);
       }
     }
-    if (meta.docs_count < kBlock) {
+    if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
     }
     _left_in_list = meta.docs_count;

@@ -28,11 +28,9 @@ template<typename InputType>
 class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
   using Base = PruneLeafBase<InputType, false>;
 
-  using Base::_base;
   using Base::_cursor;
   using Base::_doc;
   using Base::_docs;
-  using Base::_enc;
   using Base::_fetcher;
   using Base::_freqs;
   using Base::_left_in_leaf;
@@ -42,7 +40,6 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
   using Base::_needs_reposition;
   using Base::_provider;
   using Base::_score;
-  using Base::_upper_bound;
   using Base::In;
   using Base::ReadLeaf;
   using Base::RepositionForWindow;
@@ -210,8 +207,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
         if (cand > *(end - 1)) {
           break;
         }
-        const doc_id_t* it = BranchlessLowerBound<doc_limits::kBlockSize>(
-          std::cbegin(_docs), cand);
+        const doc_id_t* it = Base::FirstNotBelow(begin, cand);
         if (it < begin) {
           it = begin;
         }

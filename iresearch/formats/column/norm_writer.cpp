@@ -101,26 +101,10 @@ void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
   }
 }
 
-void NormColumnWriter::AppendValues(uint64_t target_row,
-                                    std::span<const uint32_t> values) {
-  SDB_ASSERT(target_row >= RowCount(),
-             "NormColumnWriter::AppendValues target_row=", target_row,
-             " below RowCount=", RowCount(), " on column ", _id);
-  PadTo(target_row);
-  while (!values.empty()) {
-    const auto chunk =
-      std::min<size_t>(values.size(), _row_group_size - _values.size());
-    _values.insert(_values.end(), values.begin(), values.begin() + chunk);
-    values = values.subspan(chunk);
-    if (_values.size() == _row_group_size) {
-      FlushRowGroup();
-    }
-  }
-}
-
 void NormColumnWriter::PadTo(uint64_t target) {
-  SDB_ASSERT(_row_group_size != 0);
   while (RowCount() < target) {
+    SDB_ENSURE(_row_group_size != 0, "NormColumnWriter: streamed column ", _id,
+               " holds ", RowCount(), " rows, cannot pad to ", target);
     const auto chunk =
       std::min<uint64_t>(target - RowCount(), _row_group_size - _values.size());
     _values.insert(_values.end(), chunk, 0);

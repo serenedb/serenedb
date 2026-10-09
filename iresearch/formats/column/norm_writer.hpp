@@ -64,8 +64,6 @@ struct NormLayout {
   uint32_t bits = 0;
   uint32_t value = 0;
   uint64_t exceptions = 0;
-
-  bool operator==(const NormLayout&) const noexcept = default;
 };
 
 NormLayout PickNormLayout(const NormStats& stats) noexcept;
@@ -115,8 +113,6 @@ class NormColumnWriter final {
   NormColumnWriter& operator=(const NormColumnWriter&) = delete;
 
   void Append(uint64_t target_row, uint32_t value);
-
-  void AppendValues(uint64_t target_row, std::span<const uint32_t> values);
 
   void PadTo(uint64_t target);
 

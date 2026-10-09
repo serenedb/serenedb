@@ -30,7 +30,6 @@
 #include <cstdint>
 #include <functional>
 #include <span>
-#include <tuple>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
@@ -44,7 +43,7 @@
 
 namespace irs {
 
-struct SkipState {
+struct BlockLanding {
   // pointer to the beginning of document block
   uint64_t doc_ptr = 0;
   // last document in a previous block
@@ -75,17 +74,6 @@ struct PosGroup {
     return group + kHeaderBytes + End(header, kBlocks - 1);
   }
 };
-
-struct SkipLayout {
-  bool pos = false;
-  bool offs = false;
-};
-
-IRS_FORCE_INLINE constexpr SkipLayout ToSkipLayout(
-  IndexFeatures features) noexcept {
-  return {.pos = IndexFeatures::None != (features & IndexFeatures::Pos),
-          .offs = IndexFeatures::None != (features & IndexFeatures::Offs)};
-}
 
 IRS_FORCE_INLINE constexpr bool FeaturesHaveFreq(
   IndexFeatures features) noexcept {
@@ -127,15 +115,13 @@ inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
 inline uint64_t PosExtent(const PostingMeta& meta) noexcept {
   return pos_limits::kBlockSize < meta.freq
            ? meta.pos_extent
-           : 2 *
-               (PosGroup::kHeaderBytes + block_codec::Codec256::kMaxBlockBytes);
+           : 2 * (PosGroup::kHeaderBytes + block_codec::kMaxBlockBytes);
 }
 
 inline uint64_t PayExtent(const PostingMeta& meta) noexcept {
   return pos_limits::kBlockSize < meta.freq
            ? meta.pay_extent
-           : 2 * (PosGroup::kHeaderBytes +
-                  2 * block_codec::Codec256::kMaxBlockBytes);
+           : 2 * (PosGroup::kHeaderBytes + 2 * block_codec::kMaxBlockBytes);
 }
 
 template<typename Input>
@@ -270,13 +256,6 @@ inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
   MergeBitsetAt(dst, begin, src, words, last,
                 [](uint64_t& word, uint64_t bits)
                   IRS_FORCE_INLINE { word |= bits; });
-}
-
-inline IRS_FORCE_INLINE void OrBitsetAt(uint64_t* IRS_RESTRICT dst,
-                                        uint64_t begin,
-                                        const uint64_t* IRS_RESTRICT src,
-                                        uint32_t words) noexcept {
-  OrBitsetAt(dst, begin, src, words, src[words - 1]);
 }
 
 inline IRS_FORCE_INLINE void AndNotBitsetAt(uint64_t* IRS_RESTRICT dst,

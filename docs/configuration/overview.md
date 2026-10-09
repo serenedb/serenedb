@@ -252,6 +252,17 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `table_function_identifier_conversion` | Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone`                                    | The current time zone                                                                                                                                                                                          | `VARCHAR`   | System (locale) timezone                            |
 
+#### Logical replication
+
+Server-wide settings of [subscriptions](../sql/statements/create_subscription/index.md). Only a superuser may set them, and a change applies to running subscriptions too.
+
+| Name                                          | Description                                                                                                                                                                                                    | Type        | Default value                                       |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
+| `max_sync_workers_per_subscription` | How many tables one subscription copies at the same time during its initial synchronization. | `UINTEGER` | `2` |
+| `wal_receiver_status_interval` | How often a subscription reports its position to the publisher (seconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`). 0 disables the periodic reports. | `VARCHAR` | `10s` |
+| `wal_receiver_timeout` | A subscription whose publisher sends nothing for this long drops the connection and reconnects (milliseconds without a unit). 0 disables the timeout. | `VARCHAR` | `1min` |
+| `wal_retrieve_retry_interval` | How long a failed subscription waits before it reconnects (milliseconds without a unit). | `VARCHAR` | `5s` |
+
 #### Security
 
 Authentication, authorization and what the server is allowed to reach.

@@ -64,6 +64,7 @@
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "replication/repl_source.h"
+#include "replication/settings.h"
 
 namespace sdb::replication {
 namespace {
@@ -71,8 +72,7 @@ namespace {
 using network::pg::FrameKind;
 using network::pg::FrameStatus;
 
-constexpr auto kStatusInterval = std::chrono::seconds{10};
-constexpr int64_t kReceiverTimeoutMicros = 60'000'000;
+constexpr auto kFeedbackTick = std::chrono::seconds{1};
 constexpr int64_t kPgEpochMicros = 946684800LL * 1000000;
 constexpr size_t kGroupTxns = 1000;
 constexpr size_t kArenaBytes = 1 << 20;
@@ -685,27 +685,34 @@ yaclib::Future<> PgReplicationClient::FeedbackLoop() {
   auto& timer = _feedback_timer.emplace(this->_io);
   _last_activity = SteadyMicros();
   auto pinged_at = _last_activity;
+  auto reported_at = _last_activity;
   while (!this->SendBroken()) {
-    timer.expires_after(kStatusInterval);
+    timer.expires_after(kFeedbackTick);
     co_await network::Async<void>([&](auto&& handler) {
       timer.async_wait(std::forward<decltype(handler)>(handler));
     }).NoThrow();
     if (this->SendBroken()) {
       break;
     }
-    const auto silent = _publishing ? 0 : SteadyMicros() - _last_activity;
-    if (silent >= kReceiverTimeoutMicros) {
+    const auto now = SteadyMicros();
+    const auto timeout = WalReceiverTimeoutMillis() * 1000;
+    const auto silent = _publishing ? 0 : now - _last_activity;
+    if (timeout > 0 && silent >= timeout) {
       Fail(ERRCODE_CONNECTION_FAILURE,
            "terminating logical replication worker due to timeout");
       this->Stop();
       break;
     }
     const bool ping =
-      silent >= kReceiverTimeoutMicros / 2 && pinged_at != _last_activity;
+      timeout > 0 && silent >= timeout / 2 && pinged_at != _last_activity;
     if (ping) {
       pinged_at = _last_activity;
     }
-    SendFeedback(ping);
+    const auto interval = WalReceiverStatusIntervalMillis() * 1000;
+    if (ping || (interval > 0 && now - reported_at >= interval)) {
+      reported_at = now;
+      SendFeedback(ping);
+    }
   }
   co_return {};
 }

@@ -27,19 +27,15 @@ services:
 
   # HBA network tests: the mask test launches its OWN serened and connects from
   # different 127.x source addresses, so client and server must share a
-  # container -- it cannot use the networked `serenedb` service. Runs the
-  # release image's /usr/bin/serened; root because the image lacks python3.
+  # container -- it cannot use the networked `serenedb` service.
   network-tests:
-    image: ${DOCKER_TEST_IMAGE}
-    user: "0:0"
+    image: ${BUILD_IMAGE}
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     volumes:
       - "${WORKSPACE}:/workspace:ro"
-    command: >
-      sh -c '
-        apt-get update -qq &&
-        apt-get install -y -qq --no-install-recommends python3 &&
-        SERENED=/usr/bin/serened /workspace/tests/drivers/network/run.sh
-      '
+    environment:
+      - SERENED=/workspace/out/docker-rta-serened
+    command: ["/workspace/tests/drivers/network/run.sh"]
 
   tests:
     image: ${BUILD_IMAGE}

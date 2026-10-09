@@ -1098,6 +1098,75 @@ found	diff
 
 
 statement ok
+CREATE TABLE pudge_keyed.pudgedesc_meat (a INT, b INT)
+
+
+statement ok
+COMMENT ON TABLE pudge_keyed.pudgedesc_meat IS 'fresh meat'
+
+
+statement ok
+COMMENT ON COLUMN pudge_keyed.pudgedesc_meat.b IS 'chain'
+
+
+statement ok
+CREATE VIEW pudge_keyed.pudgedesc_flesh AS SELECT a, b FROM pudge_keyed.pudgedesc_meat
+
+
+statement ok
+COMMENT ON VIEW pudge_keyed.pudgedesc_flesh IS 'flesh heap'
+
+
+statement ok
+COMMENT ON COLUMN pudge_keyed.pudgedesc_flesh.a IS 'hook'
+
+
+query
+SELECT objsubid, description FROM pg_description WHERE objoid IN ('pudge_keyed.pudgedesc_meat'::regclass, 'pudge_keyed.pudgedesc_flesh'::regclass) AND objsubid = 0 ORDER BY 2;
+----
+objsubid	description
+0	flesh heap
+0	fresh meat
+
+
+query
+SELECT objsubid, description FROM pg_description WHERE objoid IN ('pudge_keyed.pudgedesc_meat'::regclass, 'pudge_keyed.pudgedesc_flesh'::regclass) AND objsubid > 0 ORDER BY 2;
+----
+objsubid	description
+2	chain
+1	hook
+
+
+query
+SELECT objsubid, description FROM pg_description WHERE objoid IN ('pudge_keyed.pudgedesc_meat'::regclass, 'pudge_keyed.pudgedesc_flesh'::regclass) AND objsubid = 2;
+----
+objsubid	description
+2	chain
+
+
+query
+WITH keyed AS (SELECT * FROM pg_description WHERE objsubid = 0 AND classoid = 'pg_class'::regclass),
+     whole AS (SELECT * FROM (SELECT * FROM pg_description LIMIT 100000000) WHERE objsubid = 0 AND classoid = 'pg_class'::regclass)
+SELECT (SELECT count(*) FROM keyed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+WITH keyed AS (SELECT * FROM pg_description WHERE objsubid < 2),
+     whole AS (SELECT * FROM (SELECT * FROM pg_description LIMIT 100000000) WHERE objsubid < 2)
+SELECT (SELECT count(*) FROM keyed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM keyed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM keyed)) AS diff;
+----
+found	diff
+t	0
+
+
+statement ok
 CREATE TABLE pudge_keyed.pudgevis_hook (id INT CONSTRAINT pudgevis_rot PRIMARY KEY)
 
 

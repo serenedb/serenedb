@@ -28,8 +28,6 @@
 
 namespace sdb::pg {
 
-using enum PgTypeOID;
-
 const IntervalRange* FindIntervalRange(int32_t typmod) {
   const auto range = (typmod >> 16) & kIntervalFullRange;
   const auto it = absl::c_find_if(

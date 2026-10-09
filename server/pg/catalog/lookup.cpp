@@ -453,8 +453,7 @@ std::optional<ObjectName> RelationObject(const Session& session, uint64_t oid) {
     if (CatalogClassOid(entry->type) != kPgClassTable) {
       return std::nullopt;
     }
-    return ObjectName{entry->ParentSchemaName().GetIdentifierName(),
-                      entry->name.GetIdentifierName()};
+    return NameOf(*entry);
   }
   if (const auto key = FindKeyIndex(session, oid); key.table) {
     return ObjectName{key.table->ParentSchemaName().GetIdentifierName(),
@@ -563,8 +562,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
   }
   if (auto entry = EntryByOid(session, oid);
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
-    return ObjectName{entry->ParentSchemaName().GetIdentifierName(),
-                      entry->name.GetIdentifierName()};
+    return NameOf(*entry);
   }
   if (auto entry = EntryByOid(session, oid + 1);
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {

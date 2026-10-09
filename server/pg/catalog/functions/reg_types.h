@@ -52,32 +52,30 @@ struct RegType {
   RegKind kind;
   std::string_view alias;
   PgTypeOID oid;
-  PgTypeOID array;
   std::string_view to_reg;
 };
 
 inline constexpr std::array kRegTypes{
-  RegType{RegKind::Proc, kRegprocAlias, kRegproc, kRegprocArray, "to_regproc"},
+  RegType{RegKind::Proc, kRegprocAlias, kRegproc, "to_regproc"},
   RegType{RegKind::Procedure, kRegprocedureAlias, kRegprocedure,
-          kRegprocedureArray, "to_regprocedure"},
-  RegType{RegKind::Oper, kRegoperAlias, kRegoper, kRegoperArray, "to_regoper"},
-  RegType{RegKind::Operator, kRegoperatorAlias, kRegoperator, kRegoperatorArray,
-          "to_regoperator"},
-  RegType{RegKind::Class, kRegclassAlias, kRegclass, kRegclassArray,
-          "to_regclass"},
-  RegType{RegKind::Type, kRegtypeAlias, kRegtype, kRegtypeArray, "to_regtype"},
+          "to_regprocedure"},
+  RegType{RegKind::Oper, kRegoperAlias, kRegoper, "to_regoper"},
+  RegType{RegKind::Operator, kRegoperatorAlias, kRegoperator, "to_regoperator"},
+  RegType{RegKind::Class, kRegclassAlias, kRegclass, "to_regclass"},
+  RegType{RegKind::Type, kRegtypeAlias, kRegtype, "to_regtype"},
   RegType{RegKind::Collation, kRegcollationAlias, kRegcollation,
-          kRegcollationArray, "to_regcollation"},
-  RegType{RegKind::Config, kRegconfigAlias, kRegconfig, kRegconfigArray, ""},
-  RegType{RegKind::Dictionary, kRegdictionaryAlias, kRegdictionary,
-          kRegdictionaryArray, ""},
-  RegType{RegKind::Role, kRegroleAlias, kRegrole, kRegroleArray, "to_regrole"},
+          "to_regcollation"},
+  RegType{RegKind::Config, kRegconfigAlias, kRegconfig, ""},
+  RegType{RegKind::Dictionary, kRegdictionaryAlias, kRegdictionary, ""},
+  RegType{RegKind::Role, kRegroleAlias, kRegrole, "to_regrole"},
   RegType{RegKind::Namespace, kRegnamespaceAlias, kRegnamespace,
-          kRegnamespaceArray, "to_regnamespace"},
+          "to_regnamespace"},
 };
 
 const RegType* FindRegType(const duckdb::LogicalType& type);
 duckdb::LogicalType RegLogicalType(const RegType& reg);
+
+std::string QualifiedOutName(std::string_view schema, std::string_view name);
 
 std::string FormatTypeOut(const Session& session, uint64_t oid,
                           std::optional<int32_t> typmod);

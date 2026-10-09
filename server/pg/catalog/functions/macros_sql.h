@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <duckdb/common/constants.hpp>
 #include <string_view>
 
 namespace sdb::pg {

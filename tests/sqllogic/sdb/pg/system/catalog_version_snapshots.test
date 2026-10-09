@@ -299,3 +299,82 @@ ROLLBACK
 
 statement ok
 DROP SCHEMA tinker_arrays CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_defaults
+
+
+statement ok
+CREATE SEQUENCE tinker_defaults.tinkerdef_seq
+
+
+statement ok
+CREATE TABLE tinker_defaults.tinkerdef_a_wide (w1 INT DEFAULT 1, w2 INT DEFAULT 2, w3 INT DEFAULT 3, w4 INT DEFAULT 4, w5 INT DEFAULT 5, w6 INT DEFAULT 6, w7 INT DEFAULT 7, w8 INT DEFAULT 8, w9 INT DEFAULT 9, w10 INT DEFAULT 10, w11 INT DEFAULT 11, w12 INT DEFAULT 12, w13 INT DEFAULT 13, w14 INT DEFAULT 14, w15 INT DEFAULT 15, w16 INT DEFAULT 16, w17 INT DEFAULT 17, w18 INT DEFAULT 18, w19 INT DEFAULT 19, w20 INT DEFAULT 20, w21 INT DEFAULT 21, w22 INT DEFAULT 22, w23 INT DEFAULT 23, w24 INT DEFAULT 24, w25 INT DEFAULT 25, w26 INT DEFAULT 26, w27 INT DEFAULT 27, w28 INT DEFAULT 28, w29 INT DEFAULT 29, w30 INT DEFAULT 30, w31 INT DEFAULT 31, w32 INT DEFAULT 32, w33 INT DEFAULT 33, w34 INT DEFAULT 34, w35 INT DEFAULT 35, w36 INT DEFAULT 36, w37 INT DEFAULT 37, w38 INT DEFAULT 38, w39 INT DEFAULT 39, w40 INT DEFAULT 40, w41 INT DEFAULT 41, w42 INT DEFAULT 42, w43 INT DEFAULT 43, w44 INT DEFAULT 44, w45 INT DEFAULT 45, w46 INT DEFAULT 46, w47 INT DEFAULT 47, w48 INT DEFAULT 48, w49 INT DEFAULT 49, w50 INT DEFAULT 50, w51 INT DEFAULT 51, w52 INT DEFAULT 52, w53 INT DEFAULT 53, w54 INT DEFAULT 54, w55 INT DEFAULT 55, w56 INT DEFAULT 56, w57 INT DEFAULT 57, w58 INT DEFAULT 58, w59 INT DEFAULT 59, w60 INT DEFAULT 60, w61 INT DEFAULT 61, w62 INT DEFAULT 62, w63 INT DEFAULT 63, w64 INT DEFAULT 64, w65 INT DEFAULT 65, w66 INT DEFAULT 66)
+
+
+statement ok
+CREATE TABLE tinker_defaults.tinkerdef_t (a INT DEFAULT 1, b TIMESTAMP DEFAULT now(), c TEXT DEFAULT 'x' || 'y', d BIGINT DEFAULT nextval('tinker_defaults.tinkerdef_seq'), e INT GENERATED ALWAYS AS (a * 2), f INT)
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass ORDER BY 1
+----
+adnum	def
+1	1
+2	now()
+3	('x' || 'y')
+4	nextval('tinker_defaults.tinkerdef_seq')
+5	CAST((a * 2) AS INTEGER)
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass ORDER BY 1
+----
+adnum	def
+1	1
+2	now()
+3	('x' || 'y')
+4	nextval('tinker_defaults.tinkerdef_seq')
+5	CAST((a * 2) AS INTEGER)
+
+
+statement ok
+ALTER TABLE tinker_defaults.tinkerdef_t ALTER COLUMN a SET DEFAULT 5
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass AND adnum = 1
+----
+adnum	def
+1	5
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE tinker_defaults.tinkerdef_t ALTER COLUMN a SET DEFAULT 7
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass AND adnum = 1
+----
+adnum	def
+1	7
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass AND adnum = 1
+----
+adnum	def
+1	5
+
+
+statement ok
+DROP SCHEMA tinker_defaults CASCADE

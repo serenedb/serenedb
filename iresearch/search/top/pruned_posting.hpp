@@ -95,15 +95,12 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
       return;
     }
     auto* const end = std::end(_docs);
-    if (_left_in_leaf == 0 && !doc_limits::valid(_max_in_leaf)) {
-      *(end - 1) = doc_limits::min() - 1;
-    }
     for (;;) {
       if (_left_in_leaf == 0) {
         if (_left_in_list == 0) {
           break;
         }
-        auto last = *(end - 1);
+        auto last = _max_in_leaf;
         const auto target = std::max<doc_id_t>(last + 1, min);
         if (target >= max) {
           break;

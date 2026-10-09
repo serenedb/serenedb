@@ -1,0 +1,83 @@
+hash-threshold 100
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_pe AS
+    split_by_non_alpha(case := 'lower')
+    WITH (frequency, norm);
+
+
+statement ok
+CREATE TABLE pe (id INTEGER PRIMARY KEY, body VARCHAR);
+
+
+statement ok
+INSERT INTO pe SELECT i, CASE
+    WHEN i <= 256 OR i = 506 THEN 'x w w w w w w w w w'
+    WHEN i <= 512 THEN 'x w'
+    WHEN i <= 520 THEN 'z'
+    WHEN i <= 1032 AND i % 2 = 1 THEN 'x w w w w w w w w w'
+    WHEN i <= 1032 THEN 'z'
+    ELSE 'y'
+  END
+  FROM generate_series(1, 1033) AS s(i);
+
+
+statement ok
+CREATE INDEX pe_idx ON pe USING inverted(body en_pe)
+  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+
+query
+SELECT body FROM pe_idx WHERE body @@ 'x' AND NOT body @@ 'y'
+ORDER BY BM25(pe_idx.tableoid) DESC LIMIT 10;
+----
+body
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+
+
+statement ok
+CREATE TABLE pes (id INTEGER PRIMARY KEY, body VARCHAR)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+        optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+CREATE INDEX pes_idx ON pes USING inverted(body en_pe);
+
+
+statement ok
+INSERT INTO pes SELECT id, body FROM pe ORDER BY id;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pes;
+
+
+query
+SELECT body FROM pes_idx WHERE body @@ 'x' AND NOT body @@ 'y'
+ORDER BY BM25(pes_idx.tableoid) DESC LIMIT 10;
+----
+body
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+x w
+x w

@@ -39,7 +39,7 @@ struct Guc {
   std::span<const std::string_view> enumvals;
 };
 
-#include "pg/catalog/tables/settings.gen.inc"
+#include "pg/catalog/generated/settings.gen.inc"
 
 const Guc* FindGuc(std::string_view name);
 

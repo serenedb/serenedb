@@ -36,7 +36,7 @@ struct SystemView {
 };
 
 inline constexpr SystemView kExternalViews[] = {
-#include "pg/catalog/views/system_views.gen.inc"
+#include "pg/catalog/generated/system_views.gen.inc"
   {"pg_catalog", "pg_stat_progress_create_table_as", kMinSystem + 403, false,
    R"(SELECT
           S.pid AS pid, S.datid AS datid, S.datname AS datname,

@@ -603,6 +603,14 @@ class SystemScan {
     return _indexed.contains(relation);
   }
 
+  void CollectTriggered() noexcept { _collect_triggered = true; }
+  std::optional<bool> KnownTriggered(duckdb::idx_t relation) const {
+    if (!_triggered_complete) {
+      return std::nullopt;
+    }
+    return _triggered.contains(relation);
+  }
+
   bool Needs(uint32_t column) const noexcept {
     return ((_needed >> column) & 1) != 0;
   }
@@ -891,6 +899,9 @@ class SystemScan {
   mutable irs::containers::FlatHashSet<duckdb::idx_t> _indexed;
   mutable bool _indexed_complete = false;
   bool _collect_indexed = false;
+  mutable irs::containers::FlatHashSet<duckdb::idx_t> _triggered;
+  mutable bool _triggered_complete = false;
+  bool _collect_triggered = false;
 };
 
 template<const SystemSql& Sql>

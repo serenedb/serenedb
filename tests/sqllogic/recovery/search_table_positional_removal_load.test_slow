@@ -1,0 +1,1192 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rl (id BIGINT, grp INT) WITH (storage = 'search', refresh_interval = 30, compaction_interval = 10, compaction_max_segments = 3);
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(0, 2999) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 2670 AND 7013;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(3000, 11999) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 4080 AND 4505;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+12000	71994000
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(12000, 20999) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+21000	220489500
+
+connection start
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 13374 AND 15664;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(21000, 29999) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(30000, 30499) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(30500, 39499) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(39500, 39999) g(i);
+
+connection start
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection start
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection start
+statement error connection closed
+DELETE FROM rl WHERE id % 11 = 4;
+
+connection after_crash_1
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+33636	698628186
+
+connection after_crash_1
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(40000, 42047) g(i);
+
+connection after_crash_1
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_1
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_1
+statement error connection closed
+DELETE FROM rl WHERE id % 11 = 4;
+
+connection after_crash_2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+35497	774973013
+
+connection after_crash_2
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_2
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+35497	774973013
+
+connection after_crash_2
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(42048, 44095) g(i);
+
+connection after_crash_2
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_2
+statement ok
+DELETE FROM rl WHERE id % 13 = 1;
+
+connection after_crash_2
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_2
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(44096, 46143) g(i);
+
+connection after_crash_2
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_2
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_2
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_3
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+34547	836930059
+
+connection after_crash_3
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(46144, 49143) g(i);
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+DELETE FROM rl WHERE id % 13 = 1;
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(49144, 52143) g(i);
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(52144, 52643) g(i);
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+DELETE FROM rl WHERE id % 101 = 50;
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(52644, 55643) g(i);
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 31506 AND 34093;
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(55644, 64643) g(i);
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 3735 AND 5834;
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_3
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_3
+statement error connection closed
+DELETE FROM rl WHERE id % 11 = 4;
+
+connection after_crash_4
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+50289	1726722025
+
+connection after_crash_4
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_4
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_5
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+49315	1672647921
+
+connection after_crash_5
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 1184 AND 5682;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 23998 AND 27082;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+DELETE FROM rl WHERE id % 13 = 1;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+DELETE FROM rl WHERE id % 13 = 1;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(64644, 66691) g(i);
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_5
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+45453	1539525661
+
+connection after_crash_5
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_5
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_6
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+45333	1531645081
+
+connection after_crash_6
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(66692, 75691) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(75692, 78691) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+57287	2402356759
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(78692, 79191) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(79192, 82191) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+60787	2683902009
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(82192, 82691) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(82692, 85691) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(85692, 86191) g(i);
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+DELETE FROM rl WHERE id % 101 = 50;
+
+connection after_crash_6
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_6
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_6
+statement error connection closed
+DELETE FROM rl WHERE id % 11 = 4;
+
+connection after_crash_7
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+62565	2854328227
+
+connection after_crash_7
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 10611 AND 15532;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+DELETE FROM rl WHERE id % 2 = 1;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(86192, 89191) g(i);
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 59724 AND 63180;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(89192, 89691) g(i);
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 43802 AND 45499;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(89692, 91739) g(i);
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+DELETE FROM rl WHERE id % 2 = 1;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(91740, 100739) g(i);
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 38641 AND 39798;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_7
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+40014	2277264205
+
+connection after_crash_7
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_7
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_8
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+38976	2187180720
+
+connection after_crash_8
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_8
+statement error connection closed
+DELETE FROM rl WHERE id % 3 = 2;
+
+connection after_crash_9
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+25984	1458265031
+
+connection after_crash_9
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 62789 AND 65034;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(100740, 109739) g(i);
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+34984	2405420531
+
+connection after_crash_9
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(109740, 111787) g(i);
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+DELETE FROM rl WHERE id % 2 = 1;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+29093	1812842596
+
+connection after_crash_9
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(111788, 120787) g(i);
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(120788, 123787) g(i);
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(123788, 126787) g(i);
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 47635 AND 52217;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 36811 AND 40790;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(126788, 129787) g(i);
+
+connection after_crash_9
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_9
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_9
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_10
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+42949	3504992519
+
+connection after_crash_10
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+42934	3503186414
+
+connection after_crash_10
+statement ok
+DELETE FROM rl WHERE id % 101 = 50;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(129788, 132787) g(i);
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+DELETE FROM rl WHERE id % 101 = 50;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(132788, 135787) g(i);
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 107077 AND 109945;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+48671	4269495566
+
+connection after_crash_10
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(135788, 144787) g(i);
+
+connection after_crash_10
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_10
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_10
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_11
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+56790	5411122330
+
+connection after_crash_11
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_11
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_11
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_11
+statement error connection closed
+DELETE FROM rl WHERE id % 11 = 4;
+
+connection after_crash_12
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+53400	4995545383
+
+connection after_crash_12
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 125105 AND 127423;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+DELETE FROM rl WHERE id % 2 = 1;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(144788, 153787) g(i);
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(153788, 156787) g(i);
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+UPDATE rl SET grp = grp + 1 WHERE id BETWEEN 7240 AND 8843;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(156788, 165787) g(i);
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+DELETE FROM rl WHERE id % 13 = 1;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(165788, 167835) g(i);
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection after_crash_12
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_12
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_12
+statement error connection closed
+DELETE FROM rl WHERE id % 11 = 4;
+
+connection after_crash_13
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+54007	5563121760
+
+connection after_crash_13
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(167836, 169883) g(i);
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(169884, 171931) g(i);
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(171932, 180931) g(i);
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(180932, 182979) g(i);
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(182980, 185979) g(i);
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(185980, 194979) g(i);
+
+connection after_crash_13
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_13
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_13
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_14
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+78543	10039244139
+
+connection after_crash_14
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_14
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+78543	10039244139
+
+connection after_crash_14
+statement ok
+DELETE FROM rl WHERE id % 1000 = 7;
+
+connection after_crash_14
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_14
+statement ok
+DELETE FROM rl WHERE id % 7 = 3;
+
+connection after_crash_14
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_14
+statement ok
+DELETE FROM rl WHERE id % 101 = 50;
+
+connection after_crash_14
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_14
+statement ok
+INSERT INTO rl SELECT i, i % 17 FROM generate_series(194980, 197979) g(i);
+
+connection after_crash_14
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_14
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_crash_14
+statement error connection closed
+DELETE FROM rl WHERE id % 17 = 9;
+
+connection after_crash_15
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+77297	9861256424
+
+connection after_crash_15
+statement ok
+VACUUM (REFRESH_TABLE) rl;
+
+connection after_crash_15
+query
+SELECT count(*) AS n, coalesce(sum(id), 0) AS s FROM rl;
+----
+n	s
+77297	9861256424
+
+connection after_crash_15
+statement ok
+DROP TABLE rl;
+

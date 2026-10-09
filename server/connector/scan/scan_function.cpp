@@ -99,6 +99,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
 
   ClassifyColumnstoreProjections(*state, bind_data);
   state->shape = DecideShape(*state, ss);
+  if (state->row_position_output_idx != duckdb::DConstants::INVALID_INDEX &&
+      state->shape != ScanShape::Stream && state->shape != ScanShape::ColScan) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("row positions are not served by this scan"));
+  }
 
   if (state->shape == ScanShape::TsDict) {
     const auto& out = state->output_projection_ids;

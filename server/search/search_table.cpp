@@ -324,7 +324,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
 
 void SearchTable::RebuildConfig() {
   auto merged = std::make_shared<catalog::InvertedIndexConfig>();
-  merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
+  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->codec_params = _codec_params;
@@ -467,6 +467,7 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
       CompactUnsafe(bucket, kProgress, empty, field_options.get());
       merged |= !empty;
     }
+    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
     RefreshUnsafe(/*wait=*/true, nullptr, code);
     if (!merged) {
       break;

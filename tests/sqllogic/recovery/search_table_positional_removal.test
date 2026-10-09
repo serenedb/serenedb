@@ -1,0 +1,386 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE rt (id BIGINT, v TEXT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO rt SELECT i, 'a' || i FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+statement ok
+INSERT INTO rt SELECT i, 'b' || i FROM generate_series(10000, 19999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+statement ok
+INSERT INTO rt SELECT i, 'c' || i FROM generate_series(20000, 29999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+DELETE FROM rt WHERE id % 97 = 5;
+
+connection after_spread
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM rt;
+----
+n	s
+29690	445337635
+
+connection after_spread
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_spread
+query
+SELECT count(*) AS n FROM rt WHERE id % 97 = 5;
+----
+n
+0
+
+connection after_spread
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_spread
+statement error connection closed
+UPDATE rt SET v = 'u' WHERE id % 13 = 0;
+
+connection after_update
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s, count(*) FILTER (WHERE v = 'u') AS u FROM rt;
+----
+n	s	u
+29690	445337635	2284
+
+connection after_update
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_update
+query
+SELECT count(*) AS n FROM rt WHERE id % 13 = 0 AND v <> 'u';
+----
+n
+0
+
+connection after_update
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_update
+statement ok
+BEGIN;
+
+connection after_update
+statement ok
+INSERT INTO rt SELECT i, 'd' || i FROM generate_series(30000, 30009) g(i);
+
+connection after_update
+statement ok
+DELETE FROM rt WHERE id BETWEEN 1000 AND 1999;
+
+connection after_update
+statement error connection closed
+COMMIT;
+
+connection after_mixed
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM rt;
+----
+n	s
+28710	444153265
+
+connection after_mixed
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2000;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2001;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2002;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2003;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2004;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2005;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2006;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2007;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2008;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id = 2009;
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id IN (2010, 2011, 2012, 2013, 2014);
+
+connection after_mixed
+statement ok
+DELETE FROM rt WHERE id BETWEEN 2015 AND 2018;
+
+connection after_mixed
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_mixed
+statement error connection closed
+DELETE FROM rt WHERE id = 2019;
+
+connection after_many
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM rt;
+----
+n	s
+28690	444113075
+
+connection after_many
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection racer
+statement ok
+BEGIN;
+
+connection racer
+statement ok
+DELETE FROM rt WHERE id % 89 = 7;
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) rt;
+
+connection compactor
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('rt') WHERE column_name = 'id';
+----
+segments
+1
+
+connection racer
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection racer
+statement error connection closed
+COMMIT;
+
+connection after_race
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s FROM rt;
+----
+n	s
+28366	439104023
+
+connection after_race
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_race
+query
+SELECT count(*) AS n FROM rt WHERE id % 89 = 7;
+----
+n
+0
+
+connection after_race
+statement ok
+INSERT INTO rt SELECT i, 'e' || i FROM generate_series(40000, 40999) g(i);
+
+connection after_race
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_race
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
+
+connection compactor2
+statement async ok
+VACUUM (COMPACT_TABLE) rt;
+
+connection after_race
+statement ok
+SELECT pg_sleep(2);
+
+connection after_race
+statement ok
+DELETE FROM rt WHERE id % 83 = 1 AND id < 40000;
+
+connection after_race
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_race
+statement ok
+SET sdb_faults = '-pause_search_compact_before_publish';
+
+wait
+
+connection after_race
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+connection after_race
+query
+SELECT count(*) AS n, sum(id) FILTER (WHERE id < 40000) AS s, count(*) FILTER (WHERE id % 83 = 1 AND id < 40000) AS left FROM rt;
+----
+n	s	left
+29024	433843556	0
+
+connection after_race
+query
+SELECT count(DISTINCT row_group_id) AS segments FROM pragma_storage_info('rt') WHERE column_name = 'id';
+----
+segments
+1
+
+connection after_race
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_race
+statement error connection closed
+UPDATE rt SET v = 'w' WHERE id >= 40000;
+
+connection after_wide_update
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE v = 'w') AS w FROM rt;
+----
+n	w
+29024	1000
+
+connection after_wide_update
+statement ok
+DROP TABLE rt;
+
+connection after_wide_update
+statement ok
+CREATE TABLE rb (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+connection after_wide_update
+statement ok
+INSERT INTO rb SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
+
+connection after_wide_update
+statement ok
+VACUUM (REFRESH_TABLE) rb;
+
+connection after_wide_update
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+connection builder
+statement async ok
+CREATE INDEX rb_idx ON rb USING inverted (tag);
+
+connection after_wide_update
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index WHERE relid = 'rb'::regclass;
+----
+tuples_done
+5000
+
+connection after_wide_update
+statement ok
+DELETE FROM rb WHERE id % 5 = 1;
+
+connection after_wide_update
+statement ok
+UPDATE rb SET tag = 'moved' WHERE id % 5 = 2;
+
+connection after_wide_update
+statement ok
+VACUUM (REFRESH_TABLE) rb;
+
+connection after_wide_update
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+wait
+
+connection after_wide_update
+statement ok
+VACUUM (REFRESH_TABLE) rb;
+
+connection after_wide_update
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE tag = 't1') AS t1, count(*) FILTER (WHERE tag = 't2') AS t2, count(*) FILTER (WHERE tag = 'moved') AS moved FROM rb;
+----
+n	t1	t2	moved
+4000	0	0	1000
+
+connection after_wide_update
+query
+SELECT count(*) AS n FROM rb_idx WHERE tag @@ 't1';
+----
+n
+0
+
+connection after_wide_update
+query
+SELECT count(*) AS n FROM rb_idx WHERE tag @@ 'moved';
+----
+n
+1000
+
+connection after_wide_update
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+connection after_wide_update
+statement error connection closed
+DELETE FROM rb WHERE tag = 't3';
+
+connection after_build
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE tag = 't3') AS t3 FROM rb;
+----
+n	t3
+3000	0
+
+connection after_build
+query
+SELECT count(*) AS n FROM rb_idx WHERE tag @@ 't3';
+----
+n
+0
+
+connection after_build
+statement ok
+DROP TABLE rb;

@@ -89,6 +89,7 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
+    ./index/doc_removal.cpp
     ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp

@@ -1,0 +1,1861 @@
+statement ok
+CREATE TABLE pd_b (id BIGINT, grp INT, v TEXT) WITH (storage = 'search', compaction_interval = 20, refresh_interval = 0);
+
+statement ok
+CREATE TABLE pd_b_ref (id BIGINT, grp INT, v TEXT);
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(0, 19999) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(0, 19999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(20000, 20099) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(20000, 20099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(20100, 40099) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(20100, 40099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(40100, 40100) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(40100, 40100) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(40101, 40200) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(40101, 40200) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE grp = 14 AND id % 3 = 2;
+
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 14 AND id % 3 = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(40201, 45200) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(40201, 45200) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET v = v || 'u' WHERE id > 1283 AND id < 1283 + 183;
+
+statement ok
+UPDATE pd_b_ref SET v = v || 'u' WHERE id > 1283 AND id < 1283 + 183;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE NOT (id % 4096 <> 1);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE NOT (id % 4096 <> 1);
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE NOT (id % 3 <> 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE NOT (id % 3 <> 0);
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE id IN (38161, 5395, 6462);
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (38161, 5395, 6462);
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 16935 AND 16935 + 61;
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 16935 AND 16935 + 61;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(45201, 45201) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(45201, 45201) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(45202, 47249) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(45202, 47249) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE length(v) = 4;
+
+statement ok
+DELETE FROM pd_b_ref WHERE length(v) = 4;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(47250, 67249) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(47250, 67249) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id = 25338;
+
+statement ok
+DELETE FROM pd_b_ref WHERE id = 25338;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(67250, 69298) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(67250, 69298) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET grp = grp + 100 WHERE id + 0 = 22240;
+
+statement ok
+UPDATE pd_b_ref SET grp = grp + 100 WHERE id + 0 = 22240;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET grp = grp + 100 WHERE id + 0 = 9119;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET grp = grp + 100 WHERE id + 0 = 9119;
+
+connection w2
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(69299, 74298) g(i);
+
+connection w2
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(69299, 74298) g(i);
+
+connection w2
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE id BETWEEN 32552 AND 32552 + 287;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE id BETWEEN 32552 AND 32552 + 287;
+
+connection w2
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(74299, 74398) g(i);
+
+connection w2
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(74299, 74398) g(i);
+
+connection w2
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(74399, 94398) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(74399, 94398) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id = 89276;
+
+statement ok
+DELETE FROM pd_b_ref WHERE id = 89276;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET grp = grp + 100 WHERE id + 0 = 70665;
+
+statement ok
+UPDATE pd_b_ref SET grp = grp + 100 WHERE id + 0 = 70665;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id IN (SELECT id FROM pd_b_ref WHERE id % 7 = 1);
+
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (SELECT id FROM pd_b_ref WHERE id % 7 = 1);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 44731 AND 44731 + 214;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 44731 AND 44731 + 214;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id + 0 = 36447;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id + 0 = 36447;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET grp = grp + 100 WHERE grp = 7;
+
+statement ok
+UPDATE pd_b_ref SET grp = grp + 100 WHERE grp = 7;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE grp = 47 AND id % 3 = 2;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE grp = 47 AND id % 3 = 2;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE id IN (5375, 23934, 2503);
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (5375, 23934, 2503);
+
+connection w2
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(94399, 114398) g(i);
+
+connection w2
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(94399, 114398) g(i);
+
+connection w2
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET v = v || 'u' WHERE id = 42842;
+
+statement ok
+UPDATE pd_b_ref SET v = v || 'u' WHERE id = 42842;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE v = 'v112596';
+
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE v = 'v112596';
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 83652 AND 83652 + 396;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 83652 AND 83652 + 396;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE length(v) = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE length(v) = 2;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE v LIKE 'v1%';
+
+statement ok
+DELETE FROM pd_b_ref WHERE v LIKE 'v1%';
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 107280 AND 107280 + 188;
+
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 107280 AND 107280 + 188;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(114399, 116446) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(114399, 116446) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE length(v) = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE length(v) = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id = 96610;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id = 96610;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE NOT (id % 1000 <> 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE NOT (id % 1000 <> 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id IN (SELECT id FROM pd_b_ref WHERE id % 1000 = 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (SELECT id FROM pd_b_ref WHERE id % 1000 = 0);
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE grp = 34;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 34;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id = 96861;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id = 96861;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE grp = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id > 4626 AND id < 4626 + 278;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id > 4626 AND id < 4626 + 278;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id + 0 = 86499;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id + 0 = 86499;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 86857 AND 86857 + 307;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 86857 AND 86857 + 307;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(116447, 136446) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(116447, 136446) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(136447, 141446) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(136447, 141446) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET v = v || 'u' WHERE id > 134331 AND id < 134331 + 254;
+
+statement ok
+UPDATE pd_b_ref SET v = v || 'u' WHERE id > 134331 AND id < 134331 + 254;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 30138 AND 30138 + 298;
+
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 30138 AND 30138 + 298;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE grp = 22;
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 22;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(141447, 141451) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(141447, 141451) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(141452, 146451) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(141452, 146451) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id % 7 = 0;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id % 7 = 0;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id IN (40012, 97708, 8234);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (40012, 97708, 8234);
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE grp = 34;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE grp = 34;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id = 6215;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id = 6215;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 78195 AND 78195 + 267;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 78195 AND 78195 + 267;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id + 0 = 88872;
+
+statement ok
+DELETE FROM pd_b_ref WHERE id + 0 = 88872;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id IN (SELECT id FROM pd_b_ref WHERE id % 2 = 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (SELECT id FROM pd_b_ref WHERE id % 2 = 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id % 7 = 1;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id % 7 = 1;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE v LIKE 'v1%';
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE v LIKE 'v1%';
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE grp = 11 AND id % 3 = 0;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 11 AND id % 3 = 0;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id BETWEEN 93097 AND 93097 + 170;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id BETWEEN 93097 AND 93097 + 170;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE NOT (id % 4096 <> 0);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE NOT (id % 4096 <> 0);
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE id BETWEEN 11481 AND 11481 + 372;
+
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE id BETWEEN 11481 AND 11481 + 372;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE length(v) = 6;
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE length(v) = 6;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE id IN (52606, 53880, 101458);
+
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (52606, 53880, 101458);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE id % 3 = 1;
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE id % 3 = 1;
+
+connection w2
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(146452, 146452) g(i);
+
+connection w2
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(146452, 146452) g(i);
+
+connection w2
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(146453, 146453) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(146453, 146453) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(146454, 146553) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(146454, 146553) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(146554, 148602) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(146554, 148602) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(148603, 150650) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(148603, 150650) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = v || 'u' WHERE id % 3 = 0;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = v || 'u' WHERE id % 3 = 0;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET grp = grp + 100 WHERE grp = 2;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET grp = grp + 100 WHERE grp = 2;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(150651, 152698) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(150651, 152698) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(152699, 154747) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(152699, 154747) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET grp = grp + 100 WHERE grp = 31 AND id % 3 = 1;
+
+statement ok
+UPDATE pd_b_ref SET grp = grp + 100 WHERE grp = 31 AND id % 3 = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE grp = 3;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE grp = 3;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(154748, 154748) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(154748, 154748) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id % 2 = 0;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id % 2 = 0;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id IN (69888, 101759, 24892);
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id IN (69888, 101759, 24892);
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE grp = 49;
+
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 49;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = v || 'u' WHERE length(v) = 4;
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = v || 'u' WHERE length(v) = 4;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE id % 1000 = 1;
+
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE id % 1000 = 1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+UPDATE pd_b SET v = 'u' || id, grp = 0 WHERE id IN (88926, 59969, 83763);
+
+connection w1
+statement ok
+UPDATE pd_b_ref SET v = 'u' || id, grp = 0 WHERE id IN (88926, 59969, 83763);
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(154749, 154749) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(154749, 154749) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(154750, 154750) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(154750, 154750) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w3
+statement ok
+BEGIN;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE length(v) = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE length(v) = 2;
+
+connection w3
+statement ok
+DELETE FROM pd_b WHERE id % 7 = 1;
+
+connection w3
+statement ok
+DELETE FROM pd_b_ref WHERE id % 7 = 1;
+
+connection w3
+statement ok
+COMMIT;
+
+connection w3
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w3
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(154751, 154850) g(i);
+
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(154751, 154850) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE id + 0 = 82572;
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE id + 0 = 82572;
+
+connection w2
+statement ok
+INSERT INTO pd_b SELECT i, i % 50, 'v' || i FROM generate_series(154851, 174850) g(i);
+
+connection w2
+statement ok
+INSERT INTO pd_b_ref SELECT i, i % 50, 'v' || i FROM generate_series(154851, 174850) g(i);
+
+connection w2
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DELETE FROM pd_b WHERE NOT (id % 97 <> 0);
+
+statement ok
+DELETE FROM pd_b_ref WHERE NOT (id % 97 <> 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+connection w1
+statement ok
+BEGIN;
+
+connection w1
+statement ok
+DELETE FROM pd_b WHERE grp = 30;
+
+connection w1
+statement ok
+DELETE FROM pd_b_ref WHERE grp = 30;
+
+connection w2
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+connection w1
+statement ok
+COMMIT;
+
+connection w1
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+connection w1
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+VACUUM (COMPACT_TABLE) pd_b;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd_b;
+
+query
+SELECT (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b EXCEPT ALL SELECT id, grp, v FROM pd_b_ref)) + (SELECT count(*) FROM (SELECT id, grp, v FROM pd_b_ref EXCEPT ALL SELECT id, grp, v FROM pd_b)) AS diff;
+----
+diff
+0
+
+statement ok
+DROP TABLE pd_b;
+
+statement ok
+DROP TABLE pd_b_ref;
+

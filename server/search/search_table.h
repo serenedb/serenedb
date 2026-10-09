@@ -269,8 +269,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   bool ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
-      removal_provider) {
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext&)> removal_provider) {
     return _writer->ReplaceSegments(replaced, adopted_metas, removal_provider);
   }
 

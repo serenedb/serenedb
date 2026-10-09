@@ -100,6 +100,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
   }
 
   if (_filters.Empty() && live == nullptr) {
+    _last_sel = nullptr;
     for (auto& b : _bound) {
       auto& out = output.data[b.output_slot];
       if (b.extract) {
@@ -160,6 +161,7 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
     }
     b.reader->GatherDense(*b.state, start_row, *sel, survivors, count, out);
   }
+  _last_sel = sel;
   return survivors;
 }
 

@@ -34,6 +34,7 @@
 #include "catalog/catalog.h"
 #include "connector/common.h"
 #include "connector/primary_key.h"
+#include "connector/row_position.h"
 #include "connector/term_dict.h"
 #include "search_remove_filter.hpp"
 
@@ -942,6 +943,45 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
   _remove_filter.reset();
 }
 
+std::shared_ptr<const irs::DocRemoval> MakeRowRemoval(
+  std::span<const int64_t> rowids, std::span<const uint64_t> positions) {
+  SDB_ASSERT(positions.empty() || positions.size() == rowids.size());
+  if (rowids.empty()) {
+    return nullptr;
+  }
+  std::vector<irs::DocRemoval::Row> rows;
+  rows.reserve(rowids.size());
+  for (size_t i = 0; i < rowids.size(); ++i) {
+    rows.emplace_back(
+      RemovedRow(rowids[i], positions.empty() ? kNoRowPosition : positions[i]));
+  }
+  return std::make_shared<const irs::DocRemoval>(
+    irs::DocRemoval::Build(kGeneratedPKId, std::move(rows)));
+}
+
+void CollectRemovedRows(duckdb::DataChunk& chunk,
+                        std::span<const primary_key::PKColumn> columns,
+                        std::vector<int64_t>& rows,
+                        std::vector<uint64_t>& positions) {
+  SDB_ASSERT(columns.size() == 2);
+  const auto num_rows = chunk.size();
+  duckdb::UnifiedVectorFormat rowid;
+  chunk.data[columns[0].input_col_idx].ToUnifiedFormat(num_rows, rowid);
+  const auto* rowid_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(rowid);
+  duckdb::UnifiedVectorFormat position;
+  chunk.data[columns[1].input_col_idx].ToUnifiedFormat(num_rows, position);
+  const auto* position_data =
+    duckdb::UnifiedVectorFormat::GetData<uint64_t>(position);
+  rows.reserve(rows.size() + num_rows);
+  positions.reserve(positions.size() + num_rows);
+  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
+    rows.emplace_back(rowid_data[rowid.sel->get_index(row)]);
+    const auto idx = position.sel->get_index(row);
+    positions.emplace_back(
+      position.validity.RowIsValid(idx) ? position_data[idx] : kNoRowPosition);
+  }
+}
+
 std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::SearchTable& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
@@ -971,7 +1011,7 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
       return tokenizers->Acquire(field_id);
     },
     std::move(entry_of),
-    PkPolicy{.index_term = true, .column = catalog::PkColumnKind::None},
+    PkPolicy{.index_term = false, .column = catalog::PkColumnKind::None},
     std::move(indexed_exprs), config.get());
 }
 
@@ -982,7 +1022,7 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
                      const duckdb::Vector& gen_pk, duckdb::idx_t table_id,
                      duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-  sink.InitImpl(num_rows, PkChunk{.key_terms = sink.KeyTerms()});
+  sink.InitImpl(num_rows, PkChunk{});
   const auto write_column = [&](ColumnId col_id,
                                 const duckdb::LogicalType& type,
                                 const duckdb::Vector& vec) {
@@ -1013,13 +1053,9 @@ void WriteChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
                             uint64_t pk_base, duckdb::idx_t table_id,
                             duckdb::ClientContext& context) {
   const auto num_rows = chunk.size();
-  auto& key_terms = sink.KeyTerms();
-  key_terms.clear();
-  key_terms.reserve(num_rows);
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    key_terms.push_back(primary_key::GeneratedKeyTerm(pk_base + row));
     ids[row] = static_cast<int64_t>(pk_base + row);
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
@@ -1037,16 +1073,10 @@ void WriteRebuiltChunkToSearchSink(SearchSinkInsertBaseImpl& sink,
   chunk.data[rowid_slot].ToUnifiedFormat(num_rows, rowids);
   const auto* rowid_data =
     duckdb::UnifiedVectorFormat::GetData<int64_t>(rowids);
-  auto& key_terms = sink.KeyTerms();
-  key_terms.clear();
-  key_terms.reserve(num_rows);
   duckdb::Vector gen_pk(duckdb::LogicalType::BIGINT, num_rows);
   auto* ids = duckdb::FlatVector::GetDataMutable<int64_t>(gen_pk);
   for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    const auto rowid = rowid_data[rowids.sel->get_index(row)];
-    key_terms.push_back(
-      primary_key::GeneratedKeyTerm(static_cast<uint64_t>(rowid)));
-    ids[row] = rowid;
+    ids[row] = rowid_data[rowids.sel->get_index(row)];
   }
   WriteKeyedChunk(sink, chunk, column_ids, gen_pk, table_id, context);
 }

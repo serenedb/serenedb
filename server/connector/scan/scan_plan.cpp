@@ -48,6 +48,7 @@
 #include "connector/column_id.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
+#include "connector/row_position.h"
 #include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
@@ -377,6 +378,10 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.generated_pk_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(std::move(*pk_type));
+    } else if (col_id == kColumnIdentifierRowPosition) {
+      state.row_position_output_idx = proj;
+      state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
+      state.projected_types.push_back(duckdb::LogicalType::UBIGINT);
     } else if (col_id == kColumnIdentifierTableOid) {
       state.tableoid_output_idx = proj;
       state.tableoid_value = bind_data.RelationId();
@@ -623,6 +628,34 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
   }
 }
 
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
+                       std::span<const irs::doc_id_t> docs,
+                       duckdb::DataChunk& output) {
+  if (g.row_position_output_idx == duckdb::DConstants::INVALID_INDEX) {
+    return;
+  }
+  FillRowPositions(
+    SegmentNumber((*g.reader)[seg].Meta().name), docs.size(),
+    [&](duckdb::idx_t i) { return docs[i]; },
+    output.data[g.row_position_output_idx]);
+}
+
+void WriteRowPositions(const ScanGlobalState& g, uint32_t seg,
+                       uint64_t first_row, const duckdb::SelectionVector* sel,
+                       duckdb::idx_t count, duckdb::DataChunk& output) {
+  if (g.row_position_output_idx == duckdb::DConstants::INVALID_INDEX) {
+    return;
+  }
+  const auto first =
+    static_cast<irs::doc_id_t>(first_row) + irs::doc_limits::min();
+  FillRowPositions(
+    SegmentNumber((*g.reader)[seg].Meta().name), count,
+    [&](duckdb::idx_t i) {
+      return first + static_cast<irs::doc_id_t>(sel ? sel->get_index(i) : i);
+    },
+    output.data[g.row_position_output_idx]);
+}
+
 void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
   if (!hit_batcher) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
@@ -718,6 +751,7 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+  WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
   return batch.count;
 }

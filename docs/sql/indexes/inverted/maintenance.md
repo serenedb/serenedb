@@ -116,7 +116,7 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 <DocCallout type="tip">
 
-`DELETE` sits outside this bound, but costs little: only a rowid per removed row is held until the transaction commits, so even a million-row `DELETE` is a handful of megabytes.
+`DELETE` sits outside this bound, but costs little: each removed row holds only its rowid and storage position until the removal is applied, so even a million-row `DELETE` stays within a few tens of megabytes.
 
 </DocCallout>
 

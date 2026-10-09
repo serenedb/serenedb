@@ -49,7 +49,6 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -112,7 +111,6 @@ void RunSearchTableRecovery() {
   struct ReplayCtx {
     irs::IndexWriter::Transaction trx;
     std::unique_ptr<connector::SearchSinkInsertBaseImpl> insert_sink;
-    std::unique_ptr<connector::SearchSinkDeleteBaseImpl> delete_sink;
     uint64_t max_tick = 0;
     // Segments to re-attach, each with the query count at its manifest
     // position; the adopt tick needs the final count (see the finalize loop).
@@ -171,8 +169,6 @@ void RunSearchTableRecovery() {
       if (!ctx.insert_sink) {
         ctx.insert_sink = connector::MakeSearchTableInsertSink(
           ctx.trx, *info.search, *info.catalog, expr_context);
-        ctx.delete_sink =
-          std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
       return ctx;
     };
@@ -187,22 +183,14 @@ void RunSearchTableRecovery() {
     };
     // Each DELETE op replays as one removal batch on the shared trx; the record
     // orders it against the surrounding rows, which is what reproduces the
-    // `_queries` stamping. Rowids are re-encoded here, the way they were when
-    // the rows were written.
+    // `_queries` stamping.
     auto replay_delete = [&](uint64_t tick, duckdb::idx_t table_id,
                              std::span<const int64_t> rows) {
       if (rows.empty()) {
         return;
       }
       auto& ctx = ensure_ctx(table_id);
-      ctx.delete_sink->InitImpl(rows.size());
-      std::string pk;
-      for (const auto row : rows) {
-        pk.clear();
-        connector::primary_key::AppendGenerated(pk, static_cast<uint64_t>(row));
-        ctx.delete_sink->DeleteRowImpl(pk);
-      }
-      ctx.delete_sink->FinishImpl();
+      ctx.trx.Remove(connector::MakeRowRemoval(rows, {}));
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     auto replay_truncate = [&](uint64_t tick, duckdb::idx_t table_id) {
@@ -225,9 +213,7 @@ void RunSearchTableRecovery() {
     // Finalize each replayed shard outside Recover() so Commit()'s locking + GC
     // are safe.
     for (auto& [table_id, ctx] : ctxs) {
-      // Release the insert Document (and the delete filter) before committing.
       ctx.insert_sink.reset();
-      ctx.delete_sink.reset();
       auto& info = shards.at(table_id);
 
       // Adopt in this transaction's tick space, not at the record's tick: the

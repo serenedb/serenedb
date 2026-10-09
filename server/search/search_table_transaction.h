@@ -115,7 +115,8 @@ class SearchTableTransaction {
 
   // Rowids to remove, in issue order with the buffered rows.
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,
-                        std::span<const int64_t> rows);
+                        std::span<const int64_t> rows,
+                        std::span<const uint64_t> positions);
 
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
                          const duckdb::Identifier& table_name,

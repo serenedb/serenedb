@@ -177,13 +177,13 @@ packages, language runtimes and test fixtures come from images:
 
    Pin versions, and never add a runtime fallback that installs the dependency when it is missing.
 2. Build and try it locally: `docker buildx build --load -t serenedb-build-ubuntu:local --build-context drivers=../../tests/drivers -f build-ubuntu.Dockerfile .` in `scripts/ci`, then run the affected runner with `BUILD_IMAGE=serenedb-build-ubuntu:local` (e.g. `tests/sqllogic/run_in_docker.sh`).
-3. Publish from your branch: run the `serenedb | create infra` workflow (`build-images.yml`) on it with `LOCATION=linux` and `PUSH_IMAGES_2_REGISTRY=true`. Off main it pushes only the versioned tag, `serenedb/serenedb-build-ubuntu:<os>_clang-<version>_commit-<sha>` (the run's log prints it), and the fixture images; `:latest`, which every other branch uses, does not move.
-4. Run CI on that tag. The PR's "Trigger Jobs" uses `:latest`, so dispatch the build yourself with the image in `BUILD_CONFIG`:
+3. Publish from your branch: run the `serenedb | create infra` workflow (`build-images.yml`) on it with `PUSH_IMAGES_2_REGISTRY=true`, `TAG_LATEST=false` and `TAG=<your branch>`. It pushes the build image as `serenedb/serenedb-build-ubuntu:<os>_clang-<version>_commit-<sha>` and as `:<your branch>` with `/` turned into `-`, plus the fixture images. `:latest`, which every other branch's CI uses, does not move.
+4. Run CI on that image. The PR's "Trigger Jobs" uses `:latest`, so dispatch the build yourself with the image in `BUILD_CONFIG`:
    ```bash
    gh workflow run build-manual.yml --ref <branch> -f PR_NUMBER=<pr> -f PR_SHA=$(git rev-parse HEAD) \
-     -f BUILD_CONFIG='{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:<tag>"}'
+     -f BUILD_CONFIG='{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:<branch with - for />"}'
    ```
-5. After the PR merges, run `serenedb | create infra` on main the same way; that moves `:latest` to the new image for everyone.
+5. After the PR merges, run `serenedb | create infra` on main with `TAG_LATEST=true`; that moves `:latest` to the new image for everyone.
 
 ### Running DuckDB's own test suites
 

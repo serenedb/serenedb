@@ -94,8 +94,11 @@ for os in ubuntu; do
 		done
 
 		TAGS=(--tag "${REPO}:${IMAGE_TAG}")
-		if [ "${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD)}" = "main" ]; then
+		if [ "${TAG_LATEST:-false}" = "true" ]; then
 			TAGS+=(--tag "${REPO}:latest")
+		fi
+		if [ -n "${EXTRA_TAG:-}" ]; then
+			TAGS+=(--tag "${REPO}:${EXTRA_TAG//\//-}")
 		fi
 		echo "    > Creating manifests ${TAGS[*]}..."
 		docker buildx imagetools create \

@@ -25,12 +25,11 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -51,26 +50,8 @@ namespace {
 
 static_assert(kMaxSystem == duckdb::DatabaseManager::FIRST_OID);
 
-bool TypeIsComplete(const duckdb::LogicalType& type) {
-  using enum duckdb::LogicalTypeId;
-  const auto id = type.id();
-  if (id == LIST) {
-    return type.HasParameters() &&
-           TypeIsComplete(duckdb::ListType::GetChildType(type));
-  }
-  if (id == ARRAY) {
-    return type.HasParameters() &&
-           TypeIsComplete(duckdb::ArrayType::GetChildType(type));
-  }
-  if (id == DECIMAL || id == STRUCT || id == TUPLE || id == MAP ||
-      id == UNION || id == ENUM) {
-    return type.HasParameters();
-  }
-  return true;
-}
-
 duckdb::idx_t TypeOid(const duckdb::LogicalType& type) {
-  return TypeIsComplete(type) ? Type2Oid(type) : kUnknown;
+  return type.IsComplete() ? Type2Oid(type) : kUnknown;
 }
 
 std::vector<duckdb::idx_t> ArgTypes(
@@ -92,16 +73,6 @@ char Volatility(duckdb::FunctionStability stability) {
     case duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY:
       return 's';
   }
-}
-
-char Kind(duckdb::CatalogType type) {
-  if (type == duckdb::CatalogType::AGGREGATE_FUNCTION_ENTRY) {
-    return 'a';
-  }
-  if (type == duckdb::CatalogType::WINDOW_FUNCTION_ENTRY) {
-    return 'w';
-  }
-  return 'f';
 }
 
 struct BuiltinSource {
@@ -198,20 +169,19 @@ std::vector<BuiltinFunction> CollectBuiltinFunctions(
                macro->type == duckdb::MacroType::TABLE_MACRO, false, 'i');
         }
       };
-    const auto emit_signatures = [&](const auto& entry) {
+    const auto emit_signatures = [&](char kind, const auto& entry) {
       for (const auto& function : entry.functions.functions) {
-        emit(Kind(entry.type), TypeOid(function->GetReturnType()),
-             ArgTypes(function->GetSignature()), false,
-             entry.type == duckdb::CatalogType::SCALAR_FUNCTION_ENTRY &&
-               function->GetNullHandling() ==
-                 duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING,
-             Volatility(function->GetStability()));
+        emit(
+          kind, TypeOid(function->GetReturnType()),
+          ArgTypes(function->GetSignature()), false,
+          kind == 'f' && function->GetNullHandling() ==
+                           duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING,
+          Volatility(function->GetStability()));
       }
     };
-    const auto emit_arguments = [&](const auto& entry) {
+    const auto emit_arguments = [&](bool retset, const auto& entry) {
       for (const auto& function : entry.functions.functions) {
-        emit('f', kUnknown, ArgTypes(function->GetSignature()),
-             entry.type == duckdb::CatalogType::TABLE_FUNCTION_ENTRY, false,
+        emit('f', kUnknown, ArgTypes(function->GetSignature()), retset, false,
              'i');
       }
     };
@@ -222,15 +192,15 @@ std::vector<BuiltinFunction> CollectBuiltinFunctions(
     const auto& entry = *source.entry;
     using enum duckdb::CatalogType;
     if (entry.type == SCALAR_FUNCTION_ENTRY) {
-      emit_signatures(entry.Cast<duckdb::ScalarFunctionCatalogEntry>());
+      emit_signatures('f', entry.Cast<duckdb::ScalarFunctionCatalogEntry>());
     } else if (entry.type == AGGREGATE_FUNCTION_ENTRY) {
-      emit_signatures(entry.Cast<duckdb::AggregateFunctionCatalogEntry>());
+      emit_signatures('a', entry.Cast<duckdb::AggregateFunctionCatalogEntry>());
     } else if (entry.type == WINDOW_FUNCTION_ENTRY) {
-      emit_signatures(entry.Cast<duckdb::WindowFunctionCatalogEntry>());
+      emit_signatures('w', entry.Cast<duckdb::WindowFunctionCatalogEntry>());
     } else if (entry.type == TABLE_FUNCTION_ENTRY) {
-      emit_arguments(entry.Cast<duckdb::TableFunctionCatalogEntry>());
+      emit_arguments(true, entry.Cast<duckdb::TableFunctionCatalogEntry>());
     } else if (entry.type == PRAGMA_FUNCTION_ENTRY) {
-      emit_arguments(entry.Cast<duckdb::PragmaFunctionCatalogEntry>());
+      emit_arguments(false, entry.Cast<duckdb::PragmaFunctionCatalogEntry>());
     } else if (entry.type == MACRO_ENTRY || entry.type == TABLE_MACRO_ENTRY) {
       emit_macros(entry.Cast<duckdb::MacroCatalogEntry>().macros);
     }

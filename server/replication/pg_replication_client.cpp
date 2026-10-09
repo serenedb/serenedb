@@ -162,6 +162,27 @@ std::vector<size_t> ReferencedFirstOrder(
   return order;
 }
 
+void CheckTargetColumns(std::string_view schema, std::string_view table,
+                        const std::vector<std::string>& missing,
+                        const std::vector<std::string>& generated) {
+  const auto report = [&](const std::vector<std::string>& columns,
+                          std::string_view what) {
+    if (columns.empty()) {
+      return;
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("logical replication target relation \"", schema, ".", table,
+              "\" ", what, columns.size() == 1 ? " column: " : " columns: ",
+              absl::StrJoin(columns, ", ",
+                            [](std::string* out, const std::string& column) {
+                              absl::StrAppend(out, "\"", column, "\"");
+                            })));
+  };
+  report(missing, "is missing replicated");
+  report(generated, "has incompatible generated");
+}
+
 }  // namespace
 
 PgReplicationClient::PgReplicationClient(network::IoExecutor& exec,
@@ -260,7 +281,8 @@ yaclib::Task<bool> PgReplicationClient::SyncTables() {
   if (!co_await Query(
         absl::StrCat(
           "SELECT n.nspname, c.relname, a.attname, "
-          "pg_get_expr(gpt.qual, gpt.relid), p.pubname, c.relkind "
+          "pg_get_expr(gpt.qual, gpt.relid), p.pubname, c.relkind, "
+          "a.attgenerated <> '' "
           "FROM pg_publication p "
           "JOIN LATERAL pg_get_publication_tables(p.pubname) gpt ON true "
           "JOIN pg_class c ON c.oid = gpt.relid "
@@ -298,6 +320,7 @@ yaclib::Task<bool> PgReplicationClient::SyncTables() {
     }
     if (*row[4] == first) {
       table.columns.push_back(*row[2]);
+      table.generated |= row.size() > 6 && row[6] && *row[6] == "t";
     }
     if (!row[3]) {
       unfiltered[it->second] = true;
@@ -347,7 +370,7 @@ yaclib::Task<bool> PgReplicationClient::CopyTable(const SyncTable& table,
   const auto name = absl::StrCat(pg::QuoteIdentifier(table.schema), ".",
                                  pg::QuoteIdentifier(table.table));
   std::string query;
-  if (table.row_filter || table.partitioned) {
+  if (table.row_filter || table.partitioned || table.generated) {
     query = absl::StrCat("COPY (SELECT ", columns, " FROM ",
                          table.partitioned ? "" : "ONLY ", name);
     if (table.row_filter) {
@@ -894,6 +917,23 @@ bool PgReplicationClient::BeginSync() {
         ERR_MSG("logical replication target relation \"", table.schema, ".",
                 table.table, "\" does not exist"));
     }
+    std::vector<std::string> missing;
+    std::vector<std::string> generated;
+    for (const auto& name : table.columns) {
+      const duckdb::ColumnDefinition* found = nullptr;
+      for (const auto& column : local->GetColumns().Logical()) {
+        if (column.Name().GetIdentifierName() == name) {
+          found = &column;
+          break;
+        }
+      }
+      if (found == nullptr) {
+        missing.push_back(name);
+      } else if (found->Generated()) {
+        generated.push_back(name);
+      }
+    }
+    CheckTargetColumns(table.schema, table.table, missing, generated);
     table.owner = local->permissions.owner;
     locals.push_back(local);
   }
@@ -1085,23 +1125,8 @@ void PgReplicationClient::CheckRelation(const RelInfo& relation) const {
       ERR_MSG("logical replication target relation \"", relation.schema, ".",
               relation.table, "\" does not exist"));
   }
-  const auto report = [&](const std::vector<std::string>& columns,
-                          std::string_view what) {
-    if (columns.empty()) {
-      return;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-      ERR_MSG("logical replication target relation \"", relation.schema, ".",
-              relation.table, "\" ", what,
-              columns.size() == 1 ? " column: " : " columns: ",
-              absl::StrJoin(columns, ", ",
-                            [](std::string* out, const std::string& column) {
-                              absl::StrAppend(out, "\"", column, "\"");
-                            })));
-  };
-  report(relation.missing_columns, "is missing replicated");
-  report(relation.generated_columns, "has incompatible generated");
+  CheckTargetColumns(relation.schema, relation.table, relation.missing_columns,
+                     relation.generated_columns);
 }
 
 bool PgReplicationClient::ApplyChanges(const RelInfo& relation) const {

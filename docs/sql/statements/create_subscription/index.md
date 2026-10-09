@@ -103,6 +103,8 @@ Conflicts follow PostgreSQL: an `UPDATE` or `DELETE` whose row does not exist lo
 
 A partitioned table on the publisher is replicated the way its publication sends it. With `publish_via_partition_root = true` its changes and its initial copy arrive under the name of the partitioned table, so create one local table with that name. Otherwise they arrive under the names of its partitions, so create a local table for each partition.
 
+Generated columns of the publisher are sent only by a publication with `publish_generated_columns = stored`. Their values land in plain local columns of the same name. A local generated column cannot take published values: the subscription fails with `logical replication target relation "..." has incompatible generated column`. A local generated column that the publication does not send is computed locally.
+
 A remote `TRUNCATE` is applied like PostgreSQL applies it: `CASCADE` also truncates the local tables that reference the truncated ones through foreign keys, and `RESTART IDENTITY` restarts the sequences their columns own.
 
 The worker reports its position to the publisher every `wal_receiver_status_interval` (10 seconds by default). When the publisher sends nothing for `wal_receiver_timeout` (60 seconds by default), the worker first asks it for a reply halfway through and then drops the connection with `terminating logical replication worker due to timeout` and reconnects. The settings are described in [Configuration](../../../configuration/overview.md#logical-replication).

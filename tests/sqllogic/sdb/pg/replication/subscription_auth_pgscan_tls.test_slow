@@ -161,7 +161,15 @@ CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ BEGIN EXECUTE format(''COP
 
 
 statement ok
-CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ALL', use_transaction := false);
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ssl', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ssl_key_file', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ssl_cert_file', use_transaction := false);
 
 
 statement ok

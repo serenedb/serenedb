@@ -475,8 +475,25 @@ static std::string BuiltinRegtypeOut(uint64_t oid) {
 
 std::string RegtypeOut(duckdb::ClientContext* context, uint64_t oid) {
   if (const auto user = FindUserType(context, oid); user.type) {
-    return absl::StrCat(user.type->name.GetIdentifierName(),
-                        user.array ? "[]" : "");
+    const auto& name = user.type->name;
+    const auto visible =
+      duckdb::Catalog::GetEntry(
+        *context,
+        duckdb::EntryLookupInfo{duckdb::CatalogType::TYPE_ENTRY,
+                                duckdb::QualifiedName{name}},
+        duckdb::OnEntryNotFound::RETURN_NULL)
+        .get() == user.type;
+    return absl::StrCat(
+      visible
+        ? QuoteIdentifier(name.GetIdentifierName())
+        : absl::StrCat(
+            QuoteIdentifier(
+              user.type
+                ->ParentSchemaName(
+                  SessionDatabase(context)->GetCatalogTransaction(*context))
+                .GetIdentifierName()),
+            ".", QuoteIdentifier(name.GetIdentifierName())),
+      user.array ? "[]" : "");
   }
   return BuiltinRegtypeOut(oid);
 }

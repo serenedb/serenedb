@@ -167,6 +167,8 @@ void Tighten(std::optional<SystemBound<T>>& bound, SystemBound<T> candidate,
 
 template<typename T>
 void Intersect(std::optional<std::vector<T>>& keys, std::vector<T> set) {
+  absl::c_sort(set);
+  set.erase(std::unique(set.begin(), set.end()), set.end());
   if (keys) {
     std::erase_if(set, [&](const T& value) {
       return !absl::c_binary_search(*keys, value);
@@ -227,8 +229,6 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       }
       set.emplace_back(std::move(*constant));
     }
-    absl::c_sort(set);
-    set.erase(std::unique(set.begin(), set.end()), set.end());
     Intersect(condition.keys, std::move(set));
     return true;
   }
@@ -251,6 +251,21 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       exact = Capture(*child, condition) && exact;
     }
     return exact;
+  }
+  if (expr.GetExpressionClass() == BOUND_CONJUNCTION &&
+      expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR) {
+    std::vector<T> set;
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      SystemCondition<T> branch;
+      if (!Capture(*child, branch) || !branch.keys ||
+          !branch.excluded.empty() || branch.lower || branch.upper) {
+        return false;
+      }
+      set.insert(set.end(), branch.keys->begin(), branch.keys->end());
+    }
+    Intersect(condition.keys, std::move(set));
+    return true;
   }
   if (duckdb::ExpressionFilter::IsRootOptionalExpression(expr)) {
     if (const auto child =

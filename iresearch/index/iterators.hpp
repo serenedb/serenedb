@@ -203,11 +203,17 @@ class LoserScoreCollector {
 #endif
 
   struct Node {
-    score_t score;
+    uint32_t key;
     uint32_t leaf;
   };
 
   static constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+
+  IRS_FORCE_INLINE static uint32_t Key(score_t score) noexcept {
+    const auto bits = std::bit_cast<uint32_t>(score);
+    const auto sign = static_cast<uint32_t>(static_cast<int32_t>(bits) >> 31);
+    return bits ^ (sign | 0x80000000U);
+  }
 
   IRS_FORCE_INLINE size_t Match(uint32_t leaf) const noexcept {
     return (_k + leaf) >> 1;
@@ -219,7 +225,7 @@ class LoserScoreCollector {
       tree[i].leaf = kNone;
     }
     for (uint32_t leaf = 0; leaf != _k; ++leaf) {
-      Node cur{_hits[leaf].score, leaf};
+      Node cur{Key(_hits[leaf].score), leaf};
       for (size_t node = Match(leaf); node != 0; node >>= 1) {
         Node& slot = tree[node];
         if (slot.leaf == kNone) {
@@ -227,7 +233,7 @@ class LoserScoreCollector {
           cur.leaf = kNone;
           break;
         }
-        if (slot.score < cur.score) {
+        if (slot.key < cur.key) {
           std::swap(slot, cur);
         }
       }
@@ -241,10 +247,10 @@ class LoserScoreCollector {
     Node* IRS_RESTRICT const tree = _tree.data();
     const uint32_t leaf = _root.leaf;
     _hits[leaf] = hit;
-    Node cur{hit.score, leaf};
+    Node cur{Key(hit.score), leaf};
     for (size_t node = Match(leaf); node != 0; node >>= 1) {
       const Node loser = tree[node];
-      const bool win = loser.score < cur.score;
+      const bool win = loser.key < cur.key;
       tree[node] = win ? cur : loser;
       cur = win ? loser : cur;
     }
@@ -265,10 +271,11 @@ class LoserScoreCollector {
     } else {
       Replace({score, doc, _current_segment});
     }
-    if (_root.score <= threshold) {
+    const auto root = _hits[_root.leaf].score;
+    if (root <= threshold) {
       return false;
     }
-    threshold = _root.score;
+    threshold = root;
     return true;
   }
 

@@ -90,7 +90,10 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
     }
     Comment(kPgClassTable, table.oid, 0, table.comment);
     for (const auto& column : table.GetColumns().Logical()) {
-      Comment(kPgClassTable, table.oid, Attnum(column), column.Comment());
+      if (const auto* text = Text(column.Comment())) {
+        Emit<kDescription>({table.oid, kPgClassTable,
+                            static_cast<size_t>(Attnum(column)), *text});
+      }
     }
   }
 
@@ -107,16 +110,19 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
   }
 
  private:
-  void Comment(duckdb::idx_t classoid, duckdb::idx_t objoid, size_t objsubid,
-               const duckdb::Value& comment) {
+  static const std::string* Text(const duckdb::Value& comment) {
     if (comment.IsNull()) {
-      return;
+      return nullptr;
     }
     const auto& text = duckdb::StringValue::Get(comment);
-    if (text.empty()) {
-      return;
+    return text.empty() ? nullptr : &text;
+  }
+
+  void Comment(duckdb::idx_t classoid, duckdb::idx_t objoid, size_t objsubid,
+               const duckdb::Value& comment) {
+    if (const auto* text = Text(comment)) {
+      Emit<kDescription>({objoid, classoid, objsubid, *text});
     }
-    Emit<kDescription>({objoid, classoid, objsubid, text});
   }
 };
 

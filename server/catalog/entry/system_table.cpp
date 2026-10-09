@@ -198,6 +198,9 @@ duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
+  result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn{duckdb::Identifier{""},
+                                     duckdb::LogicalType::BOOLEAN}});
   return result;
 }
 

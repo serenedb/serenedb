@@ -131,6 +131,7 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
 
   std::optional<SearchBackfillTarget> search_backfill;
+  search::SearchTable::BuildClaim build_claim;
 
   pg::ProgressMetrics* progress = nullptr;
 };
@@ -263,7 +264,14 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
       index_entry.SetConfig(BindInvertedIndexConfig(
         context, index_entry, _relation, _bound_expressions, pk_type));
       if (const auto& store = index_entry.SearchStore()) {
-        store->MergeIndexConfig(index_entry.oid, index_entry.Config());
+        state->build_claim =
+          store->BeginIndexBuild(index_entry.oid, index_entry.Config());
+        if (!state->build_claim.Claimed()) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                          ERR_MSG("an index build is already running on "
+                                  "search table ",
+                                  _relation.oid));
+        }
         SearchBackfillTarget backfill;
         backfill.shard = store;
         backfill.catalog = &_relation.ParentCatalog();
@@ -613,6 +621,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   auto& gstate = input.global_state.Cast<CreateIndexGlobalState>();
   if (gstate.search_backfill) {
     RunSearchTableBackfill(context, *gstate.search_backfill, gstate.progress);
+    gstate.build_claim.Finish();
     if (gstate.progress) {
       gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Committing);
     }

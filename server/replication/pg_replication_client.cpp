@@ -34,6 +34,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
@@ -859,6 +860,9 @@ bool PgReplicationClient::SetupApplyConnection() {
   const duckdb::idx_t role =
     _target.owner_name.empty() ? pg::kRootUser : _target.owner_id;
   this->_conn = irs::DuckDBEngine::Instance().CreateConnection();
+  duckdb::PhysicalSet::SetVariable(
+    *this->_conn->context, duckdb::Identifier{"session_replication_role"},
+    duckdb::SetScope::SESSION, duckdb::Value{"replica"});
   this->_txn_state.emplace(this->_conn->context->transaction);
   this->_connection_ctx = std::make_shared<ConnectionContext>(
     *this->_conn->context, user, role, _target.database_name,

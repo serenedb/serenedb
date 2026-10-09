@@ -459,3 +459,34 @@ ALTER TABLE events SET (compaction_interval = 0);
 
 statement ok
 ALTER TABLE events RESET (compaction_interval);
+
+# DOCS_TEST: example_037
+
+statement ok
+DROP TABLE IF EXISTS orders_audit;
+
+statement ok
+DROP TABLE IF EXISTS orders;
+
+statement ok
+CREATE TABLE orders (id INTEGER);
+
+statement ok
+CREATE TABLE orders_audit (id INTEGER);
+
+statement ok
+CREATE TRIGGER orders_audited AFTER INSERT ON orders REFERENCING NEW TABLE AS added FOR EACH STATEMENT INSERT INTO orders_audit SELECT id FROM added;
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE orders DISABLE TRIGGER orders_audited;
+
+statement ok
+ALTER TABLE orders ENABLE ALWAYS TRIGGER orders_audited;
+
+query
+SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'orders'::regclass;
+----
+tgname	tgenabled
+orders_audited	A

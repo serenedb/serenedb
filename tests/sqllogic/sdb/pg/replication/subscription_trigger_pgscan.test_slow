@@ -1,0 +1,92 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rtrg_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rtrg_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rtrg\_%''');
+
+
+statement ok
+CALL postgres_execute('rtrg_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rtrg_pub; DROP TABLE IF EXISTS rtrg_child; END $$');
+
+
+statement ok
+CALL postgres_execute('rtrg_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rtrg_child (id int PRIMARY KEY, parent int); INSERT INTO rtrg_child VALUES (1, 100); CREATE PUBLICATION rtrg_pub FOR TABLE rtrg_child; END $$');
+
+
+statement ok
+CREATE TABLE rtrg_parent (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rtrg_child (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES rtrg_parent (id));
+
+
+statement ok
+CREATE TABLE rtrg_log (name TEXT, id INTEGER);
+
+
+statement ok
+CREATE TRIGGER rtrg_origin AFTER INSERT ON rtrg_child REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO rtrg_log SELECT 'origin', id FROM new_rows;
+
+
+statement ok
+CREATE TRIGGER rtrg_replica AFTER INSERT ON rtrg_child REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO rtrg_log SELECT 'replica', id FROM new_rows;
+
+
+statement ok
+ALTER TABLE rtrg_child ENABLE REPLICA TRIGGER rtrg_replica;
+
+
+statement ok
+CREATE SUBSCRIPTION rtrg_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rtrg_pub WITH (slot_name = 'rtrg_sub');
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n FROM rtrg_child;
+----
+n
+1
+
+
+statement ok
+CALL postgres_execute('rtrg_${__DATABASE__}', 'INSERT INTO rtrg_child VALUES (2, 200), (3, 300)');
+
+
+query ok retry 240 backoff 250ms
+SELECT id, parent FROM rtrg_child ORDER BY id;
+----
+id	parent
+1	100
+2	200
+3	300
+
+
+query
+SELECT name, id FROM rtrg_log ORDER BY name, id;
+----
+name	id
+replica	1
+replica	2
+replica	3
+
+
+query
+SELECT apply_error_count, sync_error_count FROM pg_stat_subscription_stats WHERE subname = 'rtrg_sub';
+----
+apply_error_count	sync_error_count
+0	0
+
+
+statement ok
+DROP SUBSCRIPTION rtrg_sub;
+
+
+statement ok
+CALL postgres_execute('rtrg_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rtrg_pub; DROP TABLE rtrg_child; END $$');
+
+
+statement ok
+DETACH rtrg_${__DATABASE__};

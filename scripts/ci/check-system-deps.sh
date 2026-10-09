@@ -9,6 +9,12 @@ STATIC="${3:-Off}"
 ALLOWED_PACKAGES='^(libc6|libc6-dev|linux-libc-dev|libclang-common-[0-9]+-dev|libclang-rt-[0-9]+-dev)$'
 ALLOWED_GCC_FILES='^/usr/lib/gcc/[a-z0-9_-]+/[0-9]+/crt(begin|end)[ST]?\.o$'
 ALLOWED_LINK_INPUTS='^(-lc|-lm|-ldl|-lrt|-lpthread|/usr/lib/llvm-[0-9]+/lib/clang/[0-9]+/lib/linux/libclang_rt\.builtins-[a-z0-9_]+\.a)$'
+GCC_UNWINDER=false
+if [[ "$SANITIZERS" =~ ^(Thread|Memory) ]]; then
+	GCC_UNWINDER=true
+	ALLOWED_GCC_FILES='^/usr/lib/gcc/[a-z0-9_-]+/[0-9]+/(crt(begin|end)[ST]?\.o|libgcc\.a|libgcc_s\.so)$'
+	ALLOWED_LINK_INPUTS='^(-lc|-lm|-ldl|-lrt|-lpthread|-lgcc_s|/usr/lib/llvm-[0-9]+/lib/clang/[0-9]+/lib/linux/libclang_rt\.builtins-[a-z0-9_]+\.a)$'
+fi
 if [[ "$SANITIZERS" == "None" || -z "$SANITIZERS" ]]; then
 	if [[ "$STATIC" == "On" ]]; then
 		ALLOWED_LIBRARIES='^$'
@@ -32,6 +38,8 @@ if [[ ${#files[@]} -ne 0 ]]; then
 			echo "::error::build used system file not owned by any package: ${line##* }"
 			failed=1
 		elif [[ "$package" =~ ^libgcc-[0-9]+-dev$ && "$file" =~ $ALLOWED_GCC_FILES ]]; then
+			continue
+		elif [[ "$GCC_UNWINDER" == true && "$package" == libgcc-s1 && "$file" =~ /libgcc_s\.so\.1$ ]]; then
 			continue
 		elif ! [[ "$package" =~ $ALLOWED_PACKAGES ]]; then
 			echo "::error::build used system file ${file} from ${package}"

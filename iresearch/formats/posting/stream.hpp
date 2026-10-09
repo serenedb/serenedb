@@ -46,6 +46,8 @@ class PostingsStream : public TermPostings {
                 IteratorTraits::Features());
 
  public:
+  PostingsStream() noexcept {}
+
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                bool has_score_bounds) {

@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <span>
 #include <string_view>
 
 #include "catalog/entry/inverted_index.h"
@@ -49,14 +48,12 @@ constexpr std::array kOpclasses{
   Opclass{kPgOpclassIncluded, catalog::kIncludedKind, kAny},
 };
 
-SystemRows<Opclass> LoadOpclasses(SystemScan&) { return {kOpclasses}; }
-
 class PgOpclass final : public SystemTableScan<kPgOpclassSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Opclass>{&LoadOpclasses, {}},
+    ArraySource<Opclass>{&LoadStatic<kOpclasses>, {}},
     CatalogSource{kTypes, SystemSchemas::Skip, kOpclassIndexes}};
 
   static constexpr auto kOpclassMethod =
@@ -73,8 +70,7 @@ class PgOpclass final : public SystemTableScan<kPgOpclassSql> {
       Col<"oid">(&duckdb::CatalogEntry::oid), kOpclassMethod,
       Col<"opcname">(&duckdb::CatalogEntry::name),
       Col<"opcnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-      Col<"opcowner">(
-        [](const auto& tokenizer) { return tokenizer.permissions.owner; }),
+      Col<"opcowner">(kOwner),
       Col<"opcintype">([](const auto&) { return int64_t{kText}; }));
 
   void Row(const Opclass& opclass) { Emit<kBuiltin>(opclass); }

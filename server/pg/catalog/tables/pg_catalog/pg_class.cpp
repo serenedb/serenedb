@@ -48,8 +48,6 @@
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kOrdinaryTypes[] = {
-  duckdb::CatalogType::TABLE_ENTRY};
 constexpr duckdb::CatalogType kViewTypes[] = {duckdb::CatalogType::TABLE_ENTRY,
                                               duckdb::CatalogType::VIEW_ENTRY};
 constexpr duckdb::CatalogType kIndexTypes[] = {
@@ -60,7 +58,7 @@ constexpr duckdb::CatalogType kCompositeTypes[] = {
   duckdb::CatalogType::TYPE_ENTRY};
 
 constexpr SystemKindTypes kRelkinds[] = {
-  {'r', kOrdinaryTypes}, {'v', kViewTypes},      {'i', kIndexTypes},
+  {'r', kTableTypes},    {'v', kViewTypes},      {'i', kIndexTypes},
   {'S', kSequenceTypes}, {'c', kCompositeTypes},
 };
 
@@ -86,10 +84,7 @@ std::optional<std::vector<std::string>> Reloptions(
                        .ToString()));
     }
   }
-  if (result.empty()) {
-    return std::nullopt;
-  }
-  return result;
+  return NonEmpty(std::move(result));
 }
 
 std::optional<std::vector<std::string>> Reloptions(
@@ -100,10 +95,7 @@ std::optional<std::vector<std::string>> Reloptions(
       result.emplace_back(absl::StrCat(name, "=", it->second.ToString()));
     }
   }
-  if (result.empty()) {
-    return std::nullopt;
-  }
-  return result;
+  return NonEmpty(std::move(result));
 }
 
 uint64_t RelationRowType(const duckdb::CatalogEntry& relation) {
@@ -129,16 +121,15 @@ bool Indexed(SystemScan& scan, duckdb::CatalogEntry& relation) {
   return indexed;
 }
 
-template<char Kind>
-constexpr std::tuple kRelation{
+constexpr std::tuple kRelationBase{
   Col<"oid">(&duckdb::CatalogEntry::oid),
   Col<"relname">(&duckdb::CatalogEntry::name),
   Col<"relnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-  Col<"relowner">([](const auto& entry) { return entry.permissions.owner; }),
-  Col<"relkind">([](const auto&) { return Kind; })};
+  Col<"relowner">(kOwner)};
 
-constexpr auto kRelationAcl = Col<"relacl">(
-  [](const auto& entry) -> const auto& { return entry.permissions.acl; });
+template<char Kind>
+constexpr auto kRelation = std::tuple_cat(
+  kRelationBase, std::tuple{Col<"relkind">([](const auto&) { return Kind; })});
 
 struct Ordinary {
   duckdb::TableCatalogEntry& table;
@@ -177,12 +168,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
                                                 "pg_table_is_visible"};
 
   static constexpr auto kSystem = Shape<kSql, const catalog::SystemTableEntry>(
-    Col<"oid">(&duckdb::CatalogEntry::oid),
-    Col<"relname">(&duckdb::CatalogEntry::name),
-    Col<"relnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-    Col<"relowner">([](const auto& entry) { return entry.permissions.owner; }),
-    Col<"relkind">(
-      [](const auto& entry) { return entry.Table().Sql().relkind; }),
+    kRelationBase, Col<"relkind">([](const auto& entry) {
+      return entry.Table().Sql().relkind;
+    }),
     Col<"relam">([](const auto& entry) {
       return entry.Table().Sql().relkind == 'v' ? duckdb::idx_t{0} : kPgAmHeap;
     }),
@@ -196,7 +184,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return entry.Table().Sql().shared ? kPgGlobalTablespace
                                         : duckdb::idx_t{0};
     }),
-    Col<"reltype">(&RelationRowType), kRelationAcl);
+    Col<"reltype">(&RelationRowType), Col<"relacl">(kAcl));
 
   static constexpr auto kOrdinary = Shape<kSql, const Ordinary>(
     Col<"oid">([](const auto& row) { return row.table.oid; }),
@@ -206,7 +194,6 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       [](const auto& row) { return row.table.ParentSchemaOid(); }),
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
-    Col<"relkind">([](const auto&) { return 'r'; }),
     Col<"relam">(
       [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
     Col<"relnatts">([](const auto& row) {
@@ -311,12 +298,12 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relhasindex">([](auto& view, SystemScan& scan) {
       return !view.internal && Indexed(scan, view);
     }),
-    kRelationAcl);
+    Col<"relacl">(kAcl));
 
   static constexpr auto kSequence =
     Shape<kSql, const duckdb::SequenceCatalogEntry>(
       kRelation<'S'>, Col<"relnatts">([](const auto&) { return 3; }),
-      Col<"reltuples">([](const auto&) { return 1.0F; }), kRelationAcl);
+      Col<"reltuples">([](const auto&) { return 1.0F; }), Col<"relacl">(kAcl));
 
   static constexpr auto kComposite =
     Shape<kSql, const duckdb::TypeCatalogEntry>(

@@ -32,8 +32,6 @@
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kTypes[] = {duckdb::CatalogType::TABLE_ENTRY};
-
 constexpr SystemIndex kIndexes[] = {
   {kPgAttrdefSql["oid"], SystemLookup::Object},
   {kPgAttrdefSql["adrelid"], SystemLookup::Object},
@@ -50,7 +48,7 @@ class PgAttrdef final : public SystemTableScan<kPgAttrdefSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kTypes, SystemSchemas::Skip, kIndexes}};
+    CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes}};
 
   static constexpr auto kAttrdef = Shape<kSql, const AttrdefRow>(
     Col<"oid">([](const auto& row) { return row.column.CatalogOid(); }),
@@ -90,14 +88,10 @@ class PgAttrdef final : public SystemTableScan<kPgAttrdefSql> {
     if (table.ParentSchemaOid() != _schema) {
       _schema = table.ParentSchemaOid();
       auto& schema = table.ParentSchema(Transaction());
-      auto* serene =
-        dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
       _snapshot =
-        serene
-          ? serene->Snapshot(
-              Context(),
-              schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(table.type))
-          : nullptr;
+        schema.ParentCatalog().Cast<catalog::SereneDBCatalog>().Snapshot(
+          Context(),
+          schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(table.type));
       if (_snapshot) {
         std::call_once(_snapshot->defaults_once, [&] {
           for (auto* entry : _snapshot->entries) {

@@ -84,19 +84,12 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
   static constexpr std::tuple kSources{
     CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes}};
 
-  static constexpr auto kOther = Shape<kSql, const ConstraintRow>(kConstraint);
-
   static constexpr auto kCheck = Shape<kSql, const ConstraintRow>(
     kConstraint, Col<"contype">([](const auto&) { return 'c'; }),
-    Col<"conkey">(
-      [](const ConstraintRow& row) -> std::optional<std::vector<int16_t>> {
-        auto attnums = ExpressionAttnums(
-          row.table, *row.As<duckdb::CheckConstraint>().expression);
-        if (attnums.empty()) {
-          return std::nullopt;
-        }
-        return attnums;
-      }),
+    Col<"conkey">([](const ConstraintRow& row) {
+      return NonEmpty(ExpressionAttnums(
+        row.table, *row.As<duckdb::CheckConstraint>().expression));
+    }),
     Col<"conbin">([](const ConstraintRow& row) {
       return row.As<duckdb::CheckConstraint>().expression->ToString();
     }));
@@ -177,7 +170,6 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
           Emit<kForeignKey>({{table, *constraint}});
           break;
         case INVALID:
-          Emit<kOther>({table, *constraint});
           break;
       }
     }

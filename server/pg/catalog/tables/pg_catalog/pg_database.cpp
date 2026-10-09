@@ -41,12 +41,8 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
   static constexpr auto kDatabase =
     Shape<kSql, const catalog::DatabaseCatalogEntry>(
       Col<"oid">(&duckdb::CatalogEntry::oid),
-      Col<"datname">(&duckdb::CatalogEntry::name),
-      Col<"datdba">(
-        [](const auto& database) { return database.permissions.owner; }),
-      Col<"datacl">([](const auto& database) -> const auto& {
-        return database.permissions.acl;
-      }));
+      Col<"datname">(&duckdb::CatalogEntry::name), Col<"datdba">(kOwner),
+      Col<"datacl">(kAcl));
 
   void Row(const catalog::DatabaseCatalogEntry& database) {
     Emit<kDatabase>(database);

@@ -68,8 +68,7 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
                          const NormColumnWriter& nw) {
   const auto& meta = nw.Meta();
   s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
-  s.WriteProperty(1, "row_count", meta.row_count);
-  s.WriteList(2, "regions", meta.regions.size(),
+  s.WriteList(1, "regions", meta.regions.size(),
               [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
                 list.WriteObject([&](duckdb::BinarySerializer& obj) {
                   SerializeNormRegion(obj, meta.regions[i]);

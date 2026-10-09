@@ -101,7 +101,9 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.stats.min = d.ReadProperty<uint32_t>(5, "min");
   r.stats.max = d.ReadProperty<uint32_t>(6, "max");
   r.bits = d.ReadProperty<uint8_t>(7, "bits");
-  SDB_ENSURE(r.stats.rows != 0 && r.stats.min <= r.stats.max &&
+  SDB_ENSURE(r.stats.rows != 0 &&
+               r.stats.rows <= doc_limits::eof() - doc_limits::min() &&
+               r.stats.min <= r.stats.max &&
                (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32),
              ".col reader: norm region on column id ", id, " is corrupt");
   if (r.bits == 0) {
@@ -138,20 +140,18 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
 NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
                                    uint64_t footer_offset) {
   NormColumnMeta meta;
-  meta.row_count = d.ReadProperty<uint64_t>(1, "row_count");
-  uint64_t rows = 0;
-  d.ReadList(2, "regions",
+  d.ReadList(1, "regions",
              [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
                list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
                  auto& r = meta.regions.emplace_back(
                    DeserializeNormRegion(obj, id, footer_offset));
-                 rows += r.stats.rows;
+                 meta.row_count += r.stats.rows;
                });
              });
-  SDB_ENSURE(!meta.regions.empty() && rows == meta.row_count &&
+  SDB_ENSURE(!meta.regions.empty() &&
                meta.row_count <= doc_limits::eof() - doc_limits::min(),
              ".col reader: norm column id ", id, " holds ", meta.row_count,
-             " rows across ", meta.regions.size(), " regions of ", rows);
+             " rows across ", meta.regions.size(), " regions");
   return meta;
 }
 

@@ -37,6 +37,10 @@ go.sum
 Cargo.lock
 composer.lock
 package-lock.json
+!tests/drivers/go/go.sum
+!tests/drivers/rust/Cargo.lock
+!tests/drivers/php/composer.lock
+!tests/drivers/js/package-lock.json
 .phpunit.result.cache
 
 # Driver-test outputs

@@ -87,6 +87,7 @@ jobs:
       SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   dev:
@@ -107,6 +108,7 @@ jobs:
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       BIGLAKE: ${{ inputs.BIGLAKE }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   asan:
@@ -127,6 +129,7 @@ jobs:
       SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   tsan:
@@ -147,6 +150,7 @@ jobs:
       SQLITE: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       SQLSMITH: ${{ inputs.EVERYTHING || contains(needs.classify.outputs.duckdb_suites, 'core') }}
       PR_SHA: ${{ inputs.PR_SHA }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
     secrets: inherit
 
   validate-pg:
@@ -157,6 +161,7 @@ jobs:
     with:
       LOCATION: linux-amd64
       PR_SHA: ${{ inputs.PR_SHA }}
+      BUILD_IMAGE: ${{ contains(inputs.BUILD_CONFIG, 'BUILD_IMAGE') && fromJSON(inputs.BUILD_CONFIG).BUILD_IMAGE || '' }}
       # empty = run all pg tests downstream
       PG_TESTS: ${{ inputs.EVERYTHING && '' || needs.classify.outputs.pg_tests }}
     secrets: inherit

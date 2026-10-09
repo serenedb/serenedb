@@ -93,10 +93,13 @@ for os in ubuntu; do
 			docker push "${REPO}:${IMAGE_TAG}-${arch}"
 		done
 
-		echo "    > Creating manifests ${REPO}:{${IMAGE_TAG},latest}..."
+		TAGS=(--tag "${REPO}:${IMAGE_TAG}")
+		if [ "${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD)}" = "main" ]; then
+			TAGS+=(--tag "${REPO}:latest")
+		fi
+		echo "    > Creating manifests ${TAGS[*]}..."
 		docker buildx imagetools create \
-			--tag "${REPO}:${IMAGE_TAG}" \
-			--tag "${REPO}:latest" \
+			"${TAGS[@]}" \
 			"${REPO}:${IMAGE_TAG}-amd64" \
 			"${REPO}:${IMAGE_TAG}-arm64"
 

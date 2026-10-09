@@ -71,11 +71,12 @@ ENV CCACHE_DIR=/.ccache
 ENV SDB_DRIVERS_DEPS=/opt/sdb-drivers
 ENV GOMODCACHE=/opt/sdb-drivers/go/mod
 ENV NUGET_PACKAGES=/opt/sdb-drivers/nuget
+ENV MAVEN_OPTS=--sun-misc-unsafe-memory-access=allow
 ENV GOTOOLCHAIN=local
 
 COPY --from=drivers python/requirements.txt /tmp/drivers/python/
 COPY test-data-requirements.txt /tmp/
-RUN python3 -m pip install --break-system-packages --no-cache-dir \
+RUN python3 -m pip install --break-system-packages --no-cache-dir --root-user-action=ignore \
       -r /tmp/drivers/python/requirements.txt -r /tmp/test-data-requirements.txt
 
 ENV SDB_DUCKDB_HOME=/opt/sdb-duckdb

@@ -53,6 +53,9 @@ class PostingsStream : public TermPostings {
                bool has_score_bounds) {
     SDB_ASSERT(meta.docs_count != 0);
 
+    _max_in_leaf = doc_limits::invalid();
+    _left_in_leaf = 0;
+    _left_in_list = 0;
     if (meta.docs_count == 1) {
       const auto doc = doc_limits::min() + meta.doc_delta;
       *(std::end(_docs) - 1) = doc;
@@ -62,7 +65,19 @@ class PostingsStream : public TermPostings {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _doc_in = OpenDocInput(meta, doc_in);
+      if (meta.inline_size != 0) {
+        _inline_in.reset(meta.Inline());
+        _doc_in = &_inline_in;
+      } else {
+        if (!_file_in) {
+          _file_in = doc_in.Reopen();
+          if (!_file_in) [[unlikely]] {
+            throw IoError{"failed to reopen document input"};
+          }
+        }
+        _file_in->Seek(meta.doc_start);
+        _doc_in = _file_in.get();
+      }
 
       auto& in = In();
       PrefetchDocs(in, meta);
@@ -157,7 +172,9 @@ class PostingsStream : public TermPostings {
     IteratorTraits::Frequency(),
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _doc_in;
+  IndexInput::ptr _file_in;
+  BytesViewInput _inline_in;
+  IndexInput* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

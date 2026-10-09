@@ -77,8 +77,8 @@ class PostingsReader final {
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
-                             const PostingMeta& meta,
-                             bool has_score_bounds) const;
+                             const PostingMeta& meta, bool has_score_bounds,
+                             TermPostings::ptr reuse = {}) const;
 
   std::unique_ptr<IndexInput> ReopenPayload() const {
     return _pay_in ? _pay_in->Reopen() : nullptr;
@@ -255,7 +255,8 @@ auto ResolveInputType(DataInput::Type type, auto&& f) {
 
 inline TermPostings::ptr PostingsReader::Postings(
   IndexFeatures field_features, IndexFeatures required_features,
-  const PostingMeta& meta, bool has_score_bounds) const {
+  const PostingMeta& meta, bool has_score_bounds,
+  TermPostings::ptr reuse) const {
   if (meta.docs_count == 0) {
     return TermPostings::empty();
   }
@@ -265,11 +266,14 @@ inline TermPostings::ptr PostingsReader::Postings(
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
       return ResolveInputType(
         _doc_in->GetType(), [&]<typename InputType> -> TermPostings::ptr {
-          auto it = memory::make_managed<
-            PostingsStream<IteratorTraits, FieldTraits, InputType>>();
-          it->Prepare(meta, *_doc_in, _pos_in.get(), _pay_in.get(),
-                      has_score_bounds);
-          return it;
+          using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
+          if (!reuse) {
+            reuse = memory::make_managed<Stream>();
+          }
+          SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
+          static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
+                                               _pay_in.get(), has_score_bounds);
+          return std::move(reuse);
         });
     });
 }

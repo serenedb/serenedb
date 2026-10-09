@@ -94,6 +94,7 @@ class CompoundPostings : public TermPostings {
   struct PostingsT {
     TermPostings::ptr it;
     const DocRemap* remap;
+    size_t source;
   };
   using IteratorsT = std::vector<PostingsT>;
 
@@ -111,6 +112,8 @@ class CompoundPostings : public TermPostings {
     _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
     _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
   }
+
+  void Clear() noexcept { _iterators.clear(); }
 
   size_t Size() const noexcept { return _iterators.size(); }
 
@@ -141,7 +144,7 @@ class CompoundPostings : public TermPostings {
 
 uint32_t CompoundPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
   for (; _current_itr < _iterators.size(); ++_current_itr) {
-    auto& [it, remap] = _iterators[_current_itr];
+    auto& [it, remap, source] = _iterators[_current_itr];
     uint32_t n = 0;
     if (remap->id_map.empty()) {
       n = it->NextDocs(docs, freqs);
@@ -159,7 +162,6 @@ uint32_t CompoundPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
       }
       return n;
     }
-    it.reset();
   }
   return 0;
 }
@@ -213,6 +215,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   void Reset(const FieldMeta& meta) noexcept {
     _current_term = {};
     _meta = &meta;
+    _doc_itr.Clear();
     _term_iterator_mask.clear();
     _term_iterators.clear();
     _min_term.clear();
@@ -250,6 +253,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   struct TermIteratorImpl {
     SeekTermIterator::ptr it;
     const DocRemap* remap;
+    mutable TermPostings::ptr postings;
   };
 
   bytes_view _current_term;
@@ -320,15 +324,22 @@ bool CompoundTermIterator::next() {
 TermPostings::ptr CompoundTermIterator::postings(
   IndexFeatures /*features*/) const {
   auto add_iterators = [this](CompoundPostings::IteratorsT& itrs) {
+    const auto* const empty = TermPostings::empty().get();
+    for (auto& entry : itrs) {
+      if (entry.it.get() != empty) {
+        _term_iterators[entry.source].postings = std::move(entry.it);
+      }
+    }
     itrs.clear();
     itrs.reserve(_term_iterator_mask.size());
     for (auto& itr_id : _term_iterator_mask) {
       auto& term_itr = _term_iterators[itr_id];
       SDB_ASSERT(term_itr.it);
-      auto it = term_itr.it->postings(Meta().index_features);
+      auto it = term_itr.it->ReusePostings(Meta().index_features,
+                                           std::move(term_itr.postings));
       SDB_ASSERT(it);
       if (it) [[likely]] {
-        itrs.emplace_back(std::move(it), term_itr.remap);
+        itrs.emplace_back(std::move(it), term_itr.remap, itr_id);
       }
     }
   };

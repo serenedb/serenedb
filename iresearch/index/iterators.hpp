@@ -395,6 +395,11 @@ struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
   [[nodiscard]] virtual TermPostings::ptr postings(
     IndexFeatures features) const = 0;
 
+  [[nodiscard]] virtual TermPostings::ptr ReusePostings(
+    IndexFeatures features, TermPostings::ptr /*reuse*/) const {
+    return postings(features);
+  }
+
   // Columnar in-memory readers expose the current term's postings as
   // in-place row views so a postings writer can consume them without
   // per-doc iterator dispatch; file-backed and merge iterators keep

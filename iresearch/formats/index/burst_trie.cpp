@@ -1593,13 +1593,15 @@ class TermIteratorBase {
     return _posting_meta;
   }
 
-  TermPostings::ptr Postings(IndexFeatures features) const {
+  TermPostings::ptr Postings(IndexFeatures features,
+                             TermPostings::ptr reuse = {}) const {
     const auto& field_meta = _field->meta();
     if (_cur_block) {
       _cur_block->LoadData(*_field, _posting_meta, *_postings);
     }
     return _postings->Postings(field_meta.index_features, features,
-                               _posting_meta, _field->HasScoreBounds());
+                               _posting_meta, _field->HasScoreBounds(),
+                               std::move(reuse));
   }
 
   struct Arc {
@@ -1907,6 +1909,11 @@ class TermIteratorImpl : public SeekTermIterator, public TermIteratorBase<FST> {
 
   TermPostings::ptr postings(IndexFeatures features) const final {
     return Base::Postings(features);
+  }
+
+  TermPostings::ptr ReusePostings(IndexFeatures features,
+                                  TermPostings::ptr reuse) const final {
+    return Base::Postings(features, std::move(reuse));
   }
 };
 

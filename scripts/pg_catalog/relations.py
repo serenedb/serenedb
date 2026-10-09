@@ -2,7 +2,14 @@ import os
 import re
 
 from . import builtins, config
-from .common import SUPERUSER_ONLY_SQL, camel, cpp_bool, cpp_char, cpp_str
+from .common import (CATALOG_DIR, SUPERUSER_ONLY_SQL, camel, cpp_bool, cpp_char,
+                     cpp_str)
+
+TABLE_FOLDERS = {
+    'pg_catalog': 'pg_catalog',
+    'sdb': 'pg_catalog',
+    'information_schema': 'information_schema',
+}
 
 RELATIONS_SQL = f"""
 SELECT c.oid::int8, n.nspname, c.relname, c.relkind, c.relisshared,
@@ -182,6 +189,22 @@ def data_rows(gen, schema, name, order):
             f'SystemTable g{const[1:]}{{{const}Sql, {const}Rows}};'])
 
 
+def registry_lines(known):
+    coded = []
+    for folder, schema in TABLE_FOLDERS.items():
+        for file in sorted(os.listdir(os.path.join(CATALOG_DIR, 'tables',
+                                                   folder))):
+            name = file.removesuffix('.cpp')
+            if (schema, name) not in known:
+                raise SystemExit(f'tables/{folder}/{file} names no catalog '
+                                 f'table')
+            coded.append(relation_constant(schema, name)[1:])
+    generated = [relation_constant(*table)[1:] for table in config.DATA_TABLES]
+    return ([f'extern SystemTable g{name};' for name in sorted(coded)] +
+            ['SystemTable* const kSystemTables[] = {'] +
+            [f'  &g{name},' for name in sorted(coded + generated)] + ['};'])
+
+
 def named_oids(gen, sql, names):
     return [f'inline constexpr duckdb::idx_t {const} = '
             f'{gen.query(sql, (name,))[0][0]};'
@@ -212,8 +235,9 @@ def generate(gen):
                         for name, const in config.LANGUAGES.items()}) +
             named_oids(gen, 'SELECT %s::regproc::oid::int8',
                        config.PROCEDURES))
-    tables, all_tables = [], []
+    tables, all_tables, known = [], [], set()
     for oid, schema, name, relkind, shared, superuser in relations(gen):
+        known.add((schema, name))
         const = relation_constant(schema, name)
         table_oid = (oid if oid is not None
                      else f'kMinSystem + {config.SDB_TABLES[name][0]}')
@@ -232,6 +256,7 @@ def generate(gen):
     for (schema, name), order in config.DATA_TABLES.items():
         data += data_rows(gen, schema, name, order)
     gen.write('information_schema_tables.gen.inc', data)
+    gen.write('registry.gen.inc', registry_lines(known))
     gen.write('keywords.gen.inc',
               [cpp_str(word) + ',' for word in sorted(reserved)])
     generate_settings(gen)

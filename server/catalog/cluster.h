@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+
 #include <atomic>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>

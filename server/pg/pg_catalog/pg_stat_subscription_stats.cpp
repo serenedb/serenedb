@@ -61,8 +61,10 @@ MaterializedData SystemTableSnapshot<PgStatSubscriptionStats>::GetTableData() {
               .confl_update_missing = count(stat.update_missing),
               .confl_delete_origin_differs = 0,
               .confl_delete_missing = count(stat.delete_missing),
-              .confl_multiple_unique_conflicts = 0,
-              .stats_reset = {},
+              .confl_multiple_unique_conflicts =
+                count(stat.multiple_unique_conflicts),
+              .stats_reset = {.micros = stat.stats_reset,
+                              .is_null = stat.stats_reset == 0},
             });
           });
   auto result = CreateColumns<PgStatSubscriptionStats>(values.size());

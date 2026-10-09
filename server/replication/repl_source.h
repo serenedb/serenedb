@@ -36,6 +36,7 @@
 
 namespace duckdb {
 
+class ColumnDataCollection;
 class DatabaseInstance;
 class SQLStatement;
 
@@ -61,6 +62,7 @@ struct RelInfo {
   std::vector<RelColumn> columns;
   std::vector<std::string> missing_columns;
   std::vector<std::string> generated_columns;
+  std::vector<std::vector<size_t>> unique_keys;
 };
 
 struct ReplBatch {
@@ -74,6 +76,7 @@ struct ReplBatch {
   uint64_t rows = 0;
   irs::containers::FlatHashSet<std::string> touched;
   std::function<bool(const PgOutputMessage&)> pass_through;
+  duckdb::ColumnDataCollection* retained = nullptr;
 };
 
 std::optional<uint32_t> RowRelId(const PgOutputMessage& msg);
@@ -86,6 +89,9 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildReplStatement(
   char op, std::string_view schema, std::string_view table,
   const std::vector<std::string>& key_names,
   const std::vector<std::string>& col_names, bool full);
+
+duckdb::unique_ptr<duckdb::SQLStatement> BuildUniqueConflictProbe(
+  const ReplBatch& batch, duckdb::ColumnDataCollection& rows);
 
 duckdb::unique_ptr<duckdb::SQLStatement> BuildTruncate(
   std::string_view schema, std::string_view table,

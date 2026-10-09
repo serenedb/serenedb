@@ -1,0 +1,177 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rcon_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rcon\_%''');
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rcon_pub; DROP TABLE IF EXISTS rcon_multi; END $$');
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rcon_multi (id int PRIMARY KEY, email text UNIQUE, code int); CREATE UNIQUE INDEX rcon_multi_code ON rcon_multi (code); INSERT INTO rcon_multi VALUES (50, ''e@x'', 5); CREATE PUBLICATION rcon_pub FOR TABLE rcon_multi; END $$');
+
+
+statement ok
+CREATE TABLE rcon_multi (id INTEGER PRIMARY KEY, email TEXT UNIQUE, code INTEGER);
+
+
+statement ok
+CREATE UNIQUE INDEX rcon_multi_code ON rcon_multi (code);
+
+
+statement ok
+CREATE SUBSCRIPTION rcon_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rcon_pub WITH (slot_name = 'rcon_sub');
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n FROM rcon_multi;
+----
+n
+1
+
+
+query
+SELECT confl_multiple_unique_conflicts, stats_reset IS NULL AS never_reset FROM pg_stat_subscription_stats WHERE subname = 'rcon_sub';
+----
+confl_multiple_unique_conflicts	never_reset
+0	t
+
+
+statement ok
+INSERT INTO rcon_multi VALUES (10, 'a@x', 1), (11, 'b@x', 2);
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'INSERT INTO rcon_multi VALUES (20, ''a@x'', 2)');
+
+
+query ok retry 240 backoff 250ms
+SELECT confl_multiple_unique_conflicts >= 1 AS conflicted, confl_insert_exists AS single, apply_error_count >= 1 AS failed FROM pg_stat_subscription_stats WHERE subname = 'rcon_sub';
+----
+conflicted	single	failed
+t	0	t
+
+
+statement ok
+DELETE FROM rcon_multi WHERE id IN (10, 11);
+
+
+query ok retry 240 backoff 250ms
+SELECT id, email, code FROM rcon_multi ORDER BY id;
+----
+id	email	code
+20	a@x	2
+50	e@x	5
+
+
+statement ok
+INSERT INTO rcon_multi VALUES (40, 'd@x', 9);
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'INSERT INTO rcon_multi VALUES (41, ''d@x'', 10)');
+
+
+query ok retry 240 backoff 250ms
+SELECT confl_insert_exists >= 1 AS single FROM pg_stat_subscription_stats WHERE subname = 'rcon_sub';
+----
+single
+t
+
+
+statement ok
+DELETE FROM rcon_multi WHERE id = 40;
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n FROM rcon_multi WHERE id = 41;
+----
+n
+1
+
+
+statement ok
+INSERT INTO rcon_multi VALUES (60, 'f@x', 6);
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'UPDATE rcon_multi SET email = ''f@x'', code = 6 WHERE id = 50');
+
+
+query ok retry 240 backoff 250ms
+SELECT confl_multiple_unique_conflicts >= 2 AS conflicted, confl_update_exists AS single FROM pg_stat_subscription_stats WHERE subname = 'rcon_sub';
+----
+conflicted	single
+t	0
+
+
+statement ok
+DELETE FROM rcon_multi WHERE id = 60;
+
+
+query ok retry 240 backoff 250ms
+SELECT id, email, code FROM rcon_multi ORDER BY id;
+----
+id	email	code
+20	a@x	2
+41	d@x	10
+50	f@x	6
+
+
+statement ok
+DROP ROLE IF EXISTS rcon_plain;
+
+
+statement ok
+CREATE ROLE rcon_plain LOGIN PASSWORD 'rcon_pw';
+
+
+connection plain user=rcon_plain password=rcon_pw
+statement error
+SELECT pg_stat_reset_subscription_stats(NULL);
+----
+db error: ERROR: permission denied for function pg_stat_reset_subscription_stats
+
+
+connection default
+statement ok
+SELECT pg_stat_reset_subscription_stats(oid) FROM pg_subscription WHERE subname = 'rcon_sub';
+
+
+query
+SELECT apply_error_count, confl_insert_exists, confl_multiple_unique_conflicts, stats_reset IS NOT NULL AS reset FROM pg_stat_subscription_stats WHERE subname = 'rcon_sub';
+----
+apply_error_count	confl_insert_exists	confl_multiple_unique_conflicts	reset
+0	0	0	t
+
+
+query
+SELECT s.apply_error_count, s.stats_reset IS NOT NULL AS reset FROM pg_subscription p, pg_stat_get_subscription_stats(p.oid) s WHERE p.subname = 'rcon_sub';
+----
+apply_error_count	reset
+0	t
+
+
+statement ok
+SELECT pg_stat_reset_subscription_stats(NULL);
+
+
+statement ok
+DROP SUBSCRIPTION rcon_sub;
+
+
+statement ok
+DROP ROLE rcon_plain;
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rcon_pub; DROP TABLE rcon_multi; END $$');
+
+
+statement ok
+DETACH rcon_${__DATABASE__};

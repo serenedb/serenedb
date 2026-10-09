@@ -20,15 +20,22 @@
 
 #include "replication/repl_source.h"
 
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
+#include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/comparison_expression.hpp>
 #include <duckdb/parser/expression/conjunction_expression.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/star_expression.hpp>
+#include <duckdb/parser/expression/subquery_expression.hpp>
 #include <duckdb/parser/parsed_data/copy_info.hpp>
 #include <duckdb/parser/query_node/select_node.hpp>
 #include <duckdb/parser/query_node/update_query_node.hpp>
@@ -38,6 +45,7 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <duckdb/parser/statement/update_statement.hpp>
 #include <duckdb/parser/tableref/basetableref.hpp>
+#include <duckdb/parser/tableref/column_data_ref.hpp>
 #include <duckdb/parser/tableref/joinref.hpp>
 #include <duckdb/parser/tableref/subqueryref.hpp>
 #include <duckdb/parser/tableref/table_function_ref.hpp>
@@ -444,6 +452,9 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
     ++row;
   }
   output.SetChildCardinality(row);
+  if (g.batch->retained != nullptr && row != 0) {
+    g.batch->retained->Append(output);
+  }
 }
 
 }  // namespace
@@ -558,6 +569,95 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildReplStatement(
     return BuildDelete(schema, table, key_names, full);
   }
   return BuildUpdate(schema, table, key_names, col_names, full);
+}
+
+duckdb::unique_ptr<duckdb::SQLStatement> BuildUniqueConflictProbe(
+  const ReplBatch& batch, duckdb::ColumnDataCollection& rows) {
+  const auto& relation = *batch.rel;
+  const size_t nkeys = batch.keys.size();
+  const auto source = [&](size_t column) -> std::optional<std::string> {
+    const auto it = std::ranges::find(batch.cols, column);
+    if (it == batch.cols.end()) {
+      return std::nullopt;
+    }
+    return absl::StrCat("c", nkeys + (it - batch.cols.begin()));
+  };
+  duckdb::vector<duckdb::Identifier> names;
+  for (size_t i = 0; i < nkeys + batch.cols.size(); ++i) {
+    names.emplace_back(absl::StrCat("c", i));
+  }
+
+  duckdb::unique_ptr<duckdb::ParsedExpression> count;
+  for (const auto& unique : relation.unique_keys) {
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> terms;
+    for (const auto column : unique) {
+      auto from = source(column);
+      if (!from) {
+        terms.clear();
+        break;
+      }
+      terms.push_back(duckdb::make_uniq<duckdb::ComparisonExpression>(
+        duckdb::ExpressionType::COMPARE_EQUAL,
+        Column(relation.columns[column].name, "tgt"), Column(*from, "src")));
+    }
+    if (terms.empty()) {
+      continue;
+    }
+    if (batch.op == 'U') {
+      duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> self;
+      for (size_t i = 0; i < nkeys; ++i) {
+        self.push_back(duckdb::make_uniq<duckdb::ComparisonExpression>(
+          duckdb::ExpressionType::COMPARE_DISTINCT_FROM,
+          Column(relation.columns[batch.keys[i]].name, "tgt"),
+          Column(absl::StrCat("c", i), "src")));
+      }
+      terms.push_back(duckdb::make_uniq<duckdb::ConjunctionExpression>(
+        duckdb::ExpressionType::CONJUNCTION_OR, std::move(self)));
+    }
+    auto probe = duckdb::make_uniq<duckdb::SelectNode>();
+    probe->select_list.push_back(duckdb::make_uniq<duckdb::ConstantExpression>(
+      duckdb::Literal::Integer(1)));
+    probe->from_table = TargetTable(relation.schema, relation.table);
+    probe->where_clause =
+      terms.size() == 1
+        ? std::move(terms.front())
+        : duckdb::make_uniq<duckdb::ConjunctionExpression>(
+            duckdb::ExpressionType::CONJUNCTION_AND, std::move(terms));
+    auto exists = duckdb::make_uniq<duckdb::SubqueryExpression>();
+    exists->GetSubqueryTypeMutable() = duckdb::SubqueryType::EXISTS;
+    exists->SubqueryMutable() = duckdb::make_uniq<duckdb::SelectStatement>();
+    exists->SubqueryMutable()->node = std::move(probe);
+    auto hit = duckdb::make_uniq<duckdb::CastExpression>(
+      duckdb::LogicalType::INTEGER, std::move(exists));
+    if (!count) {
+      count = std::move(hit);
+      continue;
+    }
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> sum;
+    sum.push_back(std::move(count));
+    sum.push_back(std::move(hit));
+    count = duckdb::make_uniq<duckdb::FunctionExpression>(
+      duckdb::Identifier{"+"}, std::move(sum), nullptr, nullptr, false, true);
+  }
+  if (!count) {
+    return nullptr;
+  }
+
+  auto ref = duckdb::make_uniq<duckdb::ColumnDataRef>(
+    duckdb::optionally_owned_ptr<duckdb::ColumnDataCollection>(rows),
+    std::move(names));
+  ref->alias = "src";
+  auto select = duckdb::make_uniq<duckdb::SelectNode>();
+  select->select_list.push_back(duckdb::make_uniq<duckdb::FunctionExpression>(
+    duckdb::Identifier{"count_star"},
+    duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>{}));
+  select->from_table = std::move(ref);
+  select->where_clause = duckdb::make_uniq<duckdb::ComparisonExpression>(
+    duckdb::ExpressionType::COMPARE_GREATERTHAN, std::move(count),
+    duckdb::make_uniq<duckdb::ConstantExpression>(duckdb::Literal::Integer(1)));
+  auto stmt = duckdb::make_uniq<duckdb::SelectStatement>();
+  stmt->node = std::move(select);
+  return stmt;
 }
 
 duckdb::unique_ptr<duckdb::SQLStatement> BuildTruncate(

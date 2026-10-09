@@ -39,6 +39,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
 #include "auth/role_closure.h"
@@ -169,32 +170,36 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
   auto every = schedule.interval.GetValue<duckdb::interval_t>();
   auto shift = schedule.offset.GetValue<duckdb::interval_t>();
   if (IsNegative(every) || every == duckdb::interval_t()) {
-    throw duckdb::InvalidInputException(
-      "job schedule interval must be positive, got %s",
-      schedule.interval.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("job schedule interval must be positive, got ",
+                            schedule.interval.ToString()));
   }
   if (IsNegative(shift)) {
-    throw duckdb::InvalidInputException(
-      "job schedule offset must not be negative, got %s",
-      schedule.offset.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("job schedule offset must not be negative, got ",
+                            schedule.offset.ToString()));
   }
   if (every.months != 0) {
     if (schedule.kind == duckdb::JobScheduleKind::EVERY &&
         (every.days != 0 || every.micros != 0)) {
-      throw duckdb::InvalidInputException(
-        "EVERY interval cannot mix months with days or time, got %s",
-        schedule.interval.ToString());
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("EVERY interval cannot mix months with days or time, got ",
+                schedule.interval.ToString()));
     }
     if (shift.months >= every.months) {
-      throw duckdb::InvalidInputException(
-        "job schedule offset %s must be shorter than the interval %s",
-        schedule.offset.ToString(), schedule.interval.ToString());
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("job schedule offset ", schedule.offset.ToString(),
+                " must be shorter than the interval ",
+                schedule.interval.ToString()));
     }
   } else if (shift.months != 0 || duckdb::Interval::GetMicro(shift) >=
                                     duckdb::Interval::GetMicro(every)) {
-    throw duckdb::InvalidInputException(
-      "job schedule offset %s must be shorter than the interval %s",
-      schedule.offset.ToString(), schedule.interval.ToString());
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("job schedule offset ", schedule.offset.ToString(),
+                            " must be shorter than the interval ",
+                            schedule.interval.ToString()));
   }
   NextRun(schedule, duckdb::Timestamp::GetCurrentTimestamp());
 }
@@ -265,8 +270,10 @@ void JobScheduler::Execute(duckdb::ClientContext& caller,
   {
     absl::MutexLock lock{&state->mutex};
     if (state->status.running > 0 && !state->status.schedule.concurrent) {
-      throw duckdb::InvalidInputException("Job %s is already running",
-                                          definition.name);
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("Job ", duckdb::SQLQuotedIdentifier::ToString(definition.name),
+                " is already running"));
     }
     ++state->status.running;
     _runs.Add();

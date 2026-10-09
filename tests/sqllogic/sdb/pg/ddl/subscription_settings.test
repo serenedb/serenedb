@@ -1,0 +1,106 @@
+query
+SELECT current_setting('wal_receiver_timeout') AS timeout, current_setting('wal_receiver_status_interval') AS status, current_setting('wal_retrieve_retry_interval') AS retry, current_setting('max_sync_workers_per_subscription') AS workers;
+----
+timeout	status	retry	workers
+1min	10s	5s	2
+
+
+skipif pg-wire-extended
+statement ok
+SET wal_receiver_timeout = '60000';
+
+
+skipif pg-wire-extended
+query
+SHOW wal_receiver_timeout;
+----
+wal_receiver_timeout
+1min
+
+
+skipif pg-wire-extended
+statement ok
+SET wal_receiver_status_interval = 10;
+
+
+skipif pg-wire-extended
+query
+SHOW wal_receiver_status_interval;
+----
+wal_receiver_status_interval
+10s
+
+
+skipif pg-wire-extended
+statement ok
+SET wal_retrieve_retry_interval = '5000ms';
+
+
+skipif pg-wire-extended
+query
+SHOW wal_retrieve_retry_interval;
+----
+wal_retrieve_retry_interval
+5s
+
+
+skipif pg-wire-extended
+statement error
+SET wal_receiver_timeout = 'soon';
+----
+db error: ERROR: invalid value for parameter "wal_receiver_timeout": "soon"
+HINT: Valid units for this parameter are "us", "ms", "s", "min", "h", and "d".
+
+
+skipif pg-wire-extended
+statement error
+SET wal_receiver_status_interval = '1 fortnight';
+----
+db error: ERROR: invalid value for parameter "wal_receiver_status_interval": "1 fortnight"
+HINT: Valid units for this parameter are "us", "ms", "s", "min", "h", and "d".
+
+
+skipif pg-wire-extended
+statement ok
+RESET wal_receiver_timeout;
+
+
+skipif pg-wire-extended
+statement ok
+RESET wal_receiver_status_interval;
+
+
+skipif pg-wire-extended
+statement ok
+RESET wal_retrieve_retry_interval;
+
+
+statement ok
+DROP ROLE IF EXISTS subset_plain;
+
+
+statement ok
+CREATE ROLE subset_plain LOGIN PASSWORD 'subset_pw';
+
+
+connection plain user=subset_plain password=subset_pw
+skipif pg-wire-extended
+statement error
+SET wal_receiver_timeout = '30s';
+----
+db error: ERROR: permission denied to set parameter "wal_receiver_timeout"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide replication settings.
+
+
+connection plain user=subset_plain password=subset_pw
+skipif pg-wire-extended
+statement error
+SET max_sync_workers_per_subscription = 4;
+----
+db error: ERROR: permission denied to set parameter "max_sync_workers_per_subscription"
+DETAIL: Only roles with the SUPERUSER attribute may change server-wide replication settings.
+
+
+connection default
+statement ok
+DROP ROLE subset_plain;

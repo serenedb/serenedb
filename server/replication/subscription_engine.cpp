@@ -37,11 +37,11 @@
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/io_context.h"
+#include "replication/settings.h"
 
 namespace sdb::replication {
 namespace {
 
-constexpr auto kRetryInterval = std::chrono::seconds{5};
 constexpr auto kTransientRetry = std::chrono::milliseconds{50};
 
 bool SameConfig(ReplicationTarget running, const ReplicationTarget& target) {
@@ -377,7 +377,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       }
     }
     bool restart = false;
-    std::chrono::milliseconds delay = kRetryInterval;
+    std::chrono::milliseconds delay{WalRetrieveRetryIntervalMillis()};
     {
       absl::MutexLock lock{&_mu};
       auto it = _subs.find(subscription);

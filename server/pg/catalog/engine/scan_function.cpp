@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <duckdb/function/partition_stats.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/node_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
@@ -105,9 +106,12 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableStatistics(
 }
 
 bool SystemTablePushdownExpression(duckdb::ClientContext&,
-                                   const duckdb::LogicalGet&,
+                                   const duckdb::LogicalGet& get,
                                    duckdb::Expression& expr) {
-  return pg::RangeOf(expr).has_value() || pg::BooleanOf(expr).has_value();
+  const auto& visibility =
+    get.bind_data->Cast<SystemTableBindData>().entry->Table().Visibility();
+  return pg::RangeOf(expr).has_value() || pg::BooleanOf(expr).has_value() ||
+         (visibility && pg::IsVisibility(expr, *visibility));
 }
 
 duckdb::vector<duckdb::PartitionStatistics> SystemTablePartitionStats(

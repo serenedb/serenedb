@@ -205,18 +205,6 @@ bool RelationIn(const Session& session, const SessionSchema& schema,
                         });
 }
 
-bool RelationVisible(const Session& session, std::string_view schema,
-                     std::string_view name) {
-  const auto at = absl::c_find_if(
-    session.search_path,
-    [&](const SessionSchema& path) { return path.name == schema; });
-  return at != session.search_path.end() &&
-         std::none_of(session.search_path.begin(), at,
-                      [&](const SessionSchema& path) {
-                        return RelationIn(session, path, name);
-                      });
-}
-
 bool IsWordStart(char c) {
   return absl::ascii_isalpha(c) || c == '_' ||
          static_cast<unsigned char>(c) >= 0x80;
@@ -1820,6 +1808,18 @@ std::optional<int32_t> RegTypmodIn(const Session& session,
     return std::nullopt;
   }
   return type->typmod;
+}
+
+bool RelationVisible(const Session& session, std::string_view schema,
+                     std::string_view name) {
+  const auto at = absl::c_find_if(
+    session.search_path,
+    [&](const SessionSchema& path) { return path.name == schema; });
+  return at != session.search_path.end() &&
+         std::none_of(session.search_path.begin(), at,
+                      [&](const SessionSchema& path) {
+                        return RelationIn(session, path, name);
+                      });
 }
 
 std::string RelationName(const Session& session, std::string_view schema,

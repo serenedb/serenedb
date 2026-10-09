@@ -444,6 +444,35 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
+std::shared_ptr<const CatalogSnapshot> SereneDBCatalog::Snapshot(
+  duckdb::ClientContext& context, duckdb::CatalogSet& set) {
+  const auto version = GetCatalogVersion(context).GetIndex();
+  if (version >= duckdb::TRANSACTION_ID_START) {
+    return nullptr;
+  }
+  {
+    absl::ReaderMutexLock lock{&_snapshots_mutex};
+    if (_snapshots_version == version) {
+      if (const auto it = _snapshots.find(&set); it != _snapshots.end()) {
+        return it->second;
+      }
+    }
+  }
+  auto snapshot = std::make_shared<CatalogSnapshot>();
+  set.Scan(GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
+    snapshot->entries.emplace_back(&entry);
+  });
+  absl::MutexLock lock{&_snapshots_mutex};
+  if (_snapshots_version > version) {
+    return snapshot;
+  }
+  if (_snapshots_version < version) {
+    _snapshots.clear();
+    _snapshots_version = version;
+  }
+  return _snapshots.try_emplace(&set, std::move(snapshot)).first->second;
+}
+
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   if (_detached.load(std::memory_order_acquire)) {
     return nullptr;

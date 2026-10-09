@@ -20,15 +20,19 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
@@ -51,6 +55,10 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::Catalog& catalog,
                      duckdb::DatabaseModificationType type =
                        duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
+
+struct CatalogSnapshot {
+  std::vector<duckdb::CatalogEntry*> entries;
+};
 
 class SereneDBCatalog final : public duckdb::DuckCatalog {
  public:
@@ -132,6 +140,9 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return entry ? &entry->template Cast<T>() : nullptr;
   }
 
+  std::shared_ptr<const CatalogSnapshot> Snapshot(
+    duckdb::ClientContext& context, duckdb::CatalogSet& set);
+
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,
@@ -191,6 +202,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
   std::atomic_bool _detached{false};
+  absl::Mutex _snapshots_mutex;
+  duckdb::idx_t _snapshots_version = 0;
+  irs::containers::FlatHashMap<const duckdb::CatalogSet*,
+                               std::shared_ptr<const CatalogSnapshot>>
+    _snapshots;
 };
 
 }  // namespace sdb::catalog

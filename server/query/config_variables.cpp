@@ -280,6 +280,26 @@ void SetServerCount(duckdb::ClientContext& ctx, duckdb::SetScope,
                    "server-wide replication settings.");
 }
 
+void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
+                        duckdb::Value& value) {
+  auto* conn = connector::GetSereneDBContextPtr(ctx);
+  if (conn && !auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG(
+        "permission denied to set parameter \"session_replication_role\""));
+  }
+  const auto role = absl::AsciiStrToLower(value.ToString());
+  if (role != "origin" && role != "replica" && role != "local") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter "
+                            "\"session_replication_role\": \"",
+                            value.ToString(), "\""),
+                    ERR_HINT("Available values: origin, replica, local."));
+  }
+  value = duckdb::Value{role};
+}
+
 void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
   duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
     ctx,
@@ -1270,6 +1290,15 @@ constexpr std::pair<std::string_view, VariableDescription>
         SetServerCount<"max_sync_workers_per_subscription">,
         nullptr,
         duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "session_replication_role",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the session's behavior for triggers and rewrite rules.",
+        [] { return duckdb::Value{"origin"}; },
+        SetReplicationRole,
       },
     },
     {

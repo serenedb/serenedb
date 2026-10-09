@@ -100,6 +100,20 @@ std::vector<int16_t> UpdateOfAttnums(const duckdb::TriggerCatalogEntry& trigger,
   return attrs;
 }
 
+PgTrigger::Tgenabled Tgenabled(duckdb::TriggerFiring firing) {
+  switch (firing) {
+    case duckdb::TriggerFiring::ORIGIN:
+      return PgTrigger::Tgenabled::Origin;
+    case duckdb::TriggerFiring::DISABLED:
+      return PgTrigger::Tgenabled::Disabled;
+    case duckdb::TriggerFiring::REPLICA:
+      return PgTrigger::Tgenabled::Replica;
+    case duckdb::TriggerFiring::ALWAYS:
+      return PgTrigger::Tgenabled::Always;
+  }
+  return PgTrigger::Tgenabled::Origin;
+}
+
 }  // namespace
 
 template<>
@@ -132,7 +146,7 @@ MaterializedData SystemTableSnapshot<PgTrigger>::GetTableData() {
             // no function to name.
             .tgfoid = 0,
             .tgtype = TriggerType(trigger),
-            .tgenabled = PgTrigger::Tgenabled::Origin,
+            .tgenabled = Tgenabled(trigger.firing),
             .tgisinternal = false,
             .tgconstrrelid = 0,
             .tgconstrindid = 0,

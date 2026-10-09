@@ -100,4 +100,4 @@ def generate(gen):
     stale = sorted(set(os.listdir(OVERRIDES_DIR)) - used)
     if stale:
         raise SystemExit(f'overrides for views PostgreSQL does not have: {stale}')
-    gen.write('views/system_views.gen.inc', out)
+    gen.write('system_views.gen.inc', out)

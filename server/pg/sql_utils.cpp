@@ -44,7 +44,7 @@ namespace sdb::pg {
 namespace {
 
 constexpr std::string_view kQuotedKeywords[] = {
-#include "pg/catalog/functions/keywords.gen.inc"
+#include "pg/catalog/generated/keywords.gen.inc"
 };
 
 bool ReservedKeyword(std::string_view ident) {

@@ -78,7 +78,7 @@ Steps 3 and 4 run every time `serened` is linked, which includes every change to
 
 ### PostgreSQL catalog code
 
-Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: built-in types and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL, default and lookup key), `pg_catalog` and `information_schema` view definitions, the rows of the `information_schema.sql_*` tables, setting descriptions for `pg_settings`, the keyword list `quote_ident` uses, and the signatures of stub set-returning functions. The output is `server/pg/catalog/**/*.gen.inc`.
+Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: built-in types and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL, default and lookup key), `pg_catalog` and `information_schema` view definitions, the rows of the `information_schema.sql_*` tables, setting descriptions for `pg_settings`, the keyword list `quote_ident` uses, and the signatures of stub set-returning functions. The output is `server/pg/catalog/generated/*.gen.inc`, and nothing else lives in that directory.
 
 `scripts/generate_pg_catalog.py` reads a running PostgreSQL and its source tree of the same version:
 

@@ -1,6 +1,6 @@
 # Driver-test type matrix. Source of truth for which PG types every driver
 # harness must round-trip and in which formats. Reconciled against
-# server/pg/catalog/builtin/type_oids.gen.inc (`enum PgTypeOID`) by gen/oids_from_pg_types.py (CI gate).
+# server/pg/catalog/generated/builtin_type_oids.gen.inc (`enum PgTypeOID`) by gen/oids_from_pg_types.py (CI gate).
 #
 # Schema:
 #   oid:            postgres OID (must match pg_types.h)

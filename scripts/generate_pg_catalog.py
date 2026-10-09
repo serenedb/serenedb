@@ -17,7 +17,7 @@ hand. Two inputs, both of the same PostgreSQL version:
 SereneDB's own choices live in scripts/pg_catalog/config.py (which views are
 native tables, which settings are exposed) and in
 server/pg/catalog/views/overrides/<schema>.<view>.sql (view bodies SereneDB
-rewrites). Every output is server/pg/catalog/**/*.gen.inc.
+rewrites). Every output is server/pg/catalog/generated/*.gen.inc.
 """
 
 import argparse

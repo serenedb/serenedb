@@ -51,4 +51,4 @@ def generate(gen):
                    f'  BEGIN ATOMIC\n'
                    f'    SELECT {nulls} WHERE false;\n'
                    f'  END;)"}},')
-    gen.write('functions/stubs.gen.inc', out)
+    gen.write('function_stubs.gen.inc', out)

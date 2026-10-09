@@ -45,7 +45,7 @@ inline constexpr duckdb::idx_t kPublicGrantee = 0;
 inline constexpr duckdb::idx_t kMinSystem = 16384;
 inline constexpr duckdb::idx_t kMaxSystem = 65536;
 
-#include "pg/catalog/oids.gen.inc"
+#include "pg/catalog/generated/catalog_oids.gen.inc"
 
 inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
 

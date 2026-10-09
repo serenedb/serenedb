@@ -23,6 +23,6 @@
 
 namespace sdb::pg {
 
-#include "pg/catalog/tables/information_schema/data.gen.inc"
+#include "pg/catalog/generated/information_schema_tables.gen.inc"
 
 }  // namespace sdb::pg

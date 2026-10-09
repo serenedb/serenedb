@@ -31,7 +31,7 @@ namespace sdb::pg {
 namespace {
 
 constexpr BuiltinType kPgTypes[] = {
-#include "pg/catalog/builtin/types.gen.inc"
+#include "pg/catalog/generated/builtin_types.gen.inc"
 };
 
 constexpr BuiltinType SdbType(int32_t oid, std::string_view name,
@@ -79,11 +79,11 @@ constexpr auto kTypes = [] {
 }();
 
 constexpr BuiltinProc kProcs[] = {
-#include "pg/catalog/builtin/procs.gen.inc"
+#include "pg/catalog/generated/builtin_procs.gen.inc"
 };
 
 constexpr BuiltinCollation kCollations[] = {
-#include "pg/catalog/builtin/collations.gen.inc"
+#include "pg/catalog/generated/builtin_collations.gen.inc"
 };
 
 constexpr auto kByOid = [](const auto& lhs, const auto& rhs) {

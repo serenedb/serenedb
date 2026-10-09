@@ -44,7 +44,7 @@ inline constexpr int64_t kGapUs = kGapMs * 1000;
 inline constexpr int64_t kGapNs = kGapUs * 1000;
 
 enum PgTypeOID : int32_t {
-#include "pg/catalog/builtin/type_oids.gen.inc"
+#include "pg/catalog/generated/builtin_type_oids.gen.inc"
   kVariant = kMinSystem + 100,
   kVariantArray = kMinSystem + 101,
   kTsquery = kMinSystem + 102,

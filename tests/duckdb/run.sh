@@ -609,7 +609,6 @@ run_unittest() {
 [[ -n "$serial_spec" ]] && run_unittest "$serial_spec"
 if [[ " $SUITES " == *" iceberg "* ]]; then
 	run_unittest --order lex --test-config "$ICEBERG_DIR/test/configs/fixture.json" \
-		--test-config "$SCRIPT_DIR/config/iceberg_catalog.json" \
 		"$ICEBERG_DIR/test/sql/local/catalog_test_config_setup/*"
 	http_proxy_public="${HTTP_PROXY_PUBLIC-}"
 	unset HTTP_PROXY_PUBLIC

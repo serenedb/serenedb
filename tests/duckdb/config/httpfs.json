@@ -12,12 +12,6 @@
       "paths": [
         "test/sql/curl_client/test_load_other_extensions.test"
       ]
-    },
-    {
-      "reason": "Expects the TPC-H data of a newer DuckDB than the vendored core: its count(DISTINCT l_comment) of the sf1 lineitem is 3610733, what upstream main's dbgen generates (upstream main's own distinct_grouping_tpch.test_slow expects the same), while the vendored core's dbgen generates 4580667 (its distinct_grouping_tpch.test_slow). Revisit on the next DuckDB update.",
-      "paths": [
-        "test/sql/attach/attach_s3_tpch.test_slow"
-      ]
     }
   ]
 }

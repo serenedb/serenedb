@@ -164,6 +164,7 @@ class PgReplicationClient final : public PublisherSession {
   void SendFeedback(bool reply);
 
   yaclib::Future<> ReplicationMain();
+  yaclib::Task<> ReplicationLoop();
   bool SetupApplyConnection();
   void ApplyFailed(irs::pg::SqlErrorData error);
   yaclib::Task<bool> RunDuckJob(Job job);

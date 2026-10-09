@@ -31,7 +31,6 @@
 #include <duckdb/catalog/catalog_set.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
-#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/scalar/regexp.hpp>
@@ -47,7 +46,6 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/system_compiler.hpp>
 #include <ranges>
 #include <utf8proc_wrapper.hpp>
 
@@ -137,7 +135,7 @@ std::optional<T> Constant(const duckdb::Expression& expr) {
 }
 
 std::string_view ScanPrefix(const SystemCondition<std::string>& condition) {
-  if (condition.keys || !condition.lower || !condition.upper) {
+  if (!condition.lower || !condition.upper) {
     return {};
   }
   const std::string_view lower = condition.lower->value;
@@ -516,8 +514,9 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
   } else {
     absl::c_iota(_places, uint32_t{0});
   }
-  const auto width = static_cast<uint32_t>(absl::c_count_if(
-    _places, [](uint32_t place) { return place != kNowhere; }));
+  const auto width = static_cast<uint32_t>(input.CanRemoveFilterColumns()
+                                             ? input.projection_ids.size()
+                                             : _column_ids.size());
   duckdb::vector<duckdb::LogicalType> side;
   if (input.filters) {
     for (const auto& entry : *input.filters) {
@@ -615,19 +614,18 @@ bool SystemScan::Compile(duckdb::column_t column,
     return true;
   }
   const auto& fallback = _table.Default(column).value;
-  SystemFilter compiled{
-    .column = static_cast<uint32_t>(column), .numbers = {}, .texts = {}};
+  SystemFilter compiled;
   bool exact = false;
   bool passes = false;
   if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
     exact = Capture(expr, compiled.texts);
     Seal(compiled.texts);
     if (_table.Sql().columns[column].type == kChar) {
-      for (uint32_t c = 0; c < 256; ++c) {
+      compiled.chars[0] = compiled.texts.Passes(std::string_view{});
+      for (uint32_t c = 1; c < 256; ++c) {
         const auto ch = static_cast<char>(c);
         compiled.chars[c] = compiled.texts.Passes(std::string_view{&ch, 1});
       }
-      compiled.chars[256] = compiled.texts.Passes(std::string_view{});
     }
     passes = !fallback.IsNull() && compiled.texts.Passes(std::string_view{
                                      duckdb::StringValue::Get(fallback)});
@@ -776,7 +774,7 @@ std::string_view SystemScan::NamePrefix(
   return {};
 }
 
-SystemMembers SystemScan::Resolve(const CatalogSource& source) const {
+SystemMembers SystemScan::Resolve(const CatalogSource& source) {
   using enum duckdb::CatalogType;
   std::vector<duckdb::CatalogType> types{source.types.begin(),
                                          source.types.end()};
@@ -837,19 +835,6 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) const {
     if (!scoped) {
       schemas = Schemas(source.schemas);
     }
-    if (const auto text = NamePrefix(source.indexes);
-        !text.empty() &&
-        !(text.starts_with('_') && absl::c_linear_search(types, TYPE_ENTRY))) {
-      const duckdb::Identifier prefix{std::string{text}};
-      for (auto* schema : schemas) {
-        if (absl::c_linear_search(types, SCHEMA_ENTRY)) {
-          entries.emplace_back(schema);
-        }
-        AppendMembers(*schema, types, prefix, entries);
-      }
-      schemas.clear();
-      return members;
-    }
     for (const auto type : types) {
       members.wanted.set(std::to_underlying(type));
     }
@@ -864,10 +849,24 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) const {
         }
       }
     }
+    if (const auto text = NamePrefix(source.indexes);
+        !text.empty() &&
+        !(text.starts_with('_') &&
+          members.wanted.test(std::to_underlying(TYPE_ENTRY)))) {
+      const duckdb::Identifier prefix{std::string{text}};
+      for (auto* schema : schemas) {
+        if (members.wanted.test(std::to_underlying(SCHEMA_ENTRY))) {
+          entries.emplace_back(schema);
+        }
+        AppendMembers(*schema, prefix, members);
+      }
+      schemas.clear();
+      return members;
+    }
     _indexed_complete =
       _collect_indexed && members.wanted.test(std::to_underlying(INDEX_ENTRY));
-    _triggered_complete = _collect_triggered;
-    const bool tables = members.wanted.test(std::to_underlying(TABLE_ENTRY));
+    _triggered_complete = _collect_triggered &&
+                          members.wanted.test(std::to_underlying(TABLE_ENTRY));
     for (auto* schema : schemas) {
       if (_indexed_complete) {
         auto indexes = MemberSet(*schema, INDEX_ENTRY);
@@ -881,7 +880,7 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) const {
           _indexed.emplace_back(std::move(indexes.snapshot));
         }
       }
-      if (_triggered_complete && tables) {
+      if (_triggered_complete) {
         const auto relations = MemberSet(*schema, TABLE_ENTRY);
         std::call_once(relations.snapshot->triggers_once, [&] {
           for (auto* entry : relations.entries) {
@@ -943,8 +942,8 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) const {
 SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
                                 duckdb::CatalogType type) const {
   auto& set = schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type);
-  auto* serene = dynamic_cast<catalog::SereneDBCatalog*>(&_database);
-  auto snapshot = serene ? serene->Snapshot(_context, set) : nullptr;
+  auto snapshot =
+    _database.Cast<catalog::SereneDBCatalog>().Snapshot(_context, set);
   if (!snapshot) {
     auto scanned = std::make_shared<catalog::CatalogSnapshot>();
     set.Scan(Transaction(), [&](duckdb::CatalogEntry& entry) {
@@ -1050,31 +1049,25 @@ std::vector<duckdb::SchemaCatalogEntry*> SystemScan::Schemas(
   return schemas;
 }
 
-void SystemScan::AppendMembers(
-  duckdb::SchemaCatalogEntry& schema,
-  std::span<const duckdb::CatalogType> types, const duckdb::Identifier& prefix,
-  std::vector<duckdb::CatalogEntry*>& entries) const {
+void SystemScan::AppendMembers(duckdb::SchemaCatalogEntry& schema,
+                               const duckdb::Identifier& prefix,
+                               SystemMembers& members) const {
   using enum duckdb::CatalogType;
   auto& sets = schema.Cast<duckdb::DuckSchemaEntry>();
-  const auto* keyed = absl::c_linear_search(types, INDEX_ENTRY)
+  const auto* keyed = members.wanted.test(std::to_underlying(INDEX_ENTRY))
                         ? &sets.GetCatalogSet(TABLE_ENTRY)
                         : nullptr;
   const auto append = [&](duckdb::CatalogEntry& entry) {
-    if (absl::c_linear_search(types, entry.type) &&
+    if (members.wanted.test(std::to_underlying(entry.type)) &&
         (!entry.internal || schema.internal)) {
-      entries.emplace_back(&entry);
+      members.entries.emplace_back(&entry);
     }
   };
-  absl::InlinedVector<const duckdb::CatalogSet*, 4> scanned;
-  for (const auto type : types | kMemberTypes) {
+  for (const auto type : members.sets) {
     auto& set = sets.GetCatalogSet(type);
-    if (absl::c_linear_search(scanned, &set)) {
-      continue;
-    }
-    scanned.emplace_back(&set);
     if (&set == keyed) {
-      const auto members = MemberSet(schema, type);
-      for (auto* entry : members.entries) {
+      const auto walked = MemberSet(schema, type);
+      for (auto* entry : walked.entries) {
         append(*entry);
       }
     } else {

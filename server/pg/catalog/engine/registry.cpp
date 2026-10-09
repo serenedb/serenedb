@@ -44,93 +44,17 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/views/system_views.h"
 #include "pg/types.h"
+#include "server/utils/build.h"
 
 namespace sdb::pg {
 
-extern SystemTable gInfoColumns;
-extern SystemTable gInfoSqlFeatures;
-extern SystemTable gInfoSqlImplementationInfo;
-extern SystemTable gInfoSqlParts;
-extern SystemTable gInfoSqlSizing;
-extern SystemTable gPgAggregate;
-extern SystemTable gPgAm;
-extern SystemTable gPgAttrdef;
-extern SystemTable gPgAttribute;
-extern SystemTable gPgAuthMembers;
-extern SystemTable gPgAuthid;
-extern SystemTable gPgClass;
-extern SystemTable gPgCollation;
-extern SystemTable gPgConstraint;
-extern SystemTable gPgDatabase;
-extern SystemTable gPgDbRoleSetting;
-extern SystemTable gPgDefaultAcl;
-extern SystemTable gPgDepend;
-extern SystemTable gPgDescription;
-extern SystemTable gPgEnum;
-extern SystemTable gPgForeignServer;
-extern SystemTable gPgHbaFileRules;
-extern SystemTable gPgIndex;
-extern SystemTable gPgLanguage;
-extern SystemTable gPgNamespace;
-extern SystemTable gPgOpclass;
-extern SystemTable gPgProc;
-extern SystemTable gPgRewrite;
-extern SystemTable gPgSequence;
-extern SystemTable gPgSettings;
-extern SystemTable gPgShdepend;
-extern SystemTable gPgTablespace;
-extern SystemTable gPgTrigger;
-extern SystemTable gPgTsDict;
-extern SystemTable gPgType;
-extern SystemTable gSdbMetrics;
-extern SystemTable gSdbProgress;
-extern SystemTable gSdbSettings;
+#include "pg/catalog/generated/information_schema_tables.gen.inc"
+#include "pg/catalog/generated/registry.gen.inc"
 
 namespace {
 
 std::vector<SystemTable*> gTables;
 std::deque<SystemTable> gEmptyTables;
-
-SystemTable* const kSystemTables[] = {
-  &gInfoColumns,
-  &gInfoSqlFeatures,
-  &gInfoSqlImplementationInfo,
-  &gInfoSqlParts,
-  &gInfoSqlSizing,
-  &gPgAggregate,
-  &gPgAm,
-  &gPgAttrdef,
-  &gPgAttribute,
-  &gPgAuthMembers,
-  &gPgAuthid,
-  &gPgClass,
-  &gPgCollation,
-  &gPgConstraint,
-  &gPgDatabase,
-  &gPgDbRoleSetting,
-  &gPgDefaultAcl,
-  &gPgDepend,
-  &gPgDescription,
-  &gPgEnum,
-  &gPgForeignServer,
-  &gPgHbaFileRules,
-  &gPgIndex,
-  &gPgLanguage,
-  &gPgNamespace,
-  &gPgOpclass,
-  &gPgProc,
-  &gPgRewrite,
-  &gPgSequence,
-  &gPgSettings,
-  &gPgShdepend,
-  &gPgTablespace,
-  &gPgTrigger,
-  &gPgTsDict,
-  &gPgType,
-  &gSdbMetrics,
-  &gSdbProgress,
-  &gSdbSettings,
-};
 
 constexpr duckdb::AclItem kOwnerAcl{
   .grantee = kRootUser,

@@ -92,7 +92,7 @@ What SereneDB decides on its own is kept apart from the generated output:
 
 - `scripts/pg_catalog/config.py` lists the views SereneDB implements natively as tables, SereneDB's own `sdb_*` tables, how each PostgreSQL column type is stored, the row estimates the planner sees, the settings it exposes, and the few PostgreSQL types it substitutes in stub functions.
 - `server/pg/catalog/views/overrides/<schema>.<view>.sql` holds a view body SereneDB rewrites; the generator uses it in place of PostgreSQL's.
-- `server/pg/catalog/tables/<schema>/<table>.cpp` produces the rows of one catalog table and sets SereneDB's constant column values, with `<schema>` one of `pg_catalog`, `information_schema` and `sdb`. A catalog without a file there exists with no rows.
+- `server/pg/catalog/tables/{pg_catalog,information_schema,sdb}/<table>.cpp` produces the rows of one catalog table and sets SereneDB's constant column values; `sdb/` holds SereneDB's own `sdb_*` tables, which live in `pg_catalog`. The generator registers every such file in `generated/registry.gen.inc` and stops on a file named after no catalog table. A catalog without a file exists with no rows.
 
 To move to a new PostgreSQL release, rerun the generator against that release and fix what no longer compiles. Column names are checked at compile time, and a debug build checks every column's storage type at startup.
 

@@ -1711,13 +1711,12 @@
                    c.oid AS coid, c.conname, c.contype, c.conindid,
                    c.confkey, c.confrelid,
                    ea.x AS ea_x, ea.n AS ea_n
-            FROM pg_namespace nr, pg_class r, pg_namespace nc,
-                 pg_constraint c,
+            FROM pg_namespace nr
+                 JOIN pg_class r ON nr.oid = r.relnamespace
+                 JOIN pg_constraint c ON r.oid = c.conrelid
+                 JOIN pg_namespace nc ON nc.oid = c.connamespace,
                  information_schema._pg_expandarray(c.conkey) AS ea
-            WHERE nr.oid = r.relnamespace
-                  AND r.oid = c.conrelid
-                  AND nc.oid = c.connamespace
-                  AND c.contype IN ('p', 'u', 'f')
+            WHERE c.contype IN ('p', 'u', 'f')
                   AND r.relkind IN ('r', 'p')
                   AND (NOT pg_is_other_temp_schema(nr.oid)) ) AS ss
       WHERE ss.roid = a.attrelid

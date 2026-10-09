@@ -32,11 +32,6 @@ namespace duckdb {
 struct CreateTableInfo;
 
 }  // namespace duckdb
-namespace sdb::pg {
-
-class SystemTable;
-
-}  // namespace sdb::pg
 namespace sdb::catalog {
 
 class SereneDBCatalog;
@@ -90,5 +85,7 @@ class SystemViewEntry final : public duckdb::ViewCatalogEntry {
 };
 
 void MountSystemSchemas(SereneDBCatalog& catalog);
+
+[[noreturn]] void RefuseSystemCatalog(const duckdb::CatalogEntry& relation);
 
 }  // namespace sdb::catalog

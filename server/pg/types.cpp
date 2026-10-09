@@ -207,8 +207,6 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   return it->second.GetValue<uint64_t>();
 }
 
-}  // namespace
-
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
   const auto id = type.id();
   const auto* builtin = AliasType(type);
@@ -249,8 +247,10 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
   return {static_cast<uint32_t>(builtin->array), -1, typmod};
 }
 
+}  // namespace
+
 PgTypeInfo WireType(const duckdb::LogicalType& type) {
-  auto info = Logical2Pg(type);
+  auto info = Logical2Pg(type, false);
   if (info.oid == kAclitem) {
     return {kText, -1, -1};
   }
@@ -259,16 +259,15 @@ PgTypeInfo WireType(const duckdb::LogicalType& type) {
   }
   if (const auto* domain = FindBuiltinType(info.oid);
       domain && domain->type == 'd') {
-    if (const auto* base = FindBuiltinType(domain->basetype)) {
-      info.oid = base->oid;
-      info.typlen = base->len;
-    }
+    const auto& base = *FindBuiltinType(domain->basetype);
+    info.oid = base.oid;
+    info.typlen = base.len;
   }
   return info;
 }
 
-uint32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
-  return Logical2Pg(type, in_array).oid;
+uint32_t Type2Oid(const duckdb::LogicalType& type) {
+  return Logical2Pg(type, false).oid;
 }
 
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
@@ -299,7 +298,7 @@ duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
   if (const auto* mapping = FindMapping(type.oid)) {
     return mapping->logical();
   }
-  if (type.category == 'A' && type.subscript != 0 && type.elem != 0) {
+  if (type.IsArray()) {
     if (const auto* element = FindBuiltinType(type.elem)) {
       auto child = BuiltinLogicalType(*element);
       if (child.id() != TypeId::INVALID) {
@@ -311,7 +310,7 @@ duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
 }
 
 ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
-  const auto info = Logical2Pg(type);
+  const auto info = Logical2Pg(type, false);
   int16_t ndims = 0;
   const auto* element = &type;
   while ((element->id() == TypeId::LIST || element->id() == TypeId::ARRAY) &&

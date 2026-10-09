@@ -94,6 +94,13 @@ static_assert(absl::c_is_sorted(kTypes, kByOid) &&
               absl::c_is_sorted(kProcs, kByOid) &&
               absl::c_is_sorted(kCollations, kByOid));
 
+static_assert(absl::c_all_of(kTypes, [](const BuiltinType& type) {
+  return type.type != 'd' ||
+         absl::c_any_of(kTypes, [&](const BuiltinType& base) {
+           return base.oid == type.basetype;
+         });
+}));
+
 const auto* FindByOid(const auto& rows, int64_t oid) {
   const auto it = absl::c_lower_bound(
     rows, oid, [](const auto& row, int64_t key) { return row.oid < key; });

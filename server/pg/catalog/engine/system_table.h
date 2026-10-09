@@ -615,6 +615,10 @@ class SystemScan {
     return ((_needed >> column) & 1) != 0;
   }
 
+  bool Reads(uint32_t column) const noexcept {
+    return (((_needed | _filtered) >> column) & 1) != 0;
+  }
+
  protected:
   void EmitChunk(const duckdb::DataChunk& source);
 
@@ -919,6 +923,11 @@ class SystemTableScan : public SystemScan {
   template<irs::utils::detail::FixedString Name>
   bool Needs() const noexcept {
     return SystemScan::Needs(Sql[std::string_view{Name}]);
+  }
+
+  template<irs::utils::detail::FixedString Name>
+  bool Reads() const noexcept {
+    return SystemScan::Reads(Sql[std::string_view{Name}]);
   }
 };
 

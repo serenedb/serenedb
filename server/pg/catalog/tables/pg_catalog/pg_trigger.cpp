@@ -19,127 +19,19 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <ranges>
 
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
-#include "pg/types.h"
 
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kTypeTypes[] = {duckdb::CatalogType::TYPE_ENTRY};
-constexpr duckdb::CatalogType kSequenceTypes[] = {
-  duckdb::CatalogType::SEQUENCE_ENTRY};
-constexpr duckdb::CatalogType kViewTypes[] = {duckdb::CatalogType::VIEW_ENTRY};
-
-constexpr SystemIndex kEnumIndexes[] = {
-  {kPgEnumSql["enumtypid"], SystemLookup::Object},
-};
-
-constexpr SystemIndex kSequenceIndexes[] = {
-  {kPgSequenceSql["seqrelid"], SystemLookup::Object},
-};
-
-constexpr SystemIndex kRewriteIndexes[] = {
-  {kPgRewriteSql["oid"], SystemLookup::Object},
-  {kPgRewriteSql["ev_class"], SystemLookup::Object},
-};
-
 constexpr SystemIndex kTriggerIndexes[] = {
   {kPgTriggerSql["oid"], SystemLookup::Object},
   {kPgTriggerSql["tgrelid"], SystemLookup::Object},
-};
-
-struct EnumLabel {
-  const duckdb::TypeCatalogEntry& entry;
-  duckdb::idx_t index;
-  duckdb::string_t label;
-};
-
-class PgEnum final : public SystemTableScan<kPgEnumSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    CatalogSource{kTypeTypes, SystemSchemas::Skip, kEnumIndexes}};
-
-  static constexpr auto kLabel = Shape<kSql, const EnumLabel>(
-    Col<"oid">(
-      [](const auto& row) { return row.entry.oid * 10000 + row.index + 1; }),
-    Col<"enumtypid">([](const auto& row) { return row.entry.oid; }),
-    Col<"enumsortorder">([](const auto& row) { return row.index + 1; }),
-    Col<"enumlabel">([](const auto& row) {
-      return std::string_view{row.label.GetData(), row.label.GetSize()};
-    }));
-
-  void Row(const duckdb::TypeCatalogEntry& entry) {
-    const auto& type = entry.user_type;
-    if (type.id() != duckdb::LogicalTypeId::ENUM) {
-      return;
-    }
-    const auto size = duckdb::EnumType::GetSize(type);
-    for (duckdb::idx_t i = 0; i < size; ++i) {
-      Emit<kLabel>({entry, i, duckdb::EnumType::GetString(type, i)});
-    }
-  }
-};
-
-struct Sequence {
-  const duckdb::SequenceCatalogEntry& entry;
-  mutable std::optional<duckdb::SequenceData> data;
-
-  const duckdb::SequenceData& Data() const {
-    if (!data) {
-      data.emplace(entry.GetData());
-    }
-    return *data;
-  }
-};
-
-class PgSequence final : public SystemTableScan<kPgSequenceSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    CatalogSource{kSequenceTypes, SystemSchemas::Skip, kSequenceIndexes}};
-
-  static constexpr auto kSequence = Shape<kSql, const Sequence>(
-    Col<"seqrelid">([](const auto& row) { return row.entry.oid; }),
-    Col<"seqtypid">([](const auto&) { return kInt8; }),
-    Col<"seqstart">([](const auto& row) { return row.Data().start_value; }),
-    Col<"seqincrement">([](const auto& row) { return row.Data().increment; }),
-    Col<"seqmax">([](const auto& row) { return row.Data().max_value; }),
-    Col<"seqmin">([](const auto& row) { return row.Data().min_value; }),
-    Col<"seqcache">([](const auto& row) { return row.Data().cache; }),
-    Col<"seqcycle">([](const auto& row) { return row.Data().cycle; }));
-
-  void Row(duckdb::SequenceCatalogEntry& sequence) {
-    if (!NumbersRows(sequence)) {
-      Emit<kSequence>({sequence, {}});
-    }
-  }
-};
-
-class PgRewrite final : public SystemTableScan<kPgRewriteSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    CatalogSource{kViewTypes, SystemSchemas::Skip, kRewriteIndexes}};
-
-  static constexpr auto kRule = Shape<kSql, const duckdb::ViewCatalogEntry>(
-    Col<"oid">(&duckdb::CatalogEntry::oid),
-    Col<"rulename">([](const auto&) { return std::string_view{"_RETURN"}; }),
-    Col<"ev_class">(&duckdb::CatalogEntry::oid),
-    Col<"ev_action">([](const auto& view) { return view.query->ToString(); }));
-
-  void Row(const duckdb::ViewCatalogEntry& view) { Emit<kRule>(view); }
 };
 
 int16_t TriggerType(const duckdb::TriggerCatalogEntry& trigger) {
@@ -237,12 +129,6 @@ class PgTrigger final : public SystemTableScan<kPgTriggerSql> {
 };
 
 }  // namespace
-
-SystemTable gPgEnum = SystemTableOf<PgEnum>();
-
-SystemTable gPgSequence = SystemTableOf<PgSequence>();
-
-SystemTable gPgRewrite = SystemTableOf<PgRewrite>();
 
 SystemTable gPgTrigger = SystemTableOf<PgTrigger>();
 

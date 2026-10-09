@@ -47,13 +47,6 @@ constexpr SystemIndex kProcIndexes[] = {
   {kPgProcSql["prokind"], SystemLookup::Kind, kProkinds},
 };
 
-using Builtins = SystemRows<BuiltinFunction, BuiltinFunctions>;
-
-Builtins LoadBuiltins(SystemScan& scan) {
-  auto functions = GetBuiltinFunctions(scan.Context());
-  return {functions->All(), std::move(functions)};
-}
-
 void FindNamed(const Builtins& rows, const SystemFilter& filter,
                std::vector<const BuiltinFunction*>& picked) {
   for (const auto& name : *filter.texts.keys) {
@@ -63,16 +56,9 @@ void FindNamed(const Builtins& rows, const SystemFilter& filter,
   }
 }
 
-constexpr auto kByOid =
-  SortedBy<BuiltinFunction, &BuiltinFunction::oid, BuiltinFunctions>;
-
 constexpr ArrayKey<BuiltinFunction, BuiltinFunctions> kBuiltinKeys[] = {
-  {kPgProcSql["oid"], kByOid},
+  {kPgProcSql["oid"], kBuiltinsByOid},
   {kPgProcSql["proname"], FindNamed},
-};
-
-constexpr ArrayKey<BuiltinFunction, BuiltinFunctions> kAggregateKeys[] = {
-  {kPgAggregateSql["aggfnoid"], kByOid},
 };
 
 bool ReturnsSet(const duckdb::MacroFunction& macro) {
@@ -171,29 +157,8 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
   }
 };
 
-class PgAggregate final : public SystemTableScan<kPgAggregateSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins,
-                                                   kAggregateKeys}};
-
-  static constexpr auto kAggregate = Shape<kSql, const BuiltinFunction>(
-    Col<"aggfnoid">(&BuiltinFunction::oid),
-    Col<"aggtranstype">([](const auto&) { return kInternal; }));
-
-  void Row(const BuiltinFunction& function) {
-    if (function.kind == 'a') {
-      Emit<kAggregate>(function);
-    }
-  }
-};
-
 }  // namespace
 
 SystemTable gPgProc = SystemTableOf<PgProc>();
-
-SystemTable gPgAggregate = SystemTableOf<PgAggregate>();
 
 }  // namespace sdb::pg

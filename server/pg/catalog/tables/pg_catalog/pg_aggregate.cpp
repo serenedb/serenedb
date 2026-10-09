@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 /// DISCLAIMER
 ///
-/// Copyright 2025 SereneDB GmbH, Berlin, Germany
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License");
 /// you may not use this file except in compliance with the License.
@@ -18,37 +18,38 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
-
-#include <optional>
-#include <ranges>
-#include <string_view>
-
 #include "pg/catalog/engine/builtin_functions.h"
-#include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/tables/tables.h"
 #include "pg/types.h"
 
 namespace sdb::pg {
+namespace {
 
-#include "pg/catalog/generated/tables.gen.inc"
+constexpr ArrayKey<BuiltinFunction, BuiltinFunctions> kAggregateKeys[] = {
+  {kPgAggregateSql["aggfnoid"], kBuiltinsByOid},
+};
 
-template<typename T>
-std::optional<T> NonEmpty(T value) {
-  if (std::ranges::empty(value)) {
-    return std::nullopt;
+class PgAggregate final : public SystemTableScan<kPgAggregateSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr std::tuple kSources{
+    ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins,
+                                                   kAggregateKeys}};
+
+  static constexpr auto kAggregate = Shape<kSql, const BuiltinFunction>(
+    Col<"aggfnoid">(&BuiltinFunction::oid),
+    Col<"aggtranstype">([](const auto&) { return kInternal; }));
+
+  void Row(const BuiltinFunction& function) {
+    if (function.kind == 'a') {
+      Emit<kAggregate>(function);
+    }
   }
-  return value;
-}
+};
 
-using Builtins = SystemRows<BuiltinFunction, BuiltinFunctions>;
+}  // namespace
 
-inline Builtins LoadBuiltins(SystemScan& scan) {
-  auto functions = GetBuiltinFunctions(scan.Context());
-  return {functions->All(), std::move(functions)};
-}
-
-inline constexpr auto kBuiltinsByOid =
-  SortedBy<BuiltinFunction, &BuiltinFunction::oid, BuiltinFunctions>;
+SystemTable gPgAggregate = SystemTableOf<PgAggregate>();
 
 }  // namespace sdb::pg

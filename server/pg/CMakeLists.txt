@@ -11,25 +11,41 @@ target_sources(
         catalog/functions/reg_types.cpp
         catalog/functions/ruleutils.cpp
         catalog/lookup.cpp
-        catalog/tables/cluster.cpp
         catalog/tables/information_schema/columns.cpp
-        catalog/tables/information_schema/data.cpp
-        catalog/tables/objects.cpp
-        catalog/tables/pg_attrdef.cpp
-        catalog/tables/pg_attribute.cpp
-        catalog/tables/pg_class.cpp
-        catalog/tables/pg_constraint.cpp
-        catalog/tables/pg_depend.cpp
-        catalog/tables/pg_description.cpp
-        catalog/tables/pg_index.cpp
-        catalog/tables/pg_namespace.cpp
-        catalog/tables/pg_proc.cpp
-        catalog/tables/pg_settings.cpp
-        catalog/tables/pg_shdepend.cpp
-        catalog/tables/pg_type.cpp
-        catalog/tables/sdb.cpp
-        catalog/tables/server.cpp
-        catalog/tables/static.cpp
+        catalog/tables/information_schema/sql_tables.cpp
+        catalog/tables/pg_catalog/pg_aggregate.cpp
+        catalog/tables/pg_catalog/pg_am.cpp
+        catalog/tables/pg_catalog/pg_attrdef.cpp
+        catalog/tables/pg_catalog/pg_attribute.cpp
+        catalog/tables/pg_catalog/pg_auth_members.cpp
+        catalog/tables/pg_catalog/pg_authid.cpp
+        catalog/tables/pg_catalog/pg_class.cpp
+        catalog/tables/pg_catalog/pg_collation.cpp
+        catalog/tables/pg_catalog/pg_constraint.cpp
+        catalog/tables/pg_catalog/pg_database.cpp
+        catalog/tables/pg_catalog/pg_db_role_setting.cpp
+        catalog/tables/pg_catalog/pg_default_acl.cpp
+        catalog/tables/pg_catalog/pg_depend.cpp
+        catalog/tables/pg_catalog/pg_description.cpp
+        catalog/tables/pg_catalog/pg_enum.cpp
+        catalog/tables/pg_catalog/pg_foreign_server.cpp
+        catalog/tables/pg_catalog/pg_hba_file_rules.cpp
+        catalog/tables/pg_catalog/pg_index.cpp
+        catalog/tables/pg_catalog/pg_language.cpp
+        catalog/tables/pg_catalog/pg_namespace.cpp
+        catalog/tables/pg_catalog/pg_opclass.cpp
+        catalog/tables/pg_catalog/pg_proc.cpp
+        catalog/tables/pg_catalog/pg_rewrite.cpp
+        catalog/tables/pg_catalog/pg_sequence.cpp
+        catalog/tables/pg_catalog/pg_settings.cpp
+        catalog/tables/pg_catalog/pg_shdepend.cpp
+        catalog/tables/pg_catalog/pg_tablespace.cpp
+        catalog/tables/pg_catalog/pg_trigger.cpp
+        catalog/tables/pg_catalog/pg_ts_dict.cpp
+        catalog/tables/pg_catalog/pg_type.cpp
+        catalog/tables/sdb/sdb_metrics.cpp
+        catalog/tables/sdb/sdb_progress.cpp
+        catalog/tables/sdb/sdb_settings.cpp
         command_tag.cpp
         connection_context.cpp
         types.cpp

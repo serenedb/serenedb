@@ -46,6 +46,9 @@ struct Attribute {
   const duckdb::LogicalType& type;
   mutable std::optional<ColumnType> described = std::nullopt;
 
+  duckdb::idx_t Relid() const noexcept { return relid; }
+  std::string_view Name() const noexcept { return name; }
+  int16_t Number() const noexcept { return attnum; }
   const ColumnType& Described() const {
     if (!described) {
       described = DescribeColumnType(type);
@@ -54,9 +57,24 @@ struct Attribute {
   }
 };
 
-struct TableAttribute : Attribute {
+struct TableAttribute {
+  duckdb::idx_t relid;
   const duckdb::ColumnDefinition& column;
-  bool not_null;
+  const std::vector<bool>& not_null;
+  mutable std::optional<ColumnType> described = std::nullopt;
+
+  duckdb::idx_t Relid() const noexcept { return relid; }
+  std::string_view Name() const noexcept {
+    return column.Name().GetIdentifierName();
+  }
+  int16_t Number() const noexcept { return Attnum(column); }
+  bool NotNull() const { return not_null[column.Logical().index]; }
+  const ColumnType& Described() const {
+    if (!described) {
+      described = DescribeColumnType(column.Type());
+    }
+    return *described;
+  }
 };
 
 char Generated(const duckdb::ColumnDefinition& column) {
@@ -71,9 +89,9 @@ char Generated(const duckdb::ColumnDefinition& column) {
 }
 
 constexpr std::tuple kAttribute{
-  Col<"attrelid">(&Attribute::relid),
-  Col<"attname">(&Attribute::name),
-  Col<"attnum">(&Attribute::attnum),
+  Col<"attrelid">([](const auto& row) { return row.Relid(); }),
+  Col<"attname">([](const auto& row) { return row.Name(); }),
+  Col<"attnum">([](const auto& row) { return row.Number(); }),
   Col<"atttypid">([](const auto& row) { return row.Described().oid; }),
   Col<"attlen">([](const auto& row) { return row.Described().len; }),
   Col<"atttypmod">([](const auto& row) { return row.Described().typmod; }),
@@ -99,7 +117,8 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   static constexpr auto kColumn = Shape<kSql, const Attribute>(kAttribute);
 
   static constexpr auto kTableColumn = Shape<kSql, const TableAttribute>(
-    kAttribute, Col<"attnotnull">(&TableAttribute::not_null),
+    kAttribute,
+    Col<"attnotnull">([](const auto& row) { return row.NotNull(); }),
     Col<"atthasdef">([](const auto& row) { return HasAttrdef(row.column); }),
     Col<"attgenerated">([](const auto& row) { return Generated(row.column); }),
     Col<"attacl">(
@@ -111,12 +130,10 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   void Row(duckdb::TableCatalogEntry& table) {
     _relations.emplace(table.oid, &table);
     if (Allows<"attrelid">(table.oid)) {
-      const auto not_null = NotNullColumns(table);
+      const auto not_null =
+        Reads<"attnotnull">() ? NotNullColumns(table) : std::vector<bool>{};
       for (const auto& column : table.GetColumns().Logical()) {
-        Emit<kTableColumn>({{table.oid, column.Name().GetIdentifierName(),
-                             Attnum(column), column.Type()},
-                            column,
-                            not_null[column.Logical().index]});
+        Emit<kTableColumn>({table.oid, column, not_null});
       }
     }
     for (const auto& key : KeyIndexes(table)) {

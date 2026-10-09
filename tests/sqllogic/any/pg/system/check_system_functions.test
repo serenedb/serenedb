@@ -188,3 +188,24 @@ query
 SELECT * FROM pg_stat_get_subscription_stats(NULL::oid) LIMIT 0
 ----
 subid	apply_error_count	sync_error_count	confl_insert_exists	confl_update_origin_differs	confl_update_exists	confl_update_missing	confl_delete_origin_differs	confl_delete_missing	confl_multiple_unique_conflicts	stats_reset
+
+
+query
+SELECT pg_stat_get_numscans(NULL) IS NULL AS literal,
+       pg_stat_get_numscans(x) IS NULL AS numscans,
+       pg_stat_get_tuples_returned(x) IS NULL AS tuples_returned,
+       pg_stat_get_total_vacuum_time(x) IS NULL AS total_vacuum_time,
+       pg_stat_get_last_vacuum_time(x) IS NULL AS last_vacuum_time
+FROM (VALUES (NULL::oid)) v(x);
+----
+literal	numscans	tuples_returned	total_vacuum_time	last_vacuum_time
+t	t	t	t	t
+
+
+query
+SELECT pg_stat_get_numscans(0) AS numscans,
+       pg_stat_get_total_vacuum_time(0) AS total_vacuum_time,
+       pg_stat_get_last_vacuum_time(0) IS NULL AS last_vacuum_time;
+----
+numscans	total_vacuum_time	last_vacuum_time
+0	0	t

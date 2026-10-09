@@ -1,0 +1,236 @@
+statement ok
+CREATE SCHEMA tinker_snap
+
+
+statement ok
+CREATE TABLE tinker_snap.march (id INT CONSTRAINT tinker_snap_laser PRIMARY KEY, x INT)
+
+
+statement ok
+CREATE TABLE tinker_snap.rearm (id INT)
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+march
+rearm
+
+
+statement ok
+CREATE TABLE tinker_snap.keen (id INT, mana INT NOT NULL)
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+rearm
+
+
+query
+SELECT attname FROM pg_attribute WHERE attrelid = 'tinker_snap.keen'::regclass AND attnotnull ORDER BY attnum
+----
+attname
+mana
+
+
+query
+SELECT count(*) FROM pg_attribute WHERE attrelid = 'tinker_snap.keen'::regclass AND attnum > 0 AND NOT attnotnull
+----
+count
+1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TABLE tinker_snap.matrix (id INT CONSTRAINT tinker_snap_defense PRIMARY KEY)
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+matrix
+rearm
+
+
+connection s1
+query
+SELECT relname, relkind FROM pg_class WHERE relname = 'tinker_snap_defense'
+----
+relname	relkind
+tinker_snap_defense	i
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+rearm
+
+
+connection s2
+query
+SELECT count(*) FROM pg_class WHERE relname = 'tinker_snap_defense'
+----
+count
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT relname, relkind FROM pg_class WHERE relname = 'tinker_snap_defense'
+----
+relname	relkind
+tinker_snap_defense	i
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+matrix
+rearm
+
+
+connection s2
+statement ok
+DROP TABLE tinker_snap.march
+
+
+connection s2
+statement ok
+CREATE TABLE tinker_snap.blink (id INT CONSTRAINT tinker_snap_conveyance PRIMARY KEY)
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+blink
+keen
+matrix
+rearm
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relname IN ('tinker_snap_laser', 'tinker_snap_conveyance')
+----
+relname
+tinker_snap_conveyance
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+matrix
+rearm
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relname IN ('tinker_snap_laser', 'tinker_snap_conveyance')
+----
+relname
+tinker_snap_laser
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+blink
+keen
+matrix
+rearm
+
+
+statement ok
+CREATE TABLE tinker_snap.audit (msg TEXT)
+
+
+statement ok
+CREATE TRIGGER tinker_snap_trg AFTER INSERT ON tinker_snap.rearm FOR EACH STATEMENT INSERT INTO tinker_snap.audit VALUES ('rearm')
+
+
+statement ok
+CREATE TABLE tinker_snap.heat (id INT REFERENCES tinker_snap.matrix (id))
+
+
+query
+SELECT relname, relhastriggers FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname	relhastriggers
+audit	f
+blink	f
+heat	t
+keen	f
+matrix	t
+rearm	t
+
+
+query
+SELECT relname, relhastriggers FROM pg_class WHERE relname = 'rearm'
+----
+relname	relhastriggers
+rearm	t
+
+
+statement ok
+DROP TRIGGER tinker_snap_trg ON tinker_snap.rearm
+
+
+query
+SELECT relname, relhastriggers FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname	relhastriggers
+audit	f
+blink	f
+heat	t
+keen	f
+matrix	t
+rearm	f
+
+
+statement ok
+DROP SCHEMA tinker_snap CASCADE

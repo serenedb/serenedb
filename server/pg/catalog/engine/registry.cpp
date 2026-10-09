@@ -20,7 +20,6 @@
 
 #include "pg/catalog/engine/registry.h"
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <deque>
@@ -34,13 +33,11 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
-#include <iresearch/utils/static_strings.hpp>
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/macros_sql.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/views/system_views.h"
 #include "pg/types.h"
@@ -197,9 +194,6 @@ void InitSystemFunctions(duckdb::Parser& parser) {
     auto& existing = *it->second;
     for (auto& m : info->macros) {
       existing.macros.emplace_back(std::move(m));
-    }
-    if (existing.type == duckdb::CatalogType::MACRO_ENTRY) {
-      existing.type = info->type;
     }
   }
   for (auto& [key, info] : built) {

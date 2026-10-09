@@ -20,9 +20,13 @@
 
 #pragma once
 
-#include <duckdb.hpp>
 #include <duckdb/function/table_function.hpp>
 
+namespace duckdb {
+
+class DatabaseInstance;
+
+}  // namespace duckdb
 namespace sdb::catalog {
 
 class SystemTableEntry;

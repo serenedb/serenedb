@@ -22,7 +22,6 @@
 
 #include <absl/functional/function_ref.h>
 
-#include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>

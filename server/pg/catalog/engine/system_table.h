@@ -28,8 +28,6 @@
 #include <bit>
 #include <bitset>
 #include <cstddef>
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -41,7 +39,6 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
-#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -180,17 +177,6 @@ struct SystemShape {
   static constexpr uint64_t kProvided =
     (uint64_t{0} | ... | (uint64_t{1} << Sql[Cols::kName]));
 
-  static consteval bool Distinct() {
-    for (size_t i = 0; i < kSize; ++i) {
-      for (size_t j = i + 1; j < kSize; ++j) {
-        if (kColumns[i] == kColumns[j]) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
   static consteval uint64_t Required() {
     uint64_t required = 0;
     for (uint32_t i = 0; i < Sql.columns.size(); ++i) {
@@ -201,7 +187,8 @@ struct SystemShape {
     return required;
   }
 
-  static_assert(Distinct(), "a shape sets every column once");
+  static_assert(std::popcount(kProvided) == static_cast<int>(kSize),
+                "a shape sets every column once");
   static_assert((Required() & ~kProvided) == 0,
                 "a shape sets every NOT NULL column without a default");
 
@@ -239,7 +226,7 @@ struct SystemScanFunctions {
 
 consteval size_t SystemWidth(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
-  if (physical == BOOL || physical == INT8) {
+  if (physical == BOOL) {
     return 1;
   }
   if (physical == INT16) {
@@ -248,7 +235,7 @@ consteval size_t SystemWidth(duckdb::PhysicalType physical) {
   if (physical == INT32 || physical == FLOAT) {
     return 4;
   }
-  if (physical == INT64 || physical == DOUBLE) {
+  if (physical == INT64) {
     return 8;
   }
   if (physical == VARCHAR) {
@@ -337,7 +324,7 @@ struct SystemOptional<std::optional<V>> : std::true_type {
 
 template<typename V>
 constexpr bool kSystemCheckable =
-  std::is_same_v<V, char> || std::is_same_v<V, duckdb::Identifier> ||
+  std::is_same_v<V, duckdb::Identifier> ||
   std::is_convertible_v<const V&, std::string_view> || std::is_integral_v<V> ||
   std::is_enum_v<V>;
 
@@ -428,10 +415,9 @@ struct SystemCondition {
 };
 
 struct SystemFilter {
-  uint32_t column;
   SystemCondition<int64_t> numbers;
   SystemCondition<std::string> texts;
-  std::bitset<257> chars;
+  std::bitset<256> chars;
 };
 
 struct SystemResidual {
@@ -529,7 +515,7 @@ class SystemScan {
     return *_database.GetDependencyManager();
   }
 
-  SystemMembers Resolve(const CatalogSource& source) const;
+  SystemMembers Resolve(const CatalogSource& source);
   std::vector<duckdb::CatalogEntry*> Resolve(
     const CatalogSetSource& source) const;
   SystemSet MemberSet(duckdb::SchemaCatalogEntry& schema,
@@ -672,9 +658,6 @@ class SystemScan {
       I, decltype(SystemShapeOf<Shape>::columns)>::Getter,
     typename SystemShapeOf<Shape>::Context>::Type;
 
-  template<typename V>
-  using Optional = SystemOptional<V>;
-
   template<const auto& Shape, size_t I, bool Checked>
   static bool Write(SystemScan& scan,
                     typename SystemShapeOf<Shape>::Context& ctx) {
@@ -695,12 +678,13 @@ class SystemScan {
           return true;
         }
       }
-      scan.PutValue<kMeta.physical, kMeta.element, kNullDefault>(kColumn,
-                                                                 value);
+      scan
+        .PutValue<kMeta.physical, kMeta.element, kNullDefault, kMeta.not_null>(
+          kColumn, value);
       return true;
     };
     decltype(auto) value = scan.Value(std::get<I>(Shape.columns).get, ctx);
-    if constexpr (Optional<ValueOf<Shape, I>>::value) {
+    if constexpr (SystemOptional<ValueOf<Shape, I>>::value) {
       static_assert(!(kMeta.not_null && kNullDefault),
                     "a NOT NULL column without a default is always set");
       if (value) {
@@ -709,7 +693,7 @@ class SystemScan {
       if (Checked && ((scan._rejecting >> kColumn) & 1) != 0) {
         return false;
       }
-      if (scan.Needs(kColumn)) {
+      if (!Checked || scan.Needs(kColumn)) {
         scan.template PutDefault<T::kSql, kColumn>();
       }
       return true;
@@ -729,7 +713,7 @@ class SystemScan {
     std::array<Checker, 64> checks{};
     ((checks[T::kColumns[I]] = [] -> Checker {
        if constexpr (kSystemCheckable<
-                       typename Optional<ValueOf<Shape, I>>::Type>) {
+                       typename SystemOptional<ValueOf<Shape, I>>::Type>) {
          return &Write<Shape, I, true>;
        } else {
          return nullptr;
@@ -744,18 +728,17 @@ class SystemScan {
     MakeChecks<Shape>(std::make_index_sequence<SystemShapeOf<Shape>::kSize>{});
 
   template<duckdb::PhysicalType P, duckdb::PhysicalType E, bool NullDefault,
-           typename V>
-  void PutValue(uint32_t column, V&& value) {
+           bool NotNull, typename V>
+  void PutValue(uint32_t column, const V& value) {
     const auto& target = _vectors[_slots[column]];
     if constexpr (NullDefault) {
       target.validity->SetValid(_row);
     }
-    if constexpr (std::is_integral_v<std::remove_cvref_t<V>> ||
-                  std::is_enum_v<std::remove_cvref_t<V>>) {
+    if constexpr (std::is_integral_v<V> || std::is_enum_v<V>) {
       SDB_ASSERT(_table.Holds(column, Integer<int64_t>(value)));
     }
     if constexpr (P == duckdb::PhysicalType::LIST) {
-      PutList<E, NullDefault>(column, target, value);
+      PutList<E, NullDefault && !NotNull>(target, value);
     } else {
       Put<P>(target, _row, value);
     }
@@ -774,9 +757,7 @@ class SystemScan {
     const auto& filter = _filters[_filter_index[column]];
     if constexpr (std::is_same_v<V, char>) {
       SDB_ASSERT(_table.Sql().columns[column].type == kChar);
-      return filter.chars[value ? static_cast<unsigned char>(value) : 256];
-    } else if constexpr (std::is_same_v<V, duckdb::Identifier>) {
-      return filter.texts.Passes(value.GetIdentifierName());
+      return filter.chars[static_cast<unsigned char>(value)];
     } else if constexpr (std::is_same_v<V, SystemStableText>) {
       return filter.texts.Passes(value.text);
     } else if constexpr (std::is_convertible_v<const V&, std::string_view>) {
@@ -829,8 +810,6 @@ class SystemScan {
     } else if constexpr (P == VARCHAR) {
       if constexpr (std::is_same_v<V, char>) {
         PutText(target, row, std::string_view{&value, value ? 1U : 0U});
-      } else if constexpr (std::is_same_v<V, duckdb::Identifier>) {
-        PutText(target, row, value.GetIdentifierName());
       } else if constexpr (std::is_same_v<V, SystemStableText>) {
         Cells<duckdb::string_t>(target)[row] = duckdb::string_t{
           value.text.data(), static_cast<uint32_t>(value.text.size())};
@@ -846,11 +825,11 @@ class SystemScan {
     }
   }
 
-  template<duckdb::PhysicalType E, bool NullDefault, typename R>
-  void PutList(uint32_t column, const SystemVector& target, R& items) {
-    if constexpr (NullDefault && std::is_same_v<std::ranges::range_value_t<R>,
-                                                duckdb::AclItem>) {
-      if (std::ranges::empty(items) && !_table.Sql().columns[column].not_null) {
+  template<duckdb::PhysicalType E, bool Nullable, typename R>
+  void PutList(const SystemVector& target, R& items) {
+    if constexpr (Nullable && std::is_same_v<std::ranges::range_value_t<R>,
+                                             duckdb::AclItem>) {
+      if (std::ranges::empty(items)) {
         target.validity->SetInvalid(_row);
         return;
       }
@@ -878,12 +857,12 @@ class SystemScan {
     const auto& target = _vectors[_slots[C]];
     if constexpr (!kMeta.default_value) {
       target.validity->SetInvalid(_row);
-    } else if constexpr (kMeta.physical == LIST ||
-                         (kMeta.physical == VARCHAR &&
-                          kMeta.default_value->size() >
-                            duckdb::string_t::INLINE_LENGTH)) {
-      target.vector->SetValue(_row, _table.Default(C).value);
     } else {
+      static_assert(
+        kMeta.physical != LIST &&
+          (kMeta.physical != VARCHAR ||
+           kMeta.default_value->size() <= duckdb::string_t::INLINE_LENGTH),
+        "a column default is a scalar that fits a string_t");
       constexpr auto kWidth = SystemWidth(kMeta.physical);
       std::memcpy(target.data + _row * kWidth, _table.Default(C).bytes.data(),
                   kWidth);
@@ -908,9 +887,8 @@ class SystemScan {
     duckdb::idx_t oid, SystemSchemas system) const;
   std::vector<duckdb::SchemaCatalogEntry*> Schemas(SystemSchemas system) const;
   void AppendMembers(duckdb::SchemaCatalogEntry& schema,
-                     std::span<const duckdb::CatalogType> types,
                      const duckdb::Identifier& prefix,
-                     std::vector<duckdb::CatalogEntry*>& entries) const;
+                     SystemMembers& members) const;
   void AppendOwned(duckdb::idx_t oid, SystemSchemas system,
                    std::vector<duckdb::CatalogEntry*>& entries) const;
   void AppendNamed(std::string_view name,
@@ -941,11 +919,11 @@ class SystemScan {
   uint64_t _pruned = 0;
   std::vector<SystemPrune> _prunes;
   std::string _text;
-  mutable std::vector<std::shared_ptr<const catalog::CatalogSnapshot>> _indexed;
-  mutable bool _indexed_complete = false;
+  std::vector<std::shared_ptr<const catalog::CatalogSnapshot>> _indexed;
+  bool _indexed_complete = false;
   bool _collect_indexed = false;
-  mutable irs::containers::FlatHashSet<duckdb::idx_t> _triggered;
-  mutable bool _triggered_complete = false;
+  irs::containers::FlatHashSet<duckdb::idx_t> _triggered;
+  bool _triggered_complete = false;
   bool _collect_triggered = false;
   bool _visible_only = false;
 };
@@ -1180,8 +1158,6 @@ class SystemCursor<SystemMembers> final {
   SystemSet _set_entries;
 };
 
-template<typename Item>
-SystemCursor(std::vector<Item*>) -> SystemCursor<Item>;
 SystemCursor(SystemMembers) -> SystemCursor<SystemMembers>;
 template<typename Row, typename Holder>
 SystemCursor(SystemArray<Row, Holder>)

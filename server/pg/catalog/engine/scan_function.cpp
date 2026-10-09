@@ -28,7 +28,6 @@
 #include <duckdb/storage/statistics/node_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/entry/system_table.h"
 #include "pg/catalog/engine/system_table.h"
 

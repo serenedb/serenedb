@@ -1,0 +1,74 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tco (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO tco VALUES (1, 'old'), (2, 'old');
+
+statement ok
+VACUUM (REFRESH_TABLE) tco;
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async ok
+TRUNCATE tco;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection writer
+statement error Attempting to write to table tco but another transaction is truncating it
+INSERT INTO tco VALUES (3, 'new');
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection writer
+statement ok
+INSERT INTO tco VALUES (3, 'new');
+
+connection writer
+statement ok
+VACUUM (REFRESH_TABLE) tco;
+
+connection writer
+query
+SELECT id, body FROM tco ORDER BY id;
+----
+id	body
+3	new
+
+connection writer
+statement ok
+INSERT INTO tco VALUES (4, 'new');
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM tco ORDER BY id;
+----
+id	body
+3	new
+4	new
+
+connection after_crash
+statement ok
+DROP TABLE tco;

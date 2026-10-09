@@ -86,6 +86,10 @@ SyncSession::SyncSession(network::IoExecutor& exec, ReplicationTarget target,
 
 yaclib::Task<bool> SyncSession::RunJob(Job job) {
   _job_done.Reset();
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+  if (_jobs_closed.load(std::memory_order_relaxed)) {
+    co_return false;
+  }
   _job.store(job, std::memory_order_release);
   this->_task->RequestRun();
   if (job == Job::Stream) {
@@ -134,7 +138,11 @@ void SyncSession::FinishJobs() {
     _in_txn = false;
   }
   _job_ok = false;
-  _job_done.Set();
+  _jobs_closed.store(true, std::memory_order_relaxed);
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+  if (!_job_done.Ready()) {
+    _job_done.Set();
+  }
   this->_task->Finish();
 }
 

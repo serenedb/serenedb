@@ -137,6 +137,7 @@ class SyncSession : public PublisherSession {
   bool CommitSync();
 
   std::atomic<Job> _job{Job::None};
+  std::atomic<bool> _jobs_closed{false};
   bool _job_ok = false;
   yaclib::OneShotEvent _job_done;
   SyncTable* _sync_table = nullptr;

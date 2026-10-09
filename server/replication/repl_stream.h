@@ -49,7 +49,10 @@ class ReplStream {
     return true;
   }
   auto Drained(yaclib::IExecutor& io) noexcept { return _consumed.AwaitOn(io); }
-  void ResetDrained() noexcept { _consumed.Reset(); }
+  void ResetDrained() noexcept {
+    _consumed.Reset();
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+  }
   void Finish() noexcept {
     if (_aborted.load(std::memory_order_acquire)) {
       return;
@@ -122,7 +125,10 @@ class ReplStream {
   }
   void Abort() noexcept {
     _aborted.store(true, std::memory_order_release);
-    _consumed.Set();
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (!_consumed.Ready()) {
+      _consumed.Set();
+    }
   }
 
  private:

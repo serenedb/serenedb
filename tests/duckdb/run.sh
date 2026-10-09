@@ -283,7 +283,7 @@ generate_iceberg_data() {
 	echo "Generating Iceberg test data, log: $REPORTS_DIR/iceberg-data.log"
 	if ! python3 -c 'import pyspark' 2>/dev/null; then
 		generator=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
-			-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${generator[@]}")
+		-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${generator[@]}")
 	fi
 	"${generator[@]}" >"$REPORTS_DIR/iceberg-data.log" 2>&1 || {
 		echo "ERROR: Iceberg data generation failed, see $REPORTS_DIR/iceberg-data.log" >&2
@@ -367,9 +367,9 @@ provision_s3() {
 		"${SUITE_DIR[core]}/data" "$1")
 	if ! python3 -c 'import boto3' 2>/dev/null; then
 		provision=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
-			--add-host "$S3_HOST:$(getent hosts "$S3_HOST" | awk '{print $1}')"
-			-v "$WORKSPACE:$WORKSPACE" -v "$1:$1" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}"
-			"${provision[@]}")
+		--add-host "$S3_HOST:$(getent hosts "$S3_HOST" | awk '{print $1}')"
+		-v "$WORKSPACE:$WORKSPACE" -v "$1:$1" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}"
+		"${provision[@]}")
 	fi
 	"${provision[@]}"
 }
@@ -431,7 +431,7 @@ ensure_azurite() {
 	local provision=(python3 "$SCRIPT_DIR/provision_azurite.py" "$AZURITE_CONNECTION_STRING" "${SUITE_DIR[azure]}/data")
 	if ! python3 -c 'import azure.storage.blob' 2>/dev/null; then
 		provision=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
-			-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${provision[@]}")
+		-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${provision[@]}")
 	fi
 	"${provision[@]}" >"$REPORTS_DIR/azurite-data.log" 2>&1 || {
 		echo "ERROR: uploading the Azurite test data failed, see $REPORTS_DIR/azurite-data.log" >&2

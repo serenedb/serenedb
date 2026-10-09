@@ -21,8 +21,10 @@
 #pragma once
 
 #include <optional>
+#include <ranges>
 #include <string_view>
 
+#include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
 #include "pg/types.h"
@@ -36,9 +38,22 @@ namespace sdb::pg {
 
 #include "pg/catalog/generated/tables.gen.inc"
 
-template<>
-MaterializedData SystemTableSnapshot<PgReplicationOrigin>::GetTableData();
+template<typename T>
+std::optional<T> NonEmpty(T value) {
+  if (std::ranges::empty(value)) {
+    return std::nullopt;
+  }
+  return value;
+}
 
-void RegisterReplicationOriginStatus(duckdb::DatabaseInstance& db);
+using Builtins = SystemRows<BuiltinFunction, BuiltinFunctions>;
+
+inline Builtins LoadBuiltins(SystemScan& scan) {
+  auto functions = GetBuiltinFunctions(scan.Context());
+  return {functions->All(), std::move(functions)};
+}
+
+inline constexpr auto kBuiltinsByOid =
+  SortedBy<BuiltinFunction, &BuiltinFunction::oid, BuiltinFunctions>;
 
 }  // namespace sdb::pg

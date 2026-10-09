@@ -144,17 +144,15 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('n') && !Allows<"deptype">('a')) {
       return;
     }
-    Dependencies().ScanEdges(
-      Transaction(), table, true,
-      [&](duckdb::CatalogEntry& object,
-          const duckdb::DependencyDependentFlags& flags) {
-        if (object.type == duckdb::CatalogType::TYPE_ENTRY) {
-          ColumnTypes(table, object);
-        } else if (object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
-                   !table.NumbersRowsWith(object)) {
-          Sequence(table, object, flags.IsOwnedBy());
-        }
-      });
+    ScanSubjects(table, [&](duckdb::CatalogEntry& object,
+                            const duckdb::DependencyDependentFlags& flags) {
+      if (object.type == duckdb::CatalogType::TYPE_ENTRY) {
+        ColumnTypes(table, object);
+      } else if (object.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+                 !table.NumbersRowsWith(object)) {
+        Sequence(table, object, flags.IsOwnedBy());
+      }
+    });
     table.ScanTriggers(Transaction(), [&](duckdb::CatalogEntry& trigger) {
       Trigger(table, trigger.Cast<duckdb::TriggerCatalogEntry>());
     });
@@ -179,17 +177,15 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     }
     RuleReferences references;
     CollectRule(*view.query->node, references);
-    Dependencies().ScanEdges(
-      Transaction(), view, true,
-      [&](duckdb::CatalogEntry& object,
-          const duckdb::DependencyDependentFlags&) {
-        if (object.type == duckdb::CatalogType::TABLE_ENTRY ||
-            object.type == duckdb::CatalogType::VIEW_ENTRY) {
-          RuleRelation(view, object, references);
-        } else {
-          Reference(kPgRewriteTable, view.oid, object, 'n');
-        }
-      });
+    ScanSubjects(view, [&](duckdb::CatalogEntry& object,
+                           const duckdb::DependencyDependentFlags&) {
+      if (object.type == duckdb::CatalogType::TABLE_ENTRY ||
+          object.type == duckdb::CatalogType::VIEW_ENTRY) {
+        RuleRelation(view, object, references);
+      } else {
+        Reference(kPgRewriteTable, view.oid, object, 'n');
+      }
+    });
   }
 
   void Row(duckdb::MacroCatalogEntry& macro) {
@@ -203,33 +199,29 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('n') && !Allows<"deptype">('a')) {
       return;
     }
-    Dependencies().ScanEdges(
-      Transaction(), index, true,
-      [&](duckdb::CatalogEntry& object,
-          const duckdb::DependencyDependentFlags&) {
-        if (object.oid != index.table_oid) {
-          Reference(kPgClassTable, index.oid, object, 'n');
-          return;
-        }
-        const auto* table = object.type == duckdb::CatalogType::TABLE_ENTRY
-                              ? &object.Cast<duckdb::TableCatalogEntry>()
-                              : nullptr;
-        for (const auto column : index.column_ids) {
-          Depend(kPgClassTable, index.oid, 0, kPgClassTable, object.oid,
-                 table ? Attnum(table->GetColumns().GetColumn(
-                           duckdb::PhysicalIndex{column}))
-                       : static_cast<int32_t>(column + 1),
-                 'a');
-        }
-        if (absl::c_none_of(index.parsed_expressions,
-                            [](const auto& expression) {
-                              return expression->GetExpressionClass() ==
-                                     duckdb::ExpressionClass::COLUMN_REF;
-                            })) {
-          Depend(kPgClassTable, index.oid, 0, kPgClassTable, object.oid, 0,
-                 'a');
-        }
-      });
+    ScanSubjects(index, [&](duckdb::CatalogEntry& object,
+                            const duckdb::DependencyDependentFlags&) {
+      if (object.oid != index.table_oid) {
+        Reference(kPgClassTable, index.oid, object, 'n');
+        return;
+      }
+      const auto* table = object.type == duckdb::CatalogType::TABLE_ENTRY
+                            ? &object.Cast<duckdb::TableCatalogEntry>()
+                            : nullptr;
+      for (const auto column : index.column_ids) {
+        Depend(kPgClassTable, index.oid, 0, kPgClassTable, object.oid,
+               table ? Attnum(table->GetColumns().GetColumn(
+                         duckdb::PhysicalIndex{column}))
+                     : static_cast<int32_t>(column + 1),
+               'a');
+      }
+      if (absl::c_none_of(index.parsed_expressions, [](const auto& expression) {
+            return expression->GetExpressionClass() ==
+                   duckdb::ExpressionClass::COLUMN_REF;
+          })) {
+        Depend(kPgClassTable, index.oid, 0, kPgClassTable, object.oid, 0, 'a');
+      }
+    });
   }
 
   void Row(duckdb::SequenceCatalogEntry& sequence) {
@@ -278,11 +270,10 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   }
 
   void References(duckdb::idx_t classid, duckdb::CatalogEntry& dependent) {
-    Dependencies().ScanEdges(Transaction(), dependent, true,
-                             [&](duckdb::CatalogEntry& object,
-                                 const duckdb::DependencyDependentFlags&) {
-                               Reference(classid, dependent.oid, object, 'n');
-                             });
+    ScanSubjects(dependent, [&](duckdb::CatalogEntry& object,
+                                const duckdb::DependencyDependentFlags&) {
+      Reference(classid, dependent.oid, object, 'n');
+    });
   }
 
   void Trigger(const duckdb::TableCatalogEntry& table,

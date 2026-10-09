@@ -616,6 +616,21 @@ class SystemScan {
     return true;
   }
 
+  void Walking(const catalog::CatalogSnapshot* snapshot) noexcept {
+    _walked = snapshot;
+  }
+
+  template<typename F>
+  void ScanSubjects(duckdb::CatalogEntry& entry, F&& visit) const {
+    if (!_walked) {
+      Dependencies().ScanEdges(Transaction(), entry, true, visit);
+      return;
+    }
+    for (const auto& [subject, flags] : WalkedSubjects(entry)) {
+      visit(*subject, flags);
+    }
+  }
+
   void CollectIndexed() noexcept { _collect_indexed = true; }
   std::optional<bool> KnownIndexed(duckdb::idx_t relation) const;
 
@@ -642,6 +657,10 @@ class SystemScan {
 
  private:
   static constexpr uint32_t kNowhere = ~uint32_t{0};
+
+  std::span<
+    const std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
+  WalkedSubjects(duckdb::CatalogEntry& entry) const;
 
   template<typename Get, typename Ctx>
   decltype(auto) Value(const Get& get, Ctx& ctx) {
@@ -926,6 +945,7 @@ class SystemScan {
   bool _triggered_complete = false;
   bool _collect_triggered = false;
   bool _visible_only = false;
+  const catalog::CatalogSnapshot* _walked = nullptr;
 };
 
 template<const SystemSql& Sql>
@@ -1136,6 +1156,7 @@ class SystemCursor<SystemMembers> final {
   template<typename T, typename V>
   bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema, V&& visit) {
     const auto entries = _set_entries.entries;
+    table.Walking(_set_entries.snapshot.get());
     for (; _pos < entries.size(); ++_pos) {
       auto& entry = *entries[_pos];
       if (!_members.wanted.test(std::to_underlying(entry.type)) ||
@@ -1146,6 +1167,7 @@ class SystemCursor<SystemMembers> final {
         return true;
       }
     }
+    table.Walking(nullptr);
     return false;
   }
 

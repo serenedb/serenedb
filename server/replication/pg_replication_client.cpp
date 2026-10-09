@@ -1280,7 +1280,7 @@ void PgReplicationClient::PushRemoteLsn(uint64_t end_lsn) {
   if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     return;
   }
-  transaction.PushSubscriptionLsn(
+  transaction.PushReplicationLsn(
     entry->Cast<duckdb::SubscriptionCatalogEntry>(), end_lsn);
 }
 

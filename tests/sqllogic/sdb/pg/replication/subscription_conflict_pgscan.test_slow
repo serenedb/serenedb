@@ -123,6 +123,59 @@ id	email	code
 50	f@x	6
 
 
+statement error
+SELECT pg_replication_origin_advance('pg_' || oid, '0/1') FROM pg_subscription WHERE subname = 'rcon_sub';
+----
+db error: ERROR: replication origin with ID <slt:ignore> is already active for the apply worker of subscription "rcon_sub"
+
+
+statement ok
+ALTER SUBSCRIPTION rcon_sub DISABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_subscription WHERE subname = 'rcon_sub';
+----
+n
+0
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'INSERT INTO rcon_multi VALUES (70, ''skipped'', 70)');
+
+
+statement ok retry 20 backoff 250ms
+SELECT pg_replication_origin_advance('pg_' || s.oid, p.lsn) FROM pg_subscription s, postgres_query('rcon_${__DATABASE__}', 'SELECT pg_current_wal_lsn()::text AS lsn') p WHERE s.subname = 'rcon_sub';
+
+
+query
+SELECT pg_replication_origin_progress('pg_' || s.oid, true) = p.lsn AS advanced FROM pg_subscription s, postgres_query('rcon_${__DATABASE__}', 'SELECT pg_current_wal_lsn()::text AS lsn') p WHERE s.subname = 'rcon_sub';
+----
+advanced
+t
+
+
+statement ok
+ALTER SUBSCRIPTION rcon_sub ENABLE;
+
+
+statement ok
+CALL postgres_execute('rcon_${__DATABASE__}', 'INSERT INTO rcon_multi VALUES (71, ''applied'', 71)');
+
+
+query ok retry 240 backoff 250ms
+SELECT list(id ORDER BY id) AS ids FROM rcon_multi WHERE id >= 70;
+----
+ids
+{71}
+
+
+statement error
+SELECT pg_replication_origin_drop('pg_' || oid) FROM pg_subscription WHERE subname = 'rcon_sub';
+----
+db error: ERROR: could not drop replication origin with ID <slt:ignore>, in use by subscription "rcon_sub"
+
+
 statement ok
 DROP ROLE IF EXISTS rcon_plain;
 

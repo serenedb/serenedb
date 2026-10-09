@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <deque>
+#include <duckdb/catalog/catalog_entry/replication_lsn_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -32,6 +33,7 @@
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/entry/subscription.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/pg_catalog/fwd.h"
@@ -63,6 +65,15 @@ std::vector<Origin> CollectOrigins(duckdb::DatabaseInstance& db) {
         });
       });
   }
+  catalog::ClusterOf(db)
+    .GetCatalogSet(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
+    .Scan([&](duckdb::CatalogEntry& entry) {
+      origins.push_back({
+        .id = entry.oid,
+        .name = entry.name.GetIdentifierName(),
+        .remote_lsn = entry.Cast<duckdb::ReplicationLsnEntry>().RemoteLsn(),
+      });
+    });
   return origins;
 }
 

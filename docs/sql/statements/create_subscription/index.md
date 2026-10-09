@@ -123,7 +123,7 @@ Local tables are not created for you. Create every published table locally befor
 | `pg_subscription_rel` | Every table of a subscription with its state: `i` while waiting for its initial copy, `r` once it is replicated, and in `srsublsn` the publisher position of its copy. |
 | `pg_stat_subscription` | One row per connected apply worker, with `received_lsn` (the latest publisher position received), `latest_end_lsn` (the latest position durably applied), and the times of the last message sent by the publisher, received, and reported back. |
 | `pg_stat_subscription_stats` | Per subscription, `apply_error_count`, `sync_error_count` and the `confl_*` conflict counters since the server started or since `stats_reset`. `pg_stat_reset_subscription_stats(subid)` resets them for one subscription, or for all of them when `subid` is `NULL`; only superusers may call it. |
-| `pg_replication_origin`, `pg_replication_origin_status` | One origin `pg_<subscription oid>` per subscription, with the publisher position it has durably applied in `remote_lsn`. |
+| `pg_replication_origin`, `pg_replication_origin_status` | One origin `pg_<subscription oid>` per subscription, with the publisher position it has durably applied in `remote_lsn`. With the subscription disabled, `pg_replication_origin_advance()` moves that position, like in PostgreSQL; see [Replication Origin Functions](../../functions/replication_origin.md). |
 
 ```sql
 SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat_subscription;
@@ -136,4 +136,4 @@ SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat
 - Changes are applied to the local table with the published table's schema and name; there is no routing of rows into local partitions.
 - `pg_subscription_rel` shows only the states `i` and `r`, because all pending tables are copied in one snapshot; `pg_stat_subscription` has no table synchronization or parallel apply rows.
 - The counters in `pg_stat_subscription_stats` are kept in memory and start from zero when the server restarts; `confl_update_origin_differs` and `confl_delete_origin_differs` stay zero.
-- The replication origin functions (`pg_replication_origin_advance()` and the like) are not available, and `local_lsn` in `pg_replication_origin_status` is always `0/0`.
+- `local_lsn` in `pg_replication_origin_status` is always `0/0`, and a subscription's origin can only be dropped with the subscription.

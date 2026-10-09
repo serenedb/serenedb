@@ -1403,6 +1403,8 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (!_txn_state->GuardNotAborted(*statement)) {
       ThrowAbortedTransaction();
     }
+    _connection_ctx->SetInTransactionBlock(
+      implicit_block || !this->_conn->context->transaction.IsAutoCommit());
     if (implicit_block &&
         statement->type != duckdb::StatementType::TRANSACTION_STATEMENT) {
       _txn_state->Arm();
@@ -1746,6 +1748,22 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
 }
 
 template<SocketKind Kind>
+yaclib::Task<> PgWireSession<Kind>::WaitCopyInput() {
+  if (!_client) {
+    co_await _copy_gate.Wait(*this->_ioexec);
+    co_return {};
+  }
+  auto [ec, n] =
+    co_await this->_socket.ReadSome(this->_recv.Reserve(kReadBlock)).NoThrow();
+  if (ec || n == 0) {
+    this->Stop();
+    co_return {};
+  }
+  this->_recv.CommitWrite(n);
+  co_return {};
+}
+
+template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   sdb::pg::CopyInBridge& bridge, CopyFormat format) {
   // Only the PG text format has the "\." end-of-data marker to scan for; binary
@@ -1776,6 +1794,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   CopyEodScanner scanner;
   bool eod = false;  // text marker seen: stop feeding, just drain to CopyDone
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
+  constexpr size_t kStage = 64 * 1024;
+  std::string stage;
+  const auto flush = [&]() -> yaclib::Task<> {
+    if (!stage.empty() && !bridge.Aborted()) {
+      bridge.Publish(stage.data(), stage.size());
+      co_await bridge.Drained(*this->_ioexec);
+      bridge.ResetDrained();
+    }
+    stage.clear();
+    co_return {};
+  };
   for (;;) {
     while (this->_recv.ReadableSize() < kHeader) {
       if (this->SendBroken()) {
@@ -1783,7 +1812,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
              "unexpected EOF during COPY from stdin");
         co_return {};
       }
-      co_await _copy_gate.Wait(*this->_ioexec);
+      co_await flush();
+      co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
     {
@@ -1806,6 +1836,27 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
       SDB_IF_FAILURE("copy_feeder_throw") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
+      if (!eod && !bridge.Aborted() && body < kStage &&
+          this->_recv.Front().size() >= body) {
+        const std::string_view piece = this->_recv.Front().substr(0, body);
+        if (is_text) {
+          const auto scanned = scanner.Scan(piece);
+          stage.append(scanned.carry);
+          stage.append(scanned.data);
+        } else {
+          stage.append(piece);
+        }
+        this->_recv.Consume(body);
+        if (is_text && scanner.Ended()) {
+          co_await flush();
+          eod = true;
+          bridge.Finish();
+        } else if (stage.size() >= kStage) {
+          co_await flush();
+        }
+        continue;
+      }
+      co_await flush();
       while (body > 0) {
         while (!this->_recv.Readable()) {
           if (this->SendBroken()) {
@@ -1813,7 +1864,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await _copy_gate.Wait(*this->_ioexec);
+          co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
         const auto take = std::min<uint64_t>(body, chunk.size());
@@ -1842,6 +1893,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         body -= take;
       }
     } else if (type == PQ_MSG_COPY_DONE) {
+      co_await flush();
       if (!eod && !bridge.Aborted()) {
         if (is_text) {
           if (const auto tail = scanner.Finish(); !tail.empty()) {
@@ -1853,9 +1905,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         bridge.Finish();
       }
       co_return {};
-    } else if (type == PQ_MSG_COPY_FAIL) {
+    } else if (type == PQ_MSG_COPY_FAIL ||
+               (_client && (type == PQ_MSG_ERROR_RESPONSE ||
+                            type == PQ_MSG_NOTICE_RESPONSE))) {
       // The client's CopyFail carries its own failure text; PG echoes it,
       // reading it as a NUL-terminated string (truncate at the first NUL).
+      // In client mode the publisher reports a failed COPY TO STDOUT with an
+      // ErrorResponse and may interleave notices.
       std::string detail;
       detail.reserve(body);
       while (detail.size() < body) {
@@ -1865,13 +1921,21 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await _copy_gate.Wait(*this->_ioexec);
+          co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
         const auto take =
           std::min<uint64_t>(body - detail.size(), chunk.size());
         detail.append(chunk.data(), take);
         this->_recv.Consume(take);
+      }
+      if (type == PQ_MSG_NOTICE_RESPONSE) {
+        continue;
+      }
+      if (type == PQ_MSG_ERROR_RESPONSE) {
+        bridge.Fail(std::make_exception_ptr(irs::SqlException{
+          ParseErrorResponse(detail), std::source_location::current()}));
+        co_return {};
       }
       fail(ERRCODE_QUERY_CANCELED, "COPY from stdin failed: ",
            std::string_view{detail}.substr(0, detail.find('\0')));
@@ -1884,7 +1948,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
-          co_await _copy_gate.Wait(*this->_ioexec);
+          co_await WaitCopyInput();
         }
         const auto take = std::min<uint64_t>(body, this->_recv.Front().size());
         this->_recv.Consume(take);
@@ -2418,6 +2482,8 @@ yaclib::Task<> PgWireSession<Kind>::ExecutePrepared(Portal& portal,
   // cursor survives across Flush (which does not commit) but not Sync, as in
   // postgres. A leading BEGIN/COMMIT/ROLLBACK is excluded: it must reach the
   // transaction operator itself, not run wrapped in our block.
+  _connection_ctx->SetInTransactionBlock(
+    !this->_conn->context->transaction.IsAutoCommit());
   if (prepared.GetStatementType() !=
       duckdb::StatementType::TRANSACTION_STATEMENT) {
     _txn_state->Arm();

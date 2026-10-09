@@ -1,0 +1,550 @@
+statement error
+CREATE SUBSCRIPTION;
+----
+db error: ERROR: syntax error at or near ";"
+
+
+statement error
+CREATE SUBSCRIPTION cs_sub CONNECTION 'host=localhost dbname=mydb';
+----
+db error: ERROR: syntax error at or near ";"
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+
+
+statement ok
+CREATE SUBSCRIPTION cs_sub CONNECTION 'host=127.0.0.1 port=1 dbname=mydb' PUBLICATION cs_pub WITH (connect = false);
+
+
+query
+SELECT subname, subenabled, subslotname, subpublications FROM pg_subscription ORDER BY subname;
+----
+subname	subenabled	subslotname	subpublications
+cs_sub	f	cs_sub	{cs_pub}
+
+
+statement error
+CREATE SUBSCRIPTION cs_sub CONNECTION 'host=localhost dbname=mydb' PUBLICATION cs_pub WITH (connect = false);
+----
+db error: ERROR: subscription "cs_sub" already exists
+
+
+statement ok
+CREATE SUBSCRIPTION cs_multi CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub2 WITH (connect = false, slot_name = 'cs_slot');
+
+
+query
+SELECT subname, subenabled, subslotname, subpublications FROM pg_subscription WHERE subname = 'cs_multi';
+----
+subname	subenabled	subslotname	subpublications
+cs_multi	f	cs_slot	{pub1,pub2}
+
+
+statement error
+CREATE SUBSCRIPTION cs_dup CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1, pub1 WITH (connect = false);
+----
+db error: ERROR: publication name "pub1" used more than once
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (bogus = true);
+----
+db error: ERROR: unrecognized subscription parameter: "bogus"
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (binary = maybe);
+----
+db error: ERROR: binary requires a Boolean value
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (origin = 'bogus');
+----
+db error: ERROR: unrecognized origin value: "bogus"
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, enabled = true);
+----
+db error: ERROR: connect = false and enabled = true are mutually exclusive options
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, copy_data = true);
+----
+db error: ERROR: connect = false and copy_data = true are mutually exclusive options
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (slot_name = NONE);
+----
+db error: ERROR: subscription with slot_name = NONE must also set enabled = false
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (slot_name = NONE, enabled = false);
+----
+db error: ERROR: subscription with slot_name = NONE must also set create_slot = false
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, streaming = sometimes);
+----
+db error: ERROR: streaming requires a Boolean value or "parallel"
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, two_phase = true);
+----
+db error: ERROR: two_phase = true is not supported
+
+
+statement error
+CREATE SUBSCRIPTION cs_bad CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, synchronous_commit = 'sometimes');
+----
+db error: ERROR: invalid value for parameter "synchronous_commit": "sometimes"
+
+
+query
+SELECT count(*) AS n FROM pg_subscription WHERE subname = 'cs_bad';
+----
+n
+0
+
+
+statement ok
+CREATE SUBSCRIPTION cs_none CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, slot_name = NONE);
+
+
+query
+SELECT subslotname IS NULL AS no_slot, subenabled FROM pg_subscription WHERE subname = 'cs_none';
+----
+no_slot	subenabled
+t	f
+
+
+statement error
+ALTER SUBSCRIPTION cs_none ENABLE;
+----
+db error: ERROR: cannot enable subscription that does not have a slot name
+
+
+statement ok
+CREATE SUBSCRIPTION cs_opts CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, binary = true, origin = none, disable_on_error = on, synchronous_commit = 'remote_apply', run_as_owner = true, failover = true, two_phase = false);
+
+
+query
+SELECT subbinary, suborigin, subdisableonerr, subsynccommit, subrunasowner, subfailover, subpasswordrequired, substream, subtwophasestate FROM pg_subscription WHERE subname = 'cs_opts';
+----
+subbinary	suborigin	subdisableonerr	subsynccommit	subrunasowner	subfailover	subpasswordrequired	substream	subtwophasestate
+t	none	t	remote_apply	t	t	t	p	d
+
+
+statement ok
+CREATE SUBSCRIPTION cs_defaults CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+query
+SELECT subbinary, suborigin, subdisableonerr, subsynccommit, subrunasowner, subfailover, subpasswordrequired, subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subbinary	suborigin	subdisableonerr	subsynccommit	subrunasowner	subfailover	subpasswordrequired	subskiplsn
+f	any	f	off	f	f	t	NULL
+
+
+statement ok
+CREATE SUBSCRIPTION cs_nopw CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, password_required = false);
+
+
+statement ok
+CREATE SUBSCRIPTION cs_stream_off CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, slot_name = NONE, streaming = off);
+
+
+statement ok
+CREATE SUBSCRIPTION cs_stream_on CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false, slot_name = NONE, streaming = true);
+
+
+query
+SELECT subname, substream FROM pg_subscription WHERE subname LIKE 'cs_stream%' ORDER BY subname;
+----
+subname	substream
+cs_stream_off	f
+cs_stream_on	t
+
+
+statement ok
+DROP SUBSCRIPTION cs_stream_off;
+
+
+statement ok
+DROP SUBSCRIPTION cs_stream_on;
+
+
+query
+SELECT subpasswordrequired FROM pg_subscription WHERE subname = 'cs_nopw';
+----
+subpasswordrequired
+f
+
+
+statement ok
+CREATE SUBSCRIPTION "cs.dotted" CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname = 'cs.dotted';
+----
+subname
+cs.dotted
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults SET (binary = true, origin = 'none', disable_on_error = true);
+
+
+query
+SELECT subbinary, suborigin, subdisableonerr FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subbinary	suborigin	subdisableonerr
+t	none	t
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults SET (synchronous_commit = 'on', run_as_owner = true, failover = false, binary = false, streaming = off);
+
+
+query
+SELECT subsynccommit, subrunasowner, subfailover, subbinary, substream FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subsynccommit	subrunasowner	subfailover	subbinary	substream
+on	t	f	f	f
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults SET (failover = true);
+----
+db error: ERROR: subscription "cs_defaults" could not connect to the publisher: <slt:ignore>
+
+
+statement error
+ALTER SUBSCRIPTION cs_none SET (failover = true);
+----
+db error: ERROR: cannot set option "failover" for a subscription that does not have a slot name
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults SET (copy_data = true);
+----
+db error: ERROR: unrecognized subscription parameter: "copy_data"
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults SET (slot_name = 'cs_other_slot');
+
+
+query
+SELECT subslotname FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subslotname
+cs_other_slot
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults CONNECTION 'host=other dbname=elsewhere';
+
+
+query
+SELECT subconninfo FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subconninfo
+host=other dbname=elsewhere
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults ADD PUBLICATION extra_pub WITH (refresh = false);
+
+
+query
+SELECT subpublications FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subpublications
+{pub1,extra_pub}
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults ADD PUBLICATION extra_pub WITH (refresh = false);
+----
+db error: ERROR: publication "extra_pub" is already in subscription "cs_defaults"
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults ADD PUBLICATION another_pub;
+----
+db error: ERROR: ALTER SUBSCRIPTION with refresh is not allowed for disabled subscriptions
+HINT: Use ALTER SUBSCRIPTION ... SET PUBLICATION ... WITH (refresh = false).
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults DROP PUBLICATION pub1 WITH (refresh = false);
+
+
+query
+SELECT subpublications FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subpublications
+{extra_pub}
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults DROP PUBLICATION missing_pub WITH (refresh = false);
+----
+db error: ERROR: publication "missing_pub" is not in subscription "cs_defaults"
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults DROP PUBLICATION extra_pub WITH (refresh = false);
+----
+db error: ERROR: cannot drop all the publications from a subscription
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults SET PUBLICATION only_pub, second_pub WITH (refresh = false);
+
+
+query
+SELECT subpublications FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subpublications
+{only_pub,second_pub}
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults REFRESH PUBLICATION;
+----
+db error: ERROR: ALTER SUBSCRIPTION ... REFRESH is not allowed for disabled subscriptions
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults SKIP (lsn = '0/1A2B3C');
+
+
+query
+SELECT subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subskiplsn
+0/1A2B3C
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults SKIP (lsn = NONE);
+
+
+query
+SELECT subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+subskiplsn
+NULL
+
+
+statement error
+ALTER SUBSCRIPTION cs_defaults SKIP (lsn = 'not-an-lsn');
+----
+db error: ERROR: invalid input syntax for type pg_lsn: "not-an-lsn"
+
+
+statement ok
+ALTER SUBSCRIPTION cs_defaults RENAME TO cs_renamed;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname IN ('cs_defaults', 'cs_renamed');
+----
+subname
+cs_renamed
+
+
+statement error
+ALTER SUBSCRIPTION cs_renamed RENAME TO cs_sub;
+----
+db error: ERROR: subscription "cs_sub" already exists
+
+
+statement ok
+CREATE ROLE cs_owner;
+
+
+statement ok
+ALTER SUBSCRIPTION cs_renamed OWNER TO cs_owner;
+
+
+query
+SELECT r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'cs_renamed';
+----
+rolname
+cs_owner
+
+
+statement ok
+ALTER SUBSCRIPTION cs_renamed OWNER TO CURRENT_USER;
+
+
+statement ok
+DROP ROLE cs_owner;
+
+
+statement error
+ALTER SUBSCRIPTION cs_missing ENABLE;
+----
+db error: ERROR: subscription "cs_missing" does not exist
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SUBSCRIPTION cs_renamed SET (binary = true);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT subbinary FROM pg_subscription WHERE subname = 'cs_renamed';
+----
+subbinary
+f
+
+
+statement ok
+BEGIN;
+
+
+statement error
+DROP SUBSCRIPTION cs_renamed;
+----
+db error: ERROR: DROP SUBSCRIPTION cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement error
+CREATE SUBSCRIPTION cs_txn CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1;
+----
+db error: ERROR: CREATE SUBSCRIPTION ... WITH (create_slot = true) cannot run inside a transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE SUBSCRIPTION cs_txn CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub1 WITH (connect = false);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_subscription WHERE subname = 'cs_txn';
+----
+n
+0
+
+
+statement ok
+DROP SUBSCRIPTION cs_none;
+
+
+statement ok
+DROP SUBSCRIPTION IF EXISTS cs_none;
+
+
+statement error
+DROP SUBSCRIPTION cs_none;
+----
+db error: ERROR: subscription "cs_none" does not exist
+
+
+statement error
+DROP SUBSCRIPTION cs_sub;
+----
+db error: ERROR: could not connect to publisher when attempting to drop replication slot "cs_sub": <slt:ignore>
+HINT: Use ALTER SUBSCRIPTION ... DISABLE to disable the subscription, and then use ALTER SUBSCRIPTION ... SET (slot_name = NONE) to disassociate it from the slot.
+
+
+statement ok
+ALTER SUBSCRIPTION cs_sub SET (slot_name = NONE);
+
+
+statement ok
+DROP SUBSCRIPTION cs_sub;
+
+
+statement ok
+ALTER SUBSCRIPTION cs_multi SET (slot_name = NONE);
+
+
+statement ok
+DROP SUBSCRIPTION cs_multi;
+
+
+statement ok
+ALTER SUBSCRIPTION cs_opts SET (slot_name = NONE);
+
+
+statement ok
+DROP SUBSCRIPTION cs_opts;
+
+
+statement ok
+ALTER SUBSCRIPTION cs_nopw SET (slot_name = NONE);
+
+
+statement ok
+DROP SUBSCRIPTION cs_nopw;
+
+
+statement ok
+ALTER SUBSCRIPTION "cs.dotted" SET (slot_name = NONE);
+
+
+statement ok
+DROP SUBSCRIPTION "cs.dotted";
+
+
+statement ok
+ALTER SUBSCRIPTION cs_renamed SET (slot_name = NONE);
+
+
+statement ok
+DROP SUBSCRIPTION cs_renamed;
+
+
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+
+
+query
+SELECT count(*) AS n FROM pg_stat_subscription_stats;
+----
+n
+0

@@ -22,6 +22,11 @@
 
 #include "pg/system_table.h"
 
+namespace duckdb {
+
+class DatabaseInstance;
+
+}  // namespace duckdb
 namespace sdb::pg {
 
 // https://www.postgresql.org/docs/18/catalog-pg-replication-origin.html
@@ -34,5 +39,10 @@ struct PgReplicationOrigin {
   Text roname;
 };
 // NOLINTEND
+
+template<>
+MaterializedData SystemTableSnapshot<PgReplicationOrigin>::GetTableData();
+
+void RegisterReplicationOriginStatus(duckdb::DatabaseInstance& db);
 
 }  // namespace sdb::pg

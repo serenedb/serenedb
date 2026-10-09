@@ -362,9 +362,12 @@ MaterializedData SystemTableSnapshot<PgClass>::GetTableData() {
                         ? static_cast<int16_t>(
                             duckdb::StructType::GetChildTypes(row_type).size())
                         : 0;
-      // pg_hba_file_rules is a view in PostgreSQL (relkind 'v'), not a base
-      // table, so relkind='r' queries must not list it.
-      const auto relkind = table.GetName() == "pg_hba_file_rules"
+      // These are views in PostgreSQL (relkind 'v'), not base tables, so
+      // relkind='r' queries must not list them.
+      const auto& name = table.GetName();
+      const auto relkind = name == "pg_hba_file_rules" ||
+                               name == "pg_stat_subscription" ||
+                               name == "pg_stat_subscription_stats"
                              ? PgClass::Relkind::View
                              : PgClass::Relkind::OrdinaryTable;
       PgClass row{

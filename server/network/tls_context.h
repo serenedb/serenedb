@@ -51,4 +51,13 @@ struct TlsOptions {
 // SslServerFeature. Throws on a missing/invalid cert or key.
 asio_ns::ssl::context BuildServerTlsContext(const TlsOptions& options);
 
+struct TlsClientOptions {
+  bool verify_peer = false;
+  std::string root_cert;
+  std::string cert_file;
+  std::string key_file;
+};
+
+asio_ns::ssl::context BuildClientTlsContext(const TlsClientOptions& options);
+
 }  // namespace sdb::network

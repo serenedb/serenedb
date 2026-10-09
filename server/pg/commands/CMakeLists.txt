@@ -4,5 +4,6 @@ target_sources(
         create_tsdictionary.cpp
         tsdictionary_spec.cpp
         create_server.cpp
+        create_subscription.cpp
         rbac.cpp
 )

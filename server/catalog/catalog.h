@@ -32,6 +32,7 @@
 
 #include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
+#include "catalog/entry/subscription.h"
 #include "catalog/entry/tokenizer.h"
 
 namespace duckdb {
@@ -109,6 +110,11 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeForeignServerEntry(
     duckdb::CreateForeignServerInfo& info) final {
     return duckdb::make_uniq<ForeignServerCatalogEntry>(*this, info);
+  }
+
+  duckdb::unique_ptr<duckdb::InCatalogEntry> MakeSubscriptionEntry(
+    duckdb::CreateSubscriptionInfo& info) final {
+    return duckdb::make_uniq<SubscriptionCatalogEntry>(*this, info);
   }
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
@@ -189,6 +195,13 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
                          duckdb::DropInfo& info);
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateSubscriptionInfo& info);
+
+  void DropSubscription(duckdb::CatalogTransaction transaction,
+                        duckdb::DropInfo& info);
 
  private:
   std::shared_ptr<DatabaseDirectory> _directory;

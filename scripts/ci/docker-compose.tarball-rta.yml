@@ -92,7 +92,7 @@ services:
           --host serenedb \
           --single-port 7890 \
           --fast \
-          --skip "encrypted|text_tokenizer|log_level" \
+          --skip "text_tokenizer|log_level" \
           --runner=/sqllogictest-rs \
           --junit /logs/tarball-rta-tests
       '

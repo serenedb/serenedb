@@ -145,14 +145,20 @@ class Socket final {
     });
   }
 
-  [[nodiscard]] auto Handshake()
+  [[nodiscard]] auto Handshake(asio_ns::ssl::stream_base::handshake_type type =
+                                 asio_ns::ssl::stream_base::server)
     requires(kSslBacked)
   {
     // TCP_NODELAY is set once at accept time (Acceptor::Run) for all sessions.
-    return Async<void>([this](auto&& handler) {
-      _stream.async_handshake(asio_ns::ssl::stream_base::server,
-                              std::forward<decltype(handler)>(handler));
+    return Async<void>([this, type](auto&& handler) {
+      _stream.async_handshake(type, std::forward<decltype(handler)>(handler));
     });
+  }
+
+  [[nodiscard]] Stream& TlsStream() noexcept
+    requires(kSslBacked)
+  {
+    return _stream;
   }
 
   // Call after a successful in-band Handshake() so subsequent IO routes through

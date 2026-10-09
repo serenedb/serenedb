@@ -43,6 +43,7 @@
 #include "network/pg/hba.h"
 #include "network/server.h"
 #include "query/server_engine.h"
+#include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
 #include "server/utils/app_server.h"
@@ -79,6 +80,9 @@ int RunServer(int argc, char** argv) {
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
+    // Constructed after StartIoPool() (it needs the io pool); std::optional so
+    // its lifetime still brackets the DOWN sequence like the other features.
+    std::optional<replication::SubscriptionEngine> subscriptions;
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
@@ -91,7 +95,8 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_background = false, up_search = false, up_network = false;
+    bool up_background = false, up_search = false, up_subscriptions = false,
+         up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       irs::CrashHandler::SetState("stopping");
@@ -114,12 +119,18 @@ int RunServer(int argc, char** argv) {
         // stretched refresh timer (up to 5x the interval) expires.
         background.CancelDelays();
       }
+      if (up_subscriptions) {
+        stop("subscriptions signal", [&] { subscriptions->RequestStop(); });
+      }
       if (up_network) {
         // Listeners close and every session is terminated: its in-flight query
         // interrupted, its socket closed by its own writer.
         stop("network signal", [&] { network.RequestStop(); });
       }
       // Joins, in dependency order.
+      if (up_subscriptions) {
+        stop("subscriptions", [&] { subscriptions->stop(); });
+      }
       if (up_network) {
         // Sessions complete against the fully-live engine, then the io pool
         // goes down.
@@ -156,6 +167,9 @@ int RunServer(int argc, char** argv) {
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
     }
+    subscriptions.emplace(*network.IoPool());
+    subscriptions->start();
+    up_subscriptions = true;
     // Accept connections only once the indexes are loaded and loops are
     // running.
     network.StartListeners();

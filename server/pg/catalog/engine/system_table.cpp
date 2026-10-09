@@ -51,6 +51,7 @@
 #include <ranges>
 #include <utf8proc_wrapper.hpp>
 
+#include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/system_table.h"
 #include "connector/column_id.h"
@@ -941,6 +942,8 @@ void SystemScan::AppendMembers(
       entries.emplace_back(&entry);
     }
   };
+  auto* serene =
+    dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
   absl::InlinedVector<const duckdb::CatalogSet*, 4> scanned;
   for (const auto type : types | kMemberTypes) {
     auto& set = sets.GetCatalogSet(type);
@@ -949,7 +952,14 @@ void SystemScan::AppendMembers(
     }
     scanned.emplace_back(&set);
     if (!prefix || &set == keyed) {
-      set.Scan(Transaction(), append);
+      if (const auto snapshot =
+            serene ? serene->Snapshot(_context, set) : nullptr) {
+        for (auto* entry : snapshot->entries) {
+          append(*entry);
+        }
+      } else {
+        set.Scan(Transaction(), append);
+      }
     } else {
       set.ScanWithPrefix(Transaction(), append, *prefix);
     }

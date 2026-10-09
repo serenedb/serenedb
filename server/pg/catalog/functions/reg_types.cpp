@@ -1614,8 +1614,16 @@ std::string_view RegOut(const Session& session, uint64_t oid) {
   if (oid == kInvalidOid) {
     return "-";
   }
-  const std::pair key{std::to_underlying(Kind), oid};
+  const auto kind = std::to_underlying(Kind);
+  auto& recent = session.reg_out_recent[((oid ^ (uint64_t{kind} << 56)) *
+                                         uint64_t{0x9E3779B97F4A7C15}) >>
+                                        58];
+  if (recent.oid == oid && recent.kind == kind) {
+    return recent.text;
+  }
+  const std::pair key{kind, oid};
   if (const auto it = session.reg_out.find(key); it != session.reg_out.end()) {
+    recent = {.oid = oid, .kind = kind, .text = it->second};
     return it->second;
   }
   std::string text;
@@ -1637,7 +1645,10 @@ std::string_view RegOut(const Session& session, uint64_t oid) {
     static_assert(Kind == Namespace);
     text = NamespaceOut(session, oid);
   }
-  return session.reg_out.emplace(key, std::move(text)).first->second;
+  const std::string_view stored =
+    session.reg_out.emplace(key, std::move(text)).first->second;
+  recent = {.oid = oid, .kind = kind, .text = stored};
+  return stored;
 }
 
 template<RegKind Kind>

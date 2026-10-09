@@ -101,7 +101,7 @@ A database that has subscriptions cannot be dropped, and a role that owns a subs
 
 ## Applying changes
 
-Each subscription has one apply worker. When it starts, it first copies the tables that are not synchronized yet: it opens one snapshot on the publisher, copies every such table from it in one local transaction, and records the publisher position of that snapshot with each table. Changes to those tables up to that position are already in the copy, so the stream skips them. Then the worker streams changes.
+Each subscription has one apply worker. When it starts, it first copies the tables that are not synchronized yet. It opens one snapshot on the publisher and copies every such table from it, up to `max_sync_workers_per_subscription` tables at a time, each over its own publisher connection that shares the snapshot. Each table is copied in its own local transaction, which commits the rows together with the table's state `r` and the publisher position of the snapshot, so a table is either fully copied and marked ready or not at all; after a failure or a crash only the tables that did not finish are copied again. A single table is copied over the worker's own connection. Changes to the copied tables up to the snapshot's position are already in the copy, so the stream skips them. Then the worker streams changes.
 
 Remote transactions are applied atomically: other sessions see all of a remote transaction or none of it. While the worker is catching up, it applies consecutive remote transactions in one local transaction (up to 1000 of them or 100 ms) and commits when it runs out of received changes, so under load several remote transactions become visible together and a durable commit is paid once per group instead of once per remote transaction. Changes of the same kind to the same table are applied as one batched statement, the way `COPY` loads rows, without building SQL per row; within a group, changes to tables that are not linked by foreign keys are batched per table.
 
@@ -144,6 +144,6 @@ SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat
 - Prepared transactions (`two_phase`) are not replicated as such; they are applied when they commit.
 - A change that violates a local constraint other than a unique key fails the apply, and the worker retries it until the conflict is fixed locally or the transaction is skipped with `SKIP`.
 - Changes are applied to the local table with the published table's schema and name; there is no routing of rows into local partitions.
-- `pg_subscription_rel` shows only the states `i` and `r`, because all pending tables are copied in one snapshot; `pg_stat_subscription` has no table synchronization or parallel apply rows.
+- `pg_subscription_rel` shows only the states `i` and `r`, because the pending tables are copied from one snapshot and the stream starts after all of them; `pg_stat_subscription` has no table synchronization or parallel apply rows.
 - The counters in `pg_stat_subscription_stats` are kept in memory and start from zero when the server restarts; `confl_update_origin_differs` and `confl_delete_origin_differs` stay zero.
 - `local_lsn` in `pg_replication_origin_status` is always `0/0`, and a subscription's origin can only be dropped with the subscription.

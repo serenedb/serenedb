@@ -78,6 +78,21 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SubscriptionCatalogEntry::AlterEntry(
                                                      LsnState());
 }
 
+std::vector<duckdb::SubscriptionRelation> SubscriptionCatalogEntry::Relations()
+  const {
+  auto relations = _config.relations;
+  for (auto& relation : relations) {
+    if (relation.state == 'r' || relation.sync_id == 0) {
+      continue;
+    }
+    if (const auto lsn = RelationSyncedLsn(relation.sync_id)) {
+      relation.state = 'r';
+      relation.lsn = *lsn;
+    }
+  }
+  return relations;
+}
+
 duckdb::unique_ptr<duckdb::CreateInfo> SubscriptionCatalogEntry::GetInfo()
   const {
   auto info = duckdb::make_uniq<duckdb::CreateSubscriptionInfo>();
@@ -98,7 +113,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> SubscriptionCatalogEntry::GetInfo()
   info->origin = _config.origin;
   info->synchronous_commit = _config.synchronous_commit;
   info->streaming = _config.streaming;
-  info->relations = {_config.relations.begin(), _config.relations.end()};
+  auto relations = Relations();
+  info->relations = {std::make_move_iterator(relations.begin()),
+                     std::make_move_iterator(relations.end())};
   info->remote_lsn = RemoteLsn();
   info->skip_lsn = _config.skip_lsn;
   info->comment = comment;

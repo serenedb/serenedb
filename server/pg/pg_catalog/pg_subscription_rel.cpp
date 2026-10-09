@@ -52,7 +52,7 @@ MaterializedData SystemTableSnapshot<PgSubscriptionRel>::GetTableData() {
           [&](duckdb::CatalogEntry& entry) {
             const auto& subscription =
               entry.Cast<catalog::SubscriptionCatalogEntry>();
-            for (const auto& relation : subscription.Config().relations) {
+            for (const auto& relation : subscription.Relations()) {
               auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
                 _context,
                 duckdb::QualifiedName::FromCatalogSchema(

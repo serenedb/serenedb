@@ -28,9 +28,8 @@ duckdb-iceberg always writes attributable deletes.
           -> the translation-refusal (rescan fallback) rung
 
 The fixture is NOT checked in: scripts/ensure_iceberg_fixture.sh generates
-it before test runs that need it, in a throwaway python container
-(pyiceberg[sql-sqlite], pyarrow, fastavro), stamping the output and
-regenerating when this script changes.
+it before test runs that need it, with the build image's pyiceberg, pyarrow
+and fastavro, stamping the output and regenerating when this script changes.
 
 pyiceberg writes the base tables (it cannot write delete files at all); the
 delete parquet, delete manifest, manifest list and v2 metadata are crafted

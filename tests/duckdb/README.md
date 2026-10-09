@@ -16,6 +16,8 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
   already set: the runner then brings up `postgres:18.6` on a free port via
   [docker-compose.postgres.yml](docker-compose.postgres.yml). CI sets `PGHOST`,
   so it reuses the postgres already in the compose stack.
+- `docker` for the `iceberg` suite, unless the Iceberg REST fixture already
+  answers at `127.0.0.1:8181` (see [The iceberg fixture](#the-iceberg-fixture)).
 
 ## Running
 
@@ -236,8 +238,7 @@ A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored g
 
 ## The postgres_scanner fixture
 
-That suite is the only one with an external dependency, and three things about
-its fixture are non-obvious:
+Three things about the postgres fixture are non-obvious:
 
 - **It uses our `config/postgres_scanner.json`, not upstream's
   `attach_postgres.json`.** Upstream's config is for the inverse scenario
@@ -251,6 +252,17 @@ its fixture are non-obvious:
 - **`tpch.lineitem` is synthetic (10k rows).** Upstream seeds tpch through
   DuckDB's dbgen; we don't ship the CLI, so the runner fakes the one table
   `attach_timeout_error.test` needs to trip its 1s statement_timeout.
+
+## The iceberg fixture
+
+The `iceberg` suite runs most of duckdb_iceberg's tests against a live catalog: `apache/iceberg-rest-fixture` with SeaweedFS as its S3 store, the same pair upstream's CI uses. Upstream's tests and `test/configs/fixture.json` hard-code `127.0.0.1:8181` (REST) and `127.0.0.1:9000` (S3), so the fixture always listens there:
+
+- **Locally**, `run.sh` starts the extension's own [scripts/docker-compose.yml](../../third_party/duckdb_iceberg/scripts/docker-compose.yml) on those host ports, and stops it at exit. A fixture that already answers at `127.0.0.1:8181` is reused.
+- **In CI**, [docker-compose.duckdb.yml](../sqllogic/docker-compose.duckdb.yml) runs SeaweedFS, the bucket setup and the REST server in one network namespace that the tests container joins, so they are on its `127.0.0.1`. `ICEBERG_FIXTURE_RUNNING=1` tells `run.sh` to wait for that fixture, not start one.
+
+Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Outside the image (no `pyspark` on the host), `run.sh` runs the generator in `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`). Its log is `out/test-results/iceberg-data.log`.
+
+The suite then runs in three `unittest` calls: the extension's tests without the catalog directories in parallel, then, in upstream CI's order and with its `--order lex`, `catalog_test_config_setup` with upstream's `fixture.json` plus our [config/iceberg_catalog.json](config/iceberg_catalog.json), and `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). The catalog tests share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind.
 
 ## Traps
 

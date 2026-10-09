@@ -155,13 +155,21 @@ mkdir -p "$REPORTS_DIR"
 # --- postgres fixture, for the postgres_scanner suite only -------------------
 PG_DOCKER_PROJECT=""
 
-cleanup_postgres() {
+ICEBERG_DIR="${SUITE_DIR[iceberg]}"
+ICEBERG_COMPOSE="$ICEBERG_DIR/scripts/docker-compose.yml"
+ICEBERG_REST_URI=http://127.0.0.1:8181
+ICEBERG_DOCKER_STARTED=false
+
+cleanup_fixtures() {
 	if [[ -n "$PG_DOCKER_PROJECT" ]]; then
 		docker compose -p "$PG_DOCKER_PROJECT" -f "$SCRIPT_DIR/docker-compose.postgres.yml" \
 			down --volumes --remove-orphans >/dev/null 2>&1 || true
 	fi
+	if [[ "$ICEBERG_DOCKER_STARTED" == true ]]; then
+		docker compose -f "$ICEBERG_COMPOSE" down --volumes --remove-orphans >/dev/null 2>&1 || true
+	fi
 }
-trap cleanup_postgres EXIT INT TERM
+trap cleanup_fixtures EXIT INT TERM
 
 start_postgres_docker() {
 	if ! docker ps >/dev/null 2>&1; then
@@ -226,6 +234,50 @@ ensure_postgres_fixture() {
 	# Upstream tests gate on this: require-env POSTGRES_TEST_DATABASE_AVAILABLE.
 	export POSTGRES_TEST_DATABASE_AVAILABLE=1
 }
+
+start_iceberg_docker() {
+	if ! docker ps >/dev/null 2>&1; then
+		echo "ERROR: docker daemon not reachable, and no Iceberg REST fixture answers at $ICEBERG_REST_URI." >&2
+		return 1
+	fi
+	echo "Starting the Iceberg REST fixture in docker..."
+	docker compose -f "$ICEBERG_COMPOSE" up -d || return 1
+	ICEBERG_DOCKER_STARTED=true
+	wait_iceberg_fixture
+}
+
+wait_iceberg_fixture() {
+	for i in $(seq 1 60); do
+		curl -fsS -o /dev/null "$ICEBERG_REST_URI/v1/config" 2>/dev/null && return 0
+		sleep 1
+	done
+	echo "ERROR: the Iceberg REST fixture at $ICEBERG_REST_URI never became ready" >&2
+	return 1
+}
+
+generate_iceberg_data() {
+	local generator=("$SCRIPT_DIR/generate_iceberg_data.sh" fixture local)
+	echo "Generating Iceberg test data, log: $REPORTS_DIR/iceberg-data.log"
+	if ! python3 -c 'import pyspark' 2>/dev/null; then
+		generator=(docker run --rm --network host -u "$(id -u):$(id -g)" -e HOME=/tmp
+			-v "$WORKSPACE:$WORKSPACE" "${BUILD_IMAGE:-serenedb/serenedb-build-ubuntu:latest}" "${generator[@]}")
+	fi
+	"${generator[@]}" >"$REPORTS_DIR/iceberg-data.log" 2>&1 || {
+		echo "ERROR: Iceberg data generation failed, see $REPORTS_DIR/iceberg-data.log" >&2
+		return 1
+	}
+}
+
+ensure_iceberg_fixture() {
+	if [[ -n "${ICEBERG_FIXTURE_RUNNING:-}" ]] || curl -fsS -o /dev/null "$ICEBERG_REST_URI/v1/config" 2>/dev/null; then
+		echo "Using the Iceberg REST fixture at $ICEBERG_REST_URI."
+		wait_iceberg_fixture || return 1
+	else
+		start_iceberg_docker || return 1
+	fi
+	generate_iceberg_data || return 1
+	export FIXTURE_SERVER_AVAILABLE=1 DUCKDB_ICEBERG_HAVE_GENERATED_DATA=1
+}
 # -----------------------------------------------------------------------------
 
 for suite in $SUITES; do
@@ -244,6 +296,8 @@ for suite in $unittest_suites; do
 	[[ -f "$config" ]] && args+=(--test-config "$config")
 	if [[ "$suite" == "postgres_scanner" ]]; then
 		serial_filters+=("$(suite_filter "$suite")")
+	elif [[ "$suite" == "iceberg" ]]; then
+		filters+=("\"$(suite_filter "$suite")\" ~\"$ICEBERG_DIR/test/sql/local/catalog_*\"")
 	else
 		filters+=("$(suite_filter "$suite")")
 	fi
@@ -284,6 +338,11 @@ if [[ " $SUITES " == *" postgres_scanner "* ]] && ! ensure_postgres_fixture; the
 	exit 1
 fi
 
+if [[ " $SUITES " == *" iceberg "* ]] && ! ensure_iceberg_fixture; then
+	echo "===== [duckdb] END (rc=1, iceberg fixture failed) ====="
+	exit 1
+fi
+
 # No --test-temp-dir here, on purpose: that flag also flips DeleteTestPath
 # off, which turns the per-test ClearTestDirectory() into a no-op. Persistent
 # `load {TEST_DIR}/x.db` tests then inherit the previous test's database and
@@ -308,6 +367,12 @@ run_unittest() {
 : >"$log"
 [[ -n "$spec" ]] && run_unittest --jobs "$DUCKDB_JOBS" "$spec"
 [[ -n "$serial_spec" ]] && run_unittest "$serial_spec"
+if [[ " $SUITES " == *" iceberg "* ]]; then
+	run_unittest --order lex --test-config "$ICEBERG_DIR/test/configs/fixture.json" \
+		--test-config "$SCRIPT_DIR/config/iceberg_catalog.json" \
+		"$ICEBERG_DIR/test/sql/local/catalog_test_config_setup/*"
+	run_unittest --order lex "$ICEBERG_DIR/test/sql/local/catalog_custom_setup/*"
+fi
 if [[ "$run_interop" == true ]]; then
 	start=$(wc -l <"$log")
 	BUILD_DIR="$BUILD_DIR" "$SCRIPT_DIR/interop/run.sh" 2>&1 | tee -a "$log"

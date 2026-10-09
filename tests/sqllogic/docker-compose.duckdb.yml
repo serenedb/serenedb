@@ -21,8 +21,46 @@ services:
     networks:
       - test-network
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+    command: ["server", "-dir=/data", "-ip=127.0.0.1", "-s3", "-s3.port=9000"]
+    networks:
+      - test-network
+
+  s3-init:
+    image: amazon/aws-cli:2.36.44
+    network_mode: "service:seaweedfs"
+    depends_on:
+      - seaweedfs
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - until aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://warehouse; do sleep 1; done
+
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    network_mode: "service:seaweedfs"
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://127.0.0.1:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+
   tests:
     image: ${BUILD_IMAGE}
+    network_mode: "service:seaweedfs"
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     group_add:
       - "${DOCKER_SOCK_GID:-999}"
@@ -44,15 +82,16 @@ services:
       - PGPORT=5432
       - PGUSER=postgres
       - PGDATABASE=postgres
+      - ICEBERG_FIXTURE_RUNNING=1
     ulimits:
       nofile:
         soft: 16384
         hard: 16384
-    networks:
-      - test-network
     depends_on:
       postgres:
         condition: service_healthy
+      iceberg-rest:
+        condition: service_started
     # One entry point for every DuckDB-level suite: duckdb core, each vendored
     # extension, and postgres_scanner against the postgres service above.
     # DUCKDB_SUITES is the diff-derived suite list (scripts/ci/classify-changes.sh);

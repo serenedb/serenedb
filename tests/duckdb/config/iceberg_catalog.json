@@ -1,0 +1,17 @@
+{
+  "description": "SereneDB test-config for duckdb_iceberg's catalog_test_config_setup tests, run against apache/iceberg-rest-fixture through the extension's own test/configs/fixture.json. Every entry is a known reason the test cannot run here -- see tests/duckdb/README.md.",
+  "skip_tests": [
+    {
+      "reason": "Expects upstream DuckDB main's COPY file packing (one output file for three ~1.5 KiB inputs with target_file_size_bytes=2000); the vendored core follows the v2.0 release line, which writes one file per input here. Revisit on the next DuckDB update.",
+      "paths": [
+        "test/sql/local/catalog_test_config_setup/catalog_agnostic/maintenance/rewrite_data_files_enough_bytes.test"
+      ]
+    },
+    {
+      "reason": "SereneDB's spatial build has no PROJ (duckdb_spatial 7b79dd71, Boost.Geometry backend), so EPSG coordinate systems such as GEOMETRY('EPSG:4326') are not defined.",
+      "paths": [
+        "test/sql/local/catalog_test_config_setup/catalog_agnostic/reads/filtering/test_filtering_spatial_intersects.test"
+      ]
+    }
+  ]
+}

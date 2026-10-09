@@ -40,6 +40,7 @@ RUN \
       systemd \
       nodejs \
       openjdk-25-jdk-headless maven \
+      openjdk-21-jre-headless libnss-wrapper \
       php-cli php-pgsql php-mbstring php-xml php-zip composer \
       dotnet-sdk-10.0 \
       libpq-dev pkg-config \
@@ -73,7 +74,20 @@ ENV NUGET_PACKAGES=/opt/sdb-drivers/nuget
 ENV GOTOOLCHAIN=local
 
 COPY --from=drivers python/requirements.txt /tmp/drivers/python/
-RUN python3 -m pip install --break-system-packages --no-cache-dir -r /tmp/drivers/python/requirements.txt
+COPY test-data-requirements.txt /tmp/
+RUN python3 -m pip install --break-system-packages --no-cache-dir \
+      -r /tmp/drivers/python/requirements.txt -r /tmp/test-data-requirements.txt
+
+ENV SDB_SPARK_JAVA_HOME=/usr/lib/jvm/spark-java
+ENV SPARK_CONF_DIR=/opt/sdb-spark/conf
+ARG SPARK_PACKAGES=org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.0,org.apache.iceberg:iceberg-aws-bundle:1.10.0
+COPY spark-prefetch.py /tmp/
+RUN ln -s "/usr/lib/jvm/java-21-openjdk-$(dpkg --print-architecture)" "$SDB_SPARK_JAVA_HOME" && \
+    mkdir -p "$SPARK_CONF_DIR" && \
+    echo "spark.jars.ivy /opt/sdb-spark/ivy" > "$SPARK_CONF_DIR/spark-defaults.conf" && \
+    JAVA_HOME="$SDB_SPARK_JAVA_HOME" SPARK_PACKAGES="$SPARK_PACKAGES" python3 /tmp/spark-prefetch.py && \
+    rm /tmp/spark-prefetch.py && \
+    chmod -R a+rwX /opt/sdb-spark
 
 COPY --from=drivers js/package.json js/package-lock.json /opt/sdb-drivers/js/
 RUN cd /opt/sdb-drivers/js && npm ci --no-fund --no-audit

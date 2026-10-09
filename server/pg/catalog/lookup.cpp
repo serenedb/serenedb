@@ -51,6 +51,7 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <limits>
+#include <mutex>
 #include <ranges>
 #include <span>
 #include <tuple>
@@ -625,7 +626,31 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
       }
     }
   }
-  schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, match);
+  auto* serene =
+    dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
+  const auto snapshot =
+    serene ? serene->Snapshot(
+               context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
+                          duckdb::CatalogType::TABLE_ENTRY))
+           : nullptr;
+  if (!snapshot) {
+    schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, match);
+    return found;
+  }
+  std::call_once(snapshot->keys_once, [&] {
+    for (auto* entry : snapshot->entries) {
+      if (entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+        continue;
+      }
+      auto& table = entry->Cast<duckdb::TableCatalogEntry>();
+      for (const auto& key : KeyIndexes(table)) {
+        snapshot->keys.try_emplace(key.constraint_name, &table, &key);
+      }
+    }
+  });
+  if (const auto it = snapshot->keys.find(name); it != snapshot->keys.end()) {
+    found = {.table = it->second.first, .key_index = it->second.second};
+  }
   return found;
 }
 

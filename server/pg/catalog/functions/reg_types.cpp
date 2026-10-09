@@ -963,8 +963,8 @@ std::string_view SqlTypeName(int32_t oid) {
   return {};
 }
 
-std::optional<std::string> FormatUserType(const Session& session,
-                                          uint64_t oid) {
+std::optional<std::string> FormatUserType(const Session& session, uint64_t oid,
+                                          std::optional<int32_t> typmod) {
   if (!session.context) {
     return std::nullopt;
   }
@@ -977,6 +977,9 @@ std::optional<std::string> FormatUserType(const Session& session,
   auto name = FindVisibleType(session, object->name) == element
                 ? QuoteIdentifier(object->name)
                 : QualifiedOutName(object->schema, object->name);
+  if (typmod && *typmod >= 0) {
+    absl::StrAppend(&name, "(", *typmod, ")");
+  }
   if (array != kInvalidOid) {
     absl::StrAppend(&name, "[]");
   }
@@ -1006,7 +1009,7 @@ std::string FormatType(const Session& session, uint64_t oid) {
     return QualifiedOutName(FindSystemNamespace(builtin->nsp)->name,
                             builtin->name);
   }
-  if (auto name = FormatUserType(session, oid)) {
+  if (auto name = FormatUserType(session, oid, std::nullopt)) {
     return std::move(*name);
   }
   return absl::StrCat(oid);
@@ -1543,6 +1546,9 @@ std::string IntervalTypmodOut(int32_t typmod) {
   return out;
 }
 
+constexpr std::array kTypmodlessTypes{kBool,   kInt2,   kInt4, kInt8,
+                                      kFloat4, kFloat8, kJson};
+
 }  // namespace
 
 std::string FormatTypeOut(const Session& session, uint64_t oid,
@@ -1551,7 +1557,7 @@ std::string FormatTypeOut(const Session& session, uint64_t oid,
     return FormatType(session, oid);
   }
   if (oid >= kMaxSystem) {
-    return FormatUserType(session, oid).value_or("???");
+    return FormatUserType(session, oid, typmod).value_or("???");
   }
   const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
   if (!builtin) {
@@ -1594,7 +1600,12 @@ std::string FormatTypeOut(const Session& session, uint64_t oid,
         return absl::StrCat(sql, IntervalTypmodOut(*typmod));
     }
   }
-  return FormatType(session, oid);
+  auto name = FormatType(session, oid);
+  if (typmod && *typmod >= 0 &&
+      !absl::c_linear_search(kTypmodlessTypes, builtin->oid)) {
+    absl::StrAppend(&name, "(", *typmod, ")");
+  }
+  return name;
 }
 
 template<RegKind Kind>

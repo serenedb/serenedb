@@ -78,7 +78,7 @@ TEST(SubscriptionConnInfo, ParsesKeywordValuePairs) {
 TEST(SubscriptionConnInfo, DefaultsHostAndPort) {
   const auto info = replication::ParseConnInfo("dbname=source");
   ASSERT_EQ(info.hosts.size(), 1);
-  EXPECT_EQ(info.hosts[0].host, "localhost");
+  EXPECT_EQ(info.hosts[0].host, "/tmp");
   EXPECT_EQ(info.hosts[0].port, "5432");
   EXPECT_TRUE(info.user.empty());
   EXPECT_EQ(info.sslmode, replication::SslMode::Prefer);

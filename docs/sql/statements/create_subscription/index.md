@@ -30,7 +30,15 @@ CREATE SUBSCRIPTION name
   [ WITH ( option [= value] [, ...] ) ]
 ```
 
-`CONNECTION` is a libpq connection string, in keyword/value or URI form (`postgresql://user:secret@pg.internal:5432/shop?sslmode=require`), parsed the way libpq parses it. SereneDB uses `host` (or `hostaddr`, a comma-separated list is tried in order), `port`, `user`, `password`, `dbname`, `application_name`, `connect_timeout`, `sslmode`, `sslrootcert`, `sslcert`, `sslkey` and `sslsni`. `user` defaults to the name of the subscription's owner and `application_name` to the subscription name.
+`CONNECTION` is a libpq connection string, in keyword/value or URI form (`postgresql://user:secret@pg.internal:5432/shop?sslmode=require`), parsed and applied the way libpq does:
+
+- `host`, `hostaddr` and `port` may list several servers, tried in order, or in random order with `load_balance_hosts=random`. A `host` starting with `/` is the directory of the publisher's Unix-domain socket, and without `host` or `hostaddr` the connection goes to the socket in `/tmp`. TLS is not used over a Unix-domain socket.
+- `target_session_attrs` (`any`, `read-write`, `read-only`, `primary`, `standby` or `prefer-standby`) skips servers in the wrong state, as libpq does.
+- `user`, `password`, `dbname`, `application_name` and `connect_timeout`. `user` defaults to the name of the subscription's owner and `application_name` to the subscription name. Without a `password`, it is looked up in `passfile`, `PGPASSFILE` or `~/.pgpass` of the server process, which must not be readable by group or others.
+- `service` takes defaults from the service file: `PGSERVICEFILE` or `~/.pg_service.conf`, then `pg_service.conf` in `PGSYSCONFDIR`.
+- `sslmode`, `sslrootcert`, `sslcert`, `sslkey`, `sslpassword` (the passphrase of an encrypted `sslkey`), `sslcrl`, `sslcrldir` and `sslsni`. Certificates, keys and revocation lists default to the files in `~/.postgresql` of the server process, like libpq.
+
+GSSAPI and Kerberos authentication are not supported.
 
 The publisher may require `trust`, `password`, `md5` or `scram-sha-256` authentication. With `sslmode` `prefer` (the default), `require`, `verify-ca` or `verify-full` the connection uses TLS when the publisher offers it; `verify-ca` and `verify-full` check the publisher's certificate against `sslrootcert` (`system` means the system trust store), and `verify-full` also checks the host name.
 

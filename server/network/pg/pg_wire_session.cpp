@@ -858,7 +858,7 @@ void PgWireSession<Kind>::WriteCommandTag(
 // is_loopback() sees the v4.
 template<SocketKind Kind>
 void PgWireSession<Kind>::CapturePeerAddress() {
-  if constexpr (Kind == SocketKind::Unix) {
+  if constexpr (Kind == SocketKind::Unix || Kind == SocketKind::Client) {
     return;  // no IP; the gate treats a unix peer as local via is_local
   } else {
     asio_ns::error_code ec;
@@ -3085,6 +3085,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
 }
 
 template class PgWireSession<SocketKind::MaybeTls>;
+template class PgWireSession<SocketKind::Client>;
 template class PgWireSession<SocketKind::Tcp>;
 template class PgWireSession<SocketKind::Unix>;
 

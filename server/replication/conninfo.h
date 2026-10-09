@@ -36,10 +36,23 @@ enum class SslMode : uint8_t {
   VerifyFull,
 };
 
+enum class SessionAttrs : uint8_t {
+  Any,
+  ReadWrite,
+  ReadOnly,
+  Primary,
+  Standby,
+  PreferStandby,
+};
+
 struct ConnHost {
   std::string host;
   std::string hostaddr;
   std::string port;
+
+  bool IsUnixSocket() const noexcept {
+    return hostaddr.empty() && (host.starts_with('/') || host.starts_with('@'));
+  }
 
   bool operator==(const ConnHost&) const = default;
 };
@@ -54,12 +67,22 @@ struct ConnInfo {
   std::string sslrootcert;
   std::string sslcert;
   std::string sslkey;
+  std::string sslpassword;
+  std::string sslcrl;
+  std::string sslcrldir;
   std::string sslsni = "1";
+  std::string passfile;
+  SessionAttrs target_session_attrs = SessionAttrs::Any;
+  bool load_balance_hosts = false;
   std::chrono::seconds connect_timeout{0};
 
   bool operator==(const ConnInfo&) const = default;
 };
 
 ConnInfo ParseConnInfo(std::string_view conninfo);
+
+std::string PasswordFromFile(const ConnInfo& conninfo, const ConnHost& host);
+
+void ArrangeHosts(ConnInfo& conninfo, uint64_t seed, bool any_session);
 
 }  // namespace sdb::replication

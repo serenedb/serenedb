@@ -94,6 +94,8 @@ What SereneDB decides on its own is kept apart from the generated output:
 - `server/pg/catalog/views/overrides/<schema>.<view>.sql` holds a view body SereneDB rewrites; the generator uses it in place of PostgreSQL's.
 - `server/pg/catalog/tables/{pg_catalog,information_schema,sdb}/<table>.cpp` produces the rows of one catalog table and sets SereneDB's constant column values; `sdb/` holds SereneDB's own `sdb_*` tables, which live in `pg_catalog`. The generator registers every such file in `generated/registry.gen.inc` and stops on a file named after no catalog table. A catalog without a file exists with no rows.
 
+The same script owns the two outputs that come from this repository alone: `generated/registry.gen.inc` and `tests/sqllogic/sdb/pg/site_docs/compatibility/system_table_claims.test`, which checks what `docs/compatibility/system-table-compatibility.md` claims for each relation. Without `--pg` it rewrites only those two, so adding a table file or editing the docs page needs no PostgreSQL; pre-commit runs `python3 scripts/generate_pg_catalog.py --check`, which fails while either is stale.
+
 To move to a new PostgreSQL release, rerun the generator against that release and fix what no longer compiles. Column names are checked at compile time, and a debug build checks every column's storage type at startup.
 
 ### Launch

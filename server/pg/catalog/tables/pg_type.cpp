@@ -37,10 +37,22 @@ constexpr duckdb::CatalogType kTypes[] = {
   duckdb::CatalogType::VIEW_ENTRY,
 };
 
+constexpr duckdb::CatalogType kUserTypes[] = {duckdb::CatalogType::TYPE_ENTRY};
+
+constexpr SystemKindTypes kTypeKinds[] = {
+  {'b', kTypes},
+  {'c', kTypes},
+  {'d', kUserTypes},
+  {'e', kUserTypes},
+};
+
 constexpr SystemIndex kIndexes[] = {
   {kPgTypeSql["oid"], SystemLookup::Object},
   {kPgTypeSql["typname"], SystemLookup::Object},
   {kPgTypeSql["typnamespace"], SystemLookup::Namespace},
+  {kPgTypeSql["typtype"], SystemLookup::Kind, kTypeKinds},
+  {kPgTypeSql["typrelid"], SystemLookup::Object},
+  {kPgTypeSql["typelem"], SystemLookup::Object},
 };
 
 SystemRows<BuiltinType> LoadBuiltinTypes(SystemScan&) { return BuiltinTypes(); }

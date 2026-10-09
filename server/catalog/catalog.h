@@ -25,6 +25,7 @@
 #include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
+#include <duckdb/catalog/dependency.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -76,6 +77,12 @@ struct CatalogSnapshot {
   mutable irs::containers::FlatHashMap<const duckdb::ColumnDefinition*,
                                        std::string>
     defaults;
+  mutable std::once_flag subjects_once;
+  mutable irs::containers::FlatHashMap<
+    const duckdb::CatalogEntry*,
+    std::vector<
+      std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>>
+    subjects;
 };
 
 class SereneDBCatalog final : public duckdb::DuckCatalog {

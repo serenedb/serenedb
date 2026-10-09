@@ -33,7 +33,6 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/vector_operations/unary_executor.hpp>
@@ -41,8 +40,6 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/client_data.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_function_info.hpp>
@@ -62,17 +59,15 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
-#include "pg/catalog/builtin/builtin.h"
-#include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/format_type.h"
 #include "pg/catalog/functions/reg_types.h"
 #include "pg/catalog/lookup.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "pg/sql_utils.h"
-#include "pg/types.h"
 #include "search/search_table.h"
 
 namespace sdb::connector {
@@ -128,10 +123,7 @@ void IsVisibleFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       if (oid <= 0) {
         return duckdb::nullopt;
       }
-      if (const auto visible = Visible(session, static_cast<uint64_t>(oid))) {
-        return *visible;
-      }
-      return duckdb::nullopt;
+      return Visible(session, static_cast<uint64_t>(oid));
     });
 }
 
@@ -232,27 +224,13 @@ void ColDescriptionFunction(duckdb::DataChunk& args,
     });
 }
 
-bool IsDomain(const duckdb::string_t& typtype) {
-  return typtype.GetSize() == 1 && typtype.GetData()[0] == 'd';
-}
-
-void TrueTypIdFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                       duckdb::Vector& result) {
-  duckdb::VariadicExecutor::Execute<int64_t, int64_t, duckdb::string_t,
-                                    int64_t>(
-    args, result,
-    [](int64_t typid, duckdb::string_t typtype, int64_t basetype) {
-      return IsDomain(typtype) ? basetype : typid;
-    });
-}
-
-void TrueTypModFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                        duckdb::Vector& result) {
-  duckdb::VariadicExecutor::Execute<int32_t, int32_t, duckdb::string_t,
-                                    int32_t>(
-    args, result,
-    [](int32_t typmod, duckdb::string_t typtype, int32_t basetypmod) {
-      return IsDomain(typtype) ? basetypmod : typmod;
+template<typename T>
+void TrueTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                      duckdb::Vector& result) {
+  duckdb::VariadicExecutor::Execute<T, T, duckdb::string_t, T>(
+    args, result, [](T value, duckdb::string_t typtype, T base) {
+      return typtype.GetSize() == 1 && typtype.GetData()[0] == 'd' ? base
+                                                                   : value;
     });
 }
 
@@ -263,13 +241,7 @@ void TypmodFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
   duckdb::VariadicExecutor::Execute<int32_t, int64_t, int32_t>(
     args, result,
-    [](int64_t typid, int32_t typmod) -> duckdb::optional<int32_t> {
-      const auto value = Fn(typid, typmod);
-      if (!value) {
-        return duckdb::nullopt;
-      }
-      return *value;
-    });
+    [](int64_t typid, int32_t typmod) { return Fn(typid, typmod); });
 }
 
 void IntervalTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -300,13 +272,10 @@ std::vector<int16_t> IndexKey(const pg::Session& session, int64_t oid) {
     }
     return pg::IndexAttnums(*session.context, index, *relation);
   }
-  if (auto table = pg::OwnerTable(session, static_cast<uint64_t>(oid))) {
-    for (const auto& key : pg::KeyIndexes(*table)) {
-      if (key.index_oid == static_cast<duckdb::idx_t>(oid)) {
-        return pg::Attnums(table->GetColumns(),
-                           key.GetLogicalIndexes(table->GetColumns()));
-      }
-    }
+  if (const auto key = pg::FindKeyIndex(session, static_cast<uint64_t>(oid));
+      key.table) {
+    const auto& columns = key.table->GetColumns();
+    return pg::Attnums(columns, key.key_index->GetLogicalIndexes(columns));
   }
   return {};
 }
@@ -378,9 +347,8 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
         return duckdb::nullopt;
       }
       return duckdb::StringVector::AddString(
-        result,
-        absl::StrCat(pg::QuoteIdentifier(schema->name.GetIdentifierName()), ".",
-                     pg::QuoteIdentifier(sequence->name.GetIdentifierName())));
+        result, pg::QualifiedOutName(schema->name.GetIdentifierName(),
+                                     sequence->name.GetIdentifierName()));
     });
 }
 
@@ -507,8 +475,8 @@ void PgCharToEncodingFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(), [](duckdb::string_t name) {
       std::string clean;
       for (const auto c : View(name)) {
-        if (absl::ascii_isalnum(static_cast<unsigned char>(c))) {
-          clean.push_back(absl::ascii_tolower(static_cast<unsigned char>(c)));
+        if (absl::ascii_isalnum(c)) {
+          clean.push_back(absl::ascii_tolower(c));
         }
       }
       const auto it = absl::c_find_if(
@@ -528,16 +496,12 @@ struct PrivilegeRequest {
   bool grant = false;
 };
 
-duckdb::AclMode PrivilegeMode(PrivilegeObject object) {
-  return object == PrivilegeObject::Tablespace ? duckdb::AclMode::Create
-                                               : duckdb::AclMode::Usage;
-}
-
 PrivilegeRequest ParsePrivileges(PrivilegeObject object,
                                  std::string_view text) {
-  const std::string_view keyword =
-    object == PrivilegeObject::Tablespace ? "CREATE" : "USAGE";
-  const auto with_grant = absl::StrCat(keyword, " WITH GRANT OPTION");
+  const bool tablespace = object == PrivilegeObject::Tablespace;
+  const std::string_view keyword = tablespace ? "CREATE" : "USAGE";
+  const std::string_view with_grant =
+    tablespace ? "CREATE WITH GRANT OPTION" : "USAGE WITH GRANT OPTION";
   PrivilegeRequest request;
   for (const std::string_view token : absl::StrSplit(text, ',')) {
     const auto stripped = absl::StripAsciiWhitespace(token);
@@ -615,7 +579,9 @@ duckdb::optional<bool> HasPrivilege(
   if (!target) {
     return duckdb::nullopt;
   }
-  const auto mode = PrivilegeMode(object);
+  const auto mode = object == PrivilegeObject::Tablespace
+                      ? duckdb::AclMode::Create
+                      : duckdb::AclMode::Usage;
   if (request.plain) {
     const bool held =
       object == PrivilegeObject::ForeignServer
@@ -912,14 +878,14 @@ int64_t RoleIdOf(duckdb::ClientContext& context, std::string_view name) {
 void ExplodeAcl(duckdb::ClientContext& context, std::string_view text,
                 std::vector<ExplodedAcl>& rows) {
   AclReader reader{text};
-  const auto grantee = RoleIdOf(context, std::string{reader.Role()});
+  const auto grantee = RoleIdOf(context, reader.Role());
   if (!reader.Skip('=')) {
     return;
   }
   const auto privileges = reader.Privileges();
   int64_t grantor = 0;
   if (reader.Skip('/')) {
-    grantor = RoleIdOf(context, std::string{reader.Role()});
+    grantor = RoleIdOf(context, reader.Role());
   }
   duckdb::AclMode held = duckdb::AclMode::NoRights;
   duckdb::AclMode grantable = duckdb::AclMode::NoRights;
@@ -1374,10 +1340,10 @@ void RegisterPgHelperFunctions(duckdb::DatabaseInstance& db) {
 
   RegisterScalar(
     loader, information_schema, "_pg_truetypid",
-    {duckdb::ScalarFunction{{oid, text, oid}, oid, TrueTypIdFunction}});
-  RegisterScalar(
-    loader, information_schema, "_pg_truetypmod",
-    {duckdb::ScalarFunction{{int4, text, int4}, int4, TrueTypModFunction}});
+    {duckdb::ScalarFunction{{oid, text, oid}, oid, TrueTypeFunction<int64_t>}});
+  RegisterScalar(loader, information_schema, "_pg_truetypmod",
+                 {duckdb::ScalarFunction{
+                   {int4, text, int4}, int4, TrueTypeFunction<int32_t>}});
   RegisterScalar(loader, information_schema, "_pg_char_max_length",
                  {duckdb::ScalarFunction{
                    {oid, int4}, int4, TypmodFunction<pg::CharMaxLength>}});

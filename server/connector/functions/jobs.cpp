@@ -27,7 +27,6 @@
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enum_util.hpp>
-#include <duckdb/common/exception.hpp>
 #include <duckdb/common/numeric_utils.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -36,6 +35,7 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -240,7 +240,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   return_types.emplace_back(duckdb::LogicalType::BOOLEAN);
   names.emplace_back("Success");
   if (input.inputs[0].IsNull()) {
-    throw duckdb::BinderException("Job name cannot be NULL");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+                    ERR_MSG("Job name cannot be NULL"));
   }
   auto name =
     duckdb::QualifiedName::Parse(duckdb::StringValue::Get(input.inputs[0]));
@@ -257,7 +258,8 @@ void ExecuteJobExecute(duckdb::ClientContext& context,
                        duckdb::DataChunk& output) {
   auto* scheduler = JobScheduler::Instance();
   if (!scheduler) {
-    throw duckdb::InvalidInputException("Jobs run only in the server");
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("Jobs run only in the server"));
   }
   scheduler->Execute(context, input.bind_data->Cast<ExecuteJobData>().job);
 }

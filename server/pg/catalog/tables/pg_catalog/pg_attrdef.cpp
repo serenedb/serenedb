@@ -82,7 +82,7 @@ class PgAttrdef final : public SystemTableScan<kPgAttrdefSql> {
 
   const decltype(catalog::CatalogSnapshot::defaults)* Defaults(
     const duckdb::TableCatalogEntry& table) {
-    if (!Needs<"adbin">() || _rendered < kRenderedBeforeCache) {
+    if (!Reads<"adbin">() || _rendered < kRenderedBeforeCache) {
       return nullptr;
     }
     if (table.ParentSchemaOid() != _schema) {

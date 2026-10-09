@@ -70,7 +70,7 @@ db error: ERROR: unique constraint on a search-backed table is not yet supported
 statement error
 ALTER TABLE pkg ADD CONSTRAINT pkg_uk UNIQUE (s);
 ----
-db error: ERROR: ALTER TABLE ADD CONSTRAINT on a search-backed table is not yet supported
+db error: ERROR: ALTER TABLE ADD UNIQUE on a search-backed table is not yet supported
 
 
 # PRIMARY KEY implies NOT NULL, and a NULL emits no term, so an unchecked one

@@ -269,8 +269,8 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
   SDB_ASSERT(op.update_column_count <= op.columns.size(),
              "SET-list size exceeds the widened update column list");
   const auto& columns = entry->GetColumns();
-  const bool updates_key_columns = absl::c_any_of(
-    connector::primary_key::KeyColumns(*entry), [&](auto key) {
+  const bool updates_key_columns =
+    absl::c_any_of(connector::primary_key::KeyColumns(*entry), [&](auto key) {
       const auto physical = columns.GetColumn(key).Physical();
       for (duckdb::idx_t i = 0; i < op.update_column_count; ++i) {
         if (op.columns[i] == physical) {

@@ -34,7 +34,6 @@
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
@@ -57,8 +56,8 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
-#include "connector/inverted_index_bind.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/inverted_index_bind.h"
 #include "connector/primary_key.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/connection_context.h"
@@ -158,9 +157,8 @@ duckdb::Identifier FreePkSequenceName(duckdb::CatalogTransaction transaction,
   return candidate;
 }
 
-void ValidateKey(const duckdb::TableCatalogEntry& table,
-                 const duckdb::CreateTableInfo& base) {
-  for (const auto& constraint : base.constraints) {
+void ValidateKey(const duckdb::TableCatalogEntry& table) {
+  for (const auto& constraint : table.GetConstraints()) {
     if (constraint->type != duckdb::ConstraintType::UNIQUE) {
       continue;
     }
@@ -174,10 +172,10 @@ void ValidateKey(const duckdb::TableCatalogEntry& table,
     const auto& column = table.GetColumn(index);
     const auto label = column.Name().GetIdentifierName();
     if (column.Type().IsNested()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                      ERR_MSG("Column '", label, "' has unsupported type ",
-                              column.Type().ToString(),
-                              " and can not be indexed"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        ERR_MSG("Column '", label, "' has unsupported type ",
+                column.Type().ToString(), " and can not be indexed"));
     }
     connector::ValidateTermDictKey(label, column.Type(), /*opclass=*/{});
   }
@@ -235,7 +233,7 @@ SearchTableEntry::SearchTableEntry(
   auto& base = info.Base();
   if (base.oid == 0) {
     BindOptions(*transaction.context, base.options);
-    ValidateKey(*this, base);
+    ValidateKey(*this);
   }
   _options = ResolveOptions(base.options);
   if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {

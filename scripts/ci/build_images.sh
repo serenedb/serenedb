@@ -122,12 +122,34 @@ done
 
 # --- Test fixture images ---
 FIXTURES=../../tests/sqllogic/fixtures
+FIXTURE_IMAGES=()
+docker logout >/dev/null 2>&1 || true
 for fixture in ollama postgres; do
 	FIXTURE_IMAGE="${REGISTRY}/serenedb-test-${fixture}:$("${FIXTURES}/image_tag.sh" "${FIXTURES}/${fixture}")"
 	echo "[*] Building ${FIXTURE_IMAGE}..."
 	if [ "$PUSH_ENABLED" = "true" ]; then
-		docker buildx build --platform linux/amd64,linux/arm64 -t "${FIXTURE_IMAGE}" --push "${FIXTURES}/${fixture}"
+		for arch in amd64 arm64; do
+			docker buildx build --platform "linux/${arch}" -t "${FIXTURE_IMAGE}-${arch}" \
+				--output "type=docker,dest=/tmp/${fixture}-${arch}.tar" "${FIXTURES}/${fixture}"
+		done
+		FIXTURE_IMAGES+=("${FIXTURE_IMAGE}")
 	else
 		docker buildx build --platform "$HOST_PLATFORM" -t "${FIXTURE_IMAGE}" --load "${FIXTURES}/${fixture}"
 	fi
 done
+
+if [ ${#FIXTURE_IMAGES[@]} -ne 0 ]; then
+	echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+	trap 'docker logout' EXIT INT TERM
+	for fixture_image in "${FIXTURE_IMAGES[@]}"; do
+		fixture="${fixture_image#"${REGISTRY}"/serenedb-test-}"
+		fixture="${fixture%%:*}"
+		for arch in amd64 arm64; do
+			docker load <"/tmp/${fixture}-${arch}.tar"
+			rm -f "/tmp/${fixture}-${arch}.tar"
+			docker push "${fixture_image}-${arch}"
+		done
+		docker buildx imagetools create --tag "${fixture_image}" "${fixture_image}-amd64" "${fixture_image}-arm64"
+		echo "[+] SUCCESS: Pushed ${fixture_image}"
+	done
+fi

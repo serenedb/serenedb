@@ -252,9 +252,9 @@ class TypedTokenizer : public Tokenizer {
                         });
   }
 
-  IRS_NO_INLINE IRS_ALIGN_HOT void Fill(const duckdb::UnifiedVectorFormat& fmt,
-                                        uint32_t count, doc_id_t first_doc,
-                                        TokenSink& sink, FillCtx ctx) final {
+  IRS_NO_INLINE void Fill(const duckdb::UnifiedVectorFormat& fmt,
+                          uint32_t count, doc_id_t first_doc, TokenSink& sink,
+                          FillCtx ctx) final {
     auto* impl = static_cast<Impl*>(this);
     SDB_ASSERT(!impl->Impl::Traits().keyword || impl->Impl::Traits().unique);
     const auto* data =

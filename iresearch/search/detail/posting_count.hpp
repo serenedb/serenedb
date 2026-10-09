@@ -74,7 +74,7 @@ class PostingCount : public PostingLeaf<InputType, kWindowShape> {
     for (;;) {
       if (_left_in_leaf != 0) {
         const auto* it = Behind(end - _left_in_leaf, end, min);
-        [[clang::code_align(64)]] while (it != end && *it < max) {
+        while (it != end && *it < max) {
           ++counts[*it - min];
           ++it;
         }

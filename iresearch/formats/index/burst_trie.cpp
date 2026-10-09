@@ -2034,7 +2034,7 @@ class AcceptorTermIterator : public SeekTermIterator,
   }
 
   bool ExtendEntry(State from, const byte_type* suffix, size_t n) {
-    [[clang::code_align(64)]] for (size_t i = 0; i != n; ++i) {
+    for (size_t i = 0; i != n; ++i) {
       from = _a->Step(from, suffix[i]);
       if (!A::Alive(from)) {
         return false;

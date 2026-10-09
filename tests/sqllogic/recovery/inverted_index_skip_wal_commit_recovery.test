@@ -1,0 +1,45 @@
+control substitution on
+
+statement ok
+CREATE DATABASE skip_wal;
+
+
+statement ok
+CREATE TABLE skip_wal.public.docs (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_idx ON skip_wal.public.docs USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+SET GLOBAL checkpoint_threshold = '1kB';
+
+
+statement ok
+SET GLOBAL auto_checkpoint_skip_wal_threshold = 1024;
+
+
+statement ok
+SET sdb_faults = 'crash_before_index_checkpoint_finish';
+
+
+statement error connection closed
+INSERT INTO skip_wal.public.docs SELECT i, 'bulk' FROM range(0, 100000) r(i);
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM skip_wal.public.docs;
+----
+n
+100000
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM skip_wal.public.docs_idx) AS docs, (SELECT count(*) FROM skip_wal.public.docs_idx WHERE body @@ 'bulk') AS bulk;
+----
+docs	bulk
+100000	100000

@@ -80,7 +80,6 @@
 #include "pg/sql_utils.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
-#include "search/tick_domain.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::connector {
@@ -337,8 +336,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     auto trx = storage->GetTransaction();
     trx.Remove(std::make_shared<irs::All>());
     trx.RegisterFlush();
-    if (!trx.Commit(
-          search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
+    if (!trx.Commit()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("REINDEX of \"", extras->source_index.GetIdentifierName(),
@@ -560,7 +558,7 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  irs::CommitOnFlush commit_on_flush{search::TickDomain::Instance().Counter()};
+  irs::CommitOnFlush commit_on_flush;
   FeedChunk(*writer, num_rows, pk, chunk, columns, expression_values,
             &commit_on_flush);
 
@@ -594,8 +592,7 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   // leaving it for the single-threaded Finalize refresh to write.
   auto& trx = *lstate.search_trx;
   trx.RegisterFlush();
-  const bool committed = trx.FlushAndCommit(
-    search::TickDomain::Instance().Next(trx.GetQueries() + 1));
+  const bool committed = trx.FlushAndCommit();
   lstate.search_trx.reset();
   if (committed) {
     // The final commit went through: nothing pending here anymore, drop
@@ -637,9 +634,7 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     FeedDeletes(delete_writer, key, delete_log.size(),
                 [&](size_t i) { return delete_log[i]; });
     trx.RegisterFlush();
-    const auto last_tick =
-      search::TickDomain::Instance().Next(delete_log.size() + 1);
-    if (!trx.Commit(last_tick)) {
+    if (!trx.Commit()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("failed to replay concurrent deletes for index '",
                               gstate.index_name, "'"));
@@ -653,7 +648,6 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   }
   inverted_storage.Refresh();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
-  inverted_storage.FinishCreation();
   if (IsDuckDBTable() && !IsReindexPass()) {
     GetSereneDBContext(context).AddCreatedIndex(
       _relation.ParentCatalog().GetAttached().oid, gstate.index_storage);

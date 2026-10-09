@@ -66,13 +66,6 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     }
   }
 
-  uint64_t CommitTick() noexcept {
-    if (_on_tick) {
-      return _tick.load();
-    }
-    return irs::writer_limits::kMaxTick;
-  }
-
  public:
   IndexProfileTestCase() { irs::timer_utils::InitStats(true); }
 
@@ -199,7 +192,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
               {
                 REGISTER_TIMER_NAMED_DETAILED("commit");
-                writer->RefreshCommit({.tick = CommitTick()});
+                writer->RefreshCommit();
               }
 
               count = 0;
@@ -210,7 +203,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           {
             std::unique_lock commit_lock{_commit_mutex};
             REGISTER_TIMER_NAMED_DETAILED("commit");
-            writer->RefreshCommit({.tick = CommitTick()});
+            writer->RefreshCommit();
           }
 
           ++writer_commit_count;
@@ -320,7 +313,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
               {
                 REGISTER_TIMER_NAMED_DETAILED("commit");
-                writer->RefreshCommit({.tick = CommitTick()});
+                writer->RefreshCommit();
               }
 
               count = 0;
@@ -331,7 +324,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
           {
             std::unique_lock commit_lock{_commit_mutex};
             REGISTER_TIMER_NAMED_DETAILED("commit");
-            writer->RefreshCommit({.tick = CommitTick()});
+            writer->RefreshCommit();
           }
 
           ++writer_commit_count;
@@ -344,7 +337,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     // ensure all data have been committed
     {
       std::unique_lock commit_lock{_commit_mutex};
-      writer->RefreshCommit({.tick = CommitTick()});
+      writer->RefreshCommit();
       EXPECT_FALSE(writer->RefreshCommit());
     }
 
@@ -437,7 +430,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
             {
               std::unique_lock commit_lock{_commit_mutex};
               REGISTER_TIMER_NAMED_DETAILED("commit");
-              writer->RefreshCommit({.tick = CommitTick()});
+              writer->RefreshCommit();
             }
             ++writer_commit_count;
             std::this_thread::sleep_for(
@@ -485,13 +478,13 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     // left in 'compacting_segments_' before applying the final compaction
     {
       std::unique_lock commit_lock{_commit_mutex};
-      writer->RefreshCommit({.tick = CommitTick()});
+      writer->RefreshCommit();
       EXPECT_FALSE(writer->RefreshCommit());
     }
     ASSERT_TRUE(writer->Compact(policy));
     {
       std::unique_lock commit_lock{_commit_mutex};
-      writer->RefreshCommit({.tick = CommitTick()});
+      writer->RefreshCommit();
       EXPECT_FALSE(writer->RefreshCommit());
     }
 

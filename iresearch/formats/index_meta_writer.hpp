@@ -24,6 +24,8 @@
 
 #include <absl/functional/any_invocable.h>
 
+#include <compare>
+#include <cstdint>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <string>
@@ -47,14 +49,21 @@ inline constexpr duckdb::field_id_t kFieldSegments = 2;
 inline constexpr duckdb::field_id_t kFieldPayload = 3;
 
 inline constexpr duckdb::field_id_t kSegmentFieldFilename = 0;
-inline constexpr duckdb::field_id_t kSegmentFieldInvisibleCount = 1;
 
 std::string FileName(uint64_t gen);
 
 }  // namespace index_meta
 
-using MetaPayloadWriter =
-  absl::AnyInvocable<void(uint64_t tick, duckdb::BinarySerializer&)>;
+struct SourcePosition {
+  uint64_t generation = 0;
+  uint64_t offset = 0;
+
+  friend auto operator<=>(const SourcePosition&,
+                          const SourcePosition&) = default;
+};
+
+using MetaPayloadWriter = absl::AnyInvocable<void(
+  const SourcePosition& position, duckdb::BinarySerializer&)>;
 
 class IndexMetaWriter final {
  public:
@@ -64,7 +73,7 @@ class IndexMetaWriter final {
   // FIXME(gnusi): Better to split prepare into 2 methods and pass meta by
   // const reference
   bool prepare(Directory& dir, IndexMeta& meta, std::string& pending_filename,
-               std::string& filename, uint64_t tick);
+               std::string& filename, const SourcePosition& position);
   bool commit();
   void rollback() noexcept;
 

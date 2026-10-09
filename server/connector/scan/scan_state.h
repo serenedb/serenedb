@@ -341,7 +341,7 @@ struct ColScanLocalState final : public ScanLocalState {
   uint64_t doc_cursor = 0;
   uint64_t doc_end = 0;
   FullScanner* scanner = nullptr;
-  irs::fill::DocsMask mask{nullptr, irs::doc_limits::eof()};
+  irs::fill::DocsMask mask{nullptr};
   bool has_mask = false;
   std::vector<std::unique_ptr<FullScanner>> full_scanners;
   duckdb::buffer_ptr<duckdb::SelectionData> live_sel_data;

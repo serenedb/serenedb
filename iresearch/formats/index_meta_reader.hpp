@@ -39,10 +39,17 @@ namespace index_meta {
 
 uint64_t ParseGeneration(std::string_view file) noexcept;
 
+uint64_t ParsePendingGeneration(std::string_view file) noexcept;
+
 bool LastFile(const Directory& dir, std::string& name);
+
+bool LastPendingFile(const Directory& dir, std::string& name);
 
 void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
           MetaPayloadReader payload = {});
+
+void ReadPayload(const Directory& dir, std::string_view filename,
+                 MetaPayloadReader payload);
 
 }  // namespace index_meta
 }  // namespace irs

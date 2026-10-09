@@ -138,7 +138,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     _wal->OnShardCommit(GetTableId(), CommittedTick());
   }
 
-  void Clear(uint64_t tick) { _writer->Clear(tick); }
+  void Clear(uint64_t tick) { _writer->Clear({.offset = tick}); }
 
   SearchDbWal& Wal() noexcept { return *_wal; }
 

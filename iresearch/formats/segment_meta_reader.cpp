@@ -198,7 +198,6 @@ void Read(const Directory& dir, SegmentMeta& meta, std::string_view filename) {
   meta.version = segment_version;
   meta.docs_count = docs_count;
   meta.live_docs_count = static_cast<uint32_t>(docs_count - mask_count);
-  meta.visible_end = doc_limits::eof();
   meta.docs_mask = std::move(docs_mask);
   meta.docs_mask_size = docs_mask_size;
   meta.docs_mask_chain = docs_mask_chain;

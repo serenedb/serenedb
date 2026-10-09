@@ -20,17 +20,19 @@
 
 #include "search/wal_recovery.h"
 
-#include <absl/cleanup/cleanup.h>
+#include <absl/algorithm/container.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
 #include <chrono>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -44,7 +46,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
-#include "search/tick_domain.h"
 
 namespace sdb::search {
 namespace {
@@ -112,32 +113,44 @@ std::optional<BoundIndexHandle> BoundIndexOf(
   return std::nullopt;
 }
 
+void SyncWal(duckdb::AttachedDatabase& db) {
+  auto& storage = db.GetStorageManager();
+  if (storage.InMemory()) {
+    return;
+  }
+  auto& fs = duckdb::FileSystem::GetFileSystem(db.GetDatabase());
+  if (auto wal =
+        fs.OpenFile(storage.GetWALPath(),
+                    duckdb::FileFlags::FILE_FLAGS_READ |
+                      duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS)) {
+    wal->Sync();
+  }
+}
+
 }  // namespace
 
 void InitInvertedIndexes() {
   const auto begin = std::chrono::steady_clock::now();
-  std::vector<std::shared_ptr<InvertedIndexStorage>> storages;
   std::vector<std::pair<std::optional<BoundIndexHandle>,
                         std::shared_ptr<InvertedIndexStorage>>>
     recovering;
+  std::vector<duckdb::reference<duckdb::AttachedDatabase>> databases;
   for (auto& index : InvertedIndexEntries()) {
     const auto& storage = index.get().Storage();
-    if (!storage) {
+    if (!storage || !index.get().info) {
       continue;
     }
-    TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
-    storages.emplace_back(storage);
-    if (!index.get().info) {
-      continue;
+    auto& db = index.get().catalog.GetAttached();
+    if (absl::c_none_of(databases, [&](const auto& synced) {
+          return &synced.get() == &db;
+        })) {
+      databases.emplace_back(db);
     }
-    storage->StartRecovery();
     recovering.emplace_back(BoundIndexOf(index.get()), storage);
   }
-  absl::Cleanup finish = [&] {
-    for (auto& storage : storages) {
-      storage->FinishCreation();
-    }
-  };
+  for (auto& db : databases) {
+    SyncWal(db);
+  }
   duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance())};
   for (auto& [index, storage] : recovering) {

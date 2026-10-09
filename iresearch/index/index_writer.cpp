@@ -76,33 +76,20 @@ struct FlushedSegmentContext {
   std::shared_ptr<const SegmentReaderImpl> reader;
   IndexWriter::FlushedSegment& flushed;
 
-  bool MakeDocumentMask(uint64_t tick, DocumentMask& document_mask,
-                        IndexSegment& index) {
-    const auto docs_count = static_cast<size_t>(flushed.meta.docs_count);
-    const auto end = flushed.docs.size();
-    SDB_ASSERT(0 < end);
-    SDB_ASSERT(flushed.docs.TickAt(0) <= tick);
-    const auto visible = flushed.docs.UpperBound(tick);
-    SDB_ASSERT(visible <= end);
-    const auto invisible_count = docs_count - visible;
-    const auto visible_end = static_cast<doc_id_t>(visible + doc_limits::min());
-    if (visible != end) {
-      document_mask = flushed.docs_mask;
+  bool MakeDocumentMask(DocumentMask& document_mask, IndexSegment& index) {
+    const auto docs_count = flushed.meta.docs_count;
+    const auto committed = static_cast<doc_id_t>(flushed.docs.size());
+    SDB_ASSERT(0 < committed);
+    SDB_ASSERT(committed <= docs_count);
+    if (committed != docs_count) {
+      flushed.docs_mask.AddRange(doc_limits::min() + committed,
+                                 doc_limits::min() + docs_count);
     }
-    auto& mask = visible == end ? flushed.docs_mask : document_mask;
-    mask.Truncate(visible_end);
-    if (mask.Count() + invisible_count == docs_count) {
+    if (flushed.docs_mask.Count() == docs_count) {
       return true;
     }
-    if (visible == end) {
-      document_mask = std::move(flushed.docs_mask);
-      index = std::move(flushed);
-    } else {
-      index = flushed;
-    }
-    if (invisible_count != 0) {
-      index.meta.visible_end = visible_end;
-    }
+    document_mask = std::move(flushed.docs_mask);
+    index = std::move(flushed);
     return false;
   }
 
@@ -128,10 +115,9 @@ bool RemoveFromSegment(DocumentMask& deleted_docs,
     return false;  // skip a query kind that has no plan
   }
 
-  const auto visible_end = reader.Meta().visible_end;
   auto it_mask = reader.MaskedDocs();
   bool modified = false;
-  for (auto doc_id = plan->Next(); doc_id < visible_end;
+  for (auto doc_id = plan->Next(); !doc_limits::eof(doc_id);
        doc_id = plan->Next()) {
     // if the indexed doc_id was already masked then it should be skipped
     if (it_mask.Contains(doc_id)) {
@@ -410,10 +396,6 @@ Sync SyncOf(bool durable, bool meta_written) noexcept {
   return meta_written ? Sync::Meta : Sync::None;
 }
 
-uint64_t LimitTick(uint64_t tick, uint64_t def) noexcept {
-  return tick != writer_limits::kMaxTick ? tick : def;
-}
-
 bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
   if (name.size() < 2 || name.front() != '_') {
     return false;
@@ -450,19 +432,11 @@ struct PublishedSegment {
 };
 
 std::vector<const IndexWriter::QueryContext*> CollectQueries(
-  std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  uint64_t committed_tick, uint64_t tick) {
+  std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments) {
   std::vector<const IndexWriter::QueryContext*> queries;
   for (const auto& segment : segments) {
     SDB_ASSERT(segment != nullptr);
-    // TODO(mbkkt) binary search for begin?
     for (const auto& query : segment->queries) {
-      if (query.tick <= committed_tick) {
-        continue;  // skip queries from previous Commit
-      }
-      if (tick < query.tick) {
-        break;  // skip queries from next Commit
-      }
       queries.emplace_back(&query);
     }
   }
@@ -624,8 +598,7 @@ AddIncomingResult AddIncoming(
     }
 
     // Skip empty segments
-    if (const auto masked = docs_mask.Count() + InvisibleCount(meta);
-        meta.docs_count <= masked) {
+    if (const auto masked = docs_mask.Count(); meta.docs_count <= masked) {
       SDB_ASSERT(meta.docs_count == masked);
       result.modified = true;  // FIXME(gnusi): looks strange
       continue;
@@ -655,10 +628,8 @@ AddIncomingResult AddIncoming(
 
 std::vector<FlushedSegmentContext> OpenFlushed(
   std::span<const std::shared_ptr<IndexWriter::SegmentContext>> segments,
-  const auto& curr_cached, auto& next_cached,
   std::span<const IndexWriter::QueryContext* const> queries,
-  uint64_t committed_tick, uint64_t tick, const Directory& dir,
-  const IndexReaderOptions& reader_options,
+  const Directory& dir, const IndexReaderOptions& reader_options,
   const ProgressReportCallback& progress) {
   // count total number of segments once
   size_t total_flushed_segments = 0;
@@ -682,16 +653,6 @@ std::vector<FlushedSegmentContext> OpenFlushed(
       SDB_ASSERT(flushed.committed_docs == flushed.docs.size());
       SDB_ASSERT(!flushed.docs.empty());
       const auto flushed_first_tick = flushed.docs.TickAt(0);
-      const auto flushed_last_tick =
-        flushed.docs.TickAt(flushed.docs.size() - 1);
-      SDB_ASSERT(flushed_first_tick <= flushed_last_tick);
-
-      if (flushed_last_tick <= committed_tick) {
-        continue;  // skip flushed from previous Commit
-      }
-      if (tick < flushed_first_tick) {
-        break;  // skip flushed from next Commit
-      }
       progress("Stage 3: Creating new/reopen old segments",
                current_flushed_segments++, total_flushed_segments);
 
@@ -699,23 +660,8 @@ std::vector<FlushedSegmentContext> OpenFlushed(
       SDB_ASSERT(flushed.meta.live_docs_count <= flushed.meta.docs_count);
       SDB_ASSERT(!flushed.meta.docs_mask);
 
-      auto reader = [&] {
-        if (auto it = curr_cached.find(&flushed); it != curr_cached.end()) {
-          SDB_ASSERT(it->second != nullptr);
-          // We don't support case when segment is committed partially more
-          // than one time. Because it's useless and ineffective.
-          SDB_ASSERT(flushed_last_tick <= tick);
-          // reuse existing reader with initial meta and docs_mask
-          return it->second->UpdateMeta(dir, flushed.meta);
-        } else {
-          return SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
-        }
-      }();
+      auto reader = SegmentReaderImpl::Open(dir, flushed.meta, reader_options);
       SDB_ASSERT(reader);
-
-      if (tick < flushed_last_tick) {
-        next_cached[&flushed] = reader;
-      }
 
       auto& segment_ctx = segment_ctxs.emplace_back(std::move(reader), flushed);
 
@@ -734,8 +680,7 @@ std::vector<FlushedSegmentContext> OpenFlushed(
 }
 
 PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
-                             std::span<const IndexSegment> committed,
-                             uint64_t tick, Directory& dir,
+                             Directory& dir,
                              const ProgressReportCallback& progress) {
   PublishResult result;
   // write docs_mask if !empty(), if all docs are masked then remove segment
@@ -747,46 +692,12 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
 
     DocumentMask document_mask;
     IndexSegment new_segment;
-    if (segment_ctx.MakeDocumentMask(tick, document_mask, new_segment)) {
-      result.modified |= segment_ctx.flushed.was_flush;
+    if (segment_ctx.MakeDocumentMask(document_mask, new_segment)) {
       continue;
     }
-    SDB_ASSERT(segment_ctx.flushed.meta.version == new_segment.meta.version);
-    const IndexSegment* published = nullptr;
-    if (segment_ctx.flushed.was_flush) {
-      const auto it =
-        absl::c_find_if(committed, [&](const IndexSegment& segment) {
-          return segment.meta.name == new_segment.meta.name;
-        });
-      if (it != committed.end()) {
-        published = &*it;
-      }
-    }
-    if (published != nullptr) {
-      SDB_ASSERT(published->meta.version == new_segment.meta.version);
-      SDB_ASSERT(HasInvisible(published->meta));
-      const auto* mask = published->meta.docs_mask.get();
-      if (document_mask.Count() == (mask != nullptr ? mask->Count() : 0)) {
-        auto segment = *published;
-        segment.meta.visible_end = new_segment.meta.visible_end;
-        segment.meta.live_docs_count =
-          segment.meta.docs_count - RemovalCount(segment.meta);
-        auto reader = segment_ctx.reader->UpdateMeta(dir, segment.meta);
-        result.segments.emplace_back(
-          std::move(segment), SegmentReader{std::move(reader)}, Sync::None);
-        result.modified = true;
-        continue;
-      }
-    }
-    const bool need_flush = segment_ctx.flushed.was_flush ||
-                            !document_mask.Empty() ||
-                            HasInvisible(new_segment.meta);
-    segment_ctx.flushed.was_flush = true;
+    const bool need_flush = !document_mask.Empty();
     if (need_flush) {
       ++new_segment.meta.version;
-      ++segment_ctx.flushed.meta.version;
-    }
-    if (!document_mask.Empty()) {
       document_mask.Trim();
       new_segment.meta.docs_mask =
         std::make_shared<DocumentMask>(std::move(document_mask));
@@ -800,8 +711,7 @@ PublishResult PublishFlushed(std::span<FlushedSegmentContext> segment_ctxs,
     }
     result.segments.emplace_back(
       std::move(new_segment), SegmentReader{std::move(segment_ctx.reader)},
-      SyncOf(published != nullptr || segment_ctx.flushed.meta_on_disk,
-             need_flush));
+      SyncOf(segment_ctx.flushed.meta_on_disk, need_flush));
     result.modified = true;
   }
   return result;
@@ -907,8 +817,6 @@ IndexWriter::Transaction::FlushAndFsync() {
     throw IoError{absl::StrCat("Failed to sync ", files.size(), " file(s) of ",
                                flushed.size(), " flushed segment(s)")};
   }
-  // Only after the sync: the flag says "durable, referenceable by name". Not
-  // `was_flush`, which means "published before" and forces a version bump.
   for (auto& entry : flushed) {
     entry.meta_on_disk = true;
   }
@@ -928,18 +836,18 @@ void IndexWriter::Transaction::RegisterFlush() noexcept {
   }
 }
 
-bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
+bool IndexWriter::Transaction::CommitImpl(
+  uint64_t last_tick, const SourcePosition& position) noexcept try {
   auto* segment = _active.Segment();
   SDB_ASSERT(segment != nullptr);
   segment->Commit(_queries, last_tick);
-  _writer->GetFlushContext()->Emplace(std::move(_active));
+  _writer->GetFlushContext()->Emplace(std::move(_active), position);
   SDB_ASSERT(_active.Segment() == nullptr);
   _queries = 0;
   return true;
 } catch (...) {
   SDB_ASSERT(_active.Segment() != nullptr);
   // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
-  Abort();
   return false;
 }
 
@@ -1007,11 +915,7 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
       throw;
     }
     if (commit_on_flush) {
-      const auto count = _queries + 1;
-      const auto tick =
-        commit_on_flush->tick.fetch_add(count, std::memory_order_relaxed) +
-        count;
-      if (!Commit(tick)) {
+      if (!Commit()) {
         throw IllegalState{"commit-on-flush failed"};
       }
       commit_on_flush->committed = true;
@@ -1035,7 +939,7 @@ bool IndexWriter::FlushContext::PrepareEmplace(
   ActiveSegmentContext& active) noexcept {
   SDB_ASSERT(active._segment != nullptr);
 
-  if (active._segment->first_tick == writer_limits::kMaxTick) {
+  if (!active._segment->committed) {
     // Reset all segment data because there wasn't successful transactions
     active._segment->Reset();
     active = {};  // release
@@ -1066,11 +970,17 @@ void IndexWriter::FlushContext::EmplaceLocked(ActiveSegmentContext&& active) {
   active = {};
 }
 
-void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active) {
+void IndexWriter::FlushContext::Emplace(ActiveSegmentContext&& active,
+                                        const SourcePosition& position) {
+  if (auto* flush = active._flush; flush != nullptr && flush != this) {
+    std::lock_guard lock{flush->pending_mutex};
+    flush->position = std::max(flush->position, position);
+  }
   if (!PrepareEmplace(active)) {
     return;
   }
   std::lock_guard lock{pending_mutex};
+  this->position = std::max(this->position, position);
   EmplaceLocked(std::move(active));
 }
 
@@ -1094,8 +1004,8 @@ void IndexWriter::FlushContext::Reset() noexcept {
   }
 
   incoming.clear();
-  cached.clear();
   segments.clear();
+  position = {};
   segment_mask.clear();
   masked_names.clear();
 
@@ -1108,86 +1018,23 @@ void IndexWriter::FlushContext::Reset() noexcept {
   dir->clear_refs();
 }
 
-void IndexWriter::Cleanup(FlushContext& curr, FlushContext* next) noexcept {
+void IndexWriter::Cleanup(FlushContext& curr) noexcept {
   for (auto& incoming : curr.incoming) {
     auto& candidates = incoming.compaction_ctx.candidates;
     for (const auto* candidate : candidates) {
       _compacting.segments.erase(candidate->Meta().name);
     }
   }
-  for (const auto& entry : curr.cached) {
-    _compacting.segments.erase(entry.second->Meta().name);
-  }
-  if (next != nullptr) {
-    for (const auto& entry : next->cached) {
-      _compacting.segments.erase(entry.second->Meta().name);
-    }
-  }
 }
 
-uint64_t IndexWriter::FlushContext::FlushPending(uint64_t committed_tick,
-                                                 uint64_t tick) {
-  // if tick is not equal uint64_max, as result of bad_alloc it's possible here
-  // that not all segments which should be committed by next FlushContext
-  // (fully or partially) will be moved to it.
-  // I consider it's ok, because in such situation you rely on tick,
-  // but you cannot assume anything about your IndexWriter::Transaction between
-  // last successfully committed tick and state before you understand that
-  // IndexWriter::Commit(tick) is failed in multi-threaded environment.
-  // Some Transactions after tick is initially in current FlushContext.
-  // Some Transactions after tick is initially in next FlushContext.
-  // From outside view you cannot distinct them!
-  // So even if I will make this moving deterministic it's not helpful at all.
-  // Also on practice such situation is almost impossible.
-  // Probably in future we can implement some out of sync logic for IndexWriter.
-  // But now it's unnecessary for our usage.
-
-  SDB_ASSERT(next != nullptr);
-  auto& next_segments = next->segments;
-  SDB_ASSERT(next_segments.empty());
-  size_t to_next_pending_segments = 0;
-  uint64_t flushed_tick = committed_tick;
+void IndexWriter::FlushContext::FlushPending() {
   for (auto& entry : pending_segments) {
     auto& segment = entry.segment;
     SDB_ASSERT(segment != nullptr);
-    const auto first_tick = segment->first_tick;
-    const auto last_tick = segment->last_tick;
-    if (first_tick <= tick) {
-      // This assert is really paranoid, it's not required just try to detect
-      // situation when we commit on tick but forgot to call RegisterFlush().
-      // This assert can work only if any transaction which committed after last
-      // Commit will has greater first tick than committed tick.
-      SDB_ASSERT(committed_tick < first_tick);
-      flushed_tick = std::max(flushed_tick, last_tick);
-      segment->Flush();
-      if (tick < last_tick) {
-        next_segments.push_back(segment);
-      }
-      segments.push_back(std::move(segment));
-    } else {
-      ++to_next_pending_segments;
-    }
+    segment->Flush();
+    segments.push_back(std::move(segment));
   }
-
-  if (to_next_pending_segments != 0) {
-    std::lock_guard lock{next->pending_mutex};
-    for (auto& entry : pending_segments) {
-      if (auto& segment = entry.segment; segment != nullptr) {
-        SDB_ASSERT(tick < segment->first_tick);
-        auto& node = next->pending_segments.emplace_back(
-          std::move(segment), next->pending_segments.size());
-        next->pending_freelist.push(node);
-      }
-    }
-  }
-
-#ifdef SDB_DEV
-  for (auto& entry : pending_segments) {
-    SDB_ASSERT(entry.segment == nullptr);
-  }
-#endif
   ClearPending();
-  return flushed_tick;
 }
 
 IndexWriter::SegmentContext::SegmentContext(
@@ -1261,10 +1108,7 @@ void IndexWriter::SegmentContext::Reset(bool store_flushed) noexcept {
 
     flushed.clear();
 
-    // TODO(mbkkt) What about ticks in case of store_flushed?
-    //  Of course it's valid but maybe we can decrease range?
-    first_tick = writer_limits::kMaxTick;
-    last_tick = writer_limits::kMinTick;
+    committed = false;
   }
   committed_buffered_docs = 0;
 
@@ -1350,11 +1194,7 @@ void IndexWriter::SegmentContext::Commit(uint64_t commit_queries,
   docs.Commit(committed_buffered_docs, commit_first_tick);
   committed_buffered_docs = docs.size();
 
-  if (first_tick == writer_limits::kMaxTick) {
-    first_tick = commit_first_tick;
-  }
-  SDB_ASSERT(last_tick <= commit_last_tick);
-  last_tick = commit_last_tick;
+  committed = true;
 }
 
 IndexWriter::IndexWriter(
@@ -1393,7 +1233,7 @@ void IndexWriter::InitMeta(IndexMeta& meta) const {
   meta.gen = _last_gen;                   // Clone index metadata generation
 }
 
-void IndexWriter::Clear(uint64_t tick) {
+void IndexWriter::Clear(const SourcePosition& position) {
   _commit_lock.ForgetDeadlockInfo();
   std::lock_guard commit_lock{_commit_lock};
 
@@ -1413,7 +1253,7 @@ void IndexWriter::Clear(uint64_t tick) {
     return;  // Already empty
   }
 
-  PendingContext to_commit{PendingBase{.tick = tick}, {}, tick, {}, {}};
+  PendingContext to_commit{PendingBase{.position = position}, {}, {}, {}};
   InitMeta(to_commit.meta);
   to_commit.ctx = std::move(ctx);
 
@@ -2113,22 +1953,13 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
 }
 
 IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
-  const auto tick = info.tick;
-  SDB_ASSERT(writer_limits::kMinTick < tick);
-  SDB_ASSERT(_committed_tick <= tick);
-  SDB_ASSERT(tick <= writer_limits::kMaxTick);
-
-  // noexcept block: I'm not sure is it really necessary or not
   auto ctx = SwitchFlushContext();
   SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
   // ensure there are no active struct update operations
   ctx->pending.Done();
   ctx->pending.Wait();
   ctx->pending.Reset(1);
-  // Stage 0
-  // wait for any outstanding segments to settle to ensure that any rollbacks
-  // are properly tracked in 'modification_queries_'
-  const auto flushed_tick = ctx->FlushPending(_committed_tick, tick);
+  ctx->FlushPending();
 
   std::unique_lock cleanup_lock{_compacting.lock, std::defer_lock};
   Finally cleanup = [&]() noexcept {
@@ -2146,14 +1977,10 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   auto& dir = *ctx->dir;
   const auto& committed_reader = *_committed_reader;
-  const auto queries = CollectQueries(ctx->segments, _committed_tick, tick);
+  const auto queries = CollectQueries(ctx->segments);
 
   // Stage 1
   // update document_mask for existing (i.e. sealed) segments
-  ctx->segment_mask.reserve(ctx->segment_mask.size() + ctx->cached.size());
-  for (const auto& entry : ctx->cached) {
-    ctx->segment_mask.emplace(entry.second->Meta().name);
-  }
   auto existing =
     UpdateExisting(committed_reader, ctx->segment_mask, queries, dir, progress);
 
@@ -2177,18 +2004,13 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       entry.reader = SegmentReader{entry.reader.GetImpl()->ReopenReader(
         dir, entry.segment.meta, committed_reader.Options())};
     }
-    ctx->cached.clear();
-    ctx->next->cached.clear();
   }
 
   // Stage 3
   // create new segments
-  auto segment_ctxs = OpenFlushed(ctx->segments, ctx->cached, ctx->next->cached,
-                                  queries, _committed_tick, tick, dir,
+  auto segment_ctxs = OpenFlushed(ctx->segments, queries, dir,
                                   committed_reader.Options(), progress);
-  auto flushed =
-    PublishFlushed(segment_ctxs, committed_reader.Meta().index_meta.segments,
-                   tick, dir, progress);
+  auto flushed = PublishFlushed(segment_ctxs, dir, progress);
   segments.insert(segments.end(),
                   std::make_move_iterator(flushed.segments.begin()),
                   std::make_move_iterator(flushed.segments.end()));
@@ -2226,10 +2048,6 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   }
 #endif
 
-  // TODO(mbkkt) In general looks useful to iterate here over all segments which
-  //  partially committed, and free query memory which already was applied.
-  //  But when I start thinking about rollback stuff it looks almost impossible
-
   const bool modified = IsInitialCommit(committed_reader.Meta()) ||
                         existing.modified || incoming.modified ||
                         flushed.modified || !files_to_sync.empty();
@@ -2249,20 +2067,11 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   InitMeta(pending_meta);
 
-  if (!ctx->next->cached.empty()) {
-    cleanup_lock.lock();
-    _compacting.segments.reserve(_compacting.segments.size() +
-                                 ctx->next->cached.size());
-    for (const auto& entry : ctx->next->cached) {
-      _compacting.segments.emplace(entry.second->Meta().name);
-    }
-  }
-
+  const auto position = ctx->position;
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
-                .tick = LimitTick(tick, _committed_tick)},
+                .position = position},
     std::move(pending_meta),  // Retain meta pending flush
-    LimitTick(tick, flushed_tick),
     std::move(readers),
     std::move(files_to_sync),
   };
@@ -2280,7 +2089,7 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
 
   // Execute 1st phase of index meta transaction
   if (!_writer.prepare(dir, to_commit.index_meta, to_commit.filename,
-                       index_meta_file, context.meta_tick)) {
+                       index_meta_file, context.position)) {
     throw IllegalState{absl::StrCat(
       "Failed to write index metadata for index: ", index_meta_file)};
   }
@@ -2325,7 +2134,6 @@ bool IndexWriter::Start(const CommitInfo& info) {
 
   if (to_commit.Empty()) {
     // Nothing to commit, no transaction started
-    _committed_tick = LimitTick(info.tick, _committed_tick);
     return false;
   }
   Finally cleanup = [&]() noexcept {
@@ -2353,9 +2161,7 @@ void IndexWriter::Finish() {
   }
 
   // noexcept part!
-  _pending_state.StartReset(*this, true);
-  SDB_ASSERT(_pending_state.tick != writer_limits::kMaxTick);
-  _committed_tick = _pending_state.tick;
+  _pending_state.StartReset(*this);
   // after this line transaction is successful (only noexcept operations below)
   std::atomic_store_explicit(&_committed_reader,
                              std::move(_pending_state.commit),

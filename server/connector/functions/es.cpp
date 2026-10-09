@@ -353,7 +353,6 @@ void CreateTextIndex(duckdb::ClientContext& context,
   storage->StartTasks();
   storage->TakeDeleteLog();
   storage->Refresh();
-  storage->FinishCreation();
 }
 
 void EsCreateIndexExecute(duckdb::ClientContext& context,

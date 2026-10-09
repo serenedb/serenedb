@@ -710,9 +710,8 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::detail::LazyBitset set{
-    std::move(node), kDocs,
-    irs::fill::DocsMask{nullptr, irs::doc_limits::eof()}};
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::fill::DocsMask{nullptr}};
 
   ASSERT_EQ(0, fill->windows());
   ASSERT_EQ(kMin, set.Filled());
@@ -742,33 +741,6 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   ASSERT_TRUE(irs::doc_limits::eof(set.Probe(9001)));
 }
 
-TEST(lazy_bitset_test, drops_a_masked_tail) {
-  constexpr irs::doc_id_t kDocs = 10000;
-  constexpr irs::doc_id_t kTail = 5000;
-  const std::vector<irs::doc_id_t> docs{3, 64, 4999, kTail, 5001, 9000};
-
-  const auto removals = [] {
-    irs::DocumentMask mask;
-    mask.Add(64);
-    mask.Trim();
-    return mask;
-  }();
-
-  auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
-  irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::fill::DocsMask{&removals, kTail}};
-
-  ASSERT_TRUE(set.Contains(3));
-  ASSERT_FALSE(set.Contains(64));
-  ASSERT_TRUE(set.Contains(4999));
-  ASSERT_FALSE(set.Contains(kTail));
-  ASSERT_FALSE(set.Contains(5001));
-  ASSERT_FALSE(set.Contains(9000));
-
-  ASSERT_EQ(4999, set.Probe(4));
-  ASSERT_TRUE(irs::doc_limits::eof(set.Probe(kTail)));
-}
-
 // A window the clause holds nothing in is never opened: the fill says where
 // it stands next, and the fold starts again there.
 TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
@@ -777,9 +749,8 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
 
   auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
   auto* fill = node.get();
-  irs::detail::LazyBitset set{
-    std::move(node), kDocs,
-    irs::fill::DocsMask{nullptr, irs::doc_limits::eof()}};
+  irs::detail::LazyBitset set{std::move(node), kDocs,
+                              irs::fill::DocsMask{nullptr}};
 
   // The segment spans three windows, the middle one holds nothing, and two
   // fills answer a probe that crosses all three.
@@ -804,16 +775,15 @@ irs::DocumentMask MakeMask(const std::vector<irs::doc_id_t>& docs) {
   return mask;
 }
 
-irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask,
-                               irs::doc_id_t visible_end) {
-  return irs::probe::DocsMask{mask, visible_end};
+irs::probe::DocsMask ProbeOver(const irs::DocumentMask* mask) {
+  return irs::probe::DocsMask{mask};
 }
 
 }  // namespace
 
 TEST(docs_mask_test, probe_answers_out_of_the_targets_own_word) {
   const auto removals = MakeMask({3, 64, 4999});
-  auto probe = ProbeOver(&removals, irs::doc_limits::eof());
+  auto probe = ProbeOver(&removals);
 
   // A hit answers with the target itself; a miss answers with a bound saying
   // nothing between it and the target is deleted, not with the next deletion.
@@ -829,7 +799,7 @@ TEST(docs_mask_test, probe_answers_out_of_the_targets_own_word) {
 
 TEST(docs_mask_test, probe_is_stateless_under_arbitrary_order) {
   const auto removals = MakeMask({3, 64, 4999});
-  auto probe = ProbeOver(&removals, irs::doc_limits::eof());
+  auto probe = ProbeOver(&removals);
 
   ASSERT_EQ(4999, probe.Probe(4999));
   ASSERT_EQ(3, probe.Probe(1));
@@ -838,41 +808,15 @@ TEST(docs_mask_test, probe_is_stateless_under_arbitrary_order) {
 }
 
 TEST(docs_mask_test, probe_without_removals_excludes_nothing) {
-  auto probe = ProbeOver(nullptr, irs::doc_limits::eof());
+  auto probe = ProbeOver(nullptr);
 
   ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(1)));
   ASSERT_TRUE(irs::doc_limits::eof(probe.Probe(10000)));
 }
 
-TEST(docs_mask_test, probe_treats_the_invisible_tail_as_deleted) {
-  const auto removals = MakeMask({3});
-  auto probe = ProbeOver(&removals, 5000);
-
-  ASSERT_EQ(3, probe.Probe(1));
-  ASSERT_EQ(64, probe.Probe(4));
-  ASSERT_EQ(5000, probe.Probe(4992));
-  ASSERT_EQ(6000, probe.Probe(6000));
-}
-
-TEST(docs_mask_test, probe_bound_never_steps_over_the_tail) {
-  const auto removals = MakeMask({3, 10000});
-  auto probe = ProbeOver(&removals, 70);
-
-  ASSERT_EQ(70, probe.Probe(65));
-  ASSERT_EQ(70, probe.Probe(69));
-  ASSERT_EQ(3, probe.Probe(1));
-}
-
-TEST(docs_mask_test, tail_only_probe_starts_at_the_bound) {
-  auto probe = ProbeOver(nullptr, 70);
-
-  ASSERT_EQ(70, probe.Probe(1));
-  ASSERT_EQ(99, probe.Probe(99));
-}
-
 TEST(docs_mask_test, fill_sets_deleted_bits_in_a_window) {
   const auto removals = MakeMask({1, 3, 64, 127, 128});
-  irs::fill::DocsMask fill{&removals, irs::doc_limits::eof()};
+  irs::fill::DocsMask fill{&removals};
 
   uint64_t words[3]{};
   const auto next = fill.FillOr(1, 1 + 3 * kBits, words);
@@ -885,65 +829,6 @@ TEST(docs_mask_test, fill_sets_deleted_bits_in_a_window) {
   ASSERT_TRUE(irs::CheckBit(words[1], 63));
   ASSERT_EQ(0, words[2]);
   ASSERT_TRUE(irs::doc_limits::eof(next));
-}
-
-TEST(docs_mask_test, fill_covers_the_invisible_tail) {
-  irs::fill::DocsMask fill{nullptr, 70};
-
-  uint64_t words[2]{};
-  const auto next = fill.FillOr(1, 1 + 2 * kBits, words);
-
-  ASSERT_FALSE(irs::CheckBit(words[0], 63));
-  ASSERT_FALSE(irs::CheckBit(words[1], 4));
-  ASSERT_TRUE(irs::CheckBit(words[1], 5));
-  ASSERT_TRUE(irs::CheckBit(words[1], 63));
-  ASSERT_EQ(1 + 2 * kBits, next);
-}
-
-TEST(docs_mask_test, truncate_drops_everything_from_the_bound_on) {
-  auto mask = MakeMask({1, 63, 64, 65, 127, 128, 1000});
-
-  mask.Truncate(65);
-
-  ASSERT_TRUE(mask.Contains(1));
-  ASSERT_TRUE(mask.Contains(63));
-  ASSERT_TRUE(mask.Contains(64));
-  ASSERT_FALSE(mask.Contains(65));
-  ASSERT_FALSE(mask.Contains(127));
-  ASSERT_FALSE(mask.Contains(128));
-  ASSERT_FALSE(mask.Contains(1000));
-  ASSERT_EQ(3, mask.Count());
-}
-
-TEST(docs_mask_test, truncate_on_a_word_boundary) {
-  auto mask = MakeMask({1, 63, 64, 65});
-
-  mask.Truncate(64);
-
-  ASSERT_TRUE(mask.Contains(1));
-  ASSERT_TRUE(mask.Contains(63));
-  ASSERT_FALSE(mask.Contains(64));
-  ASSERT_FALSE(mask.Contains(65));
-  ASSERT_EQ(2, mask.Count());
-}
-
-TEST(docs_mask_test, truncate_past_the_end_keeps_everything) {
-  auto mask = MakeMask({1, 64, 4999});
-  const auto count = mask.Count();
-
-  mask.Truncate(100000);
-
-  ASSERT_EQ(count, mask.Count());
-  ASSERT_TRUE(mask.Contains(4999));
-}
-
-TEST(docs_mask_test, truncate_at_the_first_doc_empties_the_mask) {
-  auto mask = MakeMask({1, 64, 4999});
-
-  mask.Truncate(irs::doc_limits::min());
-
-  ASSERT_TRUE(mask.Empty());
-  ASSERT_EQ(0, mask.Count());
 }
 
 TEST(docs_mask_test, clear_empties_a_reusable_mask) {
@@ -1004,7 +889,7 @@ TEST(docs_mask_test, merge_grows_capacity_by_doubling) {
 
 TEST(docs_mask_test, trim_releases_an_all_zero_mask) {
   auto mask = MakeMask({1, 4999});
-  mask.Truncate(irs::doc_limits::min());
+  mask.Clear();
 
   mask.Trim();
 
@@ -1023,8 +908,8 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
   }
   const auto removals = MakeMask(docs);
 
-  irs::fill::DocsMask fill{&removals, 15000};
-  auto probe = ProbeOver(&removals, 15000);
+  irs::fill::DocsMask fill{&removals};
+  auto probe = ProbeOver(&removals);
 
   constexpr uint32_t kWords = 64;
   constexpr irs::doc_id_t kSpan = kWords * kBits;
@@ -1047,9 +932,8 @@ TEST(docs_mask_test, fill_agrees_with_probe_across_windows) {
 // asks exactly that of the last leaf of a bounded scan.
 TEST(lazy_bitset_test, reaching_past_the_end_of_a_folded_set) {
   constexpr irs::doc_id_t kDocs = 300;
-  irs::detail::LazyBitset set{
-    MakeSet(kDocs, {3, 100, 299}),
-    irs::fill::DocsMask{nullptr, irs::doc_limits::eof()}};
+  irs::detail::LazyBitset set{MakeSet(kDocs, {3, 100, 299}),
+                              irs::fill::DocsMask{nullptr}};
 
   ASSERT_EQ(kDocs + 1, set.End());
   ASSERT_EQ(kDocs + 1, set.Filled());

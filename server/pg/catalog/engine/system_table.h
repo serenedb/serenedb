@@ -1158,6 +1158,9 @@ class SystemCursor<SystemMembers> final {
     const auto entries = _set_entries.entries;
     table.Walking(_set_entries.snapshot.get());
     for (; _pos < entries.size(); ++_pos) {
+      if (_pos + kPrefetchAhead < entries.size()) {
+        __builtin_prefetch(entries[_pos + kPrefetchAhead]);
+      }
       auto& entry = *entries[_pos];
       if (!_members.wanted.test(std::to_underlying(entry.type)) ||
           (entry.internal && !schema.internal)) {
@@ -1170,6 +1173,8 @@ class SystemCursor<SystemMembers> final {
     table.Walking(nullptr);
     return false;
   }
+
+  static constexpr size_t kPrefetchAhead = 8;
 
   SystemMembers _members;
   size_t _next = 0;

@@ -7,6 +7,9 @@ ICEBERG_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../third_party/duckdb_
 if [[ -n "${SDB_SPARK_JAVA_HOME:-}" ]]; then
 	export JAVA_HOME="$SDB_SPARK_JAVA_HOME"
 fi
+if [[ -n "${SDB_DUCKDB_HOME:-}" ]]; then
+	export HOME="$SDB_DUCKDB_HOME"
+fi
 if ! getent passwd "$(id -u)" >/dev/null; then
 	passwd=$(mktemp)
 	trap 'rm -f "$passwd"' EXIT

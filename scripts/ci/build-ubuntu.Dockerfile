@@ -40,7 +40,7 @@ RUN \
       systemd \
       nodejs \
       openjdk-25-jdk-headless maven \
-      openjdk-21-jre-headless libnss-wrapper \
+      openjdk-21-jre-headless libnss-wrapper squid \
       php-cli php-pgsql php-mbstring php-xml php-zip composer \
       dotnet-sdk-10.0 \
       libpq-dev pkg-config \
@@ -77,6 +77,10 @@ COPY --from=drivers python/requirements.txt /tmp/drivers/python/
 COPY test-data-requirements.txt /tmp/
 RUN python3 -m pip install --break-system-packages --no-cache-dir \
       -r /tmp/drivers/python/requirements.txt -r /tmp/test-data-requirements.txt
+
+ENV SDB_DUCKDB_HOME=/opt/sdb-duckdb
+RUN mkdir -p "$SDB_DUCKDB_HOME" && HOME="$SDB_DUCKDB_HOME" python3 -c 'import duckdb; duckdb.connect().install_extension("tpch")' && \
+    chmod -R a+rX "$SDB_DUCKDB_HOME"
 
 ENV SDB_SPARK_JAVA_HOME=/usr/lib/jvm/spark-java
 ENV SPARK_CONF_DIR=/opt/sdb-spark/conf

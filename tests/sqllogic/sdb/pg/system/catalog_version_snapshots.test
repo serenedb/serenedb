@@ -234,3 +234,68 @@ rearm	f
 
 statement ok
 DROP SCHEMA tinker_snap CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_arrays
+
+
+statement ok
+CREATE TYPE tinker_arrays.tinkerarr_mood AS ENUM ('march')
+
+
+statement ok
+CREATE TABLE tinker_arrays.tinkerarr_many (a1 tinker_arrays.tinkerarr_mood[], a2 tinker_arrays.tinkerarr_mood[], a3 tinker_arrays.tinkerarr_mood[], a4 tinker_arrays.tinkerarr_mood[], a5 tinker_arrays.tinkerarr_mood[], a6 tinker_arrays.tinkerarr_mood[], a7 tinker_arrays.tinkerarr_mood[], a8 tinker_arrays.tinkerarr_mood[], a9 tinker_arrays.tinkerarr_mood[], a10 tinker_arrays.tinkerarr_mood[], a11 tinker_arrays.tinkerarr_mood[], a12 tinker_arrays.tinkerarr_mood[], a13 tinker_arrays.tinkerarr_mood[], a14 tinker_arrays.tinkerarr_mood[], a15 tinker_arrays.tinkerarr_mood[], a16 tinker_arrays.tinkerarr_mood[], a17 tinker_arrays.tinkerarr_mood[], a18 tinker_arrays.tinkerarr_mood[], a19 tinker_arrays.tinkerarr_mood[], a20 tinker_arrays.tinkerarr_mood[], a21 tinker_arrays.tinkerarr_mood[], a22 tinker_arrays.tinkerarr_mood[], a23 tinker_arrays.tinkerarr_mood[], a24 tinker_arrays.tinkerarr_mood[], a25 tinker_arrays.tinkerarr_mood[], a26 tinker_arrays.tinkerarr_mood[], a27 tinker_arrays.tinkerarr_mood[], a28 tinker_arrays.tinkerarr_mood[], a29 tinker_arrays.tinkerarr_mood[], a30 tinker_arrays.tinkerarr_mood[], a31 tinker_arrays.tinkerarr_mood[], a32 tinker_arrays.tinkerarr_mood[], a33 tinker_arrays.tinkerarr_mood[], a34 tinker_arrays.tinkerarr_mood[], a35 tinker_arrays.tinkerarr_mood[], a36 tinker_arrays.tinkerarr_mood[], a37 tinker_arrays.tinkerarr_mood[], a38 tinker_arrays.tinkerarr_mood[], a39 tinker_arrays.tinkerarr_mood[], a40 tinker_arrays.tinkerarr_mood[], a41 tinker_arrays.tinkerarr_mood[], a42 tinker_arrays.tinkerarr_mood[], a43 tinker_arrays.tinkerarr_mood[], a44 tinker_arrays.tinkerarr_mood[], a45 tinker_arrays.tinkerarr_mood[], a46 tinker_arrays.tinkerarr_mood[], a47 tinker_arrays.tinkerarr_mood[], a48 tinker_arrays.tinkerarr_mood[], a49 tinker_arrays.tinkerarr_mood[], a50 tinker_arrays.tinkerarr_mood[], a51 tinker_arrays.tinkerarr_mood[], a52 tinker_arrays.tinkerarr_mood[], a53 tinker_arrays.tinkerarr_mood[], a54 tinker_arrays.tinkerarr_mood[], a55 tinker_arrays.tinkerarr_mood[], a56 tinker_arrays.tinkerarr_mood[], a57 tinker_arrays.tinkerarr_mood[], a58 tinker_arrays.tinkerarr_mood[], a59 tinker_arrays.tinkerarr_mood[], a60 tinker_arrays.tinkerarr_mood[], a61 tinker_arrays.tinkerarr_mood[], a62 tinker_arrays.tinkerarr_mood[], a63 tinker_arrays.tinkerarr_mood[], a64 tinker_arrays.tinkerarr_mood[], a65 tinker_arrays.tinkerarr_mood[], a66 tinker_arrays.tinkerarr_mood[])
+
+
+query
+SELECT count(*) AS n, min(udt_name) AS lo, max(udt_name) AS hi FROM information_schema.columns WHERE table_schema = 'tinker_arrays' AND table_name = 'tinkerarr_many'
+----
+n	lo	hi
+66	_tinkerarr_mood	_tinkerarr_mood
+
+
+statement ok
+CREATE TYPE tinker_arrays._tinkerarr_mood AS ENUM ('rearm')
+
+
+query
+SELECT count(*) AS n, min(udt_name) AS lo, max(udt_name) AS hi FROM information_schema.columns WHERE table_schema = 'tinker_arrays' AND table_name = 'tinkerarr_many'
+----
+n	lo	hi
+66	__tinkerarr_mood	__tinkerarr_mood
+
+
+query
+SELECT typname FROM pg_type WHERE typnamespace = 'tinker_arrays'::regnamespace ORDER BY 1
+----
+typname
+___tinkerarr_mood
+__tinkerarr_mood
+_tinkerarr_many
+_tinkerarr_mood
+tinkerarr_many
+tinkerarr_mood
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TYPE tinker_arrays.tinkerarr_keen AS ENUM ('laser')
+
+
+query
+SELECT count(*) AS n, min(udt_name) AS lo, max(udt_name) AS hi FROM information_schema.columns WHERE table_schema = 'tinker_arrays' AND table_name = 'tinkerarr_many'
+----
+n	lo	hi
+66	__tinkerarr_mood	__tinkerarr_mood
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+DROP SCHEMA tinker_arrays CASCADE

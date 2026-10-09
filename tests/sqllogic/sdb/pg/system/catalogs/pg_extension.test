@@ -1,0 +1,75 @@
+statement ok
+DROP ROLE IF EXISTS invoker_ext_quas;
+
+
+statement ok
+CREATE ROLE invoker_ext_quas LOGIN PASSWORD 'invoker_ext_quas_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_extension'::regclass;
+----
+oid	relname	relkind	relnatts
+3079	pg_extension	r	8
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_extension'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+extname	name	t
+extowner	oid	t
+extnamespace	oid	t
+extrelocatable	boolean	t
+extversion	text	t
+extconfig	oid[]	f
+extcondition	text[]	f
+
+
+query
+SELECT * FROM pg_extension;
+----
+oid	extname	extowner	extnamespace	extrelocatable	extversion	extconfig	extcondition
+
+
+query
+SELECT extname FROM pg_extension WHERE extname = 'plpgsql';
+----
+extname
+
+
+query
+SELECT extname FROM pg_extension WHERE oid = 13579;
+----
+extname
+
+
+query
+SELECT count(*) AS n FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace;
+----
+n
+0
+
+
+connection invoker_conn user=invoker_ext_quas password=invoker_ext_quas_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_extension', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection invoker_conn user=invoker_ext_quas password=invoker_ext_quas_pw
+query
+SELECT extname, extversion FROM pg_extension;
+----
+extname	extversion
+
+
+connection default
+statement ok
+DROP ROLE invoker_ext_quas;

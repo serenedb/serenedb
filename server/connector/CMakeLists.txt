@@ -30,7 +30,6 @@ target_sources(
         scan/scan_stream.cpp
         scan/scan_topk.cpp
         scan/scan_tsdict.cpp
-        system_table_scan.cpp
         full_scanner.cpp
         index_source_factory.cpp
         index_source_view.cpp

@@ -1,0 +1,63 @@
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_cast'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+castsource	oid	t
+casttarget	oid	t
+castfunc	oid	t
+castcontext	"char"	t
+castmethod	"char"	t
+
+
+query
+SELECT c.oid, c.relname, c.relkind, c.relnamespace::regnamespace::text AS nsp, c.relnatts, c.reltype::regtype::text AS rowtype, c.relisshared
+FROM pg_class c
+WHERE c.oid = 'pg_cast'::regclass;
+----
+oid	relname	relkind	nsp	relnatts	rowtype	relisshared
+2605	pg_cast	r	pg_catalog	6	pg_cast	f
+
+
+query
+SELECT t.typname, t.typtype, t.typrelid = 'pg_cast'::regclass AS linked, a.typname AS array_name
+FROM pg_type t JOIN pg_type a ON a.oid = t.typarray
+WHERE t.typname = 'pg_cast';
+----
+typname	typtype	linked	array_name
+pg_cast	c	t	_pg_cast
+
+
+query
+SELECT count(*) AS n FROM pg_cast;
+----
+n
+0
+
+
+query
+SELECT castsource, casttarget, castfunc, castcontext, castmethod FROM pg_cast ORDER BY 1;
+----
+castsource	casttarget	castfunc	castcontext	castmethod
+
+
+query
+SELECT castsource, casttarget, castfunc, castcontext, castmethod FROM pg_cast WHERE castsource = 23 AND casttarget = 20;
+----
+castsource	casttarget	castfunc	castcontext	castmethod
+
+
+query
+SELECT castsource, casttarget, castfunc, castcontext, castmethod FROM pg_cast WHERE castsource IN (21, 23, 20);
+----
+castsource	casttarget	castfunc	castcontext	castmethod
+
+
+query
+SELECT count(*) AS n FROM pg_catalog.pg_cast x JOIN pg_type t ON t.oid = 23;
+----
+n
+0

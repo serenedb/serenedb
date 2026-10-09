@@ -1,0 +1,72 @@
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_operator'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+oprname	name	t
+oprnamespace	oid	t
+oprowner	oid	t
+oprkind	"char"	t
+oprcanmerge	boolean	t
+oprcanhash	boolean	t
+oprleft	oid	t
+oprright	oid	t
+oprresult	oid	t
+oprcom	oid	t
+oprnegate	oid	t
+oprcode	regproc	t
+oprrest	regproc	t
+oprjoin	regproc	t
+
+
+query
+SELECT c.oid, c.relname, c.relkind, c.relnamespace::regnamespace::text AS nsp, c.relnatts, c.reltype::regtype::text AS rowtype, c.relisshared
+FROM pg_class c
+WHERE c.oid = 'pg_operator'::regclass;
+----
+oid	relname	relkind	nsp	relnatts	rowtype	relisshared
+2617	pg_operator	r	pg_catalog	15	pg_operator	f
+
+
+query
+SELECT t.typname, t.typtype, t.typrelid = 'pg_operator'::regclass AS linked, a.typname AS array_name
+FROM pg_type t JOIN pg_type a ON a.oid = t.typarray
+WHERE t.typname = 'pg_operator';
+----
+typname	typtype	linked	array_name
+pg_operator	c	t	_pg_operator
+
+
+query
+SELECT count(*) AS n FROM pg_operator;
+----
+n
+0
+
+
+query
+SELECT oprname, oprleft, oprright, oprresult FROM pg_operator ORDER BY 1;
+----
+oprname	oprleft	oprright	oprresult
+
+
+query
+SELECT oprname, oprleft, oprright, oprresult FROM pg_operator WHERE oprname = '+';
+----
+oprname	oprleft	oprright	oprresult
+
+
+query
+SELECT oprname, oprleft, oprright, oprresult FROM pg_operator WHERE oid IN (96, 551, 684);
+----
+oprname	oprleft	oprright	oprresult
+
+
+query
+SELECT count(*) AS n FROM pg_catalog.pg_operator x JOIN pg_type t ON t.oid = 23;
+----
+n
+0

@@ -17,9 +17,11 @@ This page provides an overview of the currently supported system tables and view
 
 ## System Tables
 
-System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` and `COPY ... FROM` on a system table, in `pg_catalog` or `information_schema`, fail with `permission denied: "<table>" is a system catalog`, the error PostgreSQL raises for what it refuses on its catalogs.
+System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` and `COPY ... FROM` on a system table, in `pg_catalog` or `information_schema`, fail with `permission denied: "<table>" is a system catalog`, the error PostgreSQL raises for what it refuses on its catalogs. No object can be created inside `pg_catalog` or `information_schema`, not even by a superuser: `CREATE TABLE`, `CREATE VIEW`, `CREATE FUNCTION`, `CREATE TYPE`, `CREATE INDEX` and the other `CREATE` statements fail there with `permission denied to create`.
 
 System tables often contain many low-level details. For more accessible and friendly access to the same information, consider using the built-in system views, or the SQL-standard information schema.
+
+Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` is `1259`, `'int4'::regtype` is `23`, and `pg_type.typinput` names the same `pg_proc` rows as in PostgreSQL. Queries that look objects up by `oid`, by name, by name within a schema or by the relation they belong to, such as `pg_class WHERE oid = ...`, `pg_class WHERE relname = ... AND relnamespace = ...` or `pg_attribute WHERE attrelid = ...`, read only the matching objects, so their cost does not grow with the number of tables. The same holds when the key comes from a join, as in `pg_attribute JOIN pg_class ON attrelid = pg_class.oid WHERE relname = ...`. Filters on the schema and on the object kind, such as `relnamespace = ...`, `relkind IN ('r', 'v')` or `prokind = 'a'`, combine with each other and with these lookups: `pg_class WHERE relnamespace = ... AND relkind = 'r'` reads only that schema's tables. Rows are produced as the query consumes them, so a `LIMIT` stops the scan early.
 
 | Feature                     | Support State | Details |
 |-----------------------------|---------------|---------|
@@ -33,14 +35,14 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_auth_members             | 🟢            | Tracks role memberships. |
 | pg_cast                     | 🟡            | Contains information about type casts. |
 | pg_class                    | 🟢            | Stores information about tables, indexes, sequences and other relations. |
-| pg_collation                | 🟡            | Contains information about collations. |
+| pg_collation                | 🟢            | Lists the built-in collations `default`, `C` and `POSIX`. |
 | pg_constraint               | 🟢            | Stores information about table constraints. |
 | pg_conversion               | 🟡            | Contains information about encoding conversions. |
 | pg_database                 | 🟢            | Stores information about databases. |
-| pg_db_role_setting          | 🟡            | Contains per-role and per-database configuration settings. |
-| pg_default_acl              | 🟡            | Stores default access privileges. |
+| pg_db_role_setting          | 🟢            | Contains per-role configuration settings set with `ALTER ROLE ... SET`. |
+| pg_default_acl              | 🟢            | Stores default access privileges set with `ALTER DEFAULT PRIVILEGES`. |
 | pg_depend                   | 🟢            | Tracks dependencies between database objects. |
-| pg_description              | 🟢            | Stores optional descriptions (comments) for database objects. |
+| pg_description              | 🟢            | Stores optional descriptions (comments) for database objects. Built-in objects have no rows. |
 | pg_enum                     | 🟢            | Contains information about enum types. |
 | pg_event_trigger            | 🟡            | Stores information about event triggers. |
 | pg_extension                | 🟡            | Contains information about installed extensions. |
@@ -82,7 +84,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_trigger                  | 🟢            | Contains information about table triggers. |
 | pg_ts_config                | 🟡            | Stores text search configurations. |
 | pg_ts_config_map            | 🟡            | Maps text search configurations to dictionaries. |
-| pg_ts_dict                  | 🟡            | Stores text search dictionaries. |
+| pg_ts_dict                  | 🟢            | Lists text search dictionaries (tokenizers). |
 | pg_ts_parser                | 🟡            | Contains text search parsers. |
 | pg_ts_template              | 🟡            | Stores text search templates. |
 | pg_type                     | 🟢            | Stores information about data types. |
@@ -106,7 +108,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_locks | 🟡 | Displays locks currently held or awaited. |
 | pg_matviews | 🟡 | Lists materialized views. |
 | pg_policies | 🟡 | Displays information about policies. |
-| pg_prepared_statements | 🟡 | Lists prepared statements. |
+| pg_prepared_statements | 🟢 | Lists the statements prepared with `PREPARE` in the current session. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
 | pg_replication_origin_status | 🟡 | Provides information about replication origins, including replication progress. |
@@ -115,7 +117,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_rules | 🟡 | Shows information about rules. |
 | pg_seclabels | 🟡 | Displays security labels. |
 | pg_sequences | 🟢 | Lists sequences. |
-| pg_settings | 🟢 | Provides access to parameter settings. |
+| pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the PostgreSQL settings clients read, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
 | pg_stats | 🟡 | Provides planner statistics. |
@@ -123,7 +125,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_stats_ext_exprs | 🟡 | Shows extended planner statistics for expressions. |
 | pg_tables | 🟢 | Lists tables. |
 | pg_timezone_abbrevs | 🟡 | Displays time zone abbreviations. |
-| pg_timezone_names | 🟡 | Lists time zone names. |
+| pg_timezone_names | 🟢 | Lists time zone names. |
 | pg_user | 🟢 | Shows database users. |
 | pg_user_mappings | 🟡 | Displays user mappings. |
 | pg_views | 🟢 | Lists views. |
@@ -192,7 +194,7 @@ name:
 | routines | 🟢 |  |
 | schemata | 🟢 |  |
 | sequences | 🟢 |  |
-| sql_features | 🟡 |  |
+| sql_features | 🟢 | PostgreSQL's list of SQL standard features. |
 | sql_implementation_info | 🟢 |  |
 | sql_parts | 🟢 |  |
 | sql_sizing | 🟢 |  |

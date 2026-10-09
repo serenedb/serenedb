@@ -337,19 +337,13 @@ t
 
 
 onlyif serenedb
-query
+query error db error: ERROR: server "server_name" does not exist
 SELECT has_server_privilege('server_name', 'USAGE');
-----
-has_server_privilege
-t
 
 
 onlyif serenedb
-query
+query error db error: ERROR: server "server_name" does not exist
 SELECT has_server_privilege(current_user, 'server_name', 'USAGE');
-----
-has_server_privilege
-t
 
 
 query
@@ -367,19 +361,13 @@ t
 
 
 onlyif serenedb
-query
+query error db error: ERROR: foreign\-data wrapper "fdw_name" does not exist
 SELECT has_foreign_data_wrapper_privilege('fdw_name', 'USAGE');
-----
-has_foreign_data_wrapper_privilege
-t
 
 
 onlyif serenedb
-query
+query error db error: ERROR: foreign\-data wrapper "fdw_name" does not exist
 SELECT has_foreign_data_wrapper_privilege(current_user, 'fdw_name', 'USAGE');
-----
-has_foreign_data_wrapper_privilege
-t
 
 
 skipif serenedb

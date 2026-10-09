@@ -10,7 +10,7 @@ SereneDB has a number of configuration options that can be used to change the be
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md).
 They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
-The values of configuration options can be queried via the [`current_setting()` scalar function](../sql/functions/utility.md) or the `pg_settings` view. For example:
+The values of configuration options can be queried via the [`current_setting()` scalar function](../sql/functions/utility.md) or the `pg_settings` table, which also lists the PostgreSQL settings clients read. For example:
 
 <SqlLogicTest id="configuration/overview/example_001" />
 
@@ -252,6 +252,8 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `0` |
 | `table_function_identifier_conversion` | Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone`                                    | The current time zone                                                                                                                                                                                          | `VARCHAR`   | System (locale) timezone                            |
+
+The other PostgreSQL settings that `pg_settings` lists, such as `work_mem`, `lock_timeout`, `max_connections` and `wal_level`, report PostgreSQL's defaults through `SHOW`, `current_setting()` and `pg_settings`. Settings a PostgreSQL session may change accept `SET` with a warning that the value is not enforced; the rest are read-only and `SET` fails with `cannot be changed`.
 
 #### Security
 

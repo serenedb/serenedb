@@ -1,0 +1,304 @@
+statement ok
+DROP TABLE IF EXISTS pudge_tsd_meat;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS pudge_tsd_hook;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS pudge_tsd_fresh;
+
+
+statement ok
+DROP SCHEMA IF EXISTS pudge_tsd_ns CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_tsd_butcher;
+
+
+statement ok
+CREATE ROLE pudge_tsd_butcher LOGIN PASSWORD 'pudge_tsd_butcher_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_ts_dict'::regclass;
+----
+oid	relname	relkind	relnatts
+3600	pg_ts_dict	r	6
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_ts_dict'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+dictname	name	t
+dictnamespace	oid	t
+dictowner	oid	t
+dicttemplate	oid	t
+dictinitoption	text	f
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname LIKE 'pudge_tsd%';
+----
+dictname
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pudge_tsd_hook AS keyword() WITH (frequency);
+
+
+statement ok
+CREATE SCHEMA pudge_tsd_ns;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pudge_tsd_ns.pudge_tsd_rot AS split_text_csv(' ');
+
+
+query
+SELECT d.dictname, n.nspname, d.dictowner = (SELECT oid FROM pg_roles WHERE rolname = current_user) AS mine, d.dictinitoption IS NULL AS no_initoption
+FROM pg_ts_dict d
+JOIN pg_namespace n ON n.oid = d.dictnamespace
+WHERE d.dictname LIKE 'pudge_tsd%'
+ORDER BY d.dictname;
+----
+dictname	nspname	mine	no_initoption
+pudge_tsd_hook	public	t	t
+pudge_tsd_rot	pudge_tsd_ns	t	t
+
+
+query
+SELECT oid::regdictionary::text AS dict FROM pg_ts_dict WHERE dictname LIKE 'pudge_tsd%' ORDER BY 1;
+----
+dict
+pudge_tsd_hook
+pudge_tsd_ns.pudge_tsd_rot
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE oid = 'pudge_tsd_hook'::regdictionary;
+----
+dictname
+pudge_tsd_hook
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE oid = 'pudge_tsd_ns.pudge_tsd_rot'::regdictionary;
+----
+dictname
+pudge_tsd_rot
+
+
+query
+SELECT dictname
+FROM pg_ts_dict
+WHERE oid IN (SELECT oid FROM pg_ts_dict WHERE dictname LIKE 'pudge_tsd%')
+ORDER BY dictname;
+----
+dictname
+pudge_tsd_hook
+pudge_tsd_rot
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname = 'pudge_tsd_rot' AND dictnamespace = 'pudge_tsd_ns'::regnamespace;
+----
+dictname
+pudge_tsd_rot
+
+
+query
+SELECT 'PUDGE_TSD_HOOK'::regdictionary::text AS upper_name, '"pudge_tsd_hook"'::regdictionary::text AS quoted, 'public.pudge_tsd_hook'::regdictionary::text AS qualified;
+----
+upper_name	quoted	qualified
+pudge_tsd_hook	pudge_tsd_hook	pudge_tsd_hook
+
+
+query
+SELECT 'pudge_tsd_hook'::regdictionary::oid = oid AS same FROM pg_ts_dict WHERE dictname = 'pudge_tsd_hook';
+----
+same
+t
+
+
+query
+SELECT 0::regdictionary::text AS zero, '-'::regdictionary::oid::int AS dash;
+----
+zero	dash
+-	0
+
+
+statement error
+SELECT 'pudge_tsd_rot'::regdictionary;
+----
+db error: ERROR: text search dictionary "pudge_tsd_rot" does not exist<slt:ignore>
+
+
+statement error
+SELECT 'pudge_tsd_nope'::regdictionary;
+----
+db error: ERROR: text search dictionary "pudge_tsd_nope" does not exist<slt:ignore>
+
+
+statement ok
+SET search_path = pudge_tsd_ns, public;
+
+
+query
+SELECT 'pudge_tsd_rot'::regdictionary::text AS rot, oid::regdictionary::text AS dict FROM pg_ts_dict WHERE dictname LIKE 'pudge_tsd%' ORDER BY 2;
+----
+rot	dict
+pudge_tsd_rot	pudge_tsd_hook
+pudge_tsd_rot	pudge_tsd_rot
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA pudge_tsd_ns TO pudge_tsd_butcher;
+
+
+connection pudge_conn user=pudge_tsd_butcher password=pudge_tsd_butcher_pw
+statement ok
+CREATE TEXT SEARCH DICTIONARY pudge_tsd_ns.pudge_tsd_dismember AS keyword();
+
+
+connection pudge_conn user=pudge_tsd_butcher password=pudge_tsd_butcher_pw
+query
+SELECT d.dictname, d.dictowner::regrole::text = current_user AS mine, r.rolsuper
+FROM pg_ts_dict d
+JOIN pg_roles r ON r.oid = d.dictowner
+WHERE d.dictname LIKE 'pudge_tsd%'
+ORDER BY d.dictname;
+----
+dictname	mine	rolsuper
+pudge_tsd_dismember	t	f
+pudge_tsd_hook	f	t
+pudge_tsd_rot	f	t
+
+
+connection pudge_conn user=pudge_tsd_butcher password=pudge_tsd_butcher_pw
+statement error
+DROP TEXT SEARCH DICTIONARY pudge_tsd_hook;
+----
+db error: ERROR: must be owner of text search dictionary pudge_tsd_hook<slt:ignore>
+
+
+connection default
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pudge_tsd_fresh AS keyword();
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE oid = 'pudge_tsd_fresh'::regdictionary;
+----
+dictname
+pudge_tsd_fresh
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname = 'pudge_tsd_fresh';
+----
+dictname
+
+
+statement ok
+CREATE TABLE pudge_tsd_meat (id int PRIMARY KEY, body text);
+
+
+statement ok
+CREATE INDEX pudge_tsd_meat_idx ON pudge_tsd_meat USING inverted (id, body pudge_tsd_hook);
+
+
+statement error
+DROP TEXT SEARCH DICTIONARY pudge_tsd_hook;
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname = 'pudge_tsd_hook';
+----
+dictname
+pudge_tsd_hook
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pudge_tsd_hook CASCADE;
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname = 'pudge_tsd_hook';
+----
+dictname
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE oid = 'pudge_tsd_hook'::regdictionary;
+----
+dictname
+pudge_tsd_hook
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pudge_tsd_hook CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'pudge_tsd_meat_idx';
+----
+n
+0
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname LIKE 'pudge_tsd%' ORDER BY dictname;
+----
+dictname
+pudge_tsd_dismember
+pudge_tsd_rot
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS pudge_tsd_hook;
+
+
+statement ok
+DROP SCHEMA pudge_tsd_ns CASCADE;
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname LIKE 'pudge_tsd%';
+----
+dictname
+
+
+statement ok
+DROP TABLE pudge_tsd_meat;
+
+
+statement ok
+DROP ROLE pudge_tsd_butcher;

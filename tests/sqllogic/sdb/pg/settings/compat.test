@@ -1,0 +1,75 @@
+query
+SHOW work_mem;
+----
+work_mem
+4096
+
+
+query
+SELECT current_setting('lock_timeout') AS lock_timeout, current_setting('max_connections') AS max_connections;
+----
+lock_timeout	max_connections
+0	100
+
+
+query
+SELECT count(*) AS not_showable
+FROM pg_settings
+WHERE category <> 'Customized Options' AND current_setting(name) IS NULL;
+----
+not_showable
+0
+
+
+statement ok
+SET lock_timeout = '5s';
+
+
+query
+SELECT setting, source FROM pg_settings WHERE name = 'lock_timeout';
+----
+setting	source
+5000	session
+
+
+query
+SHOW lock_timeout;
+----
+lock_timeout
+5s
+
+
+statement ok
+RESET lock_timeout;
+
+
+query
+SHOW lock_timeout;
+----
+lock_timeout
+0
+
+
+statement error
+SET block_size = '16384';
+----
+db error: ERROR: parameter "block_size" cannot be changed
+
+
+statement error
+SET wal_level = 'minimal';
+----
+db error: ERROR: parameter "wal_level" cannot be changed
+
+
+query
+SELECT name, context, setting
+FROM pg_settings
+WHERE name IN ('block_size', 'lock_timeout', 'wal_level', 'work_mem')
+ORDER BY name;
+----
+name	context	setting
+block_size	internal	8192
+lock_timeout	user	0
+wal_level	postmaster	replica
+work_mem	user	4096

@@ -1,0 +1,85 @@
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_range'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+rngtypid	oid	t
+rngsubtype	oid	t
+rngmultitypid	oid	t
+rngcollation	oid	t
+rngsubopc	oid	t
+rngcanonical	regproc	t
+rngsubdiff	regproc	t
+
+
+query
+SELECT c.oid, c.relname, c.relkind, c.relnamespace::regnamespace::text AS nsp, c.relnatts, c.reltype::regtype::text AS rowtype, c.relisshared
+FROM pg_class c
+WHERE c.oid = 'pg_range'::regclass;
+----
+oid	relname	relkind	nsp	relnatts	rowtype	relisshared
+3541	pg_range	r	pg_catalog	7	pg_range	f
+
+
+query
+SELECT t.typname, t.typtype, t.typrelid = 'pg_range'::regclass AS linked, a.typname AS array_name
+FROM pg_type t JOIN pg_type a ON a.oid = t.typarray
+WHERE t.typname = 'pg_range';
+----
+typname	typtype	linked	array_name
+pg_range	c	t	_pg_range
+
+
+query
+SELECT count(*) AS n FROM pg_range;
+----
+n
+0
+
+
+query
+SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range ORDER BY 1;
+----
+rngtypid	rngsubtype	rngmultitypid
+
+
+query
+SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range WHERE rngtypid = 3904;
+----
+rngtypid	rngsubtype	rngmultitypid
+
+
+query
+SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range WHERE rngtypid IN (3904, 3906, 3926);
+----
+rngtypid	rngsubtype	rngmultitypid
+
+
+query
+SELECT count(*) AS n FROM pg_catalog.pg_range x JOIN pg_type t ON t.oid = 23;
+----
+n
+0
+
+
+query
+SELECT t.oid, t.typname, t.typtype, t.typcategory, t.typarray, t.typinput::text AS typinput
+FROM pg_type t
+WHERE t.typtype IN ('r', 'm')
+ORDER BY t.oid;
+----
+oid	typname	typtype	typcategory	typarray	typinput
+3904	int4range	r	R	3905	range_in
+3906	numrange	r	R	3907	range_in
+3908	tsrange	r	R	3909	range_in
+3910	tstzrange	r	R	3911	range_in
+3912	daterange	r	R	3913	range_in
+3926	int8range	r	R	3927	range_in
+4451	int4multirange	m	R	6150	multirange_in
+4532	nummultirange	m	R	6151	multirange_in
+4533	tsmultirange	m	R	6152	multirange_in
+4534	tstzmultirange	m	R	6153	multirange_in
+4535	datemultirange	m	R	6155	multirange_in
+4536	int8multirange	m	R	6157	multirange_in

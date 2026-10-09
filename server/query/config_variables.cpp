@@ -54,6 +54,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/catalog/tables/settings.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -131,12 +132,12 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-template<irs::utils::detail::FixedString Name>
-void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
-                 duckdb::Value& value) {
-  constexpr std::string_view kName{Name};
+}  // namespace
+
+void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
+                     const duckdb::Value& value) {
   duckdb::Value current;
-  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{kName}, current)) {
+  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{name}, current)) {
     return;
   }
   bool equal = false;
@@ -153,8 +154,16 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
   connector::GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
     ERR_CODE(ERRCODE_WARNING),
     ERR_MSG(
-      "parameter \"", kName,
+      "parameter \"", name,
       "\" is accepted for compatibility but is not enforced by serened")));
+}
+
+namespace {
+
+template<irs::utils::detail::FixedString Name>
+void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
+                 duckdb::Value& value) {
+  NoticeIfChanged(ctx, std::string_view{Name}, value);
 }
 
 constexpr std::pair<std::string_view, double> kTimeUnits[] = {
@@ -1355,9 +1364,27 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "server_version_num",
 };
 
-bool IsUnchangeableSetting(std::string_view name) {
-  return kUnchangeableSettings.contains(name);
+namespace {
+
+const pg::Guc* CompatGuc(std::string_view name) {
+  if (kVariableIndex.contains(name) ||
+      duckdb::DBConfig::GetOptionByName(duckdb::Identifier{name})) {
+    return nullptr;
+  }
+  return pg::FindGuc(name);
 }
+
+}  // namespace
+
+bool IsUnchangeableSetting(std::string_view name) {
+  if (kUnchangeableSettings.contains(name)) {
+    return true;
+  }
+  const auto* guc = CompatGuc(name);
+  return guc && guc->context != "user" && guc->context != "superuser";
+}
+
+bool IsCompatSetting(std::string_view name) { return CompatGuc(name); }
 
 namespace {
 
@@ -1381,6 +1408,18 @@ namespace connector {
 void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
+  }
+  for (const auto& guc : pg::kGucs) {
+    const duckdb::Identifier setting{guc.name};
+    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+    if (!CompatGuc(guc.name) ||
+        config.TryGetSettingIndex(setting, option).IsValid()) {
+      continue;
+    }
+    config.AddExtensionOption(
+      setting, std::string{guc.short_desc}, duckdb::LogicalType::VARCHAR,
+      duckdb::Value{std::string{guc.setting}}, nullptr, nullptr,
+      duckdb::SetScope::AUTOMATIC, IsUnchangeableSetting(guc.name));
   }
 }
 

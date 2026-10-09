@@ -1,0 +1,91 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS invoker_tscfg_sunstrike;
+
+
+statement ok
+DROP ROLE IF EXISTS invoker_tscfg_exort;
+
+
+statement ok
+CREATE ROLE invoker_tscfg_exort LOGIN PASSWORD 'invoker_tscfg_exort_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_ts_config'::regclass;
+----
+oid	relname	relkind	relnatts
+3602	pg_ts_config	r	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_ts_config'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+cfgname	name	t
+cfgnamespace	oid	t
+cfgowner	oid	t
+cfgparser	oid	t
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY invoker_tscfg_sunstrike AS keyword();
+
+
+query
+SELECT * FROM pg_ts_config;
+----
+oid	cfgname	cfgnamespace	cfgowner	cfgparser
+
+
+query
+SELECT cfgname FROM pg_ts_config WHERE cfgname = 'invoker_tscfg_sunstrike';
+----
+cfgname
+
+
+query
+SELECT cfgname FROM pg_ts_config WHERE oid = 'invoker_tscfg_sunstrike'::regdictionary::oid;
+----
+cfgname
+
+
+query
+SELECT count(*) AS n FROM pg_ts_config c JOIN pg_ts_parser p ON p.oid = c.cfgparser;
+----
+n
+0
+
+
+query
+SELECT 0::regconfig::text AS zero;
+----
+zero
+-
+
+
+connection invoker_conn user=invoker_tscfg_exort password=invoker_tscfg_exort_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_ts_config', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection invoker_conn user=invoker_tscfg_exort password=invoker_tscfg_exort_pw
+query
+SELECT cfgname, cfgparser FROM pg_ts_config;
+----
+cfgname	cfgparser
+
+
+connection default
+statement ok
+DROP TEXT SEARCH DICTIONARY invoker_tscfg_sunstrike;
+
+
+statement ok
+DROP ROLE invoker_tscfg_exort;

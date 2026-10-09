@@ -1,0 +1,527 @@
+statement ok
+DROP VIEW IF EXISTS pudge_typ_view;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_typ_meat;
+
+
+statement ok
+DROP TABLE IF EXISTS tango_typ_saved;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_hook;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_mood;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_moods;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_typ_carry;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_alias;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_dmg;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_cost;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_hooks;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_typ_xp;
+
+
+query
+SELECT oid, typname, typnamespace, typlen, typbyval, typtype, typcategory, typispreferred, typisdefined, typdelim, typrelid, typsubscript::text AS typsubscript, typelem, typarray, typinput::text AS typinput, typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typmodin::text AS typmodin, typmodout::text AS typmodout, typanalyze::text AS typanalyze, typalign, typstorage, typnotnull, typbasetype, typtypmod, typndims, typcollation
+FROM pg_type
+WHERE oid IN (16, 23, 25, 83, 1007, 1043, 1700)
+ORDER BY oid;
+----
+oid	typname	typnamespace	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typsubscript	typelem	typarray	typinput	typoutput	typreceive	typsend	typmodin	typmodout	typanalyze	typalign	typstorage	typnotnull	typbasetype	typtypmod	typndims	typcollation
+16	bool	11	1	t	b	B	t	t	,	0	-	0	1000	boolin	boolout	boolrecv	boolsend	-	-	-	c	p	f	0	-1	0	0
+23	int4	11	4	t	b	N	f	t	,	0	-	0	1007	int4in	int4out	int4recv	int4send	-	-	-	i	p	f	0	-1	0	0
+25	text	11	-1	f	b	S	t	t	,	0	-	0	1009	textin	textout	textrecv	textsend	-	-	-	i	x	f	0	-1	0	100
+83	pg_class	11	-1	f	c	C	f	t	,	1259	-	0	273	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	0	-1	0	0
+1007	_int4	11	-1	f	b	A	f	t	,	0	array_subscript_handler	23	0	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	0	-1	0	0
+1043	varchar	11	-1	f	b	S	f	t	,	0	-	0	1015	varcharin	varcharout	varcharrecv	varcharsend	varchartypmodin	varchartypmodout	-	i	x	f	0	-1	0	100
+1700	numeric	11	-1	f	b	N	f	t	,	0	-	0	1231	numeric_in	numeric_out	numeric_recv	numeric_send	numerictypmodin	numerictypmodout	-	i	m	f	0	-1	0	0
+
+
+query
+SELECT oid, typname, typnamespace::regnamespace::text AS nsp, typlen, typbyval, typtype, typcategory, typarray, typinput::text AS typinput, typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typalign, typstorage, typbasetype, typcollation, typdefault IS NULL AS no_default
+FROM pg_type
+WHERE oid IN (13306, 13307, 13312)
+ORDER BY oid;
+----
+oid	typname	nsp	typlen	typbyval	typtype	typcategory	typarray	typinput	typoutput	typreceive	typsend	typalign	typstorage	typbasetype	typcollation	no_default
+13306	_cardinal_number	information_schema	-1	f	b	A	0	array_in	array_out	array_recv	array_send	i	x	0	0	t
+13307	cardinal_number	information_schema	4	t	d	N	13306	domain_in	int4out	domain_recv	int4send	i	p	23	0	t
+13312	sql_identifier	information_schema	64	f	d	S	13311	domain_in	nameout	domain_recv	namesend	c	p	19	950	t
+
+
+query
+SELECT oid, typname, typlen, typbyval, typtype, typcategory, typelem, typarray, typinput::text AS typinput, typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typalign, typstorage, typcollation
+FROM pg_type
+WHERE oid IN (19, 22, 26, 30, 114, 2249, 2277, 2278, 2287, 2950, 3500, 3802)
+ORDER BY oid;
+----
+oid	typname	typlen	typbyval	typtype	typcategory	typelem	typarray	typinput	typoutput	typreceive	typsend	typalign	typstorage	typcollation
+19	name	64	f	b	S	18	1003	namein	nameout	namerecv	namesend	c	p	950
+22	int2vector	-1	f	b	A	21	1006	int2vectorin	int2vectorout	int2vectorrecv	int2vectorsend	i	p	0
+26	oid	4	t	b	N	0	1028	oidin	oidout	oidrecv	oidsend	i	p	0
+30	oidvector	-1	f	b	A	26	1013	oidvectorin	oidvectorout	oidvectorrecv	oidvectorsend	i	p	0
+114	json	-1	f	b	U	0	199	json_in	json_out	json_recv	json_send	i	x	0
+2249	record	-1	f	p	P	0	2287	record_in	record_out	record_recv	record_send	d	x	0
+2277	anyarray	-1	f	p	P	0	0	anyarray_in	anyarray_out	anyarray_recv	anyarray_send	d	x	0
+2278	void	4	t	p	P	0	0	void_in	void_out	void_recv	void_send	i	p	0
+2287	_record	-1	f	p	P	2249	0	array_in	array_out	array_recv	array_send	d	x	0
+2950	uuid	16	f	b	U	0	2951	uuid_in	uuid_out	uuid_recv	uuid_send	c	p	0
+3500	anyenum	4	t	p	P	0	0	anyenum_in	anyenum_out	-	-	i	p	0
+3802	jsonb	-1	f	b	U	0	3807	jsonb_in	jsonb_out	jsonb_recv	jsonb_send	i	x	0
+
+
+query
+SELECT t.typname, c.relname, c.relkind, c.reltype = t.oid AS round_trip
+FROM pg_type t JOIN pg_class c ON c.oid = t.typrelid
+WHERE t.oid IN (75, 83)
+ORDER BY t.oid;
+----
+typname	relname	relkind	round_trip
+pg_attribute	pg_attribute	r	t
+pg_class	pg_class	r	t
+
+
+query
+SELECT n.nspname, t.typtype, count(*) AS n
+FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE t.oid < 16384 AND NOT (n.nspname = 'pg_catalog' AND t.typtype = 'b')
+GROUP BY n.nspname, t.typtype
+ORDER BY n.nspname, t.typtype;
+----
+nspname	typtype	n
+information_schema	b	74
+information_schema	c	69
+information_schema	d	5
+pg_catalog	c	144
+pg_catalog	m	6
+pg_catalog	p	26
+pg_catalog	r	6
+
+
+statement ok
+CREATE TYPE pudge_typ_mood AS ENUM ('fresh', 'fed', 'rotting');
+
+
+statement ok
+CREATE TYPE pudge_typ_hook AS (range int4, dmg numeric(10,2), mood pudge_typ_mood);
+
+
+statement ok
+CREATE TABLE pudge_typ_meat (id int, mood pudge_typ_mood, hooks pudge_typ_hook[]);
+
+
+statement ok
+CREATE VIEW pudge_typ_view AS SELECT id FROM pudge_typ_meat;
+
+
+statement ok
+CREATE TYPE pudge_typ_dmg AS int4;
+
+
+query
+SELECT typname, typnamespace::regnamespace::text AS nsp, typowner::regrole::text AS owner, typlen, typbyval, typtype, typcategory, typispreferred, typisdefined, typdelim, typrelid <> 0 AS has_rel, typsubscript::text AS typsubscript, typelem::regtype::text AS elem, typarray::regtype::text AS arr, typinput::text AS typinput, typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typmodin::text AS typmodin, typmodout::text AS typmodout, typanalyze::text AS typanalyze, typalign, typstorage, typnotnull, typbasetype, typtypmod, typndims, typcollation, typacl IS NULL AS no_acl
+FROM pg_type
+WHERE typname IN ('pudge_typ_mood', '_pudge_typ_mood', 'pudge_typ_hook', '_pudge_typ_hook', 'pudge_typ_meat', '_pudge_typ_meat', 'pudge_typ_view', '_pudge_typ_view')
+ORDER BY typname;
+----
+typname	nsp	owner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	has_rel	typsubscript	elem	arr	typinput	typoutput	typreceive	typsend	typmodin	typmodout	typanalyze	typalign	typstorage	typnotnull	typbasetype	typtypmod	typndims	typcollation	no_acl
+_pudge_typ_hook	public	postgres	-1	f	b	A	f	t	,	f	array_subscript_handler	pudge_typ_hook	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	0	-1	0	0	t
+_pudge_typ_meat	public	postgres	-1	f	b	A	f	t	,	f	array_subscript_handler	pudge_typ_meat	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	0	-1	0	0	t
+_pudge_typ_mood	public	postgres	-1	f	b	A	f	t	,	f	array_subscript_handler	pudge_typ_mood	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	0	-1	0	0	t
+_pudge_typ_view	public	postgres	-1	f	b	A	f	t	,	f	array_subscript_handler	pudge_typ_view	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	0	-1	0	0	t
+pudge_typ_hook	public	postgres	-1	f	c	C	f	t	,	t	-	-	pudge_typ_hook[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	0	-1	0	0	t
+pudge_typ_meat	public	postgres	-1	f	c	C	f	t	,	t	-	-	pudge_typ_meat[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	0	-1	0	0	t
+pudge_typ_mood	public	postgres	4	t	e	E	f	t	,	f	-	-	pudge_typ_mood[]	enum_in	enum_out	enum_recv	enum_send	-	-	-	i	p	f	0	-1	0	0	t
+pudge_typ_view	public	postgres	-1	f	c	C	f	t	,	t	-	-	pudge_typ_view[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	0	-1	0	0	t
+
+
+query
+SELECT typname, typtype, typbasetype::regtype::text AS base, typlen, typbyval, typcategory, typinput::text AS typinput, typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typalign, typstorage, typcollation, typtypmod, typnotnull, typarray <> 0 AS has_array
+FROM pg_type
+WHERE typname = 'pudge_typ_dmg';
+----
+typname	typtype	base	typlen	typbyval	typcategory	typinput	typoutput	typreceive	typsend	typalign	typstorage	typcollation	typtypmod	typnotnull	has_array
+pudge_typ_dmg	d	integer	4	t	N	domain_in	int4out	domain_recv	int4send	i	p	0	-1	f	t
+
+
+query
+SELECT t.typname, c.relname, c.relkind, c.reltype = t.oid AS round_trip
+FROM pg_type t JOIN pg_class c ON c.oid = t.typrelid
+WHERE t.typname LIKE 'pudge\_typ\_%'
+ORDER BY t.typname;
+----
+typname	relname	relkind	round_trip
+pudge_typ_hook	pudge_typ_hook	c	t
+pudge_typ_meat	pudge_typ_meat	r	t
+pudge_typ_view	pudge_typ_view	v	t
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_type t WHERE t.typinput <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typinput)) AS d_in,
+  (SELECT count(*) FROM pg_type t WHERE t.typoutput <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typoutput)) AS d_out,
+  (SELECT count(*) FROM pg_type t WHERE t.typreceive <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typreceive)) AS d_recv,
+  (SELECT count(*) FROM pg_type t WHERE t.typsend <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typsend)) AS d_send,
+  (SELECT count(*) FROM pg_type t WHERE t.typmodin <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typmodin)) AS d_modin,
+  (SELECT count(*) FROM pg_type t WHERE t.typmodout <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typmodout)) AS d_modout,
+  (SELECT count(*) FROM pg_type t WHERE t.typanalyze <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typanalyze)) AS d_analyze,
+  (SELECT count(*) FROM pg_type t WHERE t.typsubscript <> 0 AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = t.typsubscript)) AS d_subscript,
+  (SELECT count(*) FROM pg_type t WHERE (t.oid < 16384 OR t.typname LIKE '%pudge\_typ\_%') AND (t.typinput = 0 OR t.typoutput = 0)) AS no_io;
+----
+d_in	d_out	d_recv	d_send	d_modin	d_modout	d_analyze	d_subscript	no_io
+0	0	0	0	0	0	0	0	0
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_type t WHERE t.typarray <> 0 AND NOT EXISTS (SELECT 1 FROM pg_type a WHERE a.oid = t.typarray AND a.typelem = t.oid)) AS bad_array,
+  (SELECT count(*) FROM pg_type t WHERE t.typnamespace NOT IN (SELECT oid FROM pg_namespace)) AS bad_namespace,
+  (SELECT count(*) FROM pg_type t WHERE t.typrelid <> 0 AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.reltype = t.oid)) AS bad_relid,
+  (SELECT count(*) FROM pg_type t WHERE t.typcollation <> 0 AND NOT EXISTS (SELECT 1 FROM pg_collation c WHERE c.oid = t.typcollation)) AS bad_collation,
+  (SELECT count(*) FROM pg_type t WHERE t.typbasetype <> 0 AND NOT EXISTS (SELECT 1 FROM pg_type b WHERE b.oid = t.typbasetype)) AS bad_base,
+  (SELECT count(*) - count(DISTINCT oid) FROM pg_type) AS dup_oid,
+  (SELECT count(*) - count(DISTINCT (typname, typnamespace)) FROM pg_type) AS dup_name;
+----
+bad_array	bad_namespace	bad_relid	bad_collation	bad_base	dup_oid	dup_name
+0	0	0	0	0	0	0
+
+
+query
+SELECT a.typname
+FROM pg_type a
+WHERE a.typcategory = 'A' AND a.typsubscript = 'array_subscript_handler'::regproc
+  AND NOT EXISTS (SELECT 1 FROM pg_type e WHERE e.oid = a.typelem AND e.typarray = a.oid)
+ORDER BY a.typname;
+----
+typname
+int2vector
+oidvector
+
+
+query
+SELECT e.typname AS elem, a.typname AS arr, a.oid = e.typarray AS linked
+FROM pg_type e JOIN pg_type a ON a.typelem = e.oid AND a.typsubscript = 'array_subscript_handler'::regproc
+WHERE e.typname LIKE 'pudge\_typ\_%'
+ORDER BY e.typname;
+----
+elem	arr	linked
+pudge_typ_dmg	_pudge_typ_dmg	t
+pudge_typ_hook	_pudge_typ_hook	t
+pudge_typ_meat	_pudge_typ_meat	t
+pudge_typ_mood	_pudge_typ_mood	t
+pudge_typ_view	_pudge_typ_view	t
+
+
+query
+SELECT typname FROM pg_type WHERE typname LIKE '\_pudge\_typ\_%' ORDER BY typname;
+----
+typname
+_pudge_typ_dmg
+_pudge_typ_hook
+_pudge_typ_meat
+_pudge_typ_mood
+_pudge_typ_view
+
+
+query
+SELECT typname FROM pg_type WHERE typname >= 'pudge_typ_h' AND typname < 'pudge_typ_i' ORDER BY typname;
+----
+typname
+pudge_typ_hook
+
+
+query
+SELECT typname FROM pg_type WHERE oid = 'pudge_typ_mood'::regtype;
+----
+typname
+pudge_typ_mood
+
+
+query
+SELECT typname
+FROM pg_type
+WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_mood'::regtype, 'pudge_typ_hook'::regtype, 'pudge_typ_hook[]'::regtype, 'pudge_typ_meat'::regtype, 23, 1007, 83, 4294967295)
+ORDER BY typname;
+----
+typname
+_int4
+_pudge_typ_hook
+_pudge_typ_mood
+int4
+pg_class
+pudge_typ_hook
+pudge_typ_meat
+pudge_typ_mood
+
+
+query
+SELECT typname, typelem::regtype::text AS elem
+FROM pg_type
+WHERE typname IN ('_pudge_typ_mood', 'pudge_typ_hook', '_pudge_typ_meat', 'pudge_typ_view', 'int4', '_int4', 'pudge_typ_nope')
+ORDER BY typname;
+----
+typname	elem
+_int4	integer
+_pudge_typ_meat	pudge_typ_meat
+_pudge_typ_mood	pudge_typ_mood
+int4	-
+pudge_typ_hook	-
+pudge_typ_view	-
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
+   WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_hook'::regtype, 'pudge_typ_meat'::regtype, 'pudge_typ_dmg'::regtype, 16, 25, 1007, 13307)
+   EXCEPT
+   SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
+   WHERE oid::int8 + 0 IN ('pudge_typ_mood'::regtype::int8, '_pudge_typ_hook'::regtype::int8, 'pudge_typ_meat'::regtype::int8, 'pudge_typ_dmg'::regtype::int8, 16, 25, 1007, 13307))
+  UNION ALL
+  (SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
+   WHERE oid::int8 + 0 IN ('pudge_typ_mood'::regtype::int8, '_pudge_typ_hook'::regtype::int8, 'pudge_typ_meat'::regtype::int8, 'pudge_typ_dmg'::regtype::int8, 16, 25, 1007, 13307)
+   EXCEPT
+   SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
+   WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_hook'::regtype, 'pudge_typ_meat'::regtype, 'pudge_typ_dmg'::regtype, 16, 25, 1007, 13307))
+) d;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT oid, typname, typelem, typarray FROM pg_type
+   WHERE typname IN ('pudge_typ_mood', '_pudge_typ_mood', 'pudge_typ_view', '_pudge_typ_view', 'bool', '_text', 'cardinal_number')
+   EXCEPT
+   SELECT oid, typname, typelem, typarray FROM pg_type
+   WHERE typname || '' IN ('pudge_typ_mood', '_pudge_typ_mood', 'pudge_typ_view', '_pudge_typ_view', 'bool', '_text', 'cardinal_number'))
+  UNION ALL
+  (SELECT oid, typname, typelem, typarray FROM pg_type
+   WHERE typname || '' IN ('pudge_typ_mood', '_pudge_typ_mood', 'pudge_typ_view', '_pudge_typ_view', 'bool', '_text', 'cardinal_number')
+   EXCEPT
+   SELECT oid, typname, typelem, typarray FROM pg_type
+   WHERE typname IN ('pudge_typ_mood', '_pudge_typ_mood', 'pudge_typ_view', '_pudge_typ_view', 'bool', '_text', 'cardinal_number'))
+) d;
+----
+diff
+0
+
+
+query
+SELECT format_type('pudge_typ_mood'::regtype, NULL) AS mood, format_type('_pudge_typ_mood'::regtype, NULL) AS moods, format_type('pudge_typ_hook'::regtype, -1) AS hook, 'pudge_typ_mood[]'::regtype::text AS arr, to_regtype('pudge_typ_hook')::text AS reg, to_regtype('pudge_typ_nope') IS NULL AS missing, 'pudge_typ_meat'::regtype::text AS rowtype, 'public.pudge_typ_mood'::regtype = 'pudge_typ_mood'::regtype AS qualified;
+----
+mood	moods	hook	arr	reg	missing	rowtype	qualified
+pudge_typ_mood	pudge_typ_mood[]	pudge_typ_hook	pudge_typ_mood[]	pudge_typ_hook	t	pudge_typ_meat	t
+
+
+query
+SELECT format_type(1043, 24) AS vc, format_type(1700, 655366) AS num, format_type(1007, NULL) AS arr, format_type(23, NULL) AS i4, format_type(13307, NULL) AS card, format_type(NULL, NULL) IS NULL AS null_in, 23::regtype::text AS reg, 'integer'::regtype::oid AS by_alias, 'int4[]'::regtype::oid AS arr_oid;
+----
+vc	num	arr	i4	card	null_in	reg	by_alias	arr_oid
+character varying(20)	numeric(10,2)	integer[]	integer	information_schema.cardinal_number	t	integer	23	1007
+
+
+statement ok
+CREATE TABLE tango_typ_saved AS SELECT 'pudge_typ_mood'::regtype::oid AS mood, '_pudge_typ_mood'::regtype::oid AS moods;
+
+
+statement ok
+DROP VIEW pudge_typ_view;
+
+
+statement ok
+DROP TABLE pudge_typ_meat;
+
+
+statement ok
+DROP TYPE pudge_typ_hook;
+
+
+statement ok
+DROP TYPE pudge_typ_mood;
+
+
+statement ok
+DROP TYPE pudge_typ_dmg;
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_type WHERE typname LIKE '%pudge\_typ\_%') AS by_name,
+  (SELECT count(*) FROM pg_type WHERE oid IN (SELECT mood FROM tango_typ_saved UNION ALL SELECT moods FROM tango_typ_saved)) AS by_oid,
+  to_regtype('pudge_typ_mood') IS NULL AS gone;
+----
+by_name	by_oid	gone
+0	0	t
+
+
+statement ok
+DROP TABLE tango_typ_saved;
+
+
+statement ok
+CREATE TYPE pudge_typ_cost AS numeric(10,2);
+
+
+statement ok
+CREATE TYPE pudge_typ_hooks AS int4[];
+
+
+statement ok
+CREATE TYPE pudge_typ_xp AS int8;
+
+
+query
+SELECT typname, typtype, typbasetype::regtype::text AS base, typcategory, typoutput::text AS typoutput, typanalyze::text AS typanalyze, typalign, typtypmod, typndims
+FROM pg_type
+WHERE typname IN ('pudge_typ_cost', '_pudge_typ_cost', 'pudge_typ_hooks', '_pudge_typ_hooks', 'pudge_typ_xp', '_pudge_typ_xp')
+ORDER BY typname;
+----
+typname	typtype	base	typcategory	typoutput	typanalyze	typalign	typtypmod	typndims
+_pudge_typ_cost	b	-	A	array_out	array_typanalyze	i	-1	0
+_pudge_typ_hooks	b	-	A	array_out	array_typanalyze	i	-1	0
+_pudge_typ_xp	b	-	A	array_out	array_typanalyze	d	-1	0
+pudge_typ_cost	d	numeric	N	numeric_out	-	i	655366	0
+pudge_typ_hooks	d	integer[]	A	array_out	array_typanalyze	i	-1	1
+pudge_typ_xp	d	bigint	N	int8out	-	d	-1	0
+
+
+statement ok
+DROP TYPE pudge_typ_cost;
+
+
+statement ok
+DROP TYPE pudge_typ_hooks;
+
+
+statement ok
+DROP TYPE pudge_typ_xp;
+
+
+query
+SELECT pg_typeof(NULL::pg_node_tree)::text AS scalar, pg_typeof(NULL::pg_node_tree[])::text AS arr;
+----
+scalar	arr
+pg_node_tree	text[]
+
+
+statement ok
+CREATE TYPE pudge_typ_moods AS ENUM ('calm');
+
+
+query
+SELECT pg_typeof(ARRAY['calm'::pudge_typ_moods])::text AS typ;
+----
+typ
+pudge_typ_moods[]
+
+
+statement ok
+DROP TYPE pudge_typ_moods;
+
+
+query
+SELECT format_type(999999999, NULL) AS unknown, format_type(0, NULL) AS invalid, 999999999::regtype::text AS reg;
+----
+unknown	invalid	reg
+???	-	999999999
+
+
+statement ok
+CREATE TYPE pudge_typ_alias AS int4;
+
+
+statement ok
+CREATE TABLE pudge_typ_carry (a pudge_typ_alias);
+
+
+statement ok
+INSERT INTO pudge_typ_carry VALUES (1);
+
+
+query
+SELECT 7::pudge_typ_alias AS v, a + 1 AS w FROM pudge_typ_carry;
+----
+v	w
+7	2
+
+
+statement ok
+DROP TABLE pudge_typ_carry;
+
+
+statement ok
+DROP TYPE pudge_typ_alias;
+
+
+query
+SELECT typname FROM pg_type WHERE oid IN (16, 23, 25, 1043) ORDER BY 1;
+----
+typname
+bool
+int4
+text
+varchar
+
+
+query
+SELECT oid, typname FROM pg_type WHERE oid >= 20 AND oid <= 23 ORDER BY 1;
+----
+oid	typname
+20	int8
+21	int2
+22	int2vector
+23	int4
+
+
+query
+SELECT count(*) AS n FROM pg_type WHERE typname = 'int4' AND typnamespace = 11;
+----
+n
+1
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_typ_align;
+
+
+statement ok
+CREATE TABLE pudge_typ_align (a int, b float8);
+
+
+query
+SELECT typname, typalign FROM pg_type WHERE typalign = 'd' AND typname = '_pudge_typ_align';
+----
+typname	typalign
+_pudge_typ_align	d
+
+
+statement ok
+DROP TABLE pudge_typ_align;

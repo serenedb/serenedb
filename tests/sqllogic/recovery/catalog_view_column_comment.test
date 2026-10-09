@@ -1,0 +1,32 @@
+control substitution on
+
+statement ok
+CREATE TABLE pudge_vcc(id INTEGER, val TEXT);
+
+statement ok
+CREATE VIEW pudge_vcc_view AS SELECT id, val FROM pudge_vcc;
+
+statement ok
+COMMENT ON COLUMN pudge_vcc_view.val IS 'hook';
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT objsubid, description FROM pg_description WHERE objoid = 'pudge_vcc_view'::regclass;
+----
+objsubid	description
+2	hook
+
+connection after_crash
+statement ok
+DROP VIEW pudge_vcc_view;
+
+connection after_crash
+statement ok
+DROP TABLE pudge_vcc;

@@ -1,0 +1,216 @@
+statement ok
+DROP ROLE IF EXISTS pudge_aut_hook;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_aut_dismember;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_aut_rot;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_aut_butcher;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_authid'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+1260	pg_authid	r	pg_catalog	12
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_authid'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+rolname	name	t
+rolsuper	boolean	t
+rolinherit	boolean	t
+rolcreaterole	boolean	t
+rolcreatedb	boolean	t
+rolcanlogin	boolean	t
+rolreplication	boolean	t
+rolbypassrls	boolean	t
+rolconnlimit	integer	t
+rolpassword	text	f
+rolvaliduntil	timestamp with time zone	f
+
+
+query
+SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin,
+       rolreplication, rolbypassrls, rolconnlimit, rolvaliduntil
+FROM pg_authid WHERE rolname = 'postgres';
+----
+rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolbypassrls	rolconnlimit	rolvaliduntil
+postgres	t	t	t	t	t	t	t	-1	NULL
+
+
+query
+SELECT count(*) FROM pg_authid WHERE rolname LIKE 'pudge\_aut\_%';
+----
+count
+0
+
+
+statement ok
+CREATE ROLE pudge_aut_butcher LOGIN PASSWORD 'fresh_meat' CREATEDB CONNECTION LIMIT 5 VALID UNTIL '2030-01-01 00:00:00+00';
+
+
+statement ok
+CREATE ROLE pudge_aut_rot SUPERUSER NOLOGIN CREATEROLE NOINHERIT REPLICATION BYPASSRLS;
+
+
+statement ok
+CREATE ROLE pudge_aut_hook;
+
+
+query
+SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin,
+       rolreplication, rolbypassrls, rolconnlimit, rolvaliduntil
+FROM pg_authid WHERE rolname LIKE 'pudge\_aut\_%' ORDER BY rolname;
+----
+rolname	rolsuper	rolinherit	rolcreaterole	rolcreatedb	rolcanlogin	rolreplication	rolbypassrls	rolconnlimit	rolvaliduntil
+pudge_aut_butcher	f	t	f	t	t	f	f	5	2030-01-01 00:00:00+00
+pudge_aut_hook	f	t	f	f	f	f	f	-1	NULL
+pudge_aut_rot	t	f	t	f	f	t	t	-1	NULL
+
+
+query
+SELECT a.rolname, a.oid = r.oid AS same_oid, a.rolsuper = r.rolsuper AS same_super,
+       a.rolcanlogin = r.rolcanlogin AS same_login, r.rolpassword
+FROM pg_authid a JOIN pg_roles r ON r.rolname = a.rolname
+WHERE a.rolname LIKE 'pudge\_aut\_%' ORDER BY a.rolname;
+----
+rolname	same_oid	same_super	same_login	rolpassword
+pudge_aut_butcher	t	t	t	********
+pudge_aut_hook	t	t	t	********
+pudge_aut_rot	t	t	t	********
+
+
+query
+SELECT rolname, left(rolpassword, 14) AS method
+FROM pg_authid WHERE rolname LIKE 'pudge\_aut\_%' ORDER BY rolname;
+----
+rolname	method
+pudge_aut_butcher	SCRAM-SHA-256$
+pudge_aut_hook	NULL
+pudge_aut_rot	NULL
+
+
+query
+SELECT rolname FROM pg_authid WHERE oid = 'pudge_aut_rot'::regrole;
+----
+rolname
+pudge_aut_rot
+
+
+query
+SELECT rolname FROM pg_authid WHERE oid IN (SELECT 'pudge_aut_rot'::regrole::oid);
+----
+rolname
+pudge_aut_rot
+
+
+query
+SELECT oid = 'pudge_aut_butcher'::regrole AS same_oid, rolconnlimit
+FROM pg_authid WHERE rolname = 'pudge_aut_butcher';
+----
+same_oid	rolconnlimit
+t	5
+
+
+query
+SELECT oid = 'pudge_aut_butcher'::regrole AS same_oid, rolconnlimit
+FROM pg_authid WHERE rolname || '' = 'pudge_aut_butcher';
+----
+same_oid	rolconnlimit
+t	5
+
+
+statement ok
+ALTER ROLE pudge_aut_butcher NOCREATEDB CONNECTION LIMIT 10 VALID UNTIL 'infinity';
+
+
+statement ok
+ALTER ROLE pudge_aut_rot NOSUPERUSER INHERIT;
+
+
+statement ok
+ALTER ROLE pudge_aut_hook RENAME TO pudge_aut_dismember;
+
+
+query
+SELECT rolname, rolsuper, rolinherit, rolcreatedb, rolconnlimit, rolvaliduntil
+FROM pg_authid WHERE rolname LIKE 'pudge\_aut\_%' ORDER BY rolname;
+----
+rolname	rolsuper	rolinherit	rolcreatedb	rolconnlimit	rolvaliduntil
+pudge_aut_butcher	f	t	f	10	infinity
+pudge_aut_dismember	f	t	f	-1	NULL
+pudge_aut_rot	f	t	f	-1	NULL
+
+
+query
+SELECT count(*) FROM pg_authid WHERE rolname = 'pudge_aut_hook';
+----
+count
+0
+
+
+connection c_pudge_aut user=pudge_aut_butcher password=fresh_meat
+statement error
+SELECT count(*) FROM pg_authid;
+----
+db error: ERROR: permission denied for table pg_authid<slt:ignore>
+
+
+connection c_pudge_aut user=pudge_aut_butcher password=fresh_meat
+statement error
+SELECT rolname FROM pg_authid WHERE oid = 'pudge_aut_rot'::regrole;
+----
+db error: ERROR: permission denied for table pg_authid<slt:ignore>
+
+
+connection c_pudge_aut user=pudge_aut_butcher password=fresh_meat
+query
+SELECT rolname, rolsuper, rolcanlogin, rolconnlimit, rolpassword
+FROM pg_roles WHERE rolname LIKE 'pudge\_aut\_%' ORDER BY rolname;
+----
+rolname	rolsuper	rolcanlogin	rolconnlimit	rolpassword
+pudge_aut_butcher	f	t	10	********
+pudge_aut_dismember	f	f	-1	********
+pudge_aut_rot	f	f	-1	********
+
+
+connection c_pudge_aut user=pudge_aut_butcher password=fresh_meat
+query
+SELECT has_table_privilege('pg_authid', 'SELECT') AS authid,
+       has_table_privilege('pg_auth_members', 'SELECT') AS auth_members;
+----
+authid	auth_members
+f	t
+
+
+connection default
+statement ok
+DROP ROLE pudge_aut_dismember;
+
+
+statement ok
+DROP ROLE pudge_aut_rot;
+
+
+statement ok
+DROP ROLE pudge_aut_butcher;
+
+
+query
+SELECT count(*) FROM pg_authid WHERE rolname LIKE 'pudge\_aut\_%';
+----
+count
+0

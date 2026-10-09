@@ -1927,7 +1927,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     const uint64_t oid = absl::big_endian::Load32(payload.data());
     payload.remove_prefix(sizeof(uint32_t));
     param_oids.push_back(oid);
-    if (oid != 0) {
+    if (oid != 0 && oid != sdb::pg::kUnknown) {
       type_hints.emplace(
         absl::StrCat(i + 1),
         sdb::pg::Oid2Type(oid, _connection_ctx->GetClientContext()));

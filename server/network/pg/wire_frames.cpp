@@ -36,9 +36,9 @@
 #include <vector>
 
 #include "pg/command_tag.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
+#include "pg/types.h"
 #include "query/utils.h"
 #include "server/utils/dtoa.h"
 
@@ -422,8 +422,8 @@ void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
     w.Write(kNull);
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);
-    const auto type_info = sdb::pg::Logical2Pg(types[i]);
-    absl::big_endian::Store32(w.Alloc(kInt32), sdb::pg::WireOid(type_info.oid));
+    const auto type_info = sdb::pg::WireType(types[i]);
+    absl::big_endian::Store32(w.Alloc(kInt32), type_info.oid);
     absl::big_endian::Store16(w.Alloc(kInt16), type_info.typlen);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.typmod);
     const auto format = i < formats.size() ? formats[i] : default_format;

@@ -38,7 +38,7 @@
 
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "pg/pg_types.h"
+#include "pg/types.h"
 
 namespace sdb::auth {
 namespace {

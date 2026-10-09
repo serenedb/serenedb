@@ -25,7 +25,7 @@
 #include <duckdb/storage/table_storage_info.hpp>
 #include <memory>
 
-#include "pg/system_catalog.h"
+#include "pg/catalog/engine/registry.h"
 
 namespace duckdb {
 
@@ -34,7 +34,7 @@ struct CreateTableInfo;
 }  // namespace duckdb
 namespace sdb::pg {
 
-class VirtualTable;
+class SystemTable;
 
 }  // namespace sdb::pg
 namespace sdb::catalog {
@@ -44,10 +44,9 @@ class SereneDBCatalog;
 class SystemTableEntry final : public duckdb::TableCatalogEntry {
  public:
   SystemTableEntry(duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-                   duckdb::CreateTableInfo& info,
-                   const pg::VirtualTable& table);
+                   duckdb::CreateTableInfo& info, const pg::SystemTable& table);
 
-  const duckdb::ColumnList& GetColumns() const final { return _columns; }
+  const duckdb::ColumnList& GetColumns() const final;
 
   duckdb::unique_ptr<duckdb::BaseStatistics> GetStatistics(
     duckdb::ClientContext&, duckdb::column_t) final {
@@ -66,11 +65,10 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::Catalog& GetStorageCatalog(duckdb::ClientContext& context) final;
 
-  const pg::VirtualTable& Table() const noexcept { return _table; }
+  const pg::SystemTable& Table() const noexcept { return _table; }
 
  private:
-  duckdb::ColumnList _columns;
-  const pg::VirtualTable& _table;
+  const pg::SystemTable& _table;
 };
 
 class SystemViewEntry final : public duckdb::ViewCatalogEntry {

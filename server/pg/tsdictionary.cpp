@@ -25,6 +25,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -73,7 +74,6 @@
 #include "catalog/entry/tokenizer.h"
 #include "pg/option_help.h"
 #include "pg/options_parser.h"
-#include "pg/sql_utils.h"
 #include "pg/tokenizer_options.h"
 #include "pg/tsdictionary_spec.h"
 #include "search/search_analyzer_impl.h"

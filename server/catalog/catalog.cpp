@@ -81,9 +81,10 @@
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
+#include "pg/catalog/engine/registry.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "pg/tsdictionary.h"
+#include "pg/types.h"
 #include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -121,6 +122,8 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
+        sequence_info.tags[std::string{kGeneratedPkSequenceTag}] =
+          entry->name.GetIdentifierName();
         info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
@@ -174,13 +177,19 @@ duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
   }
 }
 
+[[noreturn]] void RefuseSystemIndex(const duckdb::CatalogEntry& relation) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied: \"", relation.name.GetIdentifierName(),
+            "\" is a system catalog"));
+}
+
 }  // namespace
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
-SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
+SereneDBCatalog::FindSchemaById(duckdb::CatalogTransaction transaction,
                                 duckdb::idx_t id) {
-  auto entry =
-    GetOidIndex().GetVisible(id, GetCatalogTransaction(context).view);
+  auto entry = GetOidIndex().GetVisible(id, transaction.view);
   if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
     return nullptr;
   }
@@ -369,6 +378,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::TableCatalogEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (table.internal) {
+    RefuseSystemIndex(table);
+  }
   BindIndexDefinition(binder, stmt, table);
   if (auto* search = dynamic_cast<SearchTableEntry*>(&table)) {
     return connector::BindCreateIndexOnSearchTable(binder, stmt, *search,
@@ -391,6 +403,9 @@ SereneDBCatalog::BindCreateViewIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::ViewCatalogEntry& view,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (view.internal) {
+    RefuseSystemIndex(view);
+  }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
@@ -452,15 +467,7 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   info.SetQualifiedName(duckdb::QualifiedName(
     {duckdb::Identifier{irs::StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.permissions.owner = pg::kRootUser;
-  info.permissions.acl = {
-    {.grantee = pg::kRootUser,
-     .grantor = pg::kRootUser,
-     .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
-    {.grantee = pg::kPublicGrantee,
-     .grantor = pg::kRootUser,
-     .privs = duckdb::AclMode::Usage},
-  };
+  info.permissions = pg::SchemaPermissions();
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);

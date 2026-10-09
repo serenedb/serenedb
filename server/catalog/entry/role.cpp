@@ -33,7 +33,7 @@
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
+#include "pg/types.h"
 
 namespace sdb::catalog {
 
@@ -142,8 +142,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
                     .GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
                     .GetEntry(catalog.GetCatalogTransaction(context), granted);
     if (!target) {
-      throw duckdb::CatalogException::MissingEntry(
-        duckdb::CatalogType::ROLE_ENTRY, granted, std::string{});
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+        ERR_MSG("role \"", granted.GetIdentifierName(), "\" does not exist"));
     }
     if (!alter.revoke &&
         (oid == target->oid ||

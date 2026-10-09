@@ -119,7 +119,7 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     duckdb::CreateJobInfo& info) final;
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
-    duckdb::ClientContext& context, duckdb::idx_t id);
+    duckdb::CatalogTransaction transaction, duckdb::idx_t id);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> FindEntryById(
     duckdb::optional_ptr<duckdb::ClientContext> context,

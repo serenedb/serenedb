@@ -33,11 +33,11 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
-#include "pg/connection_context.h"
-#include "pg/pg_types.h"
+#include "pg/catalog/functions/reg_types.h"
+#include "pg/catalog/lookup.h"
 #include "pg/serialize.h"
+#include "pg/types.h"
 
 namespace sdb::connector {
 namespace {
@@ -188,228 +188,105 @@ duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
                                duckdb::make_uniq<ByteaOutCastData>(use_escape));
 }
 
-// --- Shared cast data for reg* types needing catalog context ---
-
 struct RegCastData : public duckdb::BoundCastData {
   duckdb::ClientContext* ctx;
-  explicit RegCastData(duckdb::ClientContext* ctx) : ctx(ctx) {}
+  explicit RegCastData(duckdb::ClientContext* ctx) : ctx{ctx} {}
   duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
     return duckdb::make_uniq<RegCastData>(ctx);
   }
 };
 
-// --- VARCHAR -> reg* (name to OID) ---
-
-template<typename InFn>
-bool PgVarcharToOidCast(duckdb::Vector& source, duckdb::Vector& result,
-                        duckdb::idx_t count, InFn&& in_fn) {
+template<pg::RegKind Kind>
+bool PgVarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
+                        duckdb::idx_t count, duckdb::CastParameters& params) {
+  const auto& data = params.cast_data->Cast<RegCastData>();
+  SDB_ASSERT(data.ctx);
+  const auto session = pg::MakeSession(data.ctx);
   auto src = source.Values<duckdb::string_t>();
   auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
   auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
-
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto value = src[i];
     if (!value.IsValid()) {
       dst_validity.SetInvalid(i);
       continue;
     }
-    const auto& name = value.GetValue();
-    dst_data[i] = in_fn(std::string_view{name.GetData(), name.GetSize()});
+    const auto& text = value.GetValue();
+    dst_data[i] = static_cast<int64_t>(*pg::RegIn<Kind>(
+      session, std::string_view{text.GetData(), text.GetSize()}, false));
   }
   return true;
 }
 
-bool PgVarcharToRegnamespaceCast(duckdb::Vector& source, duckdb::Vector& result,
-                                 duckdb::idx_t count,
-                                 duckdb::CastParameters& params) {
-  auto& conn_ctx =
-    GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx);
-  return PgVarcharToOidCast(
-    source, result, count, [&](std::string_view name) -> int64_t {
-      auto oid = pg::RegnamespaceIn(conn_ctx, name);
-      if (oid == pg::kInvalidOid) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
-                        ERR_MSG("namespace \"", name, "\" does not exist"));
-      }
-      return oid;
-    });
-}
-
-duckdb::BoundCastInfo PgVarcharToRegnamespaceBind(duckdb::BindCastInput& input,
-                                                  const duckdb::LogicalType&,
-                                                  const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(
-    PgVarcharToRegnamespaceCast,
-    duckdb::make_uniq<RegCastData>(input.context.get()));
-}
-
-bool PgVarcharToRegclassCast(duckdb::Vector& source, duckdb::Vector& result,
-                             duckdb::idx_t count,
-                             duckdb::CastParameters& params) {
-  auto& conn_ctx =
-    GetSereneDBContext(*params.cast_data->Cast<RegCastData>().ctx);
-  return PgVarcharToOidCast(
-    source, result, count, [&](std::string_view name) -> int64_t {
-      auto oid = pg::RegclassIn(conn_ctx, name);
-      if (oid == pg::kInvalidOid) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-                        ERR_MSG("relation \"", name, "\" does not exist"));
-      }
-      return oid;
-    });
-}
-
-duckdb::BoundCastInfo PgVarcharToRegclassBind(duckdb::BindCastInput& input,
-                                              const duckdb::LogicalType&,
-                                              const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(
-    PgVarcharToRegclassCast,
-    duckdb::make_uniq<RegCastData>(input.context.get()));
-}
-
-bool PgVarcharToRegtypeCast(duckdb::Vector& source, duckdb::Vector& result,
-                            duckdb::idx_t count, duckdb::CastParameters&) {
-  return PgVarcharToOidCast(
-    source, result, count, [](std::string_view name) -> int64_t {
-      auto oid = pg::RegtypeIn(name);
-      if (oid == pg::kInvalidOid) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                        ERR_MSG("type \"", name, "\" does not exist"));
-      }
-      return oid;
-    });
-}
-
-duckdb::BoundCastInfo PgVarcharToRegtypeBind(duckdb::BindCastInput&,
-                                             const duckdb::LogicalType&,
-                                             const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(PgVarcharToRegtypeCast);
-}
-
-// --- reg* -> VARCHAR (OID to name) ---
-
-template<typename OutFn>
-bool PgOidToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                        duckdb::idx_t count, OutFn&& out_fn) {
+template<pg::RegKind Kind>
+bool PgRegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
+                        duckdb::idx_t count, duckdb::CastParameters& params) {
+  const auto session =
+    pg::MakeSession(params.cast_data->Cast<RegCastData>().ctx);
   auto src = source.Values<int64_t>();
+  auto* dst_data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
-
   for (duckdb::idx_t i = 0; i < count; i++) {
     auto value = src[i];
     if (!value.IsValid()) {
       dst_validity.SetInvalid(i);
       continue;
     }
-    auto name = out_fn(pg::OidFromSql(value.GetValue()));
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
-      duckdb::StringVector::AddString(result, name);
+    const auto text =
+      pg::RegOut<Kind>(session, static_cast<uint64_t>(value.GetValue()));
+    dst_data[i] =
+      duckdb::StringVector::AddString(result, text.data(), text.size());
   }
   return true;
 }
 
-bool PgRegtypeToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                            duckdb::idx_t count,
-                            duckdb::CastParameters& params) {
-  auto* context = params.cast_data->Cast<RegCastData>().ctx;
-  return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
-    return pg::RegtypeOut(context, oid);
-  });
-}
-
-duckdb::BoundCastInfo PgRegtypeToVarcharBind(duckdb::BindCastInput& input,
-                                             const duckdb::LogicalType&,
-                                             const duckdb::LogicalType&) {
+template<pg::RegKind Kind>
+duckdb::BoundCastInfo PgVarcharToRegBind(duckdb::BindCastInput& input,
+                                         const duckdb::LogicalType&,
+                                         const duckdb::LogicalType&) {
   return duckdb::BoundCastInfo(
-    PgRegtypeToVarcharCast,
+    PgVarcharToRegCast<Kind>,
     duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
-bool PgRegclassToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                             duckdb::idx_t count,
-                             duckdb::CastParameters& params) {
-  auto* context = params.cast_data->Cast<RegCastData>().ctx;
-  return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
-    return pg::RegclassOut(context, oid);
-  });
-}
-
-duckdb::BoundCastInfo PgRegclassToVarcharBind(duckdb::BindCastInput& input,
-                                              const duckdb::LogicalType&,
-                                              const duckdb::LogicalType&) {
+template<pg::RegKind Kind>
+duckdb::BoundCastInfo PgRegToVarcharBind(duckdb::BindCastInput& input,
+                                         const duckdb::LogicalType&,
+                                         const duckdb::LogicalType&) {
   return duckdb::BoundCastInfo(
-    PgRegclassToVarcharCast,
+    PgRegToVarcharCast<Kind>,
     duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
-bool PgRegnamespaceToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
-                                 duckdb::idx_t count,
-                                 duckdb::CastParameters& params) {
-  auto* context = params.cast_data->Cast<RegCastData>().ctx;
-  return PgOidToVarcharCast(source, result, count, [&](uint64_t oid) {
-    return pg::RegnamespaceOut(context, oid);
-  });
-}
-
-duckdb::BoundCastInfo PgRegnamespaceToVarcharBind(duckdb::BindCastInput& input,
-                                                  const duckdb::LogicalType&,
-                                                  const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(
-    PgRegnamespaceToVarcharCast,
-    duckdb::make_uniq<RegCastData>(input.context.get()));
+template<pg::RegKind Kind>
+void RegisterRegCasts(duckdb::CastFunctionSet& casts,
+                      const duckdb::LogicalType& reg) {
+  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, reg,
+                             PgVarcharToRegBind<Kind>, 50);
+  casts.RegisterCastFunction(
+    duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), reg,
+    PgVarcharToRegBind<Kind>, 50);
+  casts.RegisterCastFunction(reg, duckdb::LogicalType::VARCHAR,
+                             PgRegToVarcharBind<Kind>, 50);
+  casts.RegisterCastFunction(
+    pg::OID(), reg,
+    duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
+  casts.RegisterCastFunction(
+    reg, pg::OID(),
+    duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
 }
 
 }  // namespace
 
 void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
-  // PG reg* type casts -- all handled via implicit casts,
-  // no scalar functions needed
   auto& config = duckdb::DBConfig::GetConfig(db);
   auto& casts = config.GetCastFunctions();
 
-  // VARCHAR/STRING_LITERAL -> regnamespace
-  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, pg::REGNAMESPACE(),
-                             PgVarcharToRegnamespaceBind, 50);
-  casts.RegisterCastFunction(
-    duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL),
-    pg::REGNAMESPACE(), PgVarcharToRegnamespaceBind, 50);
-
-  // VARCHAR/STRING_LITERAL -> regclass
-  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, pg::REGCLASS(),
-                             PgVarcharToRegclassBind, 50);
-  casts.RegisterCastFunction(
-    duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), pg::REGCLASS(),
-    PgVarcharToRegclassBind, 50);
-
-  // VARCHAR/STRING_LITERAL -> regtype
-  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, pg::REGTYPE(),
-                             PgVarcharToRegtypeBind, 50);
-  casts.RegisterCastFunction(
-    duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), pg::REGTYPE(),
-    PgVarcharToRegtypeBind, 50);
-
-  // regtype -> VARCHAR
-  casts.RegisterCastFunction(pg::REGTYPE(), duckdb::LogicalType::VARCHAR,
-                             PgRegtypeToVarcharBind, 50);
-
-  // regclass -> VARCHAR
-  casts.RegisterCastFunction(pg::REGCLASS(), duckdb::LogicalType::VARCHAR,
-                             PgRegclassToVarcharBind, 50);
-
-  // regnamespace -> VARCHAR
-  casts.RegisterCastFunction(pg::REGNAMESPACE(), duckdb::LogicalType::VARCHAR,
-                             PgRegnamespaceToVarcharBind, 50);
-
-  for (const auto& reg :
-       {pg::REGCLASS(), pg::REGTYPE(), pg::REGPROC(), pg::REGPROCEDURE(),
-        pg::REGNAMESPACE(), pg::REGROLE(), pg::REGOPER(), pg::REGOPERATOR(),
-        pg::REGCONFIG(), pg::REGDICTIONARY(), pg::REGCOLLATION()}) {
-    casts.RegisterCastFunction(
-      pg::OID(), reg,
-      duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
-    casts.RegisterCastFunction(
-      reg, pg::OID(),
-      duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
-  }
+  [&]<size_t... I>(std::index_sequence<I...>) {
+    (RegisterRegCasts<pg::kRegTypes[I].kind>(
+       casts, pg::RegLogicalType(pg::kRegTypes[I])),
+     ...);
+  }(std::make_index_sequence<pg::kRegTypes.size()>{});
 
   // VARCHAR -> BLOB / BLOB -> VARCHAR (bytea)
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,

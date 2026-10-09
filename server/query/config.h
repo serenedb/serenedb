@@ -86,6 +86,11 @@ std::string_view GetOriginalName(std::string_view name);
 
 bool IsUnchangeableSetting(std::string_view name);
 
+bool IsCompatSetting(std::string_view name);
+
+void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
+                     const duckdb::Value& value);
+
 class Config {
  public:
   // Per-key tracking for a currently-open transaction. Populated only when

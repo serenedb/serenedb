@@ -32,18 +32,12 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-namespace duckdb {
-
-class Constraint;
-class Identifier;
-class TableCatalogEntry;
-class UniqueConstraint;
-
-}  // namespace duckdb
 namespace sdb::pg {
 
 static constexpr size_t kSqlStateSize = 5;
@@ -61,29 +55,7 @@ void UnpackSqlState(T& buf, int sql_state) {
   }
 }
 
-int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
-                         duckdb::idx_t column_id);
-
-std::vector<int16_t> KeyConstraintAttnums(
-  const duckdb::TableCatalogEntry& table,
-  const duckdb::UniqueConstraint& constraint);
-
-std::string ConstraintName(const duckdb::TableCatalogEntry& table,
-                           const duckdb::Constraint& constraint);
-
 std::string QuoteIdentifier(std::string_view ident);
-
-struct KeyIndex {
-  const duckdb::TableCatalogEntry* table = nullptr;
-  const duckdb::UniqueConstraint* constraint = nullptr;
-};
-
-KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
-                      duckdb::idx_t oid);
-
-KeyIndex FindKeyIndex(duckdb::ClientContext& context,
-                      duckdb::SchemaCatalogEntry& schema,
-                      std::string_view name);
 
 std::string MacroBody(const duckdb::MacroFunction& macro);
 

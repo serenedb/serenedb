@@ -279,6 +279,7 @@ query
 SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
 ----
 amname	amtype
+heap	t
 inverted	i
 iresearch	t
 secondary	i
@@ -296,7 +297,7 @@ query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 't'
 ----
 count
-1
+2
 
 
 # pg_language

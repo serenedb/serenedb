@@ -33,15 +33,12 @@
 
 namespace sdb::pg {
 
-using ParamIndex = int16_t;
-
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
   absl::CivilDay{2000, 1, 1} - absl::CivilDay{1970, 1, 1};
 inline constexpr int64_t kGapSec = kGapDays * 24 * 60 * 60;
 inline constexpr int64_t kGapMs = kGapSec * 1000;
 inline constexpr int64_t kGapUs = kGapMs * 1000;
-inline constexpr int64_t kGapNs = kGapUs * 1000;
 
 enum PgTypeOID : int32_t {
 #include "pg/catalog/generated/builtin_type_oids.gen.inc"
@@ -63,9 +60,8 @@ struct PgTypeInfo {
   int16_t typlen;
   int32_t typmod;
 };
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array = false);
 PgTypeInfo WireType(const duckdb::LogicalType& type);
-uint32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
+uint32_t Type2Oid(const duckdb::LogicalType& type);
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context);
 
 struct PgTypeMapping {
@@ -88,7 +84,5 @@ struct ColumnType {
 std::span<const PgTypeMapping> PgTypeMappings();
 duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type);
 ColumnType DescribeColumnType(const duckdb::LogicalType& type);
-
-enum class VarFormat : int16_t;
 
 }  // namespace sdb::pg

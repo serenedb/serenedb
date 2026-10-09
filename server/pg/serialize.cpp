@@ -85,8 +85,6 @@ enum class ArrayKind {
   // rectangular: a ragged or NULL inner LIST/MAP throws in binary (text renders
   // it via nested braces).
   MultiDimensions,
-  // int2vector / oidvector: space-separated text, binary lower bound 0.
-  Vector,
 };
 
 inline constexpr uint64_t kDynamicOid = std::numeric_limits<uint64_t>::max();
@@ -736,7 +734,7 @@ struct OidBinCore {
   using Value = int64_t;
   static constexpr uint32_t kMaxBytes = 4;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value value) {
-    const auto oid = OidFromSql(value);
+    const auto oid = static_cast<uint64_t>(value);
     if (oid != WireOid(oid)) {
       SDB_WARN(HTTP, "reg* OID ", oid,
                " truncated to 32-bit for binary wire protocol");
@@ -2128,17 +2126,20 @@ SerializationFunction MakeArraySerializer(VarFormat format,
                                        WrapContext::None>;
       return SelectFieldSerializer<Text, TextRec, Binary>(format, context);
     }
-    case ArrayKind::Vector: {
-      using Text =
-        VectorArrayCore<TextCore, Oid, VarFormat::Text, WrapContext::None>;
-      using TextRec =
-        VectorArrayCore<TextCore, Oid, VarFormat::Text, WrapContext::Record>;
-      using Binary =
-        VectorArrayCore<BinaryCore, Oid, VarFormat::Binary, WrapContext::None>;
-      return SelectFieldSerializer<Text, TextRec, Binary>(format, context);
-    }
   }
   SDB_UNREACHABLE();
+}
+
+template<typename TextCore, typename BinaryCore, uint64_t Oid>
+SerializationFunction MakeVectorSerializer(VarFormat format,
+                                           SerializationContext& context) {
+  using Text =
+    VectorArrayCore<TextCore, Oid, VarFormat::Text, WrapContext::None>;
+  using TextRec =
+    VectorArrayCore<TextCore, Oid, VarFormat::Text, WrapContext::Record>;
+  using Binary =
+    VectorArrayCore<BinaryCore, Oid, VarFormat::Binary, WrapContext::None>;
+  return SelectFieldSerializer<Text, TextRec, Binary>(format, context);
 }
 
 SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
@@ -2605,6 +2606,14 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case ARRAY:
     case LIST:
     case MAP: {
+      if (IsInt2vector(type)) {
+        return MakeVectorSerializer<IntTextCore<int16_t>, IntBinCore<int16_t>,
+                                    kInt2>(format, context);
+      }
+      if (IsOidvector(type)) {
+        return MakeVectorSerializer<IntTextCore<int64_t>, OidBinCore, kOid>(
+          format, context);
+      }
       const auto* element_type = &type;
       size_t dims = 0;
       while (true) {
@@ -2620,10 +2629,8 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       // >=2-D nesting -> PG multi-dim flatten (rectangular; a ragged inner
       // LIST/MAP throws in binary). 1-D LIST/ARRAY and a top-level MAP (a 1-D
       // list of key/value structs) all serialize the same single-dimension way.
-      const auto kind = IsInt2vector(type) || IsOidvector(type)
-                          ? ArrayKind::Vector
-                        : dims > 1 ? ArrayKind::MultiDimensions
-                                   : ArrayKind::SingleDimension;
+      const auto kind =
+        dims > 1 ? ArrayKind::MultiDimensions : ArrayKind::SingleDimension;
       return GetArraySerialization(*element_type, format, context, kind);
     }
     default:

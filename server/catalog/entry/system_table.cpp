@@ -39,7 +39,7 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/types.h"
+#include "pg/catalog/oids.h"
 
 namespace sdb::catalog {
 namespace {
@@ -80,15 +80,12 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacro(
   }
   auto copy = function->Copy();
   auto& macro_info = copy->Cast<duckdb::CreateMacroInfo>();
-  duckdb::unique_ptr<duckdb::CatalogEntry> entry;
   if (kind == duckdb::MacroType::SCALAR_MACRO) {
-    entry = duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
-                                                               macro_info);
-  } else {
-    entry = duckdb::make_uniq<duckdb::TableMacroCatalogEntry>(catalog, schema,
+    return duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
                                                               macro_info);
   }
-  return entry;
+  return duckdb::make_uniq<duckdb::TableMacroCatalogEntry>(catalog, schema,
+                                                           macro_info);
 }
 
 duckdb::MacroType MacroKindOf(duckdb::CatalogType set) noexcept {
@@ -204,10 +201,15 @@ duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {
   return result;
 }
 
+void RefuseSystemCatalog(const duckdb::CatalogEntry& relation) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied: \"", relation.name.GetIdentifierName(),
+            "\" is a system catalog"));
+}
+
 duckdb::Catalog& SystemTableEntry::GetStorageCatalog(duckdb::ClientContext&) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied: \"", name.GetIdentifierName(),
-                          "\" is a system catalog"));
+  RefuseSystemCatalog(*this);
 }
 
 SystemViewEntry::SystemViewEntry(duckdb::Catalog& catalog,

@@ -22,23 +22,11 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/str_cat.h>
 
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/function/table_macro_function.hpp>
-#include <duckdb/parser/constraint.hpp>
-#include <duckdb/parser/constraints/not_null_constraint.hpp>
-#include <duckdb/parser/constraints/unique_constraint.hpp>
-#include <duckdb/parser/expression/cast_expression.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <duckdb/parser/parsed_expression_iterator.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <vector>
 
 namespace sdb::pg {
 namespace {
@@ -51,8 +39,7 @@ bool ReservedKeyword(std::string_view ident) {
   if (absl::c_binary_search(kQuotedKeywords, ident)) {
     return true;
   }
-  const auto category =
-    duckdb::KeywordHelper::KeywordCategoryType(std::string{ident});
+  const auto category = duckdb::KeywordHelper::KeywordCategoryType(ident);
   return category != duckdb::KeywordCategory::KEYWORD_NONE &&
          category != duckdb::KeywordCategory::KEYWORD_UNRESERVED;
 }
@@ -88,8 +75,7 @@ std::string MacroParameterName(const duckdb::MacroFunction& macro,
                        .GetIdentifierName();
   const bool positional =
     name.size() > 1 && name.front() == '$' &&
-    absl::c_all_of(std::string_view{name}.substr(1),
-                   [](char c) { return absl::ascii_isdigit(c); });
+    absl::c_all_of(std::string_view{name}.substr(1), absl::ascii_isdigit);
   return positional ? std::string{} : name;
 }
 

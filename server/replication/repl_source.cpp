@@ -560,11 +560,17 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildReplStatement(
   return BuildUpdate(schema, table, key_names, col_names, full);
 }
 
-duckdb::unique_ptr<duckdb::SQLStatement> BuildTruncate(std::string_view schema,
-                                                       std::string_view table) {
+duckdb::unique_ptr<duckdb::SQLStatement> BuildTruncate(
+  std::string_view schema, std::string_view table,
+  std::span<const std::pair<std::string_view, std::string_view>> group) {
   auto node = duckdb::make_uniq<duckdb::DeleteQueryNode>();
   node->table = TargetTable(schema, table);
   node->is_truncate = true;
+  for (const auto& [group_schema, group_table] : group) {
+    auto ref = TargetTable(group_schema, group_table);
+    ref->alias = duckdb::Identifier{};
+    node->truncate_group.push_back(std::move(ref));
+  }
   auto stmt = duckdb::make_uniq<duckdb::DeleteStatement>();
   stmt->node = std::move(node);
   return stmt;

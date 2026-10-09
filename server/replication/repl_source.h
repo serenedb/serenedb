@@ -26,8 +26,10 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "replication/pgoutput.h"
@@ -85,8 +87,9 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildReplStatement(
   const std::vector<std::string>& key_names,
   const std::vector<std::string>& col_names, bool full);
 
-duckdb::unique_ptr<duckdb::SQLStatement> BuildTruncate(std::string_view schema,
-                                                       std::string_view table);
+duckdb::unique_ptr<duckdb::SQLStatement> BuildTruncate(
+  std::string_view schema, std::string_view table,
+  std::span<const std::pair<std::string_view, std::string_view>> group);
 
 duckdb::unique_ptr<duckdb::SQLStatement> BuildCopyFromStdin(
   std::string_view schema, std::string_view table,

@@ -36,7 +36,10 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/parsed_data/alter_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/statement/alter_statement.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -69,6 +72,7 @@ using network::pg::FrameKind;
 using network::pg::FrameStatus;
 
 constexpr auto kStatusInterval = std::chrono::seconds{10};
+constexpr int64_t kReceiverTimeoutMicros = 60'000'000;
 constexpr int64_t kPgEpochMicros = 946684800LL * 1000000;
 constexpr size_t kGroupTxns = 1000;
 constexpr size_t kArenaBytes = 1 << 20;
@@ -192,6 +196,7 @@ yaclib::Task<> PgReplicationClient::RunClient() {
       auto feedback = FeedbackLoop();
       co_await Feeder();
       this->Stop();
+      _feedback_timer->cancel();
       co_await std::move(feedback);
     }
     _stream.Finish();
@@ -438,6 +443,7 @@ yaclib::Task<bool> PgReplicationClient::Publish(
   co_await _stream.Drained(*this->_ioexec);
   _stream.ResetDrained();
   _publishing = false;
+  _last_activity = SteadyMicros();
   co_return true;
 }
 
@@ -552,6 +558,7 @@ yaclib::Task<> PgReplicationClient::Feeder() {
       continue;
     }
     _last_receipt_time.store(NowMicros(), std::memory_order_relaxed);
+    _last_activity = SteadyMicros();
     const auto record_lsn = [&](uint64_t lsn) {
       if (lsn > _received_lsn.load(std::memory_order_relaxed)) {
         _received_lsn.store(lsn, std::memory_order_relaxed);
@@ -674,8 +681,10 @@ void PgReplicationClient::SendFeedback(bool reply) {
   _latest_end_time.store(NowMicros(), std::memory_order_relaxed);
 }
 
-yaclib::Task<> PgReplicationClient::FeedbackLoop() {
-  asio_ns::steady_timer timer{this->_io};
+yaclib::Future<> PgReplicationClient::FeedbackLoop() {
+  auto& timer = _feedback_timer.emplace(this->_io);
+  _last_activity = SteadyMicros();
+  auto pinged_at = _last_activity;
   while (!this->SendBroken()) {
     timer.expires_after(kStatusInterval);
     co_await network::Async<void>([&](auto&& handler) {
@@ -684,7 +693,19 @@ yaclib::Task<> PgReplicationClient::FeedbackLoop() {
     if (this->SendBroken()) {
       break;
     }
-    SendFeedback(false);
+    const auto silent = _publishing ? 0 : SteadyMicros() - _last_activity;
+    if (silent >= kReceiverTimeoutMicros) {
+      Fail(ERRCODE_CONNECTION_FAILURE,
+           "terminating logical replication worker due to timeout");
+      this->Stop();
+      break;
+    }
+    const bool ping =
+      silent >= kReceiverTimeoutMicros / 2 && pinged_at != _last_activity;
+    if (ping) {
+      pinged_at = _last_activity;
+    }
+    SendFeedback(ping);
   }
   co_return {};
 }
@@ -1319,27 +1340,71 @@ bool PgReplicationClient::FlushCommit() {
 
 yaclib::Task<> PgReplicationClient::ApplyTruncate(
   const TruncateMessage& message) {
-  std::vector<const RelInfo*> relations;
-  std::vector<duckdb::optional_ptr<duckdb::TableCatalogEntry>> locals;
-  for (const auto relation_id : message.relation_ids) {
-    const auto* relation = Relation(relation_id);
-    if (relation == nullptr || !ApplyChanges(*relation)) {
-      continue;
+  auto& context = *this->_conn->context;
+  std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
+  std::vector<duckdb::idx_t> owners;
+  const auto add = [&](duckdb::TableCatalogEntry& table, duckdb::idx_t owner) {
+    if (std::ranges::none_of(tables, [&](const auto& member) {
+          return member.get().oid == table.oid;
+        })) {
+      tables.emplace_back(table);
+      owners.push_back(owner);
     }
-    CheckRelation(*relation);
-    relations.push_back(relation);
-  }
-  this->_conn->context->RunFunctionInTransaction([&] {
-    for (const auto* relation : relations) {
-      locals.push_back(LookupTable(relation->schema, relation->table));
+  };
+  std::vector<std::pair<std::string, std::string>> names;
+  std::vector<duckdb::QualifiedName> sequences;
+  context.RunFunctionInTransaction([&] {
+    for (const auto relation_id : message.relation_ids) {
+      const auto* relation = Relation(relation_id);
+      if (relation == nullptr || !ApplyChanges(*relation)) {
+        continue;
+      }
+      CheckRelation(*relation);
+      if (auto table = LookupTable(relation->schema, relation->table)) {
+        add(*table, relation->owner);
+      }
+    }
+    for (size_t i = 0; message.cascade && i < tables.size(); ++i) {
+      for (auto& referencing :
+           duckdb::Binder::TruncateReferencingTables(context, tables[i])) {
+        add(referencing, referencing.get().permissions.owner);
+      }
+    }
+    for (auto& table : tables) {
+      names.emplace_back(table.get().ParentSchemaName().GetIdentifierName(),
+                         table.get().name.GetIdentifierName());
+      if (message.restart_identity) {
+        for (auto& sequence :
+             duckdb::Binder::TruncateIdentitySequences(context, table)) {
+          sequences.push_back(std::move(sequence));
+        }
+      }
     }
   });
-  auto order = ReferencedFirstOrder(locals);
+  std::vector<std::pair<std::string_view, std::string_view>> group(
+    names.begin(), names.end());
+  std::vector<duckdb::optional_ptr<duckdb::TableCatalogEntry>> locals;
+  locals.reserve(tables.size());
+  for (auto& table : tables) {
+    locals.emplace_back(&table.get());
+  }
+  for (auto& sequence : sequences) {
+    auto statement = duckdb::make_uniq<duckdb::AlterStatement>();
+    statement->info = duckdb::make_uniq<duckdb::RestartSequenceInfo>(
+      duckdb::AlterEntryData(std::move(sequence),
+                             duckdb::OnEntryNotFound::THROW_EXCEPTION),
+      duckdb::optional<int64_t>());
+    auto prepared = this->_conn->Prepare(std::move(statement));
+    if (prepared->HasError()) {
+      prepared->GetErrorObject().Throw();
+    }
+    co_await RunPrepared(*prepared);
+  }
+  const auto order = ReferencedFirstOrder(locals);
   for (const auto i : std::views::reverse(order)) {
-    const auto* relation = relations[i];
-    UseRole(relation->owner);
-    auto prepared =
-      this->_conn->Prepare(BuildTruncate(relation->schema, relation->table));
+    UseRole(owners[i]);
+    auto prepared = this->_conn->Prepare(
+      BuildTruncate(names[i].first, names[i].second, group));
     if (prepared->HasError()) {
       prepared->GetErrorObject().Throw();
     }

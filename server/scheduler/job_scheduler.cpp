@@ -231,12 +231,27 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
                     ERR_MSG("job schedule offset must not be negative, got ",
                             schedule.offset.ToString()));
   }
-  if (schedule.kind == duckdb::JobScheduleKind::EVERY && every.months != 0 &&
-      (every.days != 0 || every.micros != 0)) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("EVERY interval cannot mix months with days or time, got ",
-              schedule.interval.ToString()));
+  if (every.months != 0) {
+    if (schedule.kind == duckdb::JobScheduleKind::EVERY &&
+        (every.days != 0 || every.micros != 0)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("EVERY interval cannot mix months with days or time, got ",
+                schedule.interval.ToString()));
+    }
+    if (shift.months >= every.months) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("job schedule offset ", schedule.offset.ToString(),
+                " must be shorter than the interval ",
+                schedule.interval.ToString()));
+    }
+  } else if (shift.months != 0 || duckdb::Interval::GetMicro(shift) >=
+                                    duckdb::Interval::GetMicro(every)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("job schedule offset ", schedule.offset.ToString(),
+                            " must be shorter than the interval ",
+                            schedule.interval.ToString()));
   }
   const auto shortest = ShortestLength(every);
   if ((every.months == 0 && shift.months != 0) ||

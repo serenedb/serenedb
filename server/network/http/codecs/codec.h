@@ -34,6 +34,7 @@
 namespace sdb::network::http {
 
 inline constexpr size_t kOutBlock = 16 * 1024;
+inline constexpr size_t kZstdMaxRetainedBytes = 4 << 20;
 
 inline int ClampLevel(int level, int fallback, int min, int max) {
   return level == kNoLevel ? fallback : std::clamp(level, min, max);

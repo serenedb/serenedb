@@ -46,6 +46,16 @@ class EncodeOutput {
   ~EncodeOutput() = default;
 };
 
+class StringOutput final : public EncodeOutput {
+ public:
+  explicit StringOutput(std::string& out) : _out{out} {}
+
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final;
+
+ private:
+  std::string& _out;
+};
+
 class ContentEncoder {
  public:
   virtual ~ContentEncoder() = default;

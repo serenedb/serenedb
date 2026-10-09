@@ -28,6 +28,7 @@
 #include <zstd.h>
 #include <zxc.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -46,6 +47,7 @@
 
 #include "network/acceptor.h"
 #include "network/cancel_registry.h"
+#include "network/http/codecs/codec.h"
 #include "network/http/compression.h"
 #include "network/http/handler.h"
 #include "network/http/router.h"
@@ -916,6 +918,97 @@ TEST(NetworkHttpCompression, EveryLevelRoundTrips) {
   }
 }
 
+class RecordingOutput final : public network::http::EncodeOutput {
+ public:
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final {
+    max_capacity = std::max(max_capacity, capacity);
+    const size_t size = bytes.size();
+    bytes.resize(size + capacity);
+    bytes.resize(size + fill(reinterpret_cast<uint8_t*>(bytes.data() + size)));
+  }
+
+  std::string bytes;
+  size_t max_capacity = 0;
+};
+
+TEST(NetworkHttpCompression, StreamingWritesFitTheSendChunk) {
+  const auto body = Payload(1 << 20) + Incompressible(256 * 1024);
+  for (const auto token : kCodings) {
+    if (token == "snappy") {
+      continue;
+    }
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    auto encoder = coding->make(kNoLevel);
+    RecordingOutput out;
+    std::string_view rest = body;
+    for (size_t piece = 1; !rest.empty(); piece = piece * 3 + 7) {
+      const auto part = rest.substr(0, piece);
+      rest.remove_prefix(part.size());
+      encoder->Encode(part, rest.empty(), out);
+    }
+    EXPECT_LE(out.max_capacity, network::kSendFlushSize) << token;
+    EXPECT_EQ(Decode(token, out.bytes), body) << token;
+  }
+}
+
+TEST(NetworkHttpCompression, SmallWritesCompressLikeOneWrite) {
+  const auto body = Payload(256 * 1024);
+  for (const auto token : kCodings) {
+    if (token == "snappy") {
+      continue;
+    }
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    RecordingOutput whole;
+    coding->make(kNoLevel)->Encode(body, true, whole);
+    auto encoder = coding->make(kNoLevel);
+    RecordingOutput pieces;
+    std::string_view rest = body;
+    while (!rest.empty()) {
+      const auto part = rest.substr(0, 37);
+      rest.remove_prefix(part.size());
+      encoder->Encode(part, rest.empty(), pieces);
+    }
+    EXPECT_EQ(Decode(token, pieces.bytes), body) << token;
+    EXPECT_LE(pieces.bytes.size(),
+              whole.bytes.size() + whole.bytes.size() / 10 + 64)
+      << token;
+  }
+}
+
+TEST(NetworkHttpCompression, DefaultZstdContextsFitTheRetainedCap) {
+  const auto body = Payload(8 << 20);
+  std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> cctx{ZSTD_createCCtx(),
+                                                            ZSTD_freeCCtx};
+  ZSTD_CCtx_setParameter(cctx.get(), ZSTD_c_compressionLevel,
+                         ZSTD_CLEVEL_DEFAULT);
+  std::array<char, network::http::kOutBlock> block;
+  std::string compressed;
+  ZSTD_inBuffer input{body.data(), body.size(), 0};
+  size_t remaining = 0;
+  do {
+    ZSTD_outBuffer output{block.data(), block.size(), 0};
+    remaining = ZSTD_compressStream2(cctx.get(), &output, &input, ZSTD_e_end);
+    ASSERT_FALSE(ZSTD_isError(remaining));
+    compressed.append(block.data(), output.pos);
+  } while (remaining != 0);
+  EXPECT_LE(ZSTD_sizeof_CCtx(cctx.get()), network::http::kZstdMaxRetainedBytes);
+
+  std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> dctx{ZSTD_createDCtx(),
+                                                            ZSTD_freeDCtx};
+  ZSTD_inBuffer packed{compressed.data(), compressed.size(), 0};
+  size_t decoded = 0;
+  while (packed.pos < packed.size) {
+    ZSTD_outBuffer output{block.data(), block.size(), 0};
+    ASSERT_FALSE(
+      ZSTD_isError(ZSTD_decompressStream(dctx.get(), &output, &packed)));
+    decoded += output.pos;
+  }
+  EXPECT_EQ(decoded, body.size());
+  EXPECT_LE(ZSTD_sizeof_DCtx(dctx.get()), network::http::kZstdMaxRetainedBytes);
+}
+
 std::string VariedJson() {
   std::string body;
   for (size_t i = 0; body.size() < 256 * 1024; ++i) {
@@ -942,7 +1035,8 @@ TEST(NetworkHttpCompression, LevelsAreCappedToBoundMemory) {
   for (const auto& [token, cap, beyond] :
        {std::tuple{"zstd", 8, 22}, std::tuple{"br", 6, 11},
         std::tuple{"lz4", 9, 12}, std::tuple{"zxc", 5, 7},
-        std::tuple{"gzip", 1, -5}, std::tuple{"deflate", 1, -5}}) {
+        std::tuple{"br", 1, -3}, std::tuple{"gzip", 1, -5},
+        std::tuple{"deflate", 1, -5}}) {
     const auto* coding = FindContentCoding(token);
     ASSERT_NE(coding, nullptr) << token;
     std::string capped;

@@ -12,7 +12,9 @@ import json
 import os
 import socket
 
+import psycopg
 import pytest
+from spec_loader import conn_kwargs
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
 PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
@@ -306,6 +308,28 @@ def test_large_bulk_reports_the_failing_line(conn, index):
     status, body = _bulk(conn, index, payload)
     assert status == 400
     assert "line [260001]" in body["error"]["reason"], body
+    status, body = _request(conn, "GET", f"/{index}/_count")
+    assert body["count"] == 0
+
+
+def _threads() -> int:
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as pg:
+        return int(pg.execute(
+            "SELECT current_setting('threads')").fetchone()[0])
+
+
+def test_large_bulk_reports_the_first_of_many_failing_lines(conn, index):
+    if _threads() < 2:
+        pytest.skip("the morsels of a _bulk load only race on 2+ threads")
+    good = '{"index":{}}\n{"year":1}\n'
+    bad = '{"delete":{"_id":"x"}}\n{"year":1}\n'
+    failing = {120_000, 122_885, 245_765}
+    payload = "".join(bad if doc in failing else good
+                      for doc in range(370_000))
+    for _ in range(3):
+        status, body = _bulk(conn, index, payload)
+        assert status == 400
+        assert "line [240001]" in body["error"]["reason"], body
     status, body = _request(conn, "GET", f"/{index}/_count")
     assert body["count"] == 0
 

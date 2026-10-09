@@ -30,6 +30,7 @@
 #include <chrono>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -51,7 +52,8 @@ ABSL_FLAG(
   std::vector<std::string>, listen, {"postgres://127.0.0.1:7890"},
   "Listener URL(s), comma-separated or repeated (last-wins). Each is one "
   "listener: postgres://host:port[?sslmode=...], http(s)://host:port?api=es, "
-  "postgres:///path/to.sock (unix).");
+  "postgres:///path/to.sock (unix). A TCP listener needs an explicit port; "
+  "a path after the port is ignored.");
 
 ABSL_FLAG(std::string, tls_cert, "",
           "Default PEM server certificate chain for TLS listeners (a listener "
@@ -271,40 +273,20 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
   }
   const asio_ns::local::stream_protocol::endpoint ep{path};
 
-  std::shared_ptr<network::AcceptorBase> acceptor;
-  if (spec.protocol == network::ListenProtocol::Pg) {
-    network::pg::PgServerContext& deps = _pg_ctxs.emplace_back();
-    deps.credentials = _credentials.get();
-    deps.allow_cleartext_without_tls = true;
-    deps.cancel = &_cancel;
-    deps.max_message_bytes = _max_message;
-    deps.active = &_active;
-    deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections.value_or(_max_connections);
-    deps.auth_timeout = _auth_timeout;
-    deps.proxy = spec.proxy;
-    acceptor = std::make_shared<
-      network::Acceptor<network::pg::PgWireSession<network::SocketKind::Unix>>>(
-      *_pool, ep, deps, opts);
-  } else {
-    network::HttpRouter& router = BuildRouter(spec);
-    network::HttpServerContext& deps =
-      _http_ctxs.emplace_back(network::HttpServerContext{router});
-    deps.credentials = _credentials.get();
-    deps.api_keys = _api_key_validator.get();
-    deps.bearer = _bearer_validator.get();
-    deps.active = &_active;
-    deps.cancel = &_cancel;
-    deps.sessions = &_sessions;
-    deps.max_connections = spec.max_connections.value_or(_max_connections);
-    deps.cors_origins = _cors_origins;
-    deps.database = spec.database;
-    deps.schema = spec.schema;
-    deps.proxy = spec.proxy;
-    acceptor = std::make_shared<
-      network::Acceptor<network::HttpSession<network::SocketKind::Unix>>>(
-      *_pool, ep, deps, opts);
-  }
+  SDB_ASSERT(spec.protocol == network::ListenProtocol::Pg);
+  network::pg::PgServerContext& deps = _pg_ctxs.emplace_back();
+  deps.credentials = _credentials.get();
+  deps.allow_cleartext_without_tls = true;
+  deps.cancel = &_cancel;
+  deps.max_message_bytes = _max_message;
+  deps.active = &_active;
+  deps.sessions = &_sessions;
+  deps.max_connections = spec.max_connections.value_or(_max_connections);
+  deps.auth_timeout = _auth_timeout;
+  deps.proxy = spec.proxy;
+  auto acceptor = std::make_shared<
+    network::Acceptor<network::pg::PgWireSession<network::SocketKind::Unix>>>(
+    *_pool, ep, deps, opts);
   acceptor->Start();
   _acceptors.push_back(std::move(acceptor));
   SDB_INFO(GENERAL, "network listening on ", spec.url,

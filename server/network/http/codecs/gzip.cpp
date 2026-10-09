@@ -24,7 +24,7 @@
 #include <type_traits>
 
 #include "network/http/codecs/codec.h"
-#include "server/utils/thread_local_pool.h"
+#include "network/http/pooled.h"
 
 namespace sdb::network::http {
 namespace {

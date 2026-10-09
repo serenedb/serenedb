@@ -70,6 +70,13 @@ uint16_t ParsePort(std::string_view port_str, std::string_view url) {
   return port;
 }
 
+bool HasPort(std::string_view authority) {
+  authority.remove_prefix(authority.rfind('@') + 1);
+  const auto colon = authority.rfind(':');
+  return colon != std::string_view::npos && colon + 1 < authority.size() &&
+         authority.find(']', colon) == std::string_view::npos;
+}
+
 SslMode ParseSslMode(std::string_view v, std::string_view url) {
   if (v == "disable") {
     return SslMode::Disable;
@@ -179,10 +186,6 @@ void ApplyParam(ListenSpec& spec, std::string_view key,
                 "host:port) in endpoint '",
                 url, "'");
     }
-    if (is_http) {
-      SDB_FATAL(GENERAL, "'port' is not valid on a unix http endpoint '", url,
-                "'");
-    }
     spec.unix_port = static_cast<uint16_t>(ParseUintParam(value, key, url));
   } else if (key == "backlog") {
     spec.backlog = static_cast<int>(ParseUintParam(value, key, url));
@@ -259,11 +262,14 @@ std::vector<asio_ns::ip::tcp::endpoint> ResolveTcp(
 
 void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
               std::vector<ListenSpec>& out) {
+  const auto scheme_end = url.find("://");
   const auto parsed = ada::parse<ada::url_aggregator>(url);
-  if (url.find("://") == std::string_view::npos || !parsed) {
+  if (scheme_end == std::string_view::npos || !parsed) {
     SDB_FATAL(GENERAL, "invalid network endpoint '", url,
               "' (expected scheme://...)");
   }
+  std::string_view authority = url.substr(scheme_end + 3);
+  authority = authority.substr(0, authority.find_first_of("/\\?#"));
   std::string_view scheme = parsed->get_protocol();
   scheme.remove_suffix(1);
 
@@ -299,8 +305,12 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
     }
   };
 
-  std::string_view host = parsed->get_hostname();
-  if (host.empty()) {
+  if (authority.empty()) {
+    if (base.protocol != ListenProtocol::Pg) {
+      SDB_FATAL(GENERAL, "endpoint '", url,
+                "' names a unix socket; a unix socket is only supported for "
+                "postgres (postgres:///path/to/socket)");
+    }
     base.transport = ListenTransport::Unix;
     parse_query();
     std::string path = PercentDecode(parsed->get_pathname());
@@ -314,13 +324,8 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
     return;
   }
 
-  const std::string_view path = parsed->get_pathname();
-  if (!path.empty() && path != "/") {
-    SDB_FATAL(GENERAL, "endpoint '", url,
-              "' has a path; a unix socket is only supported for postgres "
-              "(postgres:///path/to/socket)");
-  }
   base.transport = ListenTransport::Tcp;
+  std::string_view host = parsed->get_hostname();
   if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
     host = host.substr(1, host.size() - 2);
   }
@@ -328,7 +333,7 @@ void ParseOne(std::string_view url, asio_ns::io_context& resolve_ctx,
 
   const bool wildcard = host == "*";
   const std::string_view port_str = parsed->get_port();
-  const uint16_t port = port_str.empty() && parsed->scheme_default_port() != 0
+  const uint16_t port = port_str.empty() && HasPort(authority)
                           ? parsed->scheme_default_port()
                           : ParsePort(port_str, url);
   bool v6_only = false;

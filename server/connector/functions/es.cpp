@@ -52,6 +52,7 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
+#include <exception>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -60,6 +61,7 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
+#include <limits>
 #include <map>
 #include <string_view>
 
@@ -987,11 +989,49 @@ bool EsBulkSpansMorsels(std::string_view body) {
 
 namespace {
 
+class EarliestFailure {
+ public:
+  void Resize(size_t morsels) { _errors.resize(morsels); }
+
+  void Join() noexcept { _workers.fetch_add(1, std::memory_order_acquire); }
+
+  bool Before(size_t morsel) const noexcept {
+    return morsel < _earliest.load(std::memory_order_relaxed);
+  }
+
+  void Record(size_t morsel, std::exception_ptr error) noexcept {
+    _errors[morsel] = std::move(error);
+    auto earliest = _earliest.load(std::memory_order_relaxed);
+    while (morsel < earliest &&
+           !_earliest.compare_exchange_weak(earliest, morsel,
+                                            std::memory_order_relaxed)) {
+    }
+  }
+
+  void Leave() {
+    if (_workers.fetch_sub(1, std::memory_order_acq_rel) != 1) {
+      return;
+    }
+    const auto earliest = _earliest.load(std::memory_order_relaxed);
+    if (earliest < _errors.size() &&
+        !_rethrown.exchange(true, std::memory_order_relaxed)) {
+      std::rethrow_exception(_errors[earliest]);
+    }
+  }
+
+ private:
+  std::vector<std::exception_ptr> _errors;
+  std::atomic<size_t> _workers{0};
+  std::atomic<size_t> _earliest{std::numeric_limits<size_t>::max()};
+  std::atomic<bool> _rethrown{false};
+};
+
 struct EsBulkState final : duckdb::GlobalTableFunctionState {
   std::string_view body;
   std::vector<std::string>* items = nullptr;
   std::vector<BulkMorsel> bounds;
   std::atomic<size_t> next{0};
+  EarliestFailure failure;
 
   duckdb::idx_t MaxThreads() const final { return bounds.size() - 1; }
 
@@ -1016,6 +1056,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
                       ERR_MSG("no requests added"));
     }
     state->bounds = SplitBulkBody(state->body);
+    state->failure.Resize(state->bounds.size() - 1);
     if (state->items != nullptr) {
       state->items->assign(state->bounds.size() - 1, std::string{});
     }
@@ -1034,17 +1075,31 @@ struct EsBulkLocalState final : duckdb::LocalTableFunctionState {
   // buffer is reused for the document line.
   std::string padded;
   std::string id;
+  bool joined = false;
 
   bool Claim(EsBulkState& state) {
-    morsel = state.next.fetch_add(1, std::memory_order_relaxed);
-    if (morsel + 1 >= state.bounds.size()) {
-      return false;
+    if (!joined) {
+      state.failure.Join();
+      joined = true;
     }
-    pos = state.bounds[morsel].pos;
-    end = state.bounds[morsel + 1].pos;
-    line = state.bounds[morsel].line;
-    items = state.items == nullptr ? nullptr : &(*state.items)[morsel];
-    return true;
+    morsel = state.next.fetch_add(1, std::memory_order_relaxed);
+    if (morsel + 1 < state.bounds.size() && state.failure.Before(morsel)) {
+      pos = state.bounds[morsel].pos;
+      end = state.bounds[morsel + 1].pos;
+      line = state.bounds[morsel].line;
+      items = state.items == nullptr ? nullptr : &(*state.items)[morsel];
+      return true;
+    }
+    joined = false;
+    state.failure.Leave();
+    return false;
+  }
+
+  bool ParseLine(std::string_view text, simdjson::ondemand::document& doc) {
+    padded.assign(text);
+    padded.append(simdjson::SIMDJSON_PADDING, ' ');
+    return parser.iterate(padded.data(), text.size(), padded.size()).get(doc) ==
+           simdjson::SUCCESS;
   }
 
   static duckdb::unique_ptr<duckdb::LocalTableFunctionState> Init(
@@ -1113,23 +1168,111 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkSourceBind(
   return data;
 }
 
+void WriteBulkPair(EsBulkLocalState& local, const EsWriteBindData& data,
+                   std::string_view body, duckdb::DataChunk& output,
+                   duckdb::idx_t row) {
+  const auto action_line = NextBulkLine(body, local.pos);
+  ++local.line;
+  simdjson::ondemand::document action_doc;
+  simdjson::ondemand::object action;
+  if (!local.ParseLine(action_line, action_doc) ||
+      action_doc.get_object().get(action) != simdjson::SUCCESS) {
+    ThrowMalformedAction(local.line, "expected a JSON object");
+  }
+
+  std::string_view op;
+  local.id.clear();
+  for (auto field : action) {
+    std::string_view key;
+    if (field.unescaped_key().get(key) != simdjson::SUCCESS || !op.empty()) {
+      ThrowMalformedAction(local.line, "expected a single action");
+    }
+    if (key == "index") {
+      op = "index";
+    } else if (key == "create") {
+      op = "create";
+    } else {
+      ThrowMalformedAction(local.line,
+                           absl::StrCat("expected one of [create, index] but "
+                                        "found [",
+                                        key, "]"));
+    }
+    simdjson::ondemand::object params;
+    if (field.value().get_object().get(params) != simdjson::SUCCESS) {
+      ThrowMalformedAction(local.line, "expected an object value");
+    }
+    for (auto param : params) {
+      std::string_view param_key;
+      if (param.unescaped_key().get(param_key) != simdjson::SUCCESS) {
+        ThrowMalformedAction(local.line, "malformed parameters");
+      }
+      if (param_key == "_id") {
+        std::string_view id;
+        if (param.value().get_string().get(id) != simdjson::SUCCESS) {
+          ThrowMalformedAction(local.line, "_id must be a string");
+        }
+        ValidateDocId(id);
+        local.id.assign(id);
+      } else if (param_key == "_index") {
+        std::string_view explicit_index;
+        if (param.value().get_string().get(explicit_index) !=
+              simdjson::SUCCESS ||
+            explicit_index != data.index) {
+          ThrowMalformedAction(local.line,
+                               absl::StrCat("_index must match the request "
+                                            "index [",
+                                            data.index, "]"));
+        }
+      }
+      // routing/version/pipeline/...: accepted and ignored.
+    }
+  }
+  if (op.empty()) {
+    ThrowMalformedAction(local.line, "expected FIELD_NAME");
+  }
+
+  if (local.pos >= local.end) {
+    ThrowMalformedAction(local.line + 1, "document is missing");
+  }
+  const auto doc_line = NextBulkLine(body, local.pos);
+  ++local.line;
+  simdjson::ondemand::document doc;
+  if (!local.ParseLine(doc_line, doc)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                    ERR_MSG("failed to parse document on line [", local.line,
+                            "] for index [", data.index, "]"));
+  }
+  if (local.id.empty()) {
+    local.id = GenerateEsDocId();
+  }
+  // doc_line views data.body, so _source survives the padded-buffer reuse.
+  WriteDocRow(data, doc, local.id, doc_line, output, row);
+
+  if (auto* sink = local.items) {
+    if (!sink->empty()) {
+      sink->push_back(',');
+    }
+    absl::StrAppend(sink, "{\"", op, "\":{\"_index\":");
+    AppendJsonString(*sink, data.index);
+    absl::StrAppend(sink, ",\"_id\":");
+    AppendJsonString(*sink, local.id);
+    absl::StrAppend(
+      sink, R"(,"_version":1,"result":"created","_shards":{"total":1,)"
+            R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
+            R"("status":201}})");
+  }
+}
+
 void EsBulkExecute(duckdb::ClientContext& context,
                    duckdb::TableFunctionInput& input,
                    duckdb::DataChunk& output) {
   auto& state = input.global_state->Cast<EsBulkState>();
   auto& local = input.local_state->Cast<EsBulkLocalState>();
   auto& data = input.bind_data->Cast<EsWriteBindData>();
-  const std::string_view body = state.body;
 
-  auto parse_line = [&](std::string_view text,
-                        simdjson::ondemand::document& doc) {
-    local.padded.assign(text);
-    local.padded.append(simdjson::SIMDJSON_PADDING, ' ');
-    return local.parser
-             .iterate(local.padded.data(), text.size(), local.padded.size())
-             .get(doc) == simdjson::SUCCESS;
-  };
-
+  if (!state.failure.Before(local.morsel)) {
+    local.pos = local.end;
+  }
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
     if (local.pos >= local.end) {
@@ -1138,96 +1281,12 @@ void EsBulkExecute(duckdb::ClientContext& context,
       }
       continue;
     }
-    const auto action_line = NextBulkLine(body, local.pos);
-    ++local.line;
-    simdjson::ondemand::document action_doc;
-    simdjson::ondemand::object action;
-    if (!parse_line(action_line, action_doc) ||
-        action_doc.get_object().get(action) != simdjson::SUCCESS) {
-      ThrowMalformedAction(local.line, "expected a JSON object");
-    }
-
-    std::string_view op;
-    local.id.clear();
-    for (auto field : action) {
-      std::string_view key;
-      if (field.unescaped_key().get(key) != simdjson::SUCCESS || !op.empty()) {
-        ThrowMalformedAction(local.line, "expected a single action");
-      }
-      if (key == "index") {
-        op = "index";
-      } else if (key == "create") {
-        op = "create";
-      } else {
-        ThrowMalformedAction(local.line,
-                             absl::StrCat("expected one of [create, index] but "
-                                          "found [",
-                                          key, "]"));
-      }
-      simdjson::ondemand::object params;
-      if (field.value().get_object().get(params) != simdjson::SUCCESS) {
-        ThrowMalformedAction(local.line, "expected an object value");
-      }
-      for (auto param : params) {
-        std::string_view param_key;
-        if (param.unescaped_key().get(param_key) != simdjson::SUCCESS) {
-          ThrowMalformedAction(local.line, "malformed parameters");
-        }
-        if (param_key == "_id") {
-          std::string_view id;
-          if (param.value().get_string().get(id) != simdjson::SUCCESS) {
-            ThrowMalformedAction(local.line, "_id must be a string");
-          }
-          ValidateDocId(id);
-          local.id.assign(id);
-        } else if (param_key == "_index") {
-          std::string_view explicit_index;
-          if (param.value().get_string().get(explicit_index) !=
-                simdjson::SUCCESS ||
-              explicit_index != data.index) {
-            ThrowMalformedAction(local.line,
-                                 absl::StrCat("_index must match the request "
-                                              "index [",
-                                              data.index, "]"));
-          }
-        }
-        // routing/version/pipeline/...: accepted and ignored.
-      }
-    }
-    if (op.empty()) {
-      ThrowMalformedAction(local.line, "expected FIELD_NAME");
-    }
-
-    if (local.pos >= local.end) {
-      ThrowMalformedAction(local.line + 1, "document is missing");
-    }
-    const auto doc_line = NextBulkLine(body, local.pos);
-    ++local.line;
-    simdjson::ondemand::document doc;
-    if (!parse_line(doc_line, doc)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                      ERR_MSG("failed to parse document on line [", local.line,
-                              "] for index [", data.index, "]"));
-    }
-    if (local.id.empty()) {
-      local.id = GenerateEsDocId();
-    }
-    // doc_line views data.body, so _source survives the padded-buffer reuse.
-    WriteDocRow(data, doc, local.id, doc_line, output, row);
-    ++row;
-
-    if (auto* sink = local.items) {
-      if (!sink->empty()) {
-        sink->push_back(',');
-      }
-      absl::StrAppend(sink, "{\"", op, "\":{\"_index\":");
-      AppendJsonString(*sink, data.index);
-      absl::StrAppend(sink, ",\"_id\":");
-      AppendJsonString(*sink, local.id);
-      absl::StrAppend(
-        sink, R"(,"_version":1,"result":"created","_shards":{"total":1,)"
-              R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
-              R"("status":201}})");
+    try {
+      WriteBulkPair(local, data, state.body, output, row);
+      ++row;
+    } catch (...) {
+      state.failure.Record(local.morsel, std::current_exception());
+      local.pos = local.end;
     }
   }
   output.SetChildCardinality(row);

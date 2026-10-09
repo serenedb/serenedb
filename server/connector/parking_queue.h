@@ -89,7 +89,6 @@ class ParkingQueue {
       }
       lock.lock();
       if (_parked.empty()) {
-        // No free tasks to handle item
         _producing = false;
         out = std::move(*item);
         return TakeResult::Item;

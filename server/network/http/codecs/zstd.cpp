@@ -24,7 +24,7 @@
 #include <iresearch/utils/zstd_context.hpp>
 
 #include "network/http/codecs/codec.h"
-#include "server/utils/thread_local_pool.h"
+#include "network/http/pooled.h"
 
 namespace sdb::network::http {
 namespace {
@@ -34,7 +34,8 @@ struct CompressState {
   CompressState() {}
 
   bool Reset() noexcept {
-    return !ZSTD_isError(ZSTD_CCtx_reset(cctx.get(), ZSTD_reset_session_only));
+    return ZSTD_sizeof_CCtx(cctx.get()) <= kZstdMaxRetainedBytes &&
+           !ZSTD_isError(ZSTD_CCtx_reset(cctx.get(), ZSTD_reset_session_only));
   }
 
   irs::utils::ZstdCCtxPtr cctx = irs::utils::MakeZstdCCtx();
@@ -51,7 +52,8 @@ struct DecompressState {
   }
 
   bool Reset() noexcept {
-    return !ZSTD_isError(ZSTD_DCtx_reset(dctx.get(), ZSTD_reset_session_only));
+    return ZSTD_sizeof_DCtx(dctx.get()) <= kZstdMaxRetainedBytes &&
+           !ZSTD_isError(ZSTD_DCtx_reset(dctx.get(), ZSTD_reset_session_only));
   }
 
   irs::utils::ZstdDCtxPtr dctx = irs::utils::MakeZstdDCtx();

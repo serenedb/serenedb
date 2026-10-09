@@ -364,13 +364,11 @@ class ExportHandler final : public HttpHandler {
       co_return {};
     }
     if constexpr (Signal::kTargets.size() == 1) {
-      // Logs and Traces
       const auto outcome = co_await RunSourceInsert<Signal>(ctx, 0, decoded);
       if (WriteFailure(writer, outcome, protobuf)) {
         co_return {};
       }
     } else {
-      // Metrics. Insert into multiple table in single commit
       const auto present = Signal::Present(decoded);
       const bool transaction =
         std::count(present.begin(), present.end(), true) > 1;

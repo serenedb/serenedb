@@ -404,14 +404,16 @@ def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
 def test_large_text_copy_header_and_last_row_without_newline(
-        conn: psycopg.Connection, table_name: str) -> None:
+        conn: psycopg.Connection, table_name: str, storage: str) -> None:
     payload = b"x\tlabel\n" + _text_rows(_ROWS) + b"%d\tlast" % _ROWS
     with conn.cursor() as cur:
-        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
         try:
             _copy_in_pieces(cur, table_name, payload, ", HEADER")
-            assert _count(cur, table_name, "") == _ROWS + 1
+            assert _count(cur, table_name, storage) == _ROWS + 1
             cur.execute(f'SELECT label FROM public."{table_name}" '
                         f"WHERE x = {_ROWS}")
             assert cur.fetchone()[0] == "last"

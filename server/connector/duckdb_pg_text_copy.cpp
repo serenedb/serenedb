@@ -543,14 +543,6 @@ void ScanSerial(duckdb::ClientContext& context,
     return;
   }
 
-  if (g.deserializers.size() != bind.sql_types.size()) {
-    g.deserializers.reserve(bind.sql_types.size());
-    for (const auto& type : bind.sql_types) {
-      g.deserializers.push_back(
-        sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
-          type, sdb::pg::VarFormat::Text));
-    }
-  }
   sdb::pg::DeserializeContext dctx;
   sdb::pg::FillDeserializeContext(context, dctx);
   std::string field_buf;  // reused per field across this chunk

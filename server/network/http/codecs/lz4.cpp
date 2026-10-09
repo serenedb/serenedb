@@ -23,9 +23,11 @@
 #include <algorithm>
 #include <iresearch/utils/string_utils.hpp>
 #include <memory>
+#include <string>
+#include <string_view>
 
 #include "network/http/codecs/codec.h"
-#include "server/utils/thread_local_pool.h"
+#include "network/http/pooled.h"
 
 namespace sdb::network::http {
 namespace {
@@ -40,17 +42,22 @@ struct CompressState {
     if (LZ4F_isError(rc)) {
       ThrowCodecError("lz4", LZ4F_getErrorName(rc));
     }
+    prefs.autoFlush = 1;
     out_size = std::max(LZ4F_compressBound(kSlice, &prefs),
                         LZ4F_compressBound(0, &prefs));
   }
 
   ~CompressState() { LZ4F_freeCompressionContext(cctx); }
 
-  bool Reset() noexcept { return true; }
+  bool Reset() noexcept {
+    pending.clear();
+    return true;
+  }
 
   LZ4F_cctx* cctx = nullptr;
   LZ4F_preferences_t prefs{};
   size_t out_size = 0;
+  std::string pending;
 };
 
 struct DecompressState {
@@ -87,15 +94,26 @@ class Lz4Encoder final : public ContentEncoder {
       });
       _started = true;
     }
+    auto& pending = state.pending;
     while (!in.empty()) {
-      const auto slice = in.substr(0, kSlice);
-      out.Write(state.out_size, [&](uint8_t* dst) {
-        return Check(LZ4F_compressUpdate(state.cctx, dst, state.out_size,
-                                         slice.data(), slice.size(), nullptr));
-      });
-      in.remove_prefix(slice.size());
+      if (pending.empty() && in.size() >= kSlice) {
+        Compress(in.substr(0, kSlice), out);
+        in.remove_prefix(kSlice);
+        continue;
+      }
+      const auto take = std::min(kSlice - pending.size(), in.size());
+      pending.append(in.substr(0, take));
+      in.remove_prefix(take);
+      if (pending.size() == kSlice) {
+        Compress(pending, out);
+        pending.clear();
+      }
     }
     if (finish) {
+      if (!pending.empty()) {
+        Compress(pending, out);
+        pending.clear();
+      }
       out.Write(state.out_size, [&](uint8_t* dst) {
         return Check(
           LZ4F_compressEnd(state.cctx, dst, state.out_size, nullptr));
@@ -123,6 +141,14 @@ class Lz4Encoder final : public ContentEncoder {
       ThrowCodecError("lz4", LZ4F_getErrorName(rc));
     }
     return rc;
+  }
+
+  void Compress(std::string_view slice, EncodeOutput& out) {
+    auto& state = *_state;
+    out.Write(state.out_size, [&](uint8_t* dst) {
+      return Check(LZ4F_compressUpdate(state.cctx, dst, state.out_size,
+                                       slice.data(), slice.size(), nullptr));
+    });
   }
 
   Pooled<CompressState> _state;

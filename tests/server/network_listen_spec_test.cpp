@@ -169,6 +169,53 @@ TEST(ListenSpec, HttpKeepsItsDefaultPort) {
   EXPECT_EQ(specs[0].endpoint.port(), 80);
 }
 
+TEST(ListenSpec, HttpsKeepsItsDefaultPort) {
+  const auto specs = Parse({"https://[::1]:443?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].endpoint.port(), 443);
+}
+
+TEST(ListenSpec, HttpWithoutPortIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://0.0.0.0?api=es"});
+    },
+    "missing or invalid port");
+}
+
+TEST(ListenSpec, HttpWithEmptyPortIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://0.0.0.0:?api=es"});
+    },
+    "missing or invalid port");
+}
+
+TEST(ListenSpec, TcpPathIsIgnored) {
+  const auto specs = Parse({"postgres://127.0.0.1:7890/postgres"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 7890);
+}
+
+TEST(ListenSpec, HttpPathIsIgnored) {
+  const auto specs = Parse({"http://127.0.0.1:9200/x?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 9200);
+}
+
+TEST(ListenSpec, HttpBackslashStartsThePath) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://0.0.0.0\\:80?api=es"});
+    },
+    "missing or invalid port");
+}
+
 TEST(ListenSpec, HttpIPv6Brackets) {
   const auto specs = Parse({"http://[::1]:9200?api=es"});
   ASSERT_EQ(specs.size(), 1u);

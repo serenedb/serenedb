@@ -33,7 +33,7 @@ class BrotliEncoder final : public ContentEncoder {
  public:
   explicit BrotliEncoder(int level)
     : _quality{static_cast<uint32_t>(
-        ClampLevel(level, kDefaultQuality, BROTLI_MIN_QUALITY, kMaxQuality))} {}
+        ClampLevel(level, kDefaultQuality, kMinQuality, kMaxQuality))} {}
 
   ~BrotliEncoder() override {
     if (_state != nullptr) {
@@ -88,6 +88,7 @@ class BrotliEncoder final : public ContentEncoder {
   }
 
  private:
+  static constexpr int kMinQuality = 1;
   static constexpr int kDefaultQuality = 5;
   static constexpr int kMaxQuality = 6;
 

@@ -453,14 +453,6 @@ void ScanSerial(duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
   }
 
   const auto columns = bind.sql_types.size();
-  if (g.deserializers.size() != columns) {
-    g.deserializers.reserve(columns);
-    for (const auto& type : bind.sql_types) {
-      g.deserializers.push_back(
-        sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
-          type, sdb::pg::VarFormat::Binary));
-    }
-  }
   sdb::pg::DeserializeContext dctx;
   std::string
     field;  // a field that straddles a frame boundary, or the fallback

@@ -265,11 +265,17 @@ struct SystemFact {
   int64_t max;
 };
 
+struct SystemVisibility {
+  uint32_t column;
+  std::string_view function;
+};
+
 class SystemTable {
  public:
   SystemTable(const SystemSql& sql, std::span<const SystemCell> cells);
   SystemTable(const SystemSql& sql, SystemScanFunctions functions,
-              std::span<const SystemFact> facts);
+              std::span<const SystemFact> facts,
+              std::optional<SystemVisibility> visibility);
 
   SystemTable(const SystemTable&) = delete;
   SystemTable& operator=(const SystemTable&) = delete;
@@ -295,6 +301,9 @@ class SystemTable {
     const auto* fact = FactOf(column);
     return !fact || (fact->min <= value && value <= fact->max);
   }
+  const std::optional<SystemVisibility>& Visibility() const noexcept {
+    return _visibility;
+  }
   bool DefaultsHold(uint64_t provided) const;
 
  private:
@@ -302,6 +311,7 @@ class SystemTable {
   SystemScanFunctions _functions;
   std::span<const SystemCell> _cells;
   std::span<const SystemFact> _facts;
+  std::optional<SystemVisibility> _visibility;
   duckdb::ColumnList _columns;
   std::vector<SystemDefault> _defaults;
   std::vector<std::unique_ptr<std::byte[]>> _storage;
@@ -435,6 +445,8 @@ struct SystemRange {
 
 std::optional<SystemRange> RangeOf(const duckdb::Expression& expr);
 std::optional<bool> BooleanOf(const duckdb::Expression& expr);
+bool IsVisibility(const duckdb::Expression& expr,
+                  const SystemVisibility& visibility);
 
 template<typename Row, typename Holder = void>
 struct ArrayKey {
@@ -618,6 +630,8 @@ class SystemScan {
   bool Reads(uint32_t column) const noexcept {
     return (((_needed | _filtered) >> column) & 1) != 0;
   }
+
+  bool VisibleOnly() const noexcept { return _visible_only; }
 
  protected:
   void EmitChunk(const duckdb::DataChunk& source);
@@ -906,6 +920,7 @@ class SystemScan {
   mutable irs::containers::FlatHashSet<duckdb::idx_t> _triggered;
   mutable bool _triggered_complete = false;
   bool _collect_triggered = false;
+  bool _visible_only = false;
 };
 
 template<const SystemSql& Sql>
@@ -1093,12 +1108,16 @@ void SystemScanRun(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
 
 template<typename T>
 SystemTable SystemTableOf() {
+  std::span<const SystemFact> facts;
   if constexpr (requires { T::kFacts; }) {
-    return SystemTable{
-      T::kSql, {&SystemScanInit<T>, &SystemScanRun<T>}, T::kFacts};
-  } else {
-    return SystemTable{T::kSql, {&SystemScanInit<T>, &SystemScanRun<T>}, {}};
+    facts = T::kFacts;
   }
+  std::optional<SystemVisibility> visibility;
+  if constexpr (requires { T::kVisibility; }) {
+    visibility = T::kVisibility;
+  }
+  return SystemTable{
+    T::kSql, {&SystemScanInit<T>, &SystemScanRun<T>}, facts, visibility};
 }
 
 }  // namespace sdb::pg

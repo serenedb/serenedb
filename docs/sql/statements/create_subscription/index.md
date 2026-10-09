@@ -99,11 +99,13 @@ Remote transactions are applied atomically: other sessions see all of a remote t
 
 Every applied remote transaction records the publisher position it reached, its LSN, in the same commit as its rows. The position is reported to the publisher only after that commit is durable, and after a restart or a crash the subscription resumes from the recorded position. A remote transaction is therefore applied exactly once: never lost, never applied twice. A transaction streamed while still in progress is kept in a spill buffer that goes to disk when it outgrows memory; it is applied when it commits and thrown away, or partly thrown away for a rolled-back subtransaction, when it aborts.
 
-Conflicts follow PostgreSQL: an `UPDATE` or `DELETE` whose row does not exist locally is skipped and counted as `update_missing` or `delete_missing`; an `INSERT` or `UPDATE` that hits an existing unique key fails the apply as `insert_exists` or `update_exists`. When applying fails, the worker reconnects after 5 seconds and resumes from the recorded position, unless `disable_on_error` is set, in which case the subscription is disabled. A write conflict with a concurrent local transaction is retried right away.
+Conflicts follow PostgreSQL: an `UPDATE` or `DELETE` whose row does not exist locally is skipped and counted as `update_missing` or `delete_missing`; an `INSERT` or `UPDATE` that hits an existing unique key fails the apply as `insert_exists` or `update_exists`. When applying fails, the worker reconnects after `wal_retrieve_retry_interval` (5 seconds by default) and resumes from the recorded position, unless `disable_on_error` is set, in which case the subscription is disabled. A write conflict with a concurrent local transaction is retried right away.
+
+A partitioned table on the publisher is replicated the way its publication sends it. With `publish_via_partition_root = true` its changes and its initial copy arrive under the name of the partitioned table, so create one local table with that name. Otherwise they arrive under the names of its partitions, so create a local table for each partition.
 
 A remote `TRUNCATE` is applied like PostgreSQL applies it: `CASCADE` also truncates the local tables that reference the truncated ones through foreign keys, and `RESTART IDENTITY` restarts the sequences their columns own.
 
-The worker reports its position to the publisher every 10 seconds. When the publisher sends nothing for 60 seconds, not even a keepalive, the worker drops the connection with `terminating logical replication worker due to timeout` and reconnects, like PostgreSQL with the default `wal_receiver_timeout`.
+The worker reports its position to the publisher every `wal_receiver_status_interval` (10 seconds by default). When the publisher sends nothing for `wal_receiver_timeout` (60 seconds by default), the worker first asks it for a reply halfway through and then drops the connection with `terminating logical replication worker due to timeout` and reconnects. The settings are described in [Configuration](../../../configuration/overview.md#logical-replication).
 
 <DocCallout type="attention">
 

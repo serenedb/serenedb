@@ -133,6 +133,7 @@ class PgReplicationClient final : public PublisherSession {
     std::string table;
     std::vector<std::string> columns;
     std::optional<std::string> row_filter;
+    bool partitioned = false;
     duckdb::idx_t owner = 0;
   };
 

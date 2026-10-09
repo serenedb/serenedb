@@ -260,7 +260,7 @@ yaclib::Task<bool> PgReplicationClient::SyncTables() {
   if (!co_await Query(
         absl::StrCat(
           "SELECT n.nspname, c.relname, a.attname, "
-          "pg_get_expr(gpt.qual, gpt.relid), p.pubname "
+          "pg_get_expr(gpt.qual, gpt.relid), p.pubname, c.relkind "
           "FROM pg_publication p "
           "JOIN LATERAL pg_get_publication_tables(p.pubname) gpt ON true "
           "JOIN pg_class c ON c.oid = gpt.relid "
@@ -294,6 +294,7 @@ yaclib::Task<bool> PgReplicationClient::SyncTables() {
     auto& first = first_publication[it->second];
     if (first.empty()) {
       first = *row[4];
+      table.partitioned = row.size() > 5 && row[5] && *row[5] == "p";
     }
     if (*row[4] == first) {
       table.columns.push_back(*row[2]);
@@ -345,10 +346,17 @@ yaclib::Task<bool> PgReplicationClient::CopyTable(const SyncTable& table,
     });
   const auto name = absl::StrCat(pg::QuoteIdentifier(table.schema), ".",
                                  pg::QuoteIdentifier(table.table));
-  auto query = table.row_filter
-                 ? absl::StrCat("COPY (SELECT ", columns, " FROM ONLY ", name,
-                                " WHERE ", *table.row_filter, ") TO STDOUT")
-                 : absl::StrCat("COPY ", name, " (", columns, ") TO STDOUT");
+  std::string query;
+  if (table.row_filter || table.partitioned) {
+    query = absl::StrCat("COPY (SELECT ", columns, " FROM ",
+                         table.partitioned ? "" : "ONLY ", name);
+    if (table.row_filter) {
+      absl::StrAppend(&query, " WHERE ", *table.row_filter);
+    }
+    query.append(") TO STDOUT");
+  } else {
+    query = absl::StrCat("COPY ", name, " (", columns, ") TO STDOUT");
+  }
   if (binary) {
     query.append(" WITH (FORMAT binary)");
   }

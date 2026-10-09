@@ -682,11 +682,16 @@ void SystemScan::End(duckdb::DataChunk& output) {
   output.SetChildCardinality(_row);
   _side.SetChildCardinality(_row);
   for (size_t slot = 0; slot < _column_ids.size(); ++slot) {
-    if (_column_ids[slot] == connector::kColumnIdentifierTableOid &&
-        _places[slot] != kNowhere) {
+    if (_places[slot] == kNowhere) {
+      continue;
+    }
+    if (_column_ids[slot] == connector::kColumnIdentifierTableOid) {
       _vectors[_places[slot]].vector->Reference(
         duckdb::Value::BIGINT(static_cast<int64_t>(_table.Sql().oid)),
         duckdb::count_t{_row});
+    } else if (_column_ids[slot] == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      _vectors[_places[slot]].vector->Reference(
+        duckdb::Value{duckdb::LogicalType::BOOLEAN}, duckdb::count_t{_row});
     }
   }
   if (_residuals.empty() || _row == 0) {

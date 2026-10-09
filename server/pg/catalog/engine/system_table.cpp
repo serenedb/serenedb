@@ -960,6 +960,39 @@ SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
   return {std::move(snapshot), entries};
 }
 
+std::span<
+  const std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
+SystemScan::WalkedSubjects(duckdb::CatalogEntry& entry) const {
+  const auto collect = [&](duckdb::CatalogEntry& member) {
+    std::vector<
+      std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
+      edges;
+    Dependencies().ScanEdges(
+      Transaction(), member, true,
+      [&](duckdb::CatalogEntry& subject,
+          const duckdb::DependencyDependentFlags& flags) {
+        edges.emplace_back(&subject, flags);
+      });
+    return edges;
+  };
+  std::call_once(_walked->subjects_once, [&] {
+    for (auto* member : _walked->entries) {
+      if (auto edges = collect(*member); !edges.empty()) {
+        _walked->subjects.emplace(member, std::move(edges));
+      }
+    }
+  });
+  const auto it = _walked->subjects.find(&entry);
+  const std::span<
+    const std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
+    edges = it == _walked->subjects.end()
+              ? std::span<const std::pair<duckdb::CatalogEntry*,
+                                          duckdb::DependencyDependentFlags>>{}
+              : std::span{it->second};
+  SDB_ASSERT(absl::c_equal(edges, collect(entry)));
+  return edges;
+}
+
 std::optional<bool> SystemScan::KnownIndexed(duckdb::idx_t relation) const {
   if (!_indexed_complete) {
     return std::nullopt;

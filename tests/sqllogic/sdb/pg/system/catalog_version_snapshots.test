@@ -378,3 +378,77 @@ adnum	def
 
 statement ok
 DROP SCHEMA tinker_defaults CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_edges
+
+
+statement ok
+CREATE TABLE tinker_edges.base (a INT, b INT)
+
+
+statement ok
+CREATE VIEW tinker_edges.over AS SELECT a FROM tinker_edges.base
+
+
+statement ok
+CREATE INDEX tinker_edges_base_b ON tinker_edges.base (b)
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+pg_rewrite	tinker_edges.over	1	n
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+pg_rewrite	tinker_edges.over	1	n
+
+
+statement ok
+CREATE OR REPLACE VIEW tinker_edges.over AS SELECT 1 AS a
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE OR REPLACE VIEW tinker_edges.over AS SELECT b AS a FROM tinker_edges.base
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+pg_rewrite	tinker_edges.over	2	n
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+
+
+statement ok
+DROP SCHEMA tinker_edges CASCADE

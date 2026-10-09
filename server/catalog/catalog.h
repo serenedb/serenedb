@@ -30,7 +30,9 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -45,6 +47,7 @@ class PhysicalOperator;
 class LogicalInsert;
 class LogicalCreateTable;
 class LogicalMergeInto;
+class UniqueConstraint;
 struct CreateJobInfo;
 struct DropInfo;
 
@@ -58,6 +61,11 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
 
 struct CatalogSnapshot {
   std::vector<duckdb::CatalogEntry*> entries;
+  mutable std::once_flag keys_once;
+  mutable irs::containers::FlatHashMap<
+    std::string_view,
+    std::pair<duckdb::TableCatalogEntry*, const duckdb::UniqueConstraint*>>
+    keys;
 };
 
 class SereneDBCatalog final : public duckdb::DuckCatalog {

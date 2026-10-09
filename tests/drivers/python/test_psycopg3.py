@@ -417,6 +417,23 @@ def test_binder_error_sqlstates():
         c.close()
 
 
+def test_job_error_sqlstates():
+    job = f"rfq_job_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cases = [
+                ("SELECT * FROM execute_job(NULL)", "22004"),
+                (f'CREATE JOB "{job}" EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1', "22023"),
+            ]
+            for sql, code in cases:
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == code, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        c.close()
+
+
 def test_array_csv_roundtrip():
     # Arrays survive a CSV copy round-trip: csv-out emits no spurious header
     # (PG default), and the input cast accepts both PG {..} and DuckDB [..].

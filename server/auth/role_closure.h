@@ -62,6 +62,12 @@ struct RoleGraph {
     return it == nodes.end() ? nullptr : &it->second;
   }
 
+  const decltype(nodes)::value_type* FindByName(std::string_view name) const {
+    const auto it = absl::c_find_if(
+      nodes, [&](const auto& entry) { return entry.second.name == name; });
+    return it == nodes.end() ? nullptr : &*it;
+  }
+
   std::string_view NameOf(duckdb::idx_t role) const {
     const auto* node = Find(role);
     return node ? std::string_view{node->name} : std::string_view{};

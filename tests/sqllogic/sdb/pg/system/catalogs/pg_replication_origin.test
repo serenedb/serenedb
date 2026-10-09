@@ -1,0 +1,62 @@
+statement ok
+DROP ROLE IF EXISTS sven_repo_cleave;
+
+
+statement ok
+CREATE ROLE sven_repo_cleave LOGIN PASSWORD 'sven_repo_cleave_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_replication_origin'::regclass;
+----
+oid	relname	relkind	relnatts
+6000	pg_replication_origin	r	2
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_replication_origin'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+roident	oid	t
+roname	text	t
+
+
+query
+SELECT * FROM pg_replication_origin;
+----
+roident	roname
+
+
+query
+SELECT roident FROM pg_replication_origin WHERE roname = 'sven_repo_cleave';
+----
+roident
+
+
+query
+SELECT roname FROM pg_replication_origin WHERE roident = 1;
+----
+roname
+
+
+connection sven_conn user=sven_repo_cleave password=sven_repo_cleave_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_replication_origin', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection sven_conn user=sven_repo_cleave password=sven_repo_cleave_pw
+query
+SELECT roident, roname FROM pg_replication_origin;
+----
+roident	roname
+
+
+connection default
+statement ok
+DROP ROLE sven_repo_cleave;

@@ -43,8 +43,8 @@
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "pg/serialize.h"
+#include "pg/types.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {

@@ -1,0 +1,25 @@
+SELECT
+        S.datid AS datid,
+        S.datname AS datname,
+        S.pid,
+        NULL::INTEGER AS leader_pid,
+        U.oid AS usesysid,
+        S.usename AS usename,
+        NULL::TEXT AS application_name,
+        NULL::TEXT AS client_addr,
+        NULL::TEXT AS client_hostname,
+        NULL::INTEGER AS client_port,
+        to_timestamp(S.backend_start_us / 1000000.0) AS backend_start,
+        NULL::TIMESTAMPTZ AS xact_start,
+        to_timestamp(S.query_start_us / 1000000.0) AS query_start,
+        NULL::TIMESTAMPTZ AS state_change,
+        NULL::TEXT AS wait_event_type,
+        NULL::TEXT AS wait_event,
+        S.state AS state,
+        NULL::TEXT AS backend_xid,
+        NULL::TEXT AS backend_xmin,
+        NULL::BIGINT AS query_id,
+        S.query AS query,
+        'client backend' AS backend_type
+FROM sdb_progress AS S
+    LEFT JOIN pg_authid AS U ON (S.usename = U.rolname)

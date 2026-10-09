@@ -98,6 +98,9 @@ SereneDBClientState& SereneDBClientState::Register(
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_CANT_CHANGE_RUNTIME_PARAM),
                         ERR_MSG("parameter \"", name, "\" cannot be changed"));
       }
+      if (new_value && IsCompatSetting(name)) {
+        NoticeIfChanged(ctx, name, *new_value);
+      }
       // Resolve AUTOMATIC against the setting's target scope so the downstream
       // check works uniformly regardless of how the user wrote the SET.
       if (scope == duckdb::SetScope::AUTOMATIC) {
@@ -140,10 +143,9 @@ SereneDBClientState& SereneDBClientState::Register(
 
   client_ctx.setting_visibility = [](duckdb::ClientContext&,
                                      const std::string& name) {
-    // Internal knobs -- hidden from SHOW ALL / pg_settings / duckdb_settings().
-    // Still settable/readable by name.
     static const irs::containers::FlatHashSet<std::string_view> kHidden = {
-      "sdb_faults", "debug_verification"};
+      "sdb_faults", "debug_verification", "is_superuser", "role",
+      "session_authorization"};
     return !kHidden.contains(name);
   };
 

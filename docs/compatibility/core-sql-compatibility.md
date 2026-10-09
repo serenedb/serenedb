@@ -168,6 +168,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | point                                             | No            |                          |
 | polygon                                           | No            |                          |
 | real                                              | Yes           |      |
+| regclass, regtype, regproc, regprocedure, regnamespace, regrole, regcollation, regdictionary | Yes | Object identifier types: input resolves names on the search path, output prints names |
+| regoper, regoperator, regconfig                   | Partial       | Numeric input and output only: there are no operator or text search configuration catalogs |
 | smallint                                          | Yes           |    |
 | smallserial                                       | Yes           |                          |
 | serial                                            | Yes           |                          |
@@ -836,6 +838,22 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_get_function_arg_default        | Yes           |  |
 | pg_get_partkeydef                  | Yes           | Always `NULL`: there are no partitioned tables |
 | pg_get_statisticsobjdef            | Yes           | Always `NULL`, as are `pg_get_statisticsobjdef_columns` and `pg_get_statisticsobjdef_expressions`: there are no extended statistics |
+| pg_get_serial_sequence             | Yes           | Finds the sequence named by the column's `nextval(...)` default |
+| format_type                        | Yes           | Prints type modifiers, for example `numeric(10,2)`, `character varying(50)` and `timestamp(3) without time zone` |
+| to_regclass                        | Yes           | Also `to_regtype`, `to_regtypemod`, `to_regproc`, `to_regprocedure`, `to_regnamespace`, `to_regrole`, `to_regcollation`, `to_regoper` and `to_regoperator`; they return `NULL` where the cast would fail |
+| pg_get_userbyid                    | Yes           |  |
+| pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |
+| obj_description                    | Yes           | Also `col_description`. Built-in types, functions and schemas have no description, so they return `NULL` |
+| shobj_description                  | Partial       | Always `NULL`: comments on databases and roles are not stored |
+| pg_relation_is_updatable           | Yes           | Also `pg_column_is_updatable`. Tables are updatable, views are not |
+| pg_sequence_last_value             | Yes           |  |
+| pg_options_to_table                | Yes           |  |
+| pg_encoding_to_char                | Yes           | Also `pg_char_to_encoding` |
+| pg_tablespace_location             | Yes           | Always an empty string |
+| pg_my_temp_schema                  | Partial       | Always `0` |
+| acldefault                         | Yes           | Also `aclexplode` |
+| has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (there are no foreign-data wrappers) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
+| pg_stat_get_*                      | Partial       | Counters are `0` and times `NULL`. `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions; function statistics are `NULL` |
 
 ## Behavioral Differences from PostgreSQL
 

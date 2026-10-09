@@ -87,6 +87,12 @@ DECLARE_PG_TYPE(YESORNO,        YesOrNo,        "yes_or_no",       VARCHAR)
 DECLARE_PG_TYPE(SERIAL,         Serial,         "serial",          INTEGER)
 DECLARE_PG_TYPE(BIGSERIAL,      Bigserial,      "bigserial",       BIGINT)
 DECLARE_PG_TYPE(SMALLSERIAL,    Smallserial,    "smallserial",     SMALLINT)
+DECLARE_PG_TYPE(PG_NODE_TREE,   PgNodeTree,     "pg_node_tree",    VARCHAR)
+DECLARE_PG_TYPE(PG_LSN,         PgLsn,          "pg_lsn",          UBIGINT)
+DECLARE_PG_TYPE(ANYARRAY,       Anyarray,       "anyarray",        VARCHAR)
+DECLARE_PG_TYPE(PG_NDISTINCT,   PgNdistinct,    "pg_ndistinct",    VARCHAR)
+DECLARE_PG_TYPE(PG_DEPENDENCIES, PgDependencies, "pg_dependencies", VARCHAR)
+DECLARE_PG_TYPE(PG_MCV_LIST,    PgMcvList,      "pg_mcv_list",     VARCHAR)
 // PG pseudo-type `void`: functions declared RETURNS VOID still need a
 // representable result type. We back it with SQLNULL.
 DECLARE_PG_TYPE(VOID,           Void,           "void",            SQLNULL)
@@ -125,6 +131,31 @@ inline duckdb::LogicalType CTID() {
        {"tuple_offset", duckdb::LogicalType::USMALLINT}})
       .WithAlias(std::string{kCtidAlias});
   return kType;
+}
+#endif
+
+inline constexpr std::string_view kInt2vectorAlias = "int2vector";
+inline constexpr std::string_view kOidvectorAlias = "oidvector";
+
+inline bool IsInt2vector(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::LIST &&
+         type.GetAlias() == kInt2vectorAlias;
+}
+
+inline bool IsOidvector(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::LIST &&
+         type.GetAlias() == kOidvectorAlias;
+}
+
+#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
+inline duckdb::LogicalType INT2VECTOR() {
+  return duckdb::LogicalType::LIST(duckdb::LogicalType::SMALLINT)
+    .WithAlias(std::string{kInt2vectorAlias});
+}
+
+inline duckdb::LogicalType OIDVECTOR() {
+  return duckdb::LogicalType::LIST(OID()).WithAlias(
+    std::string{kOidvectorAlias});
 }
 #endif
 

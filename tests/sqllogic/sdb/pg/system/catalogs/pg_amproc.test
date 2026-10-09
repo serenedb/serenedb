@@ -1,0 +1,63 @@
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_amproc'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+amprocfamily	oid	t
+amproclefttype	oid	t
+amprocrighttype	oid	t
+amprocnum	smallint	t
+amproc	regproc	t
+
+
+query
+SELECT c.oid, c.relname, c.relkind, c.relnamespace::regnamespace::text AS nsp, c.relnatts, c.reltype::regtype::text AS rowtype, c.relisshared
+FROM pg_class c
+WHERE c.oid = 'pg_amproc'::regclass;
+----
+oid	relname	relkind	nsp	relnatts	rowtype	relisshared
+2603	pg_amproc	r	pg_catalog	6	pg_amproc	f
+
+
+query
+SELECT t.typname, t.typtype, t.typrelid = 'pg_amproc'::regclass AS linked, a.typname AS array_name
+FROM pg_type t JOIN pg_type a ON a.oid = t.typarray
+WHERE t.typname = 'pg_amproc';
+----
+typname	typtype	linked	array_name
+pg_amproc	c	t	_pg_amproc
+
+
+query
+SELECT count(*) AS n FROM pg_amproc;
+----
+n
+0
+
+
+query
+SELECT amprocfamily, amproclefttype, amprocrighttype, amprocnum FROM pg_amproc ORDER BY 1;
+----
+amprocfamily	amproclefttype	amprocrighttype	amprocnum
+
+
+query
+SELECT amprocfamily, amproclefttype, amprocrighttype, amprocnum FROM pg_amproc WHERE amprocfamily = 1976;
+----
+amprocfamily	amproclefttype	amprocrighttype	amprocnum
+
+
+query
+SELECT amprocfamily, amproclefttype, amprocrighttype, amprocnum FROM pg_amproc WHERE amproc IN (351, 842);
+----
+amprocfamily	amproclefttype	amprocrighttype	amprocnum
+
+
+query
+SELECT count(*) AS n FROM pg_catalog.pg_amproc x JOIN pg_type t ON t.oid = 23;
+----
+n
+0

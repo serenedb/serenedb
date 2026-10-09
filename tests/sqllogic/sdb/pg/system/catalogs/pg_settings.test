@@ -1,0 +1,417 @@
+statement ok
+DROP ROLE IF EXISTS pudge_settings_hook;
+
+
+statement ok
+CREATE ROLE pudge_settings_hook LOGIN PASSWORD 'pudge_settings_pw';
+
+
+query
+SELECT relkind, relnamespace::regnamespace::text AS nsp FROM pg_class WHERE relname = 'pg_settings';
+----
+relkind	nsp
+v	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_settings'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+name	text	f
+setting	text	f
+unit	text	f
+category	text	f
+short_desc	text	f
+extra_desc	text	f
+context	text	f
+vartype	text	f
+source	text	f
+min_val	text	f
+max_val	text	f
+enumvals	text[]	f
+boot_val	text	f
+reset_val	text	f
+sourcefile	text	f
+sourceline	integer	f
+pending_restart	boolean	f
+
+
+query
+SELECT name, unit, category, short_desc, context, vartype, min_val, max_val, enumvals
+FROM pg_settings
+WHERE name IN ('DateStyle', 'IntervalStyle', 'bytea_output', 'client_min_messages',
+               'statement_timeout', 'work_mem', 'standard_conforming_strings',
+               'server_version_num', 'extra_float_digits', 'max_identifier_length',
+               'block_size', 'default_transaction_isolation')
+ORDER BY lower(name);
+----
+name	unit	category	short_desc	context	vartype	min_val	max_val	enumvals
+block_size	NULL	Preset Options	Shows the size of a disk block.	internal	integer	8192	8192	NULL
+bytea_output	NULL	Client Connection Defaults / Statement Behavior	Sets the output format for bytea.	user	enum	NULL	NULL	{escape,hex}
+client_min_messages	NULL	Client Connection Defaults / Statement Behavior	Sets the message levels that are sent to the client.	user	enum	NULL	NULL	{debug5,debug4,debug3,debug2,debug1,log,notice,warning,error}
+DateStyle	NULL	Client Connection Defaults / Locale and Formatting	Sets the display format for date and time values.	user	string	NULL	NULL	NULL
+default_transaction_isolation	NULL	Client Connection Defaults / Statement Behavior	Sets the transaction isolation level of each new transaction.	user	enum	NULL	NULL	{serializable,"repeatable read","read committed","read uncommitted"}
+extra_float_digits	NULL	Client Connection Defaults / Locale and Formatting	Sets the number of digits displayed for floating-point values.	user	integer	-15	3	NULL
+IntervalStyle	NULL	Client Connection Defaults / Locale and Formatting	Sets the display format for interval values.	user	enum	NULL	NULL	{postgres,postgres_verbose,sql_standard,iso_8601}
+max_identifier_length	NULL	Preset Options	Shows the maximum identifier length.	internal	integer	63	63	NULL
+server_version_num	NULL	Preset Options	Shows the server version as an integer.	internal	integer	180003	180003	NULL
+standard_conforming_strings	NULL	Version and Platform Compatibility / Previous PostgreSQL Versions	Causes '...' strings to treat backslashes literally.	user	bool	NULL	NULL	NULL
+statement_timeout	ms	Client Connection Defaults / Statement Behavior	Sets the maximum allowed duration of any statement. Accepted for compatibility but not currently enforced.	user	integer	0	2147483647	NULL
+work_mem	kB	Resource Usage / Memory	Sets the maximum memory to be used for query workspaces.	user	integer	64	2147483647	NULL
+
+
+query
+SELECT name, boot_val
+FROM pg_settings
+WHERE name IN ('DateStyle', 'IntervalStyle', 'bytea_output', 'client_min_messages',
+               'statement_timeout', 'work_mem', 'standard_conforming_strings',
+               'server_version_num', 'extra_float_digits', 'max_identifier_length',
+               'block_size')
+ORDER BY lower(name);
+----
+name	boot_val
+block_size	8192
+bytea_output	hex
+client_min_messages	notice
+DateStyle	ISO, MDY
+extra_float_digits	1
+IntervalStyle	postgres
+max_identifier_length	63
+server_version_num	180003
+standard_conforming_strings	on
+statement_timeout	0
+work_mem	4096
+
+
+query
+SELECT name, setting, boot_val, vartype
+FROM pg_settings
+WHERE name IN ('lc_messages', 'lc_monetary', 'lc_numeric', 'lc_time',
+               'default_text_search_config', 'server_version')
+ORDER BY name;
+----
+name	setting	boot_val	vartype
+default_text_search_config	pg_catalog.simple	pg_catalog.simple	string
+lc_messages	C	C	string
+lc_monetary	C	C	string
+lc_numeric	C	C	string
+lc_time	C	C	string
+server_version	18.3	18.3	string
+
+
+query
+SELECT name, setting
+FROM pg_settings
+WHERE name IN ('block_size', 'client_encoding', 'server_encoding', 'integer_datetimes',
+               'in_hot_standby', 'max_identifier_length', 'server_version_num')
+ORDER BY name;
+----
+name	setting
+block_size	8192
+client_encoding	UTF8
+in_hot_standby	off
+integer_datetimes	on
+max_identifier_length	63
+server_encoding	UTF8
+server_version_num	180003
+
+
+query
+SELECT count(*) = count(DISTINCT name) AS unique_names,
+       count(*) FILTER (WHERE name IS NULL OR short_desc IS NULL OR context IS NULL
+                        OR vartype IS NULL OR category IS NULL) AS incomplete
+FROM pg_settings;
+----
+unique_names	incomplete
+t	0
+
+
+query
+SELECT count(*) AS bad_enum
+FROM pg_settings
+WHERE (vartype = 'enum') <> (enumvals IS NOT NULL);
+----
+bad_enum
+0
+
+
+query
+SELECT name FROM pg_settings WHERE name = 'datestyle';
+----
+name
+
+
+query
+SELECT name FROM pg_settings WHERE name IN ('DateStyle', 'datestyle', 'DATESTYLE');
+----
+name
+DateStyle
+
+
+query
+SELECT count(*) AS listed
+FROM pg_settings
+WHERE name IN ('is_superuser', 'role', 'session_authorization');
+----
+listed
+0
+
+
+query
+SELECT count(*) AS listed
+FROM duckdb_settings()
+WHERE name IN ('is_superuser', 'role', 'session_authorization');
+----
+listed
+0
+
+
+query
+SELECT current_setting('is_superuser') AS is_superuser;
+----
+is_superuser
+on
+
+
+query
+SELECT name FROM pg_settings WHERE name = 'pudge_fresh_meat';
+----
+name
+
+
+query
+SELECT name FROM pg_settings WHERE name = 'IntervalStyle';
+----
+name
+IntervalStyle
+
+
+statement ok
+SET bytea_output = 'escape';
+
+
+statement ok
+SET IntervalStyle = 'iso_8601';
+
+
+statement ok
+SET DateStyle = 'SQL, DMY';
+
+
+statement ok
+SET extra_float_digits = 2;
+
+
+query
+SELECT name, setting, source, boot_val, reset_val
+FROM pg_settings
+WHERE name IN ('bytea_output', 'IntervalStyle', 'DateStyle', 'extra_float_digits')
+ORDER BY lower(name);
+----
+name	setting	source	boot_val	reset_val
+bytea_output	escape	session	hex	hex
+DateStyle	SQL, DMY	session	ISO, MDY	ISO, MDY
+extra_float_digits	2	session	1	1
+IntervalStyle	iso_8601	session	postgres	postgres
+
+
+query
+SELECT name, setting = current_setting(name) AS same
+FROM pg_settings
+WHERE name IN ('bytea_output', 'IntervalStyle', 'DateStyle', 'extra_float_digits',
+               'standard_conforming_strings', 'server_version_num', 'client_encoding')
+ORDER BY lower(name);
+----
+name	same
+bytea_output	t
+client_encoding	t
+DateStyle	t
+extra_float_digits	t
+IntervalStyle	t
+server_version_num	t
+standard_conforming_strings	t
+
+
+query
+SHOW IntervalStyle;
+----
+IntervalStyle
+iso_8601
+
+
+query
+SHOW bytea_output;
+----
+bytea_output
+escape
+
+
+query
+SELECT count(*) AS mismatched
+FROM (
+  (SELECT * FROM pg_settings
+   WHERE name IN ('bytea_output', 'IntervalStyle', 'DateStyle', 'work_mem', 'lc_time'))
+  EXCEPT
+  (SELECT * FROM pg_settings
+   WHERE name || '' IN ('bytea_output', 'IntervalStyle', 'DateStyle', 'work_mem', 'lc_time'))
+) AS diff;
+----
+mismatched
+0
+
+
+query
+SELECT count(*) AS keyed
+FROM pg_settings
+WHERE name IN ('bytea_output', 'IntervalStyle', 'DateStyle', 'work_mem', 'lc_time');
+----
+keyed
+5
+
+
+query
+SELECT name, setting
+FROM pg_settings
+WHERE name = 'bytea_output' OR name = 'IntervalStyle'
+ORDER BY lower(name);
+----
+name	setting
+bytea_output	escape
+IntervalStyle	iso_8601
+
+
+statement ok
+RESET IntervalStyle;
+
+
+query
+SELECT setting, source FROM pg_settings WHERE name = 'IntervalStyle';
+----
+setting	source
+postgres	default
+
+
+statement ok
+SET statement_timeout = '5s';
+
+
+statement ok
+SET work_mem = '8MB';
+
+
+statement ok
+SET search_path = public;
+
+
+query
+SELECT name, setting, unit, source FROM pg_settings
+WHERE name IN ('statement_timeout', 'work_mem', 'search_path')
+ORDER BY name;
+----
+name	setting	unit	source
+search_path	public	NULL	session
+statement_timeout	5000	ms	session
+work_mem	8192	kB	session
+
+
+query
+SELECT boot_val, reset_val FROM pg_settings WHERE name = 'search_path';
+----
+boot_val	reset_val
+"$user", public	"$user", public
+
+
+query
+SHOW statement_timeout;
+----
+statement_timeout
+5s
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+RESET ALL;
+
+
+query
+SELECT name, setting, source
+FROM pg_settings
+WHERE name IN ('bytea_output', 'extra_float_digits')
+ORDER BY lower(name);
+----
+name	setting	source
+bytea_output	hex	default
+extra_float_digits	1	default
+
+
+query
+SELECT setting FROM pg_settings WHERE name = 'DateStyle';
+----
+setting
+ISO, MDY
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET LOCAL bytea_output = 'escape';
+
+
+query
+SELECT setting, source FROM pg_settings WHERE name = 'bytea_output';
+----
+setting	source
+escape	session
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT setting FROM pg_settings WHERE name = 'bytea_output';
+----
+setting
+hex
+
+
+connection rubick_settings user=pudge_settings_hook password=pudge_settings_pw
+statement ok
+SET IntervalStyle = 'sql_standard';
+
+
+connection rubick_settings user=pudge_settings_hook password=pudge_settings_pw
+query
+SELECT setting, source FROM pg_settings WHERE name = 'IntervalStyle';
+----
+setting	source
+sql_standard	session
+
+
+connection default
+query
+SELECT setting, source FROM pg_settings WHERE name = 'IntervalStyle';
+----
+setting	source
+postgres	default
+
+
+connection default
+query
+SELECT has_table_privilege('pudge_settings_hook', 'pg_settings', 'SELECT') AS can_read;
+----
+can_read
+t
+
+
+connection default
+statement ok
+DROP ROLE pudge_settings_hook;

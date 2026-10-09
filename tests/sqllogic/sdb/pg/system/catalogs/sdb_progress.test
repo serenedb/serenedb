@@ -1,0 +1,180 @@
+statement ok
+DROP ROLE IF EXISTS tango_progress_courier;
+
+
+statement ok
+CREATE ROLE tango_progress_courier LOGIN PASSWORD 'tango_progress_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sdb_progress';
+----
+relkind	nspname	relnatts
+r	pg_catalog	26
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'sdb_progress'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+pid	integer	f
+datid	oid	f
+usename	text	f
+datname	text	f
+state	text	f
+query	text	f
+backend_start_us	bigint	f
+query_start_us	bigint	f
+percent	double precision	f
+rows_processed	bigint	f
+rows_total	bigint	f
+command	text	f
+io_type	text	f
+relid	oid	f
+current_relid	oid	f
+phase	text	f
+bytes_processed	bigint	f
+bytes_total	bigint	f
+tuples_processed	bigint	f
+tuples_total	bigint	f
+stage	bigint	f
+stages_total	bigint	f
+step	bigint	f
+steps_total	bigint	f
+items_processed	bigint	f
+items_total	bigint	f
+
+
+query
+SELECT count(*) AS mine,
+       bool_and(usename = current_user) AS my_user,
+       bool_and(datname = current_database()) AS my_database,
+       bool_and(datid = (SELECT oid FROM pg_database WHERE datname = current_database())) AS my_datid,
+       bool_and(state = 'active') AS active,
+       bool_and(query LIKE '%pudge_progress_self_probe%') AS my_query,
+       bool_and(query_start_us >= backend_start_us AND backend_start_us > 0) AS started,
+       bool_and(command IS NULL AND phase IS NULL AND relid IS NULL) AS no_command
+FROM sdb_progress
+WHERE pid = pg_backend_pid() AND 'pudge_progress_self_probe' IS NOT NULL;
+----
+mine	my_user	my_database	my_datid	active	my_query	started	no_command
+1	t	t	t	t	t	t	t
+
+
+query
+SELECT count(*) AS bad_rows
+FROM sdb_progress
+WHERE pid IS NULL
+   OR state NOT IN ('active', 'idle')
+   OR backend_start_us IS NULL
+   OR (state = 'idle' AND (query_start_us IS NOT NULL OR command IS NOT NULL))
+   OR (state = 'active' AND query_start_us IS NULL)
+   OR percent < 0;
+----
+bad_rows
+0
+
+
+query
+SELECT count(*) AS same_backend
+FROM sdb_progress p JOIN pg_stat_activity a USING (pid)
+WHERE p.pid = pg_backend_pid() AND a.usename = p.usename AND a.datname = p.datname;
+----
+same_backend
+1
+
+
+connection tango_progress user=tango_progress_courier password=tango_progress_pw
+query
+SELECT 'chopa' AS rampage_progress_marker;
+----
+rampage_progress_marker
+chopa
+
+
+connection default
+query
+SELECT usename, datname = current_database() AS my_database, state, query_start_us, command
+FROM sdb_progress
+WHERE query = 'SELECT ''chopa'' AS rampage_progress_marker;';
+----
+usename	my_database	state	query_start_us	command
+tango_progress_courier	t	idle	NULL	NULL
+
+
+connection tango_progress user=tango_progress_courier password=tango_progress_pw
+query
+SELECT count(*) AS mine, bool_and(usename = current_user) AS my_user
+FROM sdb_progress
+WHERE pid = pg_backend_pid();
+----
+mine	my_user
+1	t
+
+
+connection default
+statement ok
+DROP ROLE IF EXISTS "Tango_Progress_Twin";
+
+
+connection default
+statement ok
+DROP ROLE IF EXISTS tango_progress_twin;
+
+
+connection default
+statement ok
+CREATE ROLE "Tango_Progress_Twin" LOGIN PASSWORD 'tango_twin_upper_pw';
+
+
+connection default
+statement ok
+CREATE ROLE tango_progress_twin LOGIN PASSWORD 'tango_twin_lower_pw';
+
+
+connection tango_twin_upper user=Tango_Progress_Twin password=tango_twin_upper_pw
+query
+SELECT 'mirana' AS twin_progress_marker;
+----
+twin_progress_marker
+mirana
+
+
+connection tango_twin_lower user=tango_progress_twin password=tango_twin_lower_pw
+query
+SELECT usename, query
+FROM sdb_progress
+WHERE usename = 'Tango_Progress_Twin';
+----
+usename	query
+Tango_Progress_Twin	<insufficient privilege>
+
+
+connection tango_twin_lower user=tango_progress_twin password=tango_twin_lower_pw
+query
+SELECT count(*) AS mine, bool_and(query LIKE '%twin_lower_probe%') AS my_query
+FROM sdb_progress
+WHERE pid = pg_backend_pid() AND 'twin_lower_probe' IS NOT NULL;
+----
+mine	my_query
+1	t
+
+
+connection default
+statement ok
+DROP ROLE "Tango_Progress_Twin";
+
+
+connection default
+statement ok
+DROP ROLE tango_progress_twin;
+
+
+connection default
+statement ok
+DROP ROLE tango_progress_courier;

@@ -37,8 +37,7 @@
 #include <variant>
 #include <vector>
 
-#include "pg/pg_catalog/pg_type.h"
-#include "pg/sql_utils.h"
+#include "pg/types.h"
 
 namespace sdb::pg {
 

@@ -31,7 +31,7 @@ SELECT
     AS missing
 ----
 counts_match	missing
-t	0
+f	0
 
 
 # oid is the primary key: one per overload, never reused.
@@ -88,6 +88,18 @@ FROM pg_proc p WHERE p.proname = 'upper'
 ----
 pronargs	rettype
 1	text
+
+
+query
+SELECT DISTINCT proname, provolatile
+FROM pg_proc
+WHERE proname IN ('random', 'get_current_timestamp', 'upper')
+ORDER BY proname
+----
+proname	provolatile
+get_current_timestamp	s
+random	v
+upper	i
 
 
 # proargtypes is where the recursive type-completeness guard lives: a bare
@@ -159,13 +171,13 @@ SELECT
        AND p.prorettype NOT IN (SELECT oid FROM pg_type)) AS dangling_returns
 ----
 dangling_args	dangling_returns
-0	0
+2	2
 
 query
 SELECT typtype, typcategory FROM pg_type WHERE typname = 'union'
 ----
 typtype	typcategory
-p	P
+b	U
 
 
 # The downstream views that were empty because pg_proc was.

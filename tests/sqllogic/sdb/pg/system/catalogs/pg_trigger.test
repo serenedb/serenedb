@@ -1,0 +1,188 @@
+statement ok
+DROP TABLE IF EXISTS zeus_trg_bolt;
+
+
+statement ok
+DROP TABLE IF EXISTS zeus_trg_log;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_trigger';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+2620	r	19	f	10037	pg_catalog
+
+
+query
+SELECT attname, atttypid, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_trigger'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	atttypid	attnotnull
+oid	26	t
+tgrelid	26	t
+tgparentid	26	t
+tgname	19	t
+tgfoid	26	t
+tgtype	21	t
+tgenabled	18	t
+tgisinternal	16	t
+tgconstrrelid	26	t
+tgconstrindid	26	t
+tgconstraint	26	t
+tgdeferrable	16	t
+tginitdeferred	16	t
+tgnargs	21	t
+tgattr	22	t
+tgargs	17	t
+tgqual	194	f
+tgoldtable	19	f
+tgnewtable	19	f
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_trigger'::regclass AND attnum > 0 AND attname <> 'tgattr'
+ORDER BY attnum;
+----
+attname	type
+oid	oid
+tgrelid	oid
+tgparentid	oid
+tgname	name
+tgfoid	oid
+tgtype	smallint
+tgenabled	"char"
+tgisinternal	boolean
+tgconstrrelid	oid
+tgconstrindid	oid
+tgconstraint	oid
+tgdeferrable	boolean
+tginitdeferred	boolean
+tgnargs	smallint
+tgargs	bytea
+tgqual	pg_node_tree
+tgoldtable	name
+tgnewtable	name
+
+
+statement ok
+CREATE TABLE zeus_trg_bolt (id INT, dmg INT);
+
+
+statement ok
+CREATE TABLE zeus_trg_log (tag TEXT, id INT);
+
+
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgrelid = 'zeus_trg_bolt'::regclass;
+----
+n
+0
+
+
+statement ok
+CREATE TRIGGER zeus_trg_del AFTER DELETE ON zeus_trg_bolt FOR EACH ROW
+  INSERT INTO zeus_trg_log VALUES ('del', OLD.id);
+
+
+statement ok
+CREATE TRIGGER zeus_trg_ins AFTER INSERT ON zeus_trg_bolt FOR EACH STATEMENT
+  INSERT INTO zeus_trg_log VALUES ('ins', 0);
+
+
+statement ok
+CREATE TRIGGER zeus_trg_upd AFTER UPDATE OF dmg ON zeus_trg_bolt FOR EACH STATEMENT
+  INSERT INTO zeus_trg_log VALUES ('upd', 0);
+
+
+statement ok
+CREATE TRIGGER zeus_trg_new AFTER INSERT ON zeus_trg_bolt REFERENCING NEW TABLE AS fresh FOR EACH STATEMENT
+  INSERT INTO zeus_trg_log VALUES ('new', 0);
+
+
+query
+SELECT tgname, tgrelid::regclass::text AS rel, tgparentid, tgtype, tgenabled,
+       tgisinternal, tgconstrrelid, tgconstrindid, tgconstraint, tgdeferrable,
+       tginitdeferred, tgnargs, coalesce(nullif(array_to_string(tgattr, ','), ''), '-') AS tgattr, octet_length(tgargs) AS tgargs, tgqual IS NULL AS no_qual,
+       tgoldtable IS NULL AS no_old, tgnewtable
+FROM pg_trigger
+WHERE tgrelid = 'zeus_trg_bolt'::regclass
+ORDER BY tgname;
+----
+tgname	rel	tgparentid	tgtype	tgenabled	tgisinternal	tgconstrrelid	tgconstrindid	tgconstraint	tgdeferrable	tginitdeferred	tgnargs	tgattr	tgargs	no_qual	no_old	tgnewtable
+zeus_trg_del	zeus_trg_bolt	0	9	O	f	0	0	0	f	f	0	-	0	t	t	NULL
+zeus_trg_ins	zeus_trg_bolt	0	4	O	f	0	0	0	f	f	0	-	0	t	t	NULL
+zeus_trg_new	zeus_trg_bolt	0	4	O	f	0	0	0	f	f	0	-	0	t	t	fresh
+zeus_trg_upd	zeus_trg_bolt	0	16	O	f	0	0	0	f	f	0	2	0	t	t	NULL
+
+
+query
+SELECT tgname, tgrelid::regclass::text AS rel
+FROM pg_trigger
+WHERE oid = (SELECT oid FROM pg_trigger WHERE tgname = 'zeus_trg_upd');
+----
+tgname	rel
+zeus_trg_upd	zeus_trg_bolt
+
+
+query
+SELECT t.tgname, a.attname
+FROM pg_trigger t
+JOIN pg_attribute a ON a.attrelid = t.tgrelid AND a.attnum = ANY (t.tgattr)
+WHERE t.tgrelid = 'zeus_trg_bolt'::regclass;
+----
+tgname	attname
+zeus_trg_upd	dmg
+
+
+query
+SELECT count(*) AS n
+FROM (SELECT * FROM pg_trigger OFFSET 0) t
+WHERE t.tgrelid = 'zeus_trg_bolt'::regclass;
+----
+n
+4
+
+
+query
+SELECT c.relname, c.relhastriggers
+FROM pg_class c
+WHERE c.relname IN ('zeus_trg_bolt', 'zeus_trg_log')
+ORDER BY 1;
+----
+relname	relhastriggers
+zeus_trg_bolt	t
+zeus_trg_log	f
+
+
+statement ok
+DROP TRIGGER zeus_trg_ins ON zeus_trg_bolt;
+
+
+query
+SELECT tgname FROM pg_trigger WHERE tgrelid = 'zeus_trg_bolt'::regclass ORDER BY 1;
+----
+tgname
+zeus_trg_del
+zeus_trg_new
+zeus_trg_upd
+
+
+statement ok
+DROP TABLE zeus_trg_bolt;
+
+
+query
+SELECT count(*) AS n FROM pg_trigger WHERE tgname LIKE 'zeus_trg%';
+----
+n
+0
+
+
+statement ok
+DROP TABLE zeus_trg_log;

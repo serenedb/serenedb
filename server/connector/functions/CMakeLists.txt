@@ -15,7 +15,6 @@ target_sources(
         string.cpp
         system.cpp
         minhash.cpp
-        ruleutils.cpp
         search.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp

@@ -1,0 +1,440 @@
+statement ok
+DROP VIEW IF EXISTS invoker_isc_view;
+
+
+statement ok
+DROP TABLE IF EXISTS invoker_isc_enum;
+
+
+statement ok
+DROP TABLE IF EXISTS invoker_isc_orbs;
+
+
+statement ok
+DROP TABLE IF EXISTS sven_isc_storm;
+
+
+statement ok
+DROP TABLE IF EXISTS invoker_isc_moods;
+
+
+statement ok
+DROP TYPE IF EXISTS invoker_isc_mood;
+
+
+statement ok
+DROP TYPE IF EXISTS invoker_isc_comp;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS invoker_isc_seq;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rubick_isc_ns CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS sven_isc_knight;
+
+
+statement ok
+CREATE TABLE invoker_isc_orbs (id int PRIMARY KEY, quas text NOT NULL, wex numeric(10,2) DEFAULT 1.25, exort bigint, sunstrike double precision, cold boolean DEFAULT true, ts timestamp, tstz timestamptz, d date, arr int[], js json, u uuid, b bytea, iv interval, tm time, r4 real, sm smallint, gen int GENERATED ALWAYS AS (id * 2) STORED);
+
+
+query
+SELECT table_catalog = current_database() AS cat_ok, table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, character_maximum_length, character_octet_length, numeric_precision, numeric_precision_radix, numeric_scale, datetime_precision, interval_type, interval_precision, udt_catalog = current_database() AS udt_cat_ok, udt_schema, udt_name, dtd_identifier, is_self_referencing, is_identity, is_generated, is_updatable
+FROM information_schema.columns WHERE table_name = 'invoker_isc_orbs' ORDER BY ordinal_position;
+----
+cat_ok	table_schema	table_name	column_name	ordinal_position	column_default	is_nullable	data_type	character_maximum_length	character_octet_length	numeric_precision	numeric_precision_radix	numeric_scale	datetime_precision	interval_type	interval_precision	udt_cat_ok	udt_schema	udt_name	dtd_identifier	is_self_referencing	is_identity	is_generated	is_updatable
+t	public	invoker_isc_orbs	id	1	NULL	NO	integer	NULL	NULL	32	2	0	NULL	NULL	NULL	t	pg_catalog	int4	1	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	quas	2	NULL	NO	text	NULL	1073741824	NULL	NULL	NULL	NULL	NULL	NULL	t	pg_catalog	text	2	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	wex	3	1.25	YES	numeric	NULL	NULL	10	10	2	NULL	NULL	NULL	t	pg_catalog	numeric	3	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	exort	4	NULL	YES	bigint	NULL	NULL	64	2	0	NULL	NULL	NULL	t	pg_catalog	int8	4	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	sunstrike	5	NULL	YES	double precision	NULL	NULL	53	2	NULL	NULL	NULL	NULL	t	pg_catalog	float8	5	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	cold	6	true	YES	boolean	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	t	pg_catalog	bool	6	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	ts	7	NULL	YES	timestamp without time zone	NULL	NULL	NULL	NULL	NULL	6	NULL	NULL	t	pg_catalog	timestamp	7	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	tstz	8	NULL	YES	timestamp with time zone	NULL	NULL	NULL	NULL	NULL	6	NULL	NULL	t	pg_catalog	timestamptz	8	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	d	9	NULL	YES	date	NULL	NULL	NULL	NULL	NULL	0	NULL	NULL	t	pg_catalog	date	9	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	arr	10	NULL	YES	ARRAY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	t	pg_catalog	_int4	10	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	js	11	NULL	YES	json	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	t	pg_catalog	json	11	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	u	12	NULL	YES	uuid	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	t	pg_catalog	uuid	12	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	b	13	NULL	YES	bytea	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	t	pg_catalog	bytea	13	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	iv	14	NULL	YES	interval	NULL	NULL	NULL	NULL	NULL	6	NULL	NULL	t	pg_catalog	interval	14	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	tm	15	NULL	YES	time without time zone	NULL	NULL	NULL	NULL	NULL	6	NULL	NULL	t	pg_catalog	time	15	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	r4	16	NULL	YES	real	NULL	NULL	24	2	NULL	NULL	NULL	NULL	t	pg_catalog	float4	16	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	sm	17	NULL	YES	smallint	NULL	NULL	16	2	0	NULL	NULL	NULL	t	pg_catalog	int2	17	NO	NO	NEVER	YES
+t	public	invoker_isc_orbs	gen	18	NULL	YES	integer	NULL	NULL	32	2	0	NULL	NULL	NULL	t	pg_catalog	int4	18	NO	NO	ALWAYS	YES
+
+
+query
+SELECT c.column_name, c.ordinal_position = a.attnum AS pos_ok, c.udt_name = t.typname AS udt_ok, (c.is_nullable = 'NO') = a.attnotnull AS null_ok
+FROM information_schema.columns c
+JOIN pg_attribute a ON a.attrelid = 'invoker_isc_orbs'::regclass AND a.attname = c.column_name
+JOIN pg_type t ON t.oid = a.atttypid
+WHERE c.table_name = 'invoker_isc_orbs' AND c.ordinal_position <= 4 ORDER BY c.ordinal_position;
+----
+column_name	pos_ok	udt_ok	null_ok
+id	t	t	t
+quas	t	t	t
+wex	t	t	t
+exort	t	t	t
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, udt_name FROM information_schema.columns WHERE table_name = 'invoker_isc_orbs'
+  EXCEPT
+  SELECT table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, udt_name FROM information_schema.columns WHERE upper(table_name) = 'INVOKER_ISC_ORBS'
+) s;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, udt_name FROM information_schema.columns WHERE upper(table_name) = 'INVOKER_ISC_ORBS'
+  EXCEPT
+  SELECT table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'invoker_isc_orbs'
+) s;
+----
+diff
+0
+
+
+query
+SELECT table_name, count(*) AS n FROM information_schema.columns WHERE table_name IN ('invoker_isc_orbs', 'invoker_isc_nope') GROUP BY table_name;
+----
+table_name	n
+invoker_isc_orbs	18
+
+
+statement ok
+CREATE VIEW invoker_isc_view AS SELECT id, quas AS spell, exort + 1 AS forged FROM invoker_isc_orbs;
+
+
+statement ok
+CREATE TYPE invoker_isc_comp AS (x int);
+
+
+statement ok
+CREATE SEQUENCE invoker_isc_seq;
+
+
+statement ok
+CREATE INDEX invoker_isc_idx ON invoker_isc_orbs (exort);
+
+
+query
+SELECT table_name, column_name, ordinal_position, is_nullable, data_type, udt_name
+FROM information_schema.columns WHERE table_name LIKE 'invoker\_isc\_%' AND table_name <> 'invoker_isc_orbs'
+ORDER BY table_name, ordinal_position;
+----
+table_name	column_name	ordinal_position	is_nullable	data_type	udt_name
+invoker_isc_view	id	1	YES	integer	int4
+invoker_isc_view	spell	2	YES	text	text
+invoker_isc_view	forged	3	YES	bigint	int8
+
+
+query
+SELECT forged_col.is_updatable FROM information_schema.columns forged_col WHERE forged_col.table_name = 'invoker_isc_view' AND forged_col.column_name = 'forged';
+----
+is_updatable
+NO
+
+
+query
+SELECT count(*) AS n FROM information_schema.columns WHERE table_name IN ('invoker_isc_comp', 'invoker_isc_seq', 'invoker_isc_idx', 'invoker_isc_orbs_pkey');
+----
+n
+0
+
+
+query
+SELECT table_schema, table_name, column_name, ordinal_position, data_type, udt_name, is_nullable
+FROM information_schema.columns WHERE table_schema = 'pg_catalog' AND table_name = 'pg_class' AND ordinal_position <= 4 ORDER BY ordinal_position;
+----
+table_schema	table_name	column_name	ordinal_position	data_type	udt_name	is_nullable
+pg_catalog	pg_class	oid	1	oid	oid	NO
+pg_catalog	pg_class	relname	2	name	name	NO
+pg_catalog	pg_class	relnamespace	3	oid	oid	NO
+pg_catalog	pg_class	reltype	4	oid	oid	NO
+
+
+query
+SELECT column_name, ordinal_position, column_default, is_nullable, data_type, numeric_precision, numeric_scale, udt_name, dtd_identifier, is_generated
+FROM information_schema.columns WHERE table_schema = 'pg_catalog' AND table_name = 'pg_attrdef' ORDER BY ordinal_position;
+----
+column_name	ordinal_position	column_default	is_nullable	data_type	numeric_precision	numeric_scale	udt_name	dtd_identifier	is_generated
+oid	1	NULL	NO	oid	NULL	NULL	oid	1	NEVER
+adrelid	2	NULL	NO	oid	NULL	NULL	oid	2	NEVER
+adnum	3	NULL	NO	smallint	16	0	int2	3	NEVER
+adbin	4	NULL	NO	pg_node_tree	NULL	NULL	pg_node_tree	4	NEVER
+
+
+query
+SELECT table_name, column_name, data_type FROM information_schema.columns
+WHERE table_schema = 'information_schema' AND table_name = 'columns' AND ordinal_position <= 3 ORDER BY ordinal_position;
+----
+table_name	column_name	data_type
+columns	table_catalog	name
+columns	table_schema	name
+columns	table_name	name
+
+
+query
+SELECT table_name, count(*) AS n FROM information_schema.columns
+WHERE table_schema = 'pg_catalog' AND table_name IN ('pg_attrdef', 'pg_index', 'pg_settings', 'pg_class', 'pg_attribute')
+GROUP BY table_name ORDER BY table_name;
+----
+table_name	n
+pg_attrdef	4
+pg_attribute	25
+pg_class	34
+pg_index	21
+pg_settings	17
+
+
+query
+SELECT c.relname, c.relnatts = (SELECT count(*) FROM information_schema.columns ic WHERE ic.table_schema = 'pg_catalog' AND ic.table_name = c.relname) AS natts_ok
+FROM pg_class c WHERE c.oid IN (1247, 1259, 2604, 2610) ORDER BY c.relname;
+----
+relname	natts_ok
+pg_attrdef	t
+pg_class	t
+pg_index	t
+pg_type	t
+
+
+statement ok
+CREATE SCHEMA rubick_isc_ns;
+
+
+statement ok
+CREATE TABLE rubick_isc_ns.spell_steal (stolen text, lift int DEFAULT 3);
+
+
+statement ok
+CREATE TABLE rubick_isc_ns.invoker_isc_orbs (copied int);
+
+
+query
+SELECT table_schema, column_name FROM information_schema.columns WHERE table_name = 'invoker_isc_orbs' AND ordinal_position = 1 ORDER BY table_schema;
+----
+table_schema	column_name
+public	id
+rubick_isc_ns	copied
+
+
+statement ok
+ALTER TABLE rubick_isc_ns.spell_steal ADD COLUMN telekinesis bool NOT NULL DEFAULT false;
+
+
+statement ok
+ALTER TABLE rubick_isc_ns.spell_steal RENAME COLUMN lift TO fade_bolt;
+
+
+query
+SELECT table_schema, table_name, column_name, ordinal_position, column_default, is_nullable, data_type
+FROM information_schema.columns WHERE table_schema = 'rubick_isc_ns' ORDER BY table_name, ordinal_position;
+----
+table_schema	table_name	column_name	ordinal_position	column_default	is_nullable	data_type
+rubick_isc_ns	invoker_isc_orbs	copied	1	NULL	YES	integer
+rubick_isc_ns	spell_steal	stolen	1	NULL	YES	text
+rubick_isc_ns	spell_steal	fade_bolt	2	3	YES	integer
+rubick_isc_ns	spell_steal	telekinesis	3	false	NO	boolean
+
+
+statement ok
+ALTER TABLE rubick_isc_ns.spell_steal ALTER COLUMN fade_bolt TYPE bigint;
+
+
+statement ok
+ALTER TABLE rubick_isc_ns.spell_steal ALTER COLUMN fade_bolt DROP DEFAULT;
+
+
+statement ok
+ALTER TABLE rubick_isc_ns.spell_steal ALTER COLUMN stolen SET NOT NULL;
+
+
+query
+SELECT column_name, column_default, is_nullable, data_type, numeric_precision FROM information_schema.columns
+WHERE table_schema = 'rubick_isc_ns' AND table_name = 'spell_steal' AND column_name IN ('stolen', 'fade_bolt') ORDER BY ordinal_position;
+----
+column_name	column_default	is_nullable	data_type	numeric_precision
+stolen	NULL	NO	text	NULL
+fade_bolt	NULL	YES	bigint	64
+
+
+statement ok
+ALTER TABLE rubick_isc_ns.spell_steal DROP COLUMN fade_bolt;
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_schema = 'rubick_isc_ns' AND table_name = 'spell_steal' ORDER BY ordinal_position;
+----
+column_name
+stolen
+telekinesis
+
+
+statement ok
+DROP SCHEMA rubick_isc_ns CASCADE;
+
+
+query
+SELECT count(*) AS n FROM information_schema.columns WHERE table_schema = 'rubick_isc_ns';
+----
+n
+0
+
+
+statement ok
+CREATE TYPE invoker_isc_mood AS ENUM ('quas', 'wex');
+
+
+statement ok
+CREATE TABLE invoker_isc_enum (m invoker_isc_mood, c invoker_isc_comp, s bigserial);
+
+
+query
+SELECT column_name, data_type, udt_schema, udt_name, column_default LIKE 'nextval(%' AS seq_default, is_nullable
+FROM information_schema.columns WHERE table_name = 'invoker_isc_enum' ORDER BY ordinal_position;
+----
+column_name	data_type	udt_schema	udt_name	seq_default	is_nullable
+m	USER-DEFINED	public	invoker_isc_mood	NULL	YES
+c	USER-DEFINED	public	invoker_isc_comp	NULL	YES
+s	bigint	pg_catalog	int8	t	NO
+
+
+statement ok
+CREATE TABLE invoker_isc_moods (ms invoker_isc_mood[]);
+
+
+query
+SELECT column_name, data_type, udt_schema, udt_name FROM information_schema.columns WHERE table_name = 'invoker_isc_moods';
+----
+column_name	data_type	udt_schema	udt_name
+ms	ARRAY	public	_invoker_isc_mood
+
+
+statement ok
+DROP TABLE invoker_isc_moods;
+
+
+statement ok
+CREATE TABLE sven_isc_storm (bolt int, cleave text, gods int);
+
+
+statement ok
+CREATE ROLE sven_isc_knight LOGIN PASSWORD 'sven_isc_pw';
+
+
+connection c_sven1 user=sven_isc_knight password=sven_isc_pw
+query
+SELECT count(*) AS n FROM information_schema.columns WHERE table_name IN ('sven_isc_storm', 'invoker_isc_orbs');
+----
+n
+0
+
+
+connection c_sven1
+query
+SELECT count(*) > 0 AS visible FROM information_schema.columns WHERE table_schema = 'pg_catalog' AND table_name = 'pg_class';
+----
+visible
+t
+
+
+connection default
+statement ok
+GRANT SELECT (bolt), UPDATE (gods) ON sven_isc_storm TO sven_isc_knight;
+
+
+connection c_sven2 user=sven_isc_knight password=sven_isc_pw
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'sven_isc_storm' ORDER BY ordinal_position;
+----
+column_name
+bolt
+gods
+
+
+connection default
+statement ok
+GRANT SELECT ON sven_isc_storm TO sven_isc_knight;
+
+
+connection c_sven3 user=sven_isc_knight password=sven_isc_pw
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'sven_isc_storm' ORDER BY ordinal_position;
+----
+column_name
+bolt
+cleave
+gods
+
+
+connection default
+statement ok
+REVOKE SELECT ON sven_isc_storm FROM sven_isc_knight;
+
+
+connection c_sven4 user=sven_isc_knight password=sven_isc_pw
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'sven_isc_storm' ORDER BY ordinal_position;
+----
+column_name
+gods
+
+
+connection default
+statement ok
+REVOKE ALL ON sven_isc_storm FROM sven_isc_knight;
+
+
+statement ok
+DROP TABLE sven_isc_storm;
+
+
+statement ok
+DROP ROLE sven_isc_knight;
+
+
+statement ok
+DROP VIEW invoker_isc_view;
+
+
+query
+SELECT count(*) AS n FROM information_schema.columns WHERE table_name = 'invoker_isc_view';
+----
+n
+0
+
+
+statement ok
+DROP TABLE invoker_isc_enum;
+
+
+statement ok
+DROP TABLE invoker_isc_orbs;
+
+
+statement ok
+DROP TYPE invoker_isc_mood;
+
+
+statement ok
+DROP TYPE invoker_isc_comp;
+
+
+statement ok
+DROP SEQUENCE invoker_isc_seq;
+
+
+query
+SELECT count(*) AS n FROM information_schema.columns WHERE table_name LIKE 'invoker\_isc\_%' OR table_name LIKE 'sven\_isc\_%';
+----
+n
+0

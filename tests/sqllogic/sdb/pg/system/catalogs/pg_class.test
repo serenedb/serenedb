@@ -1,0 +1,859 @@
+statement ok
+DROP SCHEMA IF EXISTS kunkka_cls_ns CASCADE;
+
+
+statement ok
+DROP VIEW IF EXISTS pudge_cls_view;
+
+
+statement ok
+DROP VIEW IF EXISTS pudge_cls_view2;
+
+
+statement ok
+DROP TABLE IF EXISTS techies_cls_mine;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_cls_hook;
+
+
+statement ok
+DROP TABLE IF EXISTS aegis_cls_owned;
+
+
+statement ok
+DROP TABLE IF EXISTS aegis_cls_ctas;
+
+
+statement ok
+DROP TABLE IF EXISTS aegis_cls_keyed;
+
+
+statement ok
+DROP TABLE IF EXISTS "Pudge_Cls_Upper";
+
+
+statement ok
+DROP TABLE IF EXISTS aegis_cls_pair;
+
+
+statement ok
+DROP TABLE IF EXISTS aegis_cls_moved;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS pudge_cls_seq;
+
+
+statement ok
+DROP TYPE IF EXISTS pudge_cls_comp;
+
+
+statement ok
+DROP SCHEMA IF EXISTS chin_cls_ns CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS sven_cls_knight;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'pudge\_cls\_%';
+----
+n
+0
+
+
+statement ok
+CREATE TABLE pudge_cls_hook (id int PRIMARY KEY, meat text NOT NULL, rot numeric(10,2) DEFAULT 1.5, CHECK (id > 0));
+
+
+statement ok
+CREATE VIEW pudge_cls_view AS SELECT id, meat FROM pudge_cls_hook;
+
+
+statement ok
+CREATE INDEX pudge_cls_idx ON pudge_cls_hook (meat);
+
+
+statement ok
+CREATE UNIQUE INDEX pudge_cls_uidx ON pudge_cls_hook (rot);
+
+
+statement ok
+CREATE SEQUENCE pudge_cls_seq;
+
+
+statement ok
+CREATE TYPE pudge_cls_comp AS (a int, b text);
+
+
+query
+SELECT relname, relkind, relnamespace::regnamespace::text AS nsp, relowner::regrole::text AS owner, relnatts, relchecks, relhasindex, relhasrules, relhastriggers, relpersistence, relreplident, relispopulated, reltablespace, reloftype, relispartition, relrowsecurity, relforcerowsecurity, relhassubclass, reloptions, relacl IS NULL AS no_acl
+FROM pg_class WHERE relname LIKE 'pudge\_cls\_%' ORDER BY relname;
+----
+relname	relkind	nsp	owner	relnatts	relchecks	relhasindex	relhasrules	relhastriggers	relpersistence	relreplident	relispopulated	reltablespace	reloftype	relispartition	relrowsecurity	relforcerowsecurity	relhassubclass	reloptions	no_acl
+pudge_cls_comp	c	public	postgres	2	0	f	f	f	p	n	t	0	0	f	f	f	f	NULL	t
+pudge_cls_hook	r	public	postgres	3	1	t	f	f	p	d	t	0	0	f	f	f	f	NULL	t
+pudge_cls_hook_pkey	i	public	postgres	1	0	f	f	f	p	n	t	0	0	f	f	f	f	NULL	t
+pudge_cls_idx	i	public	postgres	1	0	f	f	f	p	n	t	0	0	f	f	f	f	NULL	t
+pudge_cls_seq	S	public	postgres	3	0	f	f	f	p	n	t	0	0	f	f	f	f	NULL	t
+pudge_cls_uidx	i	public	postgres	1	0	f	f	f	p	n	t	0	0	f	f	f	f	NULL	t
+pudge_cls_view	v	public	postgres	2	0	f	t	f	p	n	t	0	0	f	f	f	f	NULL	t
+
+
+query
+SELECT c.relname, a.amname
+FROM pg_class c LEFT JOIN pg_am a ON a.oid = c.relam
+WHERE c.relname IN ('pudge_cls_hook', 'pudge_cls_view', 'pudge_cls_seq', 'pudge_cls_comp')
+ORDER BY c.relname;
+----
+relname	amname
+pudge_cls_comp	NULL
+pudge_cls_hook	heap
+pudge_cls_seq	NULL
+pudge_cls_view	NULL
+
+
+query
+SELECT relname, reltuples FROM pg_class WHERE relname IN ('pudge_cls_seq', 'pudge_cls_view', 'pudge_cls_comp') ORDER BY relname;
+----
+relname	reltuples
+pudge_cls_comp	-1
+pudge_cls_seq	1
+pudge_cls_view	-1
+
+
+query
+SELECT c.relname, t.typname, t.typtype, t.typrelid = c.oid AS back, t.typnamespace = c.relnamespace AS same_nsp
+FROM pg_class c JOIN pg_type t ON t.oid = c.reltype
+WHERE c.relname LIKE 'pudge\_cls\_%' ORDER BY c.relname;
+----
+relname	typname	typtype	back	same_nsp
+pudge_cls_comp	pudge_cls_comp	c	t	t
+pudge_cls_hook	pudge_cls_hook	c	t	t
+pudge_cls_view	pudge_cls_view	c	t	t
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'pudge\_cls\_%' AND reltype = 0 ORDER BY relname;
+----
+relname
+pudge_cls_hook_pkey
+pudge_cls_idx
+pudge_cls_seq
+pudge_cls_uidx
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE oid = 'pudge_cls_hook'::regclass;
+----
+relname	relkind
+pudge_cls_hook	r
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE oid::text = 'pudge_cls_hook'::regclass::oid::text;
+----
+relname	relkind
+pudge_cls_hook	r
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT oid, relname, relnamespace, reltype, relowner, relam, relkind, relnatts, relchecks, relhasindex, relhasrules, relhastriggers, relreplident
+  FROM pg_class WHERE oid IN ('pudge_cls_hook'::regclass, 'pudge_cls_view'::regclass, 'pudge_cls_idx'::regclass, 'pudge_cls_seq'::regclass, 'pudge_cls_comp'::regclass)
+  EXCEPT
+  SELECT oid, relname, relnamespace, reltype, relowner, relam, relkind, relnatts, relchecks, relhasindex, relhasrules, relhastriggers, relreplident
+  FROM pg_class WHERE relname::text LIKE 'pudge\_cls\_%' AND relname::text NOT IN ('pudge_cls_hook_pkey', 'pudge_cls_uidx')
+) s;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS diff FROM (
+  SELECT oid, relname, relnamespace, reltype, relowner, relam, relkind, relnatts, relchecks, relhasindex, relhasrules, relhastriggers, relreplident
+  FROM pg_class WHERE relname::text LIKE 'pudge\_cls\_%' AND relname::text NOT IN ('pudge_cls_hook_pkey', 'pudge_cls_uidx')
+  EXCEPT
+  SELECT oid, relname, relnamespace, reltype, relowner, relam, relkind, relnatts, relchecks, relhasindex, relhasrules, relhastriggers, relreplident
+  FROM pg_class WHERE oid IN ('pudge_cls_hook'::regclass, 'pudge_cls_view'::regclass, 'pudge_cls_idx'::regclass, 'pudge_cls_seq'::regclass, 'pudge_cls_comp'::regclass)
+) s;
+----
+diff
+0
+
+
+query
+SELECT relname FROM pg_class WHERE oid IN ('pudge_cls_hook'::regclass, 'pudge_cls_view'::regclass, 'pudge_cls_idx'::regclass) ORDER BY relname;
+----
+relname
+pudge_cls_hook
+pudge_cls_idx
+pudge_cls_view
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('pudge_cls_hook', 'pudge_cls_seq', 'pudge_cls_nope') ORDER BY relname;
+----
+relname
+pudge_cls_hook
+pudge_cls_seq
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relname LIKE 'pudge\_cls\_%';
+----
+n
+7
+
+
+query
+SELECT c.relname, n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'pudge_cls_view';
+----
+relname	nspname
+pudge_cls_view	public
+
+
+query
+SELECT 'pudge_cls_hook'::regclass::text AS reg, 'pudge_cls_hook'::regclass::oid = (SELECT oid FROM pg_class WHERE relname = 'pudge_cls_hook') AS same;
+----
+reg	same
+pudge_cls_hook	t
+
+
+query
+SELECT to_regclass('pudge_cls_view')::text AS v, to_regclass('pudge_cls_nope')::text AS nope;
+----
+v	nope
+pudge_cls_view	NULL
+
+
+query
+SELECT relname FROM pg_class WHERE oid = 'pudge_cls_view'::regclass AND relkind = 'r';
+----
+relname
+
+
+query
+SELECT relname FROM pg_class WHERE oid = 0;
+----
+relname
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts, relam, reltype::regtype::text AS reltype, relhasrules, relpersistence, relreplident
+FROM pg_class WHERE oid IN (1247, 1249, 1255, 1259) ORDER BY oid;
+----
+oid	relname	relkind	nsp	relnatts	relam	reltype	relhasrules	relpersistence	relreplident
+1247	pg_type	r	pg_catalog	32	2	pg_type	f	p	n
+1249	pg_attribute	r	pg_catalog	25	2	pg_attribute	f	p	n
+1255	pg_proc	r	pg_catalog	30	2	pg_proc	f	p	n
+1259	pg_class	r	pg_catalog	34	2	pg_class	f	p	n
+
+
+query
+SELECT 1259::regclass::text AS reg, 'pg_catalog.pg_class'::regclass::oid AS oid;
+----
+reg	oid
+pg_class	1259
+
+
+query
+SELECT relname, relkind, relhasrules, relnamespace::regnamespace::text AS nsp
+FROM pg_class WHERE relname IN ('pg_settings', 'pg_hba_file_rules', 'pg_tables', 'pg_roles') ORDER BY relname;
+----
+relname	relkind	relhasrules	nsp
+pg_hba_file_rules	v	t	pg_catalog
+pg_roles	v	t	pg_catalog
+pg_settings	v	t	pg_catalog
+pg_tables	v	t	pg_catalog
+
+
+query
+SELECT relname, reltype::regtype::text AS reltype FROM pg_class WHERE oid = 'pg_settings'::regclass;
+----
+relname	reltype
+pg_settings	pg_settings
+
+
+query
+SELECT relname, relkind FROM pg_class
+WHERE relnamespace = 'information_schema'::regnamespace AND relname IN ('columns', 'tables')
+ORDER BY relname;
+----
+relname	relkind
+columns	v
+tables	v
+
+
+query
+SELECT oid, relname FROM pg_class WHERE oid IN (1259, 1262) AND relnamespace = 11 ORDER BY oid;
+----
+oid	relname
+1259	pg_class
+1262	pg_database
+
+
+statement ok
+CREATE SCHEMA chin_cls_ns;
+
+
+statement ok
+CREATE TABLE chin_cls_ns.roshan_cls_pit (aegis int, cheese text);
+
+
+statement ok
+CREATE TABLE chin_cls_ns.pudge_cls_hook (x int);
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname, relnatts FROM pg_class WHERE relname = 'pudge_cls_hook' ORDER BY 1;
+----
+nsp	relname	relnatts
+chin_cls_ns	pudge_cls_hook	1
+public	pudge_cls_hook	3
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'chin_cls_ns'::regnamespace ORDER BY relname;
+----
+relname
+pudge_cls_hook
+roshan_cls_pit
+
+
+query
+SELECT n.nspname, c.relname
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname OPERATOR(pg_catalog.~) '^(pudge_cls_hook)$' COLLATE pg_catalog.default
+ORDER BY 1;
+----
+nspname	relname
+chin_cls_ns	pudge_cls_hook
+public	pudge_cls_hook
+
+
+query
+SELECT n.nspname, c.relname
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname OPERATOR(pg_catalog.~) '^(pudge_cls_hook)$' COLLATE pg_catalog.default
+  AND n.nspname OPERATOR(pg_catalog.~) '^(chin_cls_ns)$' COLLATE pg_catalog.default;
+----
+nspname	relname
+chin_cls_ns	pudge_cls_hook
+
+
+query
+SELECT n.nspname, c.relname
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname OPERATOR(pg_catalog.~) '^(pudge_cls_h.*)$' COLLATE pg_catalog.default
+ORDER BY 1, 2;
+----
+nspname	relname
+chin_cls_ns	pudge_cls_hook
+public	pudge_cls_hook
+public	pudge_cls_hook_pkey
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp FROM pg_class
+WHERE relname >= 'pudge_cls_hook' AND relname <= 'pudge_cls_hook'
+ORDER BY 1;
+----
+nsp
+chin_cls_ns
+public
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname FROM pg_class
+WHERE relname >= 'pudge_cls_hook' AND relname <= 'pudge_cls_hook_pkey'
+ORDER BY 1, 2;
+----
+nsp	relname
+chin_cls_ns	pudge_cls_hook
+public	pudge_cls_hook
+public	pudge_cls_hook_pkey
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname, relkind FROM pg_class
+WHERE starts_with(relname, 'pudge_cls_h')
+ORDER BY 1, 2;
+----
+nsp	relname	relkind
+chin_cls_ns	pudge_cls_hook	r
+public	pudge_cls_hook	r
+public	pudge_cls_hook_pkey	i
+
+
+query
+SELECT relname, relkind FROM pg_class
+WHERE relname ^@ 'pudge_cls_' AND relkind = 'i'
+ORDER BY 1;
+----
+relname	relkind
+pudge_cls_hook_pkey	i
+pudge_cls_idx	i
+pudge_cls_uidx	i
+
+
+query
+SELECT relname, relkind FROM pg_class
+WHERE relkind IN ('i', 'I') AND relname LIKE 'pudge\_cls\_%'
+ORDER BY 1;
+----
+relname	relkind
+pudge_cls_hook_pkey	i
+pudge_cls_idx	i
+pudge_cls_uidx	i
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname FROM pg_class
+WHERE relname OPERATOR(pg_catalog.~) '^(pudge_cls_h.*)$' COLLATE pg_catalog.default AND relkind <> 'i'
+ORDER BY 1, 2;
+----
+nsp	relname
+chin_cls_ns	pudge_cls_hook
+public	pudge_cls_hook
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname FROM pg_class
+WHERE starts_with(relname, 'pudge_cls_') AND relpages = 0 AND relkind IN ('r', 'S')
+ORDER BY 1, 2;
+----
+nsp	relname
+chin_cls_ns	pudge_cls_hook
+public	pudge_cls_hook
+public	pudge_cls_seq
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE starts_with(relname, 'pudge_cls_') AND relpages <> 0;
+----
+n
+0
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname FROM pg_class
+WHERE starts_with(relname, 'pudge_cls_h') AND relhasindex
+ORDER BY 1, 2;
+----
+nsp	relname
+public	pudge_cls_hook
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp, relname FROM pg_class
+WHERE relname >= 'pudge_cls_h' AND relname < 'pudge_cls_i'
+ORDER BY 1, 2;
+----
+nsp	relname
+chin_cls_ns	pudge_cls_hook
+public	pudge_cls_hook
+public	pudge_cls_hook_pkey
+
+
+query
+SELECT relname, relkind FROM pg_class
+WHERE relname OPERATOR(pg_catalog.~) '^(pudge_cls_hook_pkey)$' COLLATE pg_catalog.default;
+----
+relname	relkind
+pudge_cls_hook_pkey	i
+
+
+statement ok
+CREATE TABLE aegis_cls_keyed (id int, CONSTRAINT rubick_cls_pk PRIMARY KEY (id));
+
+
+statement ok
+CREATE TABLE "Pudge_Cls_Upper" (id int);
+
+
+statement ok
+CREATE TABLE aegis_cls_pair (a int, b int, UNIQUE (a, b));
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname = 'aegis_cls_pair_a_b_key';
+----
+relname	relkind
+aegis_cls_pair_a_b_key	i
+
+
+statement ok
+ALTER TABLE aegis_cls_pair RENAME TO aegis_cls_moved;
+
+
+query
+SELECT c.relname, t.relname AS owner FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid JOIN pg_class t ON t.oid = i.indrelid
+WHERE c.relname = 'aegis_cls_pair_a_b_key';
+----
+relname	owner
+aegis_cls_pair_a_b_key	aegis_cls_moved
+
+
+statement ok
+DROP TABLE aegis_cls_moved;
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'rubick\_cls\_%';
+----
+relname	relkind
+rubick_cls_pk	i
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE starts_with(relname, 'rubick_cls_') AND relkind = 'i';
+----
+relname	relkind
+rubick_cls_pk	i
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'Pudge\_Cls\_%';
+----
+relname
+Pudge_Cls_Upper
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'pudge\_cls\_up%';
+----
+relname
+
+
+query
+SELECT relname FROM pg_class
+WHERE relname OPERATOR(pg_catalog.~) '^(pudge_cls_upper)$' COLLATE pg_catalog.default;
+----
+relname
+
+
+statement ok
+DROP TABLE aegis_cls_keyed;
+
+
+statement ok
+DROP TABLE "Pudge_Cls_Upper";
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'pudge_cls_hook' AND relname = 'pudge_cls_seq';
+----
+n
+0
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('pudge_cls_seq', NULL);
+----
+relname
+pudge_cls_seq
+
+
+query
+SELECT 'chin_cls_ns.pudge_cls_hook'::regclass::text AS hook, 'chin_cls_ns.roshan_cls_pit'::regclass::text AS pit;
+----
+hook	pit
+chin_cls_ns.pudge_cls_hook	chin_cls_ns.roshan_cls_pit
+
+
+statement ok
+ALTER TABLE chin_cls_ns.roshan_cls_pit ADD COLUMN tango int;
+
+
+query
+SELECT relnatts FROM pg_class WHERE oid = 'chin_cls_ns.roshan_cls_pit'::regclass;
+----
+relnatts
+3
+
+
+statement ok
+ALTER TABLE chin_cls_ns.roshan_cls_pit RENAME TO roshan_cls_lair;
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'chin_cls_ns'::regnamespace ORDER BY relname;
+----
+relname
+pudge_cls_hook
+roshan_cls_lair
+
+
+query
+SELECT relname FROM pg_class WHERE relname = 'roshan_cls_pit';
+----
+relname
+
+
+statement ok
+DROP SCHEMA chin_cls_ns CASCADE;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('roshan_cls_lair', 'roshan_cls_pit');
+----
+n
+0
+
+
+query
+SELECT relnamespace::regnamespace::text AS nsp FROM pg_class WHERE relname = 'pudge_cls_hook';
+----
+nsp
+public
+
+
+statement ok
+CREATE TABLE techies_cls_mine (id int REFERENCES pudge_cls_hook(id), CONSTRAINT techies_cls_chk CHECK (id < 100), CONSTRAINT techies_cls_chk2 CHECK (id <> 50));
+
+
+query
+SELECT relname, relhastriggers, relchecks, relhasindex FROM pg_class WHERE relname = 'techies_cls_mine';
+----
+relname	relhastriggers	relchecks	relhasindex
+techies_cls_mine	t	2	f
+
+
+statement ok
+CREATE TABLE aegis_cls_owned (id serial PRIMARY KEY);
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'aegis\_cls\_owned%' ORDER BY relname;
+----
+relname	relkind
+aegis_cls_owned	r
+aegis_cls_owned_id_seq	S
+aegis_cls_owned_pkey	i
+
+
+query
+SELECT pg_get_serial_sequence('aegis_cls_owned', 'id') AS seq;
+----
+seq
+public.aegis_cls_owned_id_seq
+
+
+statement ok
+CREATE TABLE aegis_cls_ctas AS SELECT 1 AS a, 'x'::text AS b;
+
+
+query
+SELECT relname, relkind, relnatts FROM pg_class WHERE oid = 'aegis_cls_ctas'::regclass;
+----
+relname	relkind	relnatts
+aegis_cls_ctas	r	2
+
+
+statement ok
+CREATE VIEW pudge_cls_view2 AS SELECT 1 AS one;
+
+
+statement ok
+ALTER VIEW pudge_cls_view2 RENAME TO pudge_cls_view3;
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'pudge\_cls\_view_' ORDER BY relname;
+----
+relname	relkind
+pudge_cls_view3	v
+
+
+statement ok
+DROP VIEW pudge_cls_view3;
+
+
+statement ok
+CREATE ROLE sven_cls_knight LOGIN PASSWORD 'sven_cls_pw';
+
+
+statement ok
+GRANT SELECT ON pudge_cls_hook TO sven_cls_knight;
+
+
+query
+SELECT array_to_string(relacl, ',') AS relacl FROM pg_class WHERE oid = 'pudge_cls_hook'::regclass;
+----
+relacl
+postgres=arwdDxtm/postgres,sven_cls_knight=r/postgres
+
+
+query
+SELECT (aclexplode(relacl)).grantee::regrole::text AS grantee, (aclexplode(relacl)).privilege_type AS privilege
+FROM pg_class WHERE oid = 'pudge_cls_hook'::regclass ORDER BY 1, 2;
+----
+grantee	privilege
+postgres	DELETE
+postgres	INSERT
+postgres	MAINTAIN
+postgres	REFERENCES
+postgres	SELECT
+postgres	TRIGGER
+postgres	TRUNCATE
+postgres	UPDATE
+sven_cls_knight	SELECT
+
+
+query
+SELECT (d).grantee::regrole::text AS grantee, (d).is_grantable
+FROM (SELECT aclexplode(relacl) AS d FROM pg_class WHERE oid = 'pudge_cls_hook'::regclass) a
+WHERE (d).privilege_type = 'SELECT' ORDER BY 1;
+----
+grantee	is_grantable
+postgres	f
+sven_cls_knight	f
+
+
+query
+SELECT generate_series(1, 2) AS n;
+----
+n
+1
+2
+
+
+connection c_sven user=sven_cls_knight password=sven_cls_pw
+query
+SELECT relname, relkind, relowner::regrole::text AS owner FROM pg_class WHERE oid IN ('pudge_cls_hook'::regclass, 'pudge_cls_seq'::regclass) ORDER BY relname;
+----
+relname	relkind	owner
+pudge_cls_hook	r	postgres
+pudge_cls_seq	S	postgres
+
+
+connection default
+statement ok
+REVOKE SELECT ON pudge_cls_hook FROM sven_cls_knight;
+
+
+query
+SELECT array_to_string(relacl, ',') AS relacl FROM pg_class WHERE oid = 'pudge_cls_hook'::regclass;
+----
+relacl
+postgres=arwdDxtm/postgres
+
+
+statement ok
+DROP VIEW pudge_cls_view;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'pudge_cls_view';
+----
+n
+0
+
+
+statement ok
+DROP INDEX pudge_cls_idx;
+
+
+query
+SELECT relname, relhasindex FROM pg_class WHERE relname IN ('pudge_cls_idx', 'pudge_cls_hook');
+----
+relname	relhasindex
+pudge_cls_hook	t
+
+
+statement ok
+DROP TABLE techies_cls_mine;
+
+
+statement ok
+DROP TABLE pudge_cls_hook;
+
+
+query
+SELECT relname FROM pg_class WHERE relname IN ('pudge_cls_hook', 'pudge_cls_hook_pkey', 'pudge_cls_uidx');
+----
+relname
+
+
+statement ok
+DROP TABLE aegis_cls_owned;
+
+
+statement ok
+DROP TABLE aegis_cls_ctas;
+
+
+statement ok
+DROP SEQUENCE pudge_cls_seq;
+
+
+statement ok
+DROP TYPE pudge_cls_comp;
+
+
+statement ok
+DROP ROLE sven_cls_knight;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'pudge\_cls\_%' OR relname LIKE 'aegis\_cls\_%';
+----
+n
+0
+
+
+statement ok
+CREATE SCHEMA kunkka_cls_ns;
+
+
+statement ok
+CREATE TABLE kunkka_cls_ns.idx (id int);
+
+
+statement ok
+CREATE INDEX kunkka_cls_idx_i ON kunkka_cls_ns.idx (id);
+
+
+statement ok
+CREATE TABLE kunkka_cls_ns.pk (id int PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE kunkka_cls_ns.fk (id int REFERENCES kunkka_cls_ns.pk (id));
+
+
+statement ok
+CREATE TABLE kunkka_cls_ns.plain (id int);
+
+
+query
+SELECT relname, relhasindex FROM pg_class
+WHERE relnamespace = 'kunkka_cls_ns'::regnamespace AND relkind = 'r' ORDER BY relname;
+----
+relname	relhasindex
+fk	f
+idx	t
+pk	t
+plain	f
+
+
+query
+SELECT c.relname, c.relhasindex FROM pg_class c
+WHERE c.relnamespace = 'kunkka_cls_ns'::regnamespace ORDER BY c.relname;
+----
+relname	relhasindex
+fk	f
+idx	t
+kunkka_cls_idx_i	f
+pk	t
+pk_pkey	f
+plain	f
+
+
+statement ok
+DROP SCHEMA kunkka_cls_ns CASCADE;

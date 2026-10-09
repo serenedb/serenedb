@@ -13,6 +13,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
+        exclude: ^tests/sqllogic/any/pg/system/catalog_conformance\.test$
       - id: check-ast
       - id: check-case-conflict
       - id: check-executables-have-shebangs

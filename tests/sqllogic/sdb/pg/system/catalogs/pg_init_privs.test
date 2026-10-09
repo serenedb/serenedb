@@ -1,0 +1,91 @@
+statement ok
+DROP SCHEMA IF EXISTS roshan_ini_pit CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS roshan_ini_cheese;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_init_privs'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+3394	pg_init_privs	r	pg_catalog	5
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_init_privs'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+objoid	oid	t
+classoid	oid	t
+objsubid	integer	t
+privtype	"char"	t
+initprivs	aclitem[]	t
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_init_privs;
+----
+readable
+t
+
+
+query
+SELECT count(*) FROM pg_init_privs WHERE privtype NOT IN ('i', 'e');
+----
+count
+0
+
+
+statement ok
+CREATE ROLE roshan_ini_cheese LOGIN PASSWORD 'refresher';
+
+
+statement ok
+CREATE SCHEMA roshan_ini_pit AUTHORIZATION roshan_ini_cheese;
+
+
+statement ok
+CREATE TABLE roshan_ini_pit.aegis (id INTEGER);
+
+
+statement ok
+GRANT SELECT ON roshan_ini_pit.aegis TO PUBLIC;
+
+
+query
+SELECT count(*) FROM pg_init_privs
+WHERE objoid IN ('roshan_ini_pit'::regnamespace::oid, 'roshan_ini_pit.aegis'::regclass::oid);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_init_privs WHERE objoid >= 16384;
+----
+count
+0
+
+
+connection c_roshan_ini user=roshan_ini_cheese password=refresher
+query
+SELECT has_table_privilege('pg_init_privs', 'SELECT') AS readable,
+       count(*) FILTER (WHERE objoid = 'roshan_ini_pit.aegis'::regclass) AS mine
+FROM pg_init_privs;
+----
+readable	mine
+t	0
+
+
+connection default
+statement ok
+DROP SCHEMA roshan_ini_pit CASCADE;
+
+
+statement ok
+DROP ROLE roshan_ini_cheese;

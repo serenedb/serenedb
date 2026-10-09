@@ -202,7 +202,6 @@ start_postgres_docker() {
 	# Same path inside the container as outside, so tests that COPY FROM a
 	# host path via postgres_execute() resolve it in the postgres backend.
 	export SDB_WORKSPACE_DIR="$WORKSPACE"
-	export PG_FIXTURE_IMAGE="${PG_FIXTURE_IMAGE:-serenedb/serenedb-test-postgres:$("$WORKSPACE/tests/sqllogic/fixtures/image_tag.sh" "$WORKSPACE/tests/sqllogic/fixtures/postgres")}"
 	echo "Starting postgres in docker (host port $POSTGRES_HOST_PORT)..."
 	docker compose -p "$PG_DOCKER_PROJECT" -f "$SCRIPT_DIR/docker-compose.postgres.yml" up -d || return 1
 	for i in $(seq 1 30); do
@@ -224,8 +223,6 @@ start_postgres_docker() {
 # tests query fixtures that must already be in it. Idempotent: repeated runs
 # against the same server skip straight past.
 provision_postgres() {
-	PGPASSWORD="" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 -q \
-		-c "CREATE EXTENSION IF NOT EXISTS postgis" || return 1
 	if PGPASSWORD="" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres \
 		-tAc "SELECT 1 FROM pg_database WHERE datname='postgresscanner'" | grep -q 1; then
 		echo "Master database 'postgresscanner' already provisioned, skipping."
@@ -255,7 +252,7 @@ ensure_postgres_fixture() {
 	fi
 	provision_postgres || return 1
 	# Upstream tests gate on this: require-env POSTGRES_TEST_DATABASE_AVAILABLE.
-	export POSTGRES_TEST_DATABASE_AVAILABLE=1 HAS_POSTGIS=1
+	export POSTGRES_TEST_DATABASE_AVAILABLE=1
 	if grep -qE '^SDB_SANITIZE:STRING=.+' "$WORKSPACE/$BUILD_DIR/CMakeCache.txt"; then
 		export SANITIZER_BUILD=1
 	fi

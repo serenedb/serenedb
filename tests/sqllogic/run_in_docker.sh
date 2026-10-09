@@ -105,9 +105,6 @@ mkdir -p "${SDB_TIMING_CACHE:-${HOME}/.cache/serenedb-timing-cache}"
 if test -z "$BUILD_IMAGE"; then
 	export BUILD_IMAGE=serenedb/serenedb-build-ubuntu:latest
 fi
-if test -z "${PG_FIXTURE_IMAGE:-}"; then
-	export PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$("$SQLLOGIC_DIR/fixtures/image_tag.sh" "$SQLLOGIC_DIR/fixtures/postgres")"
-fi
 
 # Pass host user to compose/docker for correct file ownership
 export DOCKER_UID="$(id -u)"

@@ -9,7 +9,9 @@ services:
     command: ["sh", "-c", "chmod 0777 /test-tmp"]
 
   postgres:
-    image: ${PG_FIXTURE_IMAGE}
+    build:
+      context: ${SQLLOGIC_DIR}/fixtures/postgres
+    image: serenedb-test-postgres:18-3.6
     depends_on:
       test-tmp-init:
         condition: service_completed_successfully

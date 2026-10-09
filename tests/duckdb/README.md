@@ -13,8 +13,7 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
   the driver will `ninja unittest` for you if needed. Configure with
   `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` to skip it (the driver then refuses to run).
 - `docker` for the `postgres_scanner` suite only, and only when `PGHOST` isn't
-  already set: the runner then brings up the PostGIS fixture image
-  (`tests/sqllogic/fixtures/postgres`, postgres 18.6) on a free port via
+  already set: the runner then brings up `postgres:18.6` on a free port via
   [docker-compose.postgres.yml](docker-compose.postgres.yml). CI sets `PGHOST`,
   so it reuses the postgres already in the compose stack.
 - `docker` for the `iceberg` suite, unless the Iceberg REST fixture already
@@ -225,7 +224,7 @@ Upstream gates tests that need a service or a credential behind `require-env`. `
 | azure | Azurite on `127.0.0.1:10000` with upstream's containers and `data/` ([provision_azurite.py](provision_azurite.py)) | `AZURE_STORAGE_CONNECTION_STRING`, `AZ_*` |
 | azure, httpfs | squid on `localhost:3128` and, with basic auth, `localhost:3129` (upstream's `scripts/run_squid.sh`) | `HTTP_PROXY_RUNNING`, `HTTP_PROXY_PUBLIC`, `HTTP_PROXY_PRIVATE*` |
 | iceberg | the REST fixture and the Spark data ([above](#the-iceberg-fixture)), `mitmdump` on `localhost:8878` as its proxy and on `localhost:19133` with the vended-credentials script | `FIXTURE_SERVER_AVAILABLE`, `DUCKDB_ICEBERG_HAVE_GENERATED_DATA`, `HTTP_PROXY_PUBLIC`, `VENDED_CREDENTIAL_REFRESH_PROXY` |
-| postgres_scanner | the PostGIS fixture image (`tests/sqllogic/fixtures/postgres`) with `postgis` created | `HAS_POSTGIS`; `SANITIZER_BUILD` when the build sets `SDB_SANITIZE` |
+| postgres_scanner | the concurrent catalog-scan stress test, in sanitizer builds (`SDB_SANITIZE` set) | `SANITIZER_BUILD` |
 
 The S3-gated httpfs tests share bucket objects (both `version_id_pinning` tests rewrite the same file), so they run sequentially, like the postgres_scanner suite.
 
@@ -245,6 +244,7 @@ What stays gated, and why:
 - **Real cloud accounts or identity providers**: iceberg `ICEBERG_AWS_REMOTE_AVAILABLE`, `ICEBERG_SNOWFLAKE_REMOTE_AVAILABLE`, `SNOWFLAKE_*`, `R2_TOKEN`, `NO_REGION_SET`, `AWS_CREDENTIALS_REFRESH_FILE`, `ICEBERG_REMOTE_INSERT_READY`; azure `ABFSS_*` (ADLS Gen2, which Azurite does not emulate), `AZURE_CLIENT_*`, `AZURE_TENANT_ID`, `AZURE_AUTH_ENV`, `AZURE_ACCESS_TOKEN`, `AZ_CLI_LOGGED_IN`, `PUBLIC_AZ_STORAGE_ACCOUNT`; httpfs `HUGGING_FACE_TOKEN*`; postgres `PG_OAUTH_DSN`/`PGOAUTHTOKEN`, `AWS_RDS_DATABASE_AVAILABLE`; iceberg `test_read_geometry_read_with_stats.test`, which reads a public Google Cloud bucket.
 - **Other catalog servers**: `NESSIE_SERVER_AVAILABLE`, `LAKEKEEPER_SERVER_AVAILABLE`, `POLARIS_SERVER_AVAILABLE` and the matching `CATALOG_TEST_CONFIG_SETUP` values each need that server and its own generated data; upstream runs each in a separate workflow. Only the REST fixture is set up here.
 - **Capabilities the fixture does not declare**: `SCAN_PLANNING_MODE server` and `ATOMIC_COMMIT_CONFLICT_SUPPORT` are absent from upstream's `fixture.json`.
+- **PostGIS**: `HAS_POSTGIS` (`attach_postgis.test`) needs PostGIS in the postgres service, which comes from the `serenedb-test-postgres` fixture image once that image is published publicly; the service is stock `postgres:18.6` until then.
 - **Never set upstream either**: httpfs `HTTP_PROXY` would proxy every request of the run, since DuckDB reads it from the process environment; azure `ENABLE_DATA_INTEGRITY` is a gate upstream added to disable its data-integrity test; core `VALIDATE_TAGS` checks the runner's tag selection and only means something under upstream's tag-filtered invocations.
 
 ## DuckDB file interop

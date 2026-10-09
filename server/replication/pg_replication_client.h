@@ -75,6 +75,15 @@ struct ConflictCounters {
   std::atomic<uint64_t> update_exists{0};
   std::atomic<uint64_t> update_missing{0};
   std::atomic<uint64_t> delete_missing{0};
+  std::atomic<uint64_t> multiple_unique_conflicts{0};
+
+  void Reset() noexcept {
+    insert_exists.store(0, std::memory_order_relaxed);
+    update_exists.store(0, std::memory_order_relaxed);
+    update_missing.store(0, std::memory_order_relaxed);
+    delete_missing.store(0, std::memory_order_relaxed);
+    multiple_unique_conflicts.store(0, std::memory_order_relaxed);
+  }
 };
 
 class PgReplicationClient final : public PublisherSession {
@@ -117,6 +126,7 @@ class PgReplicationClient final : public PublisherSession {
     return _latest_end_time.load(std::memory_order_relaxed);
   }
   const ConflictCounters& Conflicts() const noexcept { return _conflicts; }
+  void ResetConflicts() noexcept { _conflicts.Reset(); }
 
  private:
   enum class Job : uint8_t {
@@ -170,6 +180,8 @@ class PgReplicationClient final : public PublisherSession {
   const RelInfo* Relation(uint32_t relation_id) const;
   void OnRelation(const RelationMessage& message);
   void CheckRelation(const RelInfo& relation) const;
+  yaclib::Task<bool> MultipleUniqueConflicts(
+    duckdb::ColumnDataCollection& rows);
   bool ApplyChanges(const RelInfo& relation) const;
   yaclib::Task<bool> ApplyMessage(const PgOutputMessage& message);
   void BeginTxn(const BeginMessage& message);

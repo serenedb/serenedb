@@ -67,6 +67,7 @@
 #include "pg/system_table.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
+#include "replication/functions.h"
 #include "replication/repl_source.h"
 #include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
@@ -355,6 +356,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterPgTextCopyFunction(db);
   replication::RegisterReplicationSourceFunction(db);
+  replication::RegisterReplicationFunctions(db);
   pg::RegisterReplicationOriginStatus(db);
 
   connector::RegisterSearchFunctions(db);

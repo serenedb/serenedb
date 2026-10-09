@@ -247,10 +247,28 @@ std::vector<SubscriptionEngine::SubStats> SubscriptionEngine::Stats(
       stats.update_exists += conflicts.update_exists.load();
       stats.update_missing += conflicts.update_missing.load();
       stats.delete_missing += conflicts.delete_missing.load();
+      stats.multiple_unique_conflicts +=
+        conflicts.multiple_unique_conflicts.load();
     }
     result.push_back(stats);
   }
   return result;
+}
+
+void SubscriptionEngine::ResetStats(std::optional<duckdb::idx_t> subscription) {
+  const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+                     std::chrono::system_clock::now().time_since_epoch())
+                     .count();
+  absl::MutexLock lock{&_mu};
+  for (auto& [id, state] : _subs) {
+    if (subscription && *subscription != id) {
+      continue;
+    }
+    state.stats = {.stats_reset = now};
+    if (state.client) {
+      state.client->ResetConflicts();
+    }
+  }
 }
 
 void SubscriptionEngine::Stop(duckdb::idx_t subscription) {
@@ -390,6 +408,8 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       state.stats.update_exists += conflicts.update_exists.load();
       state.stats.update_missing += conflicts.update_missing.load();
       state.stats.delete_missing += conflicts.delete_missing.load();
+      state.stats.multiple_unique_conflicts +=
+        conflicts.multiple_unique_conflicts.load();
       state.client.reset();
       restart = state.restart;
       const bool failed = !restart && !state.stopping &&

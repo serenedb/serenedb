@@ -28,14 +28,19 @@
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
@@ -1114,6 +1119,55 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       }
       info.columns.push_back(std::move(column));
     }
+    const auto add_unique = [&](const auto& names) {
+      std::vector<size_t> positions;
+      for (const auto& name : names) {
+        const auto it = std::ranges::find(info.columns, name, &RelColumn::name);
+        if (it == info.columns.end()) {
+          return;
+        }
+        positions.push_back(it - info.columns.begin());
+      }
+      if (!positions.empty()) {
+        info.unique_keys.push_back(std::move(positions));
+      }
+    };
+    const auto& columns = table->GetColumns();
+    for (const auto& constraint : table->GetConstraints()) {
+      if (constraint->type != duckdb::ConstraintType::UNIQUE) {
+        continue;
+      }
+      const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
+      std::vector<std::string_view> names;
+      if (unique.HasIndex()) {
+        names.push_back(
+          columns.GetColumn(unique.GetIndex()).Name().GetIdentifierName());
+      } else {
+        for (const auto& name : unique.GetColumnNames()) {
+          names.push_back(name.GetIdentifierName());
+        }
+      }
+      add_unique(names);
+    }
+    table->ParentSchema(*this->_conn->context)
+      .Scan(*this->_conn->context, duckdb::CatalogType::INDEX_ENTRY,
+            [&](duckdb::CatalogEntry& entry) {
+              const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
+              if (!index.IsUnique() || index.GetTableName() != table->name) {
+                return;
+              }
+              std::vector<std::string_view> names;
+              for (const auto& expression : index.parsed_expressions) {
+                if (expression->GetExpressionClass() !=
+                    duckdb::ExpressionClass::COLUMN_REF) {
+                  return;
+                }
+                names.push_back(expression->Cast<duckdb::ColumnRefExpression>()
+                                  .GetColumnName()
+                                  .GetIdentifierName());
+              }
+              add_unique(names);
+            });
   });
   _relations[message.relation_id] = std::move(info);
 }
@@ -1466,6 +1520,27 @@ std::string PgReplicationClient::ApplyContext() const {
                       pg::FormatLsn(_final_lsn));
 }
 
+yaclib::Task<bool> PgReplicationClient::MultipleUniqueConflicts(
+  duckdb::ColumnDataCollection& rows) {
+  if (_in_txn) {
+    this->_txn_state->Rollback();
+    _in_txn = false;
+  }
+  auto probe = BuildUniqueConflictProbe(_batch, rows);
+  if (!probe) {
+    co_return false;
+  }
+  std::optional<int64_t> conflicting;
+  try {
+    auto prepared = this->_conn->Prepare(std::move(probe));
+    if (!prepared->HasError()) {
+      conflicting = co_await RunPrepared(*prepared);
+    }
+  } catch (const std::exception&) {
+  }
+  co_return conflicting.value_or(0) > 0;
+}
+
 yaclib::Task<bool> PgReplicationClient::RunBatch() {
   const auto& relation = *_batch.rel;
   StmtKey key{_batch.op, _batch.relid, _batch.keys, _batch.cols, _batch.full};
@@ -1489,6 +1564,19 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   }
   _batch.rows = 0;
   _batch.touched.clear();
+  std::optional<duckdb::ColumnDataCollection> retained;
+  if (_batch.op != 'D' && relation.unique_keys.size() > 1) {
+    duckdb::vector<duckdb::LogicalType> types;
+    for (const auto i : _batch.keys) {
+      types.push_back(relation.columns[i].type);
+    }
+    for (const auto i : _batch.cols) {
+      types.push_back(relation.columns[i].type);
+    }
+    retained.emplace(duckdb::Allocator::DefaultAllocator(), std::move(types));
+    _batch.retained = &*retained;
+  }
+  absl::Cleanup release = [this] { _batch.retained = nullptr; };
   _stream.ScanActive(true);
   absl::Cleanup scan = [this] { _stream.ScanActive(false); };
   std::optional<int64_t> affected;
@@ -1502,13 +1590,19 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   if (!affected) {
     if (error.errcode == ERRCODE_UNIQUE_VIOLATION && _batch.op != 'D') {
       const bool insert = _batch.op == 'I';
-      (insert ? _conflicts.insert_exists : _conflicts.update_exists)
-        .fetch_add(1, std::memory_order_relaxed);
+      std::string_view conflict = insert ? "insert_exists" : "update_exists";
+      if (retained && co_await MultipleUniqueConflicts(*retained)) {
+        conflict = "multiple_unique_conflicts";
+        _conflicts.multiple_unique_conflicts.fetch_add(
+          1, std::memory_order_relaxed);
+      } else {
+        (insert ? _conflicts.insert_exists : _conflicts.update_exists)
+          .fetch_add(1, std::memory_order_relaxed);
+      }
       error.errdetail = std::move(error.errmsg);
-      error.errmsg = absl::StrCat(
-        "conflict detected on relation \"", relation.schema, ".",
-        relation.table,
-        "\": conflict=", insert ? "insert_exists" : "update_exists");
+      error.errmsg =
+        absl::StrCat("conflict detected on relation \"", relation.schema, ".",
+                     relation.table, "\": conflict=", conflict);
     }
     if (error.errmsg.empty()) {
       error.errcode = ERRCODE_INTERNAL_ERROR;

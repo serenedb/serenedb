@@ -2,6 +2,7 @@ target_sources(
     sereneserver
     PRIVATE
         conninfo.cpp
+        functions.cpp
         pgoutput.cpp
         pg_replication_client.cpp
         publisher_session.cpp

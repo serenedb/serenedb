@@ -99,7 +99,7 @@ Remote transactions are applied atomically: other sessions see all of a remote t
 
 Every applied remote transaction records the publisher position it reached, its LSN, in the same commit as its rows. The position is reported to the publisher only after that commit is durable, and after a restart or a crash the subscription resumes from the recorded position. A remote transaction is therefore applied exactly once: never lost, never applied twice. A transaction streamed while still in progress is kept in a spill buffer that goes to disk when it outgrows memory; it is applied when it commits and thrown away, or partly thrown away for a rolled-back subtransaction, when it aborts.
 
-Conflicts follow PostgreSQL: an `UPDATE` or `DELETE` whose row does not exist locally is skipped and counted as `update_missing` or `delete_missing`; an `INSERT` or `UPDATE` that hits an existing unique key fails the apply as `insert_exists` or `update_exists`. When applying fails, the worker reconnects after `wal_retrieve_retry_interval` (5 seconds by default) and resumes from the recorded position, unless `disable_on_error` is set, in which case the subscription is disabled. A write conflict with a concurrent local transaction is retried right away.
+Conflicts follow PostgreSQL: an `UPDATE` or `DELETE` whose row does not exist locally is skipped and counted as `update_missing` or `delete_missing`; an `INSERT` or `UPDATE` that hits an existing unique key fails the apply as `insert_exists` or `update_exists`, or as `multiple_unique_conflicts` when the row hits several unique keys (primary key, unique constraints and unique indexes) at once. When applying fails, the worker reconnects after `wal_retrieve_retry_interval` (5 seconds by default) and resumes from the recorded position, unless `disable_on_error` is set, in which case the subscription is disabled. A write conflict with a concurrent local transaction is retried right away.
 
 A partitioned table on the publisher is replicated the way its publication sends it. With `publish_via_partition_root = true` its changes and its initial copy arrive under the name of the partitioned table, so create one local table with that name. Otherwise they arrive under the names of its partitions, so create a local table for each partition.
 
@@ -122,7 +122,7 @@ Local tables are not created for you. Create every published table locally befor
 | `pg_subscription` | Every subscription of the current database and its settings. `subskiplsn` is the pending `SKIP` position. |
 | `pg_subscription_rel` | Every table of a subscription with its state: `i` while waiting for its initial copy, `r` once it is replicated, and in `srsublsn` the publisher position of its copy. |
 | `pg_stat_subscription` | One row per connected apply worker, with `received_lsn` (the latest publisher position received), `latest_end_lsn` (the latest position durably applied), and the times of the last message sent by the publisher, received, and reported back. |
-| `pg_stat_subscription_stats` | Per subscription, `apply_error_count`, `sync_error_count` and the `confl_*` conflict counters since the server started. |
+| `pg_stat_subscription_stats` | Per subscription, `apply_error_count`, `sync_error_count` and the `confl_*` conflict counters since the server started or since `stats_reset`. `pg_stat_reset_subscription_stats(subid)` resets them for one subscription, or for all of them when `subid` is `NULL`; only superusers may call it. |
 | `pg_replication_origin`, `pg_replication_origin_status` | One origin `pg_<subscription oid>` per subscription, with the publisher position it has durably applied in `remote_lsn`. |
 
 ```sql
@@ -135,5 +135,5 @@ SELECT subname, received_lsn, latest_end_lsn, last_msg_receipt_time FROM pg_stat
 - A change that violates a local constraint other than a unique key fails the apply, and the worker retries it until the conflict is fixed locally or the transaction is skipped with `SKIP`.
 - Changes are applied to the local table with the published table's schema and name; there is no routing of rows into local partitions.
 - `pg_subscription_rel` shows only the states `i` and `r`, because all pending tables are copied in one snapshot; `pg_stat_subscription` has no table synchronization or parallel apply rows.
-- The counters in `pg_stat_subscription_stats` are kept in memory and start from zero when the server restarts; `pg_stat_reset_subscription_stats()` is not available, and `confl_update_origin_differs`, `confl_delete_origin_differs` and `confl_multiple_unique_conflicts` stay zero.
+- The counters in `pg_stat_subscription_stats` are kept in memory and start from zero when the server restarts; `confl_update_origin_differs` and `confl_delete_origin_differs` stay zero.
 - The replication origin functions (`pg_replication_origin_advance()` and the like) are not available, and `local_lsn` in `pg_replication_origin_status` is always `0/0`.

@@ -86,8 +86,11 @@ class SubscriptionEngine final {
     uint64_t update_exists = 0;
     uint64_t update_missing = 0;
     uint64_t delete_missing = 0;
+    uint64_t multiple_unique_conflicts = 0;
+    int64_t stats_reset = 0;
   };
   std::vector<SubStats> Stats(std::string_view database) const;
+  void ResetStats(std::optional<duckdb::idx_t> subscription);
 
  private:
   struct SubState {

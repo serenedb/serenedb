@@ -194,3 +194,532 @@ WHERE r.oid IS NULL OR u.oid IS NULL;
 ----
 count
 0
+
+
+statement ok
+CREATE ROLE sven_aum_r01;
+
+
+statement ok
+CREATE ROLE sven_aum_r02 IN ROLE sven_aum_r01;
+
+
+statement ok
+CREATE ROLE sven_aum_r03 IN ROLE sven_aum_r01, sven_aum_r02;
+
+
+statement ok
+CREATE ROLE sven_aum_r04 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03;
+
+
+statement ok
+CREATE ROLE sven_aum_r05 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04;
+
+
+statement ok
+CREATE ROLE sven_aum_r06 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05;
+
+
+statement ok
+CREATE ROLE sven_aum_r07 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06;
+
+
+statement ok
+CREATE ROLE sven_aum_r08 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07;
+
+
+statement ok
+CREATE ROLE sven_aum_r09 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08;
+
+
+statement ok
+CREATE ROLE sven_aum_r10 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09;
+
+
+statement ok
+CREATE ROLE sven_aum_r11 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10;
+
+
+statement ok
+CREATE ROLE sven_aum_r12 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11;
+
+
+statement ok
+CREATE ROLE sven_aum_r13 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12;
+
+
+statement ok
+CREATE ROLE sven_aum_r14 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13;
+
+
+statement ok
+CREATE ROLE sven_aum_r15 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14;
+
+
+statement ok
+CREATE ROLE sven_aum_r16 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15;
+
+
+statement ok
+CREATE ROLE sven_aum_r17 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16;
+
+
+statement ok
+CREATE ROLE sven_aum_r18 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17;
+
+
+statement ok
+CREATE ROLE sven_aum_r19 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18;
+
+
+statement ok
+CREATE ROLE sven_aum_r20 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19;
+
+
+statement ok
+CREATE ROLE sven_aum_r21 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20;
+
+
+statement ok
+CREATE ROLE sven_aum_r22 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21;
+
+
+statement ok
+CREATE ROLE sven_aum_r23 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22;
+
+
+statement ok
+CREATE ROLE sven_aum_r24 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23;
+
+
+statement ok
+CREATE ROLE sven_aum_r25 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24;
+
+
+statement ok
+CREATE ROLE sven_aum_r26 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25;
+
+
+statement ok
+CREATE ROLE sven_aum_r27 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26;
+
+
+statement ok
+CREATE ROLE sven_aum_r28 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27;
+
+
+statement ok
+CREATE ROLE sven_aum_r29 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28;
+
+
+statement ok
+CREATE ROLE sven_aum_r30 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29;
+
+
+statement ok
+CREATE ROLE sven_aum_r31 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30;
+
+
+statement ok
+CREATE ROLE sven_aum_r32 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31;
+
+
+statement ok
+CREATE ROLE sven_aum_r33 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32;
+
+
+statement ok
+CREATE ROLE sven_aum_r34 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33;
+
+
+statement ok
+CREATE ROLE sven_aum_r35 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34;
+
+
+statement ok
+CREATE ROLE sven_aum_r36 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35;
+
+
+statement ok
+CREATE ROLE sven_aum_r37 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36;
+
+
+statement ok
+CREATE ROLE sven_aum_r38 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37;
+
+
+statement ok
+CREATE ROLE sven_aum_r39 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38;
+
+
+statement ok
+CREATE ROLE sven_aum_r40 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39;
+
+
+statement ok
+CREATE ROLE sven_aum_r41 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40;
+
+
+statement ok
+CREATE ROLE sven_aum_r42 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41;
+
+
+statement ok
+CREATE ROLE sven_aum_r43 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42;
+
+
+statement ok
+CREATE ROLE sven_aum_r44 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43;
+
+
+statement ok
+CREATE ROLE sven_aum_r45 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44;
+
+
+statement ok
+CREATE ROLE sven_aum_r46 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45;
+
+
+statement ok
+CREATE ROLE sven_aum_r47 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46;
+
+
+statement ok
+CREATE ROLE sven_aum_r48 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47;
+
+
+statement ok
+CREATE ROLE sven_aum_r49 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48;
+
+
+statement ok
+CREATE ROLE sven_aum_r50 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49;
+
+
+statement ok
+CREATE ROLE sven_aum_r51 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50;
+
+
+statement ok
+CREATE ROLE sven_aum_r52 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51;
+
+
+statement ok
+CREATE ROLE sven_aum_r53 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52;
+
+
+statement ok
+CREATE ROLE sven_aum_r54 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53;
+
+
+statement ok
+CREATE ROLE sven_aum_r55 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54;
+
+
+statement ok
+CREATE ROLE sven_aum_r56 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55;
+
+
+statement ok
+CREATE ROLE sven_aum_r57 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56;
+
+
+statement ok
+CREATE ROLE sven_aum_r58 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57;
+
+
+statement ok
+CREATE ROLE sven_aum_r59 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58;
+
+
+statement ok
+CREATE ROLE sven_aum_r60 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58, sven_aum_r59;
+
+
+statement ok
+CREATE ROLE sven_aum_r61 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58, sven_aum_r59, sven_aum_r60;
+
+
+statement ok
+CREATE ROLE sven_aum_r62 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58, sven_aum_r59, sven_aum_r60, sven_aum_r61;
+
+
+statement ok
+CREATE ROLE sven_aum_r63 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58, sven_aum_r59, sven_aum_r60, sven_aum_r61, sven_aum_r62;
+
+
+statement ok
+CREATE ROLE sven_aum_r64 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58, sven_aum_r59, sven_aum_r60, sven_aum_r61, sven_aum_r62, sven_aum_r63;
+
+
+statement ok
+CREATE ROLE sven_aum_r65 IN ROLE sven_aum_r01, sven_aum_r02, sven_aum_r03, sven_aum_r04, sven_aum_r05, sven_aum_r06, sven_aum_r07, sven_aum_r08, sven_aum_r09, sven_aum_r10, sven_aum_r11, sven_aum_r12, sven_aum_r13, sven_aum_r14, sven_aum_r15, sven_aum_r16, sven_aum_r17, sven_aum_r18, sven_aum_r19, sven_aum_r20, sven_aum_r21, sven_aum_r22, sven_aum_r23, sven_aum_r24, sven_aum_r25, sven_aum_r26, sven_aum_r27, sven_aum_r28, sven_aum_r29, sven_aum_r30, sven_aum_r31, sven_aum_r32, sven_aum_r33, sven_aum_r34, sven_aum_r35, sven_aum_r36, sven_aum_r37, sven_aum_r38, sven_aum_r39, sven_aum_r40, sven_aum_r41, sven_aum_r42, sven_aum_r43, sven_aum_r44, sven_aum_r45, sven_aum_r46, sven_aum_r47, sven_aum_r48, sven_aum_r49, sven_aum_r50, sven_aum_r51, sven_aum_r52, sven_aum_r53, sven_aum_r54, sven_aum_r55, sven_aum_r56, sven_aum_r57, sven_aum_r58, sven_aum_r59, sven_aum_r60, sven_aum_r61, sven_aum_r62, sven_aum_r63, sven_aum_r64;
+
+
+query
+SELECT count(*) AS n, count(DISTINCT oid) AS distinct_n, max(oid) - min(oid) + 1 AS span
+FROM pg_auth_members
+WHERE member IN (SELECT oid FROM pg_authid WHERE rolname LIKE 'sven\_aum\_%');
+----
+n	distinct_n	span
+2080	2080	2080
+
+
+statement ok
+DROP ROLE sven_aum_r65;
+
+
+statement ok
+DROP ROLE sven_aum_r64;
+
+
+statement ok
+DROP ROLE sven_aum_r63;
+
+
+statement ok
+DROP ROLE sven_aum_r62;
+
+
+statement ok
+DROP ROLE sven_aum_r61;
+
+
+statement ok
+DROP ROLE sven_aum_r60;
+
+
+statement ok
+DROP ROLE sven_aum_r59;
+
+
+statement ok
+DROP ROLE sven_aum_r58;
+
+
+statement ok
+DROP ROLE sven_aum_r57;
+
+
+statement ok
+DROP ROLE sven_aum_r56;
+
+
+statement ok
+DROP ROLE sven_aum_r55;
+
+
+statement ok
+DROP ROLE sven_aum_r54;
+
+
+statement ok
+DROP ROLE sven_aum_r53;
+
+
+statement ok
+DROP ROLE sven_aum_r52;
+
+
+statement ok
+DROP ROLE sven_aum_r51;
+
+
+statement ok
+DROP ROLE sven_aum_r50;
+
+
+statement ok
+DROP ROLE sven_aum_r49;
+
+
+statement ok
+DROP ROLE sven_aum_r48;
+
+
+statement ok
+DROP ROLE sven_aum_r47;
+
+
+statement ok
+DROP ROLE sven_aum_r46;
+
+
+statement ok
+DROP ROLE sven_aum_r45;
+
+
+statement ok
+DROP ROLE sven_aum_r44;
+
+
+statement ok
+DROP ROLE sven_aum_r43;
+
+
+statement ok
+DROP ROLE sven_aum_r42;
+
+
+statement ok
+DROP ROLE sven_aum_r41;
+
+
+statement ok
+DROP ROLE sven_aum_r40;
+
+
+statement ok
+DROP ROLE sven_aum_r39;
+
+
+statement ok
+DROP ROLE sven_aum_r38;
+
+
+statement ok
+DROP ROLE sven_aum_r37;
+
+
+statement ok
+DROP ROLE sven_aum_r36;
+
+
+statement ok
+DROP ROLE sven_aum_r35;
+
+
+statement ok
+DROP ROLE sven_aum_r34;
+
+
+statement ok
+DROP ROLE sven_aum_r33;
+
+
+statement ok
+DROP ROLE sven_aum_r32;
+
+
+statement ok
+DROP ROLE sven_aum_r31;
+
+
+statement ok
+DROP ROLE sven_aum_r30;
+
+
+statement ok
+DROP ROLE sven_aum_r29;
+
+
+statement ok
+DROP ROLE sven_aum_r28;
+
+
+statement ok
+DROP ROLE sven_aum_r27;
+
+
+statement ok
+DROP ROLE sven_aum_r26;
+
+
+statement ok
+DROP ROLE sven_aum_r25;
+
+
+statement ok
+DROP ROLE sven_aum_r24;
+
+
+statement ok
+DROP ROLE sven_aum_r23;
+
+
+statement ok
+DROP ROLE sven_aum_r22;
+
+
+statement ok
+DROP ROLE sven_aum_r21;
+
+
+statement ok
+DROP ROLE sven_aum_r20;
+
+
+statement ok
+DROP ROLE sven_aum_r19;
+
+
+statement ok
+DROP ROLE sven_aum_r18;
+
+
+statement ok
+DROP ROLE sven_aum_r17;
+
+
+statement ok
+DROP ROLE sven_aum_r16;
+
+
+statement ok
+DROP ROLE sven_aum_r15;
+
+
+statement ok
+DROP ROLE sven_aum_r14;
+
+
+statement ok
+DROP ROLE sven_aum_r13;
+
+
+statement ok
+DROP ROLE sven_aum_r12;
+
+
+statement ok
+DROP ROLE sven_aum_r11;
+
+
+statement ok
+DROP ROLE sven_aum_r10;
+
+
+statement ok
+DROP ROLE sven_aum_r09;
+
+
+statement ok
+DROP ROLE sven_aum_r08;
+
+
+statement ok
+DROP ROLE sven_aum_r07;
+
+
+statement ok
+DROP ROLE sven_aum_r06;
+
+
+statement ok
+DROP ROLE sven_aum_r05;
+
+
+statement ok
+DROP ROLE sven_aum_r04;
+
+
+statement ok
+DROP ROLE sven_aum_r03;
+
+
+statement ok
+DROP ROLE sven_aum_r02;
+
+
+statement ok
+DROP ROLE sven_aum_r01;

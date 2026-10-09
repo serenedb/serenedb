@@ -49,13 +49,21 @@ class PgAuthMembers final : public SystemTableScan<kPgAuthMembersSql> {
     Col<"set_option">([](const auto& row) { return row.edge.set_option; }));
 
   void Row(const catalog::RoleCatalogEntry& role) {
+    if (&role != _role) {
+      _role = &role;
+      _first = _next;
+      _next += static_cast<int64_t>(role.MemberOf().size());
+    }
+    auto oid = _first;
     for (const auto& edge : role.MemberOf()) {
-      Emit<kMember>({role, edge, _oid++});
+      Emit<kMember>({role, edge, oid++});
     }
   }
 
  private:
-  int64_t _oid = 1;
+  const catalog::RoleCatalogEntry* _role = nullptr;
+  int64_t _first = 1;
+  int64_t _next = 1;
 };
 
 }  // namespace

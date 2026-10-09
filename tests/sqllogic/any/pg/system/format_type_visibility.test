@@ -44,8 +44,31 @@ _mood	mood[]
 mood	mood
 
 
+query
+SELECT format_type('text'::regtype, 5) AS text,
+       format_type('bytea'::regtype, 5) AS bytea,
+       format_type('_text'::regtype, 5) AS text_array,
+       format_type('"char"'::regtype, 5) AS char,
+       format_type('int4'::regtype, 5) AS int4,
+       format_type('bool'::regtype, 5) AS bool,
+       format_type('json'::regtype, 5) AS json,
+       format_type('text'::regtype, -1) AS no_typmod,
+       format_type('mood'::regtype, 5) AS mood,
+       format_type('_mood'::regtype, 5) AS mood_array;
+----
+text	bytea	text_array	char	int4	bool	json	no_typmod	mood	mood_array
+text(5)	bytea(5)	text(5)[]	"char"(5)	integer	boolean	json	text	mood(5)	mood(5)[]
+
+
 statement ok
 RESET search_path;
+
+
+query
+SELECT format_type('ftv_s.mood'::regtype, 5);
+----
+format_type
+ftv_s.mood(5)
 
 
 statement ok

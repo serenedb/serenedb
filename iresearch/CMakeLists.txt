@@ -63,6 +63,7 @@ set(IResearch_core_sources
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
+    ./formats/posting/block_codec.cpp
     ./formats/index_meta_reader.cpp
     ./formats/index_meta_writer.cpp
     ./formats/segment_meta_reader.cpp

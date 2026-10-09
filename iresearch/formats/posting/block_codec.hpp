@@ -1037,20 +1037,7 @@ inline constexpr DeltaDecoders kDeltaDecodersOf{
   .tails = kDeltaTailDecoders<Avx512, Vbmi2>.data(),
 };
 
-inline const DeltaDecoders kDeltaDecoders = [] {
-#ifdef __AVX2__
-  __builtin_cpu_init();
-  if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") &&
-      __builtin_cpu_supports("avx512bw") &&
-      __builtin_cpu_supports("avx512dq")) {
-    if (__builtin_cpu_supports("avx512vbmi2")) {
-      return kDeltaDecodersOf<true, true>;
-    }
-    return kDeltaDecodersOf<true>;
-  }
-#endif
-  return kDeltaDecodersOf<false>;
-}();
+extern const DeltaDecoders kDeltaDecoders;
 
 template<uint32_t Token, uint32_t Add, bool Full>
 IRS_FORCE_INLINE const byte_type* DecodeValuesBody(const byte_type* in,

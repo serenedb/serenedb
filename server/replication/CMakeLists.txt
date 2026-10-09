@@ -10,6 +10,7 @@ target_sources(
         settings.cpp
         spill_buffer.cpp
         subscription_engine.cpp
+        sync_session.cpp
 )
 
 target_link_libraries(sereneserver PRIVATE libpq)

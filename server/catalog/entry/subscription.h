@@ -55,6 +55,7 @@ class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
     duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state);
 
   const SubscriptionConfig& Config() const noexcept { return _config; }
+  std::vector<duckdb::SubscriptionRelation> Relations() const;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
     duckdb::ClientContext& context, duckdb::AlterInfo& info) final;

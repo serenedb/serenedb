@@ -122,7 +122,7 @@ ReplicationTarget MakeReplicationTarget(
   target.origin = config.origin;
   target.start_lsn = subscription.RemoteLsn();
   target.skip_lsn = config.skip_lsn;
-  target.relations = config.relations;
+  target.relations = subscription.Relations();
   target.owner_id = subscription.permissions.owner;
   auto roles = auth::RolesOf(nullptr);
   target.owner_name = roles->NameOf(target.owner_id);

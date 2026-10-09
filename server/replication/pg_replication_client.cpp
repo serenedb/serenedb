@@ -56,6 +56,7 @@
 #include <optional>
 #include <string_view>
 #include <utility>
+#include <yaclib/async/contract.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -63,6 +64,7 @@
 #include "connector/duckdb_client_state.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
+#include "network/server.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
@@ -168,35 +170,12 @@ std::vector<size_t> ReferencedFirstOrder(
   return order;
 }
 
-void CheckTargetColumns(std::string_view schema, std::string_view table,
-                        const std::vector<std::string>& missing,
-                        const std::vector<std::string>& generated) {
-  const auto report = [&](const std::vector<std::string>& columns,
-                          std::string_view what) {
-    if (columns.empty()) {
-      return;
-    }
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-      ERR_MSG("logical replication target relation \"", schema, ".", table,
-              "\" ", what, columns.size() == 1 ? " column: " : " columns: ",
-              absl::StrJoin(columns, ", ",
-                            [](std::string* out, const std::string& column) {
-                              absl::StrAppend(out, "\"", column, "\"");
-                            })));
-  };
-  report(missing, "is missing replicated");
-  report(generated, "has incompatible generated");
-}
-
 }  // namespace
 
 PgReplicationClient::PgReplicationClient(network::IoExecutor& exec,
                                          ReplicationTarget target,
                                          size_t host_index)
-  : PublisherSession{exec, target.conninfo, host_index,
-                     target.subscription_name, target.require_password},
-    _target{std::move(target)},
+  : SyncSession{exec, std::move(target), host_index},
     _flushed_lsn{_target.start_lsn} {
   _arena.reserve(kArenaBytes);
   _outbox.reserve(kOutboxMessages);
@@ -242,23 +221,13 @@ yaclib::Task<> PgReplicationClient::RunClient() {
   co_return {};
 }
 
-yaclib::Task<bool> PgReplicationClient::RunJob(Job job) {
-  _job_done.Reset();
-  _job.store(job, std::memory_order_release);
-  this->_task->RequestRun();
-  if (job == Job::Stream) {
-    co_return true;
-  }
-  co_await _job_done.AwaitOn(*this->_ioexec);
-  co_return _job_ok;
-}
-
 yaclib::Task<bool> PgReplicationClient::SyncTables() {
   _sync_tables.clear();
   for (const auto& relation : _target.relations) {
     if (relation.state != 'r') {
-      _sync_tables.push_back(
-        {.schema = relation.schema, .table = relation.table});
+      _sync_tables.push_back({.schema = relation.schema,
+                              .table = relation.table,
+                              .sync_id = relation.sync_id});
     }
   }
   if (_sync_tables.empty()) {
@@ -266,24 +235,15 @@ yaclib::Task<bool> PgReplicationClient::SyncTables() {
   }
   SDB_INFO(REPLICATION, "subscription '", _target.subscription_name,
            "' synchronizing ", _sync_tables.size(), " table(s)");
-  const auto slot =
-    absl::StrCat(_target.slot_name, "_sync_", _target.subscription_oid);
+  const auto workers =
+    std::min<size_t>(std::max<uint64_t>(MaxSyncWorkersPerSubscription(), 1),
+                     _sync_tables.size());
+  co_return workers == 1 ? co_await SyncSequential()
+                         : co_await SyncParallel(workers);
+}
+
+yaclib::Task<bool> PgReplicationClient::DescribeTables() {
   std::vector<PublisherRow> rows;
-  if (!co_await Query("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ") ||
-      !co_await Query(
-        absl::StrCat("CREATE_REPLICATION_SLOT ", pg::QuoteIdentifier(slot),
-                     " TEMPORARY LOGICAL pgoutput (SNAPSHOT "
-                     "'use')"),
-        &rows) ||
-      rows.empty() || rows.front().size() < 2 || !rows.front()[1]) {
-    co_return false;
-  }
-  const auto consistent_point = pg::ParseLsn(*rows.front()[1]);
-  if (!consistent_point) {
-    Fail(ERRCODE_PROTOCOL_VIOLATION, "invalid replication slot LSN");
-    co_return false;
-  }
-  rows.clear();
   if (!co_await Query(
         absl::StrCat(
           "SELECT n.nspname, c.relname, a.attname, "
@@ -342,87 +302,107 @@ yaclib::Task<bool> PgReplicationClient::SyncTables() {
         });
     }
   }
-  if (!co_await RunJob(Job::Begin)) {
+  co_return true;
+}
+
+yaclib::Task<bool> PgReplicationClient::SyncSequential() {
+  const auto slot =
+    absl::StrCat(_target.slot_name, "_sync_", _target.subscription_oid);
+  std::vector<PublisherRow> rows;
+  if (!co_await Query("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ") ||
+      !co_await Query(
+        absl::StrCat("CREATE_REPLICATION_SLOT ", pg::QuoteIdentifier(slot),
+                     " TEMPORARY LOGICAL pgoutput (SNAPSHOT 'use')"),
+        &rows) ||
+      rows.empty() || rows.front().size() < 2 || !rows.front()[1]) {
+    co_return false;
+  }
+  const auto consistent_point = pg::ParseLsn(*rows.front()[1]);
+  if (!consistent_point) {
+    Fail(ERRCODE_PROTOCOL_VIOLATION, "invalid replication slot LSN");
+    co_return false;
+  }
+  if (!co_await DescribeTables()) {
     co_return false;
   }
   const bool binary = _target.binary && ServerVersion() >= 16;
-  bool ok = true;
-  for (const auto i : _sync_order) {
-    _sync_current = i;
-    if (!co_await CopyTable(_sync_tables[i], binary)) {
-      ok = false;
-      break;
+  for (auto& table : _sync_tables) {
+    if (!co_await SyncOne(table, *consistent_point, binary)) {
+      co_return false;
     }
-  }
-  if (!ok) {
-    co_await RunJob(Job::Rollback);
-    co_return false;
-  }
-  _sync_lsn = *consistent_point;
-  if (!co_await RunJob(Job::Commit)) {
-    co_return false;
   }
   co_return co_await Query("COMMIT") &&
     co_await Query(
       absl::StrCat("DROP_REPLICATION_SLOT ", pg::QuoteIdentifier(slot)));
 }
 
-yaclib::Task<bool> PgReplicationClient::CopyTable(const SyncTable& table,
-                                                  bool binary) {
-  std::string columns = absl::StrJoin(
-    table.columns, ", ", [](std::string* out, const std::string& column) {
-      out->append(pg::QuoteIdentifier(column));
-    });
-  const auto name = absl::StrCat(pg::QuoteIdentifier(table.schema), ".",
-                                 pg::QuoteIdentifier(table.table));
-  std::string query;
-  if (table.row_filter || table.partitioned || table.generated) {
-    query = absl::StrCat("COPY (SELECT ", columns, " FROM ",
-                         table.partitioned ? "" : "ONLY ", name);
-    if (table.row_filter) {
-      absl::StrAppend(&query, " WHERE ", *table.row_filter);
-    }
-    query.append(") TO STDOUT");
-  } else {
-    query = absl::StrCat("COPY ", name, " (", columns, ") TO STDOUT");
+yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
+  if (!co_await DescribeTables()) {
+    co_return false;
   }
-  if (binary) {
-    query.append(" WITH (FORMAT binary)");
+  const auto slot =
+    absl::StrCat(_target.slot_name, "_sync_", _target.subscription_oid);
+  std::vector<PublisherRow> rows;
+  if (!co_await Query(
+        absl::StrCat("CREATE_REPLICATION_SLOT ", pg::QuoteIdentifier(slot),
+                     " TEMPORARY LOGICAL pgoutput (SNAPSHOT 'export')"),
+        &rows) ||
+      rows.empty() || rows.front().size() < 3 || !rows.front()[1] ||
+      !rows.front()[2]) {
+    co_return false;
   }
-  SendQuery(query);
-  for (;;) {
-    auto frame = co_await NextFrame(FrameKind::Typed, this->_max_message);
-    if (frame.status != FrameStatus::Ok) {
-      Fail(ERRCODE_CONNECTION_FAILURE,
-           "server closed the connection unexpectedly");
-      co_return false;
-    }
-    const char type = frame.type;
-    if (type == PQ_MSG_ERROR_RESPONSE) {
-      Fail(network::pg::ParseErrorResponse(frame.payload));
-      this->_frames.Consume(frame);
-      co_await ReadUntilReady(nullptr);
-      co_return false;
-    }
-    this->_frames.Consume(frame);
-    if (type == PQ_MSG_COPY_OUT_RESPONSE) {
-      break;
+  const auto consistent_point = pg::ParseLsn(*rows.front()[1]);
+  if (!consistent_point) {
+    Fail(ERRCODE_PROTOCOL_VIOLATION, "invalid replication slot LSN");
+    co_return false;
+  }
+  SyncPlan plan{.tables = _sync_tables,
+                .snapshot = *rows.front()[2],
+                .lsn = *consistent_point,
+                .binary = _target.binary && ServerVersion() >= 16,
+                .done = std::vector<uint8_t>(_sync_tables.size(), 0)};
+  auto target = _target;
+  target.conninfo.hosts = {_host};
+  auto* pool = Server::instance().IoPool();
+  std::vector<duckdb::shared_ptr<TableSyncWorker>> sessions;
+  std::vector<yaclib::Future<bool>> results;
+  sessions.reserve(workers);
+  results.reserve(workers);
+  for (size_t i = 0; i < workers; ++i) {
+    auto& exec = pool->Next();
+    auto worker = duckdb::make_shared_ptr<TableSyncWorker>(exec, target, plan);
+    auto [future, promise] = yaclib::MakeContract<bool>();
+    asio_ns::post(exec.Context(),
+                  [worker, promise = std::move(promise)]() mutable {
+                    worker->Start(std::move(promise));
+                  });
+    sessions.push_back(std::move(worker));
+    results.push_back(std::move(future));
+  }
+  bool ok = true;
+  for (size_t i = 0; i < workers; ++i) {
+    if (!co_await std::move(results[i])) {
+      ok = false;
+      if (_apply_error.errmsg.empty()) {
+        _apply_error = sessions[i]->LastError();
+      }
     }
   }
-  sdb::pg::CopyInBridge bridge;
-  this->_connection_ctx->SetSideChannel(&bridge);
-  _copy_stmt =
-    BuildCopyFromStdin(table.schema, table.table, table.columns, binary);
-  _job_done.Reset();
-  _job.store(Job::Copy, std::memory_order_release);
-  this->_task->RequestRun();
-  co_await this->RunCopyInFeeder(bridge, binary
-                                           ? network::pg::CopyFormat::Binary
-                                           : network::pg::CopyFormat::Text);
-  co_await _job_done.AwaitOn(*this->_ioexec);
-  this->_connection_ctx->SetSideChannel(&_batch);
-  const bool copied = _job_ok;
-  co_return co_await ReadUntilReady(nullptr) && copied;
+  for (size_t i = 0; i < _sync_tables.size(); ++i) {
+    if (plan.done[i] == 0) {
+      ok = false;
+      continue;
+    }
+    for (auto& relation : _target.relations) {
+      if (relation.sync_id == _sync_tables[i].sync_id) {
+        relation.state = 'r';
+        relation.lsn = plan.lsn;
+      }
+    }
+  }
+  co_return co_await Query(
+    absl::StrCat("DROP_REPLICATION_SLOT ", pg::QuoteIdentifier(slot))) &&
+    ok;
 }
 
 yaclib::Task<bool> PgReplicationClient::StartReplication() {
@@ -757,13 +737,7 @@ yaclib::Future<> PgReplicationClient::FeedbackLoop() {
 yaclib::Future<> PgReplicationClient::ReplicationMain() {
   co_await this->_task->Park();
   co_await ReplicationLoop();
-  if (_in_txn) {
-    this->_txn_state->Rollback();
-    _in_txn = false;
-  }
-  _job_ok = false;
-  _job_done.Set();
-  this->_task->Finish();
+  FinishJobs();
   co_return {};
 }
 
@@ -779,22 +753,15 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
     this->Stop();
     co_return {};
   }
-  for (;;) {
-    auto job = _job.exchange(Job::None, std::memory_order_acq_rel);
-    if (job == Job::None) {
-      if (this->SendBroken()) {
-        _stream.Abort();
-        co_return {};
-      }
-      co_await this->_task->Park();
-      continue;
-    }
-    if (job == Job::Stream) {
-      break;
-    }
-    _job_ok = co_await RunDuckJob(job);
-    _job_done.Set();
+  if (!co_await RunJobs()) {
+    _stream.Abort();
+    co_return {};
   }
+  _batch.stream = &_stream;
+  _batch.pass_through = [this](const PgOutputMessage& message) {
+    return PassThrough(message);
+  };
+  this->_connection_ctx->SetSideChannel(&_batch);
   uint64_t reported = _flushed_lsn.load(std::memory_order_relaxed);
   for (;;) {
     while (!_stream.Ready()) {
@@ -849,161 +816,6 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
   co_return {};
 }
 
-bool PgReplicationClient::SetupApplyConnection() {
-  if (_target.database_oid == 0) {
-    return false;
-  }
-  const std::string_view user =
-    _target.owner_name.empty()
-      ? std::string_view{irs::StaticStrings::kDefaultUser}
-      : std::string_view{_target.owner_name};
-  const duckdb::idx_t role =
-    _target.owner_name.empty() ? pg::kRootUser : _target.owner_id;
-  this->_conn = irs::DuckDBEngine::Instance().CreateConnection();
-  duckdb::PhysicalSet::SetVariable(
-    *this->_conn->context, duckdb::Identifier{"session_replication_role"},
-    duckdb::SetScope::SESSION, duckdb::Value{"replica"});
-  this->_txn_state.emplace(this->_conn->context->transaction);
-  this->_connection_ctx = std::make_shared<ConnectionContext>(
-    *this->_conn->context, user, role, _target.database_name,
-    _target.database_oid, nullptr, 0, nullptr);
-  this->_client_state = &connector::SereneDBClientState::Register(
-    *this->_conn->context, this->_connection_ctx);
-  _batch.stream = &_stream;
-  _batch.pass_through = [this](const PgOutputMessage& message) {
-    return PassThrough(message);
-  };
-  this->_connection_ctx->SetSideChannel(&_batch);
-  this->_conn->context->session_user.assign(user);
-  connector::SetDefaultSearchPath(*this->_conn->context, _target.database_name);
-  return true;
-}
-
-void PgReplicationClient::ApplyFailed(irs::pg::SqlErrorData error) {
-  if (!_apply_error.errmsg.empty()) {
-    return;
-  }
-  if (error.errcode == ERRCODE_T_R_SERIALIZATION_FAILURE) {
-    _transient.store(true, std::memory_order_release);
-  } else if (_target.disable_on_error) {
-    _disable_requested.store(true, std::memory_order_release);
-  }
-  _apply_error = std::move(error);
-}
-
-yaclib::Task<bool> PgReplicationClient::RunDuckJob(Job job) {
-  try {
-    switch (job) {
-      case Job::Begin:
-        co_return BeginSync();
-      case Job::Copy:
-        co_return co_await RunLocalCopy();
-      case Job::Commit:
-        co_return CommitSync();
-      case Job::Rollback:
-        if (_in_txn) {
-          this->_txn_state->Rollback();
-          _in_txn = false;
-        }
-        co_return true;
-      case Job::None:
-      case Job::Stream:
-        break;
-    }
-  } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
-  }
-  co_return false;
-}
-
-bool PgReplicationClient::BeginSync() {
-  this->_txn_state->Arm();
-  _in_txn = true;
-  std::vector<duckdb::optional_ptr<duckdb::TableCatalogEntry>> locals;
-  locals.reserve(_sync_tables.size());
-  for (auto& table : _sync_tables) {
-    auto local = LookupTable(table.schema, table.table);
-    if (!local) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-        ERR_MSG("logical replication target relation \"", table.schema, ".",
-                table.table, "\" does not exist"));
-    }
-    std::vector<std::string> missing;
-    std::vector<std::string> generated;
-    for (const auto& name : table.columns) {
-      const duckdb::ColumnDefinition* found = nullptr;
-      for (const auto& column : local->GetColumns().Logical()) {
-        if (column.Name().GetIdentifierName() == name) {
-          found = &column;
-          break;
-        }
-      }
-      if (found == nullptr) {
-        missing.push_back(name);
-      } else if (found->Generated()) {
-        generated.push_back(name);
-      }
-    }
-    CheckTargetColumns(table.schema, table.table, missing, generated);
-    table.owner = local->permissions.owner;
-    locals.push_back(local);
-  }
-  _sync_order = ReferencedFirstOrder(locals);
-  return true;
-}
-
-yaclib::Task<bool> PgReplicationClient::RunLocalCopy() {
-  this->_client_state->copy_stdin_open_count = 0;
-  this->_client_state->copy_stdin_done = false;
-  auto* bridge = this->_connection_ctx->GetSideChannel<sdb::pg::CopyInBridge>();
-  bool ok = false;
-  try {
-    const auto& table = _sync_tables[_sync_current];
-    UseRole(table.owner);
-    auto prepared = this->_conn->Prepare(std::move(_copy_stmt));
-    if (prepared->HasError()) {
-      prepared->GetErrorObject().Throw();
-    }
-    ok = (co_await RunPrepared(*prepared)).has_value();
-  } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
-  }
-  if (!ok && bridge != nullptr) {
-    bridge->Abort();
-  }
-  co_return ok;
-}
-
-bool PgReplicationClient::CommitSync() {
-  UpdateDefinition([&](duckdb::CreateSubscriptionInfo& definition) {
-    for (auto& relation : definition.relations) {
-      if (std::ranges::any_of(_sync_tables, [&](const SyncTable& table) {
-            return table.schema == relation.schema &&
-                   table.table == relation.table;
-          })) {
-        relation.state = 'r';
-        relation.lsn = _sync_lsn;
-      }
-    }
-  });
-  _in_txn = false;
-  if (auto error = this->_txn_state->Commit()) {
-    ApplyFailed(std::move(*error));
-    return false;
-  }
-  for (auto& relation : _target.relations) {
-    if (relation.state != 'r') {
-      relation.state = 'r';
-      relation.lsn = _sync_lsn;
-    }
-  }
-  SDB_INFO(REPLICATION, "subscription '", _target.subscription_name,
-           "' synchronized ", _sync_tables.size(), " table(s) at ",
-           pg::FormatLsn(_sync_lsn));
-  return true;
-}
-
 void PgReplicationClient::UpdateDefinition(
   absl::FunctionRef<void(duckdb::CreateSubscriptionInfo&)> edit) {
   auto& context = *this->_conn->context;
@@ -1026,54 +838,6 @@ void PgReplicationClient::UpdateDefinition(
   duckdb::ReplaceDefinitionInfo alter{std::move(definition)};
   alter.SetQualifiedName(duckdb::QualifiedName(current.name));
   catalog.Alter(transaction, alter);
-}
-
-duckdb::optional_ptr<duckdb::TableCatalogEntry>
-PgReplicationClient::LookupTable(std::string_view schema,
-                                 std::string_view table) {
-  return duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    *this->_conn->context,
-    duckdb::QualifiedName::FromCatalogSchema(
-      duckdb::Identifier{_target.database_name}, {duckdb::Identifier{schema}},
-      duckdb::Identifier{table}),
-    duckdb::OnEntryNotFound::RETURN_NULL);
-}
-
-yaclib::Task<std::optional<int64_t>> PgReplicationClient::RunPrepared(
-  duckdb::PreparedStatement& prepared) {
-  network::pg::ClosingPending pending;
-  duckdb::vector<duckdb::Value> values;
-  auto result =
-    co_await this->DriveToResult(prepared, values, pending, nullptr);
-  if (!result) {
-    co_return std::nullopt;
-  }
-  if (result->HasError()) {
-    result->ThrowError();
-  }
-  auto chunk = result->Fetch();
-  if (!chunk || chunk->size() == 0 || chunk->ColumnCount() == 0) {
-    co_return 0;
-  }
-  co_return chunk->GetValue(0, 0).GetValue<int64_t>();
-}
-
-void PgReplicationClient::UseRole(duckdb::idx_t table_owner) {
-  auto role = _target.owner_id;
-  if (!_target.run_as_owner && table_owner != role &&
-      table_owner != pg::kInvalidOid) {
-    auto& context = *this->_conn->context;
-    if (!auth::ClosureFor(&context, role)->is_superuser &&
-        !auth::ClosureFor(&context, role)->CanSet(table_owner)) {
-      const auto roles = auth::RolesOf(&context);
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("role \"", roles->NameOf(role), "\" cannot SET ROLE to \"",
-                roles->NameOf(table_owner), "\""));
-    }
-    role = table_owner;
-  }
-  this->_connection_ctx->SetEffectiveRole(role);
 }
 
 const RelInfo* PgReplicationClient::Relation(uint32_t relation_id) const {

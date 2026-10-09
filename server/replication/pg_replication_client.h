@@ -44,31 +44,9 @@
 #include "replication/repl_source.h"
 #include "replication/repl_stream.h"
 #include "replication/spill_buffer.h"
+#include "replication/sync_session.h"
 
 namespace sdb::replication {
-
-struct ReplicationTarget {
-  duckdb::idx_t subscription_oid = 0;
-  duckdb::idx_t database_oid = 0;
-  std::string database_name;
-  std::string subscription_name;
-  ConnInfo conninfo;
-  std::vector<std::string> publications;
-  std::string slot_name;
-  bool binary = false;
-  bool streaming = false;
-  bool disable_on_error = false;
-  bool run_as_owner = false;
-  bool require_password = false;
-  std::string origin = "any";
-  uint64_t start_lsn = 0;
-  uint64_t skip_lsn = 0;
-  duckdb::idx_t owner_id = 0;
-  std::string owner_name;
-  std::vector<duckdb::SubscriptionRelation> relations;
-
-  bool operator==(const ReplicationTarget&) const = default;
-};
 
 struct ConflictCounters {
   std::atomic<uint64_t> insert_exists{0};
@@ -86,7 +64,7 @@ struct ConflictCounters {
   }
 };
 
-class PgReplicationClient final : public PublisherSession {
+class PgReplicationClient final : public SyncSession {
  public:
   PgReplicationClient(network::IoExecutor& exec, ReplicationTarget target,
                       size_t host_index);
@@ -98,17 +76,8 @@ class PgReplicationClient final : public PublisherSession {
   bool Connected() const noexcept {
     return _connected.load(std::memory_order_acquire);
   }
-  bool DisableRequested() const noexcept {
-    return _disable_requested.load(std::memory_order_acquire);
-  }
   bool SyncFailed() const noexcept {
     return _sync_failed.load(std::memory_order_acquire);
-  }
-  bool Transient() const noexcept {
-    return _transient.load(std::memory_order_acquire);
-  }
-  const irs::pg::SqlErrorData& LastError() const noexcept {
-    return _apply_error.errmsg.empty() ? Error() : _apply_error;
   }
   uint64_t ReceivedLsn() const noexcept {
     return _received_lsn.load(std::memory_order_relaxed);
@@ -129,31 +98,13 @@ class PgReplicationClient final : public PublisherSession {
   void ResetConflicts() noexcept { _conflicts.Reset(); }
 
  private:
-  enum class Job : uint8_t {
-    None,
-    Begin,
-    Copy,
-    Commit,
-    Rollback,
-    Stream,
-  };
-
-  struct SyncTable {
-    std::string schema;
-    std::string table;
-    std::vector<std::string> columns;
-    std::optional<std::string> row_filter;
-    bool partitioned = false;
-    bool generated = false;
-    duckdb::idx_t owner = 0;
-  };
-
   yaclib::Task<bool> SyncTables();
-  yaclib::Task<bool> CopyTable(const SyncTable& table, bool binary);
+  yaclib::Task<bool> DescribeTables();
+  yaclib::Task<bool> SyncSequential();
+  yaclib::Task<bool> SyncParallel(size_t workers);
   yaclib::Task<bool> StartReplication();
   yaclib::Task<> Feeder();
   yaclib::Future<> FeedbackLoop();
-  yaclib::Task<bool> RunJob(Job job);
   yaclib::Task<bool> Publish(std::span<const PgOutputMessage> messages);
   bool Stage(std::string_view payload, bool in_stream);
   yaclib::Task<bool> Flush();
@@ -165,19 +116,8 @@ class PgReplicationClient final : public PublisherSession {
 
   yaclib::Future<> ReplicationMain();
   yaclib::Task<> ReplicationLoop();
-  bool SetupApplyConnection();
-  void ApplyFailed(irs::pg::SqlErrorData error);
-  yaclib::Task<bool> RunDuckJob(Job job);
-  bool BeginSync();
-  yaclib::Task<bool> RunLocalCopy();
-  bool CommitSync();
   void UpdateDefinition(
     absl::FunctionRef<void(duckdb::CreateSubscriptionInfo&)> edit);
-  duckdb::optional_ptr<duckdb::TableCatalogEntry> LookupTable(
-    std::string_view schema, std::string_view table);
-  yaclib::Task<std::optional<int64_t>> RunPrepared(
-    duckdb::PreparedStatement& prepared);
-  void UseRole(duckdb::idx_t table_owner);
   const RelInfo* Relation(uint32_t relation_id) const;
   void OnRelation(const RelationMessage& message);
   void CheckRelation(const RelInfo& relation) const;
@@ -196,11 +136,8 @@ class PgReplicationClient final : public PublisherSession {
   std::string ApplyContext() const;
   yaclib::Task<bool> RunBatch();
 
-  ReplicationTarget _target;
   ReplStream _stream;
   std::atomic<bool> _connected{false};
-  std::atomic<bool> _disable_requested{false};
-  std::atomic<bool> _transient{false};
   std::atomic<bool> _sync_failed{false};
   std::atomic<bool> _apply_idle{true};
   std::atomic<uint64_t> _received_lsn{0};
@@ -209,7 +146,6 @@ class PgReplicationClient final : public PublisherSession {
   std::atomic<int64_t> _last_receipt_time{0};
   std::atomic<int64_t> _latest_end_time{0};
   ConflictCounters _conflicts;
-  irs::pg::SqlErrorData _apply_error;
   bool _publishing = false;
   bool _published = false;
   int64_t _last_activity = 0;
@@ -217,16 +153,7 @@ class PgReplicationClient final : public PublisherSession {
   std::string _arena;
   std::vector<PgOutputMessage> _outbox;
 
-  std::atomic<Job> _job{Job::None};
-  bool _job_ok = false;
-  yaclib::OneShotEvent _job_done;
-  yaclib::OneShotEvent _setup_done;
-  bool _setup_ok = false;
   std::vector<SyncTable> _sync_tables;
-  std::vector<size_t> _sync_order;
-  size_t _sync_current = 0;
-  uint64_t _sync_lsn = 0;
-  duckdb::unique_ptr<duckdb::SQLStatement> _copy_stmt;
 
   irs::containers::NodeHashMap<uint32_t, SpillBuffer> _spools;
   irs::containers::FlatHashMap<uint32_t,
@@ -235,7 +162,6 @@ class PgReplicationClient final : public PublisherSession {
   std::optional<uint32_t> _streamed_xid;
 
   irs::containers::NodeHashMap<uint32_t, RelInfo> _relations;
-  bool _in_txn = false;
   bool _skipping = false;
   uint64_t _final_lsn = 0;
   bool _remote_txn = false;

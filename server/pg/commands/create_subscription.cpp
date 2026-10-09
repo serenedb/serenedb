@@ -468,7 +468,10 @@ std::vector<duckdb::SubscriptionRelation> FetchRelations(
         ERR_CODE(ERRCODE_UNDEFINED_TABLE),
         ERR_MSG("relation \"", *row[0], ".", *row[1], "\" does not exist"));
     }
-    relations.push_back({.schema = *row[0], .table = *row[1]});
+    relations.push_back(
+      {.schema = *row[0],
+       .table = *row[1],
+       .sync_id = duckdb::DatabaseManager::Get(context).NextOid()});
   }
   return relations;
 }

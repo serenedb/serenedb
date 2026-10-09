@@ -67,6 +67,8 @@ struct CatalogSnapshot {
     std::string_view,
     std::pair<duckdb::TableCatalogEntry*, const duckdb::UniqueConstraint*>>
     keys;
+  mutable std::once_flag triggers_once;
+  mutable std::vector<duckdb::idx_t> triggered;
 };
 
 class SereneDBCatalog final : public duckdb::DuckCatalog {

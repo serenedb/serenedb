@@ -160,6 +160,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     if (Needs<"relhasindex">()) {
       CollectIndexed();
     }
+    if (Needs<"relhastriggers">()) {
+      CollectTriggered();
+    }
   }
 
   static constexpr std::tuple kSources{
@@ -220,10 +223,16 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return !KeyIndexes(row.table).empty() || Indexed(scan, row.table);
     }),
     Col<"relhastriggers">([](const auto& row, SystemScan& scan) {
-      bool triggers =
-        absl::c_any_of(row.table.GetConstraints(), [](const auto& constraint) {
-          return constraint->type == duckdb::ConstraintType::FOREIGN_KEY;
-        });
+      if (absl::c_any_of(
+            row.table.GetConstraints(), [](const auto& constraint) {
+              return constraint->type == duckdb::ConstraintType::FOREIGN_KEY;
+            })) {
+        return true;
+      }
+      if (const auto known = scan.KnownTriggered(row.table.oid)) {
+        return *known;
+      }
+      bool triggers = false;
       row.table.ScanTriggers(scan.Transaction(),
                              [&](duckdb::CatalogEntry&) { triggers = true; });
       return triggers;

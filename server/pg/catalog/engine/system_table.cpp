@@ -794,6 +794,7 @@ std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
       !(text.starts_with('_') && absl::c_linear_search(types, TYPE_ENTRY));
     _indexed_complete =
       _collect_indexed && !narrow && absl::c_linear_search(types, INDEX_ENTRY);
+    _triggered_complete = _collect_triggered && !narrow;
     for (auto* schema : schemas) {
       if (absl::c_linear_search(types, SCHEMA_ENTRY)) {
         entries.emplace_back(schema);
@@ -957,7 +958,26 @@ void SystemScan::AppendMembers(
         for (auto* entry : snapshot->entries) {
           append(*entry);
         }
+        if (_triggered_complete && &set == &sets.GetCatalogSet(TABLE_ENTRY)) {
+          std::call_once(snapshot->triggers_once, [&] {
+            for (auto* entry : snapshot->entries) {
+              if (entry->type != TABLE_ENTRY) {
+                continue;
+              }
+              bool triggered = false;
+              entry->Cast<duckdb::TableCatalogEntry>().ScanTriggers(
+                Transaction(),
+                [&](duckdb::CatalogEntry&) { triggered = true; });
+              if (triggered) {
+                snapshot->triggered.emplace_back(entry->oid);
+              }
+            }
+          });
+          _triggered.insert(snapshot->triggered.begin(),
+                            snapshot->triggered.end());
+        }
       } else {
+        _triggered_complete = false;
         set.Scan(Transaction(), append);
       }
     } else {

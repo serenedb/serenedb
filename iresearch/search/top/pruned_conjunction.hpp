@@ -241,28 +241,17 @@ class PrunedConjunction : public Root {
   }
 
   void FlushBatch(LoserScoreCollector& collector) {
-    const auto size = _batch.size;
-    if (size == 0) {
-      return;
-    }
-    _batch.size = 0;
-    _others.Fetch(_batch.docs, size);
-    _lead.ScoreFreqs(_batch.freqs, _batch.scores, size);
-    _others.Score(_batch.scores, size);
-    _admit.AddDocs(collector, _batch.docs, size, _batch.scores);
+    _batch.Flush(
+      _lead, _others,
+      [&](score_t* scores, uint32_t n)
+        IRS_FORCE_INLINE { _others.Score(scores, n); },
+      _admit, collector);
   }
-
-  struct Batch {
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[kChunk];
-    ABSL_CACHELINE_ALIGNED uint32_t freqs[kChunk];
-    ABSL_CACHELINE_ALIGNED score_t scores[kChunk];
-    uint32_t size = 0;
-  };
 
   Lead _lead;
   Others _others;
   [[no_unique_address]] Excludes _excludes;
-  [[no_unique_address]] utils::Need<kDocFirst, Batch> _batch;
+  [[no_unique_address]] utils::Need<kDocFirst, ScoreBatch> _batch;
   [[no_unique_address]] utils::Need<kDocFirst, std::array<Bucket, kBuckets>>
     _buckets;
   bool _narrow = false;

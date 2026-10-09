@@ -82,8 +82,9 @@ class TermRange : public detail::PostingBatch<InputType, false> {
     if (left == 0) {
       return 0;
     }
-    In().Seek(_walk.Landing().doc_ptr);
-    _last = _walk.Landing().doc;
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    _last = landing.doc;
     _left_in_list = left;
     const auto len = std::min(left, kBlock);
     ReadDocs(_block.data(), len);

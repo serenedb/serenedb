@@ -63,7 +63,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
   }
 
   doc_id_t BlockLast() {
-    Base::SeekToBlock(_doc);
+    Base::AdvanceBlock(_doc);
     return *(std::end(_docs) - 1);
   }
 
@@ -131,12 +131,7 @@ class PostingPrunedLead : public PruneLeafBase<InputType, false> {
         return _doc = Scan(target);
       }
     }
-    if (_cursor.UpperBound() < target) [[unlikely]] {
-      Base::SeekToBlock(target);
-      if (_needs_reposition) {
-        _doc = _cursor.Landing().doc;
-      }
-    }
+    Base::AdvanceBlock(target);
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();

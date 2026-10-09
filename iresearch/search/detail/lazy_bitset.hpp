@@ -221,7 +221,7 @@ class CountAgainst {
     _set->Reach(static_cast<doc_id_t>(max + 1));
     const auto begin = prev + 1;
     if (begin >= _min && begin + uint64_t{n} * kBits <= _max) [[likely]] {
-      _total += CountBlock(_set->Words(), prev, src, n);
+      _total += CountBlock(_set->Words(), begin - kMin, src, n);
       return;
     }
     const auto* const live = _set->Words();

@@ -110,7 +110,6 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
     }
     const auto buckets = NormBuckets(m);
     const auto* table = Map(in, m.table_offset, NormTableSize(m));
-    _exceptions = true;
     r.exceptions = true;
     r.first_code = NormFirstCode(m.bits);
     r.shift = m.shift;
@@ -152,17 +151,8 @@ const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {
   return *it;
 }
 
-uint32_t NormColumnReader::Get(uint64_t row) const noexcept {
-  SDB_ASSERT(row < _row_count);
-  const auto doc = static_cast<doc_id_t>(row + doc_limits::min());
-  const auto& r = Locate(doc);
-  const auto value = r.Slot(doc);
-  return r.exceptions && value >= r.first_code ? r.Exception(doc, value)
-                                               : value;
-}
-
 void NormColumnReader::Decode(doc_id_t first, size_t n,
-                              uint32_t* IRS_RESTRICT values) const noexcept {
+                              uint32_t* IRS_RESTRICT values) const {
   if (n == 0) {
     return;
   }

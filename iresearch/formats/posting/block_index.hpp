@@ -56,32 +56,10 @@ struct BoundPair {
   uint32_t norm;
 };
 
-IRS_FORCE_INLINE inline uint32_t CountLessRun(const uint32_t* begin,
-                                              uint32_t value) noexcept {
-#ifdef __AVX2__
-  const __m256i bias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
-  const __m256i target =
-    _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(value)), bias);
-  const auto less = [&](size_t j) IRS_FORCE_INLINE {
-    return _mm256_cmpgt_epi32(
-      target,
-      _mm256_xor_si256(
-        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin + j)), bias));
-  };
-  return static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(
-           _mm256_movemask_epi8(_mm256_packs_epi32(less(0), less(8)))))) /
-         2;
-#else
-  uint32_t count = 0;
-  for (size_t i = 0; i != 16; ++i) {
-    count += static_cast<uint32_t>(begin[i] < value);
-  }
-  return count;
-#endif
-}
-
-IRS_FORCE_INLINE inline uint32_t CountLessRun(const uint16_t* begin,
-                                              uint32_t value) noexcept {
+template<size_t W>
+IRS_FORCE_INLINE uint32_t CountLess(const uint16_t* begin,
+                                    uint32_t value) noexcept {
+  static_assert(W == 16);
 #ifdef __AVX2__
   const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(begin));
   const __m256i t = _mm256_set1_epi16(static_cast<int16_t>(value));
@@ -286,7 +264,7 @@ class BlockIndex {
     auto b = std::max(k, r * kRun);
     const auto e = std::min(n, (r + 1) * kRun);
     if (b == r * kRun && e == b + kRun) {
-      return b + CountLessRun(_last + b, target);
+      return b + CountLess<kRun>(_last + b, target);
     }
     while (b != e && _last[b] < target) {
       ++b;
@@ -323,7 +301,7 @@ class BlockIndex {
     const auto base = RunBase(r);
     const auto rel = target > base ? target - base : 0;
     SDB_ASSERT(rel <= kNarrowSpan);
-    return std::max(from, r * kRun + CountLessRun(_last16 + r * kRun, rel));
+    return std::max(from, r * kRun + CountLess<kRun>(_last16 + r * kRun, rel));
   }
 
   const byte_type* Landing(uint32_t k) const noexcept {
@@ -377,11 +355,6 @@ class BlockCursor {
     _pending = true;
     _block = 0;
     _upper = doc_limits::invalid();
-    _landing = {.doc_ptr = meta.doc_start,
-                .doc = doc_limits::invalid(),
-                .pos_offset = meta.pos_offset,
-                .pos_ptr = meta.pos_start,
-                .pay_ptr = meta.pay_start};
   }
 
   void Disarm() noexcept {
@@ -396,7 +369,30 @@ class BlockCursor {
 
   uint32_t Block() const noexcept { return _block; }
 
-  const BlockLanding& Landing() const noexcept { return _landing; }
+  BlockLanding Landing() const noexcept {
+    if (_block == 0) {
+      return {.doc_ptr = _doc_start,
+              .doc = doc_limits::invalid(),
+              .pos_offset = _pos_offset,
+              .pos_ptr = _pos_start,
+              .pay_ptr = _pay_start};
+    }
+    const auto k = _block - 1;
+    BlockLanding landing{.doc_ptr = _doc_start + _index.End(k),
+                         .doc = _index.Last(k)};
+    if (_shape.pos) {
+      landing.pos_offset = _index.PosIndex(k);
+      landing.pos_ptr = _pos_start + _index.PosGroup(k);
+      if (_shape.offs) {
+        landing.pay_ptr = _pay_start + _index.PayGroup(k);
+      }
+    }
+    return landing;
+  }
+
+  doc_id_t LandingDoc() const noexcept {
+    return _block == 0 ? doc_limits::invalid() : _index.Last(_block - 1);
+  }
 
   const BlockIndex& Index() const noexcept { return _index; }
 
@@ -425,7 +421,6 @@ class BlockCursor {
       return 0;
     }
     _upper = _index.Last(b);
-    Land(b);
     return _docs_count - b * doc_limits::kBlockSize;
   }
 
@@ -461,30 +456,8 @@ class BlockCursor {
   }
 
  private:
-  void Land(uint32_t b) noexcept {
-    if (b == 0) {
-      _landing = {.doc_ptr = _doc_start,
-                  .doc = doc_limits::invalid(),
-                  .pos_offset = _pos_offset,
-                  .pos_ptr = _pos_start,
-                  .pay_ptr = _pay_start};
-      return;
-    }
-    const auto k = b - 1;
-    _landing.doc_ptr = _doc_start + _index.End(k);
-    _landing.doc = _index.Last(k);
-    if (_shape.pos) {
-      _landing.pos_ptr = _pos_start + _index.PosGroup(k);
-      _landing.pos_offset = _index.PosIndex(k);
-      if (_shape.offs) {
-        _landing.pay_ptr = _pay_start + _index.PayGroup(k);
-      }
-    }
-  }
-
   BlockIndex _index;
   std::unique_ptr<uint32_t[]> _owned;
-  BlockLanding _landing;
   uint64_t _doc_start = 0;
   uint64_t _pos_start = 0;
   uint64_t _pay_start = 0;
@@ -531,51 +504,6 @@ class BlockIndexWriter {
   }
 
   uint32_t* Root() noexcept { return _root; }
-
-  uint8_t Flags() const noexcept {
-    uint8_t flags = 0;
-    const auto narrow = [](uint32_t value) noexcept {
-      return value <= std::numeric_limits<uint16_t>::max();
-    };
-    if (absl::c_all_of(_bound, narrow) && absl::c_all_of(_run_bound, narrow)) {
-      flags |= BlockIndex::kNarrowBounds;
-    }
-    const auto m = Size() - 1;
-    SDB_ASSERT(m != 0);
-    if (NarrowRuns()) {
-      flags |= BlockIndex::kNarrowRuns;
-    } else if (_end[m - 1] > std::numeric_limits<uint16_t>::max()) {
-      flags |= BlockIndex::kWideEnd;
-    }
-    if (std::max(_pos_group[m - 1], _pay_group[m - 1]) >
-        std::numeric_limits<uint32_t>::max()) {
-      flags |= BlockIndex::kWideGroup;
-    }
-    return flags;
-  }
-
-  doc_id_t RunBase(uint32_t first) const noexcept {
-    return first == 0 ? _last[0] : _last[first - 1];
-  }
-
-  uint64_t RunEnd(uint32_t first) const noexcept {
-    return first == 0 ? 0 : _end[first - 1];
-  }
-
-  bool NarrowRuns() const noexcept {
-    const auto n = Size();
-    for (uint32_t first = 0; first < n; first += BlockIndex::kRun) {
-      const auto last = std::min(n, first + BlockIndex::kRun) - 1;
-      if (_last[last] - RunBase(first) > BlockIndex::kNarrowSpan) {
-        return false;
-      }
-      if (first + 1 < n && _end[std::min(last, n - 2)] - RunEnd(first) >
-                             BlockIndex::kNarrowSpan) {
-        return false;
-      }
-    }
-    return true;
-  }
 
   void Write(IndexOutput& out, BlockIndexShape shape) const {
     const auto n = Size();
@@ -659,6 +587,51 @@ class BlockIndexWriter {
   }
 
  private:
+  uint8_t Flags() const noexcept {
+    uint8_t flags = 0;
+    const auto narrow = [](uint32_t value) noexcept {
+      return value <= std::numeric_limits<uint16_t>::max();
+    };
+    if (absl::c_all_of(_bound, narrow) && absl::c_all_of(_run_bound, narrow)) {
+      flags |= BlockIndex::kNarrowBounds;
+    }
+    const auto m = Size() - 1;
+    SDB_ASSERT(m != 0);
+    if (NarrowRuns()) {
+      flags |= BlockIndex::kNarrowRuns;
+    } else if (_end[m - 1] > std::numeric_limits<uint16_t>::max()) {
+      flags |= BlockIndex::kWideEnd;
+    }
+    if (std::max(_pos_group[m - 1], _pay_group[m - 1]) >
+        std::numeric_limits<uint32_t>::max()) {
+      flags |= BlockIndex::kWideGroup;
+    }
+    return flags;
+  }
+
+  doc_id_t RunBase(uint32_t first) const noexcept {
+    return first == 0 ? _last[0] : _last[first - 1];
+  }
+
+  uint64_t RunEnd(uint32_t first) const noexcept {
+    return first == 0 ? 0 : _end[first - 1];
+  }
+
+  bool NarrowRuns() const noexcept {
+    const auto n = Size();
+    for (uint32_t first = 0; first < n; first += BlockIndex::kRun) {
+      const auto last = std::min(n, first + BlockIndex::kRun) - 1;
+      if (_last[last] - RunBase(first) > BlockIndex::kNarrowSpan) {
+        return false;
+      }
+      if (first + 1 < n && _end[std::min(last, n - 2)] - RunEnd(first) >
+                             BlockIndex::kNarrowSpan) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   std::vector<doc_id_t> _last;
   std::vector<uint64_t> _end;
   std::vector<uint64_t> _pos_group;

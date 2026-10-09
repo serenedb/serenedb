@@ -106,15 +106,11 @@ class PrunedReqOpt : public Root {
   }
 
   void FlushBatch(LoserScoreCollector& collector) {
-    const auto size = _batch.size;
-    if (size == 0) {
-      return;
-    }
-    _batch.size = 0;
-    _optional.Fetch(_batch.docs, size);
-    _lead.ScoreFreqs(_batch.freqs, _batch.scores, size);
-    _optional.ScoreHeld(_batch.scores, size);
-    _admit.AddDocs(collector, _batch.docs, size, _batch.scores);
+    _batch.Flush(
+      _lead, _optional,
+      [&](score_t* scores, uint32_t n)
+        IRS_FORCE_INLINE { _optional.ScoreHeld(scores, n); },
+      _admit, collector);
   }
 
   void ScoreWindow(doc_id_t last, score_t optional_max,
@@ -137,16 +133,9 @@ class PrunedReqOpt : public Root {
       });
   }
 
-  struct Batch {
-    ABSL_CACHELINE_ALIGNED doc_id_t docs[kChunk];
-    ABSL_CACHELINE_ALIGNED uint32_t freqs[kChunk];
-    ABSL_CACHELINE_ALIGNED score_t scores[kChunk];
-    uint32_t size = 0;
-  };
-
   Lead _lead;
   Optional _optional;
-  Batch _batch;
+  ScoreBatch _batch;
   [[no_unique_address]] Admit<Table> _admit;
 };
 

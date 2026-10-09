@@ -82,7 +82,9 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
   }
 
  private:
-  std::array<EntryType, doc_limits::kBoundLevels> _levels{};
+  static constexpr size_t kLevels = 3;
+
+  std::array<EntryType, kLevels> _levels{};
   [[no_unique_address]] Producer _producer;
 };
 

@@ -48,6 +48,26 @@
 
 namespace irs::top {
 
+template<typename RunScore, typename BlockScore>
+IRS_FORCE_INLINE uint32_t FirstCompetitive(const BlockIndex& index, uint32_t b,
+                                           score_t threshold,
+                                           RunScore&& run_score,
+                                           BlockScore&& block_score) {
+  const auto n = index.Size();
+  while (b != n) {
+    const auto r = b / BlockIndex::kRun;
+    if (run_score(r) <= threshold) {
+      b = std::min(n, (r + 1) * BlockIndex::kRun);
+      continue;
+    }
+    if (block_score(b) > threshold) {
+      break;
+    }
+    ++b;
+  }
+  return b;
+}
+
 template<typename InputType, bool Standalone>
 class PruneLeafBase {
  protected:
@@ -111,7 +131,6 @@ class PruneLeafBase {
     _cached_runs.fill(kNoBlock);
     _root_score = std::numeric_limits<score_t>::max();
     _threshold = std::numeric_limits<score_t>::lowest();
-    _upper_bound = doc_limits::eof();
 
     if (meta.docs_count == 1) {
       *(std::end(_docs) - 1) = doc_limits::min() + meta.doc_delta;
@@ -133,7 +152,6 @@ class PruneLeafBase {
       _cursor.Arm(meta, BlockIndexShapeOf(layout, true));
       _cursor.Load(in);
       _root_score = BoundScore(_cursor.Index().Root());
-      _upper_bound = doc_limits::invalid();
     } else {
       const auto size = in.ReadByte();
       _bound_source->Read(in, size);
@@ -145,6 +163,24 @@ class PruneLeafBase {
   doc_id_t Value() const noexcept { return _doc; }
 
   uint32_t Cost() const noexcept { return _cost; }
+
+  doc_id_t AdvanceBlock(doc_id_t target) {
+    if (!_cursor.Armed()) [[unlikely]] {
+      return doc_limits::eof();
+    }
+    if (_cursor.UpperBound() >= target) {
+      return _cursor.UpperBound();
+    }
+    const auto left = SeekCursor(target);
+    if (_needs_reposition || target > _max_in_leaf) {
+      _left_in_list = left;
+      _left_in_leaf = 0;
+      _max_in_leaf = doc_limits::invalid();
+      _needs_reposition = true;
+      _doc = _cursor.LandingDoc();
+    }
+    return _cursor.UpperBound();
+  }
 
   score_t MaxScore(doc_id_t doc) {
     if (!_cursor.Armed()) {
@@ -222,20 +258,10 @@ class PruneLeafBase {
   uint32_t SeekCursor(doc_id_t target) {
     if constexpr (Standalone) {
       const auto& index = _cursor.Index();
-      const auto n = index.Size();
-      auto b = index.Find(_cursor.Block(), target);
-      while (b != n) {
-        const auto r = b / BlockIndex::kRun;
-        if (RunScore(r) <= _threshold) {
-          b = std::min(n, (r + 1) * BlockIndex::kRun);
-          continue;
-        }
-        if (BlockScore(b) > _threshold) {
-          break;
-        }
-        ++b;
-      }
-      return _cursor.MoveTo(b);
+      return _cursor.MoveTo(FirstCompetitive(
+        index, index.Find(_cursor.Block(), target), _threshold,
+        [&](uint32_t r) { return RunScore(r); },
+        [&](uint32_t b) { return BlockScore(b); }));
     } else {
       return _cursor.Seek(target, In());
     }
@@ -246,27 +272,9 @@ class PruneLeafBase {
       return;
     }
     _needs_reposition = false;
-    const auto& state = _cursor.Landing();
+    const auto state = _cursor.Landing();
     In().Seek(state.doc_ptr);
     _doc = state.doc;
-  }
-
-  doc_id_t SeekToBlock(doc_id_t target) {
-    if (!_cursor.Armed()) [[unlikely]] {
-      return doc_limits::eof();
-    }
-    const auto upper_bound = _cursor.UpperBound();
-    if (upper_bound >= target) {
-      return upper_bound;
-    }
-    const auto left = SeekCursor(target);
-    _upper_bound = _cursor.UpperBound();
-    if (_needs_reposition || target > _max_in_leaf) {
-      _left_in_list = left;
-      _left_in_leaf = 0;
-      _needs_reposition = true;
-    }
-    return _upper_bound;
   }
 
   void RepositionForWindow(doc_id_t min) {
@@ -274,7 +282,7 @@ class PruneLeafBase {
       return;
     }
     _needs_reposition = false;
-    const auto& state = _cursor.Landing();
+    const auto state = _cursor.Landing();
     In().Seek(state.doc_ptr);
     ReadLeaf(state.doc);
     const auto* const first =
@@ -420,7 +428,6 @@ class PruneLeafBase {
   uint32_t _len = 0;
   doc_id_t _base = 0;
   doc_id_t _max_in_leaf = doc_limits::invalid();
-  doc_id_t _upper_bound = doc_limits::eof();
   uint32_t _left_in_list = 0;
   uint32_t _cost = 0;
   bool _needs_reposition = false;

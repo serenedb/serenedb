@@ -202,7 +202,7 @@ class PrunedDisjunction : public Root {
         continue;
       }
       if (entry.leaf.Value() < min) {
-        entry.leaf.SeekToBlock(min);
+        entry.leaf.AdvanceBlock(min);
       }
       entry.max_score = entry.leaf.MaxScore(max - 1);
       entry.ratio = static_cast<double>(entry.max_score) / entry.cost;
@@ -383,7 +383,7 @@ class PrunedDisjunction : public Root {
     doc_id_t max = doc_limits::eof();
     for (size_t i = _first_essential; i != _sorted.size(); ++i) {
       auto& leaf = _sorted[i]->leaf;
-      const doc_id_t block_max = leaf.SeekToBlock(std::max(leaf.Value(), min));
+      const doc_id_t block_max = leaf.AdvanceBlock(std::max(leaf.Value(), min));
       if (!doc_limits::eof(block_max)) {
         max = std::min(block_max + 1, max);
       }

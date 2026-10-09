@@ -104,7 +104,6 @@ class NormColumnReader final {
   uint64_t RowCount() const noexcept { return _row_count; }
   uint64_t Sum() const noexcept { return _sum; }
   uint64_t NonZeroCount() const noexcept { return _non_zero; }
-  bool HasExceptions() const noexcept { return _exceptions; }
   size_t RegionCount() const noexcept { return _regions.size(); }
   size_t WindowCount() const noexcept { return _windows.size(); }
   size_t PageCount() const noexcept { return _pages; }
@@ -130,9 +129,7 @@ class NormColumnReader final {
     return _residency;
   }
 
-  uint32_t Get(uint64_t row) const noexcept;
-
-  void Decode(doc_id_t first, size_t n, uint32_t* values) const noexcept;
+  void Decode(doc_id_t first, size_t n, uint32_t* values) const;
 
  private:
   const byte_type* Map(IndexInput& in, uint64_t offset, uint64_t size);
@@ -147,7 +144,6 @@ class NormColumnReader final {
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;
   size_t _pages = 0;
-  bool _exceptions = false;
 };
 
 }  // namespace irs

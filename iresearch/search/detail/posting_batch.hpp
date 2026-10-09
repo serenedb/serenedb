@@ -146,8 +146,9 @@ class PostingBatch {
     if (_left_in_list == 0) {
       return false;
     }
-    In().Seek(_walk.Landing().doc_ptr);
-    _last = _walk.Landing().doc;
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    _last = landing.doc;
     return true;
   }
 

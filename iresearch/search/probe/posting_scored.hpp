@@ -26,6 +26,7 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/masked_leaf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
@@ -43,8 +44,6 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
   using Base::_freqs;
   using Base::_gather;
   using Base::_last;
-  using Base::kBits;
-  using Base::kBlock;
   using Base::ReadLeafFill;
   using Base::SeekToLeaf;
 
@@ -67,9 +66,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
     if (meta.docs_count == 1) {
       const auto doc = this->SetSingle(meta);
       _cursor.base = doc - 1;
-      _len = 1;
-      _at = kBlock - 1;
-      _packed = true;
+      _leaf.Single();
       return;
     }
 
@@ -85,7 +82,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {
-    _gather.data[slot] = _freqs.data[_index];
+    _gather.data[slot] = _freqs.data[_leaf.Index()];
   }
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
@@ -97,69 +94,13 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
       return _doc = doc_limits::eof();
     }
 
-    if (_packed) [[likely]] {
-      if (_len == kBlock) [[likely]] {
-        const auto* const it = BranchlessLowerBound<doc_limits::kBlockSize>(
-          std::begin(_docs), target);
-        _index = static_cast<uint32_t>(it - std::cbegin(_docs));
-        return _doc = *it;
-      }
-      const auto* const end = std::cend(_docs);
-      for (const auto* it = std::cbegin(_docs) + _at; it != end; ++it) {
-        if (target <= *it) {
-          _at = static_cast<uint32_t>(it - std::cbegin(_docs));
-          _index = _at;
-          return _doc = *it;
-        }
-      }
-      _at = kBlock;
-      return _doc = doc_limits::eof();
-    }
-
-    return _doc = ProbeMasked(target);
+    return _doc = _leaf.Find(std::begin(_docs), _cursor.base, target);
   }
 
  private:
-  IRS_NO_INLINE doc_id_t ProbeMasked(doc_id_t target) noexcept {
-    const auto first = _cursor.base + 1;
-    if (target < first) {
-      target = first;
-    }
-
-    if (_run) {
-      _index = kBlock - _len + (target - first);
-      return target;
-    }
-
-    auto bit = static_cast<uint64_t>(target) - first;
-    for (auto w = bit / kBits; w != _words; ++w) {
-      const auto word = _bitset[w] & (~uint64_t{0} << (bit % kBits));
-      if (word != 0) {
-        const auto tz = static_cast<uint32_t>(std::countr_zero(word));
-        for (; _prefix_word != w; ++_prefix_word) {
-          _prefix_bits +=
-            static_cast<uint32_t>(std::popcount(_bitset[_prefix_word]));
-        }
-        _index = kBlock - _len + _prefix_bits +
-                 static_cast<uint32_t>(
-                   std::popcount(_bitset[w] & ((uint64_t{1} << tz) - 1)));
-        return static_cast<doc_id_t>(first + w * kBits + tz);
-      }
-      bit = (w + 1) * kBits;
-    }
-    return doc_limits::eof();
-  }
-
   void ReadLeaf(doc_id_t prev) {
     const auto read = ReadLeafFill(prev);
-    _bitset = read.bitset;
-    _len = read.len;
-    _at = kBlock - read.len;
-    _words = read.leaf.words;
-    _run = read.leaf.IsRun();
-    _prefix_word = 0;
-    _prefix_bits = 0;
-    _packed = !read.leaf.Maskable();
+    _leaf.Reset(read.leaf, read.bitset, read.len);
   }
 
   IRS_FORCE_INLINE bool ReadTo(doc_id_t target) {
@@ -167,15 +108,7 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
       target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeaf(prev); });
   }
 
-  const uint64_t* _bitset = nullptr;
-  uint32_t _words = 0;
-  uint32_t _len = 0;
-  uint32_t _at = doc_limits::kBlockSize;
-  uint32_t _index = doc_limits::kBlockSize - 1;
-  uint64_t _prefix_word = 0;
-  uint32_t _prefix_bits = 0;
-  bool _run = false;
-  bool _packed = true;
+  MaskedLeaf _leaf;
 };
 
 }  // namespace irs::detail

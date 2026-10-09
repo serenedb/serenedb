@@ -31,6 +31,7 @@
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/top/admit.hpp"
+#include "iresearch/search/top/prune_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -121,25 +122,15 @@ class PrunedPhrase : public Root {
       _block_last = doc_limits::eof();
       return doc;
     }
-    const auto n = index->Size();
     const auto first = _slots.Lead().LeafBlock();
-    auto b = first;
-    while (b != n) {
-      const auto r = b / BlockIndex::kRun;
-      if (RunScore(*index, r) <= threshold) {
-        b = std::min(n, (r + 1) * BlockIndex::kRun);
-        continue;
-      }
-      if (BoundScore(index->Bound(b)) > threshold) {
-        break;
-      }
-      ++b;
-    }
+    const auto b = FirstCompetitive(
+      *index, first, threshold, [&](uint32_t r) { return RunScore(*index, r); },
+      [&](uint32_t k) { return BoundScore(index->Bound(k)); });
     if (b == first) {
       _block_last = index->Last(b);
       return doc;
     }
-    if (b == n) {
+    if (b == index->Size()) {
       return doc_limits::eof();
     }
     return _slots.Seek(index->Last(b - 1) + 1);

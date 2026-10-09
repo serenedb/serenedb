@@ -66,9 +66,8 @@ void AssertNormReads(const irs::NormColumnReader& col,
                      const std::vector<uint32_t>& expected) {
   ASSERT_EQ(col.RowCount(), expected.size());
   uint64_t sum = 0;
-  for (uint64_t i = 0; i < expected.size(); ++i) {
-    ASSERT_EQ(col.Get(i), expected[i]) << "i=" << i;
-    sum += expected[i];
+  for (const auto value : expected) {
+    sum += value;
   }
   EXPECT_EQ(col.Sum(), sum);
 
@@ -198,7 +197,6 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
     }
     irs::ColReader r{dir, "flush_empty_typed", Db()};
     EXPECT_TRUE(r.HasColumn(1));
-    ASSERT_TRUE(r.HasNormColumn(3));
     const auto* norm = r.NormColumn(3);
     ASSERT_NE(norm, nullptr);
     EXPECT_EQ(norm->RowCount(), 1u);
@@ -230,14 +228,16 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       w.Commit(kRowCount);
     }
     irs::ColReader r{dir, "dup_zero", Db()};
-    ASSERT_TRUE(r.HasNormColumn(9));
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
     EXPECT_EQ(col->Sum(), 0u);
     EXPECT_EQ(col->NonZeroCount(), 0u);
+    const auto reader = irs::MakePersistedNormReader(*col);
     for (uint64_t i = 0; i < kRowCount; ++i) {
-      EXPECT_EQ(col->Get(i), 0u) << "i=" << i;
+      EXPECT_EQ(
+        reader->Get(static_cast<irs::doc_id_t>(i + irs::doc_limits::min())), 0u)
+        << "i=" << i;
     }
   }
 
@@ -256,14 +256,17 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       w.Commit(kRowCount);
     }
     irs::ColReader r{dir, "dup_value", Db()};
-    ASSERT_TRUE(r.HasNormColumn(9));
     const auto* col = r.NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
     EXPECT_EQ(col->Sum(), uint64_t{kRepeatedValue} * kRowCount);
     EXPECT_EQ(col->NonZeroCount(), kRowCount);
+    const auto reader = irs::MakePersistedNormReader(*col);
     for (uint64_t i = 0; i < kRowCount; ++i) {
-      EXPECT_EQ(col->Get(i), kRepeatedValue) << "i=" << i;
+      EXPECT_EQ(
+        reader->Get(static_cast<irs::doc_id_t>(i + irs::doc_limits::min())),
+        kRepeatedValue)
+        << "i=" << i;
     }
     // Multi-row-group: with 1024 RG size + 5000 rows we expect 5 row groups.
     ASSERT_EQ(col->RegionCount(), 5u);
@@ -295,8 +298,8 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       EXPECT_EQ(region.bits, 0u) << "r=" << r;
       EXPECT_EQ(region.value, kRepeatedValue) << "r=" << r;
       EXPECT_EQ(region.end_doc - region.first_doc, kRowGroupSize) << "r=" << r;
+      EXPECT_FALSE(region.exceptions) << "r=" << r;
     }
-    EXPECT_FALSE(col->HasExceptions());
   }
 }
 

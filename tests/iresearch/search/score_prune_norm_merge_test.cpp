@@ -31,6 +31,7 @@
 #include <gtest/gtest.h>
 
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/norm.hpp>
@@ -220,9 +221,9 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
     ASSERT_NE(nullptr, column) << "norm column missing for " << field_id;
     ASSERT_EQ(norm_id, column->Id());
 
+    const auto reader = irs::MakePersistedNormReader(*column);
     for (const auto& [doc, value] : exp) {
-      const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
-      ASSERT_EQ(value, column->Get(row))
+      ASSERT_EQ(value, reader->Get(doc))
         << field_id << " norm mismatch doc=" << doc;
     }
   }

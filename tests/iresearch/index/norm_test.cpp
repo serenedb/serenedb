@@ -23,6 +23,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
+#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -154,10 +155,10 @@ void NormTestCase::AssertNormColumn(
   // of doc_id (N + doc_limits::min()), padded with zeros for docs that
   // didn't have the field. Index by the doc_id from each expected pair,
   // not by the pair's position in the vector.
+  const auto reader = irs::MakePersistedNormReader(*column);
   for (const auto& [doc, value] : expected_docs) {
     ASSERT_TRUE(irs::doc_limits::valid(doc));
-    const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
-    ASSERT_EQ(value, column->Get(row)) << "doc=" << doc;
+    ASSERT_EQ(value, reader->Get(doc)) << "doc=" << doc;
   }
 }
 
@@ -327,10 +328,12 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
     ASSERT_NE(nullptr, field);
     const auto* column = segment.GetColReader()->NormColumn(field->meta().norm);
     ASSERT_NE(nullptr, column);
-    EXPECT_TRUE(column->HasExceptions());
+    bool exceptions = false;
     for (size_t r = 0; r < column->RegionCount(); ++r) {
       EXPECT_EQ(8u, column->Region(r).bits) << "r=" << r;
+      exceptions |= column->Region(r).exceptions;
     }
+    EXPECT_TRUE(exceptions);
   };
 
   auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());

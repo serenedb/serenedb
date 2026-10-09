@@ -111,7 +111,6 @@ struct LeafScore {
 
 struct LeafCursor {
   doc_id_t base = 0;
-  doc_id_t upper_bound = doc_limits::eof();
 };
 
 template<typename InputType, LeafShape Shape>
@@ -253,9 +252,6 @@ class PostingLeaf {
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if (meta.docs_count > kBlock) {
       _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
-      if constexpr (Shape.cursor) {
-        _cursor.upper_bound = doc_limits::invalid();
-      }
     }
   }
 
@@ -272,11 +268,9 @@ class PostingLeaf {
       _doc = doc_limits::eof();
       return;
     }
-    In().Seek(walk.Landing().doc_ptr);
-    _last = walk.Landing().doc;
-    if constexpr (Shape.cursor) {
-      _cursor.upper_bound = walk.UpperBound();
-    }
+    const auto landing = walk.Landing();
+    In().Seek(landing.doc_ptr);
+    _last = landing.doc;
   }
 
   IRS_FORCE_INLINE bool Start(doc_id_t min, doc_id_t max) {
@@ -480,7 +474,7 @@ class PostingLeaf {
     static_assert(Shape.cursor);
     const auto span = _last - _cursor.base;
     const bool avoid_seek = target - _last <= span ||
-                            target <= _cursor.upper_bound ||
+                            target <= _walk.UpperBound() ||
                             target <= doc_limits::min();
 
     if (avoid_seek) [[unlikely]] {
@@ -497,12 +491,12 @@ class PostingLeaf {
     }
 
     _left_in_list = _walk.Seek(target, *_in);
-    _cursor.upper_bound = _walk.UpperBound();
     if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    In().Seek(_walk.Landing().doc_ptr);
-    read(_walk.Landing().doc);
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    read(landing.doc);
     return target <= _last;
   }
 

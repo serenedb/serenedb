@@ -83,7 +83,7 @@ struct OrBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    OrBlock(words, prev, src, n);
+    OrBlock(words, prev + 1 - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
@@ -108,7 +108,7 @@ struct ClearBits {
 
   IRS_FORCE_INLINE void Bitset(uint64_t prev, const uint64_t* IRS_RESTRICT src,
                                uint32_t n, uint64_t) noexcept {
-    ClearBlock(words, prev, src, n);
+    ClearBlock(words, prev + 1 - kMin, src, n);
   }
 
   IRS_FORCE_INLINE void Doc(size_t doc) noexcept {
@@ -196,7 +196,6 @@ struct RetainBits {
 };
 
 inline constexpr uint64_t kFillPrefetch = 512;
-inline constexpr uint64_t kFillLine = 64;
 
 template<typename Input, typename Sink>
 void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
@@ -221,7 +220,7 @@ void ReadPosting(const PostingMeta& meta, Input& in, uint32_t* IRS_RESTRICT enc,
       if constexpr (Input::kVolatileAlways) {
         const auto* const from = std::max(fetched, at);
         for (uint64_t offset = 0; offset != kFillPrefetch;
-             offset += kFillLine) {
+             offset += ABSL_CACHELINE_SIZE) {
           __builtin_prefetch(from + offset);
         }
         fetched = at + kFillPrefetch;

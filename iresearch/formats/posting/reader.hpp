@@ -51,9 +51,6 @@ inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
 class PostingsReader final {
  public:
-  template<bool Freq, bool Pos, bool Offs>
-  using IteratorTraits = IteratorTraitsImpl<Freq, Pos, Offs>;
-
   PostingsHandles Handles() const noexcept {
     return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
   }
@@ -189,35 +186,35 @@ template<typename FieldTraits, typename Factory>
 auto PostingsReader::IteratorImpl(IndexFeatures enabled, Factory&& factory) {
   switch (ToIndex(enabled)) {
     case kPosOffs: {
-      using IteratorTraits = IteratorTraits<true, true, true>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
+      using Traits = IteratorTraitsImpl<true, true, true>;
+      if constexpr ((FieldTraits::Features() & Traits::Features()) ==
+                    Traits::Features()) {
         return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
+          .template operator()<Traits, FieldTraits>();
       }
     } break;
     case kPos: {
-      using IteratorTraits = IteratorTraits<true, true, false>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
+      using Traits = IteratorTraitsImpl<true, true, false>;
+      if constexpr ((FieldTraits::Features() & Traits::Features()) ==
+                    Traits::Features()) {
         return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
+          .template operator()<Traits, FieldTraits>();
       }
     } break;
     case IndexFeatures::Freq: {
-      using IteratorTraits = IteratorTraits<true, false, false>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
+      using Traits = IteratorTraitsImpl<true, false, false>;
+      if constexpr ((FieldTraits::Features() & Traits::Features()) ==
+                    Traits::Features()) {
         return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
+          .template operator()<Traits, FieldTraits>();
       }
     } break;
     default:
       break;
   }
-  using IteratorTraits = IteratorTraits<false, false, false>;
+  using Traits = IteratorTraitsImpl<false, false, false>;
   return std::forward<Factory>(factory)
-    .template operator()<IteratorTraits, FieldTraits>();
+    .template operator()<Traits, FieldTraits>();
 }
 
 template<typename Factory>
@@ -230,19 +227,19 @@ auto PostingsReader::IteratorImpl(IndexFeatures field_features,
 
   switch (ToIndex(field_features)) {
     case kPosOffs: {
-      using FieldTraits = IteratorTraits<true, true, true>;
+      using FieldTraits = IteratorTraitsImpl<true, true, true>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     case kPos: {
-      using FieldTraits = IteratorTraits<true, true, false>;
+      using FieldTraits = IteratorTraitsImpl<true, true, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     case IndexFeatures::Freq: {
-      using FieldTraits = IteratorTraits<true, false, false>;
+      using FieldTraits = IteratorTraitsImpl<true, false, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     default: {
-      using FieldTraits = IteratorTraits<false, false, false>;
+      using FieldTraits = IteratorTraitsImpl<false, false, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
   }

@@ -113,7 +113,7 @@ class PrunedPosting : public Root, public PruneLeafBase<InputType, true> {
           if (_left_in_list == 0) {
             break;
           }
-          const auto& state = _cursor.Landing();
+          const auto state = _cursor.Landing();
           In().Seek(state.doc_ptr);
           last = state.doc;
         }

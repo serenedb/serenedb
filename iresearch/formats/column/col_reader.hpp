@@ -72,9 +72,6 @@ class ColReader final {
     return _columns;
   }
 
-  bool HasNormColumn(field_id id) const noexcept {
-    return _norm_by_id.contains(id);
-  }
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 

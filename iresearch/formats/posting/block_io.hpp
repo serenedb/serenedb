@@ -42,7 +42,6 @@ inline constexpr uint32_t kEncBytes =
 inline constexpr uint32_t kEncWords =
   (kEncBytes + sizeof(uint32_t) - 1) / sizeof(uint32_t);
 inline constexpr uint32_t kStreamAhead = 128;
-inline constexpr uint32_t kLine = 64;
 inline constexpr uint32_t kHoleWords = 8;
 inline constexpr uint32_t kFreqBias = 1;
 inline constexpr block_codec::EncodeOptions kFreqOptions{
@@ -56,7 +55,7 @@ static_assert(block_codec::kOutSlack <= doc_limits::kDocsSlack);
 
 IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
   __builtin_prefetch(at + kStreamAhead);
-  __builtin_prefetch(at + kStreamAhead + kLine);
+  __builtin_prefetch(at + kStreamAhead + ABSL_CACHELINE_SIZE);
 }
 
 template<typename InputType>

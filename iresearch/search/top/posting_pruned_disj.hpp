@@ -45,9 +45,9 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
   using Base::RepositionForWindow;
 
  public:
+  using Base::AdvanceBlock;
   using Base::ForEachScoredBlock;
   using Base::MaxScore;
-  using Base::SeekToBlock;
   using Base::Value;
 
   PostingPrunedDisj() = default;
@@ -71,12 +71,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
     if (target <= _doc) [[unlikely]] {
       return _doc;
     }
-    if (_cursor.UpperBound() < target) [[unlikely]] {
-      SeekToBlock(target);
-      if (_needs_reposition) {
-        _doc = _cursor.Landing().doc;
-      }
-    }
+    AdvanceBlock(target);
     if (_left_in_leaf == 0) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return _doc = doc_limits::eof();
@@ -271,7 +266,7 @@ class PostingPrunedDisj : public PruneLeafBase<InputType, false> {
             _left_in_leaf = 0;
             goto cand_done;
           }
-          const auto& state = _cursor.Landing();
+          const auto state = _cursor.Landing();
           In().Seek(state.doc_ptr);
           ReadLeaf(state.doc);
         } else {

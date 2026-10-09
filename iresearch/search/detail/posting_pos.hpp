@@ -246,7 +246,7 @@ class PostingPos {
     if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
-    const auto& last = _cursor.Landing();
+    const auto last = _cursor.Landing();
     In().Seek(last.doc_ptr);
     _pos.Prepare(last);
     ReadLeaf(last.doc);

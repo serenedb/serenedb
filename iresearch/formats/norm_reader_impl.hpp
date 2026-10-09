@@ -129,7 +129,6 @@ class NormReaderBase : public NormReader {
     1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
   static constexpr uint64_t kAheadBytes = 16 * 1024;
-  static constexpr uint64_t kLine = 64;
   static constexpr uint64_t kMaxGapPages = 2;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
   static constexpr uint32_t kPageShift =
@@ -417,7 +416,8 @@ class NormReaderBase : public NormReader {
     if (span > kAheadBytes) {
       return;
     }
-    for (uint64_t offset = kLine; offset <= span; offset += kLine) {
+    for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
+         offset += ABSL_CACHELINE_SIZE) {
       __builtin_prefetch(last + offset);
     }
   }
@@ -456,16 +456,16 @@ class NormReaderBase : public NormReader {
   score_t _avg;
 };
 
-class SingleRegionNormReader : public NormReaderBase {
+template<bool Multi>
+class PersistedNormReader : public NormReaderBase {
  public:
-  explicit SingleRegionNormReader(const NormColumnReader& column) noexcept
+  explicit PersistedNormReader(const NormColumnReader& column) noexcept
     : NormReaderBase{column} {
-    SDB_ASSERT(column.RegionCount() == 1);
+    SDB_ASSERT(Multi || column.RegionCount() == 1);
     Position(column.Region(0));
   }
 
-  void Get(std::span<const doc_id_t> docs,
-           std::span<uint32_t> values) noexcept final {
+  void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
     SDB_ASSERT(docs.size() <= values.size());
     if (docs.empty()) {
       return;
@@ -473,85 +473,45 @@ class SingleRegionNormReader : public NormReaderBase {
     Fetch(docs.data(), values.data(), docs.size());
   }
 
-  uint32_t Get(doc_id_t doc) noexcept final {
+  uint32_t Get(doc_id_t doc) final {
     SDB_ASSERT(doc >= doc_limits::min());
+    if constexpr (Multi) {
+      if (doc < _region->first_doc || doc >= _region->end_doc) [[unlikely]] {
+        Position(_column->Locate(doc));
+      }
+    }
     Touched(&doc, 1);
     return ReadOne(doc);
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
-                     std::span<uint32_t, kScoreBlock> values) noexcept final {
+                     std::span<uint32_t, kScoreBlock> values) final {
     Fetch(docs.data(), values.data(), docs.size());
   }
 
-  void GetPostingBlock(
-    std::span<const doc_id_t, kPostingBlock> docs,
-    std::span<uint32_t, kPostingBlock> values) noexcept final {
+  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                       std::span<uint32_t, kPostingBlock> values) final {
     Fetch(docs.data(), values.data(), docs.size());
     PrefetchNext(docs.data(), docs.size());
   }
 
  private:
   IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
-                              size_t n) noexcept {
+                              size_t n) {
     SDB_ASSERT(std::is_sorted(docs, docs + n));
+    if constexpr (Multi) {
+      if (docs[0] < _region->first_doc || docs[n - 1] >= _region->end_doc)
+        [[unlikely]] {
+        Split(docs, values, n);
+        return;
+      }
+    }
     Touched(docs, n);
     Read(docs, values, n);
   }
-};
-
-class MultiRegionNormReader : public NormReaderBase {
- public:
-  explicit MultiRegionNormReader(const NormColumnReader& column) noexcept
-    : NormReaderBase{column} {
-    Position(column.Region(0));
-  }
-
-  void Get(std::span<const doc_id_t> docs,
-           std::span<uint32_t> values) noexcept final {
-    SDB_ASSERT(docs.size() <= values.size());
-    if (docs.empty()) {
-      return;
-    }
-    Fetch(docs.data(), values.data(), docs.size());
-  }
-
-  uint32_t Get(doc_id_t doc) noexcept final {
-    SDB_ASSERT(doc >= doc_limits::min());
-    if (doc < _region->first_doc || doc >= _region->end_doc) [[unlikely]] {
-      Position(_column->Locate(doc));
-    }
-    Touched(&doc, 1);
-    return ReadOne(doc);
-  }
-
-  void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
-                     std::span<uint32_t, kScoreBlock> values) noexcept final {
-    Fetch(docs.data(), values.data(), docs.size());
-  }
-
-  void GetPostingBlock(
-    std::span<const doc_id_t, kPostingBlock> docs,
-    std::span<uint32_t, kPostingBlock> values) noexcept final {
-    Fetch(docs.data(), values.data(), docs.size());
-    PrefetchNext(docs.data(), docs.size());
-  }
-
- private:
-  IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
-                              size_t n) noexcept {
-    SDB_ASSERT(std::is_sorted(docs, docs + n));
-    if (docs[0] >= _region->first_doc && docs[n - 1] < _region->end_doc)
-      [[likely]] {
-      Touched(docs, n);
-      Read(docs, values, n);
-      return;
-    }
-    Split(docs, values, n);
-  }
 
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
-             size_t n) noexcept {
+             size_t n) {
     for (size_t i = 0; i != n;) {
       if (docs[i] < _region->first_doc || docs[i] >= _region->end_doc) {
         Position(_column->Locate(docs[i]));
@@ -571,9 +531,9 @@ inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
   SDB_ASSERT(column.RegionCount() > 0);
   if (column.RegionCount() == 1) {
-    return memory::make_managed<SingleRegionNormReader>(column);
+    return memory::make_managed<PersistedNormReader<false>>(column);
   }
-  return memory::make_managed<MultiRegionNormReader>(column);
+  return memory::make_managed<PersistedNormReader<true>>(column);
 }
 
 }  // namespace irs

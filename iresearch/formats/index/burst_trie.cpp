@@ -709,7 +709,6 @@ FieldWriter::Impl::Impl(bool compaction, IResourceManager& rm,
     _blocks{ManagedTypedAllocator<Entry>{rm}},
     _suffix{rm},
     _stats{rm},
-    _pw{compaction},
     _stack{ManagedTypedAllocator<Entry>{rm}},
     _fst_buf{new FstBuffer{rm}},
     _prefixes{kDefaultSize, 0},
@@ -774,9 +773,6 @@ void FieldWriter::Impl::write(const BasicTermReader& reader) {
   SDB_ASSERT(terms != nullptr);
 
   if (_compaction) {
-    // merge readers decode postings from existing segments doc-at-a-time
-    // (remapping through the doc map), so compaction walks the classic
-    // per-term iterator surface
     while (terms->next()) {
       PostingMeta meta;
       auto postings = terms->postings(index_features);
@@ -2829,11 +2825,13 @@ class FieldReader::Impl {
         return;
       }
 
-      doc_id_t d;
-      while (!doc_limits::eof(d = docs_it->Next())) {
-        SDB_ASSERT(doc_limits::valid(d));
-        if (!acceptor(d)) {
-          break;
+      doc_id_t docs[doc_limits::kBlockSize];
+      while (const auto n = docs_it->NextDocs(docs, nullptr)) {
+        for (uint32_t i = 0; i != n; ++i) {
+          SDB_ASSERT(doc_limits::valid(docs[i]));
+          if (!acceptor(docs[i])) {
+            return;
+          }
         }
       }
     }

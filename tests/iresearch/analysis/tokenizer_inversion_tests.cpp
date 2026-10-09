@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
@@ -145,7 +146,7 @@ void CollectKeys(const SubReader& segment, std::map<doc_id_t, size_t>& out) {
     const auto value = terms->value();
     const std::string key{reinterpret_cast<const char*>(value.data()),
                           value.size()};
-    auto docs = terms->postings(IndexFeatures::Freq);
+    auto docs = ::tests::Docs(terms->postings(IndexFeatures::Freq));
     ASSERT_TRUE(docs);
     size_t seen = 0;
     for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
@@ -195,7 +196,7 @@ void CollectField(const SubReader& segment, const FieldPlan& field,
     has_previous = true;
     ++nterms;
 
-    auto docs = terms->postings(field.features);
+    auto docs = ::tests::Docs(terms->postings(field.features), field.features);
     ASSERT_TRUE(docs);
     auto* positions = docs->Positions();
     ASSERT_EQ(want_pos, positions != nullptr) << "term=" << term;

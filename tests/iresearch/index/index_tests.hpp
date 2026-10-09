@@ -32,6 +32,7 @@
 
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
+#include "postings_cursor.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -173,36 +174,11 @@ void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 // A posting list is written before anything is deleted, so a reader walking
 // one sees documents the segment no longer has. Only a plan knows about the
 // segment's mask, and a test that drives the postings directly builds none.
-class MaskedPostings : public irs::TermPostings {
- public:
-  MaskedPostings(irs::TermPostings::ptr&& postings,
-                 irs::DocumentMask::Iterator&& it_mask) noexcept
-    : _postings{std::move(postings)}, _it_mask{std::move(it_mask)} {}
-
-  irs::doc_id_t Next() final {
-    do {
-      _doc = _postings->Next();
-    } while (!irs::doc_limits::eof(_doc) && _it_mask.Contains(_doc));
-    return _doc;
-  }
-
-  uint32_t GetFreq() const final { return _postings->GetFreq(); }
-
-  irs::PosAttr* Positions() noexcept final { return _postings->Positions(); }
-
- private:
-  irs::TermPostings::ptr _postings;
-  irs::DocumentMask::Iterator _it_mask;
-};
-
-inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
-                                           irs::TermPostings::ptr&& postings) {
-  auto it_mask = segment.MaskedDocs();
-  if (it_mask.Empty()) {
-    return std::move(postings);
-  }
-  return irs::memory::make_managed<MaskedPostings>(std::move(postings),
-                                                   std::move(it_mask));
+inline std::unique_ptr<PostingsCursor> MaskPostings(
+  const irs::SubReader& segment, irs::TermPostings::ptr&& postings,
+  irs::IndexFeatures features = irs::IndexFeatures::None) {
+  return std::make_unique<PostingsCursor>(std::move(postings), features,
+                                          segment.MaskedDocs());
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {

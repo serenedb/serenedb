@@ -192,6 +192,8 @@ irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   SDB_ASSERT(_pk_field);
   _terms.reset();
   _postings.reset();
+  _docs_at = 0;
+  _docs_size = 0;
   _pos = 0;
   _resume_row = std::numeric_limits<int64_t>::min();
   auto& self = const_cast<SearchRemovePrefixFilter&>(*this);
@@ -203,10 +205,14 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
   while (true) {
     if (_postings) {
       while (true) {
-        const auto doc = _postings->Next();
-        if (irs::doc_limits::eof(doc)) {
-          break;
+        if (_docs_at == _docs_size) {
+          _docs_size = _postings->NextDocs(_docs.data(), nullptr);
+          _docs_at = 0;
+          if (_docs_size == 0) {
+            break;
+          }
         }
+        const auto doc = _docs[_docs_at++];
         if (_segment_mask.Contains(doc) || _pending_mask.Contains(doc)) {
           continue;
         }

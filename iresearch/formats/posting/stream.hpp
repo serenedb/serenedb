@@ -81,39 +81,36 @@ class PostingsStream : public TermPostings {
     }
   }
 
-  doc_id_t Next() final {
-    if (_left_in_leaf == 0) [[unlikely]] {
-      if (_left_in_list == 0) [[unlikely]] {
-        return _doc = doc_limits::eof();
+  uint32_t NextDocs(doc_id_t* docs, uint32_t* freqs) final {
+    if (_left_in_leaf == 0) {
+      if (_left_in_list == 0) {
+        return 0;
       }
       ReadLeaf(_max_in_leaf);
     }
-
-    if constexpr (IteratorTraits::Position()) {
-      const auto freq = *(std::end(_freqs) - _left_in_leaf);
-      _pos.Notify(freq, freq);
-      _pos.Clear();
-    }
-
-    _doc = *(std::end(_docs) - _left_in_leaf);
-    --_left_in_leaf;
-    return _doc;
-  }
-
-  uint32_t GetFreq() const final {
+    const auto n = _left_in_leaf;
+    std::copy_n(std::end(_docs) - n, n, docs);
     if constexpr (IteratorTraits::Frequency()) {
-      SDB_ASSERT(_left_in_leaf < doc_limits::kBlockSize);
-      return *(std::end(_freqs) - _left_in_leaf - 1);
+      std::copy_n(std::end(_freqs) - n, n, freqs);
+    }
+    _left_in_leaf = 0;
+    return n;
+  }
+
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final {
+    if constexpr (IteratorTraits::Position()) {
+      _pos.ReadDeltas(pos, offs_start, offs_len, n);
     } else {
-      return 0;
+      TermPostings::NextPositions(pos, offs_start, offs_len, n);
     }
   }
 
-  PosAttr* Positions() noexcept final {
+  void SkipPositions(uint64_t n) final {
     if constexpr (IteratorTraits::Position()) {
-      return &_pos;
+      _pos.SkipDeltas(n);
     } else {
-      return nullptr;
+      TermPostings::SkipPositions(n);
     }
   }
 

@@ -101,6 +101,36 @@ class PositionImpl final : public PosAttr {
     return true;
   }
 
+  void ReadDeltas(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                  uint32_t n) {
+    if (_pend_pos != 0) {
+      Skip(_pend_pos);
+      _pend_pos = 0;
+    }
+    while (n != 0) {
+      if (_buf_pos == pos_limits::kBlockSize) {
+        ReadBlock();
+        _buf_pos = 0;
+      }
+      const auto take = static_cast<uint32_t>(
+        std::min<uint64_t>(n, pos_limits::kBlockSize - _buf_pos));
+      std::copy_n(_pos_deltas + _buf_pos, take, pos);
+      pos += take;
+      if constexpr (IteratorTraits::Offset()) {
+        if (offs_start != nullptr) {
+          std::copy_n(_offs_start_deltas + _buf_pos, take, offs_start);
+          std::copy_n(_offs_lengths + _buf_pos, take, offs_len);
+          offs_start += take;
+          offs_len += take;
+        }
+      }
+      _buf_pos += take;
+      n -= take;
+    }
+  }
+
+  void SkipDeltas(uint64_t n) noexcept { _pend_pos += n; }
+
   void reset() final {
     Clear();
     if (_cookie.pos_group != std::numeric_limits<uint64_t>::max()) {

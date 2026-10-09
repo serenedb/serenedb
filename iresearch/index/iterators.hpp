@@ -52,46 +52,21 @@
 
 namespace irs {
 
-class PosAttr;
-
-// One term's documents as a merge hands them to the postings writer: in
-// ascending order, one at a time, with what the field stores beside each of
-// them. A document stream and nothing else -- no score, no probe, no
-// two-phase check -- so it is a `lead::Node`. Flush hands the writer
-// `PostingRows` instead.
-struct TermPostings : lead::Node {
+struct TermPostings : memory::Managed {
   using ptr = memory::managed_ptr<TermPostings>;
-
-  // What a consumer is handed back when the attributes below change identity.
-  using AttrRefresh = absl::FunctionRef<void(TermPostings&)>;
 
   [[nodiscard]] static ptr empty() noexcept;
 
-  doc_id_t Value() const noexcept { return _doc; }
+  virtual uint32_t NextDocs(doc_id_t* docs, uint32_t* freqs) = 0;
 
-  // The write path reads a list front to back, so no stream here seeks.
-  doc_id_t Seek(doc_id_t /*target*/) final {
-    SDB_ASSERT(false);
-    return _doc = doc_limits::eof();
+  virtual void NextPositions(uint32_t* /*pos*/, uint32_t* /*offs_start*/,
+                             uint32_t* /*offs_len*/, uint32_t /*n*/) {
+    throw IndexError{"term postings hold no positions"};
   }
 
-  // The frequency of the document this stands on; unread for a field that
-  // stores none.
-  virtual uint32_t GetFreq() const = 0;
-
-  // The positions of that document, null for a field that stores none. Where
-  // the field has offsets they are an attribute of what this returns.
-  virtual PosAttr* Positions() noexcept { return nullptr; }
-
-  // A stream concatenating several sources answers with a different provider
-  // once per source, and says so through this. The call is what arms the
-  // consumer, so a stream that answers with its own provider throughout still
-  // owes exactly one -- which is the default. Staying silent leaves the
-  // consumer holding nothing.
-  virtual void Subscribe(AttrRefresh refresh) { refresh(*this); }
-
- protected:
-  doc_id_t _doc = doc_limits::invalid();
+  virtual void SkipPositions(uint64_t /*n*/) {
+    throw IndexError{"term postings hold no positions"};
+  }
 };
 
 struct ScoreDoc {

@@ -570,7 +570,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(1, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
@@ -585,7 +585,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(2, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
@@ -601,7 +601,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(3, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
@@ -617,7 +617,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(4, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
@@ -633,7 +633,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(5, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
@@ -681,7 +681,7 @@ TEST(segment_reader_test, open) {
 
           /* check docs */
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(1, docs->Value());
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
@@ -726,7 +726,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(1, docs->Value());
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
@@ -744,7 +744,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(2, docs->Value());
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
@@ -783,7 +783,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(1, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));
@@ -799,7 +799,7 @@ TEST(segment_reader_test, open) {
 
           // check docs
           {
-            auto docs = term->postings(irs::IndexFeatures::None);
+            auto docs = tests::Docs(term->postings(irs::IndexFeatures::None));
             ASSERT_TRUE(!irs::doc_limits::eof(docs->Next()));
             ASSERT_EQ(4, docs->Value());
             ASSERT_FALSE(!irs::doc_limits::eof(docs->Next()));

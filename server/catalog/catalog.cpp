@@ -82,9 +82,9 @@
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
 #include "pg/catalog/engine/registry.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/tsdictionary.h"
-#include "pg/types.h"
 #include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -175,13 +175,6 @@ duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
     default:
       return type;
   }
-}
-
-[[noreturn]] void RefuseSystemIndex(const duckdb::CatalogEntry& relation) {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-    ERR_MSG("permission denied: \"", relation.name.GetIdentifierName(),
-            "\" is a system catalog"));
 }
 
 std::vector<duckdb::CatalogEntry*> VisibleEntries(
@@ -387,7 +380,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::TableCatalogEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
   if (table.internal) {
-    RefuseSystemIndex(table);
+    RefuseSystemCatalog(table);
   }
   BindIndexDefinition(binder, stmt, table);
   if (auto* search = dynamic_cast<SearchTableEntry*>(&table)) {
@@ -412,7 +405,7 @@ SereneDBCatalog::BindCreateViewIndex(
   duckdb::ViewCatalogEntry& view,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
   if (view.internal) {
-    RefuseSystemIndex(view);
+    RefuseSystemCatalog(view);
   }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));

@@ -37,7 +37,6 @@
 #include "pg/catalog/functions/reg_types.h"
 #include "pg/catalog/lookup.h"
 #include "pg/serialize.h"
-#include "pg/types.h"
 
 namespace sdb::connector {
 namespace {
@@ -240,34 +239,24 @@ bool PgRegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
-template<pg::RegKind Kind>
-duckdb::BoundCastInfo PgVarcharToRegBind(duckdb::BindCastInput& input,
-                                         const duckdb::LogicalType&,
-                                         const duckdb::LogicalType&) {
+template<duckdb::cast_function_t Cast>
+duckdb::BoundCastInfo RegCastBind(duckdb::BindCastInput& input,
+                                  const duckdb::LogicalType&,
+                                  const duckdb::LogicalType&) {
   return duckdb::BoundCastInfo(
-    PgVarcharToRegCast<Kind>,
-    duckdb::make_uniq<RegCastData>(input.context.get()));
-}
-
-template<pg::RegKind Kind>
-duckdb::BoundCastInfo PgRegToVarcharBind(duckdb::BindCastInput& input,
-                                         const duckdb::LogicalType&,
-                                         const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(
-    PgRegToVarcharCast<Kind>,
-    duckdb::make_uniq<RegCastData>(input.context.get()));
+    Cast, duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
 template<pg::RegKind Kind>
 void RegisterRegCasts(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& reg) {
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, reg,
-                             PgVarcharToRegBind<Kind>, 50);
+                             RegCastBind<PgVarcharToRegCast<Kind>>, 50);
   casts.RegisterCastFunction(
     duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), reg,
-    PgVarcharToRegBind<Kind>, 50);
+    RegCastBind<PgVarcharToRegCast<Kind>>, 50);
   casts.RegisterCastFunction(reg, duckdb::LogicalType::VARCHAR,
-                             PgRegToVarcharBind<Kind>, 50);
+                             RegCastBind<PgRegToVarcharCast<Kind>>, 50);
   casts.RegisterCastFunction(
     pg::OID(), reg,
     duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);

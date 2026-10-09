@@ -21,22 +21,11 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
-#include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/function/macro_function.hpp>
-#include <duckdb/main/client_context.hpp>
-#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <optional>
-#include <span>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace sdb::pg {
 

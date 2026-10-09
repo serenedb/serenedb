@@ -46,7 +46,6 @@
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
 #include "pg/serialize.h"
-#include "pg/types.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {

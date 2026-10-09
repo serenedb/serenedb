@@ -50,9 +50,9 @@
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/sql_utils.h"
-#include "pg/types.h"
 #include "search/inverted_index_storage.h"
 #include "server/utils/app_server.h"
 

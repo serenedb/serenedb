@@ -31,6 +31,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/checkpoint_manager.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
@@ -51,9 +52,8 @@
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/types.h"
-#include "search/inverted_index_storage.h"
 
 namespace sdb::catalog {
 namespace {

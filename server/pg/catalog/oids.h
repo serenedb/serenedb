@@ -32,12 +32,6 @@ inline constexpr uint64_t kInvalidOid = 0;
 
 constexpr uint32_t WireOid(uint64_t oid) { return static_cast<uint32_t>(oid); }
 
-constexpr uint64_t OidFromSql(int64_t value) {
-  return static_cast<uint64_t>(value);
-}
-
-constexpr int64_t OidToSql(uint64_t oid) { return static_cast<int64_t>(oid); }
-
 // Postgres' PUBLIC pseudo-role. It is not a role id at all: 0 is the oid no
 // pg_authid row can carry, which is what lets an acl item name "everybody".
 inline constexpr duckdb::idx_t kPublicGrantee = 0;

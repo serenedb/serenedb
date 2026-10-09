@@ -52,7 +52,7 @@ class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
                            duckdb::CreateSubscriptionInfo& info);
   SubscriptionCatalogEntry(
     duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info,
-    duckdb::shared_ptr<duckdb::SubscriptionLsnState> lsn_state);
+    duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state);
 
   const SubscriptionConfig& Config() const noexcept { return _config; }
 

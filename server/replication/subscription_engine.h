@@ -91,6 +91,7 @@ class SubscriptionEngine final {
   };
   std::vector<SubStats> Stats(std::string_view database) const;
   void ResetStats(std::optional<duckdb::idx_t> subscription);
+  bool Running(duckdb::idx_t subscription) const;
 
  private:
   struct SubState {

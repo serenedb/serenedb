@@ -271,6 +271,12 @@ void SubscriptionEngine::ResetStats(std::optional<duckdb::idx_t> subscription) {
   }
 }
 
+bool SubscriptionEngine::Running(duckdb::idx_t subscription) const {
+  absl::MutexLock lock{&_mu};
+  const auto it = _subs.find(subscription);
+  return it != _subs.end() && it->second.client && !it->second.stopping;
+}
+
 void SubscriptionEngine::Stop(duckdb::idx_t subscription) {
   absl::MutexLock lock{&_mu};
   if (auto it = _subs.find(subscription); it != _subs.end()) {

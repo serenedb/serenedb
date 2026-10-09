@@ -53,11 +53,11 @@ SubscriptionCatalogEntry::SubscriptionCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info)
   : SubscriptionCatalogEntry{
       catalog, info,
-      duckdb::make_shared_ptr<duckdb::SubscriptionLsnState>(info.remote_lsn)} {}
+      duckdb::make_shared_ptr<duckdb::ReplicationLsnState>(info.remote_lsn)} {}
 
 SubscriptionCatalogEntry::SubscriptionCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info,
-  duckdb::shared_ptr<duckdb::SubscriptionLsnState> lsn_state)
+  duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state)
   : duckdb::SubscriptionCatalogEntry{catalog, info.GetQualifiedName().Name(),
                                      info.oid, std::move(lsn_state)},
     _config{MakeConfig(info)} {

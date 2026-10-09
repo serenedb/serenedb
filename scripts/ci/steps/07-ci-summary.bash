@@ -52,6 +52,9 @@ if [[ -f "${LOGS}/drivers-tests.log" ]]; then
 		add "sqlsmith dropped sessions" "$drops"
 		[[ "$drops" -ne 0 ]] && failures+=("sqlsmith: ${drops} dropped sessions")
 	done < <(grep -oE 'conn_drops=[0-9]+' "${LOGS}/drivers-tests.log" | cut -d= -f2)
+	while read -r timeouts; do
+		add "sqlsmith timeouts" "$timeouts"
+	done < <(grep -oE ' timeouts=[0-9]+' "${LOGS}/drivers-tests.log" | cut -d= -f2)
 fi
 
 reports=0

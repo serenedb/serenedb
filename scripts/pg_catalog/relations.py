@@ -2,8 +2,8 @@ import os
 import re
 
 from . import builtins, config
-from .common import (CATALOG_DIR, SUPERUSER_ONLY_SQL, camel, cpp_bool, cpp_char,
-                     cpp_str)
+from .common import (CATALOG_DIR, GENERATED_DIR, SUPERUSER_ONLY_SQL, camel,
+                     cpp_bool, cpp_char, cpp_str, generated)
 
 TABLE_FOLDERS = {
     'pg_catalog': 'pg_catalog',
@@ -189,20 +189,24 @@ def data_rows(gen, schema, name, order):
             f'SystemTable g{const[1:]}{{{const}Sql, {const}Rows}};'])
 
 
-def registry_lines(known):
-    coded = []
+REGISTRY = os.path.join(GENERATED_DIR, 'registry.gen.inc')
+
+
+def table_files():
     for folder, schema in TABLE_FOLDERS.items():
         for file in sorted(os.listdir(os.path.join(CATALOG_DIR, 'tables',
                                                    folder))):
-            name = file.removesuffix('.cpp')
-            if (schema, name) not in known:
-                raise SystemExit(f'tables/{folder}/{file} names no catalog '
-                                 f'table')
-            coded.append(relation_constant(schema, name)[1:])
-    generated = [relation_constant(*table)[1:] for table in config.DATA_TABLES]
-    return ([f'extern SystemTable g{name};' for name in sorted(coded)] +
-            ['SystemTable* const kSystemTables[] = {'] +
-            [f'  &g{name},' for name in sorted(coded + generated)] + ['};'])
+            yield f'tables/{folder}/{file}', schema, file.removesuffix('.cpp')
+
+
+def registry():
+    coded = [relation_constant(schema, name)[1:]
+             for _, schema, name in table_files()]
+    data = [relation_constant(*table)[1:] for table in config.DATA_TABLES]
+    return generated('the files in server/pg/catalog/tables', [
+        f'extern SystemTable g{name};' for name in sorted(coded)] +
+        ['SystemTable* const kSystemTables[] = {'] +
+        [f'  &g{name},' for name in sorted(coded + data)] + ['};'])
 
 
 def named_oids(gen, sql, names):
@@ -256,7 +260,9 @@ def generate(gen):
     for (schema, name), order in config.DATA_TABLES.items():
         data += data_rows(gen, schema, name, order)
     gen.write('information_schema_tables.gen.inc', data)
-    gen.write('registry.gen.inc', registry_lines(known))
+    for path, schema, name in table_files():
+        if (schema, name) not in known:
+            raise SystemExit(f'{path} names no catalog table')
     gen.write('keywords.gen.inc',
               [cpp_str(word) + ',' for word in sorted(reserved)])
     generate_settings(gen)

@@ -776,12 +776,13 @@ std::string_view SystemScan::NamePrefix(
   return {};
 }
 
-std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
-  const CatalogSource& source) const {
+SystemMembers SystemScan::Resolve(const CatalogSource& source) const {
   using enum duckdb::CatalogType;
   std::vector<duckdb::CatalogType> types{source.types.begin(),
                                          source.types.end()};
-  std::vector<duckdb::SchemaCatalogEntry*> schemas;
+  SystemMembers members;
+  auto& schemas = members.schemas;
+  auto& entries = members.entries;
   bool scoped = false;
   const auto scope =
     [&](duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
@@ -827,30 +828,79 @@ std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
         break;
     }
   }
-  std::vector<duckdb::CatalogEntry*> entries;
   if (types.empty() || (scoped && schemas.empty())) {
-    return entries;
+    schemas.clear();
+    return members;
   }
   const auto* index = Choose(source.indexes);
   if (!index) {
     if (!scoped) {
       schemas = Schemas(source.schemas);
     }
-    const auto text = NamePrefix(source.indexes);
-    const duckdb::Identifier prefix{std::string{text}};
-    const bool narrow =
-      !text.empty() &&
-      !(text.starts_with('_') && absl::c_linear_search(types, TYPE_ENTRY));
-    _indexed_complete =
-      _collect_indexed && !narrow && absl::c_linear_search(types, INDEX_ENTRY);
-    _triggered_complete = _collect_triggered && !narrow;
-    for (auto* schema : schemas) {
-      if (absl::c_linear_search(types, SCHEMA_ENTRY)) {
-        entries.emplace_back(schema);
+    if (const auto text = NamePrefix(source.indexes);
+        !text.empty() &&
+        !(text.starts_with('_') && absl::c_linear_search(types, TYPE_ENTRY))) {
+      const duckdb::Identifier prefix{std::string{text}};
+      for (auto* schema : schemas) {
+        if (absl::c_linear_search(types, SCHEMA_ENTRY)) {
+          entries.emplace_back(schema);
+        }
+        AppendMembers(*schema, types, prefix, entries);
       }
-      AppendMembers(*schema, types, narrow ? &prefix : nullptr, entries);
+      schemas.clear();
+      return members;
     }
-    return entries;
+    for (const auto type : types) {
+      members.wanted.set(std::to_underlying(type));
+    }
+    if (!schemas.empty()) {
+      auto& sets = schemas.front()->Cast<duckdb::DuckSchemaEntry>();
+      absl::InlinedVector<const duckdb::CatalogSet*, 8> walked;
+      for (const auto type : types | kMemberTypes) {
+        if (const auto* set = &sets.GetCatalogSet(type);
+            !absl::c_linear_search(walked, set)) {
+          walked.emplace_back(set);
+          members.sets.emplace_back(type);
+        }
+      }
+    }
+    _indexed_complete =
+      _collect_indexed && members.wanted.test(std::to_underlying(INDEX_ENTRY));
+    _triggered_complete = _collect_triggered;
+    const bool tables = members.wanted.test(std::to_underlying(TABLE_ENTRY));
+    for (auto* schema : schemas) {
+      if (_indexed_complete) {
+        auto indexes = MemberSet(*schema, INDEX_ENTRY);
+        std::call_once(indexes.snapshot->indexed_once, [&] {
+          for (auto* entry : indexes.entries) {
+            indexes.snapshot->indexed.insert(
+              entry->Cast<duckdb::IndexCatalogEntry>().table_oid);
+          }
+        });
+        if (!indexes.snapshot->indexed.empty()) {
+          _indexed.emplace_back(std::move(indexes.snapshot));
+        }
+      }
+      if (_triggered_complete && tables) {
+        const auto relations = MemberSet(*schema, TABLE_ENTRY);
+        std::call_once(relations.snapshot->triggers_once, [&] {
+          for (auto* entry : relations.entries) {
+            if (entry->type != TABLE_ENTRY) {
+              continue;
+            }
+            bool triggered = false;
+            entry->Cast<duckdb::TableCatalogEntry>().ScanTriggers(
+              Transaction(), [&](duckdb::CatalogEntry&) { triggered = true; });
+            if (triggered) {
+              relations.snapshot->triggered.emplace_back(entry->oid);
+            }
+          }
+        });
+        _triggered.insert(relations.snapshot->triggered.begin(),
+                          relations.snapshot->triggered.end());
+      }
+    }
+    return members;
   }
   const auto& filter = *FilterOf(index->column);
   if (const auto& names = filter.texts.keys) {
@@ -886,7 +936,33 @@ std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
            std::tuple{rhs->type, rhs->oid, rhs};
   });
   entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
-  return entries;
+  schemas.clear();
+  return members;
+}
+
+SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
+                                duckdb::CatalogType type) const {
+  auto& set = schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type);
+  auto* serene = dynamic_cast<catalog::SereneDBCatalog*>(&_database);
+  auto snapshot = serene ? serene->Snapshot(_context, set) : nullptr;
+  if (!snapshot) {
+    auto scanned = std::make_shared<catalog::CatalogSnapshot>();
+    set.Scan(Transaction(), [&](duckdb::CatalogEntry& entry) {
+      scanned->entries.emplace_back(&entry);
+    });
+    snapshot = std::move(scanned);
+  }
+  const std::span entries{snapshot->entries};
+  return {std::move(snapshot), entries};
+}
+
+std::optional<bool> SystemScan::KnownIndexed(duckdb::idx_t relation) const {
+  if (!_indexed_complete) {
+    return std::nullopt;
+  }
+  return absl::c_any_of(_indexed, [&](const auto& snapshot) {
+    return snapshot->indexed.contains(relation);
+  });
 }
 
 std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
@@ -976,7 +1052,7 @@ std::vector<duckdb::SchemaCatalogEntry*> SystemScan::Schemas(
 
 void SystemScan::AppendMembers(
   duckdb::SchemaCatalogEntry& schema,
-  std::span<const duckdb::CatalogType> types, const duckdb::Identifier* prefix,
+  std::span<const duckdb::CatalogType> types, const duckdb::Identifier& prefix,
   std::vector<duckdb::CatalogEntry*>& entries) const {
   using enum duckdb::CatalogType;
   auto& sets = schema.Cast<duckdb::DuckSchemaEntry>();
@@ -984,16 +1060,11 @@ void SystemScan::AppendMembers(
                         ? &sets.GetCatalogSet(TABLE_ENTRY)
                         : nullptr;
   const auto append = [&](duckdb::CatalogEntry& entry) {
-    if (_indexed_complete && entry.type == INDEX_ENTRY) {
-      _indexed.insert(entry.Cast<duckdb::IndexCatalogEntry>().table_oid);
-    }
     if (absl::c_linear_search(types, entry.type) &&
         (!entry.internal || schema.internal)) {
       entries.emplace_back(&entry);
     }
   };
-  auto* serene =
-    dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
   absl::InlinedVector<const duckdb::CatalogSet*, 4> scanned;
   for (const auto type : types | kMemberTypes) {
     auto& set = sets.GetCatalogSet(type);
@@ -1001,36 +1072,13 @@ void SystemScan::AppendMembers(
       continue;
     }
     scanned.emplace_back(&set);
-    if (!prefix || &set == keyed) {
-      if (const auto snapshot =
-            serene ? serene->Snapshot(_context, set) : nullptr) {
-        for (auto* entry : snapshot->entries) {
-          append(*entry);
-        }
-        if (_triggered_complete && &set == &sets.GetCatalogSet(TABLE_ENTRY)) {
-          std::call_once(snapshot->triggers_once, [&] {
-            for (auto* entry : snapshot->entries) {
-              if (entry->type != TABLE_ENTRY) {
-                continue;
-              }
-              bool triggered = false;
-              entry->Cast<duckdb::TableCatalogEntry>().ScanTriggers(
-                Transaction(),
-                [&](duckdb::CatalogEntry&) { triggered = true; });
-              if (triggered) {
-                snapshot->triggered.emplace_back(entry->oid);
-              }
-            }
-          });
-          _triggered.insert(snapshot->triggered.begin(),
-                            snapshot->triggered.end());
-        }
-      } else {
-        _triggered_complete = false;
-        set.Scan(Transaction(), append);
+    if (&set == keyed) {
+      const auto members = MemberSet(schema, type);
+      for (auto* entry : members.entries) {
+        append(*entry);
       }
     } else {
-      set.ScanWithPrefix(Transaction(), append, *prefix);
+      set.ScanWithPrefix(Transaction(), append, prefix);
     }
   }
 }

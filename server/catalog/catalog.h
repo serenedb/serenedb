@@ -28,6 +28,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
 #include <mutex>
@@ -69,6 +70,8 @@ struct CatalogSnapshot {
     keys;
   mutable std::once_flag triggers_once;
   mutable std::vector<duckdb::idx_t> triggered;
+  mutable std::once_flag indexed_once;
+  mutable irs::containers::FlatHashSet<duckdb::idx_t> indexed;
   mutable std::once_flag defaults_once;
   mutable irs::containers::FlatHashMap<const duckdb::ColumnDefinition*,
                                        std::string>

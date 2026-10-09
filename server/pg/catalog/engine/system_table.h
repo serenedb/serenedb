@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <array>
@@ -28,6 +29,7 @@
 #include <bitset>
 #include <cstddef>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -83,6 +85,7 @@ struct TableFilterState;
 namespace sdb::catalog {
 
 class TokenizerCatalogEntry;
+struct CatalogSnapshot;
 
 }  // namespace sdb::catalog
 namespace sdb::pg {
@@ -352,6 +355,18 @@ struct CatalogSource {
   std::span<const SystemIndex> indexes;
 };
 
+struct SystemMembers {
+  std::vector<duckdb::CatalogEntry*> entries;
+  std::vector<duckdb::SchemaCatalogEntry*> schemas;
+  absl::InlinedVector<duckdb::CatalogType, 8> sets;
+  std::bitset<256> wanted;
+};
+
+struct SystemSet {
+  std::shared_ptr<const catalog::CatalogSnapshot> snapshot;
+  std::span<duckdb::CatalogEntry* const> entries;
+};
+
 struct CatalogSetSource {
   SystemCatalog catalog;
   duckdb::CatalogType type;
@@ -514,9 +529,11 @@ class SystemScan {
     return *_database.GetDependencyManager();
   }
 
-  std::vector<duckdb::CatalogEntry*> Resolve(const CatalogSource& source) const;
+  SystemMembers Resolve(const CatalogSource& source) const;
   std::vector<duckdb::CatalogEntry*> Resolve(
     const CatalogSetSource& source) const;
+  SystemSet MemberSet(duckdb::SchemaCatalogEntry& schema,
+                      duckdb::CatalogType type) const;
   template<typename Row, typename Holder>
   SystemArray<Row, Holder> Resolve(const ArraySource<Row, Holder>& source) {
     auto rows = source.load(*this);
@@ -614,12 +631,7 @@ class SystemScan {
   }
 
   void CollectIndexed() noexcept { _collect_indexed = true; }
-  std::optional<bool> KnownIndexed(duckdb::idx_t relation) const {
-    if (!_indexed_complete) {
-      return std::nullopt;
-    }
-    return _indexed.contains(relation);
-  }
+  std::optional<bool> KnownIndexed(duckdb::idx_t relation) const;
 
   void CollectTriggered() noexcept { _collect_triggered = true; }
   std::optional<bool> KnownTriggered(duckdb::idx_t relation) const {
@@ -897,7 +909,7 @@ class SystemScan {
   std::vector<duckdb::SchemaCatalogEntry*> Schemas(SystemSchemas system) const;
   void AppendMembers(duckdb::SchemaCatalogEntry& schema,
                      std::span<const duckdb::CatalogType> types,
-                     const duckdb::Identifier* prefix,
+                     const duckdb::Identifier& prefix,
                      std::vector<duckdb::CatalogEntry*>& entries) const;
   void AppendOwned(duckdb::idx_t oid, SystemSchemas system,
                    std::vector<duckdb::CatalogEntry*>& entries) const;
@@ -929,7 +941,7 @@ class SystemScan {
   uint64_t _pruned = 0;
   std::vector<SystemPrune> _prunes;
   std::string _text;
-  mutable irs::containers::FlatHashSet<duckdb::idx_t> _indexed;
+  mutable std::vector<std::shared_ptr<const catalog::CatalogSnapshot>> _indexed;
   mutable bool _indexed_complete = false;
   bool _collect_indexed = false;
   mutable irs::containers::FlatHashSet<duckdb::idx_t> _triggered;
@@ -1073,8 +1085,104 @@ class SystemCursor<SystemArray<Row, Holder>> final {
   size_t _next = 0;
 };
 
+template<>
+class SystemCursor<SystemMembers> final {
+ public:
+  explicit SystemCursor(SystemMembers members) : _members{std::move(members)} {}
+
+  template<typename T>
+  bool Run(T& table) {
+    using enum duckdb::CatalogType;
+    for (; _next < _members.entries.size(); ++_next) {
+      if (table.Step([&] { Dispatch(table, *_members.entries[_next]); })) {
+        return true;
+      }
+    }
+    for (; _schema < _members.schemas.size();
+         ++_schema, _entered = false, _set = 0) {
+      auto& schema = *_members.schemas[_schema];
+      if (!_entered) {
+        if (_members.wanted.test(std::to_underlying(SCHEMA_ENTRY)) &&
+            table.Step(
+              [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); })) {
+          return true;
+        }
+        _entered = true;
+      }
+      for (; _set < _members.sets.size(); ++_set, _pos = 0, _set_entries = {}) {
+        const auto type = _members.sets[_set];
+        if (!_set_entries.snapshot) {
+          _set_entries = table.MemberSet(schema, type);
+        }
+        if (Walk(table, schema, type)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+ private:
+  template<typename T>
+  bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema,
+            duckdb::CatalogType type) {
+    using enum duckdb::CatalogType;
+    if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
+      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+        if (entry.type == TABLE_ENTRY) {
+          Visit<duckdb::TableCatalogEntry>(table, entry);
+        } else {
+          Visit<duckdb::ViewCatalogEntry>(table, entry);
+        }
+      });
+    }
+    if (type == INDEX_ENTRY) {
+      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+        Visit<duckdb::IndexCatalogEntry>(table, entry);
+      });
+    }
+    if (type == SEQUENCE_ENTRY) {
+      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+        Visit<duckdb::SequenceCatalogEntry>(table, entry);
+      });
+    }
+    if (type == TYPE_ENTRY) {
+      return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
+        Visit<duckdb::TypeCatalogEntry>(table, entry);
+      });
+    }
+    return Walk(table, schema,
+                [&](duckdb::CatalogEntry& entry) { Dispatch(table, entry); });
+  }
+
+  template<typename T, typename V>
+  bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema, V&& visit) {
+    const auto entries = _set_entries.entries;
+    for (; _pos < entries.size(); ++_pos) {
+      auto& entry = *entries[_pos];
+      if (!_members.wanted.test(std::to_underlying(entry.type)) ||
+          (entry.internal && !schema.internal)) {
+        continue;
+      }
+      if (table.Step([&] { visit(entry); })) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  SystemMembers _members;
+  size_t _next = 0;
+  size_t _schema = 0;
+  bool _entered = false;
+  size_t _set = 0;
+  size_t _pos = 0;
+  SystemSet _set_entries;
+};
+
 template<typename Item>
 SystemCursor(std::vector<Item*>) -> SystemCursor<Item>;
+SystemCursor(SystemMembers) -> SystemCursor<SystemMembers>;
 template<typename Row, typename Holder>
 SystemCursor(SystemArray<Row, Holder>)
   -> SystemCursor<SystemArray<Row, Holder>>;

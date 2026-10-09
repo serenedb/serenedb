@@ -1098,6 +1098,88 @@ found	diff
 
 
 statement ok
+CREATE TABLE pudge_keyed.pudgevis_hook (id INT CONSTRAINT pudgevis_rot PRIMARY KEY)
+
+
+statement ok
+CREATE TABLE public.pudgevis_hook (id INT CONSTRAINT pudgevis_dismember PRIMARY KEY)
+
+
+statement ok
+CREATE TABLE pudge_keyed.pudgevis_dismember (id INT)
+
+
+statement ok
+SET search_path = pudge_keyed, public
+
+
+query
+SELECT relname, relnamespace::regnamespace::text AS nsp, relkind FROM pg_class WHERE relname LIKE 'pudgevis%' AND pg_table_is_visible(oid) ORDER BY 1, 2;
+----
+relname	nsp	relkind
+pudgevis_dismember	pudge_keyed	r
+pudgevis_hook	pudge_keyed	r
+pudgevis_rot	pudge_keyed	i
+
+
+query
+SELECT relname, relnamespace::regnamespace::text AS nsp FROM pg_class WHERE relname LIKE 'pudgevis%' AND NOT pg_table_is_visible(oid) ORDER BY 1, 2;
+----
+relname	nsp
+pudgevis_dismember	public
+pudgevis_hook	public
+
+
+query
+WITH pushed AS (SELECT oid FROM pg_class WHERE pg_table_is_visible(oid)),
+     whole AS (SELECT oid FROM (SELECT oid FROM pg_class LIMIT 100000000) WHERE pg_table_is_visible(oid))
+SELECT (SELECT count(*) FROM pushed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM pushed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM pushed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+WITH pushed AS (SELECT oid FROM pg_class WHERE relkind IN ('r', 'i') AND pg_table_is_visible(oid)),
+     whole AS (SELECT oid FROM (SELECT oid, relkind FROM pg_class LIMIT 100000000) WHERE relkind IN ('r', 'i') AND pg_table_is_visible(oid))
+SELECT (SELECT count(*) FROM pushed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM pushed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM pushed)) AS diff;
+----
+found	diff
+t	0
+
+
+statement ok
+RESET search_path
+
+
+query
+WITH pushed AS (SELECT oid FROM pg_class WHERE pg_table_is_visible(oid)),
+     whole AS (SELECT oid FROM (SELECT oid FROM pg_class LIMIT 100000000) WHERE pg_table_is_visible(oid))
+SELECT (SELECT count(*) FROM pushed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM pushed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM pushed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'pudgevis%' AND pg_table_is_visible(oid) ORDER BY 1;
+----
+relname
+pudgevis_dismember
+pudgevis_hook
+
+
+statement ok
+DROP TABLE public.pudgevis_hook
+
+
+statement ok
 DROP SCHEMA pudge_keyed CASCADE
 
 

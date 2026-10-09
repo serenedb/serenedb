@@ -359,8 +359,9 @@ void PutCell(duckdb::Vector& vector, duckdb::idx_t row, std::string_view cell) {
 }  // namespace
 
 SystemTable::SystemTable(const SystemSql& sql, SystemScanFunctions functions,
-                         std::span<const SystemFact> facts)
-  : _sql{sql}, _functions{functions}, _facts{facts} {}
+                         std::span<const SystemFact> facts,
+                         std::optional<SystemVisibility> visibility)
+  : _sql{sql}, _functions{functions}, _facts{facts}, _visibility{visibility} {}
 
 SystemTable::SystemTable(const SystemSql& sql,
                          std::span<const SystemCell> cells)
@@ -478,6 +479,18 @@ std::optional<bool> BooleanOf(const duckdb::Expression& expr) {
   return !negated;
 }
 
+bool IsVisibility(const duckdb::Expression& expr,
+                  const SystemVisibility& visibility) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return false;
+  }
+  const auto& function = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto& children = function.GetChildren();
+  return function.Function().GetName() == visibility.function &&
+         children.size() == 1 &&
+         duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0]);
+}
+
 duckdb::LogicalType SystemRowType(const SystemSql& sql) {
   duckdb::child_list_t<duckdb::LogicalType> children;
   for (const auto& column : sql.columns) {
@@ -580,6 +593,12 @@ bool SystemScan::Compile(duckdb::column_t column,
     _table.Columns().GetColumn(duckdb::LogicalIndex{column}).Type();
   const auto& expr =
     *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr;
+  if (const auto& visibility = _table.Visibility();
+      visibility && visibility->column == column &&
+      IsVisibility(expr, *visibility)) {
+    _visible_only = true;
+    return true;
+  }
   const auto& fallback = _table.Default(column).value;
   SystemFilter compiled{
     .column = static_cast<uint32_t>(column), .numbers = {}, .texts = {}};

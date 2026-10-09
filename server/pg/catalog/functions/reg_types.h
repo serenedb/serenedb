@@ -95,6 +95,8 @@ uint64_t ResolveRelation(duckdb::ClientContext& context,
 std::string RelationName(const Session& session, std::string_view schema,
                          std::string_view name);
 
+bool RelationVisible(const Session& session, std::string_view schema,
+                     std::string_view name);
 std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid);
 std::optional<bool> TypeIsVisible(const Session& session, uint64_t oid);
 std::optional<bool> FunctionIsVisible(const Session& session, uint64_t oid);

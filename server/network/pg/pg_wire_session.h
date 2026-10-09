@@ -238,7 +238,7 @@ class PgWireSession
   // There is no RecvLoop: the client reads the socket itself.
   struct ClientTag {};
   PgWireSession(IoExecutor& exec, asio_ns::ssl::context& ssl, ClientTag)
-    requires(Kind == SocketKind::MaybeTls)
+    requires(Kind == SocketKind::Client)
     : Transport<Kind, PgWireSession<Kind>>{exec, ssl},
       _io{exec.Context()},
       _deadline{exec.Context()},

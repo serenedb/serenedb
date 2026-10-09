@@ -47,6 +47,7 @@ enum class SocketKind : uint8_t {
   Ssl,
   Unix,
   MaybeTls,
+  Client,
 };
 
 template<SocketKind Kind>
@@ -67,6 +68,12 @@ struct StreamTraits<SocketKind::MaybeTls> {
   using Stream = asio_ns::ssl::stream<asio_ns::ip::tcp::socket>;
 };
 
+template<>
+struct StreamTraits<SocketKind::Client> {
+  using Stream =
+    asio_ns::ssl::stream<asio_ns::generic::stream_protocol::socket>;
+};
+
 #ifdef ASIO_HAS_LOCAL_SOCKETS
 template<>
 struct StreamTraits<SocketKind::Unix> {
@@ -81,8 +88,11 @@ class Socket final {
 
   // True for the ssl::stream-backed kinds (Ssl always-TLS, MaybeTls
   // upgradeable).
-  static constexpr bool kSslBacked =
-    Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls;
+  static constexpr bool kSslBacked = Kind == SocketKind::Ssl ||
+                                     Kind == SocketKind::MaybeTls ||
+                                     Kind == SocketKind::Client;
+  static constexpr bool kUpgradeable =
+    Kind == SocketKind::MaybeTls || Kind == SocketKind::Client;
 
   explicit Socket(asio_ns::io_context& io)
     requires(!kSslBacked)
@@ -110,7 +120,7 @@ class Socket final {
   [[nodiscard]] bool IsTls() const noexcept {
     if constexpr (Kind == SocketKind::Ssl) {
       return true;
-    } else if constexpr (Kind == SocketKind::MaybeTls) {
+    } else if constexpr (kUpgradeable) {
       return _tls;
     } else {
       return false;
@@ -120,7 +130,7 @@ class Socket final {
   [[nodiscard]] auto ReadSome(std::span<uint8_t> into) {
     return Async<std::size_t>([this, into](auto&& handler) {
       const auto buffer = asio_ns::buffer(into.data(), into.size());
-      if constexpr (Kind == SocketKind::MaybeTls) {
+      if constexpr (kUpgradeable) {
         if (!_tls) {
           _stream.next_layer().async_read_some(
             buffer, std::forward<decltype(handler)>(handler));
@@ -133,7 +143,7 @@ class Socket final {
 
   [[nodiscard]] auto Write(message::SequenceView data) {
     return Async<std::size_t>([this, data](auto&& handler) {
-      if constexpr (Kind == SocketKind::MaybeTls) {
+      if constexpr (kUpgradeable) {
         if (!_tls) {
           asio_ns::async_write(_stream.next_layer(), data,
                                std::forward<decltype(handler)>(handler));
@@ -165,7 +175,7 @@ class Socket final {
   // the TLS layer. Set only on success (a failed handshake must stay plaintext
   // and close).
   void MarkTls() noexcept
-    requires(Kind == SocketKind::MaybeTls)
+    requires(kUpgradeable)
   {
     _tls = true;
   }

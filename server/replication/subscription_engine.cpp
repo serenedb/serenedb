@@ -20,6 +20,8 @@
 
 #include "replication/subscription_engine.h"
 
+#include <absl/random/random.h>
+
 #include <algorithm>
 #include <chrono>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -360,21 +362,31 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
     }
     std::string database;
     size_t host = 0;
+    uint64_t host_seed = 0;
+    bool any_session = false;
     {
       absl::MutexLock lock{&_mu};
       auto it = _subs.find(subscription);
       if (it == _subs.end() || it->second.stopping) {
         break;
       }
-      it->second.restart = false;
-      database = it->second.database;
-      host = it->second.host;
+      auto& state = it->second;
+      state.restart = false;
+      database = state.database;
+      host = state.host;
+      if (host == 0 && !state.any_session) {
+        state.host_seed = absl::Uniform<uint64_t>(absl::BitGen{});
+      }
+      host_seed = state.host_seed;
+      any_session = state.any_session;
     }
     auto target = ResolveTarget(database, subscription);
     if (!target) {
       break;
     }
+    ArrangeHosts(target->conninfo, host_seed, any_session);
     name = target->subscription_name;
+    const auto target_attrs = target->conninfo.target_session_attrs;
     const auto hosts = std::max<size_t>(target->conninfo.hosts.size(), 1);
     host %= hosts;
     auto client =
@@ -401,6 +413,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       }
     }
     bool restart = false;
+    bool retry_round = false;
     std::chrono::milliseconds delay{WalRetrieveRetryIntervalMillis()};
     {
       absl::MutexLock lock{&_mu};
@@ -420,9 +433,19 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       restart = state.restart;
       const bool failed = !restart && !state.stopping &&
                           !_stopping.load(std::memory_order_acquire);
+      if (client->Connected()) {
+        state.any_session = false;
+      }
       if (failed || disable) {
         if (!client->Connected()) {
           state.host = (host + 1) % hosts;
+          if (state.host == 0 && !state.any_session &&
+              target_attrs == SessionAttrs::PreferStandby) {
+            state.any_session = true;
+            retry_round = true;
+          } else if (state.host == 0) {
+            state.any_session = false;
+          }
         } else if (client->SyncFailed()) {
           ++state.stats.sync_error_count;
         } else if (!client->Transient()) {
@@ -445,7 +468,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
                "' restarting with updated configuration");
       continue;
     }
-    if (!client->Connected() && host + 1 < hosts) {
+    if (!client->Connected() && (host + 1 < hosts || retry_round)) {
       continue;
     }
     auto [future, promise] = yaclib::MakeContract<>();

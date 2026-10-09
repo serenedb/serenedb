@@ -367,6 +367,10 @@ cleanup_postgres() {
 		echo "Stopping postgres container..."
 		docker rm -fv "$name" >/dev/null 2>&1 || true
 	fi
+	if [[ -n "${PGSOCKETDIR:-}" ]]; then
+		rm -rf "$PGSOCKETDIR"
+		PGSOCKETDIR=""
+	fi
 }
 
 cleanup_clickhouse() {
@@ -794,6 +798,10 @@ launch_postgres() {
 		network_args=(--network "$TEST_NETWORK" -p 5432)
 		export PGHOST="localhost"
 		export PGPORT
+		PGSOCKETDIR=$(mktemp -d "${TMPDIR:-/tmp}/sdb-pgsocket-XXXXXX")
+		chmod 777 "$PGSOCKETDIR"
+		network_args+=(-v "$PGSOCKETDIR:/var/run/postgresql")
+		export PGSOCKETDIR
 	fi
 	export PGUSER=postgres
 	export PGDATABASE=postgres
@@ -1298,6 +1306,7 @@ run_tests() {
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
 		--label "$database" \
+		${PGSOCKETDIR:+--label pgsocket} \
 		--junit "$junit-$engine" \
 		$options \
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
@@ -1309,6 +1318,7 @@ run_tests() {
 			--host "$host" --port "$port" --engine "$engine" \
 			--jobs 1 \
 			--label "$database" \
+			${PGSOCKETDIR:+--label pgsocket} \
 			--junit "$junit-$engine-exclusive" \
 			$options \
 			$skip_failed_opt ${skip_failed:+"$skip_failed"} \

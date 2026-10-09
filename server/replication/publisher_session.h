@@ -45,7 +45,7 @@ struct PublisherTls {
 
 class PublisherSession
   : private PublisherTls,
-    public network::pg::PgWireSession<network::SocketKind::MaybeTls> {
+    public network::pg::PgWireSession<network::SocketKind::Client> {
  public:
   PublisherSession(network::IoExecutor& exec, ConnInfo conninfo,
                    size_t host_index, std::string application_name,
@@ -71,9 +71,14 @@ class PublisherSession
   yaclib::Task<bool> OpenSocket();
   yaclib::Task<bool> NegotiateTls();
   yaclib::Task<bool> Authenticate();
+  yaclib::Task<bool> CheckSessionAttrs();
+  std::string SocketPath() const;
   std::string ServerName() const;
 
   bool _require_password;
+  std::string _password;
+  std::string _hot_standby;
+  std::string _read_only;
   int _server_version = 0;
   irs::pg::SqlErrorData _error;
 };

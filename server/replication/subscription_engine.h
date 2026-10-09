@@ -103,6 +103,8 @@ class SubscriptionEngine final {
     bool restart = false;
     size_t host = 0;
     uint32_t transient_failures = 0;
+    uint64_t host_seed = 0;
+    bool any_session = false;
     SubStats stats;
   };
 

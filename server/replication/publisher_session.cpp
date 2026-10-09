@@ -21,6 +21,7 @@
 #include "replication/publisher_session.h"
 
 #include <absl/base/internal/endian.h>
+#include <absl/random/random.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
@@ -64,6 +65,9 @@ network::TlsClientOptions ClientTlsOptions(const ConnInfo& conninfo) {
     .root_cert = conninfo.sslrootcert,
     .cert_file = conninfo.sslcert,
     .key_file = conninfo.sslkey,
+    .key_password = conninfo.sslpassword,
+    .crl_file = conninfo.sslcrl,
+    .crl_dir = conninfo.sslcrldir,
   };
   if (options.verify_peer && options.root_cert.empty()) {
     if (const char* home = std::getenv("HOME")) {
@@ -99,9 +103,18 @@ PublisherSession::PublisherSession(network::IoExecutor& exec, ConnInfo conninfo,
     _application_name{_conninfo.application_name.empty()
                         ? std::move(application_name)
                         : _conninfo.application_name},
-    _require_password{require_password} {}
+    _require_password{require_password},
+    _password{_conninfo.password} {}
+
+std::string PublisherSession::SocketPath() const {
+  return absl::StrCat(_host.host, "/.s.PGSQL.", _host.port);
+}
 
 std::string PublisherSession::ServerName() const {
+  if (_host.IsUnixSocket()) {
+    return absl::StrCat("connection to server on socket \"", SocketPath(),
+                        "\" failed");
+  }
   return absl::StrCat("connection to server at \"",
                       _host.hostaddr.empty() ? _host.host : _host.hostaddr,
                       "\", port ", _host.port, " failed");
@@ -121,6 +134,9 @@ void PublisherSession::Fail(int errcode, std::string message) {
 }
 
 yaclib::Task<bool> PublisherSession::Connect() {
+  if (_password.empty()) {
+    _password = PasswordFromFile(_conninfo, _host);
+  }
   if (!co_await OpenSocket() || !co_await NegotiateTls()) {
     co_return false;
   }
@@ -134,26 +150,62 @@ yaclib::Task<bool> PublisherSession::Connect() {
   }};
   network::pg::WriteStartupMessage(this->_send, params);
   this->KickSend();
-  co_return co_await Authenticate();
+  co_return co_await Authenticate() && co_await CheckSessionAttrs();
+}
+
+yaclib::Task<bool> PublisherSession::CheckSessionAttrs() {
+  const auto attrs = _conninfo.target_session_attrs;
+  if (attrs == SessionAttrs::Any) {
+    co_return true;
+  }
+  const bool by_recovery = attrs == SessionAttrs::Primary ||
+                           attrs == SessionAttrs::Standby ||
+                           attrs == SessionAttrs::PreferStandby;
+  if (by_recovery ? _hot_standby.empty() : _read_only.empty()) {
+    std::vector<PublisherRow> rows;
+    if (!co_await Query(by_recovery ? "SELECT pg_catalog.pg_is_in_recovery()"
+                                    : "SHOW transaction_read_only",
+                        &rows)) {
+      co_return false;
+    }
+    if (rows.empty() || rows.front().empty() || !rows.front().front()) {
+      Fail(
+        ERRCODE_CONNECTION_FAILURE,
+        absl::StrCat(ServerName(), ": could not determine the server state"));
+      co_return false;
+    }
+    const auto& state = *rows.front().front();
+    (by_recovery ? _hot_standby : _read_only) =
+      state == "t" || state == "on" ? "on" : "off";
+  }
+  const bool on = (by_recovery ? _hot_standby : _read_only) == "on" ||
+                  (!by_recovery && _hot_standby == "on");
+  std::string_view problem;
+  switch (attrs) {
+    case SessionAttrs::ReadWrite:
+      problem = on ? "session is read-only" : "";
+      break;
+    case SessionAttrs::ReadOnly:
+      problem = on ? "" : "session is not read-only";
+      break;
+    case SessionAttrs::Primary:
+      problem = on ? "server is in hot standby mode" : "";
+      break;
+    case SessionAttrs::Standby:
+    case SessionAttrs::PreferStandby:
+      problem = on ? "" : "server is not in hot standby mode";
+      break;
+    case SessionAttrs::Any:
+      break;
+  }
+  if (!problem.empty()) {
+    Fail(ERRCODE_CONNECTION_FAILURE, absl::StrCat(ServerName(), ": ", problem));
+    co_return false;
+  }
+  co_return true;
 }
 
 yaclib::Task<bool> PublisherSession::OpenSocket() {
-  const std::string& address =
-    _host.hostaddr.empty() ? _host.host : _host.hostaddr;
-  asio_ns::ip::tcp::resolver resolver{this->_io};
-  auto [resolve_ec, endpoints] =
-    co_await network::Async<asio_ns::ip::tcp::resolver::results_type>(
-      [&](auto&& handler) {
-        resolver.async_resolve(address, _host.port,
-                               std::forward<decltype(handler)>(handler));
-      })
-      .NoThrow();
-  if (resolve_ec) {
-    Fail(ERRCODE_CONNECTION_FAILURE,
-         absl::StrCat("could not translate host name \"", address,
-                      "\" to address: ", resolve_ec.message()));
-    co_return false;
-  }
   std::optional<asio_ns::steady_timer> timeout;
   if (_conninfo.connect_timeout.count() > 0) {
     timeout.emplace(this->_io, _conninfo.connect_timeout);
@@ -163,11 +215,54 @@ yaclib::Task<bool> PublisherSession::OpenSocket() {
       }
     });
   }
-  auto [connect_ec, endpoint] =
-    co_await network::Async<asio_ns::ip::tcp::endpoint>([&](auto&& handler) {
-      asio_ns::async_connect(this->_socket.Lowest(), endpoints,
-                             std::forward<decltype(handler)>(handler));
-    }).NoThrow();
+  asio_ns::error_code connect_ec;
+  if (_host.IsUnixSocket()) {
+    auto path = SocketPath();
+    if (path.front() == '@') {
+      path.front() = '\0';
+    }
+    const asio_ns::generic::stream_protocol::endpoint endpoint{
+      asio_ns::local::stream_protocol::endpoint{path}};
+    connect_ec = co_await network::Async<void>([&](auto&& handler) {
+                   this->_socket.Lowest().async_connect(
+                     endpoint, std::forward<decltype(handler)>(handler));
+                 }).NoThrow();
+  } else {
+    const std::string& address =
+      _host.hostaddr.empty() ? _host.host : _host.hostaddr;
+    asio_ns::ip::tcp::resolver resolver{this->_io};
+    auto [resolve_ec, endpoints] =
+      co_await network::Async<asio_ns::ip::tcp::resolver::results_type>(
+        [&](auto&& handler) {
+          resolver.async_resolve(address, _host.port,
+                                 std::forward<decltype(handler)>(handler));
+        })
+        .NoThrow();
+    if (resolve_ec) {
+      if (timeout) {
+        timeout->cancel();
+      }
+      Fail(ERRCODE_CONNECTION_FAILURE,
+           absl::StrCat("could not translate host name \"", address,
+                        "\" to address: ", resolve_ec.message()));
+      co_return false;
+    }
+    std::vector<asio_ns::generic::stream_protocol::endpoint> targets;
+    for (const auto& entry : endpoints) {
+      targets.emplace_back(entry.endpoint());
+    }
+    auto [ec, endpoint] =
+      co_await network::Async<asio_ns::generic::stream_protocol::endpoint>(
+        [&](auto&& handler) {
+          asio_ns::async_connect(this->_socket.Lowest(), targets,
+                                 std::forward<decltype(handler)>(handler));
+        })
+        .NoThrow();
+    connect_ec = ec;
+    if (!ec) {
+      this->_socket.Lowest().set_option(asio_ns::ip::tcp::no_delay{true});
+    }
+  }
   if (timeout) {
     timeout->cancel();
   }
@@ -179,12 +274,11 @@ yaclib::Task<bool> PublisherSession::OpenSocket() {
                         : connect_ec.message()));
     co_return false;
   }
-  this->_socket.Lowest().set_option(asio_ns::ip::tcp::no_delay{true});
   co_return true;
 }
 
 yaclib::Task<bool> PublisherSession::NegotiateTls() {
-  if (_conninfo.sslmode == SslMode::Disable ||
+  if (_host.IsUnixSocket() || _conninfo.sslmode == SslMode::Disable ||
       _conninfo.sslmode == SslMode::Allow) {
     co_return true;
   }
@@ -238,11 +332,11 @@ yaclib::Task<bool> PublisherSession::NegotiateTls() {
 }
 
 yaclib::Task<bool> PublisherSession::Authenticate() {
-  network::pg::ScramClientSession scram{_conninfo.password};
+  network::pg::ScramClientSession scram{_password};
   bool password_requested = false;
   const auto need_password = [&] {
     password_requested = true;
-    if (_conninfo.password.empty()) {
+    if (_password.empty()) {
       Fail(ERRCODE_INVALID_PASSWORD,
            absl::StrCat(ServerName(), ": fe_sendauth: no password supplied"));
       return false;
@@ -287,7 +381,7 @@ yaclib::Task<bool> PublisherSession::Authenticate() {
       case kAuthCleartext:
         ok = need_password();
         if (ok) {
-          network::pg::WritePasswordMessage(this->_send, _conninfo.password);
+          network::pg::WritePasswordMessage(this->_send, _password);
         }
         break;
       case kAuthMd5:
@@ -297,8 +391,7 @@ yaclib::Task<bool> PublisherSession::Authenticate() {
           network::pg::WritePasswordMessage(
             this->_send,
             network::BuildMd5Response(
-              network::BuildMd5Verifier(_conninfo.user, _conninfo.password),
-              {salt, 4}));
+              network::BuildMd5Verifier(_conninfo.user, _password), {salt, 4}));
         }
         break;
       case kAuthSasl:
@@ -376,11 +469,18 @@ yaclib::Task<bool> PublisherSession::Authenticate() {
     }
     if (type == PQ_MSG_PARAMETER_STATUS) {
       const auto separator = payload.find('\0');
-      if (separator != std::string_view::npos &&
-          payload.substr(0, separator) == "server_version") {
-        const auto version = payload.substr(separator + 1);
-        (void)absl::SimpleAtoi(version.substr(0, version.find_first_of(".( ")),
-                               &_server_version);
+      if (separator != std::string_view::npos) {
+        const auto name = payload.substr(0, separator);
+        auto value = payload.substr(separator + 1);
+        value = value.substr(0, value.find('\0'));
+        if (name == "server_version") {
+          (void)absl::SimpleAtoi(value.substr(0, value.find_first_of(".( ")),
+                                 &_server_version);
+        } else if (name == "in_hot_standby") {
+          _hot_standby = value;
+        } else if (name == "default_transaction_read_only") {
+          _read_only = value;
+        }
       }
     }
     this->_frames.Consume(frame);
@@ -467,10 +567,18 @@ PublisherResult CallPublisher(const ConnInfo& conninfo,
   auto* pool = Server::instance().IoPool();
   SDB_ASSERT(pool);
   PublisherResult result;
-  for (size_t host = 0; host < conninfo.hosts.size(); ++host) {
+  const auto seed = absl::Uniform<uint64_t>(absl::BitGen{});
+  const bool fallback =
+    conninfo.target_session_attrs == SessionAttrs::PreferStandby;
+  for (size_t attempt = 0; attempt < (fallback ? 2 : 1) * conninfo.hosts.size();
+       ++attempt) {
+    const auto host = attempt % conninfo.hosts.size();
+    auto arranged = conninfo;
+    ArrangeHosts(arranged, seed, attempt >= conninfo.hosts.size());
     auto& exec = pool->Next();
     auto call = duckdb::make_shared_ptr<PublisherCall>(
-      exec, conninfo, host, std::string{application_name}, require_password);
+      exec, std::move(arranged), host, std::string{application_name},
+      require_password);
     auto [future, promise] = yaclib::MakeContract<PublisherResult>();
     asio_ns::post(exec.Context(),
                   [call, body, promise = std::move(promise)]() mutable {

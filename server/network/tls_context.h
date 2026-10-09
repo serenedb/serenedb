@@ -56,6 +56,9 @@ struct TlsClientOptions {
   std::string root_cert;
   std::string cert_file;
   std::string key_file;
+  std::string key_password;
+  std::string crl_file;
+  std::string crl_dir;
 };
 
 asio_ns::ssl::context BuildClientTlsContext(const TlsClientOptions& options);

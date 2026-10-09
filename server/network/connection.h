@@ -126,7 +126,8 @@ class Transport : public TransportBase {
     : _socket{exec.Context()}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
 
   Transport(IoExecutor& exec, asio_ns::ssl::context& ssl)
-    requires(Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls)
+    requires(Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls ||
+             Kind == SocketKind::Client)
     : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
 
   void Close() noexcept { _socket.Close(); }

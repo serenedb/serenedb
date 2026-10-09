@@ -184,6 +184,14 @@ duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
             "\" is a system catalog"));
 }
 
+std::vector<duckdb::CatalogEntry*> VisibleEntries(
+  duckdb::CatalogTransaction transaction, duckdb::CatalogSet& set) {
+  std::vector<duckdb::CatalogEntry*> entries;
+  set.Scan(transaction,
+           [&](duckdb::CatalogEntry& entry) { entries.emplace_back(&entry); });
+  return entries;
+}
+
 }  // namespace
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
@@ -450,18 +458,22 @@ std::shared_ptr<const CatalogSnapshot> SereneDBCatalog::Snapshot(
   if (version >= duckdb::TRANSACTION_ID_START) {
     return nullptr;
   }
+  std::shared_ptr<const CatalogSnapshot> cached;
   {
     absl::ReaderMutexLock lock{&_snapshots_mutex};
     if (_snapshots_version == version) {
       if (const auto it = _snapshots.find(&set); it != _snapshots.end()) {
-        return it->second;
+        cached = it->second;
       }
     }
   }
+  if (cached) {
+    SDB_ASSERT(cached->entries ==
+               VisibleEntries(GetCatalogTransaction(context), set));
+    return cached;
+  }
   auto snapshot = std::make_shared<CatalogSnapshot>();
-  set.Scan(GetCatalogTransaction(context), [&](duckdb::CatalogEntry& entry) {
-    snapshot->entries.emplace_back(&entry);
-  });
+  snapshot->entries = VisibleEntries(GetCatalogTransaction(context), set);
   absl::MutexLock lock{&_snapshots_mutex};
   if (_snapshots_version > version) {
     return snapshot;

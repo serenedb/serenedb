@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rpart_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rpart_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rpart\_%''');
+
+
+statement ok
+CALL postgres_execute('rpart_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rpart_pub_root; DROP PUBLICATION IF EXISTS rpart_pub_leaf; DROP TABLE IF EXISTS rpart_a, rpart_b; END $$');
+
+
+statement ok
+CALL postgres_execute('rpart_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rpart_a (id int PRIMARY KEY, v text) PARTITION BY RANGE (id); CREATE TABLE rpart_a1 PARTITION OF rpart_a FOR VALUES FROM (0) TO (100); CREATE TABLE rpart_a2 PARTITION OF rpart_a FOR VALUES FROM (100) TO (200); CREATE TABLE rpart_b (id int PRIMARY KEY, v text) PARTITION BY RANGE (id); CREATE TABLE rpart_b1 PARTITION OF rpart_b FOR VALUES FROM (0) TO (100); CREATE TABLE rpart_b2 PARTITION OF rpart_b FOR VALUES FROM (100) TO (200); INSERT INTO rpart_a SELECT g, ''a'' || g FROM generate_series(1, 150) g; INSERT INTO rpart_b SELECT g, ''b'' || g FROM generate_series(1, 150) g; CREATE PUBLICATION rpart_pub_root FOR TABLE rpart_a WHERE (id <> 7) WITH (publish_via_partition_root = true); CREATE PUBLICATION rpart_pub_leaf FOR TABLE rpart_b WITH (publish_via_partition_root = false); END $$');
+
+
+statement ok
+CREATE TABLE rpart_a (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rpart_b1 (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rpart_b2 (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE SUBSCRIPTION rpart_sub_root CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rpart_pub_root WITH (slot_name = 'rpart_sub_root');
+
+
+statement ok
+CREATE SUBSCRIPTION rpart_sub_leaf CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rpart_pub_leaf WITH (slot_name = 'rpart_sub_leaf');
+
+
+query ok retry 240 backoff 250ms
+SELECT c.relname, r.srsubstate FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid WHERE c.relname LIKE 'rpart%' ORDER BY c.relname;
+----
+relname	srsubstate
+rpart_a	r
+rpart_b1	r
+rpart_b2	r
+
+
+query
+SELECT (SELECT count(*) FROM rpart_a) AS a, (SELECT count(*) FROM rpart_a WHERE id = 7) AS a7, (SELECT count(*) FROM rpart_b1) AS b1, (SELECT count(*) FROM rpart_b2) AS b2;
+----
+a	a7	b1	b2
+149	0	99	51
+
+
+statement ok
+CALL postgres_execute('rpart_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rpart_a VALUES (160, ''new''); UPDATE rpart_a SET v = ''filtered'' WHERE id = 7; INSERT INTO rpart_b VALUES (160, ''new''); UPDATE rpart_a SET id = 170 WHERE id = 5; UPDATE rpart_b SET id = 170 WHERE id = 5; DELETE FROM rpart_a WHERE id = 120; DELETE FROM rpart_b WHERE id = 120; END $$');
+
+
+query ok retry 240 backoff 250ms
+SELECT (SELECT count(*) FROM rpart_a) AS a, (SELECT count(*) FROM rpart_a WHERE id IN (5, 7, 120)) AS a_gone, (SELECT v FROM rpart_a WHERE id = 170) AS a170, (SELECT count(*) FROM rpart_b1) AS b1, (SELECT count(*) FROM rpart_b2) AS b2, (SELECT v FROM rpart_b2 WHERE id = 170) AS b170;
+----
+a	a_gone	a170	b1	b2	b170
+149	0	a5	98	52	b5
+
+
+statement ok
+DROP SUBSCRIPTION rpart_sub_root;
+
+
+statement ok
+DROP SUBSCRIPTION rpart_sub_leaf;
+
+
+statement ok
+CALL postgres_execute('rpart_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rpart_pub_root; DROP PUBLICATION rpart_pub_leaf; DROP TABLE rpart_a, rpart_b; END $$');
+
+
+statement ok
+DETACH rpart_${__DATABASE__};

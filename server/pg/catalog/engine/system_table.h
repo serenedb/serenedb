@@ -542,6 +542,8 @@ class SystemScan {
     }
   }
 
+  bool AllowsAbove(uint32_t column, int64_t value) const;
+
   void Begin(duckdb::DataChunk& output);
   void End(duckdb::DataChunk& output);
   template<typename F>
@@ -933,6 +935,11 @@ class SystemTableScan : public SystemScan {
   template<irs::utils::detail::FixedString Name, typename V>
   bool Allows(const V& value) const {
     return SystemScan::Allows(Sql[std::string_view{Name}], value);
+  }
+
+  template<irs::utils::detail::FixedString Name>
+  bool AllowsAbove(int64_t value) const {
+    return SystemScan::AllowsAbove(Sql[std::string_view{Name}], value);
   }
 
   template<irs::utils::detail::FixedString Name>

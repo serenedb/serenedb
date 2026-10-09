@@ -89,6 +89,9 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
       return;
     }
     Comment(kPgClassTable, table.oid, 0, table.comment);
+    if (!AllowsAbove<"objsubid">(0)) {
+      return;
+    }
     for (const auto& column : table.GetColumns().Logical()) {
       if (const auto* text = Text(column.Comment())) {
         Emit<kDescription>({table.oid, kPgClassTable,
@@ -102,6 +105,9 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
       return;
     }
     Comment(kPgClassTable, view.oid, 0, view.comment);
+    if (!AllowsAbove<"objsubid">(0)) {
+      return;
+    }
     if (const auto columns = ViewColumns(Context(), view)) {
       for (size_t i = 0; i < columns->names.size(); ++i) {
         Comment(kPgClassTable, view.oid, i + 1, view.GetColumnComment(i));

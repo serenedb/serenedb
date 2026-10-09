@@ -569,6 +569,21 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
   }
 }
 
+bool SystemScan::AllowsAbove(uint32_t column, int64_t value) const {
+  if (!Filtered(column)) {
+    return true;
+  }
+  const auto& numbers = _filters[_filter_index[column]].numbers;
+  if (numbers.keys) {
+    return !numbers.keys->empty() && value < numbers.keys->back();
+  }
+  if (!numbers.upper) {
+    return true;
+  }
+  const auto& upper = *numbers.upper;
+  return value < upper.value && (upper.inclusive || value + 1 < upper.value);
+}
+
 bool SystemScan::Survives(uint32_t column, int64_t value) const {
   return absl::c_none_of(_prunes, [&](const SystemPrune& prune) {
     if (prune.column != column) {

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <span>
+
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -51,6 +53,16 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
 
     this->OpenInput(meta, doc_in, bounds);
     this->ArmWalk(meta, layout, bounds);
+  }
+
+  IRS_FORCE_INLINE std::span<const doc_id_t> Leaf() const noexcept {
+    return {std::end(this->_docs) - this->_left_in_leaf - 1,
+            this->_left_in_leaf + 1};
+  }
+
+  IRS_FORCE_INLINE doc_id_t NextLeaf() {
+    this->_left_in_leaf = 0;
+    return this->Next();
   }
 };
 

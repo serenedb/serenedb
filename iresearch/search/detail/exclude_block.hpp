@@ -24,6 +24,7 @@
 #include <immintrin.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -171,6 +172,29 @@ IRS_FORCE_INLINE uint32_t ExcludeBlock(Excludes& excludes,
     kept += static_cast<uint32_t>(!IsExcluded(excludes, doc));
   }
   return kept;
+}
+
+template<typename Excludes>
+IRS_FORCE_INLINE uint32_t CountExcluded(Excludes& excludes,
+                                        const doc_id_t* docs, uint32_t len) {
+  uint32_t excluded = 0;
+  if constexpr (requires { excludes.Words(); }) {
+    for (uint32_t i = 0; i != len; ++i) {
+      excluded += static_cast<uint32_t>(excludes.Test(docs[i]));
+    }
+  } else {
+    for (uint32_t i = 0; i != len;) {
+      const auto next = excludes.Probe(docs[i]);
+      if (next == docs[i]) {
+        ++excluded;
+        ++i;
+      } else {
+        i = static_cast<uint32_t>(
+          std::lower_bound(docs + i + 1, docs + len, next) - docs);
+      }
+    }
+  }
+  return excluded;
 }
 
 }  // namespace irs::detail

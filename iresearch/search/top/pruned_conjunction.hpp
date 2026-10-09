@@ -215,7 +215,7 @@ class PrunedConjunction : public Root {
 
   doc_id_t DocFirst(doc_id_t doc, doc_id_t last, score_t stop,
                     LoserScoreCollector& collector) {
-    [[clang::code_align(64)]] while (doc <= last) {
+    while (doc <= last) {
       if constexpr (kExcludes) {
         if (irs::detail::IsExcluded(_excludes, doc)) {
           doc = _lead.Next();

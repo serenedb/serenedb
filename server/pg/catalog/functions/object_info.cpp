@@ -1001,16 +1001,11 @@ duckdb::unique_ptr<duckdb::Expression> BindNull(
     duckdb::Value{input.bound_function.GetReturnType()});
 }
 
+template<typename T>
 void ZeroFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                   duckdb::Vector& result) {
-  result.Reference(duckdb::Value::INTEGER(0).DefaultCastAs(result.GetType()),
-                   duckdb::count_t(args.size()));
-}
-
-void NullFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                  duckdb::Vector& result) {
-  result.Reference(duckdb::Value{result.GetType()},
-                   duckdb::count_t(args.size()));
+  duckdb::UnaryExecutor::Execute<int64_t, T>(args.data[0], result, args.size(),
+                                             [](int64_t) { return T{0}; });
 }
 
 enum class StatKind : uint8_t {
@@ -1135,12 +1130,17 @@ void RegisterStatFunctions(duckdb::ExtensionLoader& loader) {
   for (const auto& stat : kStatFunctions) {
     const bool zero =
       stat.kind == StatKind::Count || stat.kind == StatKind::Time;
+    const bool per_row = zero && stat.takes_oid;
     duckdb::ScalarFunction function{
       stat.takes_oid ? duckdb::vector<duckdb::LogicalType>{pg::OID()}
                      : duckdb::vector<duckdb::LogicalType>{},
-      StatType(stat), zero ? ZeroFunction : NullFunction};
-    function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    function.SetBindExpressionCallback(zero ? BindZero : BindNull);
+      StatType(stat),
+      per_row ? (stat.kind == StatKind::Count ? ZeroFunction<int64_t>
+                                              : ZeroFunction<double>)
+              : nullptr};
+    if (!per_row) {
+      function.SetBindExpressionCallback(zero ? BindZero : BindNull);
+    }
     duckdb::ScalarFunctionSet set{Identifier{stat.name}};
     set.AddFunction(std::move(function));
     RegisterPg(loader, std::move(set));

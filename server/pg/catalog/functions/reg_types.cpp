@@ -26,6 +26,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_join.h>
 
+#include <algorithm>
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
@@ -206,15 +207,14 @@ bool RelationIn(const Session& session, const SessionSchema& schema,
 
 bool RelationVisible(const Session& session, std::string_view schema,
                      std::string_view name) {
-  for (const auto& path : session.search_path) {
-    if (path.name == schema) {
-      return true;
-    }
-    if (RelationIn(session, path, name)) {
-      return false;
-    }
-  }
-  return false;
+  const auto at = absl::c_find_if(
+    session.search_path,
+    [&](const SessionSchema& path) { return path.name == schema; });
+  return at != session.search_path.end() &&
+         std::none_of(session.search_path.begin(), at,
+                      [&](const SessionSchema& path) {
+                        return RelationIn(session, path, name);
+                      });
 }
 
 bool IsWordStart(char c) {

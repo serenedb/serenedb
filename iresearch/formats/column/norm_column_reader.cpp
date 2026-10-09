@@ -35,7 +35,7 @@ constexpr uint32_t kPageShift =
 
 }  // namespace
 
-uint32_t NormRegion::Overflow(uint32_t row) const noexcept {
+uint32_t NormRegion::Overflow(uint32_t row) const {
   uint32_t lo = 0;
   uint32_t hi = overflow;
   while (lo < hi) {
@@ -46,13 +46,17 @@ uint32_t NormRegion::Overflow(uint32_t row) const noexcept {
       hi = mid;
     }
   }
-  const bool found = lo < overflow && absl::little_endian::Load32(
-                                        overflow_rows + size_t{lo} * 4) == row;
-  SDB_ASSERT(found, "norm overflow exception for row ", row, " is missing");
-  if (!found) [[unlikely]] {
-    return 0;
+  if (lo == overflow || absl::little_endian::Load32(
+                          overflow_rows + size_t{lo} * 4) != row) [[unlikely]] {
+    Corrupt(first_doc + row);
   }
   return absl::little_endian::Load32(overflow_values + size_t{lo} * 4);
+}
+
+void NormRegion::Corrupt(doc_id_t doc) const {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+    ERR_MSG(".col reader: norm exception for doc ", doc, " is missing"));
 }
 
 const byte_type* NormColumnReader::Map(IndexInput& in, uint64_t offset,

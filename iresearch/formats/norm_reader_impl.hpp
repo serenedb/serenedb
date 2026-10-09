@@ -73,7 +73,7 @@ IRS_FORCE_INLINE inline void ReadNormSlots(const NormRegion& region,
 IRS_NO_INLINE inline void PatchNormEscapes(const NormRegion& region,
                                            const doc_id_t* IRS_RESTRICT docs,
                                            uint32_t* IRS_RESTRICT values,
-                                           size_t n) noexcept {
+                                           size_t n) {
   size_t i = 0;
 #ifdef __AVX2__
   const __m256i limit =
@@ -99,7 +99,7 @@ IRS_NO_INLINE inline void PatchNormEscapes(const NormRegion& region,
 IRS_FORCE_INLINE inline void PatchNormSlots(const NormRegion& region,
                                             const doc_id_t* IRS_RESTRICT docs,
                                             uint32_t* IRS_RESTRICT values,
-                                            size_t n) noexcept {
+                                            size_t n) {
   bool escaped = false;
   for (size_t i = 0; i != n; ++i) {
     escaped |= values[i] >= region.first_code;
@@ -402,7 +402,7 @@ class NormReaderBase : public NormReader {
   }
 
   IRS_FORCE_INLINE void Read(const doc_id_t* docs, uint32_t* values,
-                             size_t n) const noexcept {
+                             size_t n) const {
     ReadNormSlots(*_region, docs, values, n);
     if (_region->exceptions) {
       PatchNormSlots(*_region, docs, values, n);
@@ -422,7 +422,7 @@ class NormReaderBase : public NormReader {
     }
   }
 
-  IRS_FORCE_INLINE uint32_t ReadOne(doc_id_t doc) const noexcept {
+  IRS_FORCE_INLINE uint32_t ReadOne(doc_id_t doc) const {
     const auto value = _region->Slot(doc);
     return _region->exceptions && value >= _region->first_code
              ? _region->Exception(doc, value)

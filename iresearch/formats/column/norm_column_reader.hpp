@@ -74,17 +74,15 @@ struct NormRegion {
     }
   }
 
-  IRS_FORCE_INLINE uint32_t Exception(doc_id_t doc,
-                                      uint32_t code) const noexcept {
+  IRS_FORCE_INLINE uint32_t Exception(doc_id_t doc, uint32_t code) const {
     SDB_ASSERT(exceptions && code >= first_code);
     const uint32_t row = doc - first_doc;
     if (code != first_code + kNormDirect) [[likely]] {
       const uint32_t at =
         absl::little_endian::Load32(bases + size_t{row >> shift} * 4) +
         (code - first_code);
-      SDB_ASSERT(at < direct, "norm exception for doc ", doc, " is missing");
       if (at >= direct) [[unlikely]] {
-        return 0;
+        Corrupt(doc);
       }
       return exception_bytes == 2
                ? absl::little_endian::Load16(values + size_t{at} * 2)
@@ -93,7 +91,9 @@ struct NormRegion {
     return Overflow(row);
   }
 
-  uint32_t Overflow(uint32_t row) const noexcept;
+  uint32_t Overflow(uint32_t row) const;
+
+  [[noreturn]] void Corrupt(doc_id_t doc) const;
 };
 
 class NormColumnReader final {

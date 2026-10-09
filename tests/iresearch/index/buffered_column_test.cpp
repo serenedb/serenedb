@@ -495,6 +495,52 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
   AssertNormReads(*col, expected);
 }
 
+TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
+  constexpr uint32_t kRows = 4096;
+  constexpr uint32_t kWideEvery = 512;
+  irs::MemoryFile written{irs::IResourceManager::gNoop};
+  irs::NormColumnMeta meta;
+  {
+    irs::MemoryIndexOutput out{written};
+    irs::NormColumnWriter writer{1, kRows, out};
+    for (uint32_t i = 0; i != kRows; ++i) {
+      writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
+    }
+    writer.Finalize();
+    out.Flush();
+    meta = writer.Meta();
+  }
+  ASSERT_EQ(meta.regions.size(), 1u);
+  const auto& region = meta.regions[0];
+  ASSERT_NE(region.exceptions, 0u);
+  ASSERT_EQ(region.overflow, 0u);
+
+  std::vector<irs::byte_type> bytes(written.Length());
+  {
+    irs::MemoryIndexInput in{written};
+    in.ReadData(0, bytes.data(), bytes.size());
+  }
+  for (uint64_t b = 0; b != irs::NormBuckets(region); ++b) {
+    absl::little_endian::Store32(bytes.data() + region.table_offset + b * 4,
+                                 region.exceptions);
+  }
+  irs::MemoryFile corrupt{irs::IResourceManager::gNoop};
+  {
+    irs::MemoryIndexOutput out{corrupt};
+    out.WriteData(bytes.data(), bytes.size());
+    out.Flush();
+  }
+  irs::MemoryIndexInput in{corrupt};
+  const irs::NormColumnReader column{1, meta, in};
+  const auto reader = irs::MakePersistedNormReader(column);
+  EXPECT_EQ(reader->Get(irs::doc_limits::min() + 1), 2u);
+  EXPECT_ANY_THROW(reader->Get(irs::doc_limits::min()));
+  std::array<irs::doc_id_t, 2> docs{irs::doc_limits::min() + 1,
+                                    irs::doc_limits::min() + kWideEvery};
+  std::array<uint32_t, 2> values{};
+  EXPECT_ANY_THROW(reader->Get(docs, values));
+}
+
 TEST_P(BufferedColumnTestCase, Sort) {
   GTEST_SKIP()
     << "BufferedColumn::Sort backed sorted-index inserts on the "

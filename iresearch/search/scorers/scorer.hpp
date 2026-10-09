@@ -83,11 +83,12 @@ struct ScoreBoundWriter {
   virtual ~ScoreBoundWriter() = default;
 
   virtual bool Prepare(const NormProvider& norms, const FieldProperties& field,
-                       const AttributeProvider& attrs) = 0;
+                       bool has_freq) = 0;
 
   virtual void Reset() = 0;
 
-  virtual void Update() = 0;
+  virtual void Update(std::span<const doc_id_t> docs,
+                      const uint32_t* freqs) = 0;
 
   virtual void WriteRoot(DataOutput& out) = 0;
   virtual void Take(size_t level, uint32_t* out) = 0;

@@ -48,7 +48,7 @@ struct DocBuffer {
 
   void Push(doc_id_t doc, uint32_t freq) noexcept {
     SDB_ASSERT(freq >= block_io::kFreqBias);
-    freqs[size] = freq - block_io::kFreqBias;
+    freqs[size] = freq;
     Push(doc);
   }
 
@@ -226,25 +226,9 @@ class PostingsWriter final {
     bool _has_vec{};
   };
 
-  struct Attributes final : AttributeProvider {
-    ValueIndex doc;
-    FreqAttr freq;
-
-    FreqAttr* score_bound_freq{};
+  struct Attributes {
     PosAttr* pos{};
     const OffsAttr* offs{};
-
-    Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-      if (type == irs::Type<ValueIndex>::id()) {
-        return &doc;
-      }
-
-      if (type == irs::Type<FreqAttr>::id()) {
-        return score_bound_freq;
-      }
-
-      return nullptr;
-    }
 
     void Reset(TermPostings& docs) noexcept {
       if (auto* p = docs.Positions()) {
@@ -263,6 +247,7 @@ class PostingsWriter final {
   void PrepareWriters(const FieldProperties& meta);
   template<typename Output>
   void WriteDocBlock(Output& out);
+  void UpdateBounds();
   void FlushTailPos();
   void FlushTailPay();
   void WritePosBlock();
@@ -332,9 +317,7 @@ inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
     return;
   }
 
-  _attrs.score_bound_freq = _features.HasFrequency() ? &_attrs.freq : nullptr;
-
-  if (_writer && _writer->Prepare(*_norms, meta, _attrs)) {
+  if (_writer && _writer->Prepare(*_norms, meta, _features.HasFrequency())) {
     _valid_writer = _writer.get();
   }
 }
@@ -492,6 +475,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
   if (1 == meta.docs_count) {
     meta.doc_delta = _doc.docs[0] - doc_limits::min();
   } else if (!has_index) {
+    UpdateBounds();
     _tail.clear();
     BytesOutput out{_tail};
     ApplyToWriter([&](auto& writer) {
@@ -506,6 +490,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
       _doc_out->WriteData(_tail.data(), _tail.size());
     }
   } else {
+    UpdateBounds();
     WriteDocBlock(*_doc_out);
   }
 
@@ -563,9 +548,18 @@ void PostingsWriter::WriteDocBlock(Output& out) {
   SDB_ASSERT(size != 0);
   block_io::WriteTailDelta(size, out, _doc.docs, _doc.block_last, _enc_buf);
   if (_features.HasFrequency()) {
-    block_io::WriteTail(size, out, _doc.freqs, _enc_buf,
-                        block_io::kFreqOptions);
+    uint32_t freqs[doc_limits::kBlockSize];
+    for (uint32_t i = 0; i != size; ++i) {
+      freqs[i] = _doc.freqs[i] - block_io::kFreqBias;
+    }
+    block_io::WriteTail(size, out, freqs, _enc_buf, block_io::kFreqOptions);
   }
+}
+
+inline void PostingsWriter::UpdateBounds() {
+  ApplyToWriter([&](auto& writer) {
+    writer.Update(std::span<const doc_id_t>{_doc.docs, _doc.size}, _doc.freqs);
+  });
 }
 
 inline void PostingsWriter::FlushTailPos() {
@@ -772,6 +766,7 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
   }
 
   if (_doc.Full()) {
+    UpdateBounds();
     WriteDocBlock(*_doc_out);
     _doc.block_last = _doc.last;
     _doc.size = 0;
@@ -789,12 +784,6 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
   // First position offsets now is format dependent
   _pos.last = pos_limits::invalid();
   _pay.last = 0;
-
-  if (_valid_writer) {
-    _attrs.doc.value = doc;
-    _attrs.freq.value = freq;
-    _valid_writer->Update();
-  }
 }
 
 inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {

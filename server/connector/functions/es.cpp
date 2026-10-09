@@ -338,7 +338,7 @@ void CreateTextIndex(duckdb::ClientContext& context,
     info.column_opclasses.emplace_back(kTextTokenizer);
     info.column_opclass_options.emplace_back(std::nullopt);
   }
-  catalog::BindInvertedIndexOptions(context, info.options, false);
+  catalog::BindInvertedIndexOptions(context, info.options, false, false);
   auto& schema = table.ParentSchema(context);
   auto entry = schema.CreateIndex(
     schema.ParentCatalog().GetCatalogTransaction(context), info, table);

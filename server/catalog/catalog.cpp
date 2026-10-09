@@ -283,6 +283,13 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("unrecognized parameter \"", unknown->first, "\""));
   }
+  const bool search_table =
+    dynamic_cast<const SearchTableEntry*>(&table) != nullptr;
+  if (search_table) {
+    for (const auto& [name, value] : info.options) {
+      RequireSearchTableIndexOption(name);
+    }
+  }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
     duckdb::vector<duckdb::ColumnIndex> column_ids;
@@ -314,7 +321,8 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
   }
   if (inverted) {
     BindInvertedIndexOptions(binder.context, info.options,
-                             table.type == duckdb::CatalogType::VIEW_ENTRY);
+                             table.type == duckdb::CatalogType::VIEW_ENTRY,
+                             search_table);
   } else {
     for (auto i = info.column_opclasses.size(); i-- > 0;) {
       if (info.column_opclasses[i] != kIncludedKind) {

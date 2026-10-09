@@ -128,7 +128,8 @@ bool IsKnownInvertedIndexOption(std::string_view name);
 
 void BindInvertedIndexOptions(
   duckdb::ClientContext& context,
-  duckdb::case_insensitive_map_t<duckdb::Value>& options, bool view_backed);
+  duckdb::case_insensitive_map_t<duckdb::Value>& options, bool view_backed,
+  bool search_table);
 
 InvertedIndexSettings ResolveSettings(
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);

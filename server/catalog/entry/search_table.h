@@ -102,6 +102,8 @@ TableEngine ReadStorageEngine(
   const duckdb::case_insensitive_map_t<
     duckdb::unique_ptr<duckdb::ParsedExpression>>& options);
 
+void RequireSearchTableIndexOption(std::string_view name);
+
 inline constexpr std::string_view kGeneratedPkSequenceTag =
   "sdb_generated_pk_seq";
 

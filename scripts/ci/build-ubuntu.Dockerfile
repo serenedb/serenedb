@@ -106,7 +106,7 @@ RUN cd /tmp/drivers/go && go mod download && \
 COPY --from=drivers java /tmp/drivers/java
 COPY --from=drivers spec /tmp/drivers/spec
 RUN cd /tmp/drivers/java && rm -rf target && \
-    mvn -B -q -Dmaven.repo.local=/opt/sdb-drivers/m2 -Dmaven.test.failure.ignore=true test
+    mvn -B -q -Dmaven.repo.local=/opt/sdb-drivers/m2 -Dgroups=resolve-only test
 
 COPY --from=drivers csharp/SerenedbDrivers.csproj /tmp/drivers/csharp/
 RUN cd /tmp/drivers/csharp && dotnet restore

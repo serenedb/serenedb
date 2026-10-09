@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Parse server/pg/catalog/builtin/type_oids.gen.inc (`enum PgTypeOID`) and reconcile against types.yaml.
+"""Parse server/pg/catalog/generated/builtin_type_oids.gen.inc (`enum PgTypeOID`) and reconcile against types.yaml.
 
 Modes:
   --print          dump the parsed (name -> oid) map to stdout
-  --check          fail (exit 1) if type_oids.gen.inc has OIDs not present in
+  --check          fail (exit 1) if builtin_type_oids.gen.inc has OIDs not present in
                    types.yaml. Used as a CI/pre-commit gate so the matrix
                    does not silently rot when new OIDs are added.
   --merge-stub     append YAML stubs (skip:[all], reason: TODO) for any
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-PG_TYPES_H = REPO_ROOT / "server" / "pg" / "catalog" / "builtin" / "type_oids.gen.inc"
+PG_TYPES_H = REPO_ROOT / "server" / "pg" / "catalog" / "generated" / "builtin_type_oids.gen.inc"
 TYPES_YAML = Path(__file__).resolve().parents[1] / "types.yaml"
 
 # k<Name> = <oid>,
@@ -108,7 +108,7 @@ def main() -> int:
 
     if args.check:
         if missing:
-            print("OIDs in type_oids.gen.inc not present in types.yaml:", file=sys.stderr)
+            print("OIDs in builtin_type_oids.gen.inc not present in types.yaml:", file=sys.stderr)
             for name, oid in sorted(enum_map.items(), key=lambda kv: kv[1]):
                 if oid in missing:
                     print(f"  {oid:>5}  k{name}", file=sys.stderr)
@@ -123,7 +123,7 @@ def main() -> int:
             return 1
         if extra:
             print(
-                f"types.yaml has OIDs not in type_oids.gen.inc (stale?): {sorted(extra)}",
+                f"types.yaml has OIDs not in builtin_type_oids.gen.inc (stale?): {sorted(extra)}",
                 file=sys.stderr,
             )
             return 1

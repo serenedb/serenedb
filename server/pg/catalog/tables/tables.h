@@ -29,6 +29,6 @@
 
 namespace sdb::pg {
 
-#include "pg/catalog/tables/tables.gen.inc"
+#include "pg/catalog/generated/tables.gen.inc"
 
 }  // namespace sdb::pg

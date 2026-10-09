@@ -32,7 +32,7 @@ struct SystemMacro {
 };
 
 inline constexpr SystemMacro kExternalMacros[] = {
-#include "pg/catalog/functions/stubs.gen.inc"
+#include "pg/catalog/generated/function_stubs.gen.inc"
   // clang-format off
   {"pg_catalog", "pg_show_all_settings",
    R"(() AS TABLE SELECT * FROM pg_catalog.pg_settings)"},

@@ -226,13 +226,13 @@ def generate(gen):
     tables.append('inline constexpr const SystemSql* kGeneratedTables[] = {')
     tables += ['  ' + line for line in all_tables]
     tables.append('};')
-    gen.write('oids.gen.inc', oids)
-    gen.write('tables/tables.gen.inc', tables)
+    gen.write('catalog_oids.gen.inc', oids)
+    gen.write('tables.gen.inc', tables)
     data = []
     for (schema, name), order in config.DATA_TABLES.items():
         data += data_rows(gen, schema, name, order)
-    gen.write('tables/information_schema/data.gen.inc', data)
-    gen.write('functions/keywords.gen.inc',
+    gen.write('information_schema_tables.gen.inc', data)
+    gen.write('keywords.gen.inc',
               [cpp_str(word) + ',' for word in sorted(reserved)])
     generate_settings(gen)
 
@@ -265,5 +265,5 @@ def generate_settings(gen):
         gucs.append('  {' + ', '.join(map(cpp_str, (
             name, setting, unit, category, desc, extra, context, vartype, min_val,
             max_val))) + f', {enum}}},')
-    gen.write('tables/settings.gen.inc',
+    gen.write('settings.gen.inc',
               out + ['inline constexpr Guc kGucs[] = {'] + gucs + ['};'])

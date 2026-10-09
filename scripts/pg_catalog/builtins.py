@@ -78,16 +78,16 @@ def generate(gen):
     procs = gen.query(PROCS_SQL, (proc_oids, list(config.SDB_OWNED_TYPES),
                                   list(config.ENUM_PROCS)))
     collations = gen.query(COLLATIONS_SQL, (list(config.COLLATIONS),))
-    gen.write('builtin/type_oids.gen.inc',
+    gen.write('builtin_type_oids.gen.inc',
               [f'{name} = {oid},' for oid, name in constants.items()])
-    gen.write('builtin/types.gen.inc', rows)
-    gen.write('builtin/procs.gen.inc', [
+    gen.write('builtin_types.gen.inc', rows)
+    gen.write('builtin_procs.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {nargs}, {rettype}, '
         f'{{{", ".join(map(str, argtypes))}}}, {cpp_char(kind)}, '
         f'{cpp_bool(retset)}, {cpp_char(volatility)}, {cpp_bool(strict)}, '
         f'{lang}, {cpp_str(src)}}},'
         for oid, name, nargs, rettype, argtypes, kind, retset, volatility,
         strict, lang, src in procs])
-    gen.write('builtin/collations.gen.inc', [
+    gen.write('builtin_collations.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {cpp_char(provider)}, {cpp_str(locale)}}},'
         for oid, name, provider, locale in collations])

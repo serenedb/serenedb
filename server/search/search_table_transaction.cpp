@@ -56,12 +56,18 @@ uint64_t ShardTickSpan(const SearchShardWrites& w) {
 // The rowids this transaction deleted. The buffer already holds them raw, so a
 // build's log takes them as they are.
 void RecordDeletesForBuild(SearchTable& shard,
-                           const LocalTableChangesEntry& changes) {
+                           const LocalTableChangesEntry& changes,
+                           uint64_t record_tick) noexcept {
   std::vector<int64_t> rows;
+  bool truncated = false;
   for (const auto& op : changes.ops) {
+    truncated |= op.IsTruncate();
     rows.insert(rows.end(), op.delete_rows.begin(), op.delete_rows.end());
   }
   shard.AppendDeleteLog(rows);
+  if (truncated) {
+    shard.RecordTruncateForBuild(record_tick);
+  }
 }
 
 }  // namespace
@@ -69,18 +75,30 @@ void RecordDeletesForBuild(SearchTable& shard,
 SearchTableTransaction::~SearchTableTransaction() { ReleaseWriters(); }
 
 void SearchTableTransaction::RegisterWriter(
-  const std::shared_ptr<SearchTable>& shard) {
+  const std::shared_ptr<SearchTable>& shard,
+  const duckdb::Identifier& table_name) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
   if (w.writer_slot < 0) {
-    w.writer_slot = static_cast<int>(shard->RegisterWriter());
+    const auto slot = shard->RegisterWriter();
+    if (!slot) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Attempting to write to table ", table_name.GetIdentifierName(),
+                " but another transaction is truncating it"));
+    }
+    w.writer_slot = static_cast<int>(*slot);
   }
 }
 
 void SearchTableTransaction::ReleaseWriters() noexcept {
   for (auto& [table_id, w] : _writes) {
+    if (w.truncate_claim) {
+      w.shard->ReleaseTruncate();
+      w.truncate_claim = false;
+    }
     if (w.writer_slot >= 0) {
       w.shard->DeregisterWriter(static_cast<unsigned>(w.writer_slot));
       w.writer_slot = -1;
@@ -241,14 +259,25 @@ void SearchTableTransaction::AddSearchDeletes(
 }
 
 void SearchTableTransaction::AddSearchTruncate(
-  const std::shared_ptr<SearchTable>& shard, bool clears_shard) {
+  const std::shared_ptr<SearchTable>& shard,
+  const duckdb::Identifier& table_name, bool clears_shard) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
+  if (!w.truncate_claim) {
+    if (!shard->ClaimTruncate()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_T_R_SERIALIZATION_FAILURE),
+        ERR_MSG("Attempting to truncate table ", table_name.GetIdentifierName(),
+                " but another transaction is writing to this table"));
+    }
+    w.truncate_claim = true;
+  }
   w.transactions.clear();
   w.buffer_trx = nullptr;
-  _changes[shard->GetTableId()].AppendTruncate(clears_shard);
+  _changes[shard->GetTableId()].AppendTruncate(clears_shard &&
+                                               !shard->BuildInFlight());
 }
 
 void SearchTableTransaction::RegisterFlush() noexcept {
@@ -324,24 +353,52 @@ void SearchTableTransaction::Commit() {
   }
 
   SDB_IF_FAILURE("crash_before_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_wal");
 
-  const uint64_t record_tick = AppendCommit();
+  std::vector<std::pair<SearchTable*, const LocalTableChangesEntry*>> logged;
+  for (auto& [table_id, w] : _writes) {
+    auto cit = _changes.find(table_id);
+    if (cit != _changes.end() && !cit->second.ops.empty() &&
+        w.shard->IsDeleteLogOpen()) {
+      logged.emplace_back(w.shard.get(), &cit->second);
+    }
+  }
+
+  const uint64_t record_tick = AppendCommit([&](uint64_t tick) noexcept {
+    RegisterFlush();
+    for (auto& [table_id, w] : _writes) {
+      auto cit = _changes.find(table_id);
+      if (cit == _changes.end() || !cit->second.ClearsShard()) {
+        continue;
+      }
+      try {
+        w.shard->Clear(tick);
+      } catch (const std::exception& e) {
+        SDB_FATAL(SEARCH, "search-table commit: Clear failed for table ",
+                  table_id, " tick=", tick, ": ", e.what());
+      }
+    }
+  });
   SDB_IF_FAILURE("crash_after_search_wal_commit") { SDB_IMMEDIATE_ABORT(); }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_delete_log");
+
+  // Before the iresearch commit, never after. Once a removal is queued, the
+  // next RefreshCommit applies it -- including the one a running build
+  // publishes its own swap with -- and a build that drained the log before
+  // this ran would never reissue it, leaving the rows it had already copied
+  // resurrected for good. AppendCommit has made these durable, so the log can
+  // only ever name rows that are certainly deleted; that, not the position
+  // relative to the iresearch commit, is what keeps a reissue from removing a
+  // live row.
+  for (const auto& [shard, changes] : logged) {
+    RecordDeletesForBuild(*shard, *changes, record_tick);
+  }
 
   for (auto& [table_id, w] : _writes) {
     auto cit = _changes.find(table_id);
-    // Before the iresearch commit, never after. Once a removal is queued, the
-    // next RefreshCommit applies it -- including the one a running build
-    // publishes its own swap with -- and a build that drained the log before
-    // this ran would never reissue it, leaving the rows it had already copied
-    // resurrected for good. AppendCommit has made these durable, so the log can
-    // only ever name rows that are certainly deleted; that, not the position
-    // relative to the iresearch commit, is what keeps a reissue from removing a
-    // live row.
-    if (cit != _changes.end() && w.shard->IsDeleteLogOpen()) {
-      RecordDeletesForBuild(*w.shard, cit->second);
+    if (cit == _changes.end()) {
+      continue;
     }
-
     uint64_t tick = record_tick;
     for (size_t i = w.transactions.size(); i-- > 0;) {
       auto& trx = *w.transactions[i];
@@ -360,17 +417,14 @@ void SearchTableTransaction::Commit() {
     // loop -- move it below this point and
     // recovery/search_table_backfill_concurrent_dml.test loses a row.
     SDB_WAIT_ON_FAILURE("pause_search_commit_after_irs");
-
-    if (cit != _changes.end() && cit->second.ClearsShard()) {
-      w.shard->Clear(record_tick);
-    }
   }
   // Only now: a rebuild waiting on one of these registrations may proceed as
   // soon as it is released, so the rows have to be committed first.
   ReleaseWriters();
 }
 
-uint64_t SearchTableTransaction::AppendCommit() {
+uint64_t SearchTableTransaction::AppendCommit(
+  absl::AnyInvocable<void(uint64_t) noexcept> on_durable) {
   SDB_ASSERT(!_writes.empty());
   std::vector<SearchDbWal::ShardSection> sections;
   sections.reserve(_writes.size());
@@ -437,7 +491,7 @@ uint64_t SearchTableTransaction::AppendCommit() {
   }
 
   SDB_ASSERT(wal != nullptr);
-  return wal->AppendCommit(sections, tick_span);
+  return wal->AppendCommit(sections, tick_span, std::move(on_durable));
 }
 
 }  // namespace sdb::search

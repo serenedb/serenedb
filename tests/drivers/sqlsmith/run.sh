@@ -39,8 +39,8 @@ set -u
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 if ! command -v sqlsmith >/dev/null 2>&1; then
-	echo "[sqlsmith] sqlsmith not installed; skipping (see $SCRIPT_DIR/README.md)" >&2
-	exit 0
+	echo "[sqlsmith] sqlsmith not installed (see $SCRIPT_DIR/README.md)" >&2
+	exit 1
 fi
 
 HOST="${SDB_DRV_HOST:-localhost}"
@@ -152,11 +152,12 @@ syntax=0
 timeouts=0
 for log in "${INSTANCE_LOGS[@]}"; do
 	[[ -f "$log" ]] || continue
-	crashes=$((crashes + $(tr -cd 'C' <"$log" | wc -c | tr -d ' ')))
-	ok=$((ok + $(tr -cd '.' <"$log" | wc -c | tr -d ' ')))
-	errs=$((errs + $(tr -cd 'e' <"$log" | wc -c | tr -d ' ')))
-	syntax=$((syntax + $(tr -cd 'S' <"$log" | wc -c | tr -d ' ')))
-	timeouts=$((timeouts + $(tr -cd 't' <"$log" | wc -c | tr -d ' ')))
+	symbols=$(grep -E '^[.eStC]+$' "$log" | tr -d '\n')
+	crashes=$((crashes + $(tr -cd 'C' <<<"$symbols" | wc -c | tr -d ' ')))
+	ok=$((ok + $(tr -cd '.' <<<"$symbols" | wc -c | tr -d ' ')))
+	errs=$((errs + $(tr -cd 'e' <<<"$symbols" | wc -c | tr -d ' ')))
+	syntax=$((syntax + $(tr -cd 'S' <<<"$symbols" | wc -c | tr -d ' ')))
+	timeouts=$((timeouts + $(tr -cd 't' <<<"$symbols" | wc -c | tr -d ' ')))
 done
 
 # Scan the tail of the server log (added during this run only) for

@@ -33,6 +33,7 @@
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/execution/operator/projection/physical_projection.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -51,10 +52,7 @@
 #include <duckdb/storage/data_table.hpp>
 #include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
-#include <duckdb/transaction/undo_buffer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -175,7 +173,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto state = duckdb::make_uniq<CreateIndexGlobalState>();
   state->database_id = _database_id;
   state->schema_name = _schema_entry.name.GetIdentifierName();
-  state->table_name = std::string{_relation.name.GetIdentifierName()};
+  state->table_name = _relation.name.GetIdentifierName();
   state->index_name = _info->GetIndexName().GetIdentifierName();
 
   if (auto sdb_state = context.registered_state->Get<SereneDBClientState>(
@@ -230,9 +228,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     }
   }
 
-  // Shared, and it stays the one object: the providers below build the
-  // hyperloglog and IVF columns off the per-column options, which only this
-  // object answers -- a copy rebuilds them and loses them.
   duckdb::optional_ptr<const duckdb::IndexCatalogEntry> created;
   duckdb::idx_t created_id;
   const auto extras = Extras();
@@ -284,7 +279,8 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         backfill.group_bytes = uint64_t{1} << 30;
         duckdb::Value group_bytes;
         if (context.TryGetCurrentSetting(
-              std::string{kSearchBackfillGroupBytesSetting}, group_bytes) &&
+              duckdb::Identifier{kSearchBackfillGroupBytesSetting},
+              group_bytes) &&
             !group_bytes.IsNull()) {
           backfill.group_bytes = group_bytes.GetValue<uint64_t>();
         }
@@ -300,13 +296,6 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
             static_cast<int64_t>(published.rowid_horizon);
           state->uncommitted_min_rowids = std::vector<std::atomic<int64_t>>(
             duckdb::TaskScheduler::QueryThreads(context));
-          auto& store_db = _relation.ParentCatalog().GetAttached();
-          auto& store_txn = duckdb::DuckTransaction::Get(context, store_db);
-          const auto undo = store_txn.GetUndoProperties();
-          if (!undo.has_updates && !undo.has_deletes) {
-            duckdb::DuckTransactionManager::Get(store_db)
-              .RefreshCheckpointSnapshot(store_txn);
-          }
         }
       }
     }
@@ -362,10 +351,16 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   // identifier the bind appends. Position i is column_ids[i] -- nothing here
   // may reorder or widen it.
   state->columns.reserve(_info->column_ids.size());
+  const auto* table = _relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &_relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
   for (size_t chunk_idx = 0; chunk_idx < _info->column_ids.size();
        ++chunk_idx) {
-    state->columns.emplace_back(_info->column_ids[chunk_idx],
-                                _info->scan_types[chunk_idx], chunk_idx);
+    const auto position = _info->column_ids[chunk_idx];
+    const auto id = table ? TableColumnId(table->GetColumns().GetColumn(
+                              duckdb::LogicalIndex(position)))
+                          : ColumnId{position};
+    state->columns.emplace_back(id, _info->scan_types[chunk_idx], chunk_idx);
   }
   state->pk_base_col_idx = state->columns.size();
 
@@ -463,7 +458,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   }
 
   PkChunk pk;
-  auto& row_keys = lstate->row_keys;
   auto& key_views = lstate->key_views;
   key_views.clear();
   if (gstate.pk_column == connector::PkColumnKind::Has) {
@@ -496,9 +490,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
   if (gstate.pk_term) {
-    if (row_keys.size() < num_rows) {
-      row_keys.resize(num_rows);
-    }
     key_views.reserve(num_rows);
     switch (gstate.pk_shape) {
       case PkShape::Single: {
@@ -520,6 +511,10 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         duckdb::UnifiedVectorFormat row_fmt;
         chunk.data[base + 1].ToUnifiedFormat(num_rows, row_fmt);
         auto* rows = duckdb::UnifiedVectorFormat::GetData<int64_t>(row_fmt);
+        auto& row_keys = lstate->row_keys;
+        if (row_keys.size() < num_rows) {
+          row_keys.resize(num_rows);
+        }
         for (duckdb::idx_t row = 0; row < num_rows; ++row) {
           auto& key = row_keys[row];
           key.clear();
@@ -659,10 +654,15 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
   inverted_storage.Refresh();
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   inverted_storage.FinishCreation();
+  if (IsDuckDBTable() && !IsReindexPass()) {
+    GetSereneDBContext(context).AddCreatedIndex(
+      _relation.ParentCatalog().GetAttached().oid, gstate.index_storage);
+  }
 
   if (gstate.progress) {
     gstate.progress->SetPhase(pg::progress_phase::CreateIndex::Finalizing);
   }
+  SDB_WAIT_ON_FAILURE("pause_create_index_before_commit");
   if (!IsReindexPass()) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }

@@ -21,16 +21,20 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
+#include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -41,6 +45,7 @@
 #include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
+#include <ranges>
 #include <string>
 #include <string_view>
 
@@ -59,9 +64,8 @@ duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto slot = _slot.load(std::memory_order_relaxed);
   if (slot.config != &config) [[unlikely]] {
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    const auto index = config.TryGetSettingIndex(
-      duckdb::String{_name.data(), static_cast<uint32_t>(_name.size())},
-      option);
+    const auto index =
+      config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
     SDB_ASSERT(index.IsValid());
     slot = {.config = &config, .index = index.GetIndex()};
     _slot.store(slot, std::memory_order_relaxed);
@@ -70,7 +74,7 @@ duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto found = context.config.user_settings.TryGetSetting(config.user_settings,
                                                           slot.index, value);
   if (!found) [[unlikely]] {
-    auto res = context.TryGetCurrentSetting(std::string{_name}, value);
+    auto res = context.TryGetCurrentSetting(duckdb::Identifier{_name}, value);
     SDB_ASSERT(res);
   }
   SDB_ASSERT(!value.IsNull());
@@ -130,7 +134,7 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
   constexpr std::string_view kName{Name};
   duckdb::Value current;
-  if (!ctx.TryGetCurrentSetting(std::string{kName}, current)) {
+  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{kName}, current)) {
     return;
   }
   bool equal = false;
@@ -149,6 +153,78 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
     ERR_MSG(
       "parameter \"", kName,
       "\" is accepted for compatibility but is not enforced by serened")));
+}
+
+constexpr std::pair<std::string_view, double> kTimeUnits[] = {
+  {"us", 0.001},  {"ms", 1},      {"s", 1000},
+  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
+};
+
+int64_t ParseStatementTimeout(std::string_view text) {
+  const auto invalid = [&] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"statement_timeout\": \"", text,
+              "\""),
+      ERR_HINT("Valid units for this parameter are \"us\", "
+               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
+  };
+  const auto trimmed = absl::StripAsciiWhitespace(text);
+  double number = 0;
+  const auto [ptr, ec] = fast_float::from_chars(
+    trimmed.data(), trimmed.data() + trimmed.size(), number);
+  if (ec != std::errc{}) {
+    invalid();
+  }
+  const auto unit = absl::StripLeadingAsciiWhitespace(
+    trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
+  double scale = 1;
+  if (!unit.empty()) {
+    const auto it = std::ranges::find(
+      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
+    if (it == std::end(kTimeUnits)) {
+      invalid();
+    }
+    scale = it->second;
+  }
+  const auto ms = std::round(number * scale);
+  if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(absl::StrFormat("%g", ms),
+                            " ms is outside the valid range for parameter "
+                            "\"statement_timeout\" (0 ms .. 2147483647 ms)"));
+  }
+  return static_cast<int64_t>(ms);
+}
+
+std::string FormatStatementTimeout(int64_t ms) {
+  if (ms == 0) {
+    return "0";
+  }
+  for (const auto& [unit, scale] : std::views::reverse(kTimeUnits)) {
+    const auto factor = static_cast<int64_t>(scale);
+    if (factor != 0 && ms % factor == 0) {
+      return absl::StrCat(ms / factor, unit);
+    }
+  }
+  return absl::StrCat(ms, "ms");
+}
+
+void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
+                         duckdb::Value& value) {
+  const auto ms = value.IsNull() ? 0 : ParseStatementTimeout(value.ToString());
+  value = duckdb::Value{FormatStatementTimeout(ms)};
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(ms));
+}
+
+void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(0));
 }
 
 // PG's rule for a GUC whose effect reaches past the session that set it is
@@ -1096,10 +1172,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       "statement_timeout",
       {
         LogicalTypeId::VARCHAR,
-        "Aborts any statement that takes more than the specified number of "
-        "milliseconds. Accepted for compatibility but not currently enforced.",
+        "Aborts any statement that takes more than the specified amount of "
+        "time (milliseconds without a unit). 0 disables the timeout.",
         [] { return duckdb::Value{"0"}; },
-        NoOverwrite<"statement_timeout">,
+        SetStatementTimeout,
+        ResetStatementTimeout,
       },
     },
     {
@@ -1107,9 +1184,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Sets the current session's user name.",
-        [] {
-          return duckdb::Value{std::string{irs::StaticStrings::kDefaultUser}};
-        },
+        [] { return duckdb::Value{irs::StaticStrings::kDefaultUser}; },
         SetSessionAuthCallback,
         ResetSessionAuthCallback,
       },
@@ -1180,22 +1255,40 @@ std::string_view GetOriginalName(std::string_view name) {
   return *it;
 }
 
+// Settings a client may never change, refused for the lifetime of the process
+// by the setting_change_handler.
+const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
+  // Describes how this process is wired rather than a preference, and is pinned
+  // at startup in
+  // ConfigureServerDBConfig.
+  "external_threads",
+  // Read-only in PostgreSQL, where reporting the value is the whole point of
+  // the GUC.
+  "in_hot_standby",
+  "is_superuser",
+  "server_encoding",
+  "server_version",
+  "server_version_num",
+};
+
+bool IsUnchangeableSetting(std::string_view name) {
+  return kUnchangeableSettings.contains(name);
+}
+
 namespace {
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
                  const VariableDescription& desc) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-  if (config
-        .TryGetSettingIndex(duckdb::String::Reference(name.data(), name.size()),
-                            option)
-        .IsValid()) {
+  const duckdb::Identifier setting{name};
+  if (config.TryGetSettingIndex(setting, option).IsValid()) {
     return;  // already registered or built-in
   }
   config.AddExtensionOption(
-    std::string{name}, std::string{desc.description},
-    duckdb::LogicalType{desc.type},
+    setting, std::string{desc.description}, duckdb::LogicalType{desc.type},
     desc.default_value ? desc.default_value() : duckdb::Value{},
-    desc.set_callback, desc.reset_callback, desc.scope);
+    desc.set_callback, desc.reset_callback, desc.scope,
+    IsUnchangeableSetting(name));
 }
 
 }  // namespace
@@ -1211,8 +1304,8 @@ duckdb::Value ValidateSetting(duckdb::ClientContext& context,
                               std::string_view name,
                               const duckdb::Value& value) {
   duckdb::ExtensionOption option;
-  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(std::string{name},
-                                                             option);
+  duckdb::DBConfig::GetConfig(context).TryGetExtensionOption(
+    duckdb::Identifier{name}, option);
   auto result = value.CastAs(context, option.type);
   option.set_function(context, duckdb::SetScope::AUTOMATIC, result);
   return result;

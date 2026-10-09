@@ -24,6 +24,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include <atomic>
 #include <cstdint>
@@ -305,16 +306,9 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
-      if (_tick_source) {
-        return CommitImpl(_tick_source(_queries + 1));
-      }
       const auto first_tick =
         _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
       return CommitImpl(first_tick + _queries);
-    }
-
-    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
-      _tick_source = std::move(source);
     }
 
     bool FlushAndCommit() noexcept {
@@ -387,10 +381,6 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
-    // Queues this transaction into `flush` with its `pending_mutex` already
-    // held by the caller
-    bool CommitLocked(uint64_t last_tick, FlushContext& flush) noexcept;
-
    private:
     bool CommitImpl(uint64_t last_tick) noexcept;
     void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
@@ -399,7 +389,6 @@ class IndexWriter : private util::Noncopyable {
     ActiveSegmentContext _active;
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
-    std::function<uint64_t(uint64_t)> _tick_source;
     bool _exclusive_segment{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
@@ -469,10 +458,10 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t CurrentSegmentId() const noexcept;
 
-  bool ReplaceSegments(std::span<const std::string_view> replaced,
-                       std::span<const std::string_view> adopted_metas,
-                       Transaction* removals = nullptr,
-                       uint64_t removals_tick = writer_limits::kMinTick);
+  bool ReplaceSegments(
+    std::span<const std::string_view> replaced,
+    std::span<const std::string_view> adopted_metas,
+    absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
 
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
@@ -560,6 +549,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
+    QueryContext::FilterPtr removal;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);

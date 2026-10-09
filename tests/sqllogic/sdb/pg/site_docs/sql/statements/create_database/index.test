@@ -21,3 +21,65 @@ CREATE DATABASE IF NOT EXISTS app_production;
 
 statement ok
 USE app_production;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+statement ok
+DROP DATABASE IF EXISTS app_archive;
+
+statement ok
+CREATE DATABASE app_archive WITH (BLOCK_SIZE = 16384, ROW_GROUP_SIZE = 1048576);
+
+query
+SELECT block_size FROM pragma_database_size() WHERE database_name = 'app_archive';
+----
+block_size
+16384
+
+# DOCS_TEST: example_005
+
+statement ok
+DROP DATABASE IF EXISTS app_scratch;
+
+statement ok
+CREATE DATABASE app_scratch;
+
+# DOCS_TEST_BODY
+
+statement ok
+BEGIN;
+
+statement error db error: ERROR: DROP DATABASE cannot run inside a transaction block
+DROP DATABASE app_scratch;
+
+statement ok
+ROLLBACK;
+
+statement ok
+DROP DATABASE app_scratch;
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'app_scratch';
+----
+n
+0
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+statement error db error: ERROR: cannot drop the currently open database
+DROP DATABASE app_production;
+
+# DOCS_TEST_END
+
+statement ok
+USE postgres;
+
+statement ok
+DROP DATABASE app_production;
+
+statement ok
+DROP DATABASE app_archive;

@@ -21,6 +21,7 @@
 #include "index_builder.h"
 
 #include <absl/strings/str_format.h>
+#include <simdjson.h>
 
 #include <atomic>
 #include <cstdio>
@@ -29,8 +30,8 @@
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
-#include <istream>
 #include <memory>
+#include <optional>
 
 namespace bench {
 
@@ -65,8 +66,24 @@ IndexBuilder::IndexBuilder(std::string_view path,
       MakeWriterOptions(_scorer_ptr, opts.indexer_threads,
                         config.segment_mem_max, opts.row_group_size))} {}
 
-void IndexBuilder::IndexFromStream(std::istream& input,
-                                   BatchHandlerFactory factory) {
+void Batch::Add(std::string_view id, std::string_view text) {
+  _spans.push_back(
+    {.offset = _arena.size(), .id = id.size(), .text = text.size()});
+  _arena.append(id);
+  _arena.append(text);
+}
+
+void Batch::Seal() {
+  _docs.clear();
+  _docs.reserve(_spans.size());
+  const auto* base = _arena.data();
+  for (const auto& span : _spans) {
+    const auto* id = base + span.offset;
+    _docs.push_back({.id = {id, span.id}, .text = {id + span.id, span.text}});
+  }
+}
+
+void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
   irs::async_utils::ThreadPool<> thread_pool{_opts.indexer_threads +
                                              _opts.compaction_threads + 1};
 
@@ -75,52 +92,74 @@ void IndexBuilder::IndexFromStream(std::istream& input,
     std::atomic<bool> done{false};
     bool eof{false};
     absl::Mutex mutex;
-    std::vector<std::string> buf;
+    std::optional<Batch> ready;
 
-    bool Swap(std::vector<std::string>& buf) {
+    void Put(Batch&& batch) {
       absl::MutexLock lock{&mutex};
-      for (;;) {
-        this->buf.swap(buf);
-        this->buf.resize(0);
-        cond.notify_all();
+      while (ready) {
+        cond.Wait(&mutex);
+      }
+      ready = std::move(batch);
+      cond.notify_all();
+    }
 
-        if (!buf.empty()) {
-          return true;
+    void Close() {
+      absl::MutexLock lock{&mutex};
+      eof = true;
+      cond.notify_all();
+    }
+
+    bool Take(Batch& batch) {
+      {
+        absl::MutexLock lock{&mutex};
+        while (!ready && !eof) {
+          cond.Wait(&mutex);
         }
-
-        if (eof) {
+        if (!ready) {
           done.store(true);
           return false;
         }
-
-        if (!eof) {
-          cond.Wait(&mutex);
-        }
+        batch = std::move(*ready);
+        ready.reset();
+        cond.notify_all();
       }
+      batch.Seal();
+      return true;
     }
   } batch_provider;
 
-  // stream reader thread
-  thread_pool.run([&batch_provider, &input, batch_size = _opts.batch_size] {
-    absl::MutexLock lock{&batch_provider.mutex};
-
-    for (;;) {
-      batch_provider.buf.resize(batch_provider.buf.size() + 1);
-      batch_provider.cond.notify_all();
-
-      auto& line = batch_provider.buf.back();
-
-      if (std::getline(input, line).eof()) {
-        batch_provider.buf.pop_back();
-        break;
+  thread_pool.run([&batch_provider, &source, batch_size = _opts.batch_size] {
+    simdjson::ondemand::parser parser;
+    std::string padded;
+    Batch batch;
+    std::string_view line;
+    while (source.Next(line)) {
+      if (line.empty()) {
+        continue;
       }
-
-      if (batch_size && batch_provider.buf.size() >= batch_size) {
-        batch_provider.cond.Wait(&batch_provider.mutex);
+      const auto* data = line.data();
+      const auto capacity = line.size() + simdjson::SIMDJSON_PADDING;
+      if (static_cast<size_t>(source.End() - data) < capacity) {
+        padded.assign(line);
+        padded.resize(capacity);
+        data = padded.data();
+      }
+      simdjson::ondemand::document json;
+      const auto error = parser.iterate(data, line.size(), capacity).get(json);
+      SDB_ASSERT(error == simdjson::SUCCESS, "Failed to parse JSON document",
+                 line);
+      const std::string_view id = json["id"];
+      const std::string_view text = json["text"];
+      batch.Add(id, text);
+      if (batch_size != 0 && batch.Size() >= batch_size) {
+        batch_provider.Put(std::move(batch));
+        batch = {};
       }
     }
-
-    batch_provider.eof = true;
+    if (batch.Size() != 0) {
+      batch_provider.Put(std::move(batch));
+    }
+    batch_provider.Close();
   });
 
   absl::Mutex compaction_mutex;
@@ -180,11 +219,11 @@ void IndexBuilder::IndexFromStream(std::istream& input,
     thread_pool.run([&, factory] {
       SDB_ASSERT(factory, "BatchHandlerFactory must not be null");
       auto handler = factory();
-      std::vector<std::string> buf;
+      Batch batch;
 
-      while (batch_provider.Swap(buf)) {
+      while (batch_provider.Take(batch)) {
         auto ctx = _writer->GetBatch();
-        (*handler)(buf, ctx);
+        (*handler)(batch, ctx);
         ctx.Commit();
         absl::PrintF(".");
         std::fflush(stdout);
@@ -212,14 +251,6 @@ void IndexBuilder::CompactAll() {
     irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()));
   _writer->RefreshCommit();
   irs::directory_utils::RemoveAllUnreferenced(_dir);
-}
-
-void Document::Fill(std::string_view line) {
-  simdjson::padded_string padded_input{line};
-  const auto error = parser.iterate(padded_input).get(json_doc);
-  SDB_ASSERT(error == simdjson::SUCCESS, "Failed to parse JSON document", line);
-  fields[0].text = json_doc["id"];
-  fields[1].text = json_doc["text"];
 }
 
 bool TextField::Write(irs::DataOutput& out) const {

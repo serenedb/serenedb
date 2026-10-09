@@ -20,10 +20,6 @@
 /// @author Andrei Lobov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <unicode/brkiter.h>
-#include <unicode/ubrk.h>
-#include <unicode/utext.h>
-
 #include <functional>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
 #include <iresearch/analysis/text/words/ascii.hpp>
@@ -32,6 +28,7 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/utf8_character_tables.hpp>
 #include <memory>
+#include <text_break_iterator.hpp>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -1120,7 +1117,7 @@ TEST(SegmentationTextAdoptedTest, russian_stream_both_engines) {
   }
   {
     auto stream = IcuTextTokenizer::Make(IcuTextTokenizer::Options{
-      .locale = icu::Locale::createFromName("ru_RU")});
+      .locale = duckdb::text::Locale::FromName("ru_RU")});
     const auto tokens = tests::Analyze(*stream, data);
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(expected, *tokens);
@@ -1129,7 +1126,7 @@ TEST(SegmentationTextAdoptedTest, russian_stream_both_engines) {
 
 TEST(IcuTextTokenizerTest, cjk_dictionary_words) {
   auto stream = IcuTextTokenizer::Make(IcuTextTokenizer::Options{
-    .locale = icu::Locale::createFromName("en_US.UTF-8")});
+    .locale = duckdb::text::Locale::FromName("en_US.UTF-8")});
   {
     const auto tokens = tests::AnalyzeTerms(*stream, "中文测试");
     ASSERT_TRUE(tokens.has_value());
@@ -1156,7 +1153,7 @@ TEST(IcuTextTokenizerTest, ascii_fast_path_matches_icu_for_every_accept) {
        {Accept::Any, Accept::Graphic, Accept::AlphaNumeric, Accept::Alpha}) {
     SCOPED_TRACE(testing::Message() << "accept=" << static_cast<int>(accept));
     IcuTextTokenizer::Options opts;
-    opts.locale = icu::Locale::createFromName("en_US.UTF-8");
+    opts.locale = duckdb::text::Locale::FromName("en_US.UTF-8");
     opts.accept = accept;
     auto stream = IcuTextTokenizer::Make(opts);
     for (const std::string_view value :
@@ -1174,29 +1171,22 @@ enum class IcuMode {
   Sentence,
 };
 
-std::vector<tests::AnalyzerToken> IcuOracle(const icu::Locale& locale,
+std::vector<tests::AnalyzerToken> IcuOracle(const duckdb::text::Locale& locale,
                                             IcuMode mode,
                                             std::string_view text) {
-  auto err = UErrorCode::U_ZERO_ERROR;
-  std::unique_ptr<icu::BreakIterator> it{
-    mode == IcuMode::Sentence
-      ? icu::BreakIterator::createSentenceInstance(locale, err)
-      : icu::BreakIterator::createWordInstance(locale, err)};
-  if (!U_SUCCESS(err) || !it) {
-    ADD_FAILURE() << "break iterator: " << u_errorName(err);
-    return {};
-  }
-  UText ut = UTEXT_INITIALIZER;
-  utext_openUTF8(&ut, text.data(), static_cast<int64_t>(text.size()), &err);
-  it->setText(&ut, err);
+  using duckdb::text::BreakIterator;
+  BreakIterator it{mode == IcuMode::Sentence ? duckdb::text::BreakKind::SENTENCE
+                                             : duckdb::text::BreakKind::WORD,
+                   locale, duckdb::text::BreakUnits::UTF8};
+  it.SetText(text.data(), text.size());
   std::vector<tests::AnalyzerToken> out;
   uint32_t pos = 0;
-  for (auto start = it->first(), end = it->next();
-       end != icu::BreakIterator::DONE; start = end, end = it->next()) {
+  for (int64_t start = 0, end = it.Next(); end != BreakIterator::DONE;
+       start = end, end = it.Next()) {
     auto begin = static_cast<uint32_t>(start);
     auto stop = static_cast<uint32_t>(end);
     if (mode == IcuMode::Word &&
-        it->getRuleStatus() == UWordBreak::UBRK_WORD_NONE) {
+        it.GetRuleStatus() == duckdb::text::WORD_NONE) {
       continue;
     }
     if (mode == IcuMode::Sentence) {
@@ -1213,13 +1203,12 @@ std::vector<tests::AnalyzerToken> IcuOracle(const icu::Locale& locale,
     out.push_back(
       {std::string{text.substr(begin, stop - begin)}, ++pos, begin, stop});
   }
-  utext_close(&ut);
   return out;
 }
 
 IcuTextTokenizer::Options IcuOptions(const char* locale, IcuMode mode) {
   IcuTextTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName(locale);
+  opts.locale = duckdb::text::Locale::FromName(locale);
   if (mode == IcuMode::Sentence) {
     opts.separate = IcuTextTokenizer::Options::Separate::Sentence;
   }
@@ -1239,7 +1228,7 @@ TEST(IcuTextTokenizerTest, ascii_words_follow_the_locale_rules) {
     const auto tokens = tests::Analyze(*stream, kText);
     ASSERT_TRUE(tokens.has_value());
     ASSERT_EQ(
-      IcuOracle(icu::Locale::createFromName(locale), IcuMode::Word, kText),
+      IcuOracle(duckdb::text::Locale::FromName(locale), IcuMode::Word, kText),
       *tokens);
   }
 }
@@ -1264,7 +1253,7 @@ TEST(IcuTextTokenizerTest, offsets_match_icu_across_scripts_and_modes) {
                    << "mode=" << static_cast<int>(mode) << " value=" << value);
       const auto tokens = tests::Analyze(*stream, value);
       ASSERT_TRUE(tokens.has_value());
-      EXPECT_EQ(IcuOracle(icu::Locale::createFromName("en_US"), mode, value),
+      EXPECT_EQ(IcuOracle(duckdb::text::Locale::FromName("en_US"), mode, value),
                 *tokens);
     }
   }
@@ -1301,7 +1290,7 @@ TEST(IcuTextTokenizerTest, locale_required) {
                  .separate = IcuTextTokenizer::Options::Separate::Sentence}),
                irs::SqlException);
   ASSERT_NE(nullptr, IcuTextTokenizer::Make(IcuTextTokenizer::Options{
-                       .locale = icu::Locale::createFromName("de_DE")}));
+                       .locale = duckdb::text::Locale::FromName("de_DE")}));
 }
 
 TEST(grapheme_tokenizer_test, goldens) {

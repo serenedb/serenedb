@@ -4,7 +4,6 @@ if(uring_FOUND)
     add_definitions(-DIRESEARCH_URING)
 endif()
 
-set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -35,7 +34,6 @@ set(IResearch_core_sources
     ./analysis/icu_text_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp
-    ./analysis/text/normalize/normalize.cpp
     ./analysis/normalizing_tokenizer.cpp
     ./analysis/collation_tokenizer.cpp
     ./analysis/text_tokenizer.cpp
@@ -65,11 +63,11 @@ set(IResearch_core_sources
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
+    ./formats/posting/block_codec.cpp
     ./formats/index_meta_reader.cpp
     ./formats/index_meta_writer.cpp
     ./formats/segment_meta_reader.cpp
     ./formats/segment_meta_writer.cpp
-    ./formats/posting/skip_list.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
@@ -116,6 +114,7 @@ set(IResearch_core_sources
     ./search/filters/prefix_filter.cpp
     ./search/filters/range_filter.cpp
     ./search/filters/phrase_filter.cpp
+    ./search/filters/shingle_phrase.cpp
     ./search/filters/automaton_filter.cpp
     ./search/filters/wildcard_filter.cpp
     ./search/filters/regexp_filter.cpp
@@ -327,6 +326,7 @@ set(IResearch_core_sources
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp
+    ./search/top/make_pruned_req_opt.cpp
     ./search/queries/multiterm_query.cpp
     ./search/queries/term_query.cpp
     ./search/filters/boolean_filter.cpp
@@ -394,7 +394,6 @@ set(IResearch_core_sources
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
     ./utils/remap_executable.cpp
-    ./utils/static_strings.cpp
     ./utils/string_utils.cpp
     ./utils/zstd_context.cpp
 )
@@ -473,8 +472,9 @@ target_include_directories(
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 
 if(ARCH_AMD64)
@@ -483,7 +483,10 @@ if(ARCH_AMD64)
         PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
-    target_compile_definitions(iresearch-static PUBLIC SZ_USE_NEON=1)
+    target_compile_definitions(
+        iresearch-static
+        PUBLIC SZ_USE_NEON=1 SZ_USE_SVE=1 SZ_USE_SVE2=1
+    )
 endif()
 
 target_link_libraries(
@@ -514,12 +517,11 @@ target_link_libraries(
     PUBLIC simdjson
     PRIVATE simdutf
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
-    PUBLIC ${SIMD_LIBRARY_STATIC}
+    PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2
-    PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE stemmer-static

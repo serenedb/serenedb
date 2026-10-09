@@ -1,0 +1,175 @@
+control substitution on
+
+statement ok
+CREATE TABLE rr_events (id SERIAL PRIMARY KEY, v INT);
+
+
+statement count 100
+INSERT INTO rr_events (v) SELECT i FROM generate_series(1, 100) AS s(i);
+
+
+statement ok
+TRUNCATE rr_events RESTART IDENTITY;
+
+
+statement count 3
+INSERT INTO rr_events (v) VALUES (1), (2), (3);
+
+
+statement ok
+CREATE SEQUENCE rr_seq START 5;
+
+
+query
+SELECT nextval('rr_seq') AS a, nextval('rr_seq') AS b;
+----
+a	b
+5	6
+
+
+statement ok
+ALTER SEQUENCE rr_seq RESTART WITH 1000;
+
+
+query
+SELECT nextval('rr_seq') AS a;
+----
+a
+1000
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE rr_seq RESTART WITH 50;
+
+
+query
+SELECT nextval('rr_seq') AS a, nextval('rr_seq') AS b;
+----
+a	b
+50	51
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE SEQUENCE rr_rolled START 20;
+
+
+query
+SELECT nextval('rr_rolled') AS a;
+----
+a
+20
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER SEQUENCE rr_rolled RESTART WITH 7;
+
+
+query
+SELECT nextval('rr_rolled') AS a;
+----
+a
+7
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT id, v FROM rr_events ORDER BY id;
+----
+id	v
+1	1
+2	2
+3	3
+
+
+connection after_crash
+statement count 1
+INSERT INTO rr_events (v) VALUES (4);
+
+
+connection after_crash
+query
+SELECT id > 3 AND id < 100 AS restarted FROM rr_events WHERE v = 4;
+----
+restarted
+t
+
+
+connection after_crash
+query
+SELECT nextval('rr_seq') > 51 AND nextval('rr_seq') < 1000 AS restarted;
+----
+restarted
+t
+
+
+connection after_crash
+query
+SELECT nextval('rr_rolled') > 20 AS kept;
+----
+kept
+t
+
+
+connection after_crash
+query
+SELECT start_value FROM pg_sequences WHERE sequencename = 'rr_seq';
+----
+start_value
+5
+
+
+connection after_crash
+statement ok
+ALTER SEQUENCE rr_seq RESTART;
+
+
+connection after_crash
+query
+SELECT nextval('rr_seq') AS a;
+----
+a
+5
+
+
+connection after_crash
+statement ok
+DROP TABLE rr_events;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE rr_seq;
+
+
+connection after_crash
+statement ok
+DROP SEQUENCE rr_rolled;

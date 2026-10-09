@@ -170,21 +170,36 @@ EXPLAIN SELECT list_sort(array_agg(DISTINCT opt)) AS lst, min(cat) AS mn
 FROM mixt_idx
 ----
 QUERY PLAN
-╭─ PROJECTION ────────────────────────╮
-│ Projections: lst, mn                │
-│ ~1 row                              │
-╰──────────────────┬──────────────────╯
-╭─ UNGROUPED_AGGREGATE ───────────────╮
-│ Aggregates: array_agg(DISTINCT #0), │
-│             min(#1)                 │
-│ ~1 row                              │
-╰──────────────────┬──────────────────╯
-╭─ IRESEARCH_SCAN ─┴──────────────────╮
-│ Index: mixt_idx                     │
-│ Lookup: table                       │
-│ Projections: opt, cat               │
-│ ~5 rows                             │
-╰─────────────────────────────────────╯
+╭─ PROJECTION ───────────────────────╮
+│ Projections: lst, mn               │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ CTE ────────────┴─────────────────╮
+│ CTE Name: __aggregate_cte_7        │
+│ Table Index: 7                     │
+│ Execution Mode: PIPELINE_DEPENDENT │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+                   ├──────────────────────────────────╮
+╭─ IRESEARCH_SCAN ─┴─────────────────╮  ╭─ CROSS_PRODUCT ───────────╮
+│ Index: mixt_idx                    │  ╰─────────────┬─────────────╯
+│ Lookup: table                      │                ├────────────────────────────╮
+│ Projections: opt, cat              │  ╭─ UNGROUPED_AGGREGATE ─────╮  ╭─ UNGROUPED_AGGREGATE ─╮
+│ ~5 rows                            │  │ Aggregates: array_agg(#0) │  │ Aggregates: min(#0)   │
+╰────────────────────────────────────╯  │ ~1 row                    │  │ ~1 row                │
+                                        ╰─────────────┬─────────────╯  ╰───────────┬───────────╯
+                                        ╭─ HASH_GROUP_BY ───────────╮  ╭─ PROJECTION ──────────╮
+                                        │ Groups: #0                │  │ Projections: cat      │
+                                        │ ~2 rows                   │  │ ~5 rows               │
+                                        ╰─────────────┬─────────────╯  ╰───────────┬───────────╯
+                                        ╭─ PROJECTION ┴─────────────╮  ╭─ CTE_SCAN ┴───────────╮
+                                        │ Projections: opt          │  │ CTE Index: 7          │
+                                        │ ~5 rows                   │  │ ~5 rows               │
+                                        ╰─────────────┬─────────────╯  ╰───────────────────────╯
+                                        ╭─ CTE_SCAN ──┴─────────────╮
+                                        │ CTE Index: 7              │
+                                        │ ~5 rows                   │
+                                        ╰───────────────────────────╯
 
 query TIT
 SELECT list_sort(ts_dict_agg(cat)) AS terms, count(DISTINCT cat) AS cnt,
@@ -285,17 +300,21 @@ query
 EXPLAIN SELECT opt, count(DISTINCT cat) AS cnt FROM mixt_idx GROUP BY opt
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ────────────────╮
-│ Groups: #0                     │
-│ Aggregates: count(DISTINCT #1) │
-│ ~3 rows                        │
-╰────────────────┬───────────────╯
-╭─ IRESEARCH_SCAN ───────────────╮
-│ Index: mixt_idx                │
-│ Lookup: table                  │
-│ Projections: opt, cat          │
-│ ~5 rows                        │
-╰────────────────────────────────╯
+╭─ HASH_GROUP_BY ───────╮
+│ Groups: #0            │
+│ Aggregates: count(#1) │
+│ ~1 row                │
+╰───────────┬───────────╯
+╭─ HASH_GROUP_BY ───────╮
+│ Groups: #0, #1        │
+│ ~2 rows               │
+╰───────────┬───────────╯
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: mixt_idx       │
+│ Lookup: table         │
+│ Projections: opt, cat │
+│ ~5 rows               │
+╰───────────────────────╯
 
 query I
 SELECT count(cat) AS c FROM mixt_idx

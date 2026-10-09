@@ -42,7 +42,7 @@ n
 statement ok
 DETACH vsmp_${__DATABASE__};
 
-statement error Catalog "vsmp_.*" does not exist
+statement error Table with name "vsmp_.*articles" does not exist
 REINDEX INDEX vsmp_idx;
 
 statement ok

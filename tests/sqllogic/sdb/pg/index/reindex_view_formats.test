@@ -173,22 +173,22 @@ count
 # it picks up source DML.
 
 statement ok
-DETACH DATABASE IF EXISTS refmt_ext;
+DETACH DATABASE IF EXISTS refmt_ext_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/refmt_ext.duckdb' AS refmt_ext;
+ATTACH '${__TEST_DIR__}/refmt_ext.duckdb' AS refmt_ext_${__DATABASE__};
 
 statement ok
-CREATE OR REPLACE TABLE refmt_ext.t (id INTEGER, body TEXT);
+CREATE OR REPLACE TABLE refmt_ext_${__DATABASE__}.t (id INTEGER, body TEXT);
 
 statement ok
-INSERT INTO refmt_ext.t VALUES
+INSERT INTO refmt_ext_${__DATABASE__}.t VALUES
   (1, 'pudge goes mid'),
   (2, 'anchin reads manga'),
   (3, 'vedernikoff attaches ducks');
 
 statement ok
-CREATE VIEW refmt_ext_v AS SELECT * FROM refmt_ext.t;
+CREATE VIEW refmt_ext_v AS SELECT * FROM refmt_ext_${__DATABASE__}.t;
 
 statement ok
 CREATE INDEX refmt_ext_idx ON refmt_ext_v USING inverted(id, body refmt_en);
@@ -200,10 +200,10 @@ count
 1
 
 statement ok
-INSERT INTO refmt_ext.t VALUES (4, 'pudge farms jungle');
+INSERT INTO refmt_ext_${__DATABASE__}.t VALUES (4, 'pudge farms jungle');
 
 statement ok
-DELETE FROM refmt_ext.t WHERE id = 2;
+DELETE FROM refmt_ext_${__DATABASE__}.t WHERE id = 2;
 
 query
 SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('pudge');
@@ -235,3 +235,6 @@ SELECT count(*) FROM refmt_ext_idx WHERE body @@ ts_phrase('vedernikoff');
 ----
 count
 1
+
+statement ok
+DETACH DATABASE refmt_ext_${__DATABASE__};

@@ -1,0 +1,171 @@
+statement ok
+CREATE TABLE ob_t (id INT, v INT)
+
+
+statement ok
+CREATE SEQUENCE ob_s
+
+
+statement ok
+ALTER SEQUENCE ob_s OWNED BY ob_t.id
+
+
+statement ok
+INSERT INTO ob_t VALUES (nextval('ob_s'), 1), (nextval('ob_s'), 2)
+
+
+statement ok
+TRUNCATE ob_t RESTART IDENTITY
+
+
+query
+SELECT nextval('ob_s') AS n
+----
+n
+1
+
+
+statement error
+ALTER SEQUENCE ob_s OWNED BY ob_t.nope
+
+
+statement error
+ALTER SEQUENCE ob_s OWNED BY NONE.x
+
+
+statement ok
+DROP TABLE ob_t
+
+
+statement error
+SELECT nextval('ob_s')
+
+
+statement ok
+CREATE TABLE ob_t2 (id INT)
+
+
+statement ok
+CREATE SEQUENCE ob_s2 OWNED BY ob_t2.id
+
+
+statement ok
+CREATE SEQUENCE ob_s3
+
+
+statement ok
+ALTER SEQUENCE ob_s3 OWNED BY public.ob_t2.id
+
+
+statement ok
+ALTER SEQUENCE ob_s3 OWNED BY NONE
+
+
+statement ok
+DROP TABLE ob_t2
+
+
+statement error
+SELECT nextval('ob_s2')
+
+
+query
+SELECT nextval('ob_s3') AS n
+----
+n
+1
+
+
+statement ok
+CREATE SCHEMA ob_other
+
+
+statement ok
+CREATE TABLE ob_other.t (id INT)
+
+
+statement error
+ALTER SEQUENCE ob_s3 OWNED BY ob_other.t.id
+
+
+statement ok
+DROP SCHEMA ob_other CASCADE
+
+
+statement ok
+DROP SEQUENCE ob_s3
+
+
+statement ok
+CREATE TABLE pd_t (id integer NOT NULL, v text)
+
+
+statement ok
+CREATE SEQUENCE public.pd_t_id_seq AS integer START WITH 1 INCREMENT BY 1 NO MINVALUE NO MAXVALUE CACHE 1
+
+
+statement ok
+ALTER SEQUENCE public.pd_t_id_seq OWNED BY public.pd_t.id
+
+
+statement ok
+ALTER TABLE ONLY public.pd_t ALTER COLUMN id SET DEFAULT nextval('public.pd_t_id_seq'::regclass)
+
+
+statement ok
+INSERT INTO pd_t (id, v) VALUES (1, 'a'), (2, 'b'), (3, 'c')
+
+
+query
+SELECT pg_catalog.setval('public.pd_t_id_seq', 3, true) AS s
+----
+s
+3
+
+
+statement ok
+ALTER TABLE ONLY public.pd_t ADD CONSTRAINT pd_t_pkey PRIMARY KEY (id)
+
+
+statement ok
+INSERT INTO pd_t (v) VALUES ('d')
+
+
+query
+SELECT id, v FROM pd_t ORDER BY id
+----
+id	v
+1	a
+2	b
+3	c
+4	d
+
+
+query
+SELECT max_value FROM pg_sequences WHERE sequencename = 'pd_t_id_seq'
+----
+max_value
+2147483647
+
+
+statement ok
+TRUNCATE pd_t RESTART IDENTITY
+
+
+statement ok
+INSERT INTO pd_t (v) VALUES ('e')
+
+
+query
+SELECT id, v FROM pd_t
+----
+id	v
+1	e
+
+
+statement ok
+DROP TABLE pd_t
+
+
+statement error
+SELECT nextval('public.pd_t_id_seq')

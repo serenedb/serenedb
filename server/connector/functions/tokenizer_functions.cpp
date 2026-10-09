@@ -43,6 +43,7 @@
 #include <string_view>
 #include <vector>
 
+#include "catalog/entry/tokenizer.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/list_token_sink.hpp"
 #include "pg/commands/create_tsdictionary.h"
@@ -123,8 +124,7 @@ const pg::OptionGroup& FindGroup(std::string_view function) {
 }
 
 void Put(pg::Options& options, std::string_view key, duckdb::Value value) {
-  options.try_emplace(std::string{key},
-                      std::make_unique<duckdb::Value>(std::move(value)));
+  options.try_emplace(key, std::make_unique<duckdb::Value>(std::move(value)));
 }
 
 struct TokenizerFunctionBindData final : public duckdb::FunctionData {
@@ -254,7 +254,6 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   const bool wrapper = group.kind == pg::TemplateKind::Wrapper;
 
   pg::Options options;
-  std::string key = absl::StrCat("fn:", name, list_input ? "[]" : "", "(");
   for (size_t i = 0; i < flat.size(); ++i) {
     auto& arg = *args[i + 1];
     if (arg.HasParameter() || !arg.IsFoldable()) {
@@ -272,10 +271,8 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
     if (!flat[i].IsRequired() && value == DefaultValue(flat[i])) {
       continue;
     }
-    absl::StrAppend(&key, flat[i].name, "=", value.ToString(), ";");
     Put(options, flat[i].name, std::move(value));
   }
-  absl::StrAppend(&key, ")");
   const auto operation = absl::StrCat(name, "()");
 
   pg::TokenizerConfigs children;
@@ -287,6 +284,7 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
 
   auto config = pg::BuildStage(context, group.name, std::move(options),
                                std::move(children), operation);
+  auto key = catalog::PackTokenizerConfig(config);
 
   auto& db = duckdb::DatabaseInstance::GetDatabase(context);
   auto probe = irs::analysis::CreateTokenizer(irs::analysis::Clone(config),

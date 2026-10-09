@@ -29,7 +29,7 @@
 
 #include <chrono>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <memory>
 #include <yaclib/async/make.hpp>
 #include <yaclib/coro/task.hpp>
@@ -50,7 +50,7 @@ namespace {
 // One es_*() call per request, driven cooperatively (RunQuery yields the
 // scheduler worker between executor slices). A failed call has already been
 // written out as an ES error envelope when this resolves null.
-yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunSql(
+yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
   RequestContext& ctx, std::string sql, http::HttpResponseWriter& writer,
   std::string_view index = {}, bool writes = false) {
   auto result = co_await ctx.RunQuery(std::move(sql), writes);
@@ -244,7 +244,8 @@ class GetDocHandler final : public HttpHandler {
                 std::string_view{sb.view().value()});
       co_return {};
     }
-    const auto source = result->GetValue(0, 0).GetValue<std::string>();
+    const auto source =
+      result->Collection().GetValue(0, 0).GetValue<std::string>();
     sb.append_raw(R"(,"_version":1,"_seq_no":0,"_primary_term":1,)"
                   R"("found":true,"_source":)");
     sb.append_raw(source);
@@ -276,7 +277,7 @@ class GetSourceHandler final : public HttpHandler {
       co_return {};
     }
     WriteJson(writer, HttpStatus::Ok,
-              result->GetValue(0, 0).GetValue<std::string>());
+              result->Collection().GetValue(0, 0).GetValue<std::string>());
     co_return {};
   }
 };
@@ -423,14 +424,15 @@ bool DecodeScrollId(std::string_view id, ScrollState& state) {
 // One scroll page; rows == nullptr renders the empty terminal page. Advances
 // the cursor and embeds the refreshed id.
 void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
-                     duckdb::MaterializedQueryResult* result, int64_t took) {
+                     duckdb::QueryResult* result, int64_t took) {
   const auto rows = result ? result->RowCount() : 0;
   if (result) {
     if (static_cast<int64_t>(rows) < state.size) {
       state.done = true;
     }
     if (rows > 0) {
-      state.last_id = duckdb::StringValue::Get(result->GetValue(0, rows - 1));
+      state.last_id =
+        duckdb::StringValue::Get(result->Collection().GetValue(0, rows - 1));
     }
   }
   simdjson::builder::string_builder sb;
@@ -449,13 +451,13 @@ void WriteScrollPage(http::HttpResponseWriter& writer, ScrollState& state,
     sb.append_raw(R"({"_index":)");
     sb.escape_and_append_with_quotes(std::string_view{state.index});
     sb.append_raw(R"(,"_id":)");
-    sb.escape_and_append_with_quotes(
-      std::string_view{duckdb::StringValue::Get(result->GetValue(0, row))});
+    sb.escape_and_append_with_quotes(std::string_view{
+      duckdb::StringValue::Get(result->Collection().GetValue(0, row))});
     sb.append_raw(",\"_score\":null");
     if (state.include_source) {
       sb.append_raw(",\"_source\":");
-      sb.append_raw(
-        std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
+      sb.append_raw(std::string_view{
+        duckdb::StringValue::Get(result->Collection().GetValue(1, row))});
     }
     sb.append_raw("}");
   }
@@ -551,7 +553,7 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
       const auto rows = result->RowCount();
       int64_t shown = 0;
       const int64_t all =
-        rows > 0 ? result->GetValue(2, 0).GetValue<int64_t>() : 0;
+        rows > 0 ? result->Collection().GetValue(2, 0).GetValue<int64_t>() : 0;
       std::string buckets;
       simdjson::builder::string_builder bucket_sb;
       for (duckdb::idx_t row = 0; row < rows; ++row) {
@@ -559,9 +561,10 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
           bucket_sb.append_raw(",");
         }
         bucket_sb.append_raw(R"({"key":)");
-        AppendSortValue(bucket_sb, result->GetValue(0, row));
+        AppendSortValue(bucket_sb, result->Collection().GetValue(0, row));
         bucket_sb.append_raw(R"(,"doc_count":)");
-        const auto count = result->GetValue(1, row).GetValue<int64_t>();
+        const auto count =
+          result->Collection().GetValue(1, row).GetValue<int64_t>();
         shown += count;
         bucket_sb.append(count);
         bucket_sb.append_raw("}");
@@ -581,19 +584,19 @@ yaclib::Task<bool> RunAggregation(RequestContext& ctx, const Aggregation& agg,
           sb.append_raw(",");
         }
         sb.append_raw(R"({"key_as_string":)");
-        sb.escape_and_append_with_quotes(
-          std::string_view{duckdb::StringValue::Get(result->GetValue(1, row))});
+        sb.escape_and_append_with_quotes(std::string_view{
+          duckdb::StringValue::Get(result->Collection().GetValue(1, row))});
         sb.append_raw(R"(,"key":)");
-        sb.append(result->GetValue(0, row).GetValue<int64_t>());
+        sb.append(result->Collection().GetValue(0, row).GetValue<int64_t>());
         sb.append_raw(R"(,"doc_count":)");
-        sb.append(result->GetValue(2, row).GetValue<int64_t>());
+        sb.append(result->Collection().GetValue(2, row).GetValue<int64_t>());
         sb.append_raw("}");
       }
       sb.append_raw("]}");
       co_return true;
     }
     default: {
-      const auto value = result->GetValue(0, 0);
+      const auto value = result->Collection().GetValue(0, 0);
       sb.append_raw(R"({"value":)");
       if (value.IsNull()) {
         sb.append_raw("null");
@@ -624,7 +627,8 @@ yaclib::Task<bool> FetchFieldTypes(RequestContext& ctx, std::string_view index,
   if (!result) {
     co_return false;
   }
-  const auto mapping = result->GetValue(0, 0).GetValue<std::string>();
+  const auto mapping =
+    result->Collection().GetValue(0, 0).GetValue<std::string>();
   if (!ParseFieldTypes(mapping, fields)) {
     WriteError(writer, HttpStatus::InternalError, "exception",
                "malformed index mapping");
@@ -724,7 +728,8 @@ class SearchHandler final : public HttpHandler {
       for (duckdb::idx_t row = 0; row < rows; ++row) {
         absl::StrAppend(
           &ids, row > 0 ? "," : "",
-          SqlLiteral(result->GetValue(0, row).GetValue<std::string>()));
+          SqlLiteral(
+            result->Collection().GetValue(0, row).GetValue<std::string>()));
       }
       auto source_result = co_await RunSql(
         ctx,
@@ -737,8 +742,8 @@ class SearchHandler final : public HttpHandler {
       source_by_id.reserve(source_result->RowCount());
       for (duckdb::idx_t row = 0; row < source_result->RowCount(); ++row) {
         source_by_id.emplace(
-          source_result->GetValue(0, row).GetValue<std::string>(),
-          source_result->GetValue(1, row).GetValue<std::string>());
+          source_result->Collection().GetValue(0, row).GetValue<std::string>(),
+          source_result->Collection().GetValue(1, row).GetValue<std::string>());
       }
     }
 
@@ -755,7 +760,7 @@ class SearchHandler final : public HttpHandler {
       if (!count_result) {
         co_return {};
       }
-      total = count_result->GetValue(0, 0).GetValue<int64_t>();
+      total = count_result->Collection().GetValue(0, 0).GetValue<int64_t>();
     }
 
     // Filter-only queries score a constant 1.0; field sorts render null
@@ -763,7 +768,9 @@ class SearchHandler final : public HttpHandler {
     const bool scored = spec.order_by.empty();
     const duckdb::idx_t score_column = sort_base + spec.sort_fields.size();
     auto score_of = [&](duckdb::idx_t row) {
-      return result->GetValue(score_column, row).GetValue<double>();
+      return result->Collection()
+        .GetValue(score_column, row)
+        .GetValue<double>();
     };
     simdjson::builder::string_builder sb;
     sb.append_raw("{\"took\":");
@@ -794,8 +801,8 @@ class SearchHandler final : public HttpHandler {
       sb.append_raw(R"({"_index":)");
       sb.escape_and_append_with_quotes(index);
       sb.append_raw(R"(,"_id":)");
-      sb.escape_and_append_with_quotes(
-        std::string_view{duckdb::StringValue::Get(result->GetValue(0, row))});
+      sb.escape_and_append_with_quotes(std::string_view{
+        duckdb::StringValue::Get(result->Collection().GetValue(0, row))});
       sb.append_raw(",\"_score\":");
       if (!scored) {
         sb.append_raw("null");
@@ -806,7 +813,8 @@ class SearchHandler final : public HttpHandler {
       }
       if (spec.include_source) {
         sb.append_raw(",\"_source\":");
-        const auto id = result->GetValue(0, row).GetValue<std::string>();
+        const auto id =
+          result->Collection().GetValue(0, row).GetValue<std::string>();
         const auto it = source_by_id.find(id);
         // A doc deleted between rank and fetch leaves an empty object.
         sb.append_raw(it != source_by_id.end() ? std::string_view{it->second}
@@ -818,7 +826,8 @@ class SearchHandler final : public HttpHandler {
           if (i > 0) {
             sb.append_raw(",");
           }
-          AppendSortValue(sb, result->GetValue(sort_base + i, row));
+          AppendSortValue(sb,
+                          result->Collection().GetValue(sort_base + i, row));
         }
         sb.append_raw("]");
       }
@@ -877,7 +886,7 @@ class SearchHandler final : public HttpHandler {
       .index = std::string{index},
       .query = std::move(spec.query_raw),
       .size = spec.size,
-      .total = count_result->GetValue(0, 0).GetValue<int64_t>(),
+      .total = count_result->Collection().GetValue(0, 0).GetValue<int64_t>(),
       .include_source = spec.include_source,
     };
     auto result =
@@ -1010,7 +1019,7 @@ class CountHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto count = result->GetValue(0, 0).GetValue<int64_t>();
+    const auto count = result->Collection().GetValue(0, 0).GetValue<int64_t>();
     WriteJson(writer, HttpStatus::Ok,
               absl::StrCat("{\"count\":", count,
                            ",\"_shards\":{\"total\":1,\"successful\":1,"
@@ -1107,7 +1116,8 @@ class MappingHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
+    const auto mappings =
+      result->Collection().GetValue(0, 0).GetValue<std::string>();
     WriteJson(
       writer, HttpStatus::Ok,
       absl::StrCat(R"({")", index, R"(":{"mappings":)", mappings, "}}"));
@@ -1132,8 +1142,10 @@ class CatIndicesHandler final : public HttpHandler {
       body.push_back('[');
     }
     for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
-      const auto index = result->GetValue(0, row).GetValue<std::string>();
-      const auto docs = result->GetValue(1, row).GetValue<int64_t>();
+      const auto index =
+        result->Collection().GetValue(0, row).GetValue<std::string>();
+      const auto docs =
+        result->Collection().GetValue(1, row).GetValue<int64_t>();
       if (json) {
         absl::StrAppend(
           &body, row > 0 ? "," : "",
@@ -1244,8 +1256,9 @@ class MgetHandler final : public HttpHandler {
     irs::containers::FlatHashMap<std::string, std::string> source_by_id;
     source_by_id.reserve(result->RowCount());
     for (duckdb::idx_t row = 0; row < result->RowCount(); ++row) {
-      source_by_id.emplace(result->GetValue(0, row).GetValue<std::string>(),
-                           result->GetValue(1, row).GetValue<std::string>());
+      source_by_id.emplace(
+        result->Collection().GetValue(0, row).GetValue<std::string>(),
+        result->Collection().GetValue(1, row).GetValue<std::string>());
     }
     simdjson::builder::string_builder sb;
     sb.append_raw(R"({"docs":[)");
@@ -1362,7 +1375,8 @@ class IndexInfoHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto mappings = result->GetValue(0, 0).GetValue<std::string>();
+    const auto mappings =
+      result->Collection().GetValue(0, 0).GetValue<std::string>();
     WriteJson(
       writer, HttpStatus::Ok,
       absl::StrCat(R"({")", index, R"(":{"aliases":{},"mappings":)", mappings,
@@ -1383,7 +1397,7 @@ class CatCountHandler final : public HttpHandler {
     if (!result) {
       co_return {};
     }
-    const auto count = result->GetValue(0, 0).GetValue<int64_t>();
+    const auto count = result->Collection().GetValue(0, 0).GetValue<int64_t>();
     if (request.Query("format") == "json") {
       WriteJson(writer, HttpStatus::Ok,
                 absl::StrCat(R"([{"count":")", count, R"("}])"));

@@ -29,9 +29,8 @@
 // reset cost is included, not hidden by an artificially fresh vector.
 //
 // Build (from build_perf):
-//   cmake .                                    # only because CMakeLists
-//   changed ninja serenedb-bench-micro-columnstore_vs_duckdb
-//   SDB_BENCH_ROWS=2000000 ./bin/serenedb-bench-micro-columnstore_vs_duckdb
+//   ninja serenedb-bench-micro
+//   SDB_BENCH_ROWS=2000000 ./bin/serenedb-bench-micro columnstore_vs_duckdb
 //
 // build_perf is RelWithDebInfo/-O3: correct for A/B deltas; re-run headline
 // absolute numbers under the `bench` preset before publishing a claim.
@@ -44,8 +43,7 @@
 #include <cstdlib>
 #include <duckdb.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/pending_query_result.hpp>
-#include <duckdb/main/stream_query_result.hpp>
+#include <duckdb/main/query_result_stream.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -320,29 +318,15 @@ duckdb::Connection& NativeCon() {
 }
 
 uint64_t StreamDrain(duckdb::ClientContext& ctx, const std::string& sql) {
-  auto pending = ctx.PendingQuery(sql, /*allow_stream_result=*/true);
-  if (pending->HasError()) {
-    std::fprintf(stderr, "pending: %s\n", pending->GetError().c_str());
+  auto result = ctx.Submit(sql, duckdb::QueryParameters{});
+  if (result->HasError()) {
+    std::fprintf(stderr, "submit: %s\n", result->GetError().c_str());
     std::abort();
   }
-  for (;;) {
-    auto status = pending->ExecuteTask();
-    if (duckdb::PendingQueryResult::IsResultReady(status)) {
-      break;
-    }
-    if (status == duckdb::PendingExecutionResult::EXECUTION_ERROR) {
-      std::fprintf(stderr, "execute: %s\n", pending->GetError().c_str());
-      std::abort();
-    }
-    if (status == duckdb::PendingExecutionResult::NO_TASKS_AVAILABLE ||
-        status == duckdb::PendingExecutionResult::BLOCKED) {
-      pending->WaitForTask();
-    }
-  }
-  auto result = pending->Execute();
+  duckdb::QueryResultStream<duckdb::ChunkFormat> stream{std::move(result)};
   uint64_t rows = 0;
   for (;;) {
-    auto chunk = result->Fetch();
+    auto chunk = stream.Fetch();
     if (!chunk || chunk->size() == 0) {
       break;
     }
@@ -389,7 +373,7 @@ IRS_CASES(IrsPointLookup);
 IRS_CASES(IrsWriteSeal);
 IRS_CASES(DuckFullScan);
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
@@ -397,3 +381,6 @@ int main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

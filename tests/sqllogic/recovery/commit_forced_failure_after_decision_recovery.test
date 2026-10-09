@@ -1,0 +1,59 @@
+control substitution on
+
+statement ok
+CREATE TABLE cff_rows (a INTEGER);
+
+
+statement ok
+SET debug_force_commit_failure = true;
+
+
+connection victim
+statement ok
+BEGIN;
+
+
+connection victim
+statement ok
+CREATE TABLE cff_new (a INTEGER);
+
+
+connection victim
+statement ok
+INSERT INTO cff_rows VALUES (1);
+
+
+connection victim
+statement error Forced commit failure
+COMMIT;
+
+
+connection default
+statement ok
+SET debug_force_commit_failure = false;
+
+
+connection victim
+query
+SELECT (SELECT count(*) FROM cff_rows) AS n, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cff_new') AS t;
+----
+n	t
+0	0
+
+
+connection victim
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection victim
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT (SELECT count(*) FROM cff_rows) AS n, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cff_new') AS t;
+----
+n	t
+0	0

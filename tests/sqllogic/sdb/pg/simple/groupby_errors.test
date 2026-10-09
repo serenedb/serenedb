@@ -9,7 +9,7 @@ FROM
 GROUP BY peklo
 ----
 db error: ERROR: column "grade" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(grade)" if the exact value of "grade" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("grade") if the exact value of "grade" is not important.
 
 
 query error
@@ -38,7 +38,7 @@ GROUP BY grade
 ORDER BY superhot;
 ----
 db error: ERROR: column "name" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(name)" if the exact value of "name" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("name") if the exact value of "name" is not important.
 
 
 query error
@@ -54,7 +54,7 @@ FROM
 GROUP BY university.student;
 ----
 db error: ERROR: column "mark" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(mark)" if the exact value of "mark" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("mark") if the exact value of "mark" is not important.
 
 
 query error
@@ -83,7 +83,7 @@ GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY deadinside_level + babsky_magic DESC;
 ----
 db error: ERROR: column "deadinside_level" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(deadinside_level)" if the exact value of "deadinside_level" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("deadinside_level") if the exact value of "deadinside_level" is not important.
 
 
 query error
@@ -98,7 +98,7 @@ GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY deadinside_level + babsky_magic DESC;
 ----
 db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("kostya_iq") if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -113,7 +113,7 @@ GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY kostya_iq DESC;
 ----
 db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("kostya_iq") if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -128,7 +128,7 @@ GROUP BY kostya_iq + vedernikoff_power, deadinside_level + babsky_magic
 ORDER BY kostya_iq DESC;
 ----
 db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("kostya_iq") if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -155,7 +155,7 @@ FROM
 ) AS andreod_data(kostya_iq, vedernikoff_power, deadinside_level, babsky_magic);
 ----
 db error: ERROR: column "kostya_iq" must appear in the GROUP BY clause or must be part of an aggregate function.
-Either add it to the GROUP BY list, or use "ANY_VALUE(kostya_iq)" if the exact value of "kostya_iq" is not important.
+Either add it to the GROUP BY list, or use ANY_VALUE("kostya_iq") if the exact value of "kostya_iq" is not important.
 
 
 query error
@@ -273,14 +273,14 @@ FROM
 ----
 db error: ERROR: No function matches the given name and argument types 'sum(BIGINT[])'. You might need to add explicit type casts.
 	Candidate functions:
-	sum(col0 DECIMAL) -> DECIMAL
-	sum(col0 BOOLEAN) -> HUGEINT
-	sum(col0 SMALLINT) -> HUGEINT
-	sum(col0 INTEGER) -> HUGEINT
-	sum(col0 BIGINT) -> HUGEINT
-	sum(col0 HUGEINT) -> HUGEINT
-	sum(col0 DOUBLE) -> DOUBLE
-	sum(col0 BIGNUM) -> BIGNUM
+	sum(arg DECIMAL) -> DECIMAL
+	sum(arg BOOLEAN, /) -> HUGEINT
+	sum(arg SMALLINT, /) -> HUGEINT
+	sum(arg INTEGER, /) -> HUGEINT
+	sum(arg BIGINT, /) -> HUGEINT
+	sum(arg HUGEINT, /) -> HUGEINT
+	sum(arg DOUBLE, /) -> DOUBLE
+	sum(arg BIGNUM, /) -> BIGNUM
 
 
 query error

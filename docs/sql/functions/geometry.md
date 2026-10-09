@@ -556,7 +556,7 @@ Returns the boundary of the geometry: the rings of a polygon, the endpoints of a
 
 #### `ST_PointOnSurface(geom)` {#st_pointonsurface-function}
 
-Returns a point guaranteed to lie on the geometry.
+Returns a point guaranteed to lie on the geometry, the same point PostGIS returns: for polygons, the middle of the widest stretch of a horizontal line across them; for lines, the vertex nearest their centroid, preferring vertices other than endpoints; for points, the point nearest their centroid.
 
 <SqlLogicTest id="sql/functions/geometry/st_pointonsurface" />
 
@@ -649,7 +649,7 @@ Reverses the vertex order of the geometry.
 
 #### `ST_Normalize(geom)` {#st_normalize-function}
 
-Rewrites the geometry into a canonical form, so that geometries covering the same space become identical.
+Rewrites the geometry into the canonical form PostGIS uses, so that geometries differing only in where their rings start, in their direction or in the order of their parts become identical: every ring starts at its smallest point (by X, then Y), shells and closed lines run clockwise and holes counter-clockwise, an open line starts at its smaller end, and holes and the parts of a multi-geometry are sorted in descending order.
 
 <SqlLogicTest id="sql/functions/geometry/st_normalize" />
 
@@ -857,9 +857,10 @@ Geometry operations run on [Boost.Geometry](https://www.boost.org/doc/libs/relea
 | `ST_Segmentize`, `ST_Split`, `ST_Snap`, `ST_OffsetCurve` | -- |
 | `ST_GeoHash` | `ST_QuadKey`, `ST_Hilbert` |
 
-Four further differences apply to functions that do exist:
+Five further differences apply to functions that do exist:
 
 -   **`ST_Union` and `ST_SymDifference` require both arguments to have the same dimension.** Combining a point with a polygon would produce a `GEOMETRYCOLLECTION`, which cannot be built. `ST_Intersection` and `ST_Difference` accept mixed dimensions.
+-   **The overlay functions refuse a polygon that `ST_IsValid` rejects.** `ST_Intersection`, `ST_Union`, `ST_Difference`, `ST_SymDifference` and the union and intersection aggregates raise an error for a self-intersecting ring, a hole outside its shell or overlapping parts of a multipolygon, because Boost.Geometry's answer for such input cannot be trusted. PostGIS raises a GEOS topology error for most of these too, but answers some: when the two bounding boxes do not meet, or when a ring only touches itself at a point. There is no `ST_MakeValid` to repair the input first.
 -   **The Boost-backed operations drop `Z` and `M` from their results.** Measurement and predicates are computed in two dimensions, as they are in PostGIS, but PostGIS carries the extra dimensions through to the result and these do not: `ST_Envelope`, `ST_Boundary`, `ST_ConvexHull`, `ST_Simplify`, `ST_Intersection`, `ST_PointOnSurface`, `ST_Normalize` and `ST_RemoveRepeatedPoints`. The functions that move vertices around rather than computing new ones keep every dimension: `ST_Reverse`, `ST_Multi`, `ST_Points`, `ST_StartPoint`, `ST_EndPoint` and `ST_PointN`, and so does `ST_Centroid`.
 -   **Only some functions accept a `GEOMETRYCOLLECTION`.** Those that can answer member by member do: `ST_Reverse`, `ST_Centroid`, `ST_Envelope`, `ST_ConvexHull`, `ST_Area`, `ST_Length`, `ST_NumGeometries`, `ST_IsValid`, `ST_IsEmpty`, and the `ST_Intersects` / `ST_Disjoint` predicates. `ST_Boundary` returns `NULL` for one. Everything else rejects it, because a collection's answer is not the combination of its parts' answers -- the other predicates, `ST_Buffer` and `ST_Simplify` among them.
 -   **An empty geometry is valid, and empty input yields `NULL` where a geometry is expected.** `ST_IsValid('LINESTRING EMPTY')` is true, and `ST_ClosestPoint` and `ST_ShortestLine` return `NULL` when either argument is empty rather than raising.

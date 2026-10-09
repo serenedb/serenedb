@@ -20,8 +20,8 @@ IResearch is a high-performance C++ search engine library. It's up to [5x faster
 git clone --recursive https://github.com/serenedb/serenedb
 cd serenedb
 cmake --preset lldb
-cmake --build build --target iresearch-example-basic
-./build/iresearch/examples/iresearch-example-basic
+cmake --build build --target iresearch-examples
+./build/bin/iresearch-examples basic
 ```
 
 To depend on iresearch from your own CMake project, vendor SereneDB as a submodule and link against the `iresearch-static` target:

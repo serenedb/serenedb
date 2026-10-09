@@ -570,10 +570,10 @@ struct StoredIdBatchHandler : bench::IBatchHandler {
   std::string token;
   irs::tests::StringField bucket{.field_name = "bucket", .id = kBucketId};
 
-  void operator()(std::vector<std::string>& buf,
+  void operator()(const bench::Batch& batch,
                   irs::IndexWriter::Transaction& ctx) override {
-    for (auto& line : buf) {
-      doc.Fill(line);
+    for (const auto& item : batch.Docs()) {
+      doc.Fill(item);
       auto trx = ctx.Insert();
       ::tests::InsertField(trx, doc.fields[0]);
       irs::tests::StoreFieldAt(*trx.GetColWriter(), kIdId, trx.DocId(),
@@ -604,10 +604,10 @@ void BuildIndex(const std::string& corpus_path,
   out = std::make_unique<bench::IndexBuilder>(index_dir.string(),
                                               builder_options, config);
 
-  std::ifstream file{corpus_path};
-  ASSERT_TRUE(file.is_open()) << "Cannot open corpus: " << corpus_path;
+  bench::LineSource file{corpus_path};
+  ASSERT_TRUE(file.Ok()) << "Cannot open corpus: " << corpus_path;
 
-  out->IndexFromStream(file, [] -> std::unique_ptr<bench::IBatchHandler> {
+  out->IndexFrom(file, [] -> std::unique_ptr<bench::IBatchHandler> {
     return std::make_unique<StoredIdBatchHandler>();
   });
 }

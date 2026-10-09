@@ -2460,6 +2460,522 @@ id
 29
 30
 
+# Case-insensitive letters: both cases of an ASCII letter, and the third
+# case RE2 folds k and s with (U+212A, U+017F).
+
+statement ok
+CREATE TABLE rx_fold_t (id BIGINT PRIMARY KEY, v VARCHAR)
+
+statement ok
+INSERT INTO rx_fold_t VALUES
+    (1, 'kelvin'),
+    (2, 'KELVIN'),
+    (3, chr(8490) || 'elvin'),
+    (4, 'Kelvin'),
+    (5, 'sky'),
+    (6, 'SKY'),
+    (7, chr(383) || 'ky'),
+    (8, 'xabcx'),
+    (9, 'XaBcX'),
+    (10, 'FOOBAR'),
+    (11, 'di' || chr(383) || 'k'),
+    (12, 'DISK'),
+    (13, 'abc')
+
+statement ok
+CREATE INDEX rx_fold_idx ON rx_fold_t USING inverted(id, v rx_dict)
+
+statement ok
+CREATE INDEX rx_fold_pos_idx ON rx_fold_t USING inverted(id, v rx_pos_dict)
+
+statement ok
+CREATE INDEX rx_fold_idx2 ON rx_fold_t USING inverted(id, v rx_dict2)
+
+statement ok
+VACUUM (REFRESH_TABLE) rx_fold_t
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)kelvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)kelvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)kelvin')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)kelvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('[Kk]elvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '[Kk]elvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '[Kk]elvin')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('[Kk]elvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*elvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*elvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*elvin')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*elvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*LVI.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*LVI.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*LVI.*')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*LVI.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)\x{212A}.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)\x{212A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)\x{212A}.*')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)\x{212A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)k.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)k.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)k.*')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)k.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)sky')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)sky'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)sky')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)sky'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*ky')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*ky'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*ky')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*ky'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)s.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)s.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)s.*')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)s.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)disk')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)disk'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)disk')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)disk'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)xabcx')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)xabcx'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)xabcx')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)xabcx'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*OOBA.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*OOBA.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*OOBA.*')
+     EXCEPT SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*OOBA.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)kelvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)kelvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)kelvin')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)kelvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('[Kk]elvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '[Kk]elvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '[Kk]elvin')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('[Kk]elvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*elvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*elvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*elvin')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*elvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*LVI.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*LVI.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*LVI.*')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*LVI.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)\x{212A}.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)\x{212A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)\x{212A}.*')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)\x{212A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)k.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)k.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)k.*')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)k.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)sky')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)sky'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)sky')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)sky'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*ky')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*ky'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*ky')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*ky'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)s.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)s.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)s.*')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)s.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)disk')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)disk'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)disk')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)disk'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)xabcx')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)xabcx'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)xabcx')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i)xabcx'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*OOBA.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*OOBA.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*OOBA.*')
+     EXCEPT SELECT id FROM rx_fold_pos_idx WHERE v @@ ts_regexp('(?i).*OOBA.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)kelvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)kelvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)kelvin')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)kelvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('[Kk]elvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '[Kk]elvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '[Kk]elvin')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('[Kk]elvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*elvin')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*elvin'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*elvin')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*elvin'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*LVI.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*LVI.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*LVI.*')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*LVI.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)\x{212A}.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)\x{212A}.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)\x{212A}.*')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)\x{212A}.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)k.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)k.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)k.*')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)k.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)sky')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)sky'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)sky')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)sky'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*ky')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*ky'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*ky')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*ky'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)s.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)s.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)s.*')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)s.*'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)disk')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)disk'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)disk')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)disk'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)xabcx')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)xabcx'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i)xabcx')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i)xabcx'))
+) t
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+    (SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*OOBA.*')
+     EXCEPT SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*OOBA.*'))
+    UNION ALL
+    (SELECT id FROM rx_fold_t WHERE regexp_full_match(v, '(?i).*OOBA.*')
+     EXCEPT SELECT id FROM rx_fold_idx2 WHERE v @@ ts_regexp('(?i).*OOBA.*'))
+) t
+----
+count
+0
+
+query
+SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)kelvin') ORDER BY id
+----
+id
+1
+2
+3
+4
+
+query
+SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('[Kk]elvin') ORDER BY id
+----
+id
+1
+4
+
+query
+SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i).*LVI.*') ORDER BY id
+----
+id
+1
+2
+3
+4
+
+query
+SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)sky') ORDER BY id
+----
+id
+5
+6
+7
+
+query
+SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)disk') ORDER BY id
+----
+id
+11
+12
+
+query
+SELECT id FROM rx_fold_idx WHERE v @@ ts_regexp('(?i)xabcx') ORDER BY id
+----
+id
+8
+9
+
+statement ok
+DROP TABLE rx_fold_t
+
 # Every element of a list is a term.
 statement ok
 CREATE TABLE rx_list (id BIGINT PRIMARY KEY, tags VARCHAR[])

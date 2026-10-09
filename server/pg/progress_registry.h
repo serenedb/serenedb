@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/synchronization/mutex.h>
+#include <absl/time/time.h>
 
 #include <atomic>
 #include <cstdint>
@@ -195,6 +196,8 @@ class ProgressRegistry {
   void Unregister(const ProgressSource* source);
 
   std::vector<ProgressSnapshot> GetSnapshots() const;
+
+  size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;
 
  private:
   mutable absl::Mutex _mu;

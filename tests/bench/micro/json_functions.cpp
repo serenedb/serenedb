@@ -78,7 +78,10 @@ struct JsonFixture {
 
 class JsonArrayFixture : public benchmark::Fixture, public JsonFixture {
  public:
-  JsonArrayFixture() {
+  void SetUp(benchmark::State&) override {
+    if (!json.empty()) {
+      return;
+    }
     absl::BitGen bitgen;
     json = JsonStringLiteral(MakeArray(kNumJsonSamples));
     _indexes.reserve(kNumJsonSamples);
@@ -128,7 +131,10 @@ BENCHMARK_DEFINE_F(JsonArrayFixture,
 
 class JsonObjectFixture : public benchmark::Fixture, public JsonFixture {
  public:
-  JsonObjectFixture() {
+  void SetUp(benchmark::State&) override {
+    if (!json.empty()) {
+      return;
+    }
     absl::BitGen bitgen;
     _fields.reserve(kNumJsonSamples);
     json = "{";
@@ -186,7 +192,10 @@ BENCHMARK_DEFINE_F(JsonObjectFixture,
 
 class JsonPathFixture : public benchmark::Fixture, public JsonFixture {
  public:
-  JsonPathFixture() {
+  void SetUp(benchmark::State&) override {
+    if (!json.empty()) {
+      return;
+    }
     absl::BitGen bitgen;
     json = JsonStringLiteral(MakeArray(kNumJsonSamples));
     _paths.reserve(kNumJsonSamples);
@@ -257,5 +266,3 @@ BENCHMARK_REGISTER_F(JsonObjectFixture, BmJsonObjectExtractField);
 BENCHMARK_REGISTER_F(JsonPathFixture, BmJsonPathExtract);
 
 }  // namespace
-
-BENCHMARK_MAIN();

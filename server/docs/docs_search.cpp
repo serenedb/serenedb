@@ -326,7 +326,7 @@ duckdb::shared_ptr<DocsIndex> AcquireIndex(duckdb::DatabaseInstance& db) {
   if (GetDocsIndex().empty()) {
     return nullptr;
   }
-  return db.GetObjectCache().GetOrCreate<DocsIndex>(std::string{kIndexKey}, db);
+  return db.GetObjectCache().GetOrCreate<DocsIndex>(kIndexKey, db);
 }
 
 template<typename Body>

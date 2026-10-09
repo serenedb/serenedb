@@ -132,4 +132,4 @@ FROM x, y
 WHERE x.i = y.i;
 ----
 array_cosine_similarity
-0.9925834
+0.99258333

@@ -23,6 +23,7 @@
 #include <absl/functional/any_invocable.h>
 
 #include <cstdint>
+#include <duckdb/common/identifier.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -52,6 +53,7 @@ struct SearchShardWrites {
   // The writer-generation slot this transaction registered in on `shard`,
   // released when the transaction settles. -1 until it registers.
   int writer_slot = -1;
+  bool truncate_claim = false;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
@@ -66,7 +68,8 @@ class SearchTableTransaction {
   // GetGlobalSinkState: the bulk insert path builds its sink there, ahead of
   // the Combine that hands over its iresearch transaction, so registering any
   // later would let it straddle a swap unnoticed.
-  void RegisterWriter(const std::shared_ptr<SearchTable>& shard);
+  void RegisterWriter(const std::shared_ptr<SearchTable>& shard,
+                      const duckdb::Identifier& table_name);
 
   // Whether this transaction has already written to `shard`. CREATE INDEX
   // refuses to run in such a transaction: the rebuild would wait for writers
@@ -115,6 +118,7 @@ class SearchTableTransaction {
                         std::span<const int64_t> rows);
 
   void AddSearchTruncate(const std::shared_ptr<SearchTable>& shard,
+                         const duckdb::Identifier& table_name,
                          bool clears_shard);
 
   template<typename Factory>
@@ -155,7 +159,7 @@ class SearchTableTransaction {
   // Builds the shard sections, reserves the tick band (width = max over shards
   // of sum-over-trxs(GetQueries()+1)), appends the record, and returns the
   // record tick (the band top) -- the tick every shard's last trx commits at.
-  uint64_t AppendCommit();
+  uint64_t AppendCommit(absl::AnyInvocable<void(uint64_t) noexcept> on_durable);
 
   // Releases every writer registration this transaction holds. Idempotent, so
   // Commit / Abort / the destructor can all call it.

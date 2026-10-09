@@ -136,7 +136,7 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->table_lock = std::shared_lock{state->search_table->GetTableLock()};
   // Before any sink reads the shard's index config, so a rebuild can tell
   // that this transaction predates a config it publishes.
-  conn_ctx.SearchTxn().RegisterWriter(state->search_table);
+  conn_ctx.SearchTxn().RegisterWriter(state->search_table, table->name);
 
   const auto& columns = table->GetColumns();
   state->column_ids.reserve(columns.LogicalColumnCount());

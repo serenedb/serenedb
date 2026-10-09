@@ -472,13 +472,13 @@ duckdb::vector<duckdb::column_t> ScanGetRowIdColumns(
 
 void ScanSerialize(duckdb::Serializer&,
                    const duckdb::optional_ptr<duckdb::FunctionData>,
-                   const duckdb::TableFunction&) {
+                   const duckdb::BoundTableFunction&) {
   throw duckdb::NotImplementedException(
     "iresearch_scan serialization not implemented");
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> ScanDeserialize(
-  duckdb::Deserializer&, duckdb::TableFunction&) {
+  duckdb::Deserializer&, duckdb::BoundTableFunction&) {
   throw duckdb::NotImplementedException(
     "iresearch_scan deserialization not implemented");
 }

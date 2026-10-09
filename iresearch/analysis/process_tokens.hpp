@@ -165,6 +165,13 @@ struct TypedTokenStage : TokenStage {
       _emitted = true;
     }
 
+    template<TokenLayout L, typename Build, EmitTag... Rest>
+    IRS_FORCE_INLINE void EmitGrowable(size_t size, Build build, Rest...) {
+      ArenaTerm term{*_arena, size};
+      *_slot = term.Finish(build(term));
+      _emitted = true;
+    }
+
     template<TokenLayout L, bool Lower, EmitTag... Rest>
     IRS_FORCE_INLINE void EmitCaseConverted(const duckdb::string_t& value,
                                             Rest...) {

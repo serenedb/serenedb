@@ -34,7 +34,7 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
   SDB_VERIFY(!pattern.empty() && pattern.front() == '/',
              "HTTP route pattern must start with '/': '", pattern, "'");
   ada::url_pattern_init init{};
-  init.pathname = std::string{pattern};
+  init.pathname.emplace(pattern);
   auto parsed = ada::parse_url_pattern<AdaRe2Provider>(std::move(init));
   SDB_VERIFY(parsed.has_value(), "invalid HTTP route pattern: '", pattern, "'");
   const bool literal =
@@ -91,7 +91,7 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
     return nullptr;
   }
   ada::url_pattern_init input{};
-  input.pathname = std::string{path};
+  input.pathname.emplace(path);
   if (auto* handler = MatchIn(_literal, input, request)) {
     return handler;
   }

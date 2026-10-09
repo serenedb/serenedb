@@ -71,7 +71,7 @@ constinit SettingRef gThrowOnQuota{"sdb_ai_throw_on_quota_exceeded"};
 std::string ReadStringSetting(duckdb::ClientContext& context,
                               std::string_view name) {
   duckdb::Value value;
-  if (!context.TryGetCurrentSetting(std::string{name}, value) ||
+  if (!context.TryGetCurrentSetting(duckdb::Identifier{name}, value) ||
       value.IsNull()) {
     return {};
   }

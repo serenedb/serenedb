@@ -115,7 +115,7 @@ EXPLAIN SELECT id FROM chtop.chtest.vedernikoff WHERE id > 1 ORDER BY id LIMIT 2
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────────────╮
 │ Top: 2                                         │
-│ Order By: vedernikoff.id ASC                   │
+│ Order By: id ASC                               │
 │ ~1 row                                         │
 ╰────────────────────────┬───────────────────────╯
 ╭─ CLICKHOUSE_SCAN_PUSHDOWN ─────────────────────╮

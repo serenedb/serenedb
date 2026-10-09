@@ -44,38 +44,37 @@ Additional build presets are defined in `CMakePresets.json`:
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
 - `bench` -- Release build (`build_bench/`), static linking, production-like performance
 
+### Debug info and disk use
+
+Every binary links most of the server statically, so debug info dominates its size. Two settings keep a build directory small:
+
+- **Split DWARF** (`SDB_SPLIT_DWARF`, on by default except on macOS, off in CI): debug info is written once, into a `.dwo` file beside each object, and the binaries only point at those files. lldb, gdb, perf, `llvm-symbolizer` and `addr2line` follow the pointers on their own, as long as the build directory is there. A binary copied out of it keeps its symbols and line numbers but loses inlined frames, variables and types; to keep those too, pack the debug info next to the copy:
+
+  ```bash
+  llvm-dwp -e build/bin/serened -o /path/to/copy/serened.dwp
+  ```
+
+  lldb and gdb pick up `<binary>.dwp` beside the binary automatically.
+- **Thin archives**: static libraries (except on macOS) only reference their objects instead of holding copies, so they cannot be moved or installed without the build directory -- nothing in the build does that.
+
+Tools and benchmarks share binaries instead of each linking their own: `serenedb-bench-micro <bench> [args...]` runs one micro benchmark (see [Performance](#performance)), and `iresearch-examples <example>` runs one of the iresearch examples. Both print what they offer when run without arguments.
+
 ### The embedded documentation index
 
-`docs/` is compiled into the binary together with a prebuilt search index of it.
-The read-only `sdb_docs` functions and the shell's `.docs` read that image straight
-from the binary, so the server indexes nothing at startup and leaves nothing in the
-datadir.
+`docs/` is compiled into the binary together with a prebuilt search index of it. The read-only `sdb_docs` functions and the shell's `.docs` read that image straight from the binary, so the server indexes nothing at startup and leaves nothing in the datadir.
 
-The index cannot be produced from the sources the way the documentation text is,
-because building it needs the indexer that lives in the server being built. So
-the build does it in two passes:
+The index cannot be produced from the sources the way the documentation text is, because building it needs the indexer that lives in the server being built. So `serened` builds it itself, right after it is linked:
 
-1. `serened-docs-bootstrap` links the same server with an empty index.
-2. `serened-docs-bootstrap <datadir> --build_docs_index=<out>` boots it on a
-   throwaway datadir, indexes the documentation and the catalog of the objects
-   it documents, and writes them to `<out>/docs` and `<out>/objects`, each
-   with a layout file naming its column and field ids. It then exits before
-   any listener is started.
-3. `scripts/generate_docs_index.py` packs both directories with `#embed`, so
-   the generated translation unit stays a few hundred bytes whatever the
-   indexes weigh.
-4. `serened` links the generated unit.
+1. `scripts/generate_docs.py --corpus` writes the documentation text to a file in the build directory.
+2. `serened` is linked with an empty `.sdb_docs` section for the index (`server/docs/docs_index_image.cpp`); `server/docs/docs_index.ld` places it after `.bss`, alone in the last loadable segment.
+3. `serened <datadir> --build_docs_index=<out> --docs_corpus=<file>` boots it on a throwaway datadir, indexes the documentation and the catalog of the objects it documents, and writes them to `<out>/docs` and `<out>/objects`, each with a layout file naming its column and field ids. It then exits before any listener is started.
+4. `scripts/embed_docs_index.py` writes both directories into `.sdb_docs` of the binary that built them and grows the section and its segment to exactly their size. Nothing is loaded after that segment, so only the non-loaded sections behind it in the file move.
 
-The code behind the first two steps lives in `server/docs/builder/`: the
-documentation corpus, the indexer and the `--build_docs_index` flag. None of it
-is linked into `serened`.
+macOS has no linker scripts, so there `serened` reserves a fixed 4 MiB region instead and step 4 fills it in place. If the index outgrows it, the macOS build fails and says so; raise `kCapacity` in `docs_index_image.cpp`.
 
-Every step is an ordinary build dependency -- the index is rebuilt whenever the
-bootstrap binary changes, which includes every change to `docs/`. So the image
-always matches the documentation compiled in beside it, and there is nothing to
-keep in sync by hand. It also means an edit anywhere in the server re-runs the
-whole chain. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build
-carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
+`serenedb-tests` is linked and embedded the same way, so the documentation tests run against what `serened` ships.
+
+Steps 3 and 4 run every time `serened` is linked, which includes every change to `docs/`. So the image always matches the server it lives in, and there is nothing to keep in sync by hand. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
 
 ### Launch
 
@@ -103,6 +102,16 @@ When a change needs a test:
 - New feature / behaviour change: sqllogic test in the right subtree above. Add a unit test too if there's isolated C++ logic worth pinning.
 - CMake-only changes: rely on CI.
 - Doc-only changes live in a separate repo and don't apply here.
+
+Races are testable in sqllogic, so a concurrency bug still gets a test:
+
+- `connection <name>` before a record runs it on that named session.
+- `statement async ok`, `statement async error`, `query async` and `system async ok` run the record in the background. On a named connection, async records keep that connection's order and overlap other connections. Without a connection, each async record gets a fresh one.
+- `wait` blocks until every background record has finished; a later synchronous record on a busy named connection waits for that connection only.
+- Records are dispatched in file order, and dispatching a record on a busy named connection first waits for that connection. To keep a step in flight while others run, put the steps that should overlap on different connections right after it, then `wait`.
+- `control max-async-connections N` caps parallel background records (default 10); `control always-async on` makes every record async.
+- There are no loops: widen a race window by repeating records.
+- `tests/sqllogic/pg/simple/async.test` is a minimal example.
 
 ```bash
 # All sqllogic tests
@@ -142,6 +151,40 @@ run it whenever you touch `.github/workflows/`. Full `run` needs the build image
 and `/mnt/data` caches for heavy jobs; put fake secrets in `.secrets`
 (gitignored) for workflows that reference them.
 
+### CI images carry every dependency
+
+CI never downloads or installs anything while it builds or tests. Toolchains, driver
+packages, language runtimes and test fixtures come from images:
+
+- `scripts/ci/build-ubuntu.Dockerfile` is the build and test image. It installs each driver's
+  dependencies from the manifests in `tests/drivers/` (`requirements.txt`, `package-lock.json`,
+  `composer.lock`, `go.sum`, `pom.xml`, `*.csproj`, `Cargo.lock`) and turns the package managers
+  offline. Regenerate it with the `build-images` workflow whenever one of those changes.
+- Service fixtures that need content baked in (models, extensions) get their own image, built by
+  the same workflow (`tests/sqllogic/fixtures/ollama`).
+- Runners never install a missing dependency or skip a missing toolchain; they fail and name what
+  is missing. Locally, install it yourself once (e.g. `npm ci` in `tests/drivers/js`).
+- The one exception is our own test tooling built from source (`third_party/sqllogictest-rs`): it
+  is rebuilt every run so it can change in a PR, with its crates cached on the CI machine.
+
+#### Adding or changing a CI dependency
+
+1. Put it where the image picks it up:
+   - a system package or toolchain: the `apt-get install` list in `scripts/ci/build-ubuntu.Dockerfile`;
+   - a driver's package: that driver's manifest in `tests/drivers/`;
+   - a Python package for test data or fixtures (Spark, pyiceberg, boto3, ...): `scripts/ci/test-data-requirements.txt`;
+   - a service with baked-in content: its own Dockerfile under `tests/sqllogic/fixtures/<name>/`. Its tag is derived from the directory's content (`tests/sqllogic/fixtures/image_tag.sh`), so runners pick up the new image without any edit, and `scripts/ci/build_images.sh` builds it.
+
+   Pin versions, and never add a runtime fallback that installs the dependency when it is missing.
+2. Build and try it locally: `docker buildx build --load -t serenedb-build-ubuntu:local --build-context drivers=../../tests/drivers -f build-ubuntu.Dockerfile .` in `scripts/ci`, then run the affected runner with `BUILD_IMAGE=serenedb-build-ubuntu:local` (e.g. `tests/sqllogic/run_in_docker.sh`).
+3. Publish from your branch: run the `serenedb | create infra` workflow (`build-images.yml`) on it with `PUSH_IMAGES_2_REGISTRY=true`, `TAG_LATEST=false` and `TAG=<your branch>`. It pushes the build image as `serenedb/serenedb-build-ubuntu:<os>_clang-<version>_commit-<sha>` and as `:<your branch>` with `/` turned into `-`, plus the fixture images. `:latest`, which every other branch's CI uses, does not move.
+4. Run CI on that image. The PR's "Trigger Jobs" uses `:latest`, so dispatch the build yourself with the image in `BUILD_CONFIG`:
+   ```bash
+   gh workflow run build-manual.yml --ref <branch> -f PR_NUMBER=<pr> -f PR_SHA=$(git rev-parse HEAD) \
+     -f BUILD_CONFIG='{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:<branch with - for />"}'
+   ```
+5. After the PR merges, run `serenedb | create infra` on main with `TAG_LATEST=true`; that moves `:latest` to the new image for everyone.
+
 ### Running DuckDB's own test suites
 
 DuckDB core and each vendored extension ship sqllogic-style test suites under
@@ -165,6 +208,20 @@ The serened-level postgres_scanner tests
 (`tests/sqllogic/sdb/pg/duckdb_postgres/*_pgscan.test_slow`) ride the regular
 sqllogic runner -- the `_pgscan.` filename suffix triggers
 `launch_postgres()` in `tests/sqllogic/run.sh` automatically.
+
+## Third-party dependencies
+
+Dependencies are git submodules under `third_party/`, usually forks under `github.com/serenedb`, so build fixes can go into the fork. `third_party/CMakeLists.txt` builds them from source (`sdb_update_module` + `add_subdirectory`), so every file gets the same compiler, flags and standard library as our own code. Configure a dependency there with `set(<OPTION> <value> CACHE <type> "" FORCE)` before its `add_subdirectory`.
+
+- **One ISA baseline.** `cmake/OptimizeForArchitecture.cmake` puts the baseline into `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`: Haswell features on amd64, `-march=armv8-a+crc+crypto` on arm64. A dependency must not add its own `-march`, `-mcpu`, `-mtune` or `-mno-*` to the whole library: a later `-march` replaces ours, and a lower one drops below it. Turn such options off (`ZXC_NATIVE_ARCH OFF`, zlib-ng's `WITH_NATIVE_INSTRUCTIONS OFF`, `DUCKDB_OPTIMIZATION_PROFILE NONE`) or fix the fork.
+- **Runtime dispatch above it.** If a library can pick faster code for the CPU it runs on (AVX-512, SVE), enable that instead of building the whole library for one fixed level: OpenBLAS `DYNAMIC_ARCH` with a `DYNAMIC_LIST`, faiss `FAISS_OPT_LEVEL=dd`, zlib-ng `WITH_RUNTIME_CPU_DETECTION`. Flags above the baseline belong only on the kernels that the library reaches after a CPU check. For a header-only library that picks its backend at compile time, call the backends behind our own check, as `iresearch/analysis/text/sz/stringzilla.hpp` does for StringZilla.
+- **One C++ standard.** C++ builds with `CMAKE_CXX_STANDARD` (`-std=c++26`); the LLVM runtimes are the only exception. Pass it through the library's own variable when it has one (`SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD}`). Otherwise remove the library's own `CMAKE_CXX_STANDARD` in the fork, as was done for ada. A dependency must not set `CMAKE_BUILD_TYPE` either.
+- **Check `compile_commands.json`** after adding or updating a dependency. Every file should carry the baseline and `-std=c++26`; only the dispatched kernels may go above the baseline:
+
+  ```bash
+  jq -r '.[] | select(.file | contains("third_party/<name>/")) | .command' build/compile_commands.json \
+    | grep -oE -- '-std=[^ ]+|-m(arch|cpu|tune)=[^ ]+|-mno-[^ ]+' | grep -v frame-pointer | sort | uniq -c
+  ```
 
 ## Branching, commits, PRs
 
@@ -203,10 +260,10 @@ A file never holds stale memory, though: a compression method writes every byte 
 
 Only two places record a storage version, a `serenedb_vN` value of DuckDB's `StorageVersion`:
 
-- The headers of each database file (`engine_catalog/catalog.db`, `engine_duckdb/<oid>.db`). The file's write-ahead log and the database's search-table WAL follow it.
+- The headers of each database file (`engine_v1/<oid>/data.db`). The file's write-ahead log and the database's search-table WAL follow it.
 - `segments_N` of each search index directory. The directory's other files are only reached through it.
 
-SereneDB always writes `SERENEDB_LATEST`. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
+SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
 
 Most changes need no new version:
 
@@ -245,13 +302,28 @@ A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`
 
 `tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image; see [tests/duckdb/README.md](tests/duckdb/README.md).
 
+### Data directory
+
+```
+engine_v1/
+  catalog.wal          the catalog log: the definitions of every database
+  <database oid>/      one database
+    data.db            its DuckDB file, with data.db.wal beside it
+    search.wal.<tick>  its search-table WAL
+    <object oid>/      a search table, or an inverted index on a table or view
+```
+
+- Every directory has one owner, and only the owner creates or removes it. `catalog::DatabaseDirectory` owns `<database oid>/`. The database's catalog entry, its attachment (until DuckDB has closed the files, through `AttachedDatabase::HoldUntilClosed`), every storage of the database and every pending removal hold it, so after a drop it removes the directory last, once all of them let go. A storage removes its `<object oid>/` after its own drop or a rolled-back create; `DROP DATABASE` marks only the database.
+- A directory is created, and its parent fsynced, before the statement that creates its object commits. Paths are oids, so a rename moves nothing.
+- Boot removes what no live object owns: each `<database oid>/` that names no database right after the catalog log replays, before bootstrap may create the default database again, and each `<object oid>/` that names no storage inside an attached database once its objects are loaded. That covers a crash between a create and its commit and one between a drop and the removal. A missing catalog log beside database directories that hold anything stops the boot.
+
 ### Serialized structs
 
 Blobs stored in catalog entries (tokenizer configs, the inverted index payload), the view-backed index manifest and the segment references of the search-table WAL are written with `irs::utils::WriteTuple` and read with `ReadTuple`. An aggregate is a `BinarySerializer` object whose field ids are the positions of its members, and a member equal to its value in a value-initialized aggregate is not written. A struct boost::pfr cannot reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
 
 ### Search-table WAL
 
-Each `.swal` frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
+The WAL of a database's search tables is a series of segments in the database's directory, `search.wal.<first tick>` with the tick as 16 hex digits. Each frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
 
 ## VSCode Setup
 
@@ -344,6 +416,8 @@ Enforced by [`.clang-tidy`](.clang-tidy) and [pre-commit](.pre-commit-config.yam
 ### Formatting
 
 Handled by [`.clang-format`](.clang-format) and [pre-commit](.pre-commit-config.yaml). No style discussions in PRs.
+
+The DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) follows DuckDB's own style and generators instead: [`scripts/duckdb_family.sh`](scripts/duckdb_family.sh) formats it with DuckDB's `scripts/format.py` and builds the duckdb fork's `regen:` commit; [`tests/duckdb/README.md`](tests/duckdb/README.md) has the rules for a DuckDB update.
 
 ### Include Ordering
 
@@ -529,7 +603,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
 - Binary size matters: excessive inlining/templates hurt icache and build times
-- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt`, build with `ninja serenedb-bench-micro`, run from `build/bin/serenedb-bench-micro-<name>`.
+- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `build/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
 - Use the `bench` cmake preset for production-like numbers.
 - A microbench fits when the change is a few well-scoped functions. When the
   change is broader (a whole query path, an end-to-end pipeline, anything that

@@ -1,0 +1,80 @@
+control substitution on
+
+statement ok
+CREATE TABLE sov_t (id SERIAL PRIMARY KEY, v INT);
+
+
+statement count 5
+INSERT INTO sov_t (v) SELECT i FROM generate_series(1, 5) AS s(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE sov_t RESTART IDENTITY;
+
+
+statement count 3
+INSERT INTO sov_t (v) VALUES (1), (2), (3);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE SEQUENCE sov_seq;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+COMMENT ON SEQUENCE sov_seq IS 'ids';
+
+
+query
+SELECT nextval('sov_seq') AS a, nextval('sov_seq') AS b, nextval('sov_seq') AS c;
+----
+a	b	c
+1	2	3
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT max(id) AS m FROM sov_t;
+----
+m
+3
+
+
+connection after_crash
+statement count 1
+INSERT INTO sov_t (v) VALUES (4);
+
+
+connection after_crash
+query
+SELECT nextval('sov_seq') > 3 AS fresh;
+----
+fresh
+t

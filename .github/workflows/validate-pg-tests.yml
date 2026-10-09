@@ -13,6 +13,11 @@ on:
         type: string
         required: false
         default: ""
+      BUILD_IMAGE:
+        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+        type: string
+        required: false
+        default: ""
       PG_TESTS:
         description: "Newline list of changed pg tests (relative to tests/sqllogic/); empty = run all"
         type: string
@@ -30,6 +35,11 @@ on:
         type: string
         required: false
         default: ""
+      BUILD_IMAGE:
+        description: "Build image (empty = serenedb/serenedb-build-ubuntu:latest)"
+        type: string
+        required: false
+        default: ""
       PG_TESTS:
         description: "Newline list of changed pg tests (relative to tests/sqllogic/); empty = run all"
         type: string
@@ -38,7 +48,7 @@ on:
 
 env:
   WORKSPACE: ${{ github.workspace }}
-  BUILD_IMAGE: serenedb/serenedb-build-ubuntu:latest
+  BUILD_IMAGE: ${{ inputs.BUILD_IMAGE || 'serenedb/serenedb-build-ubuntu:latest' }}
   CARGO_TARGET_CACHE: /mnt/data/.cargo-target-sqllogic
   CARGO_HOME_CACHE: /mnt/data/.cargo-home-sqllogic
 

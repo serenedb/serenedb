@@ -335,8 +335,8 @@ SELECT 1 AS n<NL>\g
 SELECT 1 AS n<NL>\gx
 ----
 > +-[ RECORD 1 ]-+
-> | n | 1 |
-> +---+---+
+> | n | 1        |
+> +---+----------+
 
 SELECT 1 AS n<NL>\gdesc
 ----
@@ -367,6 +367,25 @@ SELECT $1::int AS v<NL>\bind 7<NL>\g
 > +---+
 > | 7 |
 > +---+
+> (1 row)
+
+CREATE TABLE {schema}.bind_once (id bigint, body text);<NL>INSERT INTO {schema}.bind_once VALUES ($1::bigint, 'token' || $2)<NL>\bind 1 2<NL>\g<NL>\echo :ROW_COUNT<NL>SELECT count(*) AS n FROM {schema}.bind_once;<NL>DROP TABLE {schema}.bind_once;
+----
+> 1
+> +---+
+> | n |
+> +---+
+> | 1 |
+> +---+
+> (1 row)
+
+CREATE SEQUENCE {schema}.bind_seq;<NL>SELECT nextval('{schema}.bind_seq') AS v, 'x' || $1 AS w<NL>\bind 1<NL>\g<NL>DROP SEQUENCE {schema}.bind_seq;
+----
+> +---+----+
+> | v | w  |
+> +---+----+
+> | 1 | x1 |
+> +---+----+
 > (1 row)
 
 SELECT 'r' AS rowcat, 'c' AS colcat, 1 AS val<NL>\crosstabview
@@ -622,14 +641,14 @@ SET search_path TO {schema};<NL>\df
 
 \dT {schema}.*
 ----
->              List of data types
-> +--------------+-------------+-------------+
-> |    Schema    |    Name     | Description |
-> +--------------+-------------+-------------+
-> | SCHEMA | acct_status | [NULL]      |
-> | SCHEMA | currency    | [NULL]      |
-> | SCHEMA | point2d     | [NULL]      |
-> +--------------+-------------+-------------+
+>                    List of data types
+> +--------------+--------------------------+-------------+
+> |    Schema    |           Name           | Description |
+> +--------------+--------------------------+-------------+
+> | SCHEMA | SCHEMA.acct_status | [NULL]      |
+> | SCHEMA | SCHEMA.currency    | [NULL]      |
+> | SCHEMA | SCHEMA.point2d     | [NULL]      |
+> +--------------+--------------------------+-------------+
 > (3 rows)
 
 \df {schema}.*
@@ -936,7 +955,7 @@ skipif postgres
 > Enter it again:
 > ERROR:  unrecognized configuration parameter "password_encryption"
 >
-> Did you mean: "password"
+> Did you mean: "s3_endpoint"
 
 \cd
 ----

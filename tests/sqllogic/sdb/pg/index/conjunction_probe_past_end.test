@@ -1,0 +1,65 @@
+hash-threshold 200
+
+# Regression: a conjunction must not invent a match past the end of a posting
+# list. SeekToLeaf() reported success on a leaf that stopped short of the probe
+# target, and Probe()'s Run branch then returned that target as a hit.
+#
+# Layout is load-bearing: 'charge' on consecutive ids makes the last leaf
+# Run-encoded, and the distant 'zebra' doc forces the skip-list path.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY probe_en AS split_by_non_alpha(case := 'lower')
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE probe_past_end (id INTEGER, body VARCHAR);
+
+# 'charge' on consecutive ids -> Run-encoded trailing leaf
+statement ok
+INSERT INTO probe_past_end SELECT i, 'charge here ' || i FROM range(1,5001) tbl(i);
+
+# gap: neither term
+statement ok
+INSERT INTO probe_past_end SELECT i, 'filler text ' || i FROM range(5001,7001) tbl(i);
+
+# 'zebra' only, far past the last 'charge' doc
+statement ok
+INSERT INTO probe_past_end VALUES (7001, 'zebra alone');
+
+statement ok
+CREATE INDEX probe_past_end_idx ON probe_past_end USING inverted(body probe_en);
+
+query
+SELECT count(*) AS n FROM probe_past_end_idx WHERE body @@ 'charge';
+----
+n
+5000
+
+query
+SELECT count(*) AS n FROM probe_past_end_idx WHERE body @@ 'zebra';
+----
+n
+1
+
+# No doc holds both terms. Returned 1 before the fix.
+query
+SELECT count(*) AS n FROM probe_past_end_idx WHERE body @@ 'zebra' AND body @@ 'charge';
+----
+n
+0
+
+# Same defect as a contradiction: a restrictive conjunct must not grow a result.
+query
+SELECT count(*) AS n FROM probe_past_end_idx
+ WHERE body @@ 'charge' AND NOT list_contains(ts_lexize('probe_en', body), 'charge');
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM probe_past_end_idx
+ WHERE body @@ 'charge' AND NOT list_contains(ts_lexize('probe_en', body), 'charge')
+   AND body @@ 'zebra';
+----
+n
+0

@@ -24,7 +24,10 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_codec.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
@@ -37,10 +40,6 @@
 
 namespace irs {
 
-// One term's posting list read front to back, which is the whole of what
-// re-writing it needs: the block after the one in hand is always the next
-// one, so there is no skip list here and nothing seeks. `IteratorTraits` says
-// what is decoded, `FieldTraits` what is stepped over.
 template<typename IteratorTraits, typename FieldTraits, typename InputType>
 class PostingsStream : public TermPostings {
   static_assert((IteratorTraits::Features() & FieldTraits::Features()) ==
@@ -61,17 +60,11 @@ class PostingsStream : public TermPostings {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _doc_in = doc_in.Reopen();
-      if (!_doc_in) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+      _doc_in = OpenDocInput(meta, doc_in);
 
       auto& in = In();
-      in.Seek(meta.doc_start);
-      // A term short enough to have no skip list carries its score bound
-      // ahead of the one block it does have; a longer one carries it past
-      // the blocks, where nothing reading forward ever reaches it.
-      if (meta.docs_count < doc_limits::kBlockSize) {
+      PrefetchDocs(in, meta);
+      if (meta.docs_count <= doc_limits::kBlockSize) {
         SkipScoreBounds(has_score_bounds, in);
       }
       _left_in_list = meta.docs_count;
@@ -134,13 +127,13 @@ class PostingsStream : public TermPostings {
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
     if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
-      IteratorTraits::ReadBlockDelta(in, _enc_buf, _docs, prev);
+      block_io::ReadBlockDelta(in, _enc_buf, _docs, prev);
       _left_in_leaf = doc_limits::kBlockSize;
       _left_in_list -= doc_limits::kBlockSize;
       ReadLeafFreqs(doc_limits::kBlockSize);
     } else {
       const auto tail = _left_in_list;
-      IteratorTraits::ReadTailDelta(tail, in, _enc_buf, _docs, prev);
+      block_io::ReadTailDelta(tail, in, _enc_buf, _docs, prev);
       _left_in_leaf = tail;
       _left_in_list = 0;
       ReadLeafFreqs(tail);
@@ -150,19 +143,20 @@ class PostingsStream : public TermPostings {
 
   void ReadLeafFreqs(uint32_t len) {
     if constexpr (IteratorTraits::Frequency()) {
-      IteratorTraits::ReadTail(len, In(), _enc_buf, _freqs);
+      block_io::ReadTail<block_io::kFreqBias>(len, In(), _enc_buf, _freqs);
     } else if constexpr (FieldTraits::Frequency()) {
       // Only a full block is followed by more of this term's documents, so
       // only a full block has to be stepped over.
       if (len == doc_limits::kBlockSize) {
-        FieldTraits::SkipBlock(In());
+        block_io::SkipBlock(In());
       }
     }
   }
 
-  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[doc_limits::kBlockSize];
+  ABSL_CACHELINE_ALIGNED uint32_t _enc_buf[block_io::kEncWords];
   [[no_unique_address]] ABSL_CACHELINE_ALIGNED utils::Need<
-    IteratorTraits::Frequency(), uint32_t[doc_limits::kBlockSize]> _freqs;
+    IteratorTraits::Frequency(),
+    SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
   IndexInput::ptr _doc_in;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;

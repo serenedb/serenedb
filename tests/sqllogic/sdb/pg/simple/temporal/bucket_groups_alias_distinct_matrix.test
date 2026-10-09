@@ -1019,7 +1019,7 @@ QUERY PLAN
 ╰──────────────────────────┬─────────────────────────╯
 ╭─ PROJECTION ─────────────┴─────────────────────────╮
 │ Projections:                                       │
-│ NULL,                                              │
+│ NULL::TIMESTAMP,                                   │
 │ __internal_date_trunc_bucket(ts, 3600000000, 0)    │
 │ ~50,001 rows                                       │
 ╰──────────────────────────┬─────────────────────────╯
@@ -1111,7 +1111,7 @@ EXPLAIN SELECT DISTINCT ON (date_trunc('hour', ts)) ts FROM g ORDER BY date_trun
 ----
 QUERY PLAN
 ╭─ ORDER_BY ───────────────────────────╮
-│ Order By: g.ts) ASC                  │
+│ Order By: #1 ASC                     │
 │ ~50,001 rows                         │
 ╰───────────────────┬──────────────────╯
 ╭─ PROJECTION ──────┴──────────────────╮
@@ -1150,11 +1150,11 @@ QUERY PLAN
 ╭─ PROJECTION ───────────┴───────────────────────╮
 │ Projections:                                   │
 │ __internal_icu_date_trunc_unbucket('hour', #0) │
-│ ~50,001 rows                                   │
+│ ~31,606 rows                                   │
 ╰────────────────────────┬───────────────────────╯
 ╭─ PERFECT_HASH_GROUP_BY ┴───────────────────────╮
 │ Groups: #0                                     │
-│ ~50,001 rows                                   │
+│ ~31,606 rows                                   │
 ╰────────────────────────┬───────────────────────╯
 ╭─ PROJECTION ───────────┴───────────────────────╮
 │ Projections:                                   │

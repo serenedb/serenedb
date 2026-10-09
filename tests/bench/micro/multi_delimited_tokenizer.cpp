@@ -323,5 +323,3 @@ BENCHMARK(BmGenericBuild)->Apply(SetSizes);
 BENCHMARK(BmGenericSharedPrefixBuild)->Apply(SetSizes);
 
 }  // namespace
-
-BENCHMARK_MAIN();

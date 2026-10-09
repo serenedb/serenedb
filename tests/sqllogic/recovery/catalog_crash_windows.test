@@ -23,7 +23,7 @@ control substitution on
 
 # Crash before the catalog log is flushed: neither half survives.
 statement ok
-SET sdb_faults = 'crash_before_commit';
+SET sdb_faults = 'crash_before_catalog_commit';
 
 statement error connection closed
 CREATE TABLE cw (a INTEGER PRIMARY KEY, b TEXT);
@@ -44,24 +44,23 @@ statement ok
 INSERT INTO cw VALUES (1, 'one'), (2, 'two');
 
 
-# A commit that fails: duckdb's debug_force_commit_failure throws after the undo
-# buffer is committed, RevertCommit undoes it, the transaction aborts with
-# nothing durable behind it, the client gets a SQL error, and the server is
-# still there to serve the next statement.
+# The append happens in the commit, so a refused one is a commit that fails:
+# the transaction aborts with nothing durable behind it, the client gets a SQL
+# error, and the server is still there to serve the next statement.
 connection after_create
 statement ok
-SET debug_force_commit_failure = true;
+SET sdb_faults = 'catalog_append_fails';
 
 connection after_create
 statement error
 CREATE TABLE cw_refused (a INTEGER);
 ----
-db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
+db error: ERROR: Failed to commit: catalog log: could not append the transaction
 
 
 connection after_create
 statement ok
-SET debug_force_commit_failure = false;
+SET sdb_faults = '-catalog_append_fails';
 
 connection after_create
 query
@@ -78,12 +77,35 @@ count
 2
 
 
+connection after_create
+statement ok
+SET debug_force_commit_failure = true;
+
+connection after_create
+statement error
+CREATE TABLE cw_forced (a INTEGER);
+----
+db error: ERROR: Failed to commit: Forced commit failure (debug_force_commit_failure)
+
+
+connection after_create
+statement ok
+SET debug_force_commit_failure = false;
+
+connection after_create
+query
+SELECT count(*) FROM pg_class WHERE relname = 'cw_forced';
+----
+count
+0
+
+
 # Crash after the catalog append and before the data commit, for a create. The
 # database's position is behind the log tail by that one frame; boot replays it
 # and the table is there, complete and usable.
 connection after_create
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_after_catalog_before_data';
 
 connection after_create
 statement error connection closed
@@ -95,6 +117,13 @@ SELECT count(*) FROM pg_class WHERE relname = 'cw2';
 ----
 count
 1
+
+connection after_gap_create
+query
+SELECT count(*) FROM pg_class WHERE relname IN ('cw_refused', 'cw_forced');
+----
+count
+0
 
 connection after_gap_create
 statement ok
@@ -125,7 +154,7 @@ INSERT INTO cw_wide VALUES (1, 'x', 'n1'), (2, 'yy', 'n2');
 
 connection after_gap_create
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_after_catalog_before_data';
 
 connection after_gap_create
 statement error connection closed
@@ -156,7 +185,7 @@ count
 # narrower, together.
 connection after_gap_add
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_after_catalog_before_data';
 
 connection after_gap_add
 statement error connection closed
@@ -193,7 +222,7 @@ INSERT INTO cw_using VALUES (1, 'xx'), (2, 'yyy');
 
 connection after_gap_drop_col
 statement ok
-SET sdb_faults = 'crash_after_commit';
+SET sdb_faults = 'crash_after_catalog_before_data';
 
 connection after_gap_drop_col
 statement error connection closed
@@ -234,7 +263,7 @@ DROP TABLE cw_wide;
 # reconcile.
 connection after_gap_using
 statement ok
-SET sdb_faults = 'crash_before_commit';
+SET sdb_faults = 'crash_before_catalog_commit';
 
 connection after_gap_using
 statement error connection closed
@@ -314,16 +343,15 @@ DROP TABLE aw;
 # follows still has to land.
 connection after_failed_alter
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+connection after_failed_alter
+statement ok
 CREATE TABLE cw_pin (a INTEGER PRIMARY KEY, b TEXT);
 
 connection after_failed_alter
 statement ok
 INSERT INTO cw_pin VALUES (1, 'one'), (2, 'two');
-
-connection after_failed_alter
-statement ok
-CHECKPOINT;
-
 
 connection after_failed_alter
 statement ok
@@ -354,12 +382,11 @@ CREATE TABLE cw_gone (a INTEGER);
 
 connection after_compact_create
 statement ok
-DROP TABLE cw_gone;
+SET sdb_faults = 'compact_inside_drop';
 
 connection after_compact_create
 statement ok
-CHECKPOINT;
-
+DROP TABLE cw_gone;
 
 connection after_compact_create
 statement ok

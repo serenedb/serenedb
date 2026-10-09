@@ -1,0 +1,36 @@
+statement ok
+CREATE TYPE named_tuple AS TUPLE(INTEGER, BIGINT);
+
+
+query
+SELECT typname, typtype, typcategory, typrelid = oid AS has_relation FROM pg_type WHERE typname = 'named_tuple';
+----
+typname	typtype	typcategory	has_relation
+named_tuple	c	C	t
+
+
+query
+SELECT relname, relkind, relnatts FROM pg_class WHERE relname = 'named_tuple';
+----
+relname	relkind	relnatts
+named_tuple	c	2
+
+
+query
+SELECT attnum, attname, atttypid FROM pg_attribute WHERE attrelid = (SELECT oid FROM pg_type WHERE typname = 'named_tuple') ORDER BY attnum;
+----
+attnum	attname	atttypid
+1	element1	23
+2	element2	20
+
+
+query
+SELECT proargtypes[1] AS first_arg, proargtypes[2] AS second_arg FROM pg_proc WHERE proname = 'struct_extract' ORDER BY second_arg;
+----
+first_arg	second_arg
+705	20
+705	25
+
+
+statement ok
+DROP TYPE named_tuple;

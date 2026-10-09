@@ -268,17 +268,16 @@ for shape in ${SHAPES}; do
 
 		for rep in $(seq 1 "${REPS}"); do
 			alias="df_${shape}_${mode_tag}_${rep}"
-			db_path="${WORK_DIR}/${alias}.db"
-			rm -f "${db_path}" "${db_path}.wal"
 
 			if ! psql "${CONN}" -X -q -v ON_ERROR_STOP=1 \
 				-c "SET force_compression='dict_fsst';" \
 				-c "SET force_dict_fsst_mode='${mode}';" \
-				-c "ATTACH '${db_path}' AS ${alias} (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');" \
+				-c "CREATE DATABASE ${alias};" \
 				>/dev/null 2>&1; then
-				status="attach_failed"
+				status="create_failed"
 				break
 			fi
+			db_path=$(plain_sql "SELECT path FROM duckdb_databases() WHERE database_name='${alias}';")
 
 			timed_sql "CREATE TABLE ${alias}.t AS SELECT ord, ${expr_sql} AS s FROM range(${srows}) t(ord) ORDER BY ord;"
 			if [[ ${SQL_RC} -ne 0 ]]; then
@@ -300,8 +299,7 @@ for shape in ${SHAPES}; do
 			printf ' | ckpt %s ms\n' "${SQL_MS}"
 
 			[[ "${rep}" -eq "${REPS}" ]] && break
-			psql "${CONN}" -X -q -c "DETACH ${alias};" >/dev/null 2>&1
-			rm -f "${db_path}" "${db_path}.wal"
+			psql "${CONN}" -X -q -c "DROP DATABASE ${alias};" >/dev/null 2>&1
 		done
 
 		if [[ "${status}" == "ok" ]]; then
@@ -312,15 +310,12 @@ for shape in ${SHAPES}; do
 			segments=$(plain_sql "SELECT count(*) FROM pragma_storage_info('${alias}.t') WHERE column_name='s' AND segment_type='VARCHAR';")
 			# ORDER BY keeps the list stable across rounds, so averaging
 			# does not report a spurious "mixed".
-			seg_modes=$(plain_sql "SELECT string_agg(m, ',' ORDER BY m) FROM (SELECT DISTINCT replace(segment_info, 'mode: ', '') AS m FROM pragma_storage_info('${alias}.t', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR');")
+			seg_modes=$(plain_sql "SELECT string_agg(m, ',' ORDER BY m) FROM (SELECT DISTINCT split_part(segment_info, ':', 1) AS m FROM pragma_storage_info('${alias}.t', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR');")
 			[[ -n "${seg_modes}" ]] || seg_modes="none"
 
 			if [[ "${COLD}" == "1" ]]; then
-				psql "${CONN}" -X -q -c "DETACH ${alias};" >/dev/null 2>&1
 				stop_serened
 				start_serened
-				psql "${CONN}" -X -q -v ON_ERROR_STOP=1 \
-					-c "ATTACH '${db_path}' AS ${alias} (TYPE duckdb, STORAGE_VERSION 'serenedb_latest');" >/dev/null 2>&1
 			fi
 
 			# Read path 1: full scan materialising every value.
@@ -350,14 +345,12 @@ for shape in ${SHAPES}; do
 			printf '  filter %s ms\n' "${filt_ms}"
 
 			psql "${CONN}" -X -q -c "CHECKPOINT ${alias};" >/dev/null 2>&1
-			psql "${CONN}" -X -q -c "DETACH ${alias};" >/dev/null 2>&1
 			[[ -f "${db_path}" ]] && file_bytes=$(du -sb "${db_path}" | awk '{print $1}')
 		else
-			psql "${CONN}" -X -q -c "DETACH ${alias};" >/dev/null 2>&1
 			echo "  status: ${status}"
 		fi
 
-		[[ "${KEEP}" == "1" ]] || rm -f "${db_path}" "${db_path}.wal"
+		[[ "${KEEP}" == "1" ]] || psql "${CONN}" -X -q -c "DROP DATABASE IF EXISTS ${alias};" >/dev/null 2>&1
 
 		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 			"${shape}" "${mode}" "${srows}" "${status}" \

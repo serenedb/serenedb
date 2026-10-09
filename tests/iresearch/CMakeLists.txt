@@ -28,6 +28,7 @@ set(iresearch-tests_sources
     ./analysis/shared_object_cache_tests.cpp
     ./analysis/text/sentence_tests.cpp
     ./analysis/text/words_tests.cpp
+    ./analysis/text/unicode_text_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
     ./analysis/filter_tokens_tokenizer_tests.cpp
     ./analysis/geo_tokenizer_tests.cpp
@@ -60,12 +61,12 @@ set(iresearch-tests_sources
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/posting_alloc_test.cpp
+    ./formats/posting/block_codec_test.cpp
     ./formats/hnsw/hnsw_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
-    ./formats/skip_list_test.cpp
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
@@ -125,6 +126,8 @@ set(iresearch-tests_sources
     ./search/phrase_filter_tests.cpp
     ./search/phrase_slop_matcher_tests.cpp
     ./search/phrase_slop_matcher_fuzz.cpp
+    ./search/phrase_positions_test.cpp
+    ./search/shingle_phrase_test.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
     ./search/geo_filter_test.cpp
@@ -212,6 +215,7 @@ target_link_libraries(
     simdjson
     simdutf
 )
+sdb_link_duckdb_extensions(iresearch-tests)
 
 target_include_directories(
     iresearch-tests
@@ -248,6 +252,7 @@ target_link_libraries(
     simdjson
     simdutf
 )
+sdb_link_duckdb_extensions(iresearch-load-tests)
 
 target_include_directories(
     iresearch-load-tests

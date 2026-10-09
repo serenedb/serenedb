@@ -170,3 +170,52 @@ statement error
 INSERT INTO exams VALUES (2, 1, 2, 10);
 ----
 db error: ERROR: Violates foreign key constraint because key "id: 2" does not exist in the referenced table
+
+
+# DOCS_TEST: example_009
+
+statement ok
+USE $__DATABASE__;
+
+statement ok
+DROP TABLE IF EXISTS accounts;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE accounts (id INTEGER PRIMARY KEY DEFERRED, name VARCHAR);
+
+statement ok
+INSERT INTO accounts VALUES (1, 'a'), (2, 'b');
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO accounts VALUES (2, 'c');
+
+statement ok
+UPDATE accounts SET id = 3 WHERE name = 'c';
+
+statement ok
+COMMIT;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO accounts VALUES (3, 'd');
+
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "3"
+
+
+query
+SELECT id, name FROM accounts ORDER BY id;
+----
+id	name
+1	a
+2	b
+3	c

@@ -1,4 +1,5 @@
 import type { SearchResultItem } from "@serenedb/docs-search-core";
+import { pageKey } from "@utils/urlmap";
 
 /** Lowercase alphanumeric tokens with a crude plural fold ("functions" ≡ "function"). */
 const titleTokens = (text: string): string[] => {
@@ -16,6 +17,12 @@ const pluralFold = (t: string): string => {
     if (t.length > 3 && t.endsWith("s") && !t.endsWith("ss")) return t.slice(0, -1);
     return t;
 };
+
+/** A heading repeated on this many pages of one result list is boilerplate. */
+const BOILERPLATE_PAGES = 3;
+
+/** Fewer inlinks than this is "not linked" — noise, not a popularity signal. */
+const MIN_INLINKS = 3;
 
 export const RankingService = {
     /**
@@ -58,11 +65,28 @@ export const RankingService = {
      *       "Date Part Functions" while the user is mid-word)
      *   1 — every query term matches a title word
      *   0 — everything else
-     * Within a tier, repeated titles ("See also", "Next steps" — boilerplate
-     * sections that recur on every page and score high on term density) sink
-     * below distinct ones; otherwise the relevance order is untouched.
+     * Within a tier, boilerplate titles ("See also", "Next steps" — sections
+     * that recur on every page and score high on term density) sink below
+     * distinct ones; otherwise the relevance order is untouched. A title
+     * counts as boilerplate when sections of at least BOILERPLATE_PAGES
+     * different pages carry it — two pages' "Aggregate Functions" are two
+     * real answers, not boilerplate.
+     *
+     * Several titles that all equal the query ("Hybrid Search" in the
+     * reference, in a client library, in its FAQ) are told apart first by
+     * being the page's own title (the page about it beats a section about
+     * it elsewhere), then by how many pages link to theirs: the page the
+     * docs themselves point readers to comes first. Pages with fewer than
+     * three inlinks count as unlinked; above that, half-log2 buckets
+     * (4 and 5 links tie, 12 beats 7) keep small differences from
+     * reordering equal titles — the relevance order decides inside a
+     * bucket, though one more link can still cross a bucket edge.
      */
-    rerankByTitle: (q: string, results: SearchResultItem[]): SearchResultItem[] => {
+    rerankByTitle: (
+        q: string,
+        results: SearchResultItem[],
+        inlinks?: ReadonlyMap<string, number>,
+    ): SearchResultItem[] => {
         const queryTokens = titleTokens(q);
         if (queryTokens.length === 0) return results;
 
@@ -94,23 +118,35 @@ export const RankingService = {
             return covered ? 1 : 0;
         };
 
-        const titleCounts = new Map<string, number>();
+        const titlePages = new Map<string, Set<string>>();
         for (const item of results) {
             const key = titleTokens(item.title).join(" ");
-            titleCounts.set(key, (titleCounts.get(key) ?? 0) + 1);
+            (titlePages.get(key) ?? titlePages.set(key, new Set()).get(key)!).add(pageKey(item.url));
         }
         const seen = new Map<string, number>();
         const decorated = results.map((item, i) => {
             const key = titleTokens(item.title).join(" ");
             const occurrence = seen.get(key) ?? 0;
             seen.set(key, occurrence + 1);
-            // every copy of a recurring title is boilerplate, including the first
-            const dup = (titleCounts.get(key) ?? 1) > 1 ? 1 + occurrence : 0;
-            return { item, i, tier: tier(item), pre: rawPrefix(item.title), dup };
+            // every copy of a boilerplate title sinks, including the first
+            const dup = (titlePages.get(key)?.size ?? 1) >= BOILERPLATE_PAGES ? 1 + occurrence : 0;
+            const t = tier(item);
+            const page = t === 2 && item.level != null && item.level <= 1 ? 1 : 0;
+            const links = t === 2 ? (inlinks?.get(pageKey(item.url)) ?? 0) : 0;
+            const pop = links < MIN_INLINKS ? 0 : Math.floor(2 * Math.log2(links));
+            return { item, i, tier: t, pre: rawPrefix(item.title), page, pop, dup };
         });
 
         return decorated
-            .sort((a, b) => b.tier - a.tier || b.pre - a.pre || a.dup - b.dup || a.i - b.i)
+            .sort(
+                (a, b) =>
+                    b.tier - a.tier ||
+                    b.pre - a.pre ||
+                    b.page - a.page ||
+                    b.pop - a.pop ||
+                    a.dup - b.dup ||
+                    a.i - b.i,
+            )
             .map((x) => x.item);
     },
 };

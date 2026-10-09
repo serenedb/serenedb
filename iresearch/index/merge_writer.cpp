@@ -473,91 +473,101 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
 
 const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
+struct NormPiece {
+  const MergeSource* source;
+  const NormColumnReader* reader;
+  size_t region;
+  NormStats planned;
+};
+
+constexpr size_t kNormMergeChunk = 64 * 1024;
+
+void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
+                    std::vector<uint32_t>& values) {
+  if (piece.reader == nullptr) {
+    for (auto left = piece.planned.rows; left != 0;) {
+      const auto n = std::min<uint64_t>(left, kNormMergeChunk);
+      values.assign(n, 0);
+      writer.Write(values);
+      left -= n;
+    }
+    return;
+  }
+  const auto& src = *piece.source;
+  const auto& region = piece.reader->Region(piece.region);
+  const bool has_mask = HasRemovals(src.reader->Meta());
+  auto mask = src.reader->MaskedDocs();
+  for (auto doc = region.first_doc; doc != region.end_doc;) {
+    const auto n = std::min<size_t>(region.end_doc - doc, kNormMergeChunk);
+    values.resize(n);
+    piece.reader->Decode(doc, n, values.data());
+    if (has_mask) {
+      size_t live = 0;
+      for (size_t i = 0; i != n; ++i) {
+        values[live] = values[i];
+        live += !mask.Contains(static_cast<doc_id_t>(doc + i));
+      }
+      values.resize(live);
+    }
+    writer.Write(values);
+    doc += static_cast<doc_id_t>(n);
+  }
+}
+
 field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
                                     std::span<const MergeSource> sources,
                                     const IndexFieldOptions* field_options) {
+  std::vector<NormPiece> pieces;
   bool any_source_has_norm = false;
   for (const auto& src : sources) {
-    if (!src.col_reader) {
-      continue;
-    }
-    const auto* source_terms = src.reader->field(id);
-    if (source_terms && field_limits::valid(source_terms->meta().norm) &&
-        src.col_reader->NormColumn(source_terms->meta().norm) != nullptr) {
-      any_source_has_norm = true;
-      break;
-    }
-  }
-  field_id norm_id = field_limits::invalid();
-  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  if (any_source_has_norm && field_options) {
-    norm_id = field_options->GetNormColumnId(id);
-    row_group_size = field_options->row_group_size;
-  }
-  field_id out_id = field_limits::invalid();
-  NormColumnWriter* norm_writer = nullptr;
-  uint64_t merged_row = 0;
-  for (const auto& src : sources) {
-    const NormColumnReader* norm_reader = nullptr;
+    const NormColumnReader* reader = nullptr;
     if (src.col_reader) {
       if (const auto* source_terms = src.reader->field(id);
           source_terms && field_limits::valid(source_terms->meta().norm)) {
-        norm_reader = src.col_reader->NormColumn(source_terms->meta().norm);
+        reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
     }
-
-    if (!norm_reader) {
-      merged_row += src.alive_count;
-      if (norm_writer) {
-        norm_writer->PadTo(merged_row);
+    if (!reader) {
+      if (src.alive_count != 0) {
+        pieces.push_back(
+          {&src, nullptr, 0, NormStats{.rows = src.alive_count, .min = 0}});
       }
       continue;
     }
-
-    if (!norm_writer) {
-      SDB_ENSURE(field_limits::valid(norm_id),
-                 "MergeNormColumnFromSources: GetNormColumnId did not "
-                 "mint a valid id for field ",
-                 id);
-      out_id = norm_id;
-      norm_writer = &col_writer.OpenNormColumn(out_id, row_group_size);
-      norm_writer->PadTo(merged_row);
-    }
-
-    SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
-    const bool has_mask = HasRemovals(src.reader->Meta());
-    auto it_mask = src.reader->MaskedDocs();
-    for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
-         ++rg) {
-      const auto bytes = norm_reader->RowGroupBytes(rg);
-      const auto byte_size = norm_reader->ByteSize(rg);
-      const auto rg_first_row = norm_reader->RowGroupFirstRow(rg);
-      const auto n = norm_reader->RowGroupRowCount(rg);
-      if (!has_mask) {
-        norm_writer->AppendBytes(merged_row, bytes.data(), n, byte_size);
-        merged_row += n;
-        continue;
-      }
-      size_t run_start = 0;
-      auto flush_run = [&](size_t run_end) {
-        if (run_end > run_start) {
-          const auto run = run_end - run_start;
-          norm_writer->AppendBytes(
-            merged_row, bytes.data() + run_start * byte_size, run, byte_size);
-          merged_row += run;
-        }
-      };
-      for (size_t i = 0; i < n; ++i) {
-        const auto src_doc =
-          static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (it_mask.Contains(src_doc)) {
-          flush_run(i);
-          run_start = i + 1;
-        }
-      }
-      flush_run(n);
+    SDB_ASSERT(reader->RowCount() == src.reader->docs_count());
+    any_source_has_norm = true;
+    for (size_t r = 0; r != reader->RegionCount(); ++r) {
+      pieces.push_back({&src, reader, r, reader->Stats(r)});
     }
   }
+  if (!any_source_has_norm || !field_options) {
+    return field_limits::invalid();
+  }
+  const auto out_id = field_options->GetNormColumnId(id);
+  SDB_ENSURE(field_limits::valid(out_id),
+             "MergeNormColumnFromSources: GetNormColumnId did not "
+             "mint a valid id for field ",
+             id);
+  auto& writer = col_writer.StreamNormColumn(out_id);
+  std::vector<uint32_t> values;
+  for (size_t i = 0; i != pieces.size();) {
+    auto planned = pieces[i].planned;
+    const auto layout = PickNormLayout(planned);
+    size_t j = i + 1;
+    for (; j != pieces.size(); ++j) {
+      const auto next = PickNormLayout(pieces[j].planned);
+      if (next.bits != layout.bits || next.value != layout.value) {
+        break;
+      }
+      planned.Merge(pieces[j].planned);
+    }
+    writer.OpenRegion(planned);
+    for (; i != j; ++i) {
+      MergeNormPiece(pieces[i], writer, values);
+    }
+    writer.CloseRegion();
+  }
+  writer.Finalize();
   return out_id;
 }
 

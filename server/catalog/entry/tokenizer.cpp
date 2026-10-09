@@ -50,7 +50,8 @@ TokenizerCatalogEntry::TokenizerCatalogEntry(duckdb::Catalog& catalog,
     _tokenizer{std::make_shared<Tokenizer>(
       search::Features{static_cast<irs::IndexFeatures>(info.features)},
       UnpackTokenizerConfig(info.GetQualifiedName().Name().GetIdentifierName(),
-                            info.config))} {
+                            info.config))},
+    _definition{info.definition} {
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -89,6 +90,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> TokenizerCatalogEntry::GetInfo() const {
   info->SetQualification(catalog.GetName(), ParentSchemaName());
   info->features = std::to_underlying(GetFeatures().GetIndexFeatures());
   info->config = PackTokenizerConfig(Config());
+  info->definition = _definition;
   SDB_IF_FAILURE("tokenizer_config_without_last_option") {
     auto older = irs::analysis::Clone(Config());
     std::visit(

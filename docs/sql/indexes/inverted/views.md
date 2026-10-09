@@ -94,7 +94,7 @@ Names in a view body are resolved each time the view is used — first in the vi
   ```sql
   CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
       warehouse '⟨warehouse⟩',
-      endpoint '⟨https://your-rest-catalog/iceberg/v1/restcatalog⟩',
+      uri '⟨https://your-rest-catalog/iceberg/v1/restcatalog⟩',
       authorization_type '⟨oauth2⟩', token '⟨...⟩',
       max_table_staleness '10 minutes');
 
@@ -127,6 +127,8 @@ Selecting a real source column that is neither indexed nor `INCLUDE`d **material
 <SqlLogicTest id="sql/indexes/inverted/views/materialize" />
 
 Because the read is live, if the underlying source changed after the index was built, materialized values reflect the *current* source: rows deleted from the source come back as `NULL`, and edited content shows its new value (or raises an error if a file became unreadable). Counts and scores, by contrast, still reflect the frozen build-time snapshot.
+
+Columns a file reader adds on its own materialize too, with the values the view gives them: a hive partition column (`hive_partitioning`) comes from the path of the row's file, `filename` is that path, and `file_row_number` is the position the reader reports for the row. Filters on these columns work like filters on any other materialized column.
 
 ## Generic views
 

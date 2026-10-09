@@ -1,0 +1,98 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET trgrc_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+DETACH DATABASE IF EXISTS trgrc_${__DATABASE__};
+
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS trgrc_${__DATABASE__} (
+  TYPE ICEBERG,
+  URI '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'sigv4',
+  SIGV4_SERVICE 'custom',
+  SIGV4_REGION 'us-east-1',
+  SECRET 'trgrc_${__DATABASE__}'
+);
+
+
+statement ok
+CREATE TABLE trgrc_t (id INT, v TEXT);
+
+
+statement ok
+CREATE TABLE trgrc_audit (tag TEXT);
+
+
+statement ok
+CREATE TRIGGER trgrc_upd AFTER UPDATE ON trgrc_t FOR EACH STATEMENT
+  INSERT INTO trgrc_audit VALUES ('update');
+
+
+statement ok
+DROP SECRET trgrc_${__DATABASE__};
+
+
+query
+SELECT trigger_name FROM duckdb_triggers() WHERE database_name = current_database() ORDER BY 1;
+----
+trigger_name
+trgrc_upd
+
+
+statement ok
+DETACH DATABASE trgrc_${__DATABASE__};
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT trigger_name FROM duckdb_triggers() WHERE database_name = current_database() ORDER BY 1;
+----
+trigger_name
+trgrc_upd
+
+
+connection after_crash
+statement count 1
+INSERT INTO trgrc_t VALUES (1, 'a');
+
+
+connection after_crash
+statement count 1
+UPDATE trgrc_t SET v = 'b';
+
+
+connection after_crash
+query
+SELECT tag FROM trgrc_audit;
+----
+tag
+update

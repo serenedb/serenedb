@@ -1,0 +1,320 @@
+statement ok
+CREATE TABLE tci (id SERIAL PRIMARY KEY, v INT)
+
+
+statement ok
+CREATE TABLE tcp (id INT, v INT)
+
+
+statement ok
+INSERT INTO tci (v) VALUES (1), (2)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+INSERT INTO tci (v) VALUES (3)
+
+
+connection s2
+statement error
+TRUNCATE tci
+----
+db error: ERROR: Attempting to truncate table "tci" but another transaction has added rows to this table
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+TRUNCATE tci
+
+
+connection s2
+query
+SELECT count(*) AS n FROM tci
+----
+n
+0
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+TRUNCATE tcp
+
+
+connection s2
+statement ok
+INSERT INTO tcp VALUES (1, 5)
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT id, v FROM tcp
+----
+id	v
+1	5
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+query
+SELECT count(*) AS n FROM tcp
+----
+n
+1
+
+
+connection s2
+statement ok
+INSERT INTO tcp VALUES (2, 6)
+
+
+connection s1
+statement error
+TRUNCATE tcp
+----
+db error: ERROR: Attempting to truncate table "tcp" but another transaction has added rows to this table
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+INSERT INTO tci (v) VALUES (4), (5)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+INSERT INTO tci (v) VALUES (6)
+
+
+connection s2
+statement error
+TRUNCATE tci RESTART IDENTITY
+----
+db error: ERROR: Attempting to truncate table "tci" but another transaction has added rows to this table
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+TRUNCATE tci RESTART IDENTITY
+
+
+connection s2
+statement ok
+INSERT INTO tci (v) VALUES (7)
+
+
+connection s2
+query
+SELECT id, v FROM tci
+----
+id	v
+1	7
+
+
+statement ok
+DROP TABLE tci
+
+
+statement ok
+DROP TABLE tcp
+
+
+statement ok
+CREATE TABLE tcs (id BIGINT PRIMARY KEY, v TEXT) WITH (storage = 'search')
+
+
+statement ok
+CREATE TABLE tcn (a INT, v TEXT) WITH (storage = 'search')
+
+
+statement ok
+INSERT INTO tcs VALUES (1, 'a'), (2, 'b')
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+INSERT INTO tcs VALUES (3, 'c')
+
+
+connection s2
+statement error
+TRUNCATE tcs
+----
+db error: ERROR: Attempting to truncate table tcs but another transaction is writing to this table
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+TRUNCATE tcs
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tcs
+
+
+query
+SELECT id, v FROM tcs ORDER BY id
+----
+id	v
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+TRUNCATE tcs
+
+
+connection s2
+statement error
+INSERT INTO tcs VALUES (4, 'd')
+----
+db error: ERROR: Attempting to write to table tcs but another transaction is truncating it
+
+
+connection s1
+statement ok
+INSERT INTO tcs VALUES (5, 'e')
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+statement ok
+INSERT INTO tcs VALUES (4, 'd')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tcs
+
+
+query
+SELECT id, v FROM tcs ORDER BY id
+----
+id	v
+4	d
+5	e
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+DELETE FROM tcn
+
+
+connection s2
+statement error
+TRUNCATE tcn
+----
+db error: ERROR: Attempting to truncate table tcn but another transaction is writing to this table
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+TRUNCATE tcn
+
+
+connection s1
+statement ok
+ROLLBACK
+
+
+connection s2
+statement ok
+INSERT INTO tcn VALUES (1, 'kept')
+
+
+connection s2
+statement ok
+TRUNCATE tcn
+
+
+connection s2
+statement ok
+INSERT INTO tcn VALUES (2, 'after')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tcn
+
+
+query
+SELECT a, v FROM tcn ORDER BY a
+----
+a	v
+2	after
+
+
+statement ok
+DROP TABLE tcs
+
+
+statement ok
+DROP TABLE tcn

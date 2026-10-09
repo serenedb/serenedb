@@ -22,6 +22,7 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/enums/compression_type.hpp>
@@ -89,40 +90,68 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
   }
 }
 
-NormColumnMeta DeserializeNormMetas(duckdb::BinaryDeserializer& d, field_id id,
-                                    uint64_t footer_offset) {
-  NormColumnMeta meta;
-  meta.row_group_size = d.ReadProperty<uint32_t>(1, "row_group_size");
-  meta.row_count = d.ReadProperty<uint64_t>(2, "row_count");
-  d.ReadList(
-    3, "row_groups",
-    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-        NormRowGroupMeta p;
-        p.byte_size = obj.ReadProperty<uint8_t>(0, "byte_size");
-        p.max = obj.ReadProperty<uint32_t>(1, "max");
-        p.sum = obj.ReadProperty<uint64_t>(2, "sum");
-        p.non_zero_count = obj.ReadProperty<uint64_t>(3, "non_zero_count");
-        p.file_offset = obj.ReadProperty<uint64_t>(4, "file_offset");
-        SDB_ENSURE(p.byte_size == 1 || p.byte_size == 2 || p.byte_size == 4,
-                   ".col reader: norm byte_size on column id ", id, ": ",
-                   p.byte_size);
-        meta.row_groups.push_back(p);
-      });
-    });
-  const uint64_t groups = meta.row_groups.size();
-  const uint64_t rgs = meta.row_group_size;
-  SDB_ENSURE(groups != 0 && rgs != 0 && meta.row_count > (groups - 1) * rgs &&
-               meta.row_count <= groups * rgs,
-             ".col reader: norm column id ", id, " holds ", meta.row_count,
-             " rows across ", groups, " row groups of ", rgs);
-  for (uint64_t rg = 0; rg < groups; ++rg) {
-    const auto& p = meta.row_groups[rg];
-    const auto rows = std::min(rgs, meta.row_count - rg * rgs);
-    SDB_ENSURE(p.file_offset + rows * p.byte_size <= footer_offset,
-               ".col reader: norm data on column id ", id,
-               " out of range (offset ", p.file_offset, ")");
+NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
+                                     uint64_t footer_offset) {
+  NormRegionMeta r;
+  r.stats.rows = d.ReadProperty<uint64_t>(0, "rows");
+  r.stats.sum = d.ReadProperty<uint64_t>(1, "sum");
+  r.stats.non_zero = d.ReadProperty<uint64_t>(2, "non_zero");
+  r.stats.wide8 = d.ReadProperty<uint64_t>(3, "wide8");
+  r.stats.wide16 = d.ReadProperty<uint64_t>(4, "wide16");
+  r.stats.min = d.ReadProperty<uint32_t>(5, "min");
+  r.stats.max = d.ReadProperty<uint32_t>(6, "max");
+  r.bits = d.ReadProperty<uint8_t>(7, "bits");
+  SDB_ENSURE(r.stats.rows != 0 &&
+               r.stats.rows <= doc_limits::eof() - doc_limits::min() &&
+               r.stats.min <= r.stats.max &&
+               (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32),
+             ".col reader: norm region on column id ", id, " is corrupt");
+  if (r.bits == 0) {
+    r.value = d.ReadProperty<uint32_t>(8, "value");
+    return r;
   }
+  r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
+  const auto slots = NormSlotsSize(r);
+  SDB_ENSURE(r.file_offset + slots >= r.file_offset &&
+               r.file_offset + slots <= footer_offset,
+             ".col reader: norm data on column id ", id,
+             " out of range (offset ", r.file_offset, ")");
+  r.exceptions =
+    d.ReadPropertyWithExplicitDefault<uint32_t>(10, "exceptions", 0);
+  if (r.exceptions == 0) {
+    return r;
+  }
+  r.overflow = d.ReadProperty<uint32_t>(11, "overflow");
+  r.shift = d.ReadProperty<uint8_t>(12, "shift");
+  r.exception_bytes = d.ReadProperty<uint8_t>(13, "exception_bytes");
+  r.table_offset = d.ReadProperty<uint64_t>(14, "table_offset");
+  SDB_ENSURE(r.bits != 32 && r.exceptions <= r.stats.rows &&
+               r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
+               (r.exception_bytes == 2 || r.exception_bytes == 4),
+             ".col reader: norm exceptions on column id ", id, " are corrupt");
+  const auto table = NormTableSize(r);
+  SDB_ENSURE(r.table_offset + table >= r.table_offset &&
+               r.table_offset + table <= footer_offset,
+             ".col reader: norm exceptions on column id ", id,
+             " out of range (offset ", r.table_offset, ")");
+  return r;
+}
+
+NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
+                                   uint64_t footer_offset) {
+  NormColumnMeta meta;
+  d.ReadList(1, "regions",
+             [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+               list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+                 auto& r = meta.regions.emplace_back(
+                   DeserializeNormRegion(obj, id, footer_offset));
+                 meta.row_count += r.stats.rows;
+               });
+             });
+  SDB_ENSURE(!meta.regions.empty() &&
+               meta.row_count <= doc_limits::eof() - doc_limits::min(),
+             ".col reader: norm column id ", id, " holds ", meta.row_count,
+             " rows across ", meta.regions.size(), " regions");
   return meta;
 }
 
@@ -158,12 +187,11 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
             const auto id =
               static_cast<field_id>(obj.ReadProperty<uint64_t>(0, "id"));
-            auto meta = DeserializeNormMetas(obj, id, data_size);
-            auto nr = std::make_unique<NormColumnReader>(id, std::move(meta),
-                                                         _ctx.In());
-            const bool ok = _norm_by_id.emplace(id, nr.get()).second;
+            auto column = std::make_unique<NormColumnReader>(
+              id, DeserializeNormMeta(obj, id, data_size), _ctx.In());
+            const bool ok = _norm_by_id.emplace(id, column.get()).second;
             SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", id);
-            _norm_readers.push_back(std::move(nr));
+            _norm_columns.push_back(std::move(column));
           });
         });
       footer.Unset<duckdb::DatabaseInstance>();
@@ -175,10 +203,6 @@ ColReader::~ColReader() = default;
 const ColumnReader* ColReader::Column(field_id id) const noexcept {
   auto it = _by_id.find(id);
   return it == _by_id.end() ? nullptr : it->second;
-}
-
-bool ColReader::HasNormColumn(field_id id) const noexcept {
-  return _norm_by_id.contains(id);
 }
 
 const NormColumnReader* ColReader::NormColumn(field_id id) const noexcept {

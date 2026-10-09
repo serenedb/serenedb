@@ -121,11 +121,11 @@ For portability, `TIMESTAMPTZ` values will always be displayed using GMT offsets
 
 <SqlLogicTest id="sql/functions/timestamptz/example_001" />
 
-Named time zone parsing (such as parsing a time zone name from a string and casting it to a representation in the local time zone) relies on ICU time zone support.
+Named time zone parsing (such as parsing a time zone name from a string and casting it to a representation in the local time zone) uses the built-in time zone database.
 
-## ICU Timestamp with Time Zone Operators
+## Timestamp with Time Zone Operators
 
-The table below shows the available mathematical operators for `TIMESTAMP WITH TIME ZONE` values. These operators rely on ICU time zone support.
+The table below shows the available mathematical operators for `TIMESTAMP WITH TIME ZONE` values. These operators work in the current time zone.
 
 | Operator | Description                   | Example                                               | Result                |
 | :------- | :---------------------------- | :---------------------------------------------------- | :-------------------- |
@@ -135,14 +135,14 @@ The table below shows the available mathematical operators for `TIMESTAMP WITH T
 
 Adding to or subtracting from [infinite values](../../sql/data_types/timestamp.md#special-values) produces the same infinite value.
 
-Addition and subtraction of intervals uses the [ICU Calendar add function](https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/classicu_1_1Calendar.html#aa6e19a88ca2225eddcbbe82313c9c095).
+Addition and subtraction of intervals works like the [ICU Calendar add function](https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/classicu_1_1Calendar.html#aa6e19a88ca2225eddcbbe82313c9c095).
 For positive intervals (forwards in time) the fields are incremented from least to most significant.
 For negative intervals (backwards in time) the fields are decremented from most to least significant.
 This produces the same results as Postgres, but does not match some [more recent calendar RFCs](https://www.rfc-editor.org/rfc/rfc5545).
 
-## ICU Timestamp with Time Zone Functions
+## Time Zone Aware Timestamp with Time Zone Functions
 
-The table below shows the ICU scalar functions for `TIMESTAMP WITH TIME ZONE` values. These functions rely on ICU time zone support.
+The table below shows the scalar functions for `TIMESTAMP WITH TIME ZONE` values that work in the current time zone and calendar.
 
 | Name                                                                                                                                            | Description                                                                                                                                                                                                                                                                                                                                                          |
 | :---------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -357,7 +357,7 @@ Parses string to a `TIMESTAMP` according to the [format string](../../sql/functi
 
 There are also dedicated extraction functions to get the [subfields](../../sql/functions/datepart.md).
 
-## ICU Timestamp Table Functions
+## Timestamp with Time Zone Table Functions
 
 The table below shows the available table functions for `TIMESTAMP WITH TIME ZONE` types.
 
@@ -392,9 +392,9 @@ Infinite values are not allowed as table function bounds.
 
 </div>
 
-## ICU Timestamp Without Time Zone Functions
+## Time Zone Aware Timestamp Without Time Zone Functions
 
-The table below shows the ICU scalar functions that operate on plain `TIMESTAMP` values. These functions rely on ICU time zone support.
+The table below shows the scalar functions that operate on plain `TIMESTAMP` values and work with time zones.
 These functions assume that the `TIMESTAMP` is a “local timestamp”.
 
 A local timestamp is effectively a way of encoding the part values from a time zone into a single value.
@@ -478,11 +478,11 @@ Often the same functionality can be implemented more reliably using the `struct`
 
 ## At Time Zone
 
-The `AT TIME ZONE` syntax is syntactic sugar for the (two argument) `timezone` function listed above. Like that function, it relies on ICU time zone support:
+The `AT TIME ZONE` syntax is syntactic sugar for the (two argument) `timezone` function listed above:
 
 <SqlLogicTest id="sql/functions/timestamptz/example_003" />
 
-The `TIMESTAMP WITH TIME ZONE` spelling of the input type is also not accepted by the parser in this build:
+The input can also be spelled as a `TIMESTAMP WITH TIME ZONE` literal; the result is the local time in the given zone:
 
 <SqlLogicTest id="sql/functions/timestamptz/example_004" />
 
@@ -499,13 +499,13 @@ the result will be `NULL`.
 
 ## Calendars
 
-ICU also supports [non-Gregorian calendars](../../sql/data_types/timestamp.md#calendar-support).
+SereneDB also supports [non-Gregorian calendars](../../sql/data_types/timestamp.md#calendar-support).
 If such a calendar is current, then the display and binning operations will use that calendar.
 
 ### Daylight Saving Time (DST) Transitions
 
 Adding calendar intervals such as `INTERVAL '1 day'` to a
-`TIMESTAMPTZ` uses the ICU time zone operators described above.
+`TIMESTAMPTZ` uses the time zone operators described above.
 The interval is added in terms of the calendar fields, so the result
 adjusts around a daylight saving time transition rather than simply
 adding a fixed number of hours:

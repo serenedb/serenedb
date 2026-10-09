@@ -23,6 +23,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -30,11 +31,10 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/fixed_buffer.hpp"
 
 namespace irs {
 
@@ -44,15 +44,12 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
 
  public:
   template<typename... Args>
-  ScoreBoundWriterImpl(size_t max_levels, Args&&... args)
-    : _producer{std::forward<Args>(args)...} {
-    SDB_ASSERT(max_levels != 0);
-    _levels.resize(max_levels + 1);
-  }
+  explicit ScoreBoundWriterImpl(Args&&... args)
+    : _producer{std::forward<Args>(args)...} {}
 
   bool Prepare(const NormProvider& norms, const FieldProperties& meta,
-               const AttributeProvider& attrs) final {
-    return _producer.Prepare(norms, meta, attrs);
+               bool has_freq) final {
+    return _producer.Prepare(norms, meta, has_freq);
   }
 
   void Reset() noexcept final {
@@ -61,45 +58,32 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     }
   }
 
-  void Update() noexcept final {
-    SDB_ASSERT(!_levels.empty());
-    _producer.Produce(_levels.front());
+  void Update(std::span<const doc_id_t> docs, const uint32_t* freqs) final {
+    _producer.Produce(docs, freqs, _levels.front());
   }
 
-  void Write(size_t level, MemoryIndexOutput& out) final {
-    SDB_ASSERT(level + 1 < _levels.size());
+  void WriteRoot(DataOutput& out) final {
+    Producer::Write(_levels.front(), out);
+  }
+
+  void Take(size_t level, uint32_t* out) final {
+    SDB_ASSERT(level < _levels.size());
     auto& entry = _levels[level];
-    _producer.Produce(entry, _levels[level + 1]);
-    Producer::Write(entry, out);
+    if (level + 1 != _levels.size()) {
+      _producer.Produce(entry, _levels[level + 1]);
+    }
+    Producer::Take(entry, out);
     entry = {};
   }
 
-  void WriteRoot(size_t level, IndexOutput& out) final {
-    SDB_ASSERT(level < _levels.size());
-    auto& entry = _levels[level];
-    Producer::Write(entry, out);
-  }
-
-  uint8_t Size(size_t level) const noexcept final {
-    SDB_ASSERT(level + 1 < _levels.size());
-    const auto& entry = _levels[level];
-    return Producer::Size(entry);
-  }
-
-  uint8_t SizeRoot(size_t level) noexcept final {
-    SDB_ASSERT(level < _levels.size());
-    auto it = _levels.begin();
-    for (auto end = it + level; it != end;) {
-      const auto& from = *it;
-      _producer.Produce(from, *++it);
-    }
-    return Producer::Size(*it);
+  uint8_t SizeRoot() const noexcept final {
+    return Producer::Size(_levels.front());
   }
 
  private:
-  // doc_limits::kMaxSkipLevels -- current max skip list levels
-  // 1 -- for whole skip list level
-  utils::FixedBuffer<EntryType, doc_limits::kMaxSkipLevels + 1> _levels;
+  static constexpr size_t kLevels = 3;
+
+  std::array<EntryType, kLevels> _levels{};
   [[no_unique_address]] Producer _producer;
 };
 
@@ -121,7 +105,7 @@ enum ScoreBoundTag : uint32_t {
 };
 
 template<uint32_t Tag>
-class FreqNormProducer : public AttributeProvider {
+class FreqNormProducer {
   static_assert((Tag & kScoreBoundFreq) == 0);
   static_assert((Tag & kScoreBoundNorm) == 0);
 
@@ -205,6 +189,15 @@ class FreqNormProducer : public AttributeProvider {
     }
   }
 
+  static void Take(Entry entry, uint32_t* out) noexcept {
+    out[0] = entry.freq;
+    if constexpr (kNorm) {
+      out[1] = entry.norm;
+    } else {
+      out[1] = entry.freq;
+    }
+  }
+
   static uint8_t Size(Entry entry) noexcept {
     SDB_ASSERT(entry.freq >= 1);
     size_t size = bytes_io<uint32_t>::vsize(entry.freq);
@@ -220,76 +213,53 @@ class FreqNormProducer : public AttributeProvider {
   explicit FreqNormProducer(score_t b = 0.f) : _b{b} {}
 
   bool Prepare(const NormProvider& norms, const FieldProperties& meta,
-               const AttributeProvider& attrs) {
-    _freq = irs::get<FreqAttr>(attrs);
-
-    if (!_freq) [[unlikely]] {
+               bool has_freq) {
+    if (!has_freq) [[unlikely]] {
       return false;
     }
-
     if constexpr (kNorm) {
-      _doc = irs::get<ValueIndex>(attrs);
-
-      if (!_doc) [[unlikely]] {
-        return false;
-      }
-
       _norm_it = norms.norms(meta.norm);
       if (!_norm_it) [[unlikely]] {
         return false;
       }
-
       if constexpr (kAvgDL) {
         _avg_dl = _norm_it->GetAvg();
       }
-
-      return true;
     }
-
     return true;
   }
-  IRS_FORCE_INLINE void Produce(Entry& to) noexcept {
-    if constexpr (kBm25 || kDivNorm) {
-      const auto freq = _freq->value;
-      ReadNorm();
-      if constexpr (kBm25) {
-        ProduceBM25(freq, _norm.value, to);
-      } else {
-        ProduceDivNorm(freq, _norm.value, to);
-      }
-    } else if constexpr (kMaxFreq) {
-      const auto freq = _freq->value;
-      to.freq = freq > to.freq ? freq : to.freq;
-      if constexpr (kMinNorm) {
-        ReadNorm();
-        to.norm = _norm.value < to.norm ? _norm.value : to.norm;
-        to.norm = to.norm < to.freq ? to.freq : to.norm;
-      }
-    }
-  }
 
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
-    if (irs::Type<FreqAttr>::id() == type) {
-      return const_cast<FreqAttr*>(_freq);
-    }
+  void Produce(std::span<const doc_id_t> docs, const uint32_t* freqs,
+               Entry& to) {
+    SDB_ASSERT(docs.size() <= doc_limits::kBlockSize);
     if constexpr (kNorm) {
-      if (irs::Type<Norm>::id() == type) {
-        return &_norm;
+      auto* const norms = _norms.data();
+      if (docs.size() == kPostingBlock) {
+        _norm_it->GetPostingBlock(
+          std::span<const doc_id_t, kPostingBlock>{docs.data(), kPostingBlock},
+          std::span<uint32_t, kPostingBlock>{norms, kPostingBlock});
+      } else {
+        _norm_it->Get(docs, std::span<uint32_t>{norms, docs.size()});
+      }
+      for (size_t i = 0; i != docs.size(); ++i) {
+        SDB_ASSERT(norms[i] != 0);
+        if constexpr (kBm25) {
+          ProduceBM25(freqs[i], norms[i], to);
+        } else if constexpr (kDivNorm) {
+          ProduceDivNorm(freqs[i], norms[i], to);
+        } else {
+          to.freq = std::max(freqs[i], to.freq);
+          to.norm = std::max(std::min(norms[i], to.norm), to.freq);
+        }
+      }
+    } else {
+      for (size_t i = 0; i != docs.size(); ++i) {
+        to.freq = std::max(freqs[i], to.freq);
       }
     }
-    if (irs::Type<ValueIndex>::id() == type) {
-      return const_cast<ValueIndex*>(_doc);
-    }
-    return nullptr;
   }
 
  private:
-  void ReadNorm() {
-    static_assert(kNorm);
-    _norm.value = _norm_it->Get(_doc->value);
-    SDB_ASSERT(_norm.value);
-  }
-
   static IRS_FORCE_INLINE void ProduceDivNorm(uint32_t freq, uint32_t norm,
                                               Entry& to) noexcept {
     if (static_cast<uint64_t>(freq) * to.norm >
@@ -327,12 +297,10 @@ class FreqNormProducer : public AttributeProvider {
     }
   }
 
-  const FreqAttr* _freq{};
-  const ValueIndex* _doc{};
-  [[no_unique_address]]
-  utils::Need<kNorm, Norm> _norm;
   [[no_unique_address]]
   utils::Need<kNorm, NormReader::ptr> _norm_it;
+  [[no_unique_address]]
+  utils::Need<kNorm, std::array<uint32_t, doc_limits::kBlockSize>> _norms;
   [[no_unique_address]] utils::Need<kBm25, score_t> _b;
   [[no_unique_address]] utils::Need<kAvgDL, score_t> _avg_dl;
 };
@@ -376,6 +344,13 @@ class FreqNormSource final : public ScoreBoundSource {
       // TODO(mbkkt) if (!kNorm) in.skip(read - size);
       norm += in.ReadV32();
     }
+    if constexpr (kNorm) {
+      _norm.value = norm;
+    }
+  }
+
+  void Set(uint32_t freq, uint32_t norm) final {
+    _freq = freq;
     if constexpr (kNorm) {
       _norm.value = norm;
     }

@@ -44,6 +44,10 @@ ALTER SCHEMA xsai_s OWNER TO xsai_owner;
 
 
 statement ok
+GRANT USAGE ON SCHEMA xsai_s TO xsai_bob;
+
+
+statement ok
 CREATE TABLE xsai_s.t (id int);
 
 

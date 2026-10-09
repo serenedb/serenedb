@@ -33,9 +33,9 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
+#include <duckdb/main/query_parameters.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -171,16 +171,19 @@ class HttpSession final
     if (!_conn) {
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
-      auto database = catalog::FindDatabase(dbname);
-      if (!database) {
+      duckdb::idx_t database_id = 0;
+      duckdb::Permissions permissions;
+      if (!catalog::ReadDatabase(
+            dbname, [&](const catalog::DatabaseCatalogEntry& database) {
+              database_id = database.oid;
+              permissions = database.permissions;
+            })) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
                         ERR_MSG("database \"", dbname, "\" does not exist"));
       }
-      const auto database_id = database->oid;
       const std::string_view user =
         _user.empty() ? irs::StaticStrings::kDefaultUser : _user;
-      auto login =
-        sdb::pg::RequireLoginRole(user, dbname, database->permissions);
+      auto login = sdb::pg::RequireLoginRole(user, dbname, permissions);
       if (!login.role) {
         THROW_SQL_ERROR_FROM_DATA(std::move(login.error));
       }
@@ -196,7 +199,7 @@ class HttpSession final
       }
       connector::SereneDBClientState::Register(*_conn->context,
                                                _connection_ctx);
-      _conn->context->session_user = std::string{user};
+      _conn->context->session_user.assign(user);
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }
@@ -209,7 +212,7 @@ class HttpSession final
   // until the executor's on_reschedule wake re-runs us. A blocking
   // Connection().Query() would instead pin this scheduler worker for the
   // whole query and starve the pool under concurrent requests.
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunQuery(
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunQuery(
     std::string sql, bool /*writes*/) final {
     // Connection::Query() captures execution exceptions into the result's
     // ErrorData; the manual drive must do the same (table functions
@@ -219,23 +222,19 @@ class HttpSession final
     // as an ErrorData result too, not an escaped exception.
     try {
       auto& conn = Connection();
-      co_return co_await Drive(
-        conn.PendingQuery(sql, /*allow_stream_result=*/false));
+      co_return co_await Drive(conn.Submit(sql, MaterializedQuery()));
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> RunPrepared(
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunPrepared(
     duckdb::PreparedStatement& statement) final {
     try {
       duckdb::vector<duckdb::Value> params;
-      co_return co_await Drive(
-        statement.PendingQuery(params, /*allow_stream_result=*/false));
+      co_return co_await Drive(statement.Submit(params, MaterializedQuery()));
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 
@@ -252,8 +251,15 @@ class HttpSession final
   }
 
  private:
-  yaclib::Task<duckdb::unique_ptr<duckdb::MaterializedQueryResult>> Drive(
-    duckdb::unique_ptr<duckdb::PendingQueryResult> pending) {
+  static duckdb::QueryParameters MaterializedQuery() {
+    duckdb::QueryParameters parameters;
+    parameters.result_eagerness = duckdb::ResultEagerness::FORCED;
+    parameters.caller_drives = true;
+    return parameters;
+  }
+
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> Drive(
+    duckdb::unique_ptr<duckdb::QueryResult> pending) {
     try {
       if (!pending->HasError()) {
         // In debug interleave queries more often to see more bugs.
@@ -266,10 +272,10 @@ class HttpSession final
         for (;;) {
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
-          if (duckdb::PendingQueryResult::IsResultReady(status)) {
+          if (duckdb::IsObservable(status)) {
             break;
           }
-          if (status == duckdb::PendingExecutionResult::RESULT_NOT_READY) {
+          if (status == duckdb::QueryResultState::NOT_READY) {
             if (++inline_slices < kInlineSliceBudget) {
               continue;
             }
@@ -281,20 +287,14 @@ class HttpSession final
           }
         }
       }
-      // An execution error leaves the pending result un-executable; pull the
-      // error directly (it preserves the typed exception) instead of calling
-      // Execute(), which would throw "unsuccessful pending result".
-      if (pending->HasError()) {
-        co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-          pending->GetErrorObject());
+      auto result = pending->TakeCollectorResult();
+      if (!result) {
+        pending->Complete();
+        result = std::move(pending);
       }
-      auto result = pending->Execute();
-      co_return duckdb::unique_ptr_cast<duckdb::QueryResult,
-                                        duckdb::MaterializedQueryResult>(
-        std::move(result));
+      co_return result;
     } catch (const std::exception& ex) {
-      co_return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-        duckdb::ErrorData{ex});
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
 
@@ -310,6 +310,7 @@ class HttpSession final
   using Transport<Kind, HttpSession<Kind>>::_stopping;
   using Transport<Kind, HttpSession<Kind>>::_producer_gate;
   using Transport<Kind, HttpSession<Kind>>::_task;
+  using Transport<Kind, HttpSession<Kind>>::_handed_off;
   using Transport<Kind, HttpSession<Kind>>::KickSend;
   using Transport<Kind, HttpSession<Kind>>::HasUnsentBytes;
   using Transport<Kind, HttpSession<Kind>>::SendBroken;
@@ -435,14 +436,9 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   auto writer = this->SendWriter();
   yaclib::Future<> cpu;
   if (co_await Negotiate()) {
-    _task = duckdb::make_shared_ptr<CpuResumer>(
-      duckdb::TaskScheduler::GetScheduler(
-        irs::DuckDBEngine::Instance().instance()),
-      *_ioexec);
-    // SessionMain (eager) runs to its first Park; the bootstrap kick schedules
-    // it onto a duck worker.
     cpu = SessionMain();
-    _task->RequestRun();
+    _handed_off = true;
+    _task->Start();
 
     for (;;) {
       _deadline.expires_after(_idle.load(std::memory_order_acquire)

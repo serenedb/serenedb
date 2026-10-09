@@ -25,8 +25,8 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
+#include <fast_float/fast_float.h>
 
-#include <charconv>
 #include <cstdint>
 #include <ranges>
 #include <shared_mutex>
@@ -420,7 +420,7 @@ bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
   }
   const auto* begin = name.data() + 1;
   const auto* end = name.data() + name.size();
-  const auto [ptr, ec] = std::from_chars(begin, end, id);
+  const auto [ptr, ec] = fast_float::from_chars(begin, end, id);
   return ec == std::errc{} && (ptr == end || *ptr == '.');
 }
 
@@ -616,6 +616,10 @@ AddIncomingResult AddIncoming(
           // FIXME(gnusi): optimize PK queries
           docs_mask_modified |= RemoveFromSegment(docs_mask, *query, *reader);
         }
+      }
+      if (incoming.removal) {
+        docs_mask_modified |= RemoveFromSegment(
+          docs_mask, {incoming.removal, writer_limits::kMinTick}, *reader);
       }
     }
 
@@ -937,31 +941,6 @@ bool IndexWriter::Transaction::CommitImpl(uint64_t last_tick) noexcept try {
   // TODO(mbkkt) Use intrusive list to avoid possibility bad_alloc here
   Abort();
   return false;
-}
-
-bool IndexWriter::Transaction::CommitLocked(uint64_t last_tick,
-                                            FlushContext& flush) noexcept {
-  auto* segment = _active.Segment();
-  if (segment == nullptr) {
-    return true;
-  }
-  // An unregistered transaction is queued into whichever context the caller
-  // holds. A registered one belongs to the context current when it registered,
-  // which may not be this one -- PrepareEmplace would then release it, and the
-  // caller would publish an adoption without the removals meant to mask it.
-  SDB_ASSERT(_active.Flush() == nullptr || _active.Flush() == &flush,
-             "CommitLocked on a transaction registered with another context");
-  try {
-    segment->Commit(_queries, last_tick);
-    if (flush.PrepareEmplace(_active)) {
-      flush.EmplaceLocked(std::move(_active));
-    }
-  } catch (...) {
-    // No Abort here: it takes the lock the caller is holding.
-    return false;
-  }
-  _queries = 0;
-  return true;
 }
 
 void IndexWriter::Transaction::Abort() noexcept {
@@ -1701,10 +1680,10 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   const auto current_committed_reader = _committed_reader;
   SDB_ASSERT(current_committed_reader != nullptr);
   const bool pending = _pending_state.Valid();
-  auto ctx = GetFlushContext();
-  lock.unlock();
   // Guard against concurrent Commit/etc
   if (pending) {
+    auto ctx = GetFlushContext();
+    lock.unlock();
     // after some transaction was started:
     if (committed_reader != current_committed_reader) {
       // If some segment already not in current reader
@@ -1789,6 +1768,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   }
 
   auto refs = dir.GetRefs();
+  auto ctx = GetFlushContext();
   std::lock_guard ctx_lock{ctx->pending_mutex};
   auto& segment_mask = ctx->segment_mask;
   segment_mask.reserve(segment_mask.size() + mappings.size() +
@@ -1902,42 +1882,10 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
 
 bool IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
-  std::span<const std::string_view> adopted_metas, Transaction* removals,
-  uint64_t removals_tick) {
+  std::span<const std::string_view> adopted_metas,
+  absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider) {
   if (replaced.empty() && adopted_metas.empty()) {
     return true;
-  }
-
-  // Pin the committed state: the candidate names are masked as string_views
-  // into its metas, so it has to outlive the flush context that holds them --
-  // and holding it also keeps the cleaner off the files until the commit
-  // publishes them. Same reason Compact pins it.
-  decltype(_committed_reader) committed_reader;
-  Compaction candidates;
-  {
-    std::lock_guard lock{_compacting.lock};
-    committed_reader = GetSnapshotImpl();
-    candidates.reserve(replaced.size());
-    for (const auto name : replaced) {
-      const SubReader* found = nullptr;
-      for (const auto& segment : *committed_reader) {
-        if (segment.Meta().name == name) {
-          found = &segment;
-          break;
-        }
-      }
-      if (found == nullptr) {
-        // Not a lost race: a removal that takes a segment's last live doc masks
-        // the whole segment out rather than giving it a docs_mask (PrepareFlush
-        // stage 1), so a source whose rows were all deleted while the caller
-        // was rebuilding it is simply gone. Nothing left to mask, and the
-        // caller's replacement is still adopted -- whatever deleted those rows
-        // reaches the replacement too, by tick if the removal is still pending
-        // and through the host's own reissue if it was already applied.
-        continue;
-      }
-      candidates.push_back(found);
-    }
   }
 
   // Open every replacement before touching the flush context, so a failure
@@ -1979,16 +1927,49 @@ bool IndexWriter::ReplaceSegments(
     adopted.push_back(std::move(entry));
   }
 
-  auto flush = GetFlushContext();
-  std::lock_guard lock{flush->pending_mutex};
-
-  // In the same critical section as the incoming segments below, so removals
-  // queued here mask the adopted segments in the generation that publishes
-  // them. As rowids are not reused - even if this succeeds but allocations
-  // below fails - removes are harmless without adoption passed.
-  if (removals != nullptr && !removals->CommitLocked(removals_tick, *flush)) {
+  _commit_lock.ForgetDeadlockInfo();
+  std::shared_lock commit_lock{_commit_lock};
+  if (_pending_state.Valid()) {
+    SDB_WARN(IRESEARCH,
+             "Cannot replace segments while a begun commit is not finished");
     return false;
   }
+
+  // Pin the committed state: the candidate names are masked as string_views
+  // into its metas, so it has to outlive the flush context that holds them --
+  // and holding it also keeps the cleaner off the files until the commit
+  // publishes them. Same reason Compact pins it.
+  auto committed_reader = GetSnapshotImpl();
+  Compaction candidates;
+  candidates.reserve(replaced.size());
+  for (const auto name : replaced) {
+    const SubReader* found = nullptr;
+    for (const auto& segment : *committed_reader) {
+      if (segment.Meta().name == name) {
+        found = &segment;
+        break;
+      }
+    }
+    if (found == nullptr) {
+      // Not a lost race: a removal that takes a segment's last live doc masks
+      // the whole segment out rather than giving it a docs_mask (PrepareFlush
+      // stage 1), so a source whose rows were all deleted while the caller was
+      // rebuilding it is simply gone. Nothing left to mask, and the caller's
+      // replacement is still adopted -- whatever deleted those rows reaches the
+      // replacement too, by tick if the removal is still pending and through
+      // the host's own reissue if it was already applied.
+      continue;
+    }
+    candidates.push_back(found);
+  }
+
+  QueryContext::FilterPtr removal;
+  if (!removal_provider(removal)) {
+    return true;
+  }
+
+  auto flush = GetFlushContext();
+  std::lock_guard lock{flush->pending_mutex};
 
   // Pre-allocation so tail is allocation-free
   auto& segment_mask = flush->segment_mask;
@@ -2010,10 +1991,12 @@ bool IndexWriter::ReplaceSegments(
     // A copy per segment: the ctor takes the pin by rvalue, and every segment
     // needs its own so the files stay referenced until the commit.
     // MinTick used here as pending removes must reach replaced segments.
-    flush->incoming.emplace_back(std::move(entry.segment),
-                                 writer_limits::kMinTick, std::move(entry.refs),
-                                 Compaction{}, std::move(entry.reader),
-                                 decltype(committed_reader){committed_reader});
+    flush->incoming
+      .emplace_back(std::move(entry.segment), writer_limits::kMinTick,
+                    std::move(entry.refs), Compaction{},
+                    std::move(entry.reader),
+                    decltype(committed_reader){committed_reader})
+      .removal = removal;
   }
   for (const auto name : masked) {
     segment_mask.emplace(name);
@@ -2137,6 +2120,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
 
   // noexcept block: I'm not sure is it really necessary or not
   auto ctx = SwitchFlushContext();
+  SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_after_flush_switch");
   // ensure there are no active struct update operations
   ctx->pending.Done();
   ctx->pending.Wait();

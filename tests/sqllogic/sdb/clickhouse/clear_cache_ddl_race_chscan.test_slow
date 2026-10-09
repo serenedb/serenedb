@@ -1,0 +1,484 @@
+control substitution on
+
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=default' AS chcr (TYPE clickhouse);
+
+
+statement ok
+CREATE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a1 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+connection ddl
+statement async ok
+CREATE OR REPLACE TABLE chcr.default.ccr_t (id BIGINT, a0 VARCHAR);
+
+
+connection clear
+statement async ok
+SELECT count(*) FROM clickhouse_clear_cache();
+
+
+connection clear
+statement async ok
+EXPLAIN SELECT * FROM chcr.default.ccr_t;
+
+
+wait
+
+
+connection ddl
+statement ok
+INSERT INTO chcr.default.ccr_t VALUES (1, 'x');
+
+
+query
+SELECT id, a0 FROM chcr.default.ccr_t;
+----
+id	a0
+1	x
+
+
+statement ok
+DROP TABLE chcr.default.ccr_t;
+
+
+statement ok
+DETACH chcr;

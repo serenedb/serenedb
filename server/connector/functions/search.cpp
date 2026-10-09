@@ -55,13 +55,12 @@
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/ts_query.h"
 #include "connector/functions/ts_query_codec.h"
-#include "connector/functions/vector.h"
 
 namespace sdb::connector {
 
-void SearchStubFn(duckdb::DataChunk& /*args*/,
-                  duckdb::ExpressionState& /*state*/,
-                  duckdb::Vector& /*result*/) {
+[[noreturn]] void SearchStubFn(duckdb::DataChunk& /*args*/,
+                               duckdb::ExpressionState& /*state*/,
+                               duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("Inverted index function called outside inverted index context. "
@@ -70,8 +69,9 @@ void SearchStubFn(duckdb::DataChunk& /*args*/,
 
 namespace {
 
-void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
-                  duckdb::Vector& /*result*/) {
+[[noreturn]] void ScorerStubFn(duckdb::DataChunk& /*args*/,
+                               duckdb::ExpressionState& state,
+                               duckdb::Vector& /*result*/) {
   const auto& fn_name =
     state.expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName();
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -86,10 +86,9 @@ void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
 // (e.g. ts_dict_min/ts_dict_max) into one before the optimizer can claim them.
 template<int Tag>
 struct TsDictStub {
-  static duckdb::idx_t StateSize(const duckdb::BoundAggregateFunction&) {
-    return 1;
-  }
-  static void Init(const duckdb::BoundAggregateFunction&, duckdb::data_ptr_t) {}
+  static duckdb::idx_t StateSize(duckdb::AggregateStateInput&) { return 1; }
+  static void Init(duckdb::AggregateStateInput&, duckdb::data_ptr_t*,
+                   duckdb::idx_t) {}
   static void Update(duckdb::Vector[], duckdb::AggregateInputData&,
                      duckdb::idx_t, duckdb::Vector&, duckdb::idx_t) {
     Throw();
@@ -116,7 +115,7 @@ template<int Tag>
 void RegisterTsDictStub(duckdb::ExtensionLoader& loader, std::string_view name,
                         const duckdb::LogicalType& ret) {
   duckdb::AggregateFunction fn(
-    duckdb::Identifier{std::string{name}}, {duckdb::LogicalType::ANY}, ret,
+    duckdb::Identifier{name}, {duckdb::LogicalType::ANY}, ret,
     TsDictStub<Tag>::StateSize, TsDictStub<Tag>::Init, TsDictStub<Tag>::Update,
     TsDictStub<Tag>::Combine, TsDictStub<Tag>::Finalize,
     duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING);
@@ -250,22 +249,14 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
   }
 
   // ST_Distance_Centroid(field, centroid) -> DOUBLE
-  //   and its operator-form synonym `field <-> centroid`.
   //
   // Returns the geodesic distance from the indexed value's centroid to the
   // centroid argument. Pseudo-function: outside an inverted-index scan it
   // throws via the stub. The filter builder recognizes
-  // `ST_Distance_Centroid(...) OP <const>` (and the `<->` form) and
-  // rewrites them into iresearch GeoDistanceFilter range bounds.
-  //
-  // The `<->` set extends the vector-distance set registered in
-  // RegisterVectorFunctions (vector.cpp); DuckDB merges overloads under
-  // the same name via OnCreateConflict::ALTER_ON_CONFLICT, so vector
-  // (ARRAY(FLOAT/DOUBLE)) and geo (VARCHAR / GEOMETRY) overloads coexist
-  // and bind by argument types. IsVectorDistanceFunction(...) in
-  // iresearch_plan.cpp keeps the geo overloads off the vector-ANN paths.
-  for (auto name : {kGeoDistance, kL2DistanceOp}) {
-    duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
+  // `ST_Distance_Centroid(...) OP <const>` and rewrites it into iresearch
+  // GeoDistanceFilter range bounds.
+  {
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kGeoDistance}};
     for (const auto& field_t : geo_arg_types) {
       for (const auto& centroid_t : geo_arg_types) {
         set.AddFunction(duckdb::ScalarFunction(
@@ -300,7 +291,7 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(std::string{name}),
+    context, duckdb::QualifiedName::Parse(name),
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return {};

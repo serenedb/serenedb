@@ -43,23 +43,28 @@ namespace {
 
 static_assert(kMaxSystem == duckdb::DatabaseManager::FIRST_OID);
 
+void FillParameters(const duckdb::FunctionSignature& signature,
+                    BuiltinFunction& row) {
+  row.has_varargs = signature.GetArgs();
+  row.parameter_types.clear();
+  for (const auto& parameter : signature.GetParameters()) {
+    if (!parameter.IsVariadic()) {
+      row.parameter_types.push_back(parameter.GetType());
+    }
+  }
+}
+
 template<typename Entry>
 void EmitSignatures(const Entry& entry, BuiltinFunction& row,
                     absl::FunctionRef<void(const BuiltinFunction&)> visitor,
                     uint64_t& next_oid) {
   for (duckdb::idx_t offset = 0; offset < entry.functions.functions.size();
        ++offset) {
-    const auto& function = entry.functions.GetFunctionByOffset(offset);
-    const auto& signature = function.GetSignature();
+    const auto& function = *entry.functions.GetFunctionByOffset(offset);
 
     row.oid = next_oid++;
     row.return_type = function.GetReturnType();
-    row.has_varargs = function.HasVarArgs();
-    row.parameter_types.clear();
-    row.parameter_types.reserve(signature.GetParameterCount());
-    for (duckdb::idx_t i = 0; i < signature.GetParameterCount(); ++i) {
-      row.parameter_types.push_back(signature.GetParameter(i).GetType());
-    }
+    FillParameters(function.GetSignature(), row);
     visitor(row);
   }
 }
@@ -70,12 +75,10 @@ void EmitArguments(const Entry& entry, BuiltinFunction& row,
                    uint64_t& next_oid) {
   for (duckdb::idx_t offset = 0; offset < entry.functions.functions.size();
        ++offset) {
-    const auto& function = entry.functions.GetFunctionByOffset(offset);
-
     row.oid = next_oid++;
     row.return_type = duckdb::LogicalType::INVALID;
-    row.has_varargs = function.HasVarArgs();
-    row.parameter_types = function.GetArguments();
+    FillParameters(entry.functions.GetFunctionByOffset(offset)->GetSignature(),
+                   row);
     visitor(row);
   }
 }
@@ -177,6 +180,36 @@ void VisitBuiltinFunctions(
     }
   }
   SDB_ASSERT(next_oid <= kMaxSystem);
+}
+
+namespace {
+
+bool TypeIsComplete(const duckdb::LogicalType& type) {
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case DECIMAL:
+    case TUPLE:
+    case STRUCT:
+    case MAP:
+    case UNION:
+    case ENUM:
+      return type.HasParameters();
+    case LIST:
+      return type.HasParameters() &&
+             TypeIsComplete(duckdb::ListType::GetChildType(type));
+    case ARRAY:
+      return type.HasParameters() &&
+             TypeIsComplete(duckdb::ArrayType::GetChildType(type));
+    default:
+      return true;
+  }
+}
+
+}  // namespace
+
+duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type) {
+  return TypeIsComplete(type) ? static_cast<duckdb::idx_t>(Type2Oid(type))
+                              : static_cast<duckdb::idx_t>(PgTypeOID::kUnknown);
 }
 
 }  // namespace sdb::pg

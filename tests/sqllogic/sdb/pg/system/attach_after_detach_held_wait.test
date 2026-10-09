@@ -1,19 +1,19 @@
 control substitution on
 
 statement ok
-DETACH IF EXISTS aadw;
+DETACH IF EXISTS aadw_${__DATABASE__};
 
 statement ok
-DETACH IF EXISTS aadw_other;
+DETACH IF EXISTS aadw_other_${__DATABASE__};
 
 statement ok
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_${__DATABASE__};
 
 statement ok
-CREATE OR REPLACE TABLE aadw.main.docs(id INTEGER);
+CREATE OR REPLACE TABLE aadw_${__DATABASE__}.main.docs(id INTEGER);
 
 statement ok
-INSERT INTO aadw.main.docs VALUES (1), (2);
+INSERT INTO aadw_${__DATABASE__}.main.docs VALUES (1), (2);
 
 
 connection holder
@@ -23,7 +23,7 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables();
+SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = 'aadw_${__DATABASE__}';
 ----
 listed
 t
@@ -31,12 +31,20 @@ t
 
 connection default
 statement ok
-DETACH aadw;
+DETACH aadw_${__DATABASE__};
+
+
+connection holder
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = 'aadw_${__DATABASE__}';
+----
+listed
+f
 
 
 connection attacher
 statement async ok
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other_${__DATABASE__};
 
 
 connection holder
@@ -49,7 +57,7 @@ wait
 
 connection default
 query
-SELECT count(*) AS n FROM aadw_other.main.docs;
+SELECT count(*) AS n FROM aadw_other_${__DATABASE__}.main.docs;
 ----
 n
 2
@@ -57,12 +65,12 @@ n
 
 connection default
 statement ok
-DETACH aadw_other;
+DETACH aadw_other_${__DATABASE__};
 
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw (READ_ONLY);
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_${__DATABASE__} (READ_ONLY);
 
 
 connection holder
@@ -72,7 +80,7 @@ BEGIN;
 
 connection holder
 query
-SELECT count(*) AS n FROM aadw.main.docs;
+SELECT count(*) AS n FROM aadw_${__DATABASE__}.main.docs;
 ----
 n
 2
@@ -80,12 +88,12 @@ n
 
 connection default
 statement ok
-DETACH aadw;
+DETACH aadw_${__DATABASE__};
 
 
 connection attacher
 statement async ok
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_${__DATABASE__};
 
 
 connection holder
@@ -98,12 +106,12 @@ wait
 
 connection default
 statement ok
-INSERT INTO aadw.main.docs VALUES (3);
+INSERT INTO aadw_${__DATABASE__}.main.docs VALUES (3);
 
 
 connection default
 statement ok
-DETACH aadw;
+DETACH aadw_${__DATABASE__};
 
 
 connection default
@@ -113,17 +121,17 @@ BEGIN;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_${__DATABASE__};
 
 
 connection default
 statement ok
-DETACH aadw;
+DETACH aadw_${__DATABASE__};
 
 
 connection default
-statement error Unique file handle conflict: Cannot attach "aadw_other" - the database file ".*aadw\.db" is in the process of being detached
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
+statement error Unique file handle conflict: Cannot attach "aadw_other_.*" - the database file ".*aadw\.db" is in the process of being detached
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other_${__DATABASE__};
 
 
 connection default
@@ -133,12 +141,12 @@ ROLLBACK;
 
 connection default
 statement ok
-ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other;
+ATTACH '${__TEST_DIR__}/aadw.db' AS aadw_other_${__DATABASE__};
 
 
 connection default
 query
-SELECT count(*) AS n FROM aadw_other.main.docs;
+SELECT count(*) AS n FROM aadw_other_${__DATABASE__}.main.docs;
 ----
 n
 3
@@ -146,4 +154,4 @@ n
 
 connection default
 statement ok
-DETACH aadw_other;
+DETACH aadw_other_${__DATABASE__};

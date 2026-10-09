@@ -1,7 +1,7 @@
 control substitution on
 
 # Compaction is a checkpoint written from the catalog: the definitions come out
-# of the committed snapshot, not out of a copy the store kept beside it. Three
+# of the committed snapshot, not out of a copy the store kept beside it. Two
 # things have to hold for that to be safe.
 #
 # 1. Every kind of definition makes the round trip -- the checkpoint files each
@@ -10,10 +10,6 @@ control substitution on
 # 2. A checkpoint taken the moment a transaction has committed its catalog work
 #    must not lose it. The fold runs from the commit hook, off the catalog that
 #    commit just published, so it never reads a catalog that is behind the log.
-# 3. A drop still open at a checkpoint is rescheduled at boot from the record
-#    that opened it. The checkpoint no longer holds the definitions the drop
-#    removed, so the boot walk cannot find them to notice the tombstone -- the
-#    record carries its own subtree and is the only thing driving the sweep.
 
 
 # --- 1. every kind through a checkpoint ---
@@ -73,11 +69,11 @@ COMMENT ON TABLE ckp.t IS 'checkpointed';
 
 
 statement ok
-CREATE TABLE ckp.trigger_compaction(x INTEGER);
+SET sdb_faults = 'compact_inside_ddl';
 
 
 statement ok
-CHECKPOINT;
+CREATE TABLE ckp.trigger_compaction(x INTEGER);
 
 
 statement ok
@@ -193,6 +189,11 @@ count
 # fold fires from that commit's own hook.
 connection after_checkpoint
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_checkpoint
+statement ok
 CREATE ROLE ckp_window_role;
 
 
@@ -209,11 +210,6 @@ CREATE VIEW ckp_window.v AS SELECT 1 AS x;
 connection after_checkpoint
 statement ok
 GRANT ckp_window_role TO ckp_role;
-
-
-connection after_checkpoint
-statement ok
-CHECKPOINT;
 
 
 connection after_checkpoint
@@ -288,17 +284,17 @@ CREATE ROLE ckp_db_role;
 
 connection after_window
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_window
+statement ok
 CREATE DATABASE ckp_window_db;
 
 
 connection after_window
 statement ok
 GRANT CONNECT, TEMP ON DATABASE ckp_window_db TO ckp_db_role;
-
-
-connection after_window
-statement ok
-CHECKPOINT;
 
 
 connection after_window
@@ -353,6 +349,11 @@ CREATE ROLE ckp_schema_role;
 
 connection after_db_window
 statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_db_window
+statement ok
 CREATE SCHEMA ckp_schema_window;
 
 
@@ -369,11 +370,6 @@ ALTER SCHEMA ckp_schema_window OWNER TO ckp_schema_role;
 connection after_db_window
 statement ok
 GRANT USAGE ON SCHEMA ckp_schema_window TO ckp_role;
-
-
-connection after_db_window
-statement ok
-CHECKPOINT;
 
 
 connection after_db_window
@@ -464,6 +460,11 @@ first
 5
 
 
+connection after_schema_window
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
 # The last catalog write before the crash: a comment and a grant, both of which
 # rewrite the definition beside the same counter.
 connection after_schema_window
@@ -474,11 +475,6 @@ COMMENT ON SEQUENCE ckp_seq_window.s IS 'checkpointed sequence';
 connection after_schema_window
 statement ok
 GRANT USAGE ON SEQUENCE ckp_seq_window.s TO ckp_seq_role;
-
-
-connection after_schema_window
-statement ok
-CHECKPOINT;
 
 
 connection after_schema_window
@@ -565,14 +561,14 @@ CREATE SCHEMA ckp_dict_window;
 
 connection after_seq_window
 statement ok
-CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d AS
-    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
-    WITH (frequency, position);
+SET sdb_faults = 'compact_inside_ddl';
 
 
 connection after_seq_window
 statement ok
-CHECKPOINT;
+CREATE TEXT SEARCH DICTIONARY ckp_dict_window.d AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
 
 
 connection after_seq_window
@@ -656,12 +652,12 @@ CREATE INDEX ckp_gone_inv ON ckp.gone USING inverted(a);
 
 connection after_dict_window
 statement ok
-DROP TABLE ckp.gone;
+SET sdb_faults = 'compact_inside_drop';
 
 
 connection after_dict_window
 statement ok
-CHECKPOINT;
+DROP TABLE ckp.gone;
 
 
 connection after_dict_window

@@ -110,4 +110,25 @@ class Admit {
   [[no_unique_address]] irs::detail::Narrowing<Table> _table;
 };
 
+struct ScoreBatch {
+  template<typename Lead, typename Others, typename Score, typename Table>
+  IRS_FORCE_INLINE void Flush(Lead& lead, Others& others, Score&& score,
+                              Admit<Table>& admit,
+                              LoserScoreCollector& collector) {
+    const auto n = std::exchange(size, 0);
+    if (n == 0) {
+      return;
+    }
+    others.Fetch(docs, n);
+    lead.ScoreFreqs(freqs, scores, n);
+    score(scores, n);
+    admit.AddDocs(collector, docs, n, scores);
+  }
+
+  ABSL_CACHELINE_ALIGNED doc_id_t docs[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED uint32_t freqs[kScoreBlock];
+  ABSL_CACHELINE_ALIGNED score_t scores[kScoreBlock];
+  uint32_t size = 0;
+};
+
 }  // namespace irs::top

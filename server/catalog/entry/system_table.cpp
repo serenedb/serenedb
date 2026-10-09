@@ -30,6 +30,7 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 
 #include "catalog/catalog.h"
@@ -56,15 +57,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeView(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  const pg::StaticView& view) {
-  if (!view.info) {
+  const pg::StaticView* view) {
+  if (!view) {
     return nullptr;
   }
-  auto info = view.info->Copy();
-  info->oid = view.oid;
-  auto entry = duckdb::make_uniq<duckdb::ViewCatalogEntry>(
-    catalog, schema, info->Cast<duckdb::CreateViewInfo>());
-  entry->permissions = view.permissions;
+  auto info = view->info->Copy();
+  info->oid = view->oid;
+  auto entry = duckdb::make_uniq<SystemViewEntry>(
+    catalog, schema, info->Cast<duckdb::CreateViewInfo>(), view->binding);
+  entry->permissions = view->permissions;
   return entry;
 }
 
@@ -154,6 +155,9 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
     duckdb::CreateSchemaInfo info;
     info.SetQualifiedName(duckdb::QualifiedName({name}, duckdb::Identifier()));
     info.internal = true;
+    info.oid = name == duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}
+                 ? pg::kPgCatalogSchema
+                 : pg::kPgInformationSchema;
     info.permissions.owner = pg::kRootUser;
     auto schema = duckdb::make_uniq<duckdb::DuckSchemaEntry>(catalog, info);
     for (const auto set :
@@ -177,7 +181,9 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    duckdb::SchemaCatalogEntry& schema,
                                    duckdb::CreateTableInfo& info,
                                    const pg::VirtualTable& table)
-  : duckdb::TableCatalogEntry{catalog, schema, info}, _table{table} {
+  : duckdb::TableCatalogEntry{catalog, schema, info},
+    _columns{std::move(info.columns)},
+    _table{table} {
   internal = true;
   permissions.owner = pg::kRootUser;
   const auto acl = table.GetAcl();
@@ -195,6 +201,44 @@ duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
   return result;
+}
+
+duckdb::Catalog& SystemTableEntry::GetStorageCatalog(duckdb::ClientContext&) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied: \"", name.GetIdentifierName(),
+                          "\" is a system catalog"));
+}
+
+SystemViewEntry::SystemViewEntry(duckdb::Catalog& catalog,
+                                 duckdb::SchemaCatalogEntry& schema,
+                                 duckdb::CreateViewInfo& info,
+                                 std::shared_ptr<pg::ViewBinding> binding)
+  : duckdb::ViewCatalogEntry{catalog, schema, info},
+    _binding{std::move(binding)} {}
+
+duckdb::shared_ptr<duckdb::ViewColumnInfo> SystemViewEntry::GetColumnInfo()
+  const {
+  return _binding->columns.atomic_load();
+}
+
+void SystemViewEntry::BindView(duckdb::ClientContext& context,
+                               duckdb::BindViewAction action) {
+  if (action == duckdb::BindViewAction::BIND_IF_UNBOUND && GetColumnInfo()) {
+    return;
+  }
+  duckdb::ViewCatalogEntry::BindView(context, action);
+  _binding->columns.atomic_store(duckdb::ViewCatalogEntry::GetColumnInfo());
+}
+
+void SystemViewEntry::UpdateBinding(
+  const duckdb::vector<duckdb::LogicalType>& types,
+  const duckdb::vector<duckdb::Identifier>& names) {
+  const auto columns = GetColumnInfo();
+  if (columns && columns->types == types && columns->names == names) {
+    return;
+  }
+  duckdb::ViewCatalogEntry::UpdateBinding(types, names);
+  _binding->columns.atomic_store(duckdb::ViewCatalogEntry::GetColumnInfo());
 }
 
 void MountSystemSchemas(SereneDBCatalog& catalog) {

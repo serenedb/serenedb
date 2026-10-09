@@ -48,6 +48,12 @@ A statement that fails inside a transaction aborts the whole transaction: every 
 
 When multiple SQL statements are submitted together (e.g., separated by semicolons), they are executed within a single implicit transaction. If any statement fails, all preceding statements in the batch are rolled back. This also applies to `PRAGMA` commands that decompose into multiple internal operations, such as `COPY FROM DATABASE`.
 
+## Transactions Across Databases
+
+A transaction can write to several databases of the same server, including DDL in each of them and cluster-wide objects such as roles and databases (`CREATE ROLE`, `CREATE DATABASE`, `GRANT`). The commit is atomic across all of them: after a crash, either every database has the transaction's changes or none has.
+
+A database attached with `ATTACH` keeps its own file and commits on its own, so a transaction that writes to it cannot write to any other database.
+
 ## Isolation Level
 
 SereneDB's concurrency model guarantees snapshot isolation. Transactions that violate this isolation level are aborted.
@@ -58,6 +64,8 @@ Two of [PostgreSQL's transaction isolation levels](https://www.postgresql.org/do
 -   `READ COMMITTED`: each statement sees the data committed before it started, until the transaction writes. From its first `INSERT`, `UPDATE` or `DELETE` on, the transaction keeps one snapshot to its end, so its own uncommitted rows stay consistent.
 
 Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused with `transaction isolation level "serializable" is not supported`.
+
+`ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
 
 ## Example
 

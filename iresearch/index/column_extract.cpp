@@ -148,7 +148,7 @@ const duckdb::vector<duckdb::VariantPathComponent>& ExtractBinding::Components()
   if (!_components_built) {
     _components.reserve(_extract_path.size());
     for (const auto& field : _extract_path) {
-      _components.emplace_back(std::string{field});
+      _components.emplace_back(field);
     }
     _components_built = true;
   }

@@ -81,15 +81,14 @@ QUERY PLAN
 │ Conditions: sid = sid │
 │ ~1 row                │
 ╰───────────┬───────────╯
-            ├────────────────────────────────╮
-╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ──────┴────────────────╮
-│ Table: exams          │  │ Table: students                  │
-│ Type: Sequential Scan │  │ Type: Sequential Scan            │
-│ Projections: sid      │  │ Projections: sid, name           │
-│ ~3 rows               │  │ Column Filter:                   │
-╰───────────────────────╯  │ (name >= 'Ma') AND (name < 'Mb') │
-                           │ ~1 row                           │
-                           ╰──────────────────────────────────╯
+            ├─────────────────────────────╮
+╭─ SEQ_SCAN ┴───────────╮  ╭─ SEQ_SCAN ───┴──────────────╮
+│ Table: exams          │  │ Table: students             │
+│ Type: Sequential Scan │  │ Type: Sequential Scan       │
+│ Projections: sid      │  │ Projections: sid, name      │
+│ ~3 rows               │  │ Column Filter: name >= 'Ma' │
+╰───────────────────────╯  │ ~1 row                      │
+                           ╰─────────────────────────────╯
 
 # DOCS_TEST: example_003
 

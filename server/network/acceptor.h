@@ -124,6 +124,7 @@ class Acceptor final : public AcceptorBase,
   Acceptor& operator=(const Acceptor&) = delete;
 
   void Start() override {
+    _deps.sessions->Add();
     asio_ns::post(_acceptor.get_executor(),
                   [self = this->shared_from_this()] { self->Run().Detach(); });
   }
@@ -159,6 +160,7 @@ class Acceptor final : public AcceptorBase,
       if (_running) {
         Start();
       }
+      _deps.sessions->Done();
     };
     while (_running) {
       auto connection = duckdb::make_shared_ptr<Session>(_deps, _pool.Next());

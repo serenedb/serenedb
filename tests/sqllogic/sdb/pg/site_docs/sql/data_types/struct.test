@@ -277,10 +277,8 @@ CREATE TABLE t1 AS (
 
 # DOCS_TEST_BODY
 
-statement error
+statement ok
 CREATE TABLE t2 AS SELECT row('a');
-----
-db error: ERROR: A table cannot be created from an unnamed struct
 
 
 # DOCS_TEST: example_022
@@ -292,7 +290,7 @@ SELECT a::STRUCT(y INTEGER) AS b
 FROM
     (SELECT {'x': 42} AS a);
 ----
-db error: ERROR: STRUCT to STRUCT cast must have at least one matching member
+db error: ERROR: STRUCT to STRUCT cast must have at least one matching member, inputs are (STRUCT(x INTEGER)) and (STRUCT(y INTEGER))
 
 
 # DOCS_TEST: example_023

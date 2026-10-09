@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18.3
+    image: postgres:18.6
     environment:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_DB: postgres
@@ -21,8 +21,67 @@ services:
     networks:
       - test-network
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.47
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+    command: ["server", "-dir=/data", "-ip=127.0.0.1", "-s3", "-s3.port=9000", "-s3.port.iceberg=0"]
+    networks:
+      - test-network
+
+  s3-init:
+    image: amazon/aws-cli:2.36.44
+    network_mode: "service:seaweedfs"
+    depends_on:
+      - seaweedfs
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - until aws --endpoint-url http://127.0.0.1:9000 s3 mb s3://warehouse; do sleep 1; done
+
+  iceberg-rest:
+    image: apache/iceberg-rest-fixture:1.10.1
+    network_mode: "service:seaweedfs"
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+    environment:
+      - AWS_ACCESS_KEY_ID=admin
+      - AWS_SECRET_ACCESS_KEY=password
+      - AWS_REGION=us-east-1
+      - CATALOG_WAREHOUSE=s3://warehouse/
+      - CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO
+      - CATALOG_S3_ENDPOINT=http://127.0.0.1:9000
+      - CATALOG_S3_PATH__STYLE__ACCESS=true
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.37.0
+    network_mode: "service:seaweedfs"
+    command: ["azurite-blob", "--blobHost", "127.0.0.1", "--skipApiVersionCheck"]
+
+  s3:
+    image: chrislusf/seaweedfs:4.47
+    hostname: duckdb-minio.com
+    volumes:
+      - "${WORKSPACE}/third_party/duckdb_httpfs/scripts/seaweedfs_s3_config.json:/etc/seaweedfs/s3_config.json:ro"
+    command: >
+      server -dir=/data -ip=duckdb-minio.com -ip.bind=0.0.0.0 -master.volumeSizeLimitMB=1024
+      -s3 -s3.port=9000 -s3.domainName=duckdb-minio.com -s3.config=/etc/seaweedfs/s3_config.json
+    networks:
+      test-network:
+        aliases:
+          - duckdb-minio.com
+          - test-bucket.duckdb-minio.com
+          - test-bucket-2.duckdb-minio.com
+          - test-bucket-public.duckdb-minio.com
+
   tests:
     image: ${BUILD_IMAGE}
+    network_mode: "service:seaweedfs"
     user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
     group_add:
       - "${DOCKER_SOCK_GID:-999}"
@@ -44,11 +103,22 @@ services:
       - PGPORT=5432
       - PGUSER=postgres
       - PGDATABASE=postgres
-    networks:
-      - test-network
+      - ICEBERG_FIXTURE_RUNNING=1
+      - S3_FIXTURE_RUNNING=1
+      - AZURITE_RUNNING=1
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
     depends_on:
       postgres:
         condition: service_healthy
+      iceberg-rest:
+        condition: service_started
+      s3:
+        condition: service_started
+      azurite:
+        condition: service_started
     # One entry point for every DuckDB-level suite: duckdb core, each vendored
     # extension, and postgres_scanner against the postgres service above.
     # DUCKDB_SUITES is the diff-derived suite list (scripts/ci/classify-changes.sh);

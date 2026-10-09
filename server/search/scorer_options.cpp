@@ -201,10 +201,10 @@ std::optional<irs::ScorerOptions> ExtractScorerFromBound(
 }
 
 irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
-                                         std::string input,
+                                         std::string_view input,
                                          std::string_view what) {
   using namespace duckdb;
-  auto exprs = Parser::ParseExpressionList(input);
+  auto exprs = Parser::GetBuiltinParser().ParseExpressionList(input);
   if (exprs.size() != 1) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -223,14 +223,20 @@ irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
   std::string name = fn.FunctionName().GetIdentifierName();
   absl::AsciiStrToLower(&name);
 
-  std::vector<const Value*> literals;
+  std::vector<Value> values;
+  values.reserve(fn.GetArguments().size());
   for (const auto& arg : fn.GetArguments()) {
     const auto& expr = arg.GetExpression();
     if (expr.GetExpressionClass() == ExpressionClass::CONSTANT) {
-      literals.push_back(&expr.Cast<ConstantExpression>().GetValue());
+      values.push_back(expr.Cast<ConstantExpression>().GetLiteral().ToValue());
     }
   }
-  if (literals.size() == fn.GetArguments().size()) {
+  if (values.size() == fn.GetArguments().size()) {
+    std::vector<const Value*> literals;
+    literals.reserve(values.size());
+    for (const auto& value : values) {
+      literals.push_back(&value);
+    }
     return *ExtractScorer(name, literals);
   }
   if (!context) {
@@ -244,8 +250,7 @@ irs::ScorerOptions ParseScorerExpression(duckdb::ClientContext* context,
   // overload that ConstantBinder will resolve.
   fn.GetArgumentsMutable().insert(
     fn.GetArgumentsMutable().begin(),
-    FunctionArgument{unique_ptr<ParsedExpression>(
-      make_uniq<ConstantExpression>(Value::BIGINT(0)))});
+    FunctionArgument{ConstantExpression::FromValue(Value::BIGINT(0))});
 
   auto binder = Binder::CreateBinder(*context);
   ConstantBinder cb(*binder, *context, std::string{what});

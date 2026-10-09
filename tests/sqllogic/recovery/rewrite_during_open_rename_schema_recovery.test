@@ -1,0 +1,109 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA melstroi_casino;
+
+
+statement ok
+CREATE TABLE melstroi_casino.slots (id INT, spin TEXT);
+
+
+statement ok
+CREATE INDEX slots_spin ON melstroi_casino.slots USING inverted (spin);
+
+
+statement ok
+INSERT INTO melstroi_casino.slots VALUES (1, 'jackpot'), (2, 'lose');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) melstroi_casino.slots;
+
+
+connection pudge
+statement ok
+BEGIN;
+
+
+connection pudge
+statement ok
+ALTER SCHEMA melstroi_casino RENAME TO melstroi_bankrupt;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE vjling_first (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection pudge
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection default
+statement ok
+CREATE TABLE vjling_second (x INT);
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM melstroi_casino.slots;
+----
+n
+2
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'melstroi_bankrupt';
+----
+n
+0
+
+
+connection after_crash
+statement ok
+INSERT INTO melstroi_casino.slots VALUES (3, 'jackpot');
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) melstroi_casino.slots;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM melstroi_casino.slots_spin WHERE spin @@ 'jackpot') AS jackpot, (SELECT count(*) FROM melstroi_casino.slots_spin WHERE spin @@ 'lose') AS lose;
+----
+jackpot	lose
+2	1

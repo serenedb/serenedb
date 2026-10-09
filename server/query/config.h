@@ -84,6 +84,8 @@ struct VariableDescription {
 
 std::string_view GetOriginalName(std::string_view name);
 
+bool IsUnchangeableSetting(std::string_view name);
+
 class Config {
  public:
   // Per-key tracking for a currently-open transaction. Populated only when

@@ -18,10 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_format.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -955,31 +956,26 @@ TEST(TokenizerInversion, SurvivesConsolidation) {
   }
 }
 
-TEST(TokenizerInversionLoad, ManyDocuments) {
-  const auto budget = EnvU64("TOKENIZER_INVERSION_LOAD_BYTES", 32ull << 20);
-  const auto seconds =
-    static_cast<double>(EnvU64("TOKENIZER_INVERSION_LOAD_SECONDS", 0));
-  const auto seed = Seed() ^ 0x1E7E12ull;
-  const auto start = Clock::now();
+class TokenizerInversionLoad : public testing::TestWithParam<const Spec*> {};
 
-  for (const auto* spec : SelectedFamilies()) {
-    if (seconds > 0.0 && Seconds(start) >= seconds) {
-      break;
-    }
-    SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
-    const auto spec_budget = budget / std::max<uint32_t>(1, spec->cost);
-    size_t bytes = 0;
-    const auto values = GenerateCorpus(*spec, seed, spec_budget, bytes);
-    const auto spec_start = Clock::now();
-    ASSERT_NO_FATAL_FAILURE(
-      CheckInversion(*spec, values, /*exact=*/false, /*consolidate=*/false));
-    std::printf("[ INVERTED ] %-42s %6zu MiB  %8zu docs  %6.1fs\n",
-                spec->name.c_str(), bytes >> 20, values.size(),
-                Seconds(spec_start));
-  }
+TEST_P(TokenizerInversionLoad, ManyDocuments) {
+  const auto* spec = GetParam();
+  const auto budget = EnvU64("TOKENIZER_INVERSION_LOAD_BYTES", 32ull << 20);
+  const auto seed = Seed() ^ 0x1E7E12ull;
+
+  SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
+  const auto spec_budget = budget / std::max<uint32_t>(1, spec->cost);
+  size_t bytes = 0;
+  const auto values = GenerateCorpus(*spec, seed, spec_budget, bytes);
+  const auto start = Clock::now();
+  ASSERT_NO_FATAL_FAILURE(
+    CheckInversion(*spec, values, /*exact=*/false, /*consolidate=*/false));
+  absl::PrintF("[ INVERTED ] %-42s %6d MiB  %8d docs  %6.1fs\n", spec->name,
+               bytes >> 20, values.size(), Seconds(start));
 }
 
-TEST(TokenizerInversionLoad, ConcurrentWriters) {
+TEST_P(TokenizerInversionLoad, ConcurrentWriters) {
+  const auto* spec = GetParam();
   const auto threads = static_cast<size_t>(
     EnvU64("TOKENIZER_INVERSION_THREADS",
            std::max<unsigned>(2, std::thread::hardware_concurrency() / 2)));
@@ -987,84 +983,87 @@ TEST(TokenizerInversionLoad, ConcurrentWriters) {
     static_cast<size_t>(EnvU64("TOKENIZER_INVERSION_CONCURRENT_DOCS", 2048));
   const auto seed = Seed() ^ 0xC0C0ull;
 
-  for (const auto* spec : SelectedFamilies()) {
-    SCOPED_TRACE(testing::Message() << spec->name << " threads=" << threads);
-    const auto per_thread = std::max<size_t>(
-      32, ValueBudget(*spec, docs) / std::max<size_t>(1, threads));
-    const auto total = per_thread * threads;
-    const auto values = SpecCorpus(*spec, seed, total);
-    const auto trimmed =
-      std::span{values}.first(std::min(total, values.size()));
-    const auto keys = MakeKeys(trimmed.size());
+  SCOPED_TRACE(testing::Message() << spec->name << " threads=" << threads);
+  const auto per_thread = std::max<size_t>(
+    32, ValueBudget(*spec, docs) / std::max<size_t>(1, threads));
+  const auto total = per_thread * threads;
+  const auto values = SpecCorpus(*spec, seed, total);
+  const auto trimmed = std::span{values}.first(std::min(total, values.size()));
+  const auto keys = MakeKeys(trimmed.size());
 
-    auto reference = Make(*spec);
-    ASSERT_NE(nullptr, reference);
-    const auto plan = PlanFor(reference->Traits());
+  auto reference = Make(*spec);
+  ASSERT_NE(nullptr, reference);
+  const auto plan = PlanFor(reference->Traits());
 
-    IndexUnderTest index;
-    auto writer = index.Open();
-    ASSERT_NE(nullptr, writer);
+  IndexUnderTest index;
+  auto writer = index.Open();
+  ASSERT_NE(nullptr, writer);
 
-    std::atomic<size_t> failures{0};
-    std::mutex report_mutex;
-    std::string first_error;
-    std::vector<std::thread> pool;
-    const auto stride = (trimmed.size() + threads - 1) / threads;
-    for (size_t t = 0; t < threads; ++t) {
-      pool.emplace_back([&, t] {
-        auto tokenizer = Make(*spec);
-        if (!tokenizer) {
+  std::atomic<size_t> failures{0};
+  std::mutex report_mutex;
+  std::string first_error;
+  std::vector<std::thread> pool;
+  const auto stride = (trimmed.size() + threads - 1) / threads;
+  for (size_t t = 0; t < threads; ++t) {
+    pool.emplace_back([&, t] {
+      auto tokenizer = Make(*spec);
+      if (!tokenizer) {
+        ++failures;
+        return;
+      }
+      const auto traits = tokenizer->Traits();
+      const auto begin = std::min(t * stride, trimmed.size());
+      const auto end = std::min(begin + stride, trimmed.size());
+      auto trx = writer->GetBatch();
+      for (size_t base = begin; base < end; base += kInsertBlock) {
+        const auto n = std::min<size_t>(kInsertBlock, end - base);
+        std::string error;
+        WriteBlock(trx, *tokenizer, traits, plan,
+                   std::span{keys}.subspan(base, n), trimmed.subspan(base, n),
+                   error);
+        if (!error.empty()) {
+          std::lock_guard lock{report_mutex};
+          if (first_error.empty()) {
+            first_error = error;
+          }
           ++failures;
           return;
         }
-        const auto traits = tokenizer->Traits();
-        const auto begin = std::min(t * stride, trimmed.size());
-        const auto end = std::min(begin + stride, trimmed.size());
-        auto trx = writer->GetBatch();
-        for (size_t base = begin; base < end; base += kInsertBlock) {
-          const auto n = std::min<size_t>(kInsertBlock, end - base);
-          std::string error;
-          WriteBlock(trx, *tokenizer, traits, plan,
-                     std::span{keys}.subspan(base, n), trimmed.subspan(base, n),
-                     error);
-          if (!error.empty()) {
-            std::lock_guard lock{report_mutex};
-            if (first_error.empty()) {
-              first_error = error;
-            }
-            ++failures;
-            return;
-          }
+      }
+      if (!trx.Commit()) {
+        std::lock_guard lock{report_mutex};
+        if (first_error.empty()) {
+          first_error = "concurrent commit failed";
         }
-        if (!trx.Commit()) {
-          std::lock_guard lock{report_mutex};
-          if (first_error.empty()) {
-            first_error = "concurrent commit failed";
-          }
-          ++failures;
-        }
-      });
-    }
-    for (auto& thread : pool) {
-      thread.join();
-    }
-    ASSERT_EQ(0u, failures.load()) << spec->name << ": " << first_error;
-    ASSERT_TRUE(writer->RefreshCommit());
+        ++failures;
+      }
+    });
+  }
+  for (auto& thread : pool) {
+    thread.join();
+  }
+  ASSERT_EQ(0u, failures.load()) << spec->name << ": " << first_error;
+  ASSERT_TRUE(writer->RefreshCommit());
 
-    const auto analysed = AnalyseForPlan(*spec, plan, trimmed);
-    std::map<std::string, PostingsDigest> want;
-    for (const auto& field : plan) {
-      FoldExpectedField(analysed.at(LayoutFromFeatures(field.features)), field,
-                        want[field.name]);
-    }
-    Verification got;
-    ASSERT_NO_FATAL_FAILURE(ReadIndex(index, plan, got, nullptr));
-    ASSERT_EQ(trimmed.size(), got.docs);
-    for (const auto& field : plan) {
-      SCOPED_TRACE(testing::Message() << "field=" << field.name);
-      ASSERT_EQ(want[field.name], got.by_field[field.name])
-        << "expected " << want[field.name].Describe() << "\n     got "
-        << got.by_field[field.name].Describe();
-    }
+  const auto analysed = AnalyseForPlan(*spec, plan, trimmed);
+  std::map<std::string, PostingsDigest> want;
+  for (const auto& field : plan) {
+    FoldExpectedField(analysed.at(LayoutFromFeatures(field.features)), field,
+                      want[field.name]);
+  }
+  Verification got;
+  ASSERT_NO_FATAL_FAILURE(ReadIndex(index, plan, got, nullptr));
+  ASSERT_EQ(trimmed.size(), got.docs);
+  for (const auto& field : plan) {
+    SCOPED_TRACE(testing::Message() << "field=" << field.name);
+    ASSERT_EQ(want[field.name], got.by_field[field.name])
+      << "expected " << want[field.name].Describe() << "\n     got "
+      << got.by_field[field.name].Describe();
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(Families, TokenizerInversionLoad,
+                         testing::ValuesIn(SelectedFamilies()),
+                         [](const testing::TestParamInfo<const Spec*>& info) {
+                           return std::string{Family(*info.param)};
+                         });

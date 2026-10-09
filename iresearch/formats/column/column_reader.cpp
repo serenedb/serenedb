@@ -590,7 +590,7 @@ duckdb::idx_t ColumnReader::GatherFilter(
   // rows by run flag). Bare null checks keep the validity-only arm below, and
   // null-bearing spans keep the decode arm.
   const bool codec_filter =
-    within_segment && codec.filter &&
+    within_segment && codec.filter && !filter_state.can_throw &&
     (self_valid || (null_check == NullCheckKind::None &&
                     ValiditySpanAllValid(s, anchor, span)));
   if (codec_filter) {
@@ -719,6 +719,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       break;
     case duckdb::LogicalTypeId::UNION:
     case duckdb::LogicalTypeId::STRUCT:
+    case duckdb::LogicalTypeId::TUPLE:
       col = std::make_unique<StructColumnReader>(meta.id, std::move(meta.type),
                                                  std::move(validity),
                                                  std::move(children));

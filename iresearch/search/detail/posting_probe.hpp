@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <bit>
 
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -76,7 +75,7 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
       return _doc = doc_limits::eof();
     }
 
-    if (_kind == FormatTraits128::FillLeaf::Kind::Docs) [[likely]] {
+    if (_kind == block_io::FillLeaf::Kind::Docs) [[likely]] {
       if (_len == kBlock) [[likely]] {
         return _doc = *BranchlessLowerBound<doc_limits::kBlockSize>(
                  std::begin(_docs), target);
@@ -92,23 +91,23 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
       return _doc = doc_limits::eof();
     }
 
-    if (_kind == FormatTraits128::FillLeaf::Kind::Bitset) {
+    if (_kind == block_io::FillLeaf::Kind::Bitset) {
       return ProbeBitset(target);
     }
 
-    SDB_ASSERT(_kind == FormatTraits128::FillLeaf::Kind::Run);
+    SDB_ASSERT(_kind == block_io::FillLeaf::Kind::Run);
     return _doc = target;
   }
 
  private:
   doc_id_t ProbeBitset(doc_id_t target) noexcept {
     SDB_ASSERT(target > _cursor.base);
-    const auto bit = target - _cursor.base;
+    const auto bit = target - _cursor.base - 1;
     const auto w = bit / kBits;
     if (const auto word = _bitset[w] >> (bit % kBits); word != 0) {
       return _doc = target + std::countr_zero(word);
     }
-    return _cursor.base + (w + 1) * kBits;
+    return _cursor.base + 1 + (w + 1) * kBits;
   }
 
   void ReadLeaf(doc_id_t prev) {
@@ -124,7 +123,7 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
   }
 
   const uint64_t* _bitset = nullptr;
-  FormatTraits128::FillLeaf::Kind _kind = FormatTraits128::FillLeaf::Kind::Docs;
+  block_io::FillLeaf::Kind _kind = block_io::FillLeaf::Kind::Docs;
   uint32_t _len = 0;
 };
 

@@ -1,3 +1,4 @@
+import { objectsFromTable, type DocObject } from "./objects";
 import { classifyKind, slugify, type RawSection } from "./section";
 
 export interface MarkdownParseResult {
@@ -5,6 +6,8 @@ export interface MarkdownParseResult {
     docTitle: string | null;
     frontmatter: Record<string, string>;
     sections: RawSection[];
+    /** Link targets outside code fences (page popularity input). */
+    links: string[];
 }
 
 /**
@@ -23,6 +26,7 @@ export function parseMarkdown(
     const lines = cleaned.split("\n");
 
     const docTitle = frontmatter["title"] || findFirstH1(lines) || null;
+    const links = linksOf(lines);
 
     if (opts.mode === "whole") {
         const text = collapse(lines.join("\n"));
@@ -32,6 +36,7 @@ export function parseMarkdown(
             sections: text
                 ? [{ title: docTitle ?? "", kind: "text", level: 0, content: text }]
                 : [],
+            links,
         };
     }
 
@@ -47,6 +52,7 @@ export function parseMarkdown(
     let inFence = false;
 
     const flush = () => {
+        const objects = tableObjectsOf(buf);
         const content = collapse(buf.join("\n"));
         const code = codeBuf.join("\n").trim();
         buf = [];
@@ -61,6 +67,7 @@ export function parseMarkdown(
             level: currentLevel,
             content,
             code: code || undefined,
+            objects: objects.length ? objects : undefined,
         });
     };
 
@@ -81,7 +88,47 @@ export function parseMarkdown(
         }
     }
     flush();
-    return { docTitle, frontmatter, sections };
+    return { docTitle, frontmatter, sections, links };
+}
+
+/** [label](target) links outside code fences; images excluded. */
+function linksOf(lines: string[]): string[] {
+    const out: string[] = [];
+    let inFence = false;
+    for (const line of lines) {
+        if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+        if (inFence) continue;
+        for (const m of line.matchAll(/(?<!!)\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) {
+            out.push(m[1]);
+        }
+    }
+    return out;
+}
+
+/** GFM pipe tables of a section body, handed to the object catalog. */
+function tableObjectsOf(lines: string[]): DocObject[] {
+    const cells = (line: string): string[] =>
+        line
+            .trim()
+            .replace(/^\|/, "")
+            .replace(/\|$/, "")
+            // an escaped pipe ("\|") is cell text, not a separator
+            .split(/(?<!\\)\|/)
+            .map((c) => c.replace(/\\\|/g, "|").trim());
+    const out: DocObject[] = [];
+    let inFence = false;
+    for (let i = 0; i + 1 < lines.length; i++) {
+        if (/^\s*(```|~~~)/.test(lines[i])) inFence = !inFence;
+        if (inFence || !/^\s*\|/.test(lines[i])) continue;
+        if (!/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) continue;
+        const headers = cells(lines[i]);
+        const rows: string[][] = [];
+        let j = i + 2;
+        for (; j < lines.length && /^\s*\|/.test(lines[j]); j++) rows.push(cells(lines[j]));
+        out.push(...objectsFromTable(headers, rows));
+        i = j - 1;
+    }
+    return out;
 }
 
 /** {#custom-id} suffixes win over generated slugs (Docusaurus convention). */

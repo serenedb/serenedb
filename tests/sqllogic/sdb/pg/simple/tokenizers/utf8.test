@@ -304,7 +304,7 @@ t
 # SHINGLES
 
 query
-SELECT generate_shingles(['Ωμέγα', 'ΟΔΟΣ', '北京'], 2, 2, store_tokens := false) AS t;
+SELECT generate_shingles(['Ωμέγα', 'ΟΔΟΣ', '北京'], 2, 2) AS t;
 ----
 t
 {Ωμέγα,"Ωμέγα ΟΔΟΣ",ΟΔΟΣ,"ΟΔΟΣ 北京",北京}
@@ -313,7 +313,7 @@ t
 # --- the separator may itself be multi-byte ---
 
 query
-SELECT generate_shingles(['Ωμέγα', '北京'], 2, 2, store_tokens := false, token_separator := '—') AS t;
+SELECT generate_shingles(['Ωμέγα', '北京'], 2, 2, token_separator := '—') AS t;
 ----
 t
 {Ωμέγα,Ωμέγα—北京,北京}
@@ -396,7 +396,7 @@ chain	nested
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY sh_mb_grams AS
-    generate_shingles(split_text(), 2, 2, store_tokens := false, token_separator := '—')
+    generate_shingles(split_text(), 2, 2, token_separator := '—')
     | generate_ngrams(1, 2)
 
 

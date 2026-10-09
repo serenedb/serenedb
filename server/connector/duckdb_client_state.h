@@ -105,6 +105,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
                                 duckdb::idx_t wal_generation,
                                 duckdb::idx_t wal_end_offset) final;
 
+  void TransactionPreWalWrite(duckdb::AttachedDatabase& db,
+                              duckdb::ClientContext& context) final;
+
   void TransactionPreRollback(
     duckdb::MetaTransaction& transaction, duckdb::ClientContext& context,
     duckdb::optional_ptr<duckdb::ErrorData> error) final;
@@ -127,7 +130,7 @@ class SereneDBClientState final : public duckdb::ClientContextState {
   // reset and clears them.
   pg::ProgressCommand pending_copy_command = pg::ProgressCommand::None;
   pg::ProgressIoType pending_copy_io = pg::ProgressIoType::None;
-  duckdb::idx_t pending_copy_relid;
+  duckdb::idx_t pending_copy_relid = 0;
 
  private:
   std::shared_ptr<ConnectionContext> _connection_ctx;

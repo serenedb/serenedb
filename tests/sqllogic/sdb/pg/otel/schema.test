@@ -29,19 +29,19 @@ otel_traces_idx
 statement error
 ALTER TABLE otel_logs ADD COLUMN extra VARCHAR;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE ADD COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE otel_logs DROP COLUMN body;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE DROP COLUMN on a search-backed table is not yet supported
 
 
 statement error
 ALTER TABLE otel_logs ALTER COLUMN body TYPE TEXT;
 ----
-db error: ERROR: Unsupported alter type for catalog entry!
+db error: ERROR: ALTER TABLE ALTER COLUMN TYPE on a search-backed table is not yet supported
 
 
 statement ok

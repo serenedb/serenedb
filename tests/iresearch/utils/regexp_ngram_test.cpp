@@ -191,10 +191,71 @@ TEST(RegexpNGramTest, code_points) {
   EXPECT_NE(zhuk.children.end(), absl::c_find(zhuk.children, lower));
 }
 
-TEST(RegexpNGramTest, case_folding_drops_letters) {
-  EXPECT_EQ("ALL", Extract("(?i)abc"));
-  EXPECT_EQ(R"("123\x1f")", Extract("(?i)abc123"));
-  EXPECT_EQ(R"("\x1f123")", Extract("123(?i:abc)"));
+TEST(RegexpNGramTest, case_folding) {
+  static constexpr Case kCases[]{
+    {"(?i)abc",
+     R"(Or("\x1fABC\x1f", "\x1fABc\x1f", "\x1fAbC\x1f", "\x1fAbc\x1f", )"
+     R"("\x1faBC\x1f", "\x1faBc\x1f", "\x1fabC\x1f", "\x1fabc\x1f"))"},
+    {"(?i)abc123",
+     R"(Or("\x1fABC123\x1f", "\x1fABc123\x1f", "\x1fAbC123\x1f", )"
+     R"("\x1fAbc123\x1f", "\x1faBC123\x1f", "\x1faBc123\x1f", )"
+     R"("\x1fabC123\x1f", "\x1fabc123\x1f"))"},
+    {"123(?i:abc)",
+     R"(Or("\x1f123ABC\x1f", "\x1f123ABc\x1f", "\x1f123AbC\x1f", )"
+     R"("\x1f123Abc\x1f", "\x1f123aBC\x1f", "\x1f123aBc\x1f", )"
+     R"("\x1f123abC\x1f", "\x1f123abc\x1f"))"},
+    {"(?i).*abc.*",
+     R"(Or("ABC", "aBC", "AbC", "abC", "ABc", "aBc", "Abc", "abc"))"},
+    {"(?i).*abc.*",
+     R"(And(Or("AB", "aB", "Ab", "ab"), Or("BC", "bC", "Bc", "bc")))", 2},
+    {"(?i)ab.*", R"(Or("\x1fAB", "\x1fAb", "\x1faB", "\x1fab"))"},
+    {"[Aa]bc", R"(Or("\x1fAbc\x1f", "\x1fabc\x1f"))"},
+    {R"((?i)\x{4E2D}12)", R"("12\x1f")"},
+  };
+  Check(kCases);
+  EXPECT_EQ(Extract("(?i)abc"), Extract("(?i)ABC"));
+}
+
+// RE2 parses `(?i)k` and `(?i)s` into classes of three runes: the third case is
+// the Kelvin sign U+212A and the long s U+017F.
+TEST(RegexpNGramTest, case_folding_third_case) {
+  static constexpr Case kCases[]{
+    {"(?i)k", R"(Or("\x1fK\x1f", "\x1fk\x1f", "\x1f\xe2\x84\xaa\x1f"))"},
+    {"(?i)s", R"(Or("\x1fS\x1f", "\x1fs\x1f", "\x1f\xc5\xbf\x1f"))"},
+    {"(?i).*k12.*", R"(Or("K12", "k12", "\xe2\x84\xaa12"))"},
+    {"(?i).*s12.*", R"(Or("S12", "s12", "\xc5\xbf12"))"},
+    {"(?i).*ok1.*",
+     R"(Or("OK1", "oK1", "Ok1", "ok1", "O\xe2\x84\xaa1", "o\xe2\x84\xaa1"))"},
+    {"[Kk]1", R"(Or("\x1fK1\x1f", "\x1fk1\x1f"))"},
+  };
+  Check(kCases);
+  EXPECT_EQ(Extract("(?i)k"), Extract("(?i)K"));
+  EXPECT_EQ(Extract("(?i)k"), Extract(R"((?i)\x{212A})"));
+}
+
+TEST(RegexpNGramTest, case_folding_budget) {
+  const auto query =
+    irs::ExtractGramQuery(Bytes("(?i).*outofmemoryerror.*"),
+                          irs::RegexpSyntax::Perl, 3, kBoundary)
+      .query;
+  ASSERT_EQ(irs::GramQuery::Kind::And, query.kind);
+  EXPECT_LE(irs::LeafCount(query), irs::GramQueryLimits{}.max_leaves);
+  EXPECT_TRUE(Eval(query, Bytes("\x1Fjava.lang.OutOfMemoryError\x1F")));
+  EXPECT_TRUE(Eval(query, Bytes("\x1FOUTOFMEMORYERROR\x1F")));
+  EXPECT_FALSE(Eval(query, Bytes("\x1Fout of memory error\x1F")));
+
+  std::mt19937 rng{20261003};
+  std::string letters;
+  for (int i = 0; i != 1000; ++i) {
+    letters += static_cast<char>('a' + rng() % 26);
+  }
+  const auto pattern = absl::StrCat("(?i).*", letters, ".*");
+  const auto long_query =
+    irs::ExtractGramQuery(Bytes(pattern), irs::RegexpSyntax::Perl, 3, kBoundary)
+      .query;
+  ASSERT_EQ(irs::GramQuery::Kind::And, long_query.kind);
+  EXPECT_LE(irs::LeafCount(long_query), irs::GramQueryLimits{}.max_leaves);
+  EXPECT_TRUE(Eval(long_query, Bytes(absl::StrCat("\x1F", letters, "\x1F"))));
 }
 
 TEST(RegexpNGramTest, nothing_to_require) {
@@ -318,6 +379,77 @@ TEST(RegexpNGramTest, matched_terms_satisfy_query) {
           .query;
       for (const auto& term : terms) {
         if (!acceptor.Matches(Bytes(term))) {
+          continue;
+        }
+        const auto wrapped = absl::StrCat("\x1F", term, "\x1F");
+        EXPECT_TRUE(Eval(query, Bytes(wrapped)))
+          << "pattern: " << pattern << ", n: " << n << ", term: " << term
+          << ", query: " << irs::ToString(query);
+      }
+    }
+  }
+}
+
+// Every term RE2 matches satisfies the extracted query, over the runes RE2
+// folds together.
+TEST(RegexpNGramTest, folded_terms_satisfy_query) {
+  static constexpr std::string_view kAlphabet[]{
+    "a", "A", "k", "K", "\xE2\x84\xAA", "s", "S", "\xC5\xBF", "1",
+  };
+  std::vector<std::string> terms{""};
+  for (size_t from = 0, len = 0; len != 3; ++len) {
+    const auto to = terms.size();
+    for (auto i = from; i != to; ++i) {
+      for (const auto letter : kAlphabet) {
+        terms.push_back(absl::StrCat(terms[i], letter));
+      }
+    }
+    from = to;
+  }
+
+  std::vector<std::string> patterns{
+    "(?i)k",
+    "(?i)s",
+    "(?i)ks",
+    "(?i)ask",
+    "(?i).*k.*",
+    "(?i)a.*s",
+    "[Kk]a",
+    "[Ss]+",
+    "(?i)AK1",
+    "(?i)(a|k)+1",
+    R"((?i)\x{212A}s)",
+    R"(\x{17F}k)",
+  };
+  static constexpr std::string_view kAtoms[]{
+    "a",    "A",      "k",      "S",         "1",
+    ".",    "(?i:a)", "(?i:k)", "(?i:s)",    "(?i:ak)",
+    "[Kk]", "[Ss]",   "(a|K)",  "\\x{212A}", "\\x{17F}",
+  };
+  static constexpr std::string_view kSuffixes[]{
+    "", "", "", "*", "+", "?",
+  };
+  std::mt19937 rng{20261003};
+  for (int i = 0; i != 300; ++i) {
+    std::string pattern;
+    const auto atoms = 1 + rng() % 4;
+    for (size_t j = 0; j != atoms; ++j) {
+      absl::StrAppend(&pattern, kAtoms[rng() % std::size(kAtoms)],
+                      kSuffixes[rng() % std::size(kSuffixes)]);
+    }
+    patterns.push_back(std::move(pattern));
+  }
+
+  for (const auto& pattern : patterns) {
+    const re2::RE2 re{pattern, irs::RegexpOptions(irs::RegexpSyntax::Perl)};
+    ASSERT_TRUE(re.ok()) << pattern;
+    for (const auto n : {size_t{2}, size_t{3}}) {
+      const auto query =
+        irs::ExtractGramQuery(Bytes(pattern), irs::RegexpSyntax::Perl, n,
+                              kBoundary)
+          .query;
+      for (const auto& term : terms) {
+        if (!re2::RE2::FullMatch(term, re)) {
           continue;
         }
         const auto wrapped = absl::StrCat("\x1F", term, "\x1F");

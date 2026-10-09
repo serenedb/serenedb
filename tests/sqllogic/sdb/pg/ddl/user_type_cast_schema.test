@@ -1,0 +1,70 @@
+statement ok
+CREATE SCHEMA utc_s;
+
+
+statement ok
+CREATE TYPE utc_s.mood AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TYPE mood AS ENUM ('other');
+
+
+statement ok
+CREATE FUNCTION utc_f(m utc_s.mood) AS m::TEXT || '!';
+
+
+statement ok
+CREATE FUNCTION utc_tf(m utc_s.mood) AS TABLE SELECT m::TEXT AS v;
+
+
+query
+SELECT utc_f('y'::utc_s.mood) AS f, (SELECT v FROM utc_tf('x'::utc_s.mood)) AS tf;
+----
+f	tf
+y!	x
+
+
+statement ok
+CREATE TABLE utc_g (a utc_s.mood, b utc_s.mood GENERATED ALWAYS AS (a) VIRTUAL);
+
+
+statement ok
+INSERT INTO utc_g (a) VALUES ('y');
+
+
+query
+SELECT a, b, b = 'y'::utc_s.mood AS same FROM utc_g;
+----
+a	b	same
+y	y	t
+
+
+statement error
+INSERT INTO utc_g (a) VALUES ('other');
+----
+db error: ERROR: Could not convert string 'other' to mood
+
+
+statement ok
+DROP TABLE utc_g;
+
+
+statement ok
+DROP FUNCTION utc_tf;
+
+
+statement ok
+DROP FUNCTION utc_f;
+
+
+statement ok
+DROP TYPE mood;
+
+
+statement ok
+DROP TYPE utc_s.mood;
+
+
+statement ok
+DROP SCHEMA utc_s;

@@ -15,7 +15,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
+CREATE DATABASE w WITH (ROW_GROUP_SIZE = 1048576);
 
 
 statement ok
@@ -72,11 +72,6 @@ SELECT 1;
 connection after_crash
 statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT 1;
-
-
-connection after_crash
-statement ok
-ATTACH '${__TEST_DIR__}/cwnt.db' AS w (TYPE duckdb, STORAGE_VERSION 'serenedb_latest', ROW_GROUP_SIZE 1048576);
 
 
 # compression now runs for the first time, over rows the WAL handed back
@@ -195,7 +190,7 @@ t
 
 connection after_crash
 statement ok
-DETACH w;
+DROP DATABASE w;
 
 
 connection after_crash

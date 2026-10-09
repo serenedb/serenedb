@@ -29,6 +29,7 @@
 #include <array>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/types.hpp>
@@ -36,6 +37,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <optional>
 #include <span>
@@ -134,6 +136,29 @@ void VisitEntries(duckdb::ClientContext& context, duckdb::Catalog& database,
   for (auto& entry : entries) {
     visitor(entry.get());
   }
+}
+
+struct ViewColumns {
+  duckdb::shared_ptr<duckdb::ViewColumnInfo> info;
+  duckdb::vector<duckdb::Identifier> names;
+};
+
+inline ViewColumns GetViewColumns(duckdb::ClientContext& context,
+                                  duckdb::ViewCatalogEntry& view) {
+  try {
+    view.BindView(context);
+  } catch (const std::exception&) {
+  }
+  ViewColumns columns{.info = view.GetColumnInfo()};
+  if (!columns.info) {
+    return columns;
+  }
+  columns.names = columns.info->names;
+  for (size_t i = 0; i < columns.names.size() && i < view.aliases.size(); ++i) {
+    columns.names[i] = view.aliases[i];
+  }
+  duckdb::QueryResult::DeduplicateColumns(columns.names);
+  return columns;
 }
 
 // Write a single field value into a DuckDB Vector at the given row.

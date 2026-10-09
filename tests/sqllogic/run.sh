@@ -140,7 +140,7 @@ OLLAMA_CONTAINER_NAME=""
 OLLAMA_LOG_FILE=""
 KEV_CONTAINER_NAME=""
 KEV_LOG_FILE=""
-KEV_IMAGE="serenedb-test-kev:0.5b-09ff745d52a0"
+KEV_IMAGE="serenedb/serenedb-test-kev:1.0-0.5b-1534a08c"
 POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
@@ -611,7 +611,7 @@ launch_iceberg_rest() {
 
 export_iceberg_local_vars() {
 	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_storage (TYPE S3, KEY_ID '${MINIO_ACCESS_KEY}', SECRET '${MINIO_SECRET_KEY}', ENDPOINT '${MINIO_HOST}:${MINIO_PORT}', URL_STYLE 'path', USE_SSL false, SCOPE 's3://${MINIO_BUCKET}/warehouse/');"
-	export ICEBERG_SERVER_OPTIONS="warehouse '${ICEBERG_WAREHOUSE}', endpoint '${ICEBERG_REST_URL}', authorization_type 'none'"
+	export ICEBERG_SERVER_OPTIONS="warehouse '${ICEBERG_WAREHOUSE}', uri '${ICEBERG_REST_URL}', authorization_type 'none'"
 }
 
 launch_biglake() {
@@ -648,7 +648,7 @@ launch_biglake() {
 		echo "BigLake catalog ${BIGLAKE_CATALOG}: credentials from ${adc}."
 	fi
 	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_catalog (${secret_body});"
-	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
+	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', uri 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
 }
 
 launch_ollama() {
@@ -718,11 +718,6 @@ launch_kev() {
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	KEV_CONTAINER_NAME="${prefix}-serenedb-test-kev-$$"
 	KEV_LOG_FILE="${LOG_DIR:-/tmp}/${KEV_CONTAINER_NAME}.log"
-
-	if ! docker image inspect "$KEV_IMAGE" >/dev/null 2>&1; then
-		echo "Building $KEV_IMAGE..."
-		docker build -t "$KEV_IMAGE" "${SCRIPT_DIR}/fixtures/kev"
-	fi
 
 	local network_args=()
 	if [[ -n "${COMPOSE_NETWORK:-}" ]]; then
@@ -800,7 +795,7 @@ launch_postgres() {
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
-		postgres:18.3
+		postgres:18.6
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
 		PGPORT=$(docker port "$POSTGRES_CONTAINER_NAME" 5432/tcp | head -1 | sed 's/.*://')
 	fi
@@ -982,6 +977,13 @@ launch_external() {
 		[[ -n "$test_files" ]] || continue
 		while IFS= read -r f; do
 			[[ -n "$f" ]] || continue
+			# Skipped tests must not boot their service (Ollama, MinIO, ...).
+			if [[ -n "$skip" && "$f" =~ $skip ]]; then
+				continue
+			fi
+			if grep -qE '^# exclusive( |$)' "$f" 2>/dev/null; then
+				exclusive_tests+=("$f")
+			fi
 			# The local iceberg fixture is generated, not checked in. Tests
 			# symlink ${RESOURCES}/tests/iceberg/<table>_vN and serened
 			# resolves the target; under compose run_in_docker.sh generates
@@ -1160,6 +1162,7 @@ parse_options() {
 # --test is repeatable; collect into array and fall back to the single default
 # glob when none are provided.
 tests=()
+exclusive_tests=()
 
 # Example usage:
 parse_options "$@" || exit 1
@@ -1262,9 +1265,15 @@ run_tests() {
 		skip_failed_opt="--skip-failed"
 	fi
 
+	local main_skip="$skip"
+	if [[ ${#exclusive_tests[@]} -gt 0 ]]; then
+		local exclusive_regex
+		exclusive_regex=$(printf '%s\n' "${exclusive_tests[@]}" | sed -e 's/[][\\.*^$+?(){}|]/\\&/g' | paste -sd'|')
+		main_skip="${main_skip:+$main_skip|}$exclusive_regex"
+	fi
 	local skip_opt=""
-	if [[ -n "$skip" ]]; then
-		skip_opt="--skip $skip"
+	if [[ -n "$main_skip" ]]; then
+		skip_opt="--skip $main_skip"
 	fi
 
 	# TODO(Misha) move this to sqllogictest-rs
@@ -1289,6 +1298,18 @@ run_tests() {
 		$skip_opt \
 		$ssl_port_opt
 	local rc=$?
+	if [[ ${#exclusive_tests[@]} -gt 0 ]]; then
+		sqllogictest "${exclusive_tests[@]}" \
+			--host "$host" --port "$port" --engine "$engine" \
+			--jobs 1 \
+			--label "$database" \
+			--junit "$junit-$engine-exclusive" \
+			$options \
+			$skip_failed_opt ${skip_failed:+"$skip_failed"} \
+			$ssl_port_opt
+		local exclusive_rc=$?
+		[[ $rc == 0 ]] && rc=$exclusive_rc
+	fi
 
 	if [[ -n "$timing_out" ]]; then
 		unset SDB_TIMING_CACHE SDB_TIMING_OUT

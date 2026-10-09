@@ -172,6 +172,11 @@ struct PhrasePartVisitor : util::Noncopyable {
       ERR_MSG("Wildcard phrase part must be lowered by the optimizer before "
               "printing"));
   }
+  auto operator()(const ByRegexpOptions&) const {
+    THROW_SQL_ERROR(
+      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
+              "printing"));
+  }
   auto operator()(const ByEditDistanceOptions&) const {
     THROW_SQL_ERROR(
       ERR_MSG("Levenshtein phrase part must be lowered by the optimizer before "
@@ -188,20 +193,16 @@ struct PhrasePartVisitor : util::Noncopyable {
     if (opts.range.min_type == BoundType::Unbounded) {
       absl::StrAppend(out, "*");
     } else {
-      absl::StrAppend(
-        out, opts.range.min_type == BoundType::Inclusive ? "[" : "(",
-        std::string(reinterpret_cast<const char*>(opts.range.min.data()),
-                    opts.range.min.size()));
+      absl::StrAppend(out,
+                      opts.range.min_type == BoundType::Inclusive ? "[" : "(",
+                      ViewCast<char>(bytes_view{opts.range.min}));
     }
     absl::StrAppend(out, "..");
     if (opts.range.max_type == BoundType::Unbounded) {
       absl::StrAppend(out, "*");
     } else {
-      absl::StrAppend(
-        out,
-        std::string(reinterpret_cast<const char*>(opts.range.max.data()),
-                    opts.range.max.size()),
-        opts.range.max_type == BoundType::Inclusive ? "]" : ")");
+      absl::StrAppend(out, ViewCast<char>(bytes_view{opts.range.max}),
+                      opts.range.max_type == BoundType::Inclusive ? "]" : ")");
     }
   }
   std::string* out;
@@ -268,7 +269,7 @@ struct FilterPrinter {
     for (const auto& part : filter.options()) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+      absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
                       ")", "; ");
     }
     return s;
@@ -525,6 +526,11 @@ struct FilterPrinter {
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Parts"] = PhraseParts(f);
+      if (const auto separator = f.options().word_separator();
+          !separator.empty()) {
+        node.attributes["Separator"] =
+          absl::StrCat("'", TermToString(separator), "'");
+      }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
       }
@@ -534,9 +540,9 @@ struct FilterPrinter {
       const auto& f = downCast<const GeoFilter>(filter);
       ExplainNode node{"Geo"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Op"] = std::string{GeoFilterTypeName(f.options().type)};
-      node.attributes["Shape"] =
-        std::string{GeoShapeTypeName(f.options().shape.type())};
+      node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
+      node.attributes["Shape"].assign(
+        GeoShapeTypeName(f.options().shape.type()));
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -551,7 +557,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
+      node.attributes["Metric"].assign(VectorMetricName(o.metric));
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       if (o.inner) {
@@ -560,7 +566,7 @@ struct FilterPrinter {
       return node;
     }
     ExplainNode node{"Unknown"};
-    node.attributes["Type"] = std::string{type().name()};
+    node.attributes["Type"].assign(type().name());
     return node;
   }
 };

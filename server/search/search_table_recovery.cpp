@@ -53,7 +53,6 @@
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 namespace {
@@ -96,7 +95,6 @@ void ForEachSearchTable(
 
 void RunSearchTableRecovery() {
   auto begin = std::chrono::steady_clock::now();
-  auto& engine = GetSearchEngine();
 
   // Per-shard replay metadata, built once from the catalog table so the
   // recovered key matches the written one.
@@ -132,7 +130,6 @@ void RunSearchTableRecovery() {
 
   size_t recovered_shards = 0;
   for (const auto& database : SereneDatabases()) {
-    const duckdb::idx_t db_id = database->oid;
     irs::containers::NodeHashMap<duckdb::idx_t, ShardInfo> shards;
     ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& entry) {
       auto search = entry.Storage();
@@ -150,7 +147,10 @@ void RunSearchTableRecovery() {
       continue;
     }
 
-    auto& wal = engine.GetDbWal(db_id);
+    auto& wal = database->GetCatalog()
+                  .Cast<catalog::SereneDBCatalog>()
+                  .Directory()
+                  ->Wal();
     irs::containers::NodeHashMap<duckdb::idx_t, ReplayCtx> ctxs;
     auto exists_of = [&](duckdb::idx_t table_id) {
       return shards.find(table_id) != shards.end();
@@ -205,12 +205,6 @@ void RunSearchTableRecovery() {
       ctx.delete_sink->FinishImpl();
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // TRUNCATE wipes the shard as of `tick`. Clear rolls back the open trx
-    // (discarding any pre-truncate replayed inserts -- superseded by the
-    // truncate) and drops on-disk published data <= tick; drop the sinks first
-    // so nothing pins the trx, then start a fresh trx. Post-truncate ops (in
-    // later records) lazily rebuild the sinks via ensure_ctx; if the truncate
-    // is last, Finalize commits the empty trx so the cleared state publishes.
     auto replay_truncate = [&](uint64_t tick, duckdb::idx_t table_id) {
       auto& ctx = ensure_ctx(table_id);
       ctx.trx.Remove(std::make_shared<irs::All>());

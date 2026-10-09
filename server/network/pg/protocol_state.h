@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
-#include <duckdb/main/pending_query_result.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
 #include <duckdb/main/query_result.hpp>
@@ -44,6 +43,7 @@
 #include <vector>
 
 #include "network/pg/wire_frames.h"
+#include "pg/command_tag.h"
 #include "pg/serialize.h"
 
 namespace sdb::network::pg {
@@ -113,8 +113,10 @@ class Statement {
   // The statement behind the plan, for classifying it (transaction control)
   // without paying for a copy. Null when the plan does not carry one.
   const duckdb::SQLStatement* Unbound() const {
-    if (_prepared && _prepared->data && _prepared->data->unbound_statement) {
-      return _prepared->data->unbound_statement.get();
+    if (_prepared) {
+      if (const auto* unbound = sdb::pg::UnboundStatement(*_prepared)) {
+        return unbound;
+      }
     }
     return _source.get();
   }
@@ -152,6 +154,10 @@ class Statement {
   const duckdb::case_insensitive_map_t<duckdb::LogicalType>& TypeHints() const {
     return _type_hints;
   }
+  void SetParamOids(std::vector<uint64_t> oids) {
+    _param_oids = std::move(oids);
+  }
+  const std::vector<uint64_t>& ParamOids() const { return _param_oids; }
 
   // The result descriptor the client was last told (PG's
   // plansource->resultDesc). The extended protocol sends RowDescription only
@@ -220,6 +226,7 @@ class Statement {
   CatalogEpoch _epoch = 0;
   duckdb::unique_ptr<duckdb::SQLStatement> _source;
   duckdb::case_insensitive_map_t<duckdb::LogicalType> _type_hints;
+  std::vector<uint64_t> _param_oids;
   duckdb::vector<duckdb::LogicalType> _described_types;
   duckdb::vector<duckdb::Identifier> _described_names;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _statements;
@@ -242,7 +249,7 @@ struct BindInfo {
 class ClosingPending {
  public:
   ClosingPending() = default;
-  ClosingPending(duckdb::unique_ptr<duckdb::PendingQueryResult> pending)
+  ClosingPending(duckdb::unique_ptr<duckdb::QueryResult> pending)
     : _pending{std::move(pending)} {}
   ClosingPending(ClosingPending&& other) noexcept = default;
   ClosingPending& operator=(ClosingPending&& other) noexcept {
@@ -264,12 +271,16 @@ class ClosingPending {
     }
   }
 
-  duckdb::PendingQueryResult* operator->() const { return _pending.get(); }
-  duckdb::PendingQueryResult& operator*() const { return *_pending; }
+  duckdb::QueryResult* operator->() const { return _pending.get(); }
+  duckdb::QueryResult& operator*() const { return *_pending; }
   explicit operator bool() const { return _pending != nullptr; }
 
+  duckdb::unique_ptr<duckdb::QueryResult> Release() noexcept {
+    return std::move(_pending);
+  }
+
  private:
-  duckdb::unique_ptr<duckdb::PendingQueryResult> _pending;
+  duckdb::unique_ptr<duckdb::QueryResult> _pending;
 };
 
 // A portal's execution lifecycle. The old started/exhausted bool pair only had
@@ -309,6 +320,12 @@ struct Portal {
   BindInfo bind_info;
   PortalExecution exec;
 };
+
+inline bool IsCommit(const duckdb::SQLStatement& statement) {
+  return statement.type == duckdb::StatementType::TRANSACTION_STATEMENT &&
+         statement.Cast<duckdb::TransactionStatement>().info->type ==
+           duckdb::TransactionType::COMMIT;
+}
 
 // COMMIT/ROLLBACK are the only commands PG still accepts while a transaction
 // block is aborted -- they end the block. Everything else is rejected.

@@ -191,7 +191,7 @@ class ColumnReader {
   uint64_t ArraySize() const noexcept { return _array_size; }
 
   size_t StructFieldCount() const noexcept {
-    return _type.id() == duckdb::LogicalTypeId::STRUCT ? _children.size() : 0;
+    return duckdb::StructType::IsStruct(_type) ? _children.size() : 0;
   }
   const ColumnReader& StructField(size_t i) const noexcept {
     SDB_ASSERT(i < _children.size());

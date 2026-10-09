@@ -111,6 +111,29 @@ FROM sdb_docs.objects;
 ?column?	?column?	?column?	?column?	?column?	?column?
 t	t	t	t	t	t
 
+connection docs database=postgres
+query
+SELECT count(*) > 0 FROM pg_settings WHERE starts_with(name, 'sdb_ai_');
+----
+?column?
+t
+
+connection docs database=postgres
+query
+SELECT s.name FROM pg_settings s
+LEFT JOIN (SELECT DISTINCT name FROM sdb_docs.objects WHERE kind = 'setting') o ON o.name = s.name
+WHERE starts_with(s.name, 'sdb_ai_') AND o.name IS NULL
+ORDER BY 1;
+----
+name
+
+connection docs database=postgres
+query
+SELECT count(*) > 0, bool_and(kind = 'setting') FROM sdb_docs.object('sdb_ai_request_timeout', 'setting');
+----
+?column?	bool_and
+t	t
+
 # The catalog knows object kinds, so a name documented only as a client method
 # or as parser syntax is never reported as a SQL function.
 connection docs database=postgres

@@ -500,7 +500,7 @@ EXPLAIN SELECT id, TFIDF(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phras
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
-│ Order By: docs_idx.id ASC              │
+│ Order By: id ASC                       │
 │ ~7 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
@@ -623,8 +623,8 @@ SELECT TFIDF();
 ----
 db error: ERROR: No function matches the given name and argument types 'tfidf()'. You might need to add explicit type casts.
 	Candidate functions:
-	tfidf(col0 BIGINT) -> FLOAT
-	tfidf(col0 BIGINT, col1 BOOLEAN) -> FLOAT
+	tfidf(col0 BIGINT, /) -> FLOAT
+	tfidf(col0 BIGINT, col1 BOOLEAN, /) -> FLOAT
 
 
 # Error: BM25(docs_idx.tableoid, 1) — must be 0 or 2 arguments
@@ -633,8 +633,8 @@ SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoi
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
-	bm25(col0 BIGINT) -> FLOAT
-	bm25(col0 BIGINT, col1 DOUBLE, col2 DOUBLE) -> FLOAT
+	bm25(col0 BIGINT, /) -> FLOAT
+	bm25(col0 BIGINT, col1 DOUBLE, col2 DOUBLE, /) -> FLOAT
 
 
 # Error: BM25(docs_idx.tableoid, k1, b, extra) — too many arguments
@@ -643,8 +643,8 @@ SELECT id FROM docs_idx WHERE body @@ ts_phrase('fox') AND BM25(docs_idx.tableoi
 ----
 db error: ERROR: No function matches the given name and argument types 'bm25(BIGINT, DECIMAL(2,1), DECIMAL(3,2), DECIMAL(2,1))'. You might need to add explicit type casts.
 	Candidate functions:
-	bm25(col0 BIGINT) -> FLOAT
-	bm25(col0 BIGINT, col1 DOUBLE, col2 DOUBLE) -> FLOAT
+	bm25(col0 BIGINT, /) -> FLOAT
+	bm25(col0 BIGINT, col1 DOUBLE, col2 DOUBLE, /) -> FLOAT
 
 
 # Error: BM25(docs.tableoid) with plain table in FROM (no inverted index scan)
@@ -661,7 +661,7 @@ EXPLAIN SELECT id, BM25(docs_idx.tableoid) FROM docs_idx WHERE body @@ ts_phrase
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
 │ Top: 3                                 │
-│ Order By: docs_idx.id ASC              │
+│ Order By: id ASC                       │
 │ ~3 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
@@ -927,7 +927,7 @@ ORDER BY a.id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
-│ Order By: a.id ASC                     │
+│ Order By: id ASC                       │
 │ ~7 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ PROJECTION ───────┴───────────────────╮
@@ -977,7 +977,7 @@ ORDER BY docs_idx.id;
 ----
 QUERY PLAN
 ╭─ ORDER_BY ─────────────────────────────╮
-│ Order By: docs_idx.id ASC              │
+│ Order By: id ASC                       │
 │ ~7 rows                                │
 ╰────────────────────┬───────────────────╯
 ╭─ PROJECTION ───────┴───────────────────╮
@@ -1169,7 +1169,8 @@ UNION ALL
 ORDER BY BM25(docs_idx.tableoid)
 LIMIT 6;
 ----
-db error: ERROR: Could not ORDER BY column "bm25(<slt:ignore>)": add the expression/function to every SELECT, or move the UNION into a FROM clause.
+db error: ERROR: Referenced table "docs_idx" not found!
+Candidate tables: "unnamed_subquery"
 
 
 statement ok

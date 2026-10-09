@@ -59,7 +59,7 @@ irs::analysis::Tokenizer::ptr MakeDelimiter(std::string_view delim) {
 irs::analysis::Tokenizer::ptr MakeCollation(std::string_view locale) {
   return irs::analysis::CollationTokenizer::Make(
     irs::analysis::CollationTokenizer::Options{
-      .locale = icu::Locale::createFromName(std::string(locale).c_str()),
+      .locale = duckdb::text::Locale::FromName(std::string(locale).c_str()),
     });
 }
 
@@ -77,7 +77,7 @@ irs::analysis::Tokenizer::ptr MakeNorm(std::string_view locale,
                                        irs::Case case_convert) {
   return irs::analysis::NormalizingTokenizer::Make(
     irs::analysis::NormalizingTokenizer::Options{
-      .locale = icu::Locale::createFromName(std::string(locale).c_str()),
+      .locale = duckdb::text::Locale::FromName(std::string(locale).c_str()),
       .case_convert = case_convert,
     });
 }
@@ -455,7 +455,7 @@ TEST(pipeline_token_stream_test, signle_non_tokenizer) {
   irs::analysis::PipelineTokenizer::Options opts;
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{irs::analysis::NormalizingTokenizer::Options{
-      .locale = icu::Locale::createFromName("en"),
+      .locale = duckdb::text::Locale::FromName("en"),
       .case_convert = irs::Case::Lower,
     }}));
 
@@ -582,7 +582,7 @@ TEST(pipeline_token_stream_test, test_construct) {
 
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{irs::analysis::NormalizingTokenizer::Options{
-      .locale = icu::Locale::createFromName("en_US.UTF-8"),
+      .locale = duckdb::text::Locale::FromName("en_US.UTF-8"),
       .case_convert = irs::Case::Upper,
     }}));
 
@@ -1134,7 +1134,7 @@ irs::analysis::Tokenizer::ptr MakeCollationEn() {
 
 irs::analysis::Tokenizer::ptr MakeStemEn() {
   irs::analysis::StemmingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   return irs::analysis::StemmingTokenizer::Make(std::move(opts));
 }
 

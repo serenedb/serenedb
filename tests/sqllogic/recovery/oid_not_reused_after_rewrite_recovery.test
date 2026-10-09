@@ -1,0 +1,45 @@
+control substitution on
+
+statement ok
+CREATE TABLE onr_oids (oid BIGINT);
+
+
+statement ok
+CREATE TABLE onr_a (x INT);
+
+
+statement ok
+INSERT INTO onr_oids SELECT 'onr_a'::regclass::oid;
+
+
+statement ok
+SET sdb_faults = 'compact_inside_drop';
+
+
+statement ok
+DROP TABLE onr_a;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_drop';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE onr_b (x INT);
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM onr_oids WHERE oid >= 'onr_b'::regclass::oid;
+----
+n
+0

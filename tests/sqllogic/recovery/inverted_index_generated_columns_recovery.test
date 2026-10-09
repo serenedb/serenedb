@@ -1,0 +1,89 @@
+control substitution on
+
+statement ok
+CREATE TABLE iigc_t (a INT, v INT GENERATED ALWAYS AS (a + 1) VIRTUAL, s INT GENERATED ALWAYS AS (a * 2) STORED, b TEXT, c TEXT);
+
+
+statement ok
+CREATE INDEX iigc_b ON iigc_t USING inverted (b);
+
+
+statement ok
+CREATE INDEX iigc_c ON iigc_t USING inverted (c);
+
+
+statement ok
+INSERT INTO iigc_t (a, b, c) VALUES (1, 'red', 'x'), (2, 'blue', 'y'), (3, 'red', 'x');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iigc_t;
+
+
+query
+SELECT (SELECT count(*) FROM iigc_b WHERE b @@ 'red') AS r, (SELECT count(*) FROM iigc_c WHERE c @@ 'x') AS x;
+----
+r	x
+2	2
+
+
+statement ok
+ALTER TABLE iigc_t DROP COLUMN v;
+
+
+statement ok
+INSERT INTO iigc_t (a, b, c) VALUES (4, 'red', 'y');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) iigc_t;
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM iigc_b WHERE b @@ 'red') AS r, (SELECT count(*) FROM iigc_c WHERE c @@ 'y') AS y, (SELECT count(*) FROM iigc_b) AS nb, (SELECT count(*) FROM iigc_c) AS nc;
+----
+r	y	nb	nc
+3	2	4	4
+
+
+connection after_crash
+statement ok
+INSERT INTO iigc_t (a, b, c) VALUES (5, 'green', 'x');
+
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_shutdown
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) iigc_t;
+
+
+connection after_shutdown
+query
+SELECT (SELECT count(*) FROM iigc_b WHERE b @@ 'green') AS g, (SELECT count(*) FROM iigc_c WHERE c @@ 'x') AS x, (SELECT s FROM iigc_t WHERE a = 5) AS s;
+----
+g	x	s
+1	3	10

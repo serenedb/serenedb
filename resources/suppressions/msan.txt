@@ -1,1 +1,7 @@
-# No active MemorySanitizer suppressions.
+[memory]
+fun:*simdutf*icelake*
+fun:sz_*_icelake*
+fun:*NGramTokenizer*DoFill*
+fun:*ConvertListToVariantILb0E*
+fun:*ConvertArrayToVariantILb0E*
+fun:*StringUtil*SkipBOM*

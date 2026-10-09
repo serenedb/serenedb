@@ -261,7 +261,7 @@ void Register(const std::string& name) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int Main(int argc, char** argv) {
   Register<StdMap>("std_map");
   Register<AbslBtree>("absl_btree_map");
   Register<AbslBtreeBoxed>("absl_btree_map_boxed");
@@ -284,3 +284,6 @@ int main(int argc, char** argv) {
   benchmark::Shutdown();
   return 0;
 }
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

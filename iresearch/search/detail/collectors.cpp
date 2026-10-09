@@ -22,6 +22,8 @@
 
 #include "collectors.hpp"
 
+#include <absl/base/internal/endian.h>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/term_reader.hpp"
 
@@ -30,6 +32,12 @@ namespace {
 
 byte_type* Mutable(const byte_type* stats) noexcept {
   return const_cast<byte_type*>(stats);
+}
+
+uint64_t TermOrderKey(bytes_view term) noexcept {
+  byte_type key[sizeof(uint64_t)]{};
+  std::memcpy(key, term.data(), std::min(term.size(), sizeof(key)));
+  return absl::big_endian::Load64(key);
 }
 
 }  // namespace
@@ -93,24 +101,32 @@ void ExpandedSlotsCollector::Finish(StatsArena& stats) {
   const auto field = _counters.TotalField();
   auto* const slot = Mutable(_stats);
   Terms merged;
-  std::vector<const Terms::value_type*> ordered;
+  std::vector<std::pair<uint64_t, const Terms::value_type*>> ordered;
   for (size_t i = 0; i != _expanded_size; ++i) {
-    merged.clear();
-    for (uint32_t t = 0; t != threads; ++t) {
-      for (const auto& [term, counter] : Expanded(t, i)) {
-        auto& one = merged[term];
-        one.docs_with_term += counter.docs_with_term;
-        one.total_term_freq += counter.total_term_freq;
+    const Terms* terms = &Expanded(0, i);
+    if (threads > 1) {
+      merged.clear();
+      for (uint32_t t = 0; t != threads; ++t) {
+        for (const auto& [term, counter] : Expanded(t, i)) {
+          auto& one = merged[term];
+          one.docs_with_term += counter.docs_with_term;
+          one.total_term_freq += counter.total_term_freq;
+        }
       }
+      terms = &merged;
     }
     ordered.clear();
-    for (const auto& entry : merged) {
-      ordered.push_back(&entry);
+    ordered.reserve(terms->size());
+    for (const auto& entry : *terms) {
+      ordered.emplace_back(TermOrderKey(entry.first), &entry);
     }
-    absl::c_sort(ordered, [](const auto* lhs, const auto* rhs) {
-      return lhs->first < rhs->first;
+    absl::c_sort(ordered, [](const auto& lhs, const auto& rhs) {
+      if (lhs.first != rhs.first) {
+        return lhs.first < rhs.first;
+      }
+      return lhs.second->first < rhs.second->first;
     });
-    for (const auto* entry : ordered) {
+    for (const auto& [key, entry] : ordered) {
       _scorer->collect(slot, &field, &entry->second);
     }
   }

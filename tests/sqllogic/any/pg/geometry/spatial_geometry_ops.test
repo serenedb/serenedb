@@ -31,6 +31,37 @@ SELECT ST_Equals(ST_SymDifference('LINESTRING(0 0,4 0)'::geometry,'LINESTRING(2 
 v
 t
 
+
+statement error
+SELECT ST_Intersection('POLYGON((0 0,10 10,10 0,0 10,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry);
+----
+db error: ERROR: <slt:ignore>
+
+
+statement error
+SELECT ST_Union('POLYGON((0 0,10 10,10 0,0 10,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry);
+----
+db error: ERROR: <slt:ignore>
+
+
+statement error
+SELECT ST_Difference('POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry, 'POLYGON((0 0,10 10,10 0,0 10,0 0))'::geometry);
+----
+db error: ERROR: <slt:ignore>
+
+
+statement error
+SELECT ST_SymDifference('POLYGON((0 0,10 10,10 0,0 10,0 0))'::geometry, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry);
+----
+db error: ERROR: <slt:ignore>
+
+
+statement error
+SELECT ST_Intersection('MULTIPOLYGON(((0 0,4 0,4 4,0 4,0 0)),((2 2,6 2,6 6,2 6,2 2)))'::geometry, 'POLYGON((0 0,10 0,10 10,0 10,0 0))'::geometry);
+----
+db error: ERROR: <slt:ignore>
+
+
 query
 SELECT ST_Equals(ST_ConvexHull('MULTIPOINT(0 0,4 0,4 4,0 4,2 2)'::geometry), 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::geometry) AS v;
 ----

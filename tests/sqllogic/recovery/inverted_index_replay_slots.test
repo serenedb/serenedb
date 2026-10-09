@@ -1,0 +1,178 @@
+control substitution on
+
+
+statement ok
+SET GLOBAL checkpoint_threshold = '1GB';
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rs_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE rs(id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX rs_idx ON rs USING inverted(id, body rs_dict)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE rt(id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX rt_idx ON rt USING inverted(id, body rs_dict)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO rs SELECT g, 'row ' || g || ' alpha ' || repeat('pad ', 40) FROM generate_series(1, 60000) g;
+
+
+statement ok
+DELETE FROM rs WHERE id % 10 = 0;
+
+
+statement ok
+UPDATE rs SET body = 'row ' || id || ' bravo ' || repeat('pad ', 40) WHERE id % 10 = 1;
+
+
+statement ok
+INSERT INTO rs SELECT g, 'row ' || g || ' gamma ' || repeat('pad ', 40) FROM generate_series(60001, 120000) g;
+
+
+statement ok
+INSERT INTO rt SELECT g, 'row ' || g || ' old ' || repeat('pad ', 40) FROM generate_series(1, 30000) g;
+
+
+statement ok
+TRUNCATE rt;
+
+
+statement ok
+INSERT INTO rt SELECT g, 'row ' || g || ' delta ' || repeat('pad ', 40) FROM generate_series(1, 30000) g;
+
+
+statement ok
+DELETE FROM rs WHERE id % 10 = 2 AND id > 60000;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) rs;
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) rt;
+
+
+connection after_crash
+query
+SELECT count(*) FROM rs_idx WHERE body @@ ts_like('alpha');
+----
+count
+48000
+
+
+connection after_crash
+query
+SELECT count(*) FROM rs_idx WHERE body @@ ts_like('bravo');
+----
+count
+6000
+
+
+connection after_crash
+query
+SELECT count(*) FROM rs_idx WHERE body @@ ts_like('gamma');
+----
+count
+54000
+
+
+connection after_crash
+query
+SELECT count(*) FROM rs_idx WHERE body @@ ts_like('pad');
+----
+count
+108000
+
+
+connection after_crash
+query
+SELECT count(*) FROM rs;
+----
+count
+108000
+
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM rs_idx WHERE body @@ ts_like('bravo')
+  EXCEPT SELECT id FROM rs WHERE body LIKE '% bravo %') x;
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM (
+  SELECT id FROM rs WHERE id > 60000
+  EXCEPT SELECT id FROM rs_idx WHERE body @@ ts_like('gamma')) x;
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM rt_idx WHERE body @@ ts_like('old');
+----
+count
+0
+
+
+connection after_crash
+query
+SELECT count(*) FROM rt_idx WHERE body @@ ts_like('delta');
+----
+count
+30000
+
+
+connection after_crash
+query
+SELECT count(*) FROM rt_idx WHERE body @@ ts_like('pad');
+----
+count
+30000
+
+
+connection after_crash
+statement ok
+DROP TABLE rs;
+
+
+connection after_crash
+statement ok
+DROP TABLE rt;
+
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY rs_dict;

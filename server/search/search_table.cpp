@@ -32,7 +32,6 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -44,7 +43,6 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <mutex>
-#include <system_error>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -53,30 +51,9 @@
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
-#include "server/utils/lifecycle.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
-
-std::filesystem::path SearchTable::GetPath(duckdb::idx_t db_id,
-                                           duckdb::idx_t schema_id,
-                                           duckdb::idx_t table_id) {
-  SDB_ASSERT(db_id != 0);
-  SDB_ASSERT(schema_id != 0);
-  SDB_ASSERT(table_id != 0);
-  // Same on-disk layout as an inverted index minus the trailing index level --
-  // reuse its path generator with the index unset.
-  // TODO(Dronplane): unify as generic SearchStorage with all common stuff
-  return InvertedIndexStorage::GetPath(db_id, schema_id, table_id,
-                                       /*index_id=*/0);
-}
-
-std::filesystem::path SearchTable::GetWalPath(duckdb::idx_t db_id) {
-  SDB_ASSERT(db_id != 0);
-  auto path = GetSearchEngine().GetPersistedPath(db_id);
-  path /= "wal";
-  return path;
-}
 
 catalog::CompressionByColumn SearchTable::DeclaredCompression(
   const duckdb::ColumnList& columns) {
@@ -99,13 +76,12 @@ uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
   return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
 }
 
-SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
-                         duckdb::idx_t table_id, bool is_new,
+SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
+                         bool in_memory, duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
   : _table_id{table_id},
-    _db_id{db_id},
-    _schema_id{schema_id},
+    _directory{std::move(directory)},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
@@ -115,7 +91,7 @@ SearchTable::SearchTable(duckdb::idx_t db_id, duckdb::idx_t schema_id,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig();
-  OpenWriter();
+  OpenWriter(in_memory);
   ApplyOptions(options);
 }
 
@@ -136,40 +112,21 @@ SearchTable::~SearchTable() {
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
   }
-  if (!lifecycle::IsStopping()) {
-    GetSearchEngine().GetDbWal(_db_id).DeregisterShard(_table_id);
-  }
-  RemoveDroppedStorageDir(GetPath(_db_id, _schema_id, _table_id), 2);
+  _wal->DeregisterShard(_table_id);
+  catalog::DatabaseDirectory::RemoveStorage(std::move(_directory), _table_id);
 }
 
-void SearchTable::OpenWriter() {
-  auto path = GetPath(_db_id, _schema_id, GetTableId());
+void SearchTable::OpenWriter(bool in_memory) {
+  irs::ResourceManagementOptions resource_manager;
+  auto opened = OpenStorageDirectory(*_directory, GetTableId(), _is_new,
+                                     in_memory, resource_manager);
+  _dir = std::move(opened.directory);
+  _absent = opened.absent;
 
-  std::error_code ec;
-  bool path_exists = std::filesystem::exists(path, ec);
-  if (ec) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to check existence of path '",
-                            path.string(),
-                            "' while initializing search table for table ",
-                            GetTableId(), ": ", ec.message()));
-  }
-  if (!path_exists) {
-    std::filesystem::create_directories(path, ec);
-    if (ec) {
-      THROW_SQL_ERROR(ERR_MSG("Failed to create directory '", path.string(),
-                              "' while initializing search table for table ",
-                              GetTableId(), ": ", ec.message()));
-    }
-  }
-
-  const bool reopen = path_exists && !_is_new;
+  const bool reopen = opened.on_disk && !_is_new;
   const auto open_mode =
     reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
            : irs::OpenMode::kOmCreate;
-
-  irs::ResourceManagementOptions resource_manager;
-  _dir = std::make_unique<irs::MMapDirectory>(path, irs::DirectoryAttributes{},
-                                              resource_manager);
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
@@ -186,11 +143,13 @@ void SearchTable::OpenWriter() {
 
   writer_options.meta_payload_writer = [this](uint64_t tick,
                                               duckdb::BinarySerializer& out) {
-    _last_committed_tick = std::max(_last_committed_tick, tick);
-    out.WriteProperty<uint64_t>(kFieldTick, "tick", _last_committed_tick);
+    const auto committed = std::max(CommittedTick(), tick);
+    _last_committed_tick.store(committed, std::memory_order_release);
+    out.WriteProperty<uint64_t>(kFieldTick, "tick", committed);
   };
   writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
-    _last_committed_tick = ReadCommittedTick(in);
+    _last_committed_tick.store(ReadCommittedTick(in),
+                               std::memory_order_release);
   };
 
   _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
@@ -213,15 +172,15 @@ void SearchTable::OpenWriter() {
     }
   }
 
-  _wal = &GetSearchEngine().GetDbWal(_db_id);
+  _wal = &_directory->Wal();
 
   if (_is_new) {
     // A brand-new shard has no WAL records, so seed its committed tick at the
     // database WAL's current tick (not 0) -- otherwise an unused table would
     // pin the shared WAL's GC floor.
-    _last_committed_tick = _wal->CurrentTick();
+    _last_committed_tick.store(_wal->CurrentTick(), std::memory_order_release);
   }
-  _wal->RegisterShard(GetTableId(), _last_committed_tick);
+  _wal->RegisterShard(GetTableId(), CommittedTick());
 
   if (_is_new) {
     _writer->RefreshCommit();
@@ -256,13 +215,15 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
     if (lock.owns_lock()) {
+      _refresh_mutex.AssertHeld();
       // Snapshot the WAL tick before publishing: a RefreshCommit that reports
       // no changes proves this shard has nothing un-published up to that tick,
       // and any later batch lands at a higher tick, so advancing to it never
       // over-claims.
       const auto tick_before = _wal->CurrentTick();
+      SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
       if (_writer->RefreshCommit()) {
-        _wal->OnShardCommit(GetTableId(), _last_committed_tick);
+        _wal->OnShardCommit(GetTableId(), CommittedTick());
         code = RefreshResult::Done;
       } else {
         _wal->OnShardCommit(GetTableId(), tick_before);
@@ -305,7 +266,18 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::OpenDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log.clear();
+  _build_truncate_tick.store(0, std::memory_order_relaxed);
   _delete_log_open.store(true, std::memory_order_release);
+}
+
+void SearchTable::RecordTruncateForBuild(uint64_t tick) {
+  absl::MutexLock lock{&_delete_log_mutex};
+  if (!_delete_log_open.load(std::memory_order_relaxed)) {
+    return;
+  }
+  if (_build_truncate_tick.load(std::memory_order_relaxed) < tick) {
+    _build_truncate_tick.store(tick, std::memory_order_release);
+  }
 }
 
 void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
@@ -317,11 +289,6 @@ void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
     return;
   }
   _delete_log.insert(_delete_log.end(), rows.begin(), rows.end());
-}
-
-std::vector<int64_t> SearchTable::TakeDeleteLog() {
-  absl::MutexLock lock{&_delete_log_mutex};
-  return std::exchange(_delete_log, {});
 }
 
 void SearchTable::CloseDeleteLog() {

@@ -76,7 +76,7 @@ Normalization rewrites tokens so that equivalent forms collapse together. Each n
 
 Case folding (`split_text(case := 'lower')`) is applied in every example above. [`collate_tokens`](../../functions/search/tokenizers/collate_tokens.md) is the other normalizing stage, producing sort keys for a locale.
 
-**Locale-aware analysis.** The [`collate_tokens`](../../functions/search/tokenizers/collate_tokens.md) and [`normalize_tokens`](../../functions/search/tokenizers/normalize_tokens.md) templates take an ICU `locale`, so sorting and equality follow a language's rules rather than raw byte order — German `de`, for example, sorts `ä` next to `a`. A `collate_tokens` dictionary turns each value into one locale-ordered key, which is ideal for [range queries](./full-text-search.md#range-queries) and exact ordering on a column. The same ICU locales back the SQL [`COLLATE` clause](../../expressions/collations/index.md).
+**Locale-aware analysis.** The [`collate_tokens`](../../functions/search/tokenizers/collate_tokens.md) and [`normalize_tokens`](../../functions/search/tokenizers/normalize_tokens.md) templates take a `locale`, so sorting and equality follow a language's rules rather than raw byte order — German `de`, for example, sorts `ä` next to `a`. A `collate_tokens` dictionary turns each value into one locale-ordered key, which is ideal for [range queries](./full-text-search.md#range-queries) and exact ordering on a column. The collations of `collate_tokens` are those of the SQL [`COLLATE` clause](../../expressions/collations/index.md).
 
 ## Composing with `pipeline`
 

@@ -222,7 +222,7 @@ struct PgBinaryCopyFromGlobalState final
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::ClientContext&, duckdb::CopyFromFunctionBindInput& input,
-  duckdb::vector<std::string>&,
+  duckdb::vector<duckdb::Identifier>&,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   return duckdb::make_uniq<PgBinaryCopyFromBindData>(expected_types,
                                                      input.info.file_path);

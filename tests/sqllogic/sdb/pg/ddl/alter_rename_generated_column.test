@@ -28,7 +28,7 @@ query
 SELECT sql FROM duckdb_tables() WHERE table_name = 'gren_metrics';
 ----
 sql
-CREATE TABLE public.gren_metrics(qps_base INTEGER, qps_next INTEGER GENERATED ALWAYS AS((qps_base + 1)));
+CREATE TABLE public.gren_metrics(qps_base INTEGER, qps_next INTEGER GENERATED ALWAYS AS((qps_base + 1)) STORED);
 
 
 statement ok

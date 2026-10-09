@@ -76,7 +76,7 @@ def read_row_tokens(conn, keys):
 
 
 def catalog_wal_size(datadir):
-    path = os.path.join(datadir, "engine_catalog", "catalog.wal")
+    path = os.path.join(datadir, "engine_v1", "catalog.wal")
     try:
         return os.path.getsize(path)
     except OSError:
@@ -151,20 +151,20 @@ def take(conn, run_tag, datadir=None, row_keys=(), scan_artifacts=False):
 
 def scan_datadir(datadir, live_oids):
     findings = []
-    duck = os.path.join(datadir, "engine_duckdb")
-    if os.path.isdir(duck):
-        for entry in os.listdir(duck):
-            stem = entry.split(".", 1)[0]
-            if not stem.isdigit():
-                continue
-            if int(stem) not in live_oids:
-                findings.append(("engine_duckdb", entry))
-    search = os.path.join(datadir, "engine_search")
-    if os.path.isdir(search):
-        for root, dirs, _files in os.walk(search):
-            for d in dirs:
-                if d.isdigit() and int(d) not in live_oids:
-                    findings.append((os.path.relpath(root, datadir), d))
+    engine = os.path.join(datadir, "engine_v1")
+    if not os.path.isdir(engine):
+        return findings
+    for database in os.listdir(engine):
+        path = os.path.join(engine, database)
+        if not database.isdigit() or not os.path.isdir(path):
+            continue
+        if int(database) not in live_oids:
+            findings.append(("engine_v1", database))
+            continue
+        for entry in os.listdir(path):
+            if (entry.isdigit() and os.path.isdir(os.path.join(path, entry))
+                    and int(entry) not in live_oids):
+                findings.append((os.path.join("engine_v1", database), entry))
     return findings
 
 

@@ -1,0 +1,314 @@
+statement ok
+CREATE TABLE ck_t (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ck_t (other INT);
+
+
+query
+SELECT string_agg(column_name, ',' ORDER BY ordinal_position) AS cols FROM information_schema.columns
+WHERE table_name = 'ck_t';
+----
+cols
+id,body
+
+
+statement ok
+CREATE INDEX ck_inv ON ck_t USING inverted (body);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS ck_inv ON ck_t USING inverted (id);
+
+
+query
+SELECT expressions FROM duckdb_indexes() WHERE index_name = 'ck_inv';
+----
+expressions
+[body]
+
+
+statement ok
+INSERT INTO ck_t VALUES (1, 'x');
+
+
+statement ok
+CREATE OR REPLACE TABLE ck_t (id INT PRIMARY KEY, body TEXT, extra INT);
+
+
+query
+SELECT count(*) AS n FROM pg_indexes WHERE indexname = 'ck_inv';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM ck_t;
+----
+n
+0
+
+
+statement ok
+CREATE TABLE ck_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ck_s (x INT) WITH (storage = 'search');
+
+
+statement ok
+INSERT INTO ck_s VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ck_s;
+
+
+statement ok
+CREATE INDEX ck_s_inv ON ck_s USING inverted (body);
+
+
+statement ok
+CREATE INDEX IF NOT EXISTS ck_s_inv ON ck_s USING inverted (id);
+
+
+statement ok
+CREATE OR REPLACE TABLE ck_s (id INT PRIMARY KEY, body2 TEXT) WITH (storage = 'search');
+
+
+query
+SELECT count(*) AS n FROM ck_s;
+----
+n
+0
+
+
+statement ok
+INSERT INTO ck_s VALUES (3, 'c');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ck_s;
+
+
+query
+SELECT id, body2 FROM ck_s;
+----
+id	body2
+3	c
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ck_ctas AS SELECT 1 AS a;
+
+
+statement ok
+CREATE TABLE IF NOT EXISTS ck_ctas AS SELECT 2 AS b;
+
+
+query
+SELECT * FROM ck_ctas;
+----
+a
+1
+
+
+statement ok
+CREATE OR REPLACE TABLE ck_ctas AS SELECT 3 AS c;
+
+
+query
+SELECT * FROM ck_ctas;
+----
+c
+3
+
+
+statement ok
+CREATE VIEW ck_v AS SELECT 1 AS a;
+
+
+statement ok
+CREATE VIEW IF NOT EXISTS ck_v AS SELECT 2 AS b;
+
+
+statement ok
+CREATE OR REPLACE VIEW ck_v AS SELECT 3 AS a;
+
+
+query
+SELECT * FROM ck_v;
+----
+a
+3
+
+
+statement error
+CREATE OR REPLACE VIEW ck_v AS SELECT 3 AS z;
+----
+db error: ERROR: cannot change name of view column "a" to "z"
+
+
+statement ok
+CREATE VIEW ck_tv AS SELECT id FROM ck_t;
+
+
+statement error
+CREATE OR REPLACE TABLE ck_t (id INT);
+----
+db error: ERROR: Cannot drop entry "ck_t" because there are entries that depend on it.
+view "ck_tv" depends on table "ck_t".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+CREATE SEQUENCE ck_q START 5;
+
+
+statement ok
+CREATE SEQUENCE IF NOT EXISTS ck_q START 50;
+
+
+query
+SELECT nextval('ck_q') AS n;
+----
+n
+5
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE ck_q START 500;
+
+
+query
+SELECT nextval('ck_q') AS n;
+----
+n
+500
+
+
+statement ok
+CREATE TABLE ck_dq (id INT DEFAULT nextval('ck_q'));
+
+
+statement error
+CREATE OR REPLACE SEQUENCE ck_q START 1;
+----
+db error: ERROR: Cannot drop entry "ck_q" because there are entries that depend on it.
+table "ck_dq" depends on sequence "ck_q".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+CREATE SCHEMA ck_sc;
+
+
+statement ok
+CREATE SCHEMA IF NOT EXISTS ck_sc;
+
+
+statement ok
+CREATE TYPE ck_e AS ENUM ('a');
+
+
+statement ok
+CREATE TYPE IF NOT EXISTS ck_e AS ENUM ('b');
+
+
+query
+SELECT enum_range(NULL::ck_e)::text AS r;
+----
+r
+[a]
+
+
+statement ok
+CREATE OR REPLACE TYPE ck_e AS ENUM ('c');
+
+
+query
+SELECT enum_range(NULL::ck_e)::text AS r;
+----
+r
+[c]
+
+
+statement ok
+CREATE FUNCTION ck_f(x INT) AS x + 1;
+
+
+statement ok
+CREATE FUNCTION IF NOT EXISTS ck_f(x INT) AS x + 2;
+
+
+query
+SELECT ck_f(1) AS r;
+----
+r
+2
+
+
+statement ok
+CREATE OR REPLACE FUNCTION ck_f(x INT) AS x + 3;
+
+
+query
+SELECT ck_f(1) AS r;
+----
+r
+4
+
+
+statement ok
+CREATE DATABASE ck_db;
+
+
+statement ok
+CREATE DATABASE IF NOT EXISTS ck_db;
+
+
+statement ok
+DROP DATABASE ck_db;
+
+
+statement ok
+DROP TABLE ck_dq;
+
+
+statement ok
+DROP SEQUENCE ck_q;
+
+
+statement ok
+DROP VIEW ck_tv;
+
+
+statement ok
+DROP VIEW ck_v;
+
+
+statement ok
+DROP TABLE ck_t;
+
+
+statement ok
+DROP TABLE ck_s;
+
+
+statement ok
+DROP TABLE ck_ctas;
+
+
+statement ok
+DROP FUNCTION ck_f;
+
+
+statement ok
+DROP TYPE ck_e;
+
+
+statement ok
+DROP SCHEMA ck_sc;

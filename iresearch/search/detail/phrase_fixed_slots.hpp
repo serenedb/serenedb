@@ -94,6 +94,14 @@ class PhraseFixedSlots {
     return _matcher.template Match<true>();
   }
 
+  uint32_t FreqBoundOf(uint32_t freq) const noexcept
+    requires(kHasFreqBound)
+  {
+    return _matcher.FreqBoundOf(freq);
+  }
+
+  Leaf& Lead() noexcept { return _leaves.Lead(); }
+
   uint32_t Freq() const noexcept { return _matcher.GetFreq(); }
 
   static constexpr bool kOffsets = Leaf::kOffsets;

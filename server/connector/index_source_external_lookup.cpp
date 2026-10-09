@@ -124,7 +124,7 @@ void ExternalLookupIndexSource::BuildQuery(
 
 void ExternalLookupIndexSource::PrepareLookup(
   duckdb::ClientContext& context, const std::string& catalog,
-  const std::string& inner, duckdb::named_parameter_map_t named) {
+  const std::string& inner, duckdb::named_argument_map_t named) {
   const std::string_view func_name =
     _dialect == Dialect::Postgres ? "postgres_lookup" : "clickhouse_lookup";
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
@@ -134,12 +134,14 @@ void ExternalLookupIndexSource::PrepareLookup(
                                duckdb::Identifier{func_name});
   SDB_ASSERT(entry);
   auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
-  _lookup_func = tf_entry.functions.GetFunctionByArguments(
-    context, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR});
+  _lookup_func =
+    duckdb::BoundTableFunction{tf_entry.functions.GetFunctionByArguments(
+      context, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR})};
 
   duckdb::vector<duckdb::Value> inputs;
   inputs.emplace_back(catalog);
   inputs.emplace_back(inner);
+  _lookup_func.SetCallArguments(inputs, named);
   duckdb::vector<duckdb::LogicalType> in_types;
   duckdb::vector<duckdb::Identifier> in_names;
   duckdb::TableFunctionRef dummy_ref;
@@ -147,7 +149,7 @@ void ExternalLookupIndexSource::PrepareLookup(
                                             _lookup_func.function_info.get(),
                                             nullptr, _lookup_func, dummy_ref);
   duckdb::vector<duckdb::LogicalType> types;
-  duckdb::vector<std::string> names;
+  duckdb::vector<duckdb::Identifier> names;
   duckdb::Connection bind_con(*context.db);
   bind_con.BeginTransaction();
   _bind_data = _lookup_func.bind(*bind_con.context, bind_input, types, names);
@@ -227,7 +229,10 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
                                    : Quote(_fast_path.key_columns[k].name),
                     " = u.__sdb_a", k);
   }
-  PrepareLookup(context, ref.catalog, inner, {});
+  duckdb::named_argument_map_t named;
+  named.insert("schema", duckdb::Value(ref.schema));
+  named.insert("table", duckdb::Value(ref.table));
+  PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 
 void ExternalLookupIndexSource::BuildClickHouseQuery(
@@ -271,8 +276,8 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
 
   const std::string schema_inner = absl::StrCat(
     "SELECT toInt64(0) AS __sdb_ord", proj, " FROM ", table, " WHERE 0");
-  duckdb::named_parameter_map_t named;
-  named.emplace("schema_query", duckdb::Value(schema_inner));
+  duckdb::named_argument_map_t named;
+  named.insert("schema_query", duckdb::Value(schema_inner));
   PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 

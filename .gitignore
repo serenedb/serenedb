@@ -28,9 +28,9 @@ docker.env
 .venv/
 __pycache__/
 .pytest_cache/
-node_modules/
+node_modules
 target/
-vendor/
+vendor
 bin/
 obj/
 go.sum

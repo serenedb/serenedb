@@ -335,8 +335,8 @@ SELECT 1 AS n<NL>\g
 SELECT 1 AS n<NL>\gx
 ----
 > +-[ RECORD 1 ]-+
-> | n | 1 |
-> +---+---+
+> | n | 1        |
+> +---+----------+
 
 SELECT 1 AS n<NL>\gdesc
 ----
@@ -641,14 +641,14 @@ SET search_path TO {schema};<NL>\df
 
 \dT {schema}.*
 ----
->              List of data types
-> +--------------+-------------+-------------+
-> |    Schema    |    Name     | Description |
-> +--------------+-------------+-------------+
-> | SCHEMA | acct_status | [NULL]      |
-> | SCHEMA | currency    | [NULL]      |
-> | SCHEMA | point2d     | [NULL]      |
-> +--------------+-------------+-------------+
+>                    List of data types
+> +--------------+--------------------------+-------------+
+> |    Schema    |           Name           | Description |
+> +--------------+--------------------------+-------------+
+> | SCHEMA | SCHEMA.acct_status | [NULL]      |
+> | SCHEMA | SCHEMA.currency    | [NULL]      |
+> | SCHEMA | SCHEMA.point2d     | [NULL]      |
+> +--------------+--------------------------+-------------+
 > (3 rows)
 
 \df {schema}.*

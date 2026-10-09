@@ -151,6 +151,22 @@ run it whenever you touch `.github/workflows/`. Full `run` needs the build image
 and `/mnt/data` caches for heavy jobs; put fake secrets in `.secrets`
 (gitignored) for workflows that reference them.
 
+### CI images carry every dependency
+
+CI never downloads or installs anything while it builds or tests. Toolchains, driver
+packages, language runtimes and test fixtures come from images:
+
+- `scripts/ci/build-ubuntu.Dockerfile` is the build and test image. It installs each driver's
+  dependencies from the manifests in `tests/drivers/` (`requirements.txt`, `package-lock.json`,
+  `composer.lock`, `go.sum`, `pom.xml`, `*.csproj`, `Cargo.lock`) and turns the package managers
+  offline. Regenerate it with the `build-images` workflow whenever one of those changes.
+- Service fixtures that need content baked in (models, extensions) get their own image, built by
+  the same workflow (`tests/sqllogic/fixtures/ollama`).
+- Runners never install a missing dependency or skip a missing toolchain; they fail and name what
+  is missing. Locally, install it yourself once (e.g. `npm ci` in `tests/drivers/js`).
+- The one exception is our own test tooling built from source (`third_party/sqllogictest-rs`): it
+  is rebuilt every run so it can change in a PR, with its crates cached on the CI machine.
+
 ### Running DuckDB's own test suites
 
 DuckDB core and each vendored extension ship sqllogic-style test suites under

@@ -13,7 +13,7 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
   the driver will `ninja unittest` for you if needed. Configure with
   `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` to skip it (the driver then refuses to run).
 - `docker` for the `postgres_scanner` suite only, and only when `PGHOST` isn't
-  already set: the runner then brings up `postgres:18.3` on a free port via
+  already set: the runner then brings up `postgres:18.6` on a free port via
   [docker-compose.postgres.yml](docker-compose.postgres.yml). CI sets `PGHOST`,
   so it reuses the postgres already in the compose stack.
 

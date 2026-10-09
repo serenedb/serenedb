@@ -141,6 +141,7 @@ OLLAMA_LOG_FILE=""
 KEV_CONTAINER_NAME=""
 KEV_LOG_FILE=""
 KEV_IMAGE="serenedb/serenedb-test-kev:1.0-0.5b-1534a08c"
+OLLAMA_IMAGE="serenedb/serenedb-test-ollama:$("$SCRIPT_DIR/fixtures/image_tag.sh" "$SCRIPT_DIR/fixtures/ollama")"
 POSTGRES_CONTAINER_NAME=""
 POSTGRES_LOG_FILE=""
 CLICKHOUSE_CONTAINER_NAME=""
@@ -678,8 +679,7 @@ launch_ollama() {
 	docker run -d \
 		--name "$OLLAMA_CONTAINER_NAME" \
 		"${network_args[@]}" \
-		-v serenedb-test-ollama:/root/.ollama \
-		ollama/ollama:latest
+		"$OLLAMA_IMAGE"
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
 		OLLAMA_PORT=$(docker port "$OLLAMA_CONTAINER_NAME" 11434/tcp | head -1 | sed 's/.*://')
 	fi
@@ -701,11 +701,8 @@ launch_ollama() {
 
 	for model in "$OLLAMA_MODEL" "$OLLAMA_CHAT_MODEL"; do
 		if ! docker exec "$OLLAMA_CONTAINER_NAME" ollama show "$model" >/dev/null 2>&1; then
-			echo "Pulling model '$model'..."
-			if ! docker exec "$OLLAMA_CONTAINER_NAME" ollama pull "$model"; then
-				echo "ERROR: could not pull Ollama model '$model'"
-				exit 1
-			fi
+			echo "ERROR: Ollama model '$model' is not in $OLLAMA_IMAGE; add it to fixtures/ollama/Dockerfile"
+			exit 1
 		fi
 	done
 
@@ -795,7 +792,7 @@ launch_postgres() {
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
-		postgres:18.3
+		postgres:18.6
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
 		PGPORT=$(docker port "$POSTGRES_CONTAINER_NAME" 5432/tcp | head -1 | sed 's/.*://')
 	fi

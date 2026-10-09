@@ -36,6 +36,8 @@ if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
 fi
 docker buildx create --name "$BUILDER_NAME" --use --driver-opt network=host >/dev/null
 
+CONTEXTS=(--build-context drivers=../../tests/drivers)
+
 # --- Build Loop ---
 for os in ubuntu; do
 	REPO="${REGISTRY}/serenedb-build-${os}"
@@ -46,7 +48,7 @@ for os in ubuntu; do
 
 	# 1. Build Probe (host arch, loaded locally for version extraction)
 	echo "    > Building local probe ($HOST_PLATFORM)..."
-	docker buildx build --load --platform "$HOST_PLATFORM" -t "${REPO}:probe" --file "${DOCKERFILE}" . >/dev/null
+	docker buildx build --load --platform "$HOST_PLATFORM" -t "${REPO}:probe" "${CONTEXTS[@]}" --file "${DOCKERFILE}" . >/dev/null
 
 	# 2. Extract Version Info
 	echo "    > Inspecting versions..."
@@ -72,6 +74,7 @@ for os in ubuntu; do
 				--platform "linux/${arch}" \
 				-t "${REPO}:${IMAGE_TAG}-${arch}" \
 				--output "type=docker,dest=/tmp/${os}-${arch}.tar" \
+				"${CONTEXTS[@]}" \
 				--file "${DOCKERFILE}" .
 		done
 
@@ -109,4 +112,16 @@ for os in ubuntu; do
 	# Cleanup local probe tag
 	docker rmi "${REPO}:probe" >/dev/null 2>&1 || true
 
+done
+
+# --- Test fixture images ---
+FIXTURES=../../tests/sqllogic/fixtures
+for fixture in ollama postgres; do
+	FIXTURE_IMAGE="${REGISTRY}/serenedb-test-${fixture}:$("${FIXTURES}/image_tag.sh" "${FIXTURES}/${fixture}")"
+	echo "[*] Building ${FIXTURE_IMAGE}..."
+	if [ "$PUSH_ENABLED" = "true" ]; then
+		docker buildx build --platform linux/amd64,linux/arm64 -t "${FIXTURE_IMAGE}" --push "${FIXTURES}/${fixture}"
+	else
+		docker buildx build --platform "$HOST_PLATFORM" -t "${FIXTURE_IMAGE}" --load "${FIXTURES}/${fixture}"
+	fi
 done

@@ -39,8 +39,8 @@ set -u
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 if ! command -v sqlsmith >/dev/null 2>&1; then
-	echo "[sqlsmith] sqlsmith not installed; skipping (see $SCRIPT_DIR/README.md)" >&2
-	exit 0
+	echo "[sqlsmith] sqlsmith not installed (see $SCRIPT_DIR/README.md)" >&2
+	exit 1
 fi
 
 HOST="${SDB_DRV_HOST:-localhost}"

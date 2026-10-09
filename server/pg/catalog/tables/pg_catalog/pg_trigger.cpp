@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <ranges>
@@ -73,14 +72,6 @@ int16_t TriggerType(const duckdb::TriggerCatalogEntry& trigger) {
   return type;
 }
 
-std::optional<std::string_view> TransitionTable(
-  const duckdb::Identifier& name) {
-  if (name.empty()) {
-    return std::nullopt;
-  }
-  return name.GetIdentifierName();
-}
-
 struct Trigger {
   const duckdb::TableCatalogEntry& table;
   const duckdb::TriggerCatalogEntry& trigger;
@@ -109,14 +100,17 @@ class PgTrigger final : public SystemTableScan<kPgTriggerSql> {
                });
     }),
     Col<"tgoldtable">([](const auto& row) {
-      return TransitionTable(row.trigger.referencing_old_table);
+      return NonEmpty<std::string_view>(
+        row.trigger.referencing_old_table.GetIdentifierName());
     }),
     Col<"tgnewtable">([](const auto& row) {
-      return TransitionTable(row.trigger.referencing_new_table);
+      return NonEmpty<std::string_view>(
+        row.trigger.referencing_new_table.GetIdentifierName());
     }));
 
   void Row(const duckdb::TriggerCatalogEntry& trigger) {
-    if (auto table = TriggerTable(*this, trigger)) {
+    if (auto table =
+          SiblingTable(Transaction(), trigger, trigger.base_table->Table())) {
       Emit<kTrigger>({*table, trigger});
     }
   }

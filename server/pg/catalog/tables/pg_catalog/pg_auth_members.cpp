@@ -20,7 +20,6 @@
 
 #include "catalog/entry/role.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {

@@ -23,7 +23,6 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
-#include <memory>
 #include <string_view>
 #include <vector>
 

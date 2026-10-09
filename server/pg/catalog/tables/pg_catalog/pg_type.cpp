@@ -165,12 +165,8 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typrelid">(&BuiltinType::relid),
     Col<"typtypmod">(&BuiltinType::typmod),
     Col<"typnotnull">(&BuiltinType::notnull),
-    Col<"typdefault">([](const auto& type) -> std::optional<std::string_view> {
-      if (type.default_text.empty()) {
-        return std::nullopt;
-      }
-      return type.default_text;
-    }));
+    Col<"typdefault">(
+      [](const auto& type) { return NonEmpty(type.default_text); }));
 
   static constexpr auto kEnumType = Shape<kSql, const UserType>(
     kUserTypeColumns, Col<"typlen">([](const auto&) { return 4; }),
@@ -223,9 +219,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"oid">([](const auto& relation) { return RowTypeOid(relation.oid); }),
     Col<"typname">(&duckdb::CatalogEntry::name),
     Col<"typnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-    Col<"typowner">(
-      [](const auto& relation) { return relation.permissions.owner; }),
-    Col<"typarray">([](const auto& relation) {
+    Col<"typowner">(kOwner), Col<"typarray">([](const auto& relation) {
       return TypeArrayOid(RowTypeOid(relation.oid));
     }),
     TypeColumns([](const auto&) -> const BuiltinType& { return kComposite; },

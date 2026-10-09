@@ -30,10 +30,7 @@
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
@@ -226,30 +223,24 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression) {
   return copy->ToString();
 }
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
-  const SystemScan& scan, const duckdb::TableCatalogEntry& table,
-  const duckdb::ForeignKeyConstraint& fk) {
-  if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
-    return &table;
-  }
-  auto entry =
-    FindMember(scan.Transaction(), table.ParentSchema(scan.Transaction()),
-               duckdb::CatalogType::TABLE_ENTRY, fk.info.table);
+duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
+  duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
+  const duckdb::Identifier& name) {
+  auto entry = FindMember(transaction, member.ParentSchema(transaction),
+                          duckdb::CatalogType::TABLE_ENTRY, name);
   if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
   return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> TriggerTable(
-  const SystemScan& scan, const duckdb::TriggerCatalogEntry& trigger) {
-  auto entry =
-    FindMember(scan.Transaction(), trigger.ParentSchema(scan.Transaction()),
-               duckdb::CatalogType::TABLE_ENTRY, trigger.base_table->Table());
-  if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
-    return nullptr;
+duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
+  const SystemScan& scan, const duckdb::TableCatalogEntry& table,
+  const duckdb::ForeignKeyConstraint& fk) {
+  if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
+    return &table;
   }
-  return &entry->Cast<duckdb::TableCatalogEntry>();
+  return SiblingTable(scan.Transaction(), table, fk.info.table);
 }
 
 const duckdb::UniqueConstraint* ReferencedKey(
@@ -285,9 +276,8 @@ bool NumbersRows(const duckdb::CatalogEntry& sequence) {
 namespace {
 
 void PutId(std::string& out, std::string_view name) {
-  const bool safe = absl::c_all_of(name, [](unsigned char c) {
-    return !(c & 0x80) && (absl::ascii_isalnum(c) || c == '_');
-  });
+  const bool safe = absl::c_all_of(
+    name, [](unsigned char c) { return absl::ascii_isalnum(c) || c == '_'; });
   if (safe) {
     out.append(name);
     return;
@@ -466,13 +456,9 @@ std::optional<ObjectName> RelationObject(const Session& session, uint64_t oid) {
     return ObjectName{entry->ParentSchemaName().GetIdentifierName(),
                       entry->name.GetIdentifierName()};
   }
-  if (auto table = OwnerTable(session, oid)) {
-    for (const auto& key : KeyIndexes(*table)) {
-      if (key.index_oid == oid) {
-        return ObjectName{table->ParentSchemaName().GetIdentifierName(),
-                          key.constraint_name};
-      }
-    }
+  if (const auto key = FindKeyIndex(session, oid); key.table) {
+    return ObjectName{key.table->ParentSchemaName().GetIdentifierName(),
+                      key.key_index->constraint_name};
   }
   if (const auto* table = FindSystemTable(oid)) {
     return ObjectName{std::string{table->Sql().schema},
@@ -543,30 +529,17 @@ std::string ArrayTypeNames::Of(const duckdb::CatalogEntry& element) {
 bool ArrayTypeNames::Unprefixed(const duckdb::CatalogEntry& element) {
   auto& names = _schemas[element.ParentSchemaOid()];
   if (!names.unprefixed && ++names.looked_up > kLookupsBeforeScan) {
-    const auto transaction = _scan.Transaction();
-    auto& schema = element.ParentSchema(transaction);
-    auto* serene =
-      dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
-    bool prefixed = false;
-    const auto check = [&](duckdb::CatalogEntry& entry) {
-      prefixed = prefixed || entry.name.GetIdentifierName().starts_with('_');
-    };
-    for (const auto type :
-         {duckdb::CatalogType::TYPE_ENTRY, duckdb::CatalogType::TABLE_ENTRY}) {
-      if (const auto snapshot =
-            serene
-              ? serene->Snapshot(
-                  _scan.Context(),
-                  schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type))
-              : nullptr) {
-        for (auto* entry : snapshot->entries) {
-          check(*entry);
-        }
-      } else {
-        schema.Scan(transaction, type, check);
-      }
-    }
-    names.unprefixed = !prefixed;
+    auto& schema = element.ParentSchema(_scan.Transaction());
+    names.unprefixed = absl::c_none_of(
+      std::array{duckdb::CatalogType::TYPE_ENTRY,
+                 duckdb::CatalogType::TABLE_ENTRY},
+      [&](duckdb::CatalogType type) {
+        return absl::c_any_of(
+          _scan.MemberSet(schema, type).entries,
+          [](const duckdb::CatalogEntry* entry) {
+            return entry->name.GetIdentifierName().starts_with('_');
+          });
+      });
   }
   return names.unprefixed.value_or(false);
 }
@@ -593,9 +566,8 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
     return ObjectName{entry->ParentSchemaName().GetIdentifierName(),
                       entry->name.GetIdentifierName()};
   }
-  if (const auto element = ArrayElementOid(session, oid);
-      element != kInvalidOid) {
-    const auto entry = EntryByOid(session, element);
+  if (auto entry = EntryByOid(session, oid + 1);
+      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
     return ObjectName{entry->ParentSchemaName().GetIdentifierName(),
                       ArrayTypeName(*session.transaction, *entry)};
   }
@@ -609,6 +581,17 @@ uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
   const auto entry = EntryByOid(session, oid + 1);
   return entry && entry->type == duckdb::CatalogType::TYPE_ENTRY ? oid + 1
                                                                  : kInvalidOid;
+}
+
+SubObject FindKeyIndex(const Session& session, uint64_t oid) {
+  if (auto table = OwnerTable(session, oid)) {
+    for (const auto& key : KeyIndexes(*table)) {
+      if (key.index_oid == oid) {
+        return {.table = table.get(), .key_index = &key};
+      }
+    }
+  }
+  return {};
 }
 
 SubObject FindKeyIndex(duckdb::ClientContext& context,
@@ -640,13 +623,10 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
       }
     }
   }
-  auto* serene =
-    dynamic_cast<catalog::SereneDBCatalog*>(&schema.ParentCatalog());
   const auto snapshot =
-    serene ? serene->Snapshot(
-               context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
-                          duckdb::CatalogType::TABLE_ENTRY))
-           : nullptr;
+    schema.ParentCatalog().Cast<catalog::SereneDBCatalog>().Snapshot(
+      context, schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(
+                 duckdb::CatalogType::TABLE_ENTRY));
   if (!snapshot) {
     schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, match);
     return found;

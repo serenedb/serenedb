@@ -20,7 +20,6 @@
 
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -94,12 +93,8 @@ struct InfoColumn {
                                          .entry = entry,
                                          .array = array});
     }
-    const auto* base = builtin;
-    if (builtin->type == 'd') {
-      if (const auto* found = FindBuiltinType(builtin->basetype)) {
-        base = found;
-      }
-    }
+    const auto* base =
+      builtin->type == 'd' ? FindBuiltinType(builtin->basetype) : builtin;
     const auto* collation = FindBuiltinCollation(described.collation);
     return info.emplace(ColumnTypeInfo{
       .described = described,

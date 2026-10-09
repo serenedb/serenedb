@@ -20,7 +20,6 @@
 
 #include "catalog/entry/role.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
@@ -54,11 +53,8 @@ class PgAuthid final : public SystemTableScan<kPgAuthidSql> {
     Col<"rolreplication">(kRoleOption<catalog::RoleOption::Replication>),
     Col<"rolbypassrls">(kRoleOption<catalog::RoleOption::BypassRls>),
     Col<"rolconnlimit">(&catalog::RoleCatalogEntry::ConnLimit),
-    Col<"rolpassword">([](const auto& role) -> std::optional<std::string_view> {
-      if (role.Password().empty()) {
-        return std::nullopt;
-      }
-      return role.Password();
+    Col<"rolpassword">([](const auto& role) {
+      return NonEmpty<std::string_view>(role.Password());
     }),
     Col<"rolvaliduntil">(
       [](const auto& role) -> std::optional<duckdb::timestamp_tz_t> {

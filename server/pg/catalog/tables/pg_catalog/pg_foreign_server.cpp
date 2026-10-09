@@ -21,7 +21,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <ranges>
-#include <string_view>
 
 #include "catalog/entry/foreign_server.h"
 #include "pg/catalog/tables/tables.h"
@@ -45,13 +44,8 @@ class PgForeignServer final : public SystemTableScan<kPgForeignServerSql> {
   static constexpr auto kServer =
     Shape<kSql, const catalog::ForeignServerCatalogEntry>(
       Col<"oid">(&duckdb::CatalogEntry::oid),
-      Col<"srvname">(&duckdb::CatalogEntry::name),
-      Col<"srvowner">(
-        [](const auto& server) { return server.permissions.owner; }),
-      Col<"srvacl">([](const auto& server) -> const auto& {
-        return server.permissions.acl;
-      }),
-      Col<"srvoptions">([](const auto& server) {
+      Col<"srvname">(&duckdb::CatalogEntry::name), Col<"srvowner">(kOwner),
+      Col<"srvacl">(kAcl), Col<"srvoptions">([](const auto& server) {
         return NonEmpty(server.Options() |
                         std::views::transform([](const auto& option) {
                           return absl::StrCat(option.first, "=", option.second);

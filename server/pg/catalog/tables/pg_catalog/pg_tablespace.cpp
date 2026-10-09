@@ -34,14 +34,12 @@ constexpr std::array kTablespaces{
   Tablespace{kPgGlobalTablespace, "pg_global"},
 };
 
-SystemRows<Tablespace> LoadTablespaces(SystemScan&) { return {kTablespaces}; }
-
 class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Tablespace>{&LoadTablespaces, {}}};
+    ArraySource<Tablespace>{&LoadStatic<kTablespaces>, {}}};
 
   static constexpr auto kTablespace = Shape<kSql, const Tablespace>(
     Col<"oid">(&Tablespace::oid), Col<"spcname">(&Tablespace::name),

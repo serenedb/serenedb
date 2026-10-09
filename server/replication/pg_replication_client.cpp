@@ -755,15 +755,18 @@ yaclib::Future<> PgReplicationClient::FeedbackLoop() {
 
 yaclib::Future<> PgReplicationClient::ReplicationMain() {
   co_await this->_task->Park();
-  absl::Cleanup finish = [this] {
-    if (_in_txn) {
-      this->_txn_state->Rollback();
-      _in_txn = false;
-    }
-    _job_ok = false;
-    _job_done.Set();
-    this->_task->Finish();
-  };
+  co_await ReplicationLoop();
+  if (_in_txn) {
+    this->_txn_state->Rollback();
+    _in_txn = false;
+  }
+  _job_ok = false;
+  _job_done.Set();
+  this->_task->Finish();
+  co_return {};
+}
+
+yaclib::Task<> PgReplicationClient::ReplicationLoop() {
   try {
     _setup_ok = SetupApplyConnection();
   } catch (const std::exception& ex) {

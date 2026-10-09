@@ -21,16 +21,20 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
+#include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/settings.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/utils/debugging.hpp>
@@ -41,6 +45,7 @@
 #include <iterator>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
+#include <ranges>
 #include <string>
 #include <string_view>
 
@@ -148,6 +153,78 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
     ERR_MSG(
       "parameter \"", kName,
       "\" is accepted for compatibility but is not enforced by serened")));
+}
+
+constexpr std::pair<std::string_view, double> kTimeUnits[] = {
+  {"us", 0.001},  {"ms", 1},      {"s", 1000},
+  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
+};
+
+int64_t ParseStatementTimeout(std::string_view text) {
+  const auto invalid = [&] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"statement_timeout\": \"", text,
+              "\""),
+      ERR_HINT("Valid units for this parameter are \"us\", "
+               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
+  };
+  const auto trimmed = absl::StripAsciiWhitespace(text);
+  double number = 0;
+  const auto [ptr, ec] = fast_float::from_chars(
+    trimmed.data(), trimmed.data() + trimmed.size(), number);
+  if (ec != std::errc{}) {
+    invalid();
+  }
+  const auto unit = absl::StripLeadingAsciiWhitespace(
+    trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
+  double scale = 1;
+  if (!unit.empty()) {
+    const auto it = std::ranges::find(
+      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
+    if (it == std::end(kTimeUnits)) {
+      invalid();
+    }
+    scale = it->second;
+  }
+  const auto ms = std::round(number * scale);
+  if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(absl::StrFormat("%g", ms),
+                            " ms is outside the valid range for parameter "
+                            "\"statement_timeout\" (0 ms .. 2147483647 ms)"));
+  }
+  return static_cast<int64_t>(ms);
+}
+
+std::string FormatStatementTimeout(int64_t ms) {
+  if (ms == 0) {
+    return "0";
+  }
+  for (const auto& [unit, scale] : std::views::reverse(kTimeUnits)) {
+    const auto factor = static_cast<int64_t>(scale);
+    if (factor != 0 && ms % factor == 0) {
+      return absl::StrCat(ms / factor, unit);
+    }
+  }
+  return absl::StrCat(ms, "ms");
+}
+
+void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
+                         duckdb::Value& value) {
+  const auto ms = value.IsNull() ? 0 : ParseStatementTimeout(value.ToString());
+  value = duckdb::Value{FormatStatementTimeout(ms)};
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(ms));
+}
+
+void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(0));
 }
 
 // PG's rule for a GUC whose effect reaches past the session that set it is
@@ -1095,10 +1172,11 @@ constexpr std::pair<std::string_view, VariableDescription>
       "statement_timeout",
       {
         LogicalTypeId::VARCHAR,
-        "Aborts any statement that takes more than the specified number of "
-        "milliseconds. Accepted for compatibility but not currently enforced.",
+        "Aborts any statement that takes more than the specified amount of "
+        "time (milliseconds without a unit). 0 disables the timeout.",
         [] { return duckdb::Value{"0"}; },
-        NoOverwrite<"statement_timeout">,
+        SetStatementTimeout,
+        ResetStatementTimeout,
       },
     },
     {

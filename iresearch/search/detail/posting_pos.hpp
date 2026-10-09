@@ -24,11 +24,11 @@
 #include <vector>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_index.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
-#include "iresearch/formats/posting/skip_levels.hpp"
-#include "iresearch/formats/posting/skip_list.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -39,21 +39,16 @@
 
 namespace irs::detail {
 
-template<bool Offs>
-struct SkipCopyTraits {
-  static constexpr bool Position() noexcept { return true; }
-  static constexpr bool Offset() noexcept { return Offs; }
-};
-
 template<typename InputType, bool Bounds, bool Offs = false>
 class PostingPos {
  public:
-  using PosTraits = IteratorTraitsImpl<FormatTraits128, true, true, Offs>;
+  using PosTraits = IteratorTraitsImpl<true, true, Offs>;
   using Position = PositionImpl<PosTraits>;
 
   static constexpr bool kOffsets = Offs;
+  static constexpr bool kDefaultInit = true;
 
-  PostingPos() : _skip{doc_limits::kBlockSize, doc_limits::kSkipSize} {}
+  PostingPos() = default;
 
   PostingPos(const PostingPos&) = delete;
   PostingPos& operator=(const PostingPos&) = delete;
@@ -64,10 +59,8 @@ class PostingPos {
                IndexFeatures layout, const IndexInput& pos_in,
                const IndexInput* pay_in) {
     SDB_ASSERT(meta.docs_count != 0);
-    const auto skip = ToSkipLayout(layout);
-    SDB_ASSERT(skip.pos);
-    SDB_ASSERT(!Offs || skip.offs);
-    _skip.Reader().SetLayout(skip);
+    SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, layout));
+    SDB_ASSERT(!Offs || IsSubsetOf(IndexFeatures::Offs, layout));
     _docs_count = meta.docs_count;
 
     if (meta.docs_count == 1) {
@@ -77,22 +70,18 @@ class PostingPos {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _in = doc_in.Reopen();
-      if (!_in) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+      _in = OpenDocInput(meta, doc_in);
       auto& in = In();
-      in.Seek(meta.doc_start);
-      LimitDocReadahead(in, meta);
-      if (meta.docs_count < doc_limits::kBlockSize) {
+      if (const auto extent = DocExtent(meta); extent != 0) {
+        _hint.Arm(meta.doc_start, meta.doc_start + extent);
+      }
+      if (meta.docs_count <= doc_limits::kBlockSize) {
         SkipScoreBounds(Bounds, in);
       }
       _left_in_list = meta.docs_count;
 
       if (meta.docs_count > doc_limits::kBlockSize) {
-        _skip.Reader().Enable(meta);
-        _skip_offs = meta.doc_start + meta.doc_delta;
-        _pending_skip = meta.docs_count;
+        _cursor.Arm(meta, BlockIndexShapeOf(layout, Bounds));
       }
     }
 
@@ -112,6 +101,20 @@ class PostingPos {
   uint32_t Estimate() const noexcept { return _docs_count; }
 
   Position& Positions() noexcept { return _pos; }
+
+  const BlockIndex* Blocks() {
+    if constexpr (Bounds) {
+      if (_cursor.Armed()) {
+        return &_cursor.Loaded(In());
+      }
+    }
+    return nullptr;
+  }
+
+  uint32_t LeafBlock() const noexcept {
+    SDB_ASSERT(_left_in_list < _docs_count);
+    return (_docs_count - _left_in_list - 1) / doc_limits::kBlockSize;
+  }
 
   IRS_FORCE_INLINE doc_id_t Next() {
     if (_left_in_leaf == 0) [[unlikely]] {
@@ -208,48 +211,30 @@ class PostingPos {
  private:
   IRS_FORCE_INLINE uint32_t* Enc() noexcept { return EncOf<InputType>(_enc); }
 
-  class ReadSkip : public SkipLevels<SkipCopyTraits<Offs>> {
-   public:
-    void SetLayout(SkipLayout layout) noexcept { _layout = layout; }
-
-    void Read(size_t level, InputType& in) {
-      auto& next = this->_levels[level];
-      CopyState<SkipCopyTraits<Offs>>(*this->_prev, next);
-      ReadPosState<Offs>(next, in, _layout.offs);
-      SkipScoreBounds(Bounds, in);
-    }
-
-    IRS_FORCE_INLINE void SkipBounds(InputType& in) {
-      SkipScoreBounds(Bounds, in);
-    }
-
-   private:
-    SkipLayout _layout;
-  };
-
   IRS_FORCE_INLINE InputType& In() const noexcept {
     return irs::utils::downCast<InputType>(*_in);
   }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
+    _hint.Advance(in, in.Position());
     if (_left_in_list >= doc_limits::kBlockSize) [[likely]] {
-      FormatTraits128::ReadBlockDelta(in, Enc(), _docs, prev);
+      block_io::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = doc_limits::kBlockSize;
       _left_in_list -= doc_limits::kBlockSize;
-      FormatTraits128::ReadBlock(in, Enc(), _freqs.data);
+      block_io::ReadBlock<block_io::kFreqBias>(in, Enc(), _freqs.data);
     } else {
       const auto tail = _left_in_list;
-      FormatTraits128::ReadTailDelta(tail, in, Enc(), _docs, prev);
+      block_io::ReadTailDelta(tail, in, Enc(), _docs, prev);
       _left_in_leaf = tail;
       _left_in_list = 0;
-      FormatTraits128::ReadTail(tail, in, Enc(), _freqs.data);
+      block_io::ReadTail<block_io::kFreqBias>(tail, in, Enc(), _freqs.data);
     }
     _max_in_leaf = *(std::end(_docs) - 1);
   }
 
   IRS_NO_INLINE bool SeekToLeaf(doc_id_t target) {
-    if (target <= _skip.Reader().UpperBound()) [[unlikely]] {
+    if (target <= _cursor.UpperBound()) [[unlikely]] {
       if (_left_in_list == 0) [[unlikely]] {
         return false;
       }
@@ -257,42 +242,13 @@ class PostingPos {
       return true;
     }
 
-    SkipState last;
-    _skip.Reader().Reset(last);
-    if (_pending_skip != 0) [[unlikely]] {
-      return InitAndSeek(last, target);
-    }
-    return SeekAfterInit(last, target);
-  }
-
-  IRS_NO_INLINE bool InitAndSeek(SkipState& last, doc_id_t target) {
-    std::unique_ptr<InputType> skip_in{
-      irs::utils::downCast<InputType>(_in->Dup().release())};
-    if (!skip_in) [[unlikely]] {
-      throw IoError{"failed to duplicate document input"};
-    }
-    skip_in->Seek(_skip_offs);
-    _skip.Reader().SkipBounds(*skip_in);
-    const auto docs_count = _pending_skip;
-    _pending_skip = 0;
-    _skip.Prepare(std::move(skip_in), docs_count);
-
-    const auto num_levels = _skip.NumLevels();
-    SDB_ENSURE(1 <= num_levels && num_levels <= doc_limits::kMaxSkipLevels,
-               "Invalid number of skip levels ", num_levels,
-               ", must be in range of [1, ", doc_limits::kMaxSkipLevels, "].");
-    _skip.Reader().Init(num_levels);
-
-    return SeekAfterInit(last, target);
-  }
-
-  bool SeekAfterInit(SkipState& last, doc_id_t target) {
-    _left_in_list = _skip.Seek(target);
+    _left_in_list = _cursor.Seek(target, In());
     if (_left_in_list == 0) [[unlikely]] {
       return false;
     }
+    const auto last = _cursor.Landing();
     In().Seek(last.doc_ptr);
-    _pos.template Prepare<InputType>(last);
+    _pos.Prepare(last);
     ReadLeaf(last.doc);
     return true;
   }
@@ -302,14 +258,13 @@ class PostingPos {
   DocsBuf _docs;
   IndexInput::ptr _in;
   Position _pos;
-  SkipReader<ReadSkip, InputType> _skip;
-  uint64_t _skip_offs = 0;
+  BlockCursor _cursor;
+  GrowingHint _hint;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _docs_count = 0;
   uint32_t _left_in_leaf = 0;
   uint32_t _left_in_list = 0;
-  uint32_t _pending_skip = 0;
 };
 
 }  // namespace irs::detail

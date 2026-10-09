@@ -215,14 +215,42 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY eik.d AS split_text();
 
 
-statement error
-EXPORT DATABASE '${__TEST_DIR__}/export_import_kinds_dictionary';
+query
+SELECT ts_lexize('eik.d', 'Hello World') AS tokens;
 ----
-db error: ERROR: EXPORT DATABASE does not support text search dictionaries yet: "d"
+tokens
+{Hello,World}
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/export_import_kinds_dictionary';
+
+
+statement ok
+CREATE DATABASE eik_dict;
+
+
+statement ok
+USE eik_dict;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/export_import_kinds_dictionary';
+
+
+query
+SELECT ts_lexize('eik.d', 'Hello World') AS tokens;
+----
+tokens
+{Hello,World}
 
 
 statement ok
 USE postgres;
+
+
+statement ok
+DROP DATABASE eik_dict;
 
 
 statement ok

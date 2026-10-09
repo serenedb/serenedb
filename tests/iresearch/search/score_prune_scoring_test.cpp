@@ -494,7 +494,7 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
 // needs a fix for negative scores first.
 TEST_P(ScorePruneScoringTestCase, IndriDirichletClaimsNoBounds) {
   const irs::IndriDirichlet scorer{2000.f};
-  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+  EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
   EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
 
   auto reader = CreateLargeIndex(scorer, 10);
@@ -532,10 +532,10 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
               scorer.Compatible(min_norm));
     EXPECT_FALSE(scorer.Compatible(none));
     if (expected == irs::Scorer::ScoreBoundType::None) {
-      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_EQ(nullptr, scorer.PrepareScoreBoundWriter());
       EXPECT_EQ(nullptr, scorer.PrepareScoreBoundSource());
     } else {
-      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter(4));
+      EXPECT_NE(nullptr, scorer.PrepareScoreBoundWriter());
       EXPECT_NE(nullptr, scorer.PrepareScoreBoundSource());
     }
   };
@@ -574,7 +574,7 @@ TEST(score_prune_bound_type_test, reported_bound_types) {
 // TOP_100 reports over an index with score bounds.
 TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
-  auto reader = CreateLargeIndex(scorer, 10);
+  auto reader = CreateLargeIndex(scorer, 40);
   constexpr size_t k = 10;
 
   auto reached = [&](const irs::Filter& filter, bool prune) {
@@ -612,6 +612,20 @@ TEST_P(ScorePruneScoringTestCase, PruningIsTaken) {
       irs::Occur::Should);
     filter.SetMinShouldMatch(1);
     EXPECT_LT(reached(filter, true), reached(filter, false));
+  }
+
+  {
+    SCOPED_TRACE("required and optional terms");
+    auto filter = ParseQuery("+topic:database content:index");
+    ASSERT_NE(nullptr, filter);
+    EXPECT_LT(reached(*filter, true), reached(*filter, false));
+  }
+
+  {
+    SCOPED_TRACE("required term and a rare optional term");
+    auto filter = ParseQuery("+topic:database content:lookup");
+    ASSERT_NE(nullptr, filter);
+    EXPECT_LT(reached(*filter, true) * 10, reached(*filter, false));
   }
 }
 
@@ -655,6 +669,25 @@ TEST_P(ScorePruneScoringTestCase, Bm25PrunedVsBaseline) {
   ComparePrunedVsBaseline(reader, *filter, scorer, 15);
 }
 
+TEST_P(ScorePruneScoringTestCase, Bm25RequiredOptionalPrunedVsBaseline) {
+  auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B()};
+  auto reader = CreateLargeIndex(scorer, 10);
+
+  for (const auto* query :
+       {"+topic:database content:index", "+topic:search content:index",
+        "+topic:database content:index content:search topic:search",
+        "+topic:database content:lookup",
+        "+topic:database content:lookup content:index",
+        "+topic:physics content:quantum content:lookup content:relativity"}) {
+    SCOPED_TRACE(query);
+    auto filter = ParseQuery(query);
+    ASSERT_NE(nullptr, filter);
+    for (const size_t k : {1, 10, 100}) {
+      ComparePrunedVsBaseline(reader, *filter, scorer, k);
+    }
+  }
+}
+
 // Anti-correlated row filter: the highest-scoring docs all FAIL the filter and
 // only lower-scoring docs pass. Block-max score pruning must NOT skip the
 // (low-scoring) passing blocks just because high scorers dominate -- because
@@ -673,7 +706,7 @@ TEST_P(ScorePruneScoringTestCase, FilteredAntiCorrelatedKeepsLowScorers) {
   ASSERT_NE(nullptr, filter);
 
   // 1. Identify the top scorers with a brute-force (unpruned) pass.
-  constexpr size_t kReject = 150;  // > kBlockSize (128): rejects > a full block
+  constexpr size_t kReject = irs::doc_limits::kBlockSize + 14;
   std::vector<irs::ScoreDoc> top(kReject);
   const auto df =
     irs::ExecuteTopK(reader, *filter, scorer, kReject, false, std::span{top});

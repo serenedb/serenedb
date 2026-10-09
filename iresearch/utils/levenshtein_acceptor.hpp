@@ -135,6 +135,8 @@ class LevenshteinAcceptor {
   // instead of walking the whole field.
   bytes_view LowerBound() const noexcept { return _prefix; }
 
+  uint32_t MaxDistance() const noexcept { return _no_distance - 1U; }
+
   static bool Alive(const State& state) noexcept {
     return state.pstate != kDeadState;
   }

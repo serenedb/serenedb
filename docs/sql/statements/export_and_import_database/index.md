@@ -51,11 +51,23 @@ target_directory/t_1.csv
 target_directory/t_n.csv
 ```
 
-The `schema.sql` file contains the schema statements that are found in the database. It contains the `CREATE SCHEMA`, `CREATE TYPE`, `CREATE SEQUENCE`, `CREATE TABLE`, `CREATE FUNCTION`, `CREATE VIEW` and `CREATE INDEX` commands, including inverted indexes, and the `COMMENT ON` commands for tables, columns, views, sequences, indexes, types and functions that are necessary to re-construct the database. Sequences resume where they were, and a search table's internal row-numbering sequence is not exported: the search table creates its own when it is imported.
+The `schema.sql` file contains the schema statements that are found in the database. It contains the `CREATE SCHEMA`, `CREATE TYPE`, `CREATE SEQUENCE`, `CREATE TABLE`, `CREATE FUNCTION`, `CREATE VIEW`, [`CREATE TEXT SEARCH DICTIONARY`](../create_text_search_dictionary/index.md) and [`CREATE INDEX`](../create_index/index.md) commands, including inverted indexes, and the `COMMENT ON` commands for tables, columns, views, sequences, indexes, types and functions that are necessary to re-construct the database. Each sequence is written with its own `START` and, once it has been used, followed by a `SELECT setval(...)`, as `pg_dump` writes it, so it resumes where it was. A search table's internal row-numbering sequence is not exported: the search table creates its own when it is imported. A column of a user-defined type, and a user-defined type used inside another type, a list, an array, a map or a struct, is written with the type's schema-qualified name, so it binds to the same type on import. The system catalogs (`pg_catalog` and `information_schema`) are not exported. Privileges are not exported either: roles belong to the server rather than to a database, so the imported objects are owned by the importing role, and `GRANT`s have to be issued again after the import.
 
-The `load.sql` file contains a set of `COPY` statements that can be used to read the data from the CSV files again. The file contains a single `COPY` statement for every table found in the schema. Generated columns are not exported; their values are computed again on import. A search table exports the rows that queries see, that is, the rows as of its last refresh.
+The database's default schema (`public`) is not written, because the new database the export is imported into already has it; every other schema is created like any other object, so importing into a database that already holds one of them fails. Each text search dictionary is written with its analyzer expression and its feature flags. The expression is stored as the dictionary was compiled: named arguments in place of positional ones, SQL stages as lambdas, and a dictionary used as a stage written out in full. A dictionary copied from another one therefore loads even when the source was dropped. Inverted indexes keep their column list, their per-column options such as `emb hnsw (m = 16, metric = 'cosine')` and their `WITH` options. The index content itself is not exported. `schema.sql` creates each index before `load.sql` copies the rows in, so the rows are indexed as they load and become searchable after the next [refresh](../../indexes/inverted/maintenance.md), like any other insert.
 
-`EXPORT DATABASE` does not support text search dictionaries yet: it fails with an error on a database that has one.
+The `load.sql` file contains a set of `COPY` statements that can be used to read the data from the CSV files again. The file contains a single `COPY` statement for every table found in the schema. Generated columns are not exported; their values are computed again on import. An empty string is written as a quoted empty field and `NULL` as an empty field, so both load back as they were. A search table exports the rows that queries see, that is, the rows as of its last refresh.
+
+### Data formats
+
+Use `FORMAT parquet`: it exports and imports far faster than the text formats and writes far smaller files. The schema round-trips in every format; the data files differ in which values they carry exactly. An export written in one format and imported with `IMPORT DATABASE` gives back:
+
+| `FORMAT` | Data after import |
+| :-- | :-- |
+| `parquet` | The same values. The export fails with `Parquet files do not support negative intervals` when a table holds a negative `INTERVAL`, because the Parquet interval type has no sign. |
+| `csv` (the default), `text`, `binary` | The same values, for every type. |
+| `json` | The same values, except: a `NUMERIC` passes through a double, so digits beyond its precision change (`1234567890.0123456789` loads as `1234567890.0123457536`); a `BYTEA` loads as the bytes of its escaped text (`\x00\xFF`) rather than the bytes themselves; a `JSON` value loads without its insignificant whitespace, and a JSON `null` loads as SQL `NULL`. |
+
+Fall back to `csv`, `text` or `binary` for a database that holds negative intervals.
 
 ### Syntax
 

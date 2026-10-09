@@ -66,10 +66,6 @@
 	path = third_party/zstd
 	url = https://github.com/serenedb/zstd.git
 	shallow = true
-[submodule "third_party/streamvbyte"]
-	path = third_party/streamvbyte
-	url = https://github.com/serenedb/streamvbyte.git
-	shallow = true
 [submodule "third_party/faiss"]
 	path = third_party/faiss
 	url = https://github.com/serenedb/faiss.git

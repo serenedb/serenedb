@@ -518,6 +518,14 @@ void ClickHouseSchemaEntry::RetireTableLocked(const string &table_name) {
 	tables.erase(entry);
 }
 
+void ClickHouseSchemaEntry::ClearCache() {
+	lock_guard<mutex> l(tables_lock);
+	for (auto &entry : tables) {
+		retired_tables.push_back(std::move(entry.second));
+	}
+	tables.clear();
+}
+
 void ClickHouseSchemaEntry::Scan(ClientContext &context, CatalogType type,
                                  const std::function<void(CatalogEntry &)> &callback) {
 	if (type != CatalogType::TABLE_ENTRY) {

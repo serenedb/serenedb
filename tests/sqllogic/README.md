@@ -207,7 +207,7 @@ Let's see typical usages.
 Tests under `any/pg/` also run against real PostgreSQL in the `validate-pg` job,
 so everything they use has to exist there too. `any/pg/geometry/` needs PostGIS,
 which the stock `postgres` images do not ship, so that job builds its own image
-from `fixtures/postgres/Dockerfile`: `postgres:18.3` plus the PostGIS package
+from `fixtures/postgres/Dockerfile`: `postgres:18.6` plus the PostGIS package
 from the PGDG apt repo the base image already configures.
 
 Installing the package does not enable it. A test that needs an extension asks

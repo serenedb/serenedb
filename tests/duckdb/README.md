@@ -13,9 +13,11 @@ the regular sqllogic tree under [tests/sqllogic/](../sqllogic/).
   the driver will `ninja unittest` for you if needed. Configure with
   `-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` to skip it (the driver then refuses to run).
 - `docker` for the `postgres_scanner` suite only, and only when `PGHOST` isn't
-  already set: the runner then brings up `postgres:18.3` on a free port via
+  already set: the runner then brings up `postgres:18.6` on a free port via
   [docker-compose.postgres.yml](docker-compose.postgres.yml). CI sets `PGHOST`,
   so it reuses the postgres already in the compose stack.
+- `docker` for the `iceberg` suite, unless the Iceberg REST fixture already
+  answers at `127.0.0.1:8181` (see [The iceberg fixture](#the-iceberg-fixture)).
 
 ## Running
 
@@ -210,6 +212,41 @@ keep its artifacts out of the checkout the way
 shows: a scratch `--root-dir` with `benchmark` and `extension` symlinked from
 `third_party/duckdb`.
 
+## Environment-gated tests
+
+Upstream gates tests that need a service or a credential behind `require-env`. `run.sh` provides every service that can run in a container and exports the variables, so these tests run; the services live in [docker-compose.duckdb.yml](../sqllogic/docker-compose.duckdb.yml) in CI and are started on demand locally:
+
+| Suite | What runs | Variables |
+|---|---|---|
+| httpfs | SeaweedFS as `duckdb-minio.com:9000` with upstream's identities, buckets `test-bucket` (versioned), `test-bucket-2`, `test-bucket-public`, the presigned files ([provision_s3.py](provision_s3.py); the TPC-H files and `attach.db` come from this build's `unittest`) | `S3_TEST_SERVER_AVAILABLE`, `DUCKDB_S3_*`, `AWS_*`, `S3_*_PRESIGNED_URL`, `S3_ATTACH_DB` |
+| httpfs | `python3 -m http.server` on a scratch directory | `PYTHON_HTTP_SERVER_URL`, `PYTHON_HTTP_SERVER_DIR` |
+| httpfs, core | the checked-in `data/secrets` with the owner-only permissions DuckDB requires | `TEST_PERSISTENT_SECRETS_AVAILABLE` |
+| azure | Azurite on `127.0.0.1:10000` with upstream's containers and `data/` ([provision_azurite.py](provision_azurite.py)) | `AZURE_STORAGE_CONNECTION_STRING`, `AZ_*` |
+| azure, httpfs | squid on `localhost:3128` and, with basic auth, `localhost:3129` (upstream's `scripts/run_squid.sh`) | `HTTP_PROXY_RUNNING`, `HTTP_PROXY_PUBLIC`, `HTTP_PROXY_PRIVATE*` |
+| iceberg | the REST fixture and the Spark data ([above](#the-iceberg-fixture)), `mitmdump` on `localhost:8878` as its proxy and on `localhost:19133` with the vended-credentials script | `FIXTURE_SERVER_AVAILABLE`, `DUCKDB_ICEBERG_HAVE_GENERATED_DATA`, `HTTP_PROXY_PUBLIC`, `VENDED_CREDENTIAL_REFRESH_PROXY` |
+| postgres_scanner | the concurrent catalog-scan stress test, in sanitizer builds (`SDB_SANITIZE` set) | `SANITIZER_BUILD` |
+
+The S3-gated httpfs tests share bucket objects (both `version_id_pinning` tests rewrite the same file), so they run sequentially, like the postgres_scanner suite.
+
+Locally `run.sh` starts the S3 server only when `duckdb-minio.com` and its bucket names resolve, as upstream requires. Point them at a loopback address other than `127.0.0.1`, whose port 9000 belongs to the Iceberg fixture:
+
+```
+127.0.0.2 duckdb-minio.com test-bucket.duckdb-minio.com test-bucket-2.duckdb-minio.com test-bucket-public.duckdb-minio.com
+```
+
+squid and mitmproxy come from the build image; without them on the host the proxy tests stay gated.
+
+What stays gated, and why:
+
+- **No extension loader** (see the skips above): `LOCAL_EXTENSION_REPO*`, `REMOTE_EXTENSION_REPO*`, `LOCAL_EXTENSION_DIR*`, `DIRECT_INSTALL_DIR`, `RUN_EXTENSION_UPDATE_TEST`.
+- **Extensions SereneDB does not build**: `require aws` (with it the iceberg `SIGV4_MOCK_SERVER_AVAILABLE` tests), `require ducklake`, `require mysql_scanner`.
+- **Code SereneDB does not compile**: `EQUALITY_DELETE_WRITES_ENABLED` needs `ICEBERG_ENABLE_EQUALITY_DELETE_WRITES`, off by default upstream too.
+- **Real cloud accounts or identity providers**: iceberg `ICEBERG_AWS_REMOTE_AVAILABLE`, `ICEBERG_SNOWFLAKE_REMOTE_AVAILABLE`, `SNOWFLAKE_*`, `R2_TOKEN`, `NO_REGION_SET`, `AWS_CREDENTIALS_REFRESH_FILE`, `ICEBERG_REMOTE_INSERT_READY`; azure `ABFSS_*` (ADLS Gen2, which Azurite does not emulate), `AZURE_CLIENT_*`, `AZURE_TENANT_ID`, `AZURE_AUTH_ENV`, `AZURE_ACCESS_TOKEN`, `AZ_CLI_LOGGED_IN`, `PUBLIC_AZ_STORAGE_ACCOUNT`; httpfs `HUGGING_FACE_TOKEN*`; postgres `PG_OAUTH_DSN`/`PGOAUTHTOKEN`, `AWS_RDS_DATABASE_AVAILABLE`; iceberg `test_read_geometry_read_with_stats.test`, which reads a public Google Cloud bucket.
+- **Other catalog servers**: `NESSIE_SERVER_AVAILABLE`, `LAKEKEEPER_SERVER_AVAILABLE`, `POLARIS_SERVER_AVAILABLE` and the matching `CATALOG_TEST_CONFIG_SETUP` values each need that server and its own generated data; upstream runs each in a separate workflow. Only the REST fixture is set up here.
+- **Capabilities the fixture does not declare**: `SCAN_PLANNING_MODE server` and `ATOMIC_COMMIT_CONFLICT_SUPPORT` are absent from upstream's `fixture.json`.
+- **PostGIS**: `HAS_POSTGIS` (`attach_postgis.test`) needs PostGIS in the postgres service, which comes from the `serenedb-test-postgres` fixture image once that image is published publicly; the service is stock `postgres:18.6` until then.
+- **Never set upstream either**: httpfs `HTTP_PROXY` would proxy every request of the run, since DuckDB reads it from the process environment; azure `ENABLE_DATA_INTEGRITY` is a gate upstream added to disable its data-integrity test; core `VALIDATE_TAGS` checks the runner's tag selection and only means something under upstream's tag-filtered invocations.
+
 ## DuckDB file interop
 
 The `interop` suite checks that a database file with a DuckDB storage version is a DuckDB file: vanilla DuckDB reads what SereneDB writes, and SereneDB reads what vanilla DuckDB writes. It is not a `unittest` suite. [interop/run.sh](interop/run.sh) drives `serened shell` and a vanilla `duckdb` copied out of the official `duckdb/duckdb` image (`docker create` + `docker cp` into `$BUILD_DIR/duckdb-<tag>/`; nothing is built, and the CI container gets the docker socket for it).
@@ -236,8 +273,7 @@ A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored g
 
 ## The postgres_scanner fixture
 
-That suite is the only one with an external dependency, and three things about
-its fixture are non-obvious:
+Three things about the postgres fixture are non-obvious:
 
 - **It uses our `config/postgres_scanner.json`, not upstream's
   `attach_postgres.json`.** Upstream's config is for the inverse scenario
@@ -251,6 +287,17 @@ its fixture are non-obvious:
 - **`tpch.lineitem` is synthetic (10k rows).** Upstream seeds tpch through
   DuckDB's dbgen; we don't ship the CLI, so the runner fakes the one table
   `attach_timeout_error.test` needs to trip its 1s statement_timeout.
+
+## The iceberg fixture
+
+The `iceberg` suite runs most of duckdb_iceberg's tests against a live catalog: `apache/iceberg-rest-fixture` with SeaweedFS as its S3 store, the same pair upstream's CI uses. Upstream's tests and `test/configs/fixture.json` hard-code `127.0.0.1:8181` (REST) and `127.0.0.1:9000` (S3), so the fixture always listens there:
+
+- **Locally**, `run.sh` starts the extension's own [scripts/docker-compose.yml](../../third_party/duckdb_iceberg/scripts/docker-compose.yml) on those host ports, and stops it at exit. A fixture that already answers at `127.0.0.1:8181` is reused.
+- **In CI**, [docker-compose.duckdb.yml](../sqllogic/docker-compose.duckdb.yml) runs SeaweedFS, the bucket setup and the REST server in one network namespace that the tests container joins, so they are on its `127.0.0.1`. `ICEBERG_FIXTURE_RUNNING=1` tells `run.sh` to wait for that fixture, not start one.
+
+Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Outside the image (no `pyspark` on the host), `run.sh` runs the generator in `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`). Its log is `out/test-results/iceberg-data.log`.
+
+The suite then runs in three `unittest` calls: the extension's tests without the catalog directories in parallel, then, in upstream CI's order and with its `--order lex`, `catalog_test_config_setup` with upstream's `fixture.json`, and `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). The catalog tests share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind.
 
 ## Traps
 

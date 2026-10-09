@@ -127,14 +127,10 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const final {
-    auto& cluster = catalog::ClusterOf();
-    auto entry =
-      cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-        .GetEntry(cluster.LoginTransaction(), duckdb::Identifier{username});
-    if (!entry) {
-      return std::nullopt;
-    }
-    const auto& stored = entry->Cast<catalog::RoleCatalogEntry>().Password();
+    std::string stored;
+    catalog::ReadRole(username, [&](const catalog::RoleCatalogEntry& role) {
+      stored = role.Password();
+    });
     if (stored.empty()) {
       return std::nullopt;
     }
@@ -409,7 +405,8 @@ void Server::StartListeners() {
                   "': OpenTelemetry schema: ", status.message());
       }
     }
-    if (!catalog::FindDatabase(database)) {
+    if (!catalog::ReadDatabase(database,
+                               [](const catalog::DatabaseCatalogEntry&) {})) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
                 "' does not exist");
     }

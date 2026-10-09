@@ -26,7 +26,7 @@ SET s3_use_ssl=false;
 statement ok
 CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
   warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
+  uri '${ICEBERG_REST_URL}',
   authorization_type 'none',
   max_table_staleness '10 minutes'
 );
@@ -154,7 +154,7 @@ ALTER INDEX recat_tick_idx SET (reindex_interval=0);
 statement ok
 CREATE SERVER recatw_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
   warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
+  uri '${ICEBERG_REST_URL}',
   authorization_type 'none'
 );
 

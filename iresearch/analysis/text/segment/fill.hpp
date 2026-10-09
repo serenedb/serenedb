@@ -172,8 +172,7 @@ IRS_FORCE_INLINE void EmitTrimmedSegment(TokenSink& sink, const char* data,
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE IRS_ALIGN_HOT void WordFillValue(TokenSink& sink,
-                                               duckdb::string_t value) {
+IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   const auto emit = [&](const words::Segment& seg) IRS_FORCE_INLINE {
@@ -198,8 +197,7 @@ IRS_NO_INLINE IRS_ALIGN_HOT void WordFillValue(TokenSink& sink,
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE IRS_ALIGN_HOT void SentenceFillValue(TokenSink& sink,
-                                                   duckdb::string_t value) {
+IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   ForEachSzMatch(sz::Sentences, data, n, [&](size_t begin, size_t end) {
@@ -209,8 +207,7 @@ IRS_NO_INLINE IRS_ALIGN_HOT void SentenceFillValue(TokenSink& sink,
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE IRS_ALIGN_HOT void GraphemeFillValue(TokenSink& sink,
-                                                   duckdb::string_t value) {
+IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   if constexpr (Ascii) {
@@ -230,8 +227,7 @@ IRS_NO_INLINE IRS_ALIGN_HOT void GraphemeFillValue(TokenSink& sink,
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Paragraph, bool Ascii>
-IRS_NO_INLINE IRS_ALIGN_HOT void LineFillValue(TokenSink& sink,
-                                               duckdb::string_t value) {
+IRS_NO_INLINE void LineFillValue(TokenSink& sink, duckdb::string_t value) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   const auto emit = [&](size_t begin, size_t end) {
@@ -272,8 +268,7 @@ IRS_NO_INLINE IRS_ALIGN_HOT void LineFillValue(TokenSink& sink,
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE IRS_ALIGN_HOT void WholeFillValue(TokenSink& sink,
-                                                duckdb::string_t value) {
+IRS_NO_INLINE void WholeFillValue(TokenSink& sink, duckdb::string_t value) {
   const uint32_t size = value.GetSize();
   if (size == 0) {
     return;

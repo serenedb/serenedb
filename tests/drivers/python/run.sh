@@ -11,46 +11,17 @@ if ! command -v python3 >/dev/null 2>&1; then
 	exit 1
 fi
 
-# Provision deps. Prefer the build image's pre-installed system packages.
-# If anything is missing, fall back to:
-#   1. a venv (if python3-venv is available), or
-#   2. a system-wide pip install with --break-system-packages (last resort).
-missing_module() {
-	for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto google.protobuf sqlalchemy; do
-		if ! python3 -c "import $mod" 2>/dev/null; then
-			echo "$mod"
-			return 0
-		fi
-	done
-	return 1
-}
-
-if missing_module >/dev/null; then
-	VENV="${SCRIPT_DIR}/.venv"
-	if [[ ! -d "$VENV" ]] && python3 -m venv --help >/dev/null 2>&1; then
-		python3 -m venv --system-site-packages "$VENV" 2>/dev/null || true
-	fi
-	if [[ -f "$VENV/bin/activate" ]]; then
-		# shellcheck disable=SC1091
-		. "$VENV/bin/activate"
-	fi
-	if [[ -d "$VENV" && ! -f "$VENV/.deps-installed" ]]; then
-		python3 -m pip install --quiet --upgrade pip 2>/dev/null || true
-		if python3 -m pip install --quiet -r "$SCRIPT_DIR/requirements.txt"; then
-			touch "$VENV/.deps-installed"
-		fi
-	fi
-	# Final fallback: install system-wide. The build image runs as root with
-	# a throwaway filesystem, so --break-system-packages is fine for CI.
-	if mod=$(missing_module); then
-		echo "[python] $mod missing, installing requirements system-wide"
-		python3 -m pip install --quiet --break-system-packages \
-			-r "$SCRIPT_DIR/requirements.txt"
-	fi
-	if mod=$(missing_module); then
-		echo "[python] $mod still missing after install" >&2
-	fi
+if [[ -f "$SCRIPT_DIR/.venv/bin/activate" ]]; then
+	# shellcheck disable=SC1091
+	. "$SCRIPT_DIR/.venv/bin/activate"
 fi
+
+for mod in pytest pytest_asyncio yaml psycopg psycopg2 asyncpg opentelemetry.proto google.protobuf sqlalchemy; do
+	if ! python3 -c "import $mod" 2>/dev/null; then
+		echo "[python] module $mod is missing; install $SCRIPT_DIR/requirements.txt" >&2
+		exit 1
+	fi
+done
 
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
 mkdir -p "$JUNIT"

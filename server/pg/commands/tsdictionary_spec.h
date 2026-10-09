@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <string>
 #include <string_view>
 
 #include "pg/commands/create_tsdictionary.h"
@@ -32,8 +33,13 @@ class ClientContext;
 }  // namespace duckdb
 namespace sdb::pg {
 
-irs::analysis::TokenizerConfig CompileTSDictionarySpec(
-  duckdb::ClientContext& context, std::string_view spec);
+struct CompiledTSDictionary {
+  irs::analysis::TokenizerConfig config;
+  std::string definition;
+};
+
+CompiledTSDictionary CompileTSDictionarySpec(duckdb::ClientContext& context,
+                                             std::string_view spec);
 
 std::string FormatTSDictionaryHelp();
 

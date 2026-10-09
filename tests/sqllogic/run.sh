@@ -611,7 +611,7 @@ launch_iceberg_rest() {
 
 export_iceberg_local_vars() {
 	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_storage (TYPE S3, KEY_ID '${MINIO_ACCESS_KEY}', SECRET '${MINIO_SECRET_KEY}', ENDPOINT '${MINIO_HOST}:${MINIO_PORT}', URL_STYLE 'path', USE_SSL false, SCOPE 's3://${MINIO_BUCKET}/warehouse/');"
-	export ICEBERG_SERVER_OPTIONS="warehouse '${ICEBERG_WAREHOUSE}', endpoint '${ICEBERG_REST_URL}', authorization_type 'none'"
+	export ICEBERG_SERVER_OPTIONS="warehouse '${ICEBERG_WAREHOUSE}', uri '${ICEBERG_REST_URL}', authorization_type 'none'"
 }
 
 launch_biglake() {
@@ -648,7 +648,7 @@ launch_biglake() {
 		echo "BigLake catalog ${BIGLAKE_CATALOG}: credentials from ${adc}."
 	fi
 	export ICEBERG_BOOTSTRAP="CREATE OR REPLACE PERSISTENT SECRET iceberg_ci_catalog (${secret_body});"
-	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', endpoint 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
+	export ICEBERG_SERVER_OPTIONS="warehouse 'bl://projects/${BIGLAKE_PROJECT}/catalogs/${BIGLAKE_CATALOG}', uri 'https://biglake.googleapis.com/iceberg/v1/restcatalog', secret 'iceberg_ci_catalog'"
 }
 
 launch_ollama() {
@@ -795,7 +795,7 @@ launch_postgres() {
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
-		postgres:18.3
+		postgres:18.6
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
 		PGPORT=$(docker port "$POSTGRES_CONTAINER_NAME" 5432/tcp | head -1 | sed 's/.*://')
 	fi

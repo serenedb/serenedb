@@ -22,6 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/formats/column/norm_reader.hpp>
+#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/merge_writer.hpp>
@@ -827,10 +828,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
 
         std::unordered_map<uint32_t, irs::doc_id_t> expected_values{{4, 1},
                                                                     {2, 2}};
+        const auto reader = irs::MakePersistedNormReader(*column);
         for (irs::doc_id_t doc = irs::doc_limits::min();
              doc < irs::doc_limits::min() + 2; ++doc) {
-          const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
-          const auto actual_value = column->Get(row);
+          const auto actual_value = reader->Get(doc);
           auto it = expected_values.find(actual_value);
           ASSERT_NE(expected_values.end(), it);
           ASSERT_EQ(doc, it->second);
@@ -1049,9 +1050,8 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
         const auto* column = cs->NormColumn(field.norm);
         ASSERT_NE(nullptr, column);
 
-        const auto row = static_cast<uint64_t>(irs::doc_limits::min()) -
-                         irs::doc_limits::min();
-        ASSERT_EQ(3u, column->Get(row));
+        ASSERT_EQ(3u, irs::MakePersistedNormReader(*column)->Get(
+                        irs::doc_limits::min()));
       }
     }
 
@@ -1264,10 +1264,10 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
         {2, 2},  // norm value for 'doc_bytes' in 'doc2'
         {3, 3},  // norm value for 'doc_bytes' in 'doc3'
       };
+      const auto reader = irs::MakePersistedNormReader(*column);
       for (irs::doc_id_t doc = irs::doc_limits::min();
            doc < irs::doc_limits::min() + 3; ++doc) {
-        const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
-        const auto actual_value = column->Get(row);
+        const auto actual_value = reader->Get(doc);
         auto it = expected_values.find(actual_value);
         ASSERT_NE(expected_values.end(), it);
         ASSERT_EQ(doc, it->second);

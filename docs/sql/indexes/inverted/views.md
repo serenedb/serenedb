@@ -94,7 +94,7 @@ Names in a view body are resolved each time the view is used — first in the vi
   ```sql
   CREATE SERVER lake FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
       warehouse '⟨warehouse⟩',
-      endpoint '⟨https://your-rest-catalog/iceberg/v1/restcatalog⟩',
+      uri '⟨https://your-rest-catalog/iceberg/v1/restcatalog⟩',
       authorization_type '⟨oauth2⟩', token '⟨...⟩',
       max_table_staleness '10 minutes');
 

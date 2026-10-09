@@ -1,0 +1,197 @@
+control substitution on
+
+statement ok
+CREATE DATABASE eif_src;
+
+
+statement ok
+USE eif_src;
+
+
+statement ok
+CREATE SCHEMA s1;
+
+
+statement ok
+CREATE SCHEMA s2;
+
+
+statement ok
+CREATE SCHEMA "Odd S";
+
+
+statement ok
+CREATE TYPE s1.mood AS ENUM ('a', 'b');
+
+
+statement ok
+CREATE TYPE s2.mood AS ENUM ('x', 'y');
+
+
+statement ok
+CREATE TYPE "Odd S"."My T" AS STRUCT(a INT, b s2.mood);
+
+
+statement ok
+CREATE TABLE s1.typed (id INT, m s2.mood, p "Odd S"."My T", ms s2.mood[], arr s2.mood[2], mp MAP(TEXT, s1.mood), st STRUCT(k s2.mood), ip INET);
+
+
+statement ok
+CREATE FUNCTION s1.mf(m s2.mood) AS m::TEXT || '!';
+
+
+statement ok
+CREATE FUNCTION s1.mtf(m s2.mood) AS TABLE SELECT m::TEXT AS v;
+
+
+statement ok
+INSERT INTO s1.typed VALUES (1, 'y', {'a': 1, 'b': 'x'}, ['x', 'y'], ['y', 'x'], MAP {'q': 'a'}, {'k': 'y'}, '10.0.0.1');
+
+
+statement ok
+CREATE TABLE s1.strings (id INT, t TEXT, v VARCHAR(10), l TEXT[]);
+
+
+statement ok
+INSERT INTO s1.strings VALUES (1, '', '', ['', NULL]), (2, NULL, NULL, NULL), (3, '"', ',', ['a,b']);
+
+
+statement ok
+CREATE SEQUENCE "Odd S"."q s" START 5 INCREMENT 2;
+
+
+statement ok
+CREATE SEQUENCE s1.fresh START 9;
+
+
+statement ok
+CREATE SEQUENCE s1.wrap START 2 INCREMENT -1 MINVALUE 1 MAXVALUE 2 CYCLE;
+
+
+statement ok
+CREATE SEQUENCE s1.done START 1 MAXVALUE 2;
+
+
+query
+SELECT nextval('"Odd S"."q s"') AS q, nextval('"Odd S"."q s"') AS q2, nextval('s1.wrap') AS w, nextval('s1.wrap') AS w2, nextval('s1.done') AS d, nextval('s1.done') AS d2;
+----
+q	q2	w	w2	d	d2
+5	7	2	1	1	2
+
+
+statement ok
+CREATE TABLE s1.docs (id INT, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_inv ON s1.docs USING inverted (body) WITH (segment_docs_max = 7, compaction_max_segments = 3, cleanup_interval_step = 2);
+
+
+statement ok
+EXPORT DATABASE '${__TEST_DIR__}/export_import_fidelity';
+
+
+query
+SELECT trim(line) AS line FROM (SELECT unnest(string_split(content, chr(10))) AS line FROM read_text('${__TEST_DIR__}/export_import_fidelity/schema.sql')) WHERE line LIKE 'CREATE TABLE s1.typed%' OR line LIKE 'CREATE TYPE "Odd S"%' OR line LIKE '%setval%' OR line LIKE 'CREATE SEQUENCE%' OR line LIKE 'CREATE MACRO s1.m%' ORDER BY 1;
+----
+line
+CREATE MACRO s1.mf (m s2.mood) AS ((CAST(m AS text) || '!'));
+CREATE MACRO s1.mtf (m s2.mood) AS TABLE (SELECT CAST(m AS text) AS v);
+CREATE SEQUENCE "Odd S"."q s" INCREMENT BY 2 MINVALUE 1 MAXVALUE 9223372036854775807 START 5 NO CYCLE;
+CREATE SEQUENCE s1.done INCREMENT BY 1 MINVALUE 1 MAXVALUE 2 START 1 NO CYCLE;
+CREATE SEQUENCE s1.fresh INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START 9 NO CYCLE;
+CREATE SEQUENCE s1.wrap INCREMENT BY -1 MINVALUE 1 MAXVALUE 2 START 2 CYCLE;
+CREATE TABLE s1.typed(id INTEGER, m s2.mood, p "Odd S"."My T", ms s2.mood[], arr s2.mood[2], mp MAP(VARCHAR, s1.mood), st STRUCT(k s2.mood), ip INET);
+CREATE TYPE "Odd S"."My T" AS STRUCT(a INTEGER, b s2.mood);
+SELECT setval('"Odd S"."q s"', 7, true);
+SELECT setval('s1.done', 2, true);
+SELECT setval('s1.wrap', 1, true);
+
+
+query
+SELECT o = list_sort(o) AS sorted, list_contains(o, 'segment_docs_max = 7') AS kept FROM (SELECT string_split(regexp_extract(sql, 'WITH \((.*) \)', 1), ', ') AS o FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'docs_inv');
+----
+sorted	kept
+t	t
+
+
+statement ok
+CREATE DATABASE eif_dst;
+
+
+statement ok
+USE eif_dst;
+
+
+statement ok
+IMPORT DATABASE '${__TEST_DIR__}/export_import_fidelity';
+
+
+query
+SELECT column_name, data_type, udt_schema, udt_name FROM information_schema.columns WHERE table_schema = 's1' AND table_name = 'typed' AND column_name NOT IN ('ms', 'arr') ORDER BY ordinal_position;
+----
+column_name	data_type	udt_schema	udt_name
+id	integer	pg_catalog	int4
+m	USER-DEFINED	s2	mood
+p	USER-DEFINED	Odd S	My T
+mp	ARRAY	pg_catalog	_record
+st	record	pg_catalog	record
+ip	inet	pg_catalog	inet
+
+
+query
+SELECT * FROM s1.typed;
+----
+id	m	p	ms	arr	mp	st	ip
+1	y	(1,x)	{x,y}	{y,x}	{"(q,a)"}	(y)	10.0.0.1
+
+
+query
+SELECT id, t IS NULL AS t_null, length(t) AS t_len, v IS NULL AS v_null, length(v) AS v_len, l FROM s1.strings ORDER BY id;
+----
+id	t_null	t_len	v_null	v_len	l
+1	f	0	f	0	{"",NULL}
+2	t	NULL	t	NULL	NULL
+3	f	1	f	1	{"a,b"}
+
+
+query
+SELECT sequence_name, start_value, last_value FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1;
+----
+sequence_name	start_value	last_value
+done	1	2
+fresh	9	NULL
+q s	5	7
+wrap	2	1
+
+
+query
+SELECT nextval('"Odd S"."q s"') AS q, nextval('s1.fresh') AS f, nextval('s1.wrap') AS w;
+----
+q	f	w
+9	9	2
+
+
+statement error
+SELECT nextval('s1.done');
+----
+db error: ERROR: nextval: reached maximum value of sequence "done" (2)
+
+
+query
+SELECT count(*) AS indexes, count(DISTINCT replace(sql, database_name || '.', '')) AS variants FROM sdb_indexes() WHERE database_name IN ('eif_src', 'eif_dst') AND index_name = 'docs_inv';
+----
+indexes	variants
+2	1
+
+
+statement ok
+USE postgres;
+
+
+statement ok
+DROP DATABASE eif_dst;
+
+
+statement ok
+DROP DATABASE eif_src;

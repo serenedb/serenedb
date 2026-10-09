@@ -350,17 +350,21 @@ class Loader {
 };
 
 std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
-  const auto database =
-    catalog::FindDatabase(irs::StaticStrings::kDefaultDatabase);
-  if (!database) {
+  std::string name;
+  duckdb::idx_t oid = 0;
+  if (!catalog::ReadDatabase(
+        irs::StaticStrings::kDefaultDatabase,
+        [&](const catalog::DatabaseCatalogEntry& database) {
+          name = database.name.GetIdentifierName();
+          oid = database.oid;
+        })) {
     SDB_ERROR(STARTUP,
               "cannot build the docs index: default database not found");
     return {};
   }
-  const std::string_view name = database->name.GetIdentifierName();
   const auto begin = std::chrono::steady_clock::now();
   try {
-    Loader loader{name, database->oid, docs};
+    Loader loader{name, oid, docs};
     auto image = loader.Build();
     if (!image.empty()) {
       SDB_INFO(STARTUP, "embedded docs indexed in database \"", name, "\" in ",

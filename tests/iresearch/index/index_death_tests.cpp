@@ -1164,6 +1164,51 @@ TEST(index_death_test_formats_15, open_reader) {
   });
 }
 
+TEST(index_death_test_formats_15, postings_doc_reopen_fail) {
+  constexpr size_t kDocs = 2 * irs::doc_limits::kBlockSize;
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                              &tests::PayloadedJsonFieldFactory);
+  const auto* doc = gen.next();
+
+  irs::MemoryDirectory impl;
+  FailingDirectory dir(impl);
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    for (size_t i = 0; i != kDocs; ++i) {
+      ASSERT_TRUE(InsertWithName(*writer, *doc));
+    }
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_TRUE(reader);
+  ASSERT_EQ(1, reader->size());
+  auto& segment = reader[0];
+  auto terms = segment.field(kSameAnlPayId);
+  ASSERT_NE(nullptr, terms);
+  auto term_itr = terms->iterator();
+  ASSERT_NE(nullptr, term_itr);
+  ASSERT_TRUE(term_itr->next());
+  ASSERT_EQ(kDocs, term_itr->cookie().docs_count);
+
+  dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
+  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
+               irs::IoError);
+  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
+  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
+               irs::IoError);
+  ASSERT_TRUE(dir.NoFailures());
+
+  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  size_t count = 0;
+  while (!irs::doc_limits::eof(docs_itr->Next())) {
+    ++count;
+  }
+  ASSERT_EQ(kDocs, count);
+}
+
 TEST(index_death_test_formats_15, postings_reopen_fail) {
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
@@ -1248,16 +1293,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   ASSERT_NE(nullptr, term_itr);
   ASSERT_TRUE(term_itr->next());
 
-  // regiseter reopen failure in postings
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
-  // can't reopen document input
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
-               irs::IoError);
-  // regiseter reopen failure in postings (nullptr)
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
-  // can't reopen document input (nullptr)
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
-               irs::IoError);
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
   // can't reopen position input
@@ -1285,10 +1320,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // can't reopen position (nullptr)
   ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
 
-  // regiseter reopen failure in postings
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
-  // regiseter reopen failure in postings
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
   // regiseter reopen failure in positions
@@ -1297,8 +1328,6 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
   // regiseter reopen failure in payload
   dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
   ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
   ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
   ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);

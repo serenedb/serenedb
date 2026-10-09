@@ -107,8 +107,8 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
   // Arrays are varlena (typlen -1); a scalar carries its fixed width or -1. The
   // typmod (DECIMAL precision/scale, else -1) is the element's and survives the
   // array wrapping.
-  auto make = [in_array](int32_t scalar_oid, int32_t array_oid, int16_t typlen,
-                         int32_t typmod = -1) -> PgTypeInfo {
+  auto make = [in_array](uint64_t scalar_oid, uint64_t array_oid,
+                         int16_t typlen, int32_t typmod = -1) -> PgTypeInfo {
     return {in_array ? array_oid : scalar_oid,
             in_array ? static_cast<int16_t>(-1) : typlen, typmod};
   };
@@ -220,7 +220,7 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       // (e.g. enum_range); their value is just the string label on the wire.
       if (const auto oid = UserTypeOid(type)) {
         // Enum types are int4-backed (typlen 4).
-        return {static_cast<int32_t>(in_array ? TypeArrayOid(*oid) : *oid),
+        return {in_array ? TypeArrayOid(*oid) : *oid,
                 in_array ? static_cast<int16_t>(-1) : static_cast<int16_t>(4),
                 -1};
       }
@@ -236,8 +236,8 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       }
       // null in case of anonymous record types (e.g. SELECT ROW(1, 2))
       if (const auto oid = UserTypeOid(type)) {
-        return {static_cast<int32_t>(in_array ? TypeArrayOid(*oid) : *oid),
-                static_cast<int16_t>(-1), -1};
+        return {in_array ? TypeArrayOid(*oid) : *oid, static_cast<int16_t>(-1),
+                -1};
       }
       return make(kRecord, kRecordArray, -1);
     }
@@ -272,11 +272,31 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
   }
 }
 
-int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
+uint64_t Type2Oid(const duckdb::LogicalType& type, bool in_array) {
   return Logical2Pg(type, in_array).oid;
 }
 
-duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
+struct UserTypeRef {
+  const duckdb::TypeCatalogEntry* type = nullptr;
+  bool array = false;
+};
+
+static UserTypeRef FindUserType(duckdb::ClientContext* context, uint64_t oid) {
+  auto database = SessionDatabase(context);
+  if (oid < kMaxSystem || !database) {
+    return {};
+  }
+  auto& catalog = database->Cast<catalog::SereneDBCatalog>();
+  if (auto type = catalog.FindIn<duckdb::TypeCatalogEntry>(context, oid)) {
+    return {type.get(), false};
+  }
+  if (auto type = catalog.FindIn<duckdb::TypeCatalogEntry>(context, oid + 1)) {
+    return {type.get(), true};
+  }
+  return {};
+}
+
+duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
   switch (oid) {
     using enum PgTypeOID;
     using duckdb::LogicalType;
@@ -324,12 +344,9 @@ duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
     default: {
       // A user-defined type is not in the snapshot -- its entry is the object
       // -- so the oid resolves through this session's database.
-      auto database = SessionDatabase(&context);
-      if (auto type = database
-                        ? database->Cast<catalog::SereneDBCatalog>()
-                            .FindIn<duckdb::TypeCatalogEntry>(&context, oid)
-                        : nullptr) {
-        return type->user_type;
+      if (const auto user = FindUserType(&context, oid); user.type) {
+        return user.array ? LogicalType::LIST(user.type->user_type)
+                          : user.type->user_type;
       }
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("cache lookup failed for type ", oid));
@@ -337,7 +354,7 @@ duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context) {
   }
 }
 
-std::string RegtypeOut(uint64_t oid) {
+static std::string BuiltinRegtypeOut(uint64_t oid) {
   switch (static_cast<PgTypeOID>(oid)) {
     SDB_REGTYPE_WITH_ARRAY_OUT(kBool, "boolean")
     SDB_REGTYPE_WITH_ARRAY_OUT(kBytea, "bytea")
@@ -454,6 +471,31 @@ std::string RegtypeOut(uint64_t oid) {
     SDB_REGTYPE_WITH_ARRAY_OUT(kGeometry, "geometry")
   }
   return absl::StrCat(oid);
+}
+
+std::string RegtypeOut(duckdb::ClientContext* context, uint64_t oid) {
+  if (const auto user = FindUserType(context, oid); user.type) {
+    const auto& name = user.type->name;
+    const auto visible =
+      duckdb::Catalog::GetEntry(
+        *context,
+        duckdb::EntryLookupInfo{duckdb::CatalogType::TYPE_ENTRY,
+                                duckdb::QualifiedName{name}},
+        duckdb::OnEntryNotFound::RETURN_NULL)
+        .get() == user.type;
+    return absl::StrCat(
+      visible
+        ? QuoteIdentifier(name.GetIdentifierName())
+        : absl::StrCat(
+            QuoteIdentifier(
+              user.type
+                ->ParentSchemaName(
+                  SessionDatabase(context)->GetCatalogTransaction(*context))
+                .GetIdentifierName()),
+            ".", QuoteIdentifier(name.GetIdentifierName())),
+      user.array ? "[]" : "");
+  }
+  return BuiltinRegtypeOut(oid);
 }
 
 static const irs::containers::FlatHashMap<std::string_view, PgTypeOID>

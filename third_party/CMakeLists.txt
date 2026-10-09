@@ -280,14 +280,7 @@ set(BENCHMARK_CXX_STANDARD ${CMAKE_CXX_STANDARD} CACHE STRING "" FORCE)
 add_subdirectory(benchmark)
 
 ################################################################################
-### streamvbyte library
-################################################################################
-
-sdb_update_module(${GIT_EXECUTABLE} "streamvbyte" ${CMAKE_CURRENT_SOURCE_DIR} "LICENSE")
-add_subdirectory(streamvbyte)
-
-################################################################################
-### sse2neon library -- need this after abseil and highway, but before simdcomp
+### sse2neon library -- need this after abseil and highway
 ################################################################################
 
 add_library(sse2neon INTERFACE)
@@ -298,13 +291,6 @@ if(ARCH_AARCH64)
         INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/sse2neon"
     )
 endif()
-
-################################################################################
-### SIMDCOMP library
-################################################################################
-
-# TODO(mbkkt) make it submodule
-add_subdirectory(simdcomp)
 
 ################################################################################
 ### fastText library
@@ -679,9 +665,6 @@ option(
 set(BUILD_BENCHMARKS ${SDB_BUILD_DUCKDB_BENCHMARKS} CACHE BOOL "" FORCE)
 set(BUILD_COMPLETE_EXTENSION_SET FALSE CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS_ONLY FALSE CACHE BOOL "" FORCE)
-# Keep builtin extensions (core_functions, parquet, json, etc.)
-set(ENABLE_EXTENSION_AUTOLOADING FALSE CACHE BOOL "" FORCE)
-set(ENABLE_EXTENSION_AUTOINSTALL FALSE CACHE BOOL "" FORCE)
 # No dynamic extension load/install (we link a fixed BUILD_EXTENSIONS set).
 set(ENABLE_EXTENSION_LOAD FALSE CACHE BOOL "" FORCE)
 set(DUCKDB_CAPABILITIES "none" CACHE STRING "" FORCE)

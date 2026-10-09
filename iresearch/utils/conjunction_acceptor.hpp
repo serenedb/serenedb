@@ -253,6 +253,8 @@ class FuzzyConjunction {
 
   bool Matches(bytes_view term, PayloadType& payload) const;
 
+  uint32_t MaxDistance() const noexcept { return _fuzzy->MaxDistance(); }
+
  private:
   struct Key {
     Parts parts;

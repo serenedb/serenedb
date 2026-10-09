@@ -1,0 +1,64 @@
+control substitution on
+
+
+statement ok retry 20 backoff 250ms
+${ICEBERG_BOOTSTRAP}
+
+
+statement ok
+CREATE SERVER srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS});
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+SET logging_level = 'debug';
+
+
+statement ok
+CREATE SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE srv_${__DATABASE__}.${__DATABASE__}.mtr_pudge (id INTEGER);
+
+
+connection fresh
+statement ok
+CREATE TABLE mtr_http_mark AS
+SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+
+
+connection fresh
+statement error
+SELECT * FROM mtr_pudg;
+----
+db error: ERROR: Table with name mtr_pudg does not exist!<slt:ignore>
+
+
+connection fresh
+query
+SELECT count(*) - (SELECT n FROM mtr_http_mark) AS http_requests
+FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id();
+----
+http_requests
+0
+
+
+connection default
+statement ok
+DROP TABLE mtr_http_mark;
+
+
+statement ok
+DROP TABLE srv_${__DATABASE__}.${__DATABASE__}.mtr_pudge;
+
+
+statement ok
+DROP SCHEMA srv_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+DROP SERVER srv_${__DATABASE__};

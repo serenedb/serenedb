@@ -305,7 +305,7 @@ session_authorization	postgres	Sets the current session's user name.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
+statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
@@ -640,7 +640,7 @@ session_authorization	postgres	Sets the current session's user name.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Aborts any statement that takes more than the specified number of milliseconds. Accepted for compatibility but not currently enforced.
+statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.

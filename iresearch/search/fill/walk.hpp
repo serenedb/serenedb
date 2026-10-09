@@ -136,8 +136,7 @@ class WalkScored {
     return doc;
   }
 
-  void Settle(doc_id_t min, scores_size_t n,
-              score_t* IRS_RESTRICT scores) noexcept {
+  void Settle(doc_id_t min, scores_size_t n, score_t* IRS_RESTRICT scores) {
     if (n == 0) {
       return;
     }

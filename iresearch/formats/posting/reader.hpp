@@ -22,7 +22,6 @@
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/stream.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/formats/reader_state.hpp"
@@ -52,9 +51,6 @@ inline constexpr IndexFeatures kPos = IndexFeatures::Freq | IndexFeatures::Pos;
 
 class PostingsReader final {
  public:
-  template<bool Freq, bool Pos, bool Offs>
-  using IteratorTraits = IteratorTraitsImpl<FormatTraits128, Freq, Pos, Offs>;
-
   PostingsHandles Handles() const noexcept {
     return {.doc = _doc_in.get(), .pos = _pos_in.get(), .pay = _pay_in.get()};
   }
@@ -79,10 +75,6 @@ class PostingsReader final {
   size_t decode(const byte_type* in, IndexFeatures field_features,
                 PostingMeta& state);
 
-  // One term's whole posting list as the write side reads it: front to back,
-  // with the frequency and the positions the field stores. Nothing here
-  // seeks, so no skip list is parsed. `required_features` narrows what is
-  // decoded; what the field carries beyond that is stepped over.
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
                              const PostingMeta& meta,
@@ -115,50 +107,75 @@ inline void PostingsReader::prepare(const ReaderState& state,
 
   // prepare document input
   PrepareInput(buf, _doc_in, IOAdvice::RANDOM, state, PostingsWriter::kDocExt);
-  _doc_in->EnableReadahead();
 
   if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
     PrepareInput(buf, _pos_in, IOAdvice::RANDOM, state,
                  PostingsWriter::kPosExt);
-    _pos_in->EnableReadahead();
   }
 
   if (needs_pay) {
     PrepareInput(buf, _pay_in, IOAdvice::RANDOM, state,
                  PostingsWriter::kPayExt);
-    _pay_in->EnableReadahead();
   }
 }
 
-inline size_t PostingsReader::decode(const byte_type* in,
-                                     IndexFeatures features,
-                                     PostingMeta& posting_meta) {
+IRS_FORCE_INLINE inline size_t PostingsReader::decode(
+  const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
 
   SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Vec) ||
              IndexFeatures::None ==
                (features & (IndexFeatures::Pos | IndexFeatures::Offs)));
 
-  posting_meta.docs_count = vread<uint32_t>(p);
+  const uint64_t next = uint64_t{posting_meta.pos_offset} + posting_meta.freq;
+  const auto head = vread<uint64_t>(p);
+  const bool single = (head & 1) != 0;
+  const bool follows = (head & 4) != 0;
+  if (single) {
+    posting_meta.docs_count = 1;
+    posting_meta.doc_delta = static_cast<uint32_t>(head >> 3);
+  } else {
+    posting_meta.docs_count = static_cast<uint32_t>(head >> 4);
+  }
   if (IndexFeatures::None != (features & IndexFeatures::Freq)) {
-    posting_meta.freq = posting_meta.docs_count + vread<uint32_t>(p);
+    posting_meta.freq =
+      posting_meta.docs_count + ((head & 2) != 0 ? 0 : 1 + vread<uint32_t>(p));
   }
 
-  posting_meta.doc_start += vread<uint64_t>(p);
-  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    posting_meta.pos_start += vread<uint64_t>(p);
-    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
-      posting_meta.pay_start += vread<uint64_t>(p);
+  if (!single && (head & 8) != 0) {
+    const auto size = *p++;
+    SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
+    posting_meta.inline_size = size;
+  } else {
+    posting_meta.inline_size = 0;
+    if (!single) {
+      posting_meta.doc_start += vread<uint64_t>(p);
     }
-    posting_meta.pos_offset = *p++;
+  }
+  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
+    if (!follows || next >= PosGroup::kPositions) {
+      posting_meta.pos_start += vread<uint64_t>(p);
+      if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+        posting_meta.pay_start += vread<uint64_t>(p);
+      }
+    }
+    posting_meta.pos_offset = static_cast<uint16_t>(
+      follows ? next % PosGroup::kPositions : vread<uint32_t>(p));
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
     posting_meta.pos_offset = *p++;
   }
 
-  if (1 == posting_meta.docs_count ||
-      doc_limits::kBlockSize < posting_meta.docs_count) {
+  if (doc_limits::kBlockSize < posting_meta.docs_count) {
     posting_meta.doc_delta = vread<uint32_t>(p);
+  }
+
+  if (IndexFeatures::None != (features & IndexFeatures::Pos) &&
+      pos_limits::kBlockSize < posting_meta.freq) {
+    posting_meta.pos_extent = vread<uint32_t>(p);
+    if (IndexFeatures::None != (features & IndexFeatures::Offs)) {
+      posting_meta.pay_extent = vread<uint32_t>(p);
+    }
   }
 
   SDB_ASSERT(p >= in);
@@ -169,35 +186,35 @@ template<typename FieldTraits, typename Factory>
 auto PostingsReader::IteratorImpl(IndexFeatures enabled, Factory&& factory) {
   switch (ToIndex(enabled)) {
     case kPosOffs: {
-      using IteratorTraits = IteratorTraits<true, true, true>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
+      using Traits = IteratorTraitsImpl<true, true, true>;
+      if constexpr ((FieldTraits::Features() & Traits::Features()) ==
+                    Traits::Features()) {
         return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
+          .template operator()<Traits, FieldTraits>();
       }
     } break;
     case kPos: {
-      using IteratorTraits = IteratorTraits<true, true, false>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
+      using Traits = IteratorTraitsImpl<true, true, false>;
+      if constexpr ((FieldTraits::Features() & Traits::Features()) ==
+                    Traits::Features()) {
         return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
+          .template operator()<Traits, FieldTraits>();
       }
     } break;
     case IndexFeatures::Freq: {
-      using IteratorTraits = IteratorTraits<true, false, false>;
-      if constexpr ((FieldTraits::Features() & IteratorTraits::Features()) ==
-                    IteratorTraits::Features()) {
+      using Traits = IteratorTraitsImpl<true, false, false>;
+      if constexpr ((FieldTraits::Features() & Traits::Features()) ==
+                    Traits::Features()) {
         return std::forward<Factory>(factory)
-          .template operator()<IteratorTraits, FieldTraits>();
+          .template operator()<Traits, FieldTraits>();
       }
     } break;
     default:
       break;
   }
-  using IteratorTraits = IteratorTraits<false, false, false>;
+  using Traits = IteratorTraitsImpl<false, false, false>;
   return std::forward<Factory>(factory)
-    .template operator()<IteratorTraits, FieldTraits>();
+    .template operator()<Traits, FieldTraits>();
 }
 
 template<typename Factory>
@@ -210,19 +227,19 @@ auto PostingsReader::IteratorImpl(IndexFeatures field_features,
 
   switch (ToIndex(field_features)) {
     case kPosOffs: {
-      using FieldTraits = IteratorTraits<true, true, true>;
+      using FieldTraits = IteratorTraitsImpl<true, true, true>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     case kPos: {
-      using FieldTraits = IteratorTraits<true, true, false>;
+      using FieldTraits = IteratorTraitsImpl<true, true, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     case IndexFeatures::Freq: {
-      using FieldTraits = IteratorTraits<true, false, false>;
+      using FieldTraits = IteratorTraitsImpl<true, false, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
     default: {
-      using FieldTraits = IteratorTraits<false, false, false>;
+      using FieldTraits = IteratorTraitsImpl<false, false, false>;
       return IteratorImpl<FieldTraits>(enabled, std::forward<Factory>(factory));
     }
   }

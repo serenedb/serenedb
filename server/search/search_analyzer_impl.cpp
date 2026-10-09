@@ -24,6 +24,7 @@
 
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/parser/parsed_data/create_tokenizer_info.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/sparse_ngram_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -60,19 +61,31 @@ std::string FeatureNames(irs::IndexFeatures features) {
 
 }  // namespace
 
+static_assert(duckdb::TOKENIZER_FEATURES[0].bit ==
+                std::to_underlying(irs::IndexFeatures::Freq) &&
+              duckdb::TOKENIZER_FEATURES[0].name ==
+                irs::Type<irs::FreqAttr>::name());
+static_assert(duckdb::TOKENIZER_FEATURES[1].bit ==
+                std::to_underlying(irs::IndexFeatures::Pos) &&
+              duckdb::TOKENIZER_FEATURES[1].name ==
+                irs::Type<irs::PosAttr>::name());
+static_assert(duckdb::TOKENIZER_FEATURES[2].bit ==
+                std::to_underlying(irs::IndexFeatures::Offs) &&
+              duckdb::TOKENIZER_FEATURES[2].name ==
+                irs::Type<irs::OffsAttr>::name());
+static_assert(duckdb::TOKENIZER_FEATURES[3].bit ==
+                std::to_underlying(irs::IndexFeatures::Norm) &&
+              duckdb::TOKENIZER_FEATURES[3].name ==
+                irs::Type<irs::Norm>::name());
+
 bool Features::Add(std::string_view feature_name) {
-  if (feature_name == irs::Type<irs::PosAttr>::name()) {
-    _index_features |= irs::IndexFeatures::Pos;
-  } else if (feature_name == irs::Type<irs::FreqAttr>::name()) {
-    _index_features |= irs::IndexFeatures::Freq;
-  } else if (feature_name == irs::Type<irs::OffsAttr>::name()) {
-    _index_features |= irs::IndexFeatures::Offs;
-  } else if (feature_name == irs::Type<irs::Norm>::name()) {
-    _index_features |= irs::IndexFeatures::Norm;
-  } else {
-    return false;
+  for (const auto& feature : duckdb::TOKENIZER_FEATURES) {
+    if (feature_name == feature.name) {
+      _index_features |= static_cast<irs::IndexFeatures>(feature.bit);
+      return true;
+    }
   }
-  return true;
+  return false;
 }
 
 void Features::Validate(std::string_view type) const {

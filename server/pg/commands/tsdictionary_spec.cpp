@@ -80,7 +80,6 @@ struct Stage {
   enum class Kind : uint8_t {
     Template,
     Sql,
-    Dictionary,
     Identity,
   };
 
@@ -88,7 +87,6 @@ struct Stage {
   std::string name;
   std::vector<std::pair<std::string, duckdb::Value>> options;
   std::vector<Chain> children;
-  const catalog::TokenizerCatalogEntry* dictionary = nullptr;
 };
 
 const duckdb::FunctionExpression* AsFunction(
@@ -320,8 +318,6 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
     case Stage::Kind::Identity:
       type = kKeywordName;
       break;
-    case Stage::Kind::Dictionary:
-      return irs::analysis::Clone(stage.dictionary->Config());
     case Stage::Kind::Sql:
       type = kSqlName;
       put(tokenizer_options::kSqlExpression.name, duckdb::Value{stage.name});
@@ -357,11 +353,66 @@ irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
                     kOperation);
 }
 
+std::string RenderOption(const OptionGroup& group, std::string_view name,
+                         const duckdb::Value& value) {
+  const auto flat = group.FlatOptions();
+  const auto info = absl::c_find_if(
+    flat, [&](const OptionInfo& option) { return option.name == name; });
+  if (info != flat.end() && info->type == OptionInfo::Type::Lambda) {
+    return absl::StrCat(name, " := lambda ", kInput, ": ",
+                        value.GetValue<std::string>());
+  }
+  return absl::StrCat(name, " := ", value.ToSQLString());
+}
+
+std::string RenderChain(const Chain& chain) {
+  std::vector<std::string> stages;
+  stages.reserve(chain.size());
+  for (const auto& stage : chain) {
+    switch (stage.kind) {
+      case Stage::Kind::Identity:
+        stages.push_back(absl::StrCat(kKeywordName, "()"));
+        continue;
+      case Stage::Kind::Sql:
+        stages.push_back(
+          absl::StrCat("(lambda ", kInput, ": ", stage.name, ")"));
+        continue;
+      case Stage::Kind::Template:
+        break;
+    }
+    std::vector<std::string> args;
+    args.reserve(stage.children.size() + stage.options.size());
+    for (const auto& child : stage.children) {
+      args.push_back(RenderChain(child));
+    }
+    if (stage.name == kUnionName) {
+      stages.push_back(absl::StrCat("[", absl::StrJoin(args, ", "), "]"));
+      continue;
+    }
+    const auto* group = FindTemplate(stage.name);
+    SDB_ASSERT(group);
+    for (const auto& [name, value] : stage.options) {
+      args.push_back(RenderOption(*group, name, value));
+    }
+    stages.push_back(
+      absl::StrCat(stage.name, "(", absl::StrJoin(args, ", "), ")"));
+  }
+  return absl::StrJoin(stages, " | ");
+}
+
 class SpecCompiler {
  public:
   explicit SpecCompiler(duckdb::ClientContext& context) : _context{context} {}
 
-  irs::analysis::TokenizerConfig Compile(std::string_view spec) {
+  CompiledTSDictionary Compile(std::string_view spec) {
+    const auto chain = CompileChain(*Parse(spec));
+    return {.config = BuildChainConfig(chain, {_context}),
+            .definition = RenderChain(chain)};
+  }
+
+ private:
+  static duckdb::unique_ptr<duckdb::ParsedExpression> Parse(
+    std::string_view spec) {
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
     try {
       exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(spec);
@@ -374,11 +425,13 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG(kOperation, ": expected one analyzer expression"));
     }
-    return BuildChainConfig(CompileChain(*exprs[0]), {_context});
+    return std::move(exprs[0]);
   }
 
- private:
   Chain CompileChain(const duckdb::ParsedExpression& expr) {
+    if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+      return CompileDictionary(expr.Cast<duckdb::ColumnRefExpression>());
+    }
     if (!IsPipe(expr)) {
       Chain chain;
       chain.push_back(CompileStage(expr));
@@ -398,9 +451,6 @@ class SpecCompiler {
     }
     if (const auto elements = AsListLiteral(expr)) {
       return CompileUnion(*elements);
-    }
-    if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-      return CompileDictionary(expr.Cast<duckdb::ColumnRefExpression>());
     }
     if (const auto* fn = AsCall(expr)) {
       if (AsPlainCall(expr)) {
@@ -477,7 +527,7 @@ class SpecCompiler {
                     ERR_HINT("did you mean \"", closest, "\"?"));
   }
 
-  Stage CompileDictionary(const duckdb::ColumnRefExpression& ref) {
+  Chain CompileDictionary(const duckdb::ColumnRefExpression& ref) {
     const auto& names = ref.ColumnNames();
     const auto spelled = absl::StrJoin(
       names, ".", [](std::string* out, const duckdb::Identifier& id) {
@@ -500,7 +550,7 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", spelled, "\" does not exist"));
     }
-    return {.kind = Stage::Kind::Dictionary, .dictionary = tokenizer.get()};
+    return CompileChain(*Parse(tokenizer->Definition()));
   }
 
   Stage CompileLambda(const duckdb::LambdaExpression& lambda) {
@@ -731,8 +781,8 @@ class SpecCompiler {
 
 }  // namespace
 
-irs::analysis::TokenizerConfig CompileTSDictionarySpec(
-  duckdb::ClientContext& context, std::string_view spec) {
+CompiledTSDictionary CompileTSDictionarySpec(duckdb::ClientContext& context,
+                                             std::string_view spec) {
   return SpecCompiler{context}.Compile(spec);
 }
 

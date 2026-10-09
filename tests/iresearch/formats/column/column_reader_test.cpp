@@ -32,7 +32,9 @@
 #include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
+#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <span>
@@ -1466,8 +1468,6 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   constexpr uint32_t kRgSize = 1024;
   constexpr irs::field_id kN = 50;
 
-  // Norm for every 3rd doc (others zero-padded); value grows so byte_size
-  // widens across row groups (1->2->4 byte packing).
   auto has_norm = [](uint64_t d) { return d % 3 == 0; };
   auto norm_val = [](uint64_t d) { return static_cast<uint32_t>(d * 13 + 1); };
 
@@ -1484,13 +1484,16 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   }
 
   irs::ColReader r{dir, "seg", Db()};
-  ASSERT_TRUE(r.HasNormColumn(kN));
   const auto* nr = r.NormColumn(kN);
   ASSERT_NE(nr, nullptr);
   ASSERT_EQ(nr->RowCount(), kDocs);
+  const auto reader = irs::MakePersistedNormReader(*nr);
   for (uint64_t d = 0; d < kDocs; ++d) {
     const auto expected = has_norm(d) ? norm_val(d) : 0u;
-    EXPECT_EQ(nr->Get(d), expected) << "doc " << d;
+    EXPECT_EQ(
+      reader->Get(static_cast<irs::doc_id_t>(d + irs::doc_limits::min())),
+      expected)
+      << "doc " << d;
   }
 }
 

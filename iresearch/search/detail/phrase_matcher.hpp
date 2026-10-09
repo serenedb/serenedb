@@ -29,7 +29,6 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
 #include "iresearch/formats/posting/iterator_pos.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
@@ -48,7 +47,7 @@ struct TermInterval {
 };
 
 template<bool Offs>
-using FixedTermTraits = IteratorTraitsImpl<FormatTraits128, true, true, Offs>;
+using FixedTermTraits = IteratorTraitsImpl<true, true, Offs>;
 
 template<bool Offs>
 using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>>;
@@ -384,6 +383,14 @@ class PhraseMatcher {
         }
       }
       return static_cast<uint32_t>(std::min<uint64_t>(by_occurrence, kMaxFreq));
+    }
+    return freq;
+  }
+
+  uint32_t FreqBoundOf(uint32_t freq) const noexcept {
+    if constexpr (HasIntervals) {
+      return static_cast<uint32_t>(
+        std::min<uint64_t>(uint64_t{freq} * _freq_scale, kMaxFreq));
     }
     return freq;
   }

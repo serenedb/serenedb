@@ -61,7 +61,7 @@ using SerializationFunction = bool (*)(
 
 struct RecordSerializers {
   std::vector<SerializationFunction> functions;
-  std::vector<int32_t> oids;  // populated for binary, empty for text
+  std::vector<uint64_t> oids;  // populated for binary, empty for text
 };
 
 using TypesSerializationCache =

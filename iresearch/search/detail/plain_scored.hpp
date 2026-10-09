@@ -41,6 +41,8 @@ namespace irs::detail {
 template<typename InputType>
 class PlainFillScored {
  public:
+  static constexpr bool kDefaultInit = true;
+
   PlainFillScored() = default;
 
   PlainFillScored(const PostingMeta& meta, const IndexInput& doc_in,
@@ -69,6 +71,8 @@ class ConstFillScored {
     "a clause of a disjunction is merged into what the others said");
 
  public:
+  static constexpr bool kDefaultInit = true;
+
   ConstFillScored() = default;
 
   ConstFillScored(const PostingMeta& meta, const IndexInput& doc_in,
@@ -102,6 +106,8 @@ class ConstFillScored {
 template<typename InputType>
 class PlainCountScored {
  public:
+  static constexpr bool kDefaultInit = true;
+
   PlainCountScored() = default;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
@@ -141,6 +147,8 @@ class ConstCountScored {
     "a clause of a disjunction is merged into what the others said");
 
  public:
+  static constexpr bool kDefaultInit = true;
+
   ConstCountScored() = default;
 
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
@@ -183,6 +191,8 @@ class ConstCountScored {
 template<typename InputType>
 class PlainProbeScored {
  public:
+  static constexpr bool kDefaultInit = true;
+
   PlainProbeScored() = default;
 
   PlainProbeScored(const PostingMeta& meta, const IndexInput& doc_in,

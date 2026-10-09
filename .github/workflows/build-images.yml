@@ -19,6 +19,16 @@ on:
         required: true
         type: boolean
         default: false
+      TAG_LATEST:
+        description: 'Also tag the build image :latest, which every CI run uses by default'
+        required: true
+        type: boolean
+        default: false
+      TAG:
+        description: 'Also tag the build image with this name (e.g. a branch, / becomes -)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -46,6 +56,8 @@ jobs:
           DOCKER_USERNAME: serenedb
           DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TOKEN }}
           PUSH_IMAGES_2_REGISTRY: ${{ inputs.PUSH_IMAGES_2_REGISTRY }}
+          TAG_LATEST: ${{ inputs.TAG_LATEST }}
+          EXTRA_TAG: ${{ inputs.TAG }}
         run: ./build_images.sh
 
       - name: Send notification

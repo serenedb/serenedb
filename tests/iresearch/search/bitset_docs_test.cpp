@@ -115,8 +115,8 @@ std::vector<irs::doc_id_t> Emit(irs::docs::Root& root, uint32_t capacity,
 // reached and not what they found.
 class WindowFill : public irs::fill::Node {
  public:
-  explicit WindowFill(irs::detail::BitsetStorage&& set) noexcept
-    : _set{std::move(set)} {}
+  WindowFill(irs::detail::BitsetStorage&& set, size_t& windows) noexcept
+    : _set{std::move(set)}, _windows{windows} {}
 
   irs::doc_id_t FillOr(irs::doc_id_t min, irs::doc_id_t max,
                        uint64_t* IRS_RESTRICT mask) final {
@@ -136,11 +136,9 @@ class WindowFill : public irs::fill::Node {
     return _set.FillAndNot(min, max, mask);
   }
 
-  size_t windows() const noexcept { return _windows; }
-
  private:
   irs::fill::BitsetDocs _set;
-  size_t _windows = 0;
+  size_t& _windows;
 };
 
 }  // namespace
@@ -708,36 +706,36 @@ TEST(lazy_bitset_test, fills_only_as_far_as_asked) {
   constexpr irs::doc_id_t kDocs = 10000;
   const std::vector<irs::doc_id_t> docs{3, 5000, 9000};
 
-  auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
-  auto* fill = node.get();
-  irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::fill::DocsMask{nullptr}};
+  size_t windows = 0;
+  irs::detail::LazyBitset set{
+    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
+    irs::fill::DocsMask{nullptr}};
 
-  ASSERT_EQ(0, fill->windows());
+  ASSERT_EQ(0, windows);
   ASSERT_EQ(kMin, set.Filled());
   ASSERT_EQ(kDocs + 1, set.End());
 
   ASSERT_TRUE(set.Contains(3));
-  ASSERT_EQ(1, fill->windows());
+  ASSERT_EQ(1, windows);
   ASSERT_EQ(kMin + irs::detail::kWindowDocs, set.Filled());
 
   // Already decided, so nothing is filled to answer it.
   ASSERT_FALSE(set.Contains(7));
-  ASSERT_EQ(1, fill->windows());
+  ASSERT_EQ(1, windows);
 
   ASSERT_TRUE(set.Contains(5000));
-  ASSERT_EQ(2, fill->windows());
+  ASSERT_EQ(2, windows);
   ASSERT_EQ(kMin + 2 * irs::detail::kWindowDocs, set.Filled());
 
   // A probe that finds nothing in what is decided fills on, and what it
   // reaches is coherent afterwards.
   ASSERT_EQ(9000, set.Probe(5001));
-  ASSERT_EQ(3, fill->windows());
+  ASSERT_EQ(3, windows);
   ASSERT_EQ(kDocs + 1, set.Filled());
 
   ASSERT_TRUE(set.Contains(9000));
   ASSERT_FALSE(set.Contains(8999));
-  ASSERT_EQ(3, fill->windows());
+  ASSERT_EQ(3, windows);
   ASSERT_TRUE(irs::doc_limits::eof(set.Probe(9001)));
 }
 
@@ -747,21 +745,21 @@ TEST(lazy_bitset_test, skips_the_windows_it_holds_nothing_in) {
   constexpr irs::doc_id_t kDocs = 10000;
   const std::vector<irs::doc_id_t> docs{3, 9000};
 
-  auto node = irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs));
-  auto* fill = node.get();
-  irs::detail::LazyBitset set{std::move(node), kDocs,
-                              irs::fill::DocsMask{nullptr}};
+  size_t windows = 0;
+  irs::detail::LazyBitset set{
+    irs::memory::make_managed<WindowFill>(MakeSet(kDocs, docs), windows), kDocs,
+    irs::fill::DocsMask{nullptr}};
 
   // The segment spans three windows, the middle one holds nothing, and two
   // fills answer a probe that crosses all three.
   ASSERT_EQ(9000, set.Probe(4));
-  ASSERT_EQ(2, fill->windows());
+  ASSERT_EQ(2, windows);
   ASSERT_EQ(kDocs + 1, set.Filled());
 
   ASSERT_TRUE(set.Contains(3));
   ASSERT_TRUE(set.Contains(9000));
   ASSERT_FALSE(set.Contains(5000));
-  ASSERT_EQ(2, fill->windows());
+  ASSERT_EQ(2, windows);
 }
 
 namespace {

@@ -21,6 +21,7 @@
 #include <snappy-sinksource.h>
 #include <snappy.h>
 
+#include <exception>
 #include <string>
 
 #include "network/http/codecs/codec.h"
@@ -52,10 +53,26 @@ class ForwardSink final : public snappy::Sink {
   explicit ForwardSink(absl::FunctionRef<void(std::string_view)> sink)
     : _sink{sink} {}
 
-  void Append(const char* bytes, size_t n) override { _sink({bytes, n}); }
+  void Append(const char* bytes, size_t n) override {
+    if (_error) {
+      return;
+    }
+    try {
+      _sink({bytes, n});
+    } catch (...) {
+      _error = std::current_exception();
+    }
+  }
+
+  void RethrowError() const {
+    if (_error) {
+      std::rethrow_exception(_error);
+    }
+  }
 
  private:
   absl::FunctionRef<void(std::string_view)> _sink;
+  std::exception_ptr _error;
 };
 
 class SnappyDecoder final : public ContentDecoder {
@@ -68,7 +85,9 @@ class SnappyDecoder final : public ContentDecoder {
     }
     snappy::ByteArraySource source{_pending.data(), _pending.size()};
     ForwardSink out{sink};
-    if (!snappy::Uncompress(&source, &out)) {
+    const bool ok = snappy::Uncompress(&source, &out);
+    out.RethrowError();
+    if (!ok) {
       ThrowCorrupt("snappy", "corrupt or truncated body");
     }
     _pending.clear();

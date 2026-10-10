@@ -88,6 +88,7 @@ jobs:
           export DOCKER_GID="$(id -g)"
           export SQLLOGIC_DIR="${WORKSPACE}/tests/sqllogic"
           export PG_CHANGED_TESTS="${{ inputs.PG_TESTS }}"
+          export PG_FIXTURE_IMAGE="serenedb/serenedb-test-postgres:$(tests/sqllogic/fixtures/image_tag.sh tests/sqllogic/fixtures/postgres)"
 
           cd tests/sqllogic
           PREFIX="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
@@ -101,7 +102,6 @@ jobs:
             -p "${PREFIX}" \
             -f docker-compose.validate-pg-tests.yml \
             up \
-            --build \
             --attach tests \
             --exit-code-from tests \
             --remove-orphans

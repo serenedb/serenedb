@@ -515,4 +515,32 @@ TEST(BlockIoTest, HolesBecomeBitset) {
   }
 }
 
+TEST(BlockIoTest, MaskLeafStaysInsideTheWindow) {
+  namespace io = irs::block_io;
+  constexpr irs::doc_id_t kMin = 64;
+  constexpr uint32_t kPrev = kMin + 63;
+  std::array<uint64_t, 4> bitset;
+  bitset.fill(~uint64_t{0});
+  const io::FillLeaf leaf{.bitset = bitset.data(),
+                          .words = 4,
+                          .max = kPrev + 4 * 64,
+                          .kind = io::FillLeaf::Kind::Bitset};
+  for (const uint32_t inside : {1U, 2U, 3U}) {
+    const irs::doc_id_t max = kPrev + 1 + inside * 64;
+    std::vector<uint64_t> mask(1 + inside);
+    std::vector<uint32_t> docs(io::kBlock + bc::kOutSlack);
+    auto* const docs_end = docs.data() + io::kBlock;
+    const auto live = io::MaskLeaf<false>(leaf, kPrev, io::kBlock, kMin, max,
+                                          mask.data(), docs_end);
+    std::vector<uint64_t> expected(1 + inside, ~uint64_t{0});
+    expected.front() = 0;
+    EXPECT_EQ(expected, mask) << "inside " << inside;
+    ASSERT_EQ((4 - inside) * 64, live) << "inside " << inside;
+    for (uint32_t i = 0; i != live; ++i) {
+      EXPECT_EQ(max + i, *(docs_end - live + i))
+        << "inside " << inside << " doc " << i;
+    }
+  }
+}
+
 }  // namespace

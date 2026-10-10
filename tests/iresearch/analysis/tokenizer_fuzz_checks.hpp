@@ -104,6 +104,7 @@ class Probe {
                                          Result& out);
 
   const Spec* _spec;
+  duckdb::Connection _conn;
   irs::analysis::Tokenizer::ptr _primary;
   irs::analysis::Tokenizer::ptr _shadow;
   irs::analysis::Tokenizer::ptr _blocked;

@@ -66,6 +66,9 @@ SELECT count(*) AS n FROM pg_database WHERE datname = 'app_scratch';
 n
 0
 
+statement ok
+DROP DATABASE IF EXISTS app_scratch;
+
 # DOCS_TEST: example_006
 
 # DOCS_TEST_BODY

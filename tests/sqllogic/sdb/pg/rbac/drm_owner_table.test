@@ -59,7 +59,7 @@ ALTER TABLE dot_kostya OWNER TO dot_vedernikoff;
 statement error
 DROP ROLE dot_vedernikoff;
 ----
-db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # IF EXISTS does not soften the dependency error: the role exists, so the
@@ -67,7 +67,7 @@ db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects d
 statement error
 DROP ROLE IF EXISTS dot_vedernikoff;
 ----
-db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Remove the dependency by dropping the owned table; now the drop succeeds.
@@ -114,7 +114,7 @@ DROP ROLE dot_vedernikoff;
 statement error
 DROP ROLE dot_clickclack;
 ----
-db error: ERROR: role "dot_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 # Reassign back to the bootstrap superuser; clickclack then drops cleanly.
@@ -163,7 +163,7 @@ REVOKE SELECT ON dot_mop FROM dot_vedernikoff;
 statement error
 DROP ROLE dot_vedernikoff;
 ----
-db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Drop the owned table -> last dependency gone -> role drops.
@@ -210,7 +210,7 @@ GRANT SELECT ON dot_kostya TO dot_vedernikoff;
 statement error
 DROP ROLE dot_vedernikoff;
 ----
-db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke clears the grantee's dependency.
@@ -226,7 +226,7 @@ DROP ROLE dot_vedernikoff;
 statement error
 DROP ROLE dot_clickclack;
 ----
-db error: ERROR: role "dot_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -270,7 +270,7 @@ db error: ERROR: Cannot drop entry "dot_kostya" because there are entries that d
 statement error
 DROP ROLE dot_vedernikoff;
 ----
-db error: ERROR: role "dot_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "dot_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # CASCADE drops the table and its dependent view together.

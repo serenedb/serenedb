@@ -95,7 +95,10 @@ statement ok
 DROP ROLE doc_mo_staff;
 
 statement ok
-DROP ROLE doc_mo_deputy, doc_mo_alice;
+DROP ROLE doc_mo_deputy;
+
+statement ok
+DROP ROLE doc_mo_alice;
 
 statement ok
 DROP ROLE doc_mo_lead;

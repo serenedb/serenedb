@@ -41,6 +41,7 @@
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
@@ -82,8 +83,8 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/role.h"
 #include "connector/scan/scan_bind.h"
-#include "pg/commands/rbac.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "pg/progress_registry.h"
@@ -118,6 +119,8 @@ std::string KindName(CatalogType type) {
       return "text search dictionary";
     case CatalogType::FOREIGN_SERVER_ENTRY:
       return "foreign server";
+    case CatalogType::JOB_ENTRY:
+      return "job";
     default:
       return "object";
   }
@@ -133,6 +136,13 @@ std::string KindName(CatalogType type) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("must be owner of ", KindName(entry.type), " ",
                           entry.name.GetIdentifierName()));
+}
+
+[[noreturn]] void DenyRoleAction(std::string_view verb,
+                                 std::string_view detail) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                  ERR_MSG("permission denied to ", verb, " role"),
+                  ERR_DETAIL(detail));
 }
 
 bool Unowned(const duckdb::CatalogEntry& entry) {
@@ -168,6 +178,10 @@ CatalogType DefaultObjType(LogicalOperatorType type) {
       return CatalogType::MACRO_ENTRY;
     case LogicalOperatorType::LOGICAL_CREATE_TYPE:
       return CatalogType::TYPE_ENTRY;
+    case LogicalOperatorType::LOGICAL_CREATE_JOB:
+      return CatalogType::JOB_ENTRY;
+    case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+      return CatalogType::TOKENIZER_ENTRY;
     default:
       return CatalogType::TABLE_ENTRY;
   }
@@ -206,6 +220,15 @@ duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
     return *root.children[0];
   }
   return root;
+}
+
+template<typename Info>
+void PointAtCluster(Info& info, CatalogType type) {
+  if (type == CatalogType::DATABASE_ENTRY || type == CatalogType::ROLE_ENTRY) {
+    info.GetQualifiedNameMutable() = duckdb::QualifiedName{
+      duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
+      duckdb::Identifier{}, info.GetQualifiedName().Name()};
+  }
 }
 
 class Enforcer {
@@ -422,12 +445,31 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_VIEW:
       case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
       case LogicalOperatorType::LOGICAL_CREATE_MACRO:
-      case LogicalOperatorType::LOGICAL_CREATE_TYPE: {
+      case LogicalOperatorType::LOGICAL_CREATE_TYPE:
+      case LogicalOperatorType::LOGICAL_CREATE_JOB:
+      case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
         Stamp(*create.info, DefaultObjType(op.type), create.schema);
         if (_enforce) {
           RequireSchemaCreate(*create.schema);
           CheckReplace(*create.info);
+        }
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_ROLE: {
+        auto& info =
+          op.Cast<duckdb::LogicalCreate>().info->Cast<duckdb::CreateRoleInfo>();
+        if (_enforce) {
+          CheckCreateRole(info);
+        }
+        PointAtCluster(info, CatalogType::ROLE_ENTRY);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
+        auto& create = op.Cast<duckdb::LogicalCreate>();
+        Stamp(*create.info, CatalogType::FOREIGN_SERVER_ENTRY, nullptr);
+        if (_enforce) {
+          RequireDatabasePrivilege(AclMode::Create);
         }
         break;
       }
@@ -457,9 +499,24 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
+        if (info.type == CatalogType::DATABASE_ENTRY &&
+            !_context.transaction.IsAutoCommit()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+        }
         if (_enforce) {
           CheckDrop(info);
         }
+        if (info.type == CatalogType::DATABASE_ENTRY) {
+          auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(
+            info.GetQualifiedName().Name());
+          if (database && database->GetCatalog().GetCatalogType() ==
+                            catalog::SereneDBCatalog::kStorageType) {
+            RequireDatabaseUnused(*database);
+          }
+        }
+        PointAtCluster(info, info.type);
         break;
       }
       case LogicalOperatorType::LOGICAL_ALTER: {
@@ -471,19 +528,15 @@ class Enforcer {
         if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
           ResolvePermissions(info.Cast<duckdb::AlterPermissionsInfo>());
         } else if (info.type == duckdb::AlterType::ALTER_ROLE) {
-          pg::ResolveAlterRole(_context, info.Cast<duckdb::AlterRoleInfo>());
+          if (_enforce) {
+            CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
+          }
         } else {
           if (_enforce) {
             CheckAlter(info);
           }
         }
-        const auto type = info.GetCatalogType();
-        if (type == CatalogType::DATABASE_ENTRY ||
-            type == CatalogType::ROLE_ENTRY) {
-          info.GetQualifiedNameMutable() = duckdb::QualifiedName{
-            duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
-            duckdb::Identifier{}, info.GetQualifiedName().Name()};
-        }
+        PointAtCluster(info, info.GetCatalogType());
         break;
       }
       case LogicalOperatorType::LOGICAL_ATTACH:
@@ -495,22 +548,12 @@ class Enforcer {
           op.Cast<duckdb::LogicalAttach>().info->name);
         break;
       case LogicalOperatorType::LOGICAL_DETACH: {
-        const auto& name = op.Cast<duckdb::LogicalDetach>().info->name;
-        auto database =
-          duckdb::DatabaseManager::Get(_context).GetDatabase(name);
-        const bool drops_database =
-          database && database->GetCatalog().GetCatalogType() ==
-                        catalog::SereneDBCatalog::kStorageType;
-        if (drops_database && !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
-        }
-        if (_enforce) {
-          RequireDatabaseOwner(name.GetIdentifierName());
-        }
-        if (drops_database) {
-          RequireDatabaseUnused(*database);
+        const auto name =
+          op.Cast<duckdb::LogicalDetach>().info->name.GetIdentifierName();
+        if (ClusterEntry(CatalogType::DATABASE_ENTRY, name)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                          ERR_MSG("cannot detach database \"", name,
+                                  "\", use DROP DATABASE"));
         }
         break;
       }
@@ -878,6 +921,9 @@ class Enforcer {
             Denied(*entry);
           }
           break;
+        case CatalogType::JOB_ENTRY:
+          RequireOwner(*entry);
+          break;
         default:
           break;
       }
@@ -964,6 +1010,7 @@ class Enforcer {
       case CatalogType::INDEX_ENTRY:
       case CatalogType::TRIGGER_ENTRY:
       case CatalogType::TOKENIZER_ENTRY:
+      case CatalogType::JOB_ENTRY:
         return true;
       default:
         return false;
@@ -1002,6 +1049,28 @@ class Enforcer {
                                    duckdb::OnEntryNotFound::RETURN_NULL);
       if (schema) {
         RequireOwner(*schema);
+      }
+      return;
+    }
+    if (info.type == CatalogType::DATABASE_ENTRY) {
+      RequireDatabaseOwner(name.Name().GetIdentifierName());
+      return;
+    }
+    if (info.type == CatalogType::ROLE_ENTRY) {
+      if (!_caller_closure.Has(catalog::RoleOption::CreateRole)) {
+        DenyRoleAction("drop",
+                       "Only roles with the CREATEROLE attribute and the ADMIN "
+                       "option on the target roles may drop roles.");
+      }
+      if (auto role = ClusterEntry(CatalogType::ROLE_ENTRY,
+                                   name.Name().GetIdentifierName())) {
+        RequireRoleAdmin(*role, "drop");
+      }
+      return;
+    }
+    if (info.type == CatalogType::FOREIGN_SERVER_ENTRY) {
+      if (auto server = ServerEntry(name.Name().GetIdentifierName())) {
+        RequireOwner(*server);
       }
       return;
     }
@@ -1179,7 +1248,7 @@ class Enforcer {
     }
     if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
       const auto& name = info.GetQualifiedName().Name().GetIdentifierName();
-      const auto database = DatabaseEntry(name);
+      const auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database \"", name, "\" does not exist"));
@@ -1248,7 +1317,7 @@ class Enforcer {
       info.default_scope = schema.oid;
       database = schema.ParentCatalog().GetName().GetIdentifierName();
     }
-    if (!DatabaseEntry(database)) {
+    if (!ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                       ERR_MSG("database \"", database, "\" does not exist"));
     }
@@ -1286,18 +1355,18 @@ class Enforcer {
     }
   }
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> DatabaseEntry(
-    std::string_view name) {
+  duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
+    CatalogType type, std::string_view name) {
     auto& cluster = catalog::ClusterOf(_context);
-    return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.GetCatalogTransaction(_context),
-                duckdb::Identifier{name});
+    return cluster.GetCatalogSet(type).GetEntry(
+      cluster.GetCatalogTransaction(_context), duckdb::Identifier{name});
   }
 
   void RequireDatabasePrivilege(AclMode need) {
     auto database =
-      DatabaseEntry(duckdb::DatabaseManager::GetDefaultDatabase(_context)
-                      .GetIdentifierName());
+      ClusterEntry(CatalogType::DATABASE_ENTRY,
+                   duckdb::DatabaseManager::GetDefaultDatabase(_context)
+                     .GetIdentifierName());
     if (database && !_caller_closure.Can(CatalogType::DATABASE_ENTRY,
                                          database->permissions, need)) {
       Denied(*database);
@@ -1305,7 +1374,7 @@ class Enforcer {
   }
 
   void RequireDatabaseOwner(std::string_view name) {
-    auto database = DatabaseEntry(name);
+    auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
     if (database && !_caller_closure.Owns(database->permissions.owner)) {
       MustOwn(*database);
     }
@@ -1317,7 +1386,7 @@ class Enforcer {
                        catalog::SereneDBCatalog::kStorageType) {
       return;
     }
-    if (!DatabaseEntry(name.GetIdentifierName())) {
+    if (!ClusterEntry(CatalogType::DATABASE_ENTRY, name.GetIdentifierName())) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
                       ERR_MSG("database \"", name.GetIdentifierName(),
                               "\" is being created by another transaction"));
@@ -1346,6 +1415,94 @@ class Enforcer {
                                             " other sessions using the "
                                             "database.")));
   }
+  void RequireAttributeGrant(std::string_view verb,
+                             catalog::RoleOption options) {
+    const auto deny = [&](std::string_view attribute) {
+      DenyRoleAction(
+        verb, absl::StrCat("Only roles with the ", attribute, " attribute may ",
+                           verb, " roles with the ", attribute, " attribute."));
+    };
+    if (HasOption(options, catalog::RoleOption::Superuser)) {
+      deny("SUPERUSER");
+    }
+    if (HasOption(options, catalog::RoleOption::CreateDb) &&
+        !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
+      deny("CREATEDB");
+    }
+    if (HasOption(options, catalog::RoleOption::Replication) &&
+        !_caller_closure.Has(catalog::RoleOption::Replication)) {
+      deny("REPLICATION");
+    }
+    if (HasOption(options, catalog::RoleOption::BypassRls) &&
+        !_caller_closure.Has(catalog::RoleOption::BypassRls)) {
+      deny("BYPASSRLS");
+    }
+  }
+
+  void RequireRoleAdmin(const duckdb::CatalogEntry& role,
+                        std::string_view verb) {
+    if (role.Cast<catalog::RoleCatalogEntry>().IsSuperuser()) {
+      DenyRoleAction(
+        verb, absl::StrCat("Only roles with the SUPERUSER attribute may ", verb,
+                           " roles with the SUPERUSER attribute."));
+    }
+    if (!_caller_closure.Has(catalog::RoleOption::CreateRole) ||
+        !_caller_closure.IsAdminOf(role.oid)) {
+      DenyRoleAction(
+        verb, absl::StrCat("Only roles with the CREATEROLE attribute and "
+                           "the ADMIN option on role \"",
+                           role.name.GetIdentifierName(), "\" may ", verb,
+                           " this role."));
+    }
+  }
+
+  void RequireGrantableRole(std::string_view name) {
+    auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
+    if (role && !_caller_closure.IsAdminOf(role->oid)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+        ERR_MSG("permission denied to grant role \"",
+                role->name.GetIdentifierName(), "\""),
+        ERR_DETAIL("Only roles with the ADMIN option on role \"",
+                   role->name.GetIdentifierName(), "\" may grant this role."));
+    }
+  }
+
+  void CheckCreateRole(const duckdb::CreateRoleInfo& info) {
+    if (!_caller_closure.Has(catalog::RoleOption::CreateRole)) {
+      DenyRoleAction(
+        "create", "Only roles with the CREATEROLE attribute may create roles.");
+    }
+    RequireAttributeGrant("create", info.options);
+    for (const auto& name : info.in_roles) {
+      RequireGrantableRole(name.GetIdentifierName());
+    }
+  }
+
+  void CheckAlterRole(const duckdb::AlterRoleInfo& info) {
+    auto role =
+      ClusterEntry(CatalogType::ROLE_ENTRY,
+                   info.GetQualifiedName().Name().GetIdentifierName());
+    if (!role) {
+      return;
+    }
+    if (!info.grant_role.empty()) {
+      RequireGrantableRole(info.grant_role);
+      return;
+    }
+    if (!info.new_name.empty()) {
+      RequireRoleAdmin(*role, "rename");
+      return;
+    }
+    const bool attributes = info.set_options != catalog::RoleOption::None ||
+                            info.clear_options != catalog::RoleOption::None ||
+                            info.set_conn_limit || info.set_valid_until;
+    if (role->oid != _caller || attributes) {
+      RequireRoleAdmin(*role, "alter");
+      RequireAttributeGrant("alter", info.set_options);
+    }
+  }
+
   duckdb::optional_ptr<duckdb::CatalogEntry> ServerEntry(
     std::string_view name) {
     auto& catalog =
@@ -1409,7 +1566,8 @@ class Enforcer {
         }
       }
     };
-    const auto database = DatabaseEntry(
+    const auto database = ClusterEntry(
+      CatalogType::DATABASE_ENTRY,
       schema ? schema->ParentCatalog().GetName().GetIdentifierName()
              : duckdb::DatabaseManager::GetDefaultDatabase(_context)
                  .GetIdentifierName());

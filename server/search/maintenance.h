@@ -36,7 +36,6 @@ struct TasksSettings {
   std::atomic_size_t cleanup_interval_step{};
   std::atomic_size_t refresh_interval_msec{};
   std::atomic_size_t compaction_interval_msec{};
-  std::atomic_size_t reindex_interval_msec{};
   std::atomic_size_t compaction_max_segments{};
   std::atomic_size_t compaction_max_segments_bytes{};
   std::atomic_size_t compaction_floor_segment_bytes{};

@@ -1,0 +1,392 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE ROLE jrec_babsky;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO jrec_babsky;
+
+
+statement ok
+CREATE TABLE jrec_ticks (src text, n int);
+
+
+statement ok
+GRANT INSERT ON jrec_ticks TO jrec_babsky;
+
+
+statement ok
+CREATE JOB jrec_every EVERY 1 SECOND AS INSERT INTO jrec_ticks VALUES ('every', 1);
+
+
+statement ok
+CREATE JOB jrec_parked EVERY 1 HOUR OFFSET 7 MINUTES SUSPENDED AS INSERT INTO jrec_ticks VALUES ('parked', 1);
+
+
+statement ok
+SET ROLE jrec_babsky;
+
+
+statement ok
+CREATE JOB jrec_babsky_job AFTER 2 HOURS AS INSERT INTO jrec_ticks VALUES ('babsky', 1);
+
+
+statement ok
+RESET ROLE;
+
+
+system ok
+rm -rf $__TEST_DIR__/jrec_glob && mkdir -p $__TEST_DIR__/jrec_glob
+
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/jrec_glob/f1.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW jrec_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/jrec_glob/f*.parquet');
+
+
+statement ok
+CREATE INDEX jrec_idx ON jrec_v USING inverted(id, body) WITH (reindex_interval=100);
+
+
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 1 AS fired FROM jrec_ticks WHERE src = 'every';
+----
+fired
+t
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+system ok
+cp $__TEST_DIR__/jrec_glob/f1.parquet $__TEST_DIR__/jrec_glob/f2.parquet
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT job_name, schedule, suspended, regexp_replace(body, '[0-9]+', 'N', 'g') AS body
+FROM duckdb_jobs() WHERE starts_with(job_name, 'jrec_') ORDER BY job_name;
+----
+job_name	schedule	suspended	body
+jrec_babsky_job	AFTER INTERVAL '02:00:00'	f	INSERT INTO jrec_ticks (VALUES ('babsky', N))
+jrec_every	EVERY INTERVAL '00:00:01'	f	INSERT INTO jrec_ticks (VALUES ('every', N))
+jrec_idx	AFTER INTERVAL '00:00:00.1'	f	PRAGMA serenedb_reindex_by_id(CAST(N AS BIGINT));
+jrec_parked	EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:07:00'	t	INSERT INTO jrec_ticks (VALUES ('parked', N))
+
+
+connection r1
+statement ok
+CREATE TABLE jrec_before AS SELECT count(*) AS n FROM jrec_ticks WHERE src = 'every';
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT (SELECT count(*) FROM jrec_ticks WHERE src = 'every') > (SELECT n FROM jrec_before) AS resumed;
+----
+resumed
+t
+
+
+connection r1
+query ok retry 200 backoff 250ms
+SELECT count(*) FROM jrec_idx;
+----
+count
+2
+
+
+connection r1
+query
+SELECT next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'jrec_parked';
+----
+idle
+t
+
+
+connection r1
+statement ok
+EXECUTE JOB jrec_babsky_job;
+
+
+connection r1
+statement ok
+SET ROLE jrec_babsky;
+
+
+connection r1
+statement ok
+EXECUTE JOB jrec_babsky_job;
+
+
+connection r1
+statement ok
+RESET ROLE;
+
+
+connection r1
+query
+SELECT count(*) FROM jrec_ticks WHERE src = 'babsky';
+----
+count
+2
+
+
+connection r1
+statement ok
+ALTER JOB jrec_every SUSPEND;
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_every';
+----
+running
+f
+
+
+connection r1
+statement ok
+CREATE TABLE jrec_crash (n int);
+
+
+connection r1
+statement ok
+CREATE JOB jrec_midrun EVERY 1 SECOND AS INSERT INTO jrec_crash SELECT 1 WHERE sleep_ms(10000) IS NULL;
+
+
+connection r1
+query ok retry 80 backoff 250ms
+SELECT running, run_count FROM duckdb_jobs() WHERE job_name = 'jrec_midrun';
+----
+running	run_count
+t	0
+
+
+connection r1
+statement error
+EXECUTE JOB jrec_midrun;
+----
+db error: ERROR: Job "jrec_midrun" is already running<slt:ignore>
+
+
+connection r1
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection r1
+statement error connection closed
+SELECT 1;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT count(*) >= 1 AS healed FROM jrec_crash;
+----
+healed
+t
+
+
+connection r2
+query
+SELECT failure_count FROM duckdb_jobs() WHERE job_name = 'jrec_midrun';
+----
+failure_count
+0
+
+
+connection r2
+statement ok
+ALTER JOB jrec_midrun SUSPEND;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_midrun';
+----
+running
+f
+
+
+connection r2
+statement ok
+CREATE TABLE jrec_dropped (n int);
+
+
+connection r2
+statement ok
+CREATE JOB jrec_doomed EVERY 1 SECOND AS INSERT INTO jrec_dropped SELECT 1 WHERE sleep_ms(60000) IS NULL;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_doomed';
+----
+running
+t
+
+
+connection r2
+statement ok
+DROP JOB jrec_doomed;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT success, error FROM duckdb_job_runs() WHERE job_name = 'jrec_doomed';
+----
+success	error
+f	Interrupted!
+
+
+connection r2
+query
+SELECT count(*) FROM jrec_dropped;
+----
+count
+0
+
+
+connection r2
+statement ok
+CREATE TABLE jrec_backlog (n int);
+
+
+connection r2
+statement ok
+CREATE JOB jrec_slow EVERY 1 SECOND AS INSERT INTO jrec_backlog SELECT 1 WHERE sleep_ms(10000) IS NULL;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_slow';
+----
+running
+t
+
+
+connection r2
+statement ok
+CREATE TABLE jrec_parked_at AS SELECT clock_timestamp() AS t;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT clock_timestamp() > (SELECT t FROM jrec_parked_at) + INTERVAL '3 seconds' AS missed_ticks;
+----
+missed_ticks
+t
+
+
+connection r2
+statement ok
+ALTER JOB jrec_slow SUSPEND;
+
+
+connection r2
+query ok retry 80 backoff 250ms
+SELECT running, run_count FROM duckdb_jobs() WHERE job_name = 'jrec_slow';
+----
+running	run_count
+f	1
+
+
+connection r2
+query
+SELECT count(*) FROM jrec_backlog;
+----
+count
+1
+
+
+connection r2
+statement ok
+DROP JOB jrec_slow;
+
+
+connection r2
+statement ok
+DROP JOB jrec_midrun;
+
+
+connection r2
+statement ok
+DROP JOB jrec_every;
+
+
+connection r2
+statement ok
+DROP JOB jrec_parked;
+
+
+connection r2
+statement ok
+DROP JOB jrec_babsky_job;
+
+
+connection r2
+statement ok
+DROP VIEW jrec_v CASCADE;
+
+
+connection r2
+query
+SELECT count(*) FROM duckdb_jobs() WHERE starts_with(job_name, 'jrec_');
+----
+count
+0
+
+
+connection r2
+statement ok
+DROP TABLE jrec_backlog;
+
+
+connection r2
+statement ok
+DROP TABLE jrec_dropped;
+
+
+connection r2
+statement ok
+DROP TABLE jrec_crash;
+
+
+connection r2
+statement ok
+DROP TABLE jrec_before;
+
+
+connection r2
+statement ok
+DROP TABLE jrec_parked_at;
+
+
+connection r2
+statement ok
+DROP TABLE jrec_ticks;
+
+
+connection r2
+statement ok
+REVOKE CREATE ON SCHEMA public FROM jrec_babsky;
+
+
+connection r2
+statement ok
+DROP ROLE jrec_babsky;

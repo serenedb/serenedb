@@ -62,10 +62,18 @@ GRANT CONNECT ON DATABASE postgres TO daft_vedernikoff;
 
 
 # The CONNECT grant makes the role a dependency of the database.
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
@@ -88,10 +96,18 @@ statement ok
 GRANT USAGE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -114,10 +130,18 @@ statement ok
 GRANT CREATE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -137,10 +161,18 @@ statement ok
 GRANT USAGE, CREATE ON SCHEMA daft_kostya_schema TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -163,10 +195,18 @@ statement ok
 GRANT USAGE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -186,10 +226,18 @@ statement ok
 GRANT SELECT, UPDATE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -214,20 +262,36 @@ statement ok
 GRANT USAGE ON SEQUENCE daft_clickclack_seq TO daft_vedernikoff WITH GRANT OPTION;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
 REVOKE GRANT OPTION FOR USAGE ON SEQUENCE daft_clickclack_seq FROM daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -250,10 +314,18 @@ statement ok
 GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -273,10 +345,18 @@ statement ok
 GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -296,10 +376,18 @@ statement ok
 GRANT EXECUTE ON FUNCTION daft_mop_fn(int) TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -326,10 +414,18 @@ statement ok
 GRANT USAGE ON TYPE daft_iceberg_type TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -349,10 +445,18 @@ statement ok
 GRANT USAGE ON TYPE daft_iceberg_type TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
@@ -399,50 +503,90 @@ statement ok
 GRANT USAGE ON TYPE daft_iceberg_type TO daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok retry 20 backoff 50ms
 REVOKE CONNECT ON DATABASE postgres FROM daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
 REVOKE USAGE ON SCHEMA daft_kostya_schema FROM daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
 REVOKE USAGE ON SEQUENCE daft_clickclack_seq FROM daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok
 REVOKE EXECUTE ON FUNCTION daft_mop_fn(int) FROM daft_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE daft_vedernikoff;
 ----
 db error: ERROR: role "daft_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE daft_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "daft_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 statement ok

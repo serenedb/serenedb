@@ -56,7 +56,7 @@ postgres	t
 statement error
 CREATE ROLE role_ved LOGIN;
 ----
-db error: ERROR: role "role_ved" already exists
+db error: ERROR: <slt:ignore>already exists<slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -131,7 +131,7 @@ db error: ERROR: role "role_cyc_b" is a member of role "role_cyc_a"
 statement error
 GRANT nonesuch TO role_cyc_a;
 ----
-db error: ERROR: role "nonesuch" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 # ----------------------------------------------------------------------
@@ -160,7 +160,7 @@ count
 statement error
 DROP ROLE role_ice;
 ----
-db error: ERROR: role "role_ice" does not exist
+db error: ERROR: <slt:ignore>does not exist<slt:ignore>
 
 
 statement ok

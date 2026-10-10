@@ -44,12 +44,14 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <string_view>
 
+#include "auth/role_closure.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
-#include "network/credentials.h"
+#include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "pg/pg_types.h"
 
 namespace sdb::catalog {
@@ -77,54 +79,8 @@ duckdb::Catalog& ClusterCatalog::ReplayUseCatalog(
   return AttachDatabaseCatalog(context, database->name, catalog_oid);
 }
 
-ClusterCatalog::~ClusterCatalog() {
-  {
-    absl::MutexLock lock{&_sync_mutex};
-    _sync_stop = true;
-  }
-  if (_sync_thread.joinable()) {
-    _sync_thread.join();
-  }
-}
-
 duckdb::idx_t ClusterCatalog::DefaultSchemaOid() const {
   return pg::kPgMainSchema;
-}
-
-void ClusterCatalog::RequestCatalogLogSync(
-  duckdb::shared_ptr<duckdb::WriteAheadLog> log, duckdb::idx_t offset) {
-  absl::MutexLock lock{&_sync_mutex};
-  if (_sync_stop) {
-    return;
-  }
-  if (_sync_log != log || offset > _sync_offset) {
-    _sync_log = std::move(log);
-    _sync_offset = offset;
-  }
-  if (!_sync_thread.joinable()) {
-    _sync_thread = std::thread{[this] { SyncCatalogLogLoop(); }};
-  }
-}
-
-void ClusterCatalog::SyncCatalogLogLoop() {
-  while (true) {
-    duckdb::shared_ptr<duckdb::WriteAheadLog> log;
-    duckdb::idx_t offset = 0;
-    {
-      absl::MutexLock lock{&_sync_mutex};
-      _sync_mutex.Await(absl::Condition(this, &ClusterCatalog::SyncPending));
-      if (_sync_stop) {
-        return;
-      }
-      log = std::move(_sync_log);
-      offset = _sync_offset;
-    }
-    SDB_WAIT_ON_FAILURE("pause_catalog_log_sync");
-    try {
-      log->SyncUpTo(offset);
-    } catch (...) {
-    }
-  }
 }
 
 void ClusterCatalog::OpenCatalogLog(
@@ -136,7 +92,6 @@ void ClusterCatalog::OpenCatalogLog(
   _compactable = compactable;
   _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
                     std::memory_order_relaxed);
-  _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -150,20 +105,11 @@ void ClusterCatalog::OnCatalogLogPrepared() {
 void ClusterCatalog::OnCatalogLogDecided() {
   SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
-  SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
-}
-
-void ClusterCatalog::EndCatalogLogCommit() {
-  const auto version = duckdb::DuckTransactionManager::Get(GetAttached())
-                         .GetLastCommittedCatalogVersion();
-  if (_generation_version.exchange(version, std::memory_order_acq_rel) !=
-      version) {
-    _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
-  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_after_catalog_decision");
 }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
-  if (!_compactable || !CatalogLog()) {
+  if (!_compactable) {
     return;
   }
   bool force = false;
@@ -294,13 +240,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
                    RoleOption::BypassRls;
     if (const char* password = std::getenv("POSTGRES_PASSWORD");
         password && *password) {
-      auto verifier = network::BuildScramVerifierString(password);
-      if (!verifier) {
-        SDB_FATAL(GENERAL,
-                  "could not derive a password verifier from "
-                  "POSTGRES_PASSWORD");
-      }
-      info.password = std::move(*verifier);
+      info.password = password;
       SDB_INFO(GENERAL, "bootstrap: initial password set for role '", kRootRole,
                "' from POSTGRES_PASSWORD");
     }
@@ -317,41 +257,90 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context) {
   }
 }
 
-namespace {
-
-void RequireUnreservedRoleName(const duckdb::Identifier& name) {
-  if (name.GetIdentifierName().starts_with("pg_")) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_RESERVED_NAME),
-      ERR_MSG("role name \"", name.GetIdentifierName(), "\" is reserved"),
-      ERR_DETAIL("Role names starting with \"pg_\" are reserved."));
+duckdb::unique_ptr<duckdb::InCatalogEntry> ClusterCatalog::MakeRoleEntry(
+  duckdb::CreateRoleInfo& info) {
+  RequireUnreservedRoleName(info.GetQualifiedName().Name());
+  if (!info.password.empty()) {
+    info.password = StoredPassword(info.password);
   }
+  return duckdb::make_uniq<RoleCatalogEntry>(*this, info);
 }
-
-}  // namespace
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
-  RequireUnreservedRoleName(info.GetQualifiedName().Name());
   DeclareModified(transaction, *this);
-  return duckdb::DuckCatalog::CreateRole(transaction, info);
+  auto role = duckdb::DuckCatalog::CreateRole(transaction, info);
+  const auto grant = [&](const duckdb::Identifier& member,
+                         const duckdb::Identifier& granted, bool admin) {
+    duckdb::AlterRoleInfo alter{member};
+    alter.grant_role = granted.GetIdentifierName();
+    alter.admin_option = admin;
+    Alter(transaction, alter);
+  };
+  for (const auto& name : info.in_roles) {
+    grant(role->name, name, false);
+  }
+  for (const auto& name : info.role_members) {
+    grant(name, role->name, false);
+  }
+  for (const auto& name : info.admin_members) {
+    grant(name, role->name, true);
+  }
+  auto& context = transaction.GetContext();
+  if (const auto creator = GrantorOfMembership(context);
+      creator != pg::kRootUser) {
+    duckdb::AlterRoleInfo alter{
+      duckdb::Identifier{auth::RolesOf(&context)->NameOf(creator)}};
+    alter.grant_role = role->name.GetIdentifierName();
+    alter.grantor_id = pg::kRootUser;
+    alter.admin_option = true;
+    alter.inherit_option = false;
+    alter.set_option = false;
+    Alter(transaction, alter);
+  }
+  return role;
 }
 
 void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
                               duckdb::DropInfo& info) {
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  auto& roles = GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY);
+  if (auto role = roles.GetEntry(transaction, info.GetQualifiedName().Name())) {
+    auto* session = connector::GetSereneDBContextPtr(transaction.GetContext());
+    if (session && (role->oid == session->GetRoleId() ||
+                    role->oid == session->GetSessionRoleId() ||
+                    role->oid == session->GetLoginRoleId())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                      ERR_MSG("current user cannot be dropped"));
+    }
+    if (role->oid == pg::kRootUser) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("cannot drop role \"", role->name.GetIdentifierName(),
+                "\" because it is required by the database system"));
+    }
+    std::vector<duckdb::Identifier> members;
+    roles.Scan(transaction, [&](duckdb::CatalogEntry& other) {
+      if (absl::c_any_of(other.Cast<RoleCatalogEntry>().MemberOf(),
+                         [&](const duckdb::Membership& membership) {
+                           return membership.role == role->oid;
+                         })) {
+        members.emplace_back(other.name);
+      }
+    });
+    for (const auto& member : members) {
+      duckdb::AlterRoleInfo alter{member};
+      alter.grant_role_id = role->oid;
+      alter.revoke = true;
+      Alter(transaction, alter);
+    }
+  }
   duckdb::DuckCatalog::DropRole(transaction, info);
 }
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_ROLE) {
-    const auto& new_name = info.Cast<duckdb::AlterRoleInfo>().new_name;
-    if (!new_name.empty()) {
-      RequireUnreservedRoleName(new_name);
-    }
-  }
   DeclareModified(transaction, *this);
   const auto type = info.GetCatalogType();
   const auto& name = info.GetQualifiedName().Name();

@@ -67,6 +67,14 @@ std::string_view CreateObjectTag(duckdb::CatalogType type) {
       return "CREATE DATABASE";
     case CatalogType::TRIGGER_ENTRY:
       return "CREATE TRIGGER";
+    case CatalogType::ROLE_ENTRY:
+      return "CREATE ROLE";
+    case CatalogType::FOREIGN_SERVER_ENTRY:
+      return "CREATE SERVER";
+    case CatalogType::TOKENIZER_ENTRY:
+      return "CREATE TEXT SEARCH DICTIONARY";
+    case CatalogType::JOB_ENTRY:
+      return "CREATE JOB";
     default:
       return "CREATE";
   }
@@ -94,8 +102,14 @@ std::string_view DropObjectTag(duckdb::CatalogType type) {
       return "DROP DATABASE";
     case CatalogType::TRIGGER_ENTRY:
       return "DROP TRIGGER";
+    case CatalogType::ROLE_ENTRY:
+      return "DROP ROLE";
+    case CatalogType::FOREIGN_SERVER_ENTRY:
+      return "DROP SERVER";
     case CatalogType::TOKENIZER_ENTRY:
       return "DROP TEXT SEARCH DICTIONARY";
+    case CatalogType::JOB_ENTRY:
+      return "DROP JOB";
     default:
       return "DROP";
   }
@@ -246,6 +260,8 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               return make("ALTER SEQUENCE");
             case duckdb::AlterType::ALTER_DATABASE:
               return make("ALTER DATABASE");
+            case duckdb::AlterType::ALTER_JOB:
+              return make("ALTER JOB");
             case duckdb::AlterType::SET_COMMENT:
             case duckdb::AlterType::SET_COLUMN_COMMENT:
               return make("COMMENT");

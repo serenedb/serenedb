@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-The `DROP ROLE` statement removes one or more roles. `DROP USER` is an alias. A role that still owns objects or holds privileges on them cannot be dropped — transfer ownership (`ALTER TABLE ... OWNER TO ...`) or revoke the grants first.
+The `DROP ROLE` statement removes a role. `DROP USER` is an alias. A role that still owns objects or holds privileges on them cannot be dropped — transfer ownership (`ALTER TABLE ... OWNER TO ...`) or revoke the grants first.
 
 ## Examples
 
@@ -20,7 +20,7 @@ Drop one:
 
 <SqlLogicTest id="sql/statements/drop_role/index/example_002" />
 
-Drop several at once:
+Each statement drops one role; drop several with one statement per role:
 
 <SqlLogicTest id="sql/statements/drop_role/index/example_003" />
 
@@ -39,7 +39,7 @@ Without it, it is:
 ## Notes
 
 - Dropping roles requires the `CREATEROLE` attribute (or superuser); dropping a superuser role requires superuser.
-- If the role owns objects or is referenced by grants, `DROP ROLE` fails with `role "..." cannot be dropped because some objects depend on it`.
+- If the role owns objects or is referenced by grants in any database, `DROP ROLE` fails with `Cannot drop entry "..." because there are entries that depend on it.` and lists the objects that depend on the role. `DROP ROLE` has no `CASCADE`.
 
 ## See also
 

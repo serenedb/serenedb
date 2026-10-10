@@ -89,6 +89,16 @@ Views that reference a table are tracked as dependents of that table. If a view 
 
 <SqlLogicTest id="sql/statements/drop/view_dependency/example_012" />
 
+### Dependencies across Databases
+
+A view or macro may read objects of another database, and a table may take a column default (`nextval`) or a column type from one. Those references are tracked the same way: dropping the referenced object with `RESTRICT` is rejected, and so is `DROP DATABASE` while an object of another database depends on one of its objects. `CASCADE` also drops a dependent view or macro in the other database; a dependent table stays, and a column default that used a dropped sequence is removed:
+
+<SqlLogicTest id="sql/statements/drop/cross_database_dependency/example_013" />
+
+`DROP DATABASE ... CASCADE` drops the dependents in other databases together with the database:
+
+<SqlLogicTest id="sql/statements/drop/cross_database_dependency/example_015" />
+
 ## Limitations on Reclaiming Disk Space
 
 Running `DROP TABLE` should free the memory used by the table, but not always disk space.

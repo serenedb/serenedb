@@ -103,8 +103,13 @@ CREATE TABLE doc_sec_audit (id int);
 statement ok
 ALTER TABLE doc_sec_audit OWNER TO doc_sec_owner;
 
-statement error db error: ERROR: role "doc_sec_owner" cannot be dropped because some objects depend on it
+statement error
 DROP ROLE doc_sec_owner;
+----
+db error: ERROR: Cannot drop entry "doc_sec_owner" because there are entries that depend on it.
+table "doc_sec_audit" depends on role "doc_sec_owner".
+Use DROP...CASCADE to drop all dependents.
+
 
 statement ok
 DROP TABLE doc_sec_audit;
@@ -117,7 +122,10 @@ DROP ROLE doc_sec_owner;
 # DOCS_TEST_BODY
 
 statement ok
-DROP ROLE doc_sec_alice, doc_sec_batch;
+DROP ROLE doc_sec_alice;
+
+statement ok
+DROP ROLE doc_sec_batch;
 
 statement ok
 DROP ROLE IF EXISTS doc_sec_missing;

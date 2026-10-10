@@ -742,3 +742,21 @@ CREATE TEXT SEARCH DICTIONARY bad_with_option AS split_text() | stem_words('en_U
 
 statement error
 CREATE TEXT SEARCH DICTIONARY bad_reserved AS union(keyword(), generate_ngrams(2, 2));
+
+statement ok
+CREATE SCHEMA expr_outer;
+
+statement ok
+CREATE SCHEMA expr_outer.expr_inner;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY expr_outer.expr_inner.expr_nested AS split_text(case := 'lower');
+
+query
+SELECT count(*) FROM pg_ts_dict WHERE dictname = 'expr_nested';
+----
+count
+1
+
+statement ok
+DROP SCHEMA expr_outer CASCADE;

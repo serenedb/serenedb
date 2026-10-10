@@ -177,11 +177,13 @@ Two caveats:
 
 ### Automatic refresh
 
-The `reindex_interval` index option (milliseconds, `0` = off, the default) runs the same pass on a background loop, as the index's owner. Set it at `CREATE INDEX` or retune it live with `ALTER INDEX` — setting it back to `0` stops the loop:
+The `reindex_interval` index option (milliseconds, `0` = off, the default) runs the same pass periodically, as the owner of the indexed view. It is shorthand for a [job](../../statements/create_job/index.md): a non-zero value creates a job named after the index with an `AFTER <interval>` schedule, so a pass starts that long after the previous one finished. Set it at `CREATE INDEX` or retune it live with `ALTER INDEX` — setting it back to `0` (or `RESET`) drops the job:
 
 <SqlLogicTest id="sql/indexes/inverted/views/reindex_interval" />
 
-The interval is part of the index definition, so the loop survives server restarts. A failed pass (source unreachable, empty glob) leaves the index serving its last published state; the next pass retries. The loop runs without a user session and reads **global** settings — apply options the source needs with `SET GLOBAL`; a manual `REINDEX` uses the calling session's settings.
+The job appears in `duckdb_jobs()` with its run counters and last error, and the usual job statements apply to it: `ALTER JOB ... SUSPEND` pauses the refresh, and `EXECUTE JOB` runs one pass right away. The interval lives only in the job, so the index's `reloptions` do not list it. The job is owned by the index, the way a sequence is owned by a column: it is dropped together with the index and cannot be dropped on its own. It targets the index by its internal id, so renaming the index keeps it working. Creating the index fails if a job with the same name already exists in the schema.
+
+The job is persisted with the index, so the refresh survives server restarts. A failed pass (source unreachable, empty glob) leaves the index serving its last published state and is recorded as the job's last error; the next pass retries. The pass runs in its own session and reads **global** settings — apply options the source needs with `SET GLOBAL`; a manual `REINDEX` uses the calling session's settings.
 
 ## Snapshot and isolation
 

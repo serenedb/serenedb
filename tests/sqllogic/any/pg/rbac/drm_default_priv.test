@@ -55,10 +55,18 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT SELECT ON TABLES TO ddp_v
 
 
 # The grantee is now referenced by a pg_default_acl row -> DROP refused.
+skipif serenedb
 statement error
 DROP ROLE ddp_vedernikoff;
 ----
 db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "ddp_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke the default privilege -> dependency gone -> drop succeeds.
@@ -100,10 +108,18 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT USAGE ON SCHEMAS TO ddp_v
 
 
 # Any one of the five entries is enough to refuse the drop.
+skipif serenedb
 statement error
 DROP ROLE ddp_vedernikoff;
 ----
 db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "ddp_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke four of five: still one entry left -> still refused.
@@ -123,10 +139,18 @@ statement ok
 ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack REVOKE USAGE ON TYPES FROM ddp_vedernikoff;
 
 
+skipif serenedb
 statement error
 DROP ROLE ddp_vedernikoff;
 ----
 db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "ddp_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke the last (SCHEMAS) -> no entries reference the grantee -> drop ok.
@@ -153,17 +177,33 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack GRANT SELECT ON TABLES TO ddp_v
 
 
 # Dropping the FOR ROLE owner is refused (owner dependency).
+skipif serenedb
 statement error
 DROP ROLE ddp_clickclack;
 ----
 db error: ERROR: role "ddp_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
+onlyif serenedb
+statement error
+DROP ROLE ddp_clickclack;
+----
+db error: ERROR: Cannot drop entry "ddp_clickclack" because there are entries that depend on it.<slt:ignore>
+
+
 # Dropping the grantee is independently refused (grantee dependency).
+skipif serenedb
 statement error
 DROP ROLE ddp_vedernikoff;
 ----
 db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "ddp_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke the grantee out: the owner's entry collapses (only the implicit owner
@@ -223,10 +263,18 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ddp_clickclack IN SCHEMA ddp_mop GRANT SELECT 
 
 
 # While the schema-scoped entry exists, the grantee cannot be dropped.
+skipif serenedb
 statement error
 DROP ROLE ddp_vedernikoff;
 ----
 db error: ERROR: role "ddp_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE ddp_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "ddp_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke the scoped entry -> grantee dependency gone.

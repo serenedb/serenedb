@@ -1,0 +1,252 @@
+control substitution on
+
+
+statement ok
+DROP VIEW IF EXISTS jri_v CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS jri_t;
+
+
+statement ok
+DROP JOB IF EXISTS jri_clash;
+
+
+system ok
+rm -rf $__TEST_DIR__/jri_glob && mkdir -p $__TEST_DIR__/jri_glob
+
+
+statement count 1
+COPY (SELECT 1 AS id, 'pudge goes mid' AS body)
+TO '${__TEST_DIR__}/jri_glob/f1.parquet' (FORMAT PARQUET);
+
+
+statement ok
+CREATE VIEW jri_v AS SELECT * FROM read_parquet('${__TEST_DIR__}/jri_glob/f*.parquet');
+
+
+statement ok
+CREATE INDEX jri_idx ON jri_v USING inverted(id, body) WITH (reindex_interval=100);
+
+
+query
+SELECT job_name, schedule, schedule_kind, body LIKE 'PRAGMA serenedb_reindex_by_id(%);' AS by_id
+FROM duckdb_jobs() WHERE job_name = 'jri_idx';
+----
+job_name	schedule	schedule_kind	by_id
+jri_idx	AFTER INTERVAL '00:00:00.1'	AFTER	t
+
+
+statement count 1
+COPY (SELECT 2 AS id, 'arelav is skuf' AS body)
+TO '${__TEST_DIR__}/jri_glob/f2.parquet' (FORMAT PARQUET);
+
+
+query ok retry 200 backoff 250ms
+SELECT count(*) FROM jri_idx;
+----
+count
+2
+
+
+query
+SELECT body FROM jri_idx WHERE id = 2;
+----
+body
+arelav is skuf
+
+
+query
+SELECT run_count > 0 AS ran, failure_count FROM duckdb_jobs() WHERE job_name = 'jri_idx';
+----
+ran	failure_count
+t	0
+
+
+statement ok
+ALTER INDEX jri_idx SET (reindex_interval=3600000);
+
+
+query ok retry 80 backoff 250ms
+SELECT schedule, running FROM duckdb_jobs() WHERE job_name = 'jri_idx';
+----
+schedule	running
+AFTER INTERVAL '01:00:00'	f
+
+
+statement count 1
+COPY (SELECT 3 AS id, 'vedernikoff ships cron' AS body)
+TO '${__TEST_DIR__}/jri_glob/f3.parquet' (FORMAT PARQUET);
+
+
+statement ok
+EXECUTE JOB jri_idx;
+
+
+query
+SELECT count(*) FROM jri_idx;
+----
+count
+3
+
+
+statement ok
+ALTER INDEX jri_idx RENAME TO jri_idx_renamed;
+
+
+query
+SELECT job_name FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+job_name
+jri_idx
+
+
+statement count 1
+COPY (SELECT 4 AS id, 'kostya renames things' AS body)
+TO '${__TEST_DIR__}/jri_glob/f4.parquet' (FORMAT PARQUET);
+
+
+statement ok
+EXECUTE JOB jri_idx;
+
+
+query
+SELECT body FROM jri_idx_renamed WHERE id = 4;
+----
+body
+kostya renames things
+
+
+statement ok
+ALTER JOB jri_idx SUSPEND;
+
+
+query
+SELECT suspended FROM duckdb_jobs() WHERE job_name = 'jri_idx';
+----
+suspended
+t
+
+
+statement ok
+ALTER INDEX jri_idx_renamed SET (reindex_interval=0);
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+count
+0
+
+
+statement ok
+ALTER INDEX jri_idx_renamed SET (reindex_interval=200);
+
+
+query
+SELECT job_name, schedule, suspended FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+job_name	schedule	suspended
+jri_idx_renamed	AFTER INTERVAL '00:00:00.2'	f
+
+
+statement count 1
+COPY (SELECT 5 AS id, 'clickclack rearms the loop' AS body)
+TO '${__TEST_DIR__}/jri_glob/f5.parquet' (FORMAT PARQUET);
+
+
+query ok retry 200 backoff 250ms
+SELECT count(*) FROM jri_idx_renamed;
+----
+count
+5
+
+
+statement ok
+ALTER INDEX jri_idx_renamed RESET (reindex_interval);
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+count
+0
+
+
+statement ok
+ALTER INDEX jri_idx_renamed SET (reindex_interval=100);
+
+
+statement ok
+DROP INDEX jri_idx_renamed;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+count
+0
+
+
+statement ok
+CREATE JOB jri_clash AFTER 1 HOUR AS SELECT 1;
+
+
+statement error
+CREATE INDEX jri_clash ON jri_v USING inverted(id, body) WITH (reindex_interval=100);
+----
+db error: ERROR: Job with name "jri_clash" already exists!<slt:ignore>
+
+
+query
+SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'jri_clash';
+----
+count
+0
+
+
+statement ok
+DROP JOB jri_clash;
+
+
+statement ok
+CREATE INDEX jri_clash ON jri_v USING inverted(id, body) WITH (reindex_interval=100);
+
+
+statement ok
+DROP VIEW jri_v CASCADE;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+count
+0
+
+
+statement ok
+SET reindex_interval = 100;
+
+
+statement ok
+CREATE TABLE jri_t (id int, body text);
+
+
+statement ok
+CREATE INDEX jri_tidx ON jri_t USING inverted(id, body);
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name LIKE 'jri%';
+----
+count
+0
+
+
+statement ok
+RESET reindex_interval;
+
+
+statement ok
+DROP TABLE jri_t;

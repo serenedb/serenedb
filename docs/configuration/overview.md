@@ -210,6 +210,7 @@ Planning, rewriting and the shape of query output.
 | `preserve_insertion_order`                    | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses.                                                                | `BOOLEAN`   | `true`                                              |
 | `read_ahead_depth` | The number of scan jobs prefetched ahead of decoding (-1 = automatic, bounded by a memory budget; 0 = disabled). | `BIGINT` | `-1` |
 | `scalar_subquery_error_on_multiple_rows`      | When a scalar subquery returns multiple rows - return a random row instead of returning an error.                                                                                                              | `BOOLEAN`   | `true`                                              |
+| `sdb_job_max_depth` | Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global. | `UINTEGER` | `16` |
 | `standard_vector_size` | The compiled-in STANDARD_VECTOR_SIZE (read-only). | `UBIGINT` | `2048` |
 
 #### Session and PostgreSQL compatibility
@@ -282,6 +283,7 @@ What the server records about itself.
 | `logging_level`                               | The log level which will be recorded in the log                                                                                                                                                                | `VARCHAR`   | `INFO`                                              |
 | `logging_mode`                                | Determines which types of log messages are logged                                                                                                                                                              | `VARCHAR`   | `LEVEL_ONLY`                                        |
 | `logging_storage`                             | Set the logging storage (memory/stdout/file/&lt;custom&gt;)                                                                                                                                                    | `VARCHAR`   | `stdout`                                            |
+| `sdb_job_history_size` | Number of recent job runs, across all jobs, that `duckdb_job_runs()` returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global. | `UBIGINT` | `1024` |
 
 #### Files, object stores and caching
 

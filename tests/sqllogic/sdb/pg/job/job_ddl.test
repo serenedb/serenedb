@@ -1,0 +1,850 @@
+statement ok
+DROP JOB IF EXISTS jd_babsky;
+
+
+statement ok
+DROP JOB IF EXISTS jd_parallel;
+
+
+statement ok
+DROP JOB IF EXISTS jd_hourly;
+
+
+statement ok
+DROP JOB IF EXISTS jd_nine;
+
+
+statement ok
+DROP JOB IF EXISTS jd_saturday;
+
+
+statement ok
+DROP TABLE IF EXISTS jd_spread_at;
+
+
+statement ok
+DROP JOB IF EXISTS jd_five;
+
+
+statement ok
+DROP JOB IF EXISTS jd_spread;
+
+
+statement ok
+DROP JOB IF EXISTS jd_after_spread;
+
+
+statement ok
+DROP JOB IF EXISTS jd_monthly;
+
+
+statement ok
+DROP JOB IF EXISTS jd_daily;
+
+
+statement ok
+DROP JOB IF EXISTS jd_weekly;
+
+
+statement ok
+DROP JOB IF EXISTS jd_quarter;
+
+
+statement ok
+DROP JOB IF EXISTS jd_folded;
+
+
+statement ok
+DROP JOB IF EXISTS jd_renamed;
+
+
+statement ok
+DROP SCHEMA IF EXISTS jd_outer CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS jd_nested_runs;
+
+
+statement ok
+DROP TABLE IF EXISTS jd_skuf;
+
+
+statement ok
+CREATE TABLE jd_skuf (who text, n int);
+
+
+statement ok
+CREATE JOB jd_babsky AFTER 1 HOUR AS INSERT INTO jd_skuf VALUES ('arelav', 1);
+
+
+query
+SELECT job_name, schema_name, schedule, schedule_kind, suspended, running, body
+FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
+----
+job_name	schema_name	schedule	schedule_kind	suspended	running	body
+jd_babsky	public	AFTER INTERVAL '01:00:00'	AFTER	f	f	INSERT INTO jd_skuf (VALUES ('arelav', 1))
+
+
+query
+SELECT replace(sql, current_database() || '.', '') AS sql FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
+----
+sql
+CREATE JOB public.jd_babsky AFTER INTERVAL '01:00:00' AS INSERT INTO jd_skuf (VALUES ('arelav', 1));
+
+
+query
+SELECT count(*) FROM jd_skuf;
+----
+count
+0
+
+
+statement ok
+EXECUTE JOB jd_babsky;
+
+
+query
+SELECT who, n FROM jd_skuf;
+----
+who	n
+arelav	1
+
+
+query
+SELECT run_count, failure_count, last_status FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
+----
+run_count	failure_count	last_status
+1	0	success
+
+
+query
+SELECT DISTINCT trigger, success FROM duckdb_job_runs() WHERE job_name = 'jd_babsky';
+----
+trigger	success
+manual	t
+
+
+statement error
+CREATE JOB jd_babsky AFTER 1 HOUR AS SELECT 1;
+----
+db error: ERROR: Job with name "jd_babsky" already exists!<slt:ignore>
+
+
+statement ok
+CREATE JOB IF NOT EXISTS jd_babsky AFTER 2 HOURS AS SELECT 2;
+
+
+query
+SELECT schedule, body FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
+----
+schedule	body
+AFTER INTERVAL '01:00:00'	INSERT INTO jd_skuf (VALUES ('arelav', 1))
+
+
+statement ok
+CREATE OR REPLACE JOB jd_babsky EVERY 30 MINUTES AS INSERT INTO jd_skuf VALUES ('vedernikoff', 2);
+
+
+query
+SELECT schedule, body FROM duckdb_jobs() WHERE job_name = 'jd_babsky';
+----
+schedule	body
+EVERY INTERVAL '00:30:00'	INSERT INTO jd_skuf (VALUES ('vedernikoff', 2))
+
+
+statement error
+CREATE OR REPLACE JOB IF NOT EXISTS jd_babsky AFTER 1 HOUR AS SELECT 1;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement<slt:ignore>
+
+
+statement ok
+CREATE JOB jd_hourly EVERY 1 HOUR OFFSET 5 MINUTES AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_monthly EVERY 1 MONTH AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_daily EVERY INTERVAL '1 day' OFFSET INTERVAL '3 hours' AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_weekly EVERY 1 WEEK AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_quarter EVERY INTERVAL '15' MINUTE AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_folded EVERY INTERVAL (2 * 3) MINUTE AS SELECT 1;
+
+
+query
+SELECT job_name, schedule FROM duckdb_jobs() WHERE starts_with(job_name, 'jd_') ORDER BY job_name;
+----
+job_name	schedule
+jd_babsky	EVERY INTERVAL '00:30:00'
+jd_daily	EVERY INTERVAL '1 day' OFFSET INTERVAL '03:00:00'
+jd_folded	EVERY INTERVAL '00:06:00'
+jd_hourly	EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:05:00'
+jd_monthly	EVERY INTERVAL '1 mon'
+jd_quarter	EVERY INTERVAL '00:15:00'
+jd_weekly	EVERY INTERVAL '7 days'
+
+
+query
+SELECT
+  extract(minute FROM next_run AT TIME ZONE 'UTC') = 5
+    AND extract(second FROM next_run AT TIME ZONE 'UTC') = 0
+    AND next_run > now() AND next_run <= now() + INTERVAL '1 hour' AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_hourly';
+----
+aligned
+t
+
+
+query
+SELECT
+  extract(day FROM next_run AT TIME ZONE 'UTC') = 1
+    AND extract(hour FROM next_run AT TIME ZONE 'UTC') = 0
+    AND next_run > now() AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_monthly';
+----
+aligned
+t
+
+
+query
+SELECT
+  extract(hour FROM next_run AT TIME ZONE 'UTC') = 3
+    AND extract(minute FROM next_run AT TIME ZONE 'UTC') = 0
+    AND next_run > now() AND next_run <= now() + INTERVAL '1 day' AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_daily';
+----
+aligned
+t
+
+
+query
+SELECT
+  extract(isodow FROM next_run AT TIME ZONE 'UTC') = 1
+    AND extract(hour FROM next_run AT TIME ZONE 'UTC') = 0
+    AND next_run > now() AND next_run <= now() + INTERVAL '7 days' AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_weekly';
+----
+aligned
+t
+
+
+statement ok
+CREATE JOB jd_nine EVERY 1 WEEK 2 DAYS AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_five EVERY 5 MONTHS AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_spread EVERY 1 DAY OFFSET 2 HOURS RANDOMIZE FOR 1 HOUR AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_after_spread AFTER 1 HOUR RANDOMIZE FOR 10 MINUTES AS SELECT 1;
+
+
+query
+SELECT job_name, schedule FROM duckdb_jobs()
+WHERE job_name IN ('jd_nine', 'jd_five', 'jd_spread', 'jd_after_spread') ORDER BY job_name;
+----
+job_name	schedule
+jd_after_spread	AFTER INTERVAL '01:00:00' RANDOMIZE FOR INTERVAL '00:10:00'
+jd_five	EVERY INTERVAL '5 mons'
+jd_nine	EVERY INTERVAL '9 days'
+jd_spread	EVERY INTERVAL '1 day' OFFSET INTERVAL '02:00:00' RANDOMIZE FOR INTERVAL '01:00:00'
+
+
+query
+SELECT schedule_randomize = INTERVAL '1 hour' AS randomize_ok FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+----
+randomize_ok
+t
+
+
+query
+SELECT
+  ((next_run AT TIME ZONE 'UTC')::DATE - DATE '1969-12-29') % 9 = 0
+    AND extract(hour FROM next_run AT TIME ZONE 'UTC') = 0 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_nine';
+----
+aligned
+t
+
+
+query
+SELECT
+  ((extract(year FROM next_run AT TIME ZONE 'UTC') - 1970) * 12
+    + extract(month FROM next_run AT TIME ZONE 'UTC') - 1) % 5 = 0
+    AND extract(day FROM next_run AT TIME ZONE 'UTC') = 1 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_five';
+----
+aligned
+t
+
+
+query
+SELECT (next_run AT TIME ZONE 'UTC')::TIME BETWEEN TIME '01:30:00' AND TIME '02:30:00' AS spread
+FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+----
+spread
+t
+
+
+query
+SELECT next_run BETWEEN now() + INTERVAL '54 minutes' AND now() + INTERVAL '66 minutes' AS spread
+FROM duckdb_jobs() WHERE job_name = 'jd_after_spread';
+----
+spread
+t
+
+
+statement ok
+CREATE JOB jd_saturday EVERY 2 WEEKS OFFSET 5 DAYS 15 HOURS 10 MINUTES AS SELECT 1;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_saturday';
+----
+schedule
+EVERY INTERVAL '14 days' OFFSET INTERVAL '5 days 15:10:00'
+
+
+query
+SELECT
+  extract(isodow FROM next_run AT TIME ZONE 'UTC') = 6
+    AND extract(hour FROM next_run AT TIME ZONE 'UTC') = 15
+    AND extract(minute FROM next_run AT TIME ZONE 'UTC') = 10
+    AND (((next_run AT TIME ZONE 'UTC')::DATE - DATE '1969-12-29') // 7) % 2 = 0 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_saturday';
+----
+aligned
+t
+
+
+statement ok
+CREATE TABLE jd_spread_at AS SELECT next_run FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+
+
+statement ok
+EXECUTE JOB jd_spread;
+
+
+query
+SELECT next_run = (SELECT next_run FROM jd_spread_at) AS steady FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+----
+steady
+t
+
+
+statement ok
+DROP TABLE jd_spread_at;
+
+
+statement ok
+DROP JOB jd_saturday;
+
+
+statement ok
+DROP JOB jd_nine;
+
+
+statement ok
+DROP JOB jd_five;
+
+
+statement ok
+DROP JOB jd_spread;
+
+
+statement ok
+DROP JOB jd_after_spread;
+
+
+query
+SELECT
+  extract(minute FROM next_run AT TIME ZONE 'UTC')::int % 15 = 0
+    AND extract(second FROM next_run AT TIME ZONE 'UTC') = 0 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_quarter';
+----
+aligned
+t
+
+
+statement ok
+ALTER JOB jd_hourly SUSPEND;
+
+
+query
+SELECT suspended, next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'jd_hourly';
+----
+suspended	idle
+t	t
+
+
+statement ok
+ALTER JOB jd_hourly RESUME;
+
+
+query
+SELECT suspended, next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'jd_hourly';
+----
+suspended	idle
+f	f
+
+
+statement ok
+ALTER JOB jd_hourly SET SCHEDULE AFTER 90 MINUTES;
+
+
+query
+SELECT schedule, schedule_kind, schedule_interval = INTERVAL '90 minutes' AS interval_ok
+FROM duckdb_jobs() WHERE job_name = 'jd_hourly';
+----
+schedule	schedule_kind	interval_ok
+AFTER INTERVAL '01:30:00'	AFTER	t
+
+
+statement ok
+ALTER JOB jd_hourly RENAME TO jd_renamed;
+
+
+query
+SELECT job_name, schedule FROM duckdb_jobs() WHERE job_name IN ('jd_hourly', 'jd_renamed');
+----
+job_name	schedule
+jd_renamed	AFTER INTERVAL '01:30:00'
+
+
+statement ok
+CREATE JOB jd_hourly EVERY 1 HOUR SUSPENDED AS SELECT 1;
+
+
+query
+SELECT job_name, suspended FROM duckdb_jobs() WHERE job_name IN ('jd_hourly', 'jd_renamed') ORDER BY job_name;
+----
+job_name	suspended
+jd_hourly	t
+jd_renamed	f
+
+
+statement ok
+EXECUTE JOB jd_hourly;
+
+
+query
+SELECT suspended, run_count, next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'jd_hourly';
+----
+suspended	run_count	idle
+t	1	t
+
+
+statement ok
+ALTER JOB IF EXISTS jd_kostya SUSPEND;
+
+
+statement error
+ALTER JOB jd_kostya SUSPEND;
+----
+db error: ERROR: Job with name jd_kostya does not exist!<slt:ignore>
+
+
+statement error
+EXECUTE JOB jd_kostya;
+----
+db error: ERROR: Job with name jd_kostya does not exist!<slt:ignore>
+
+
+statement error
+DROP JOB jd_kostya;
+----
+db error: ERROR: Job with name jd_kostya does not exist!<slt:ignore>
+
+
+statement ok
+DROP JOB IF EXISTS jd_kostya;
+
+
+statement ok
+DROP JOB jd_renamed;
+
+
+statement ok
+DROP JOB jd_hourly CASCADE;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name IN ('jd_hourly', 'jd_renamed');
+----
+count
+0
+
+
+statement ok
+DROP JOB jd_babsky;
+
+
+statement ok
+DROP JOB jd_monthly;
+
+
+statement ok
+DROP JOB jd_daily;
+
+
+statement ok
+DROP JOB jd_weekly;
+
+
+statement ok
+DROP JOB jd_quarter;
+
+
+statement ok
+DROP JOB jd_folded;
+
+
+statement ok
+DROP TABLE jd_skuf;
+
+
+statement ok
+DROP SCHEMA IF EXISTS jd_androed CASCADE;
+
+
+statement ok
+CREATE SCHEMA jd_androed;
+
+
+statement ok
+CREATE JOB jd_androed.jd_nested AFTER 1 HOUR AS SELECT 1;
+
+
+query
+SELECT schema_name, job_name FROM duckdb_jobs() WHERE job_name = 'jd_nested';
+----
+schema_name	job_name
+jd_androed	jd_nested
+
+
+statement error
+DROP SCHEMA jd_androed;
+----
+db error: ERROR: Cannot drop entry "jd_androed" because there are entries that depend on it.<slt:ignore>
+
+
+statement ok
+DROP SCHEMA jd_androed CASCADE;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_nested';
+----
+count
+0
+
+
+statement ok
+CREATE JOB jd_parallel EVERY 1 HOUR OFFSET 5 MINUTES CONCURRENT AS SELECT 1;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_parallel';
+----
+schedule
+EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:05:00' CONCURRENT
+
+
+statement ok
+ALTER JOB jd_parallel SET SCHEDULE EVERY 2 HOURS;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_parallel';
+----
+schedule
+EVERY INTERVAL '02:00:00'
+
+
+statement ok
+ALTER JOB jd_parallel SET SCHEDULE EVERY 2 HOURS CONCURRENT;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_parallel';
+----
+schedule
+EVERY INTERVAL '02:00:00' CONCURRENT
+
+
+statement ok
+DROP JOB jd_parallel;
+
+
+statement error
+CREATE JOB jd_invalid EVERY 0 SECONDS AS SELECT 1;
+----
+db error: ERROR: job schedule interval must be positive, got 00:00:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY INTERVAL '1 month 1 day' AS SELECT 1;
+----
+db error: ERROR: EVERY interval cannot mix months with days or time, got 1 mon 1 day
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1;
+----
+db error: ERROR: job schedule offset 02:00:00 must be shorter than the interval 01:00:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 MONTH OFFSET 40 DAYS AS SELECT 1;
+----
+db error: ERROR: job schedule offset 40 days must be shorter than the interval 1 mon
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 HOUR RANDOMIZE FOR 1 HOUR AS SELECT 1;
+----
+db error: ERROR: job schedule RANDOMIZE FOR 01:00:00 must not be negative and must be shorter than the interval 01:00:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 HOUR OFFSET INTERVAL '-1 minute' AS SELECT 1;
+----
+db error: ERROR: job schedule offset must not be negative, got -00:01:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY 100000000 YEARS AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>Date and time not in timestamp range<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 100000000 YEARS AS SELECT 1;
+----
+db error: ERROR: <slt:ignore>Date out of range<slt:ignore>
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_invalid';
+----
+count
+0
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR CONCURRENT AS SELECT 1;
+----
+db error: ERROR: syntax error at or near "CONCURRENT"<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR OFFSET 1 MINUTE AS SELECT 1;
+----
+db error: ERROR: syntax error at or near "OFFSET"<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS BEGIN TRANSACTION;
+----
+db error: ERROR: <slt:ignore>CREATE JOB body cannot be a transaction statement<slt:ignore>
+
+
+statement error
+CREATE JOB jd_invalid AFTER 1 HOUR AS SELECT $1;
+----
+db error: ERROR: <slt:ignore>CREATE JOB cannot have parameters<slt:ignore>
+
+
+statement ok
+DROP TABLE IF EXISTS jd_calls;
+
+
+statement ok
+CREATE TABLE jd_calls (n int);
+
+
+statement ok
+CREATE JOB jd_called AFTER 1 HOUR AS INSERT INTO jd_calls VALUES (1);
+
+
+statement ok
+CALL execute_job('jd_called');
+
+
+query
+SELECT count(*) AS n FROM jd_calls;
+----
+n
+1
+
+
+statement ok
+CREATE JOB jd_caller AFTER 1 HOUR SUSPENDED AS EXECUTE JOB jd_called;
+
+
+statement ok
+EXECUTE JOB jd_caller;
+
+
+query
+SELECT count(*) AS n FROM jd_calls;
+----
+n
+2
+
+
+query
+SELECT job_name, run_count, failure_count FROM duckdb_jobs()
+WHERE job_name IN ('jd_called', 'jd_caller') ORDER BY job_name;
+----
+job_name	run_count	failure_count
+jd_called	2	0
+jd_caller	1	0
+
+
+statement ok
+CREATE JOB jd_loop AFTER 1 HOUR SUSPENDED AS EXECUTE JOB jd_loop;
+
+
+statement error
+EXECUTE JOB jd_loop;
+----
+db error: ERROR: <slt:ignore>Job "jd_loop" is already running<slt:ignore>
+
+
+statement ok
+CREATE JOB jd_self EVERY 1 HOUR CONCURRENT SUSPENDED AS EXECUTE JOB jd_self;
+
+
+statement error
+EXECUTE JOB jd_self;
+----
+db error: ERROR: <slt:ignore>Max job depth limit of 16 exceeded. Use "SET sdb_job_max_depth TO x" to increase the maximum job depth.<slt:ignore>
+
+
+query
+SELECT running, run_count, failure_count FROM duckdb_jobs() WHERE job_name = 'jd_self';
+----
+running	run_count	failure_count
+f	17	17
+
+
+statement ok
+CREATE JOB jd_ping EVERY 1 HOUR CONCURRENT SUSPENDED AS EXECUTE JOB jd_pong;
+
+
+statement ok
+CREATE JOB jd_pong EVERY 1 HOUR CONCURRENT SUSPENDED AS EXECUTE JOB jd_ping;
+
+
+statement error
+EXECUTE JOB jd_ping;
+----
+db error: ERROR: <slt:ignore>Max job depth limit of 16 exceeded. Use "SET sdb_job_max_depth TO x" to increase the maximum job depth.<slt:ignore>
+
+
+query
+SELECT job_name, running, run_count, failure_count FROM duckdb_jobs()
+WHERE job_name IN ('jd_ping', 'jd_pong') ORDER BY job_name;
+----
+job_name	running	run_count	failure_count
+jd_ping	f	9	9
+jd_pong	f	8	8
+
+
+statement ok
+DROP JOB jd_ping;
+
+
+statement ok
+DROP JOB jd_pong;
+
+
+statement ok
+DROP JOB jd_self;
+
+
+statement ok
+DROP JOB jd_loop;
+
+
+statement ok
+DROP JOB jd_caller;
+
+
+statement ok
+DROP JOB jd_called;
+
+
+statement ok
+DROP TABLE jd_calls;
+
+
+statement ok
+CREATE SCHEMA jd_outer;
+
+
+statement ok
+CREATE SCHEMA jd_outer.jd_inner;
+
+
+statement ok
+CREATE TABLE jd_nested_runs (n int);
+
+
+statement ok
+CREATE JOB jd_outer.jd_inner.jd_nested EVERY 1 HOUR AS INSERT INTO public.jd_nested_runs VALUES (1);
+
+
+query
+SELECT schema_name, job_name, schedule FROM duckdb_jobs() WHERE job_name = 'jd_nested';
+----
+schema_name	job_name	schedule
+jd_inner	jd_nested	EVERY INTERVAL '01:00:00'
+
+
+statement ok
+EXECUTE JOB jd_outer.jd_inner.jd_nested;
+
+
+query
+SELECT count(*) AS n FROM jd_nested_runs;
+----
+n
+1
+
+
+statement ok
+DROP TABLE jd_nested_runs;
+
+
+statement ok
+DROP JOB jd_outer.jd_inner.jd_nested;
+
+
+query
+SELECT count(*) FROM duckdb_jobs() WHERE job_name = 'jd_nested';
+----
+count
+0
+
+
+statement ok
+DROP SCHEMA jd_outer CASCADE;

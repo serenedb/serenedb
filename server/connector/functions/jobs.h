@@ -20,29 +20,10 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
+#include <duckdb/main/database.hpp>
 
-#include <cstdint>
-#include <duckdb/common/types.hpp>
+namespace sdb::connector {
 
-namespace duckdb {
+void RegisterJobFunctions(duckdb::DatabaseInstance& db);
 
-class ClientContext;
-
-}  // namespace duckdb
-namespace sdb::pg {
-
-struct RoleDependency {
-  duckdb::idx_t database;
-  uint64_t classid;
-  duckdb::idx_t objid;
-  int32_t objsubid;
-  duckdb::idx_t role;
-  char deptype;
-};
-
-void VisitRoleDependencies(
-  duckdb::ClientContext& context,
-  absl::FunctionRef<void(const RoleDependency&)> visitor);
-
-}  // namespace sdb::pg
+}  // namespace sdb::connector

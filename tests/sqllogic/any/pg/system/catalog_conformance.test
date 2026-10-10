@@ -2901,6 +2901,7 @@ orders	orders	public	postgres	-1	f	c	C	f	t	,	orders	-	-	orders[]	record_in	recor
 orders[]	_orders	public	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	orders	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 
 
+skipif serenedb
 query
 SELECT oid, typname, typnamespace::regnamespace::text AS typnamespace,
   pg_catalog.pg_get_userbyid(typowner) AS typowner, typlen, typbyval, typtype, typcategory, typispreferred,
@@ -3112,6 +3113,563 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 6153	_tstzmultirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tstzmultirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 6155	_datemultirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	datemultirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 6157	_int8multirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	int8multirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10000	_pg_attrdef	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_attrdef	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10001	pg_attrdef	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_attrdef	-	-	pg_attrdef[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10002	_pg_constraint	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_constraint	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10003	pg_constraint	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_constraint	-	-	pg_constraint[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10004	_pg_inherits	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_inherits	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10005	pg_inherits	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_inherits	-	-	pg_inherits[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10006	_pg_index	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_index	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10007	pg_index	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_index	-	-	pg_index[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10008	_pg_operator	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_operator	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10009	pg_operator	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_operator	-	-	pg_operator[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10010	_pg_opfamily	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_opfamily	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10011	pg_opfamily	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_opfamily	-	-	pg_opfamily[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10012	_pg_opclass	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_opclass	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10013	pg_opclass	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_opclass	-	-	pg_opclass[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10014	_pg_am	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_am	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10015	pg_am	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_am	-	-	pg_am[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10016	_pg_amop	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_amop	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10017	pg_amop	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_amop	-	-	pg_amop[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10018	_pg_amproc	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_amproc	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10019	pg_amproc	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_amproc	-	-	pg_amproc[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10020	_pg_language	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_language	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10021	pg_language	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_language	-	-	pg_language[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10022	_pg_largeobject_metadata	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_largeobject_metadata	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10023	pg_largeobject_metadata	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_largeobject_metadata	-	-	pg_largeobject_metadata[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10024	_pg_largeobject	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_largeobject	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10025	pg_largeobject	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_largeobject	-	-	pg_largeobject[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10026	_pg_aggregate	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_aggregate	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10027	pg_aggregate	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_aggregate	-	-	pg_aggregate[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10028	_pg_statistic	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statistic	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10029	pg_statistic	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statistic	-	-	pg_statistic[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10030	_pg_statistic_ext	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statistic_ext	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10031	pg_statistic_ext	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statistic_ext	-	-	pg_statistic_ext[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10032	_pg_statistic_ext_data	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statistic_ext_data	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10033	pg_statistic_ext_data	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statistic_ext_data	-	-	pg_statistic_ext_data[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10034	_pg_rewrite	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_rewrite	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10035	pg_rewrite	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_rewrite	-	-	pg_rewrite[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10036	_pg_trigger	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_trigger	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10037	pg_trigger	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_trigger	-	-	pg_trigger[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10038	_pg_event_trigger	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_event_trigger	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10039	pg_event_trigger	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_event_trigger	-	-	pg_event_trigger[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10040	_pg_description	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_description	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10041	pg_description	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_description	-	-	pg_description[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10042	_pg_cast	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_cast	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10043	pg_cast	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_cast	-	-	pg_cast[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10044	_pg_enum	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_enum	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10045	pg_enum	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_enum	-	-	pg_enum[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10046	_pg_namespace	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_namespace	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10047	pg_namespace	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_namespace	-	-	pg_namespace[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10048	_pg_conversion	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_conversion	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10049	pg_conversion	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_conversion	-	-	pg_conversion[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10050	_pg_depend	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_depend	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10051	pg_depend	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_depend	-	-	pg_depend[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10052	_pg_database	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_database	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10053	_pg_db_role_setting	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_db_role_setting	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10054	pg_db_role_setting	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_db_role_setting	-	-	pg_db_role_setting[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10055	_pg_tablespace	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_tablespace	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10056	pg_tablespace	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_tablespace	-	-	pg_tablespace[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10057	_pg_authid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_authid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10058	_pg_auth_members	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_auth_members	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10059	_pg_shdepend	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_shdepend	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10060	pg_shdepend	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shdepend	-	-	pg_shdepend[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10061	_pg_shdescription	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_shdescription	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10062	pg_shdescription	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shdescription	-	-	pg_shdescription[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10063	_pg_ts_config	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_ts_config	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10064	pg_ts_config	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_ts_config	-	-	pg_ts_config[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10065	_pg_ts_config_map	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_ts_config_map	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10066	pg_ts_config_map	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_ts_config_map	-	-	pg_ts_config_map[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10067	_pg_ts_dict	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_ts_dict	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10068	pg_ts_dict	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_ts_dict	-	-	pg_ts_dict[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10069	_pg_ts_parser	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_ts_parser	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10070	pg_ts_parser	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_ts_parser	-	-	pg_ts_parser[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10071	_pg_ts_template	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_ts_template	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10072	pg_ts_template	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_ts_template	-	-	pg_ts_template[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10073	_pg_extension	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_extension	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10074	pg_extension	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_extension	-	-	pg_extension[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10075	_pg_foreign_data_wrapper	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_foreign_data_wrapper	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10076	pg_foreign_data_wrapper	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_foreign_data_wrapper	-	-	pg_foreign_data_wrapper[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10077	_pg_foreign_server	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_foreign_server	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10078	pg_foreign_server	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_foreign_server	-	-	pg_foreign_server[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10079	_pg_user_mapping	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_user_mapping	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10080	pg_user_mapping	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_user_mapping	-	-	pg_user_mapping[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10081	_pg_foreign_table	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_foreign_table	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10082	pg_foreign_table	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_foreign_table	-	-	pg_foreign_table[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10083	_pg_policy	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_policy	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10084	pg_policy	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_policy	-	-	pg_policy[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10085	_pg_replication_origin	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_replication_origin	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10086	pg_replication_origin	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_replication_origin	-	-	pg_replication_origin[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10087	_pg_default_acl	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_default_acl	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10088	pg_default_acl	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_default_acl	-	-	pg_default_acl[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10089	_pg_init_privs	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_init_privs	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10090	pg_init_privs	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_init_privs	-	-	pg_init_privs[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10091	_pg_seclabel	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_seclabel	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10092	pg_seclabel	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_seclabel	-	-	pg_seclabel[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10093	_pg_shseclabel	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_shseclabel	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10094	_pg_collation	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_collation	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10095	pg_collation	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_collation	-	-	pg_collation[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10096	_pg_parameter_acl	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_parameter_acl	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10097	pg_parameter_acl	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_parameter_acl	-	-	pg_parameter_acl[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10098	_pg_partitioned_table	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_partitioned_table	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10099	pg_partitioned_table	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_partitioned_table	-	-	pg_partitioned_table[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10100	_pg_range	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_range	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10101	pg_range	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_range	-	-	pg_range[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10102	_pg_transform	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_transform	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10103	pg_transform	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_transform	-	-	pg_transform[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10104	_pg_sequence	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_sequence	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10105	pg_sequence	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_sequence	-	-	pg_sequence[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10106	_pg_publication	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_publication	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10107	pg_publication	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_publication	-	-	pg_publication[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10108	_pg_publication_namespace	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_publication_namespace	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10109	pg_publication_namespace	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_publication_namespace	-	-	pg_publication_namespace[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10110	_pg_publication_rel	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_publication_rel	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10111	pg_publication_rel	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_publication_rel	-	-	pg_publication_rel[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+10112	_pg_subscription	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_subscription	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10113	_pg_subscription_rel	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_subscription_rel	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+10114	pg_subscription_rel	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_subscription_rel	-	-	pg_subscription_rel[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12001	_pg_roles	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_roles	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12002	pg_roles	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_roles	-	-	pg_roles[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12006	_pg_shadow	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_shadow	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12007	pg_shadow	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shadow	-	-	pg_shadow[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12011	_pg_group	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_group	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12012	pg_group	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_group	-	-	pg_group[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12015	_pg_user	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_user	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12016	pg_user	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_user	-	-	pg_user[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12019	_pg_policies	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_policies	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12020	pg_policies	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_policies	-	-	pg_policies[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12024	_pg_rules	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_rules	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12025	pg_rules	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_rules	-	-	pg_rules[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12029	_pg_views	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_views	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12030	pg_views	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_views	-	-	pg_views[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12034	_pg_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12035	pg_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_tables	-	-	pg_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12039	_pg_matviews	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_matviews	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12040	pg_matviews	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_matviews	-	-	pg_matviews[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12044	_pg_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12045	pg_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_indexes	-	-	pg_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12049	_pg_sequences	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_sequences	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12050	pg_sequences	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_sequences	-	-	pg_sequences[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12054	_pg_stats	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stats	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12055	pg_stats	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stats	-	-	pg_stats[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12059	_pg_stats_ext	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stats_ext	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12060	pg_stats_ext	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stats_ext	-	-	pg_stats_ext[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12064	_pg_stats_ext_exprs	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stats_ext_exprs	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12065	pg_stats_ext_exprs	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stats_ext_exprs	-	-	pg_stats_ext_exprs[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12069	_pg_publication_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_publication_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12070	pg_publication_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_publication_tables	-	-	pg_publication_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12074	_pg_locks	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_locks	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12075	pg_locks	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_locks	-	-	pg_locks[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12078	_pg_cursors	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_cursors	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12079	pg_cursors	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_cursors	-	-	pg_cursors[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12082	_pg_available_extensions	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_available_extensions	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12083	pg_available_extensions	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_available_extensions	-	-	pg_available_extensions[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12086	_pg_available_extension_versions	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_available_extension_versions	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12087	pg_available_extension_versions	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_available_extension_versions	-	-	pg_available_extension_versions[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12091	_pg_prepared_xacts	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_prepared_xacts	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12092	pg_prepared_xacts	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_prepared_xacts	-	-	pg_prepared_xacts[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12096	_pg_prepared_statements	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_prepared_statements	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12097	pg_prepared_statements	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_prepared_statements	-	-	pg_prepared_statements[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12100	_pg_seclabels	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_seclabels	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12101	pg_seclabels	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_seclabels	-	-	pg_seclabels[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12105	_pg_settings	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_settings	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12106	pg_settings	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_settings	-	-	pg_settings[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12111	_pg_file_settings	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_file_settings	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12112	pg_file_settings	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_file_settings	-	-	pg_file_settings[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12115	_pg_hba_file_rules	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_hba_file_rules	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12116	pg_hba_file_rules	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_hba_file_rules	-	-	pg_hba_file_rules[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12119	_pg_ident_file_mappings	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_ident_file_mappings	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12120	pg_ident_file_mappings	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_ident_file_mappings	-	-	pg_ident_file_mappings[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12123	_pg_timezone_abbrevs	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_timezone_abbrevs	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12124	pg_timezone_abbrevs	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_timezone_abbrevs	-	-	pg_timezone_abbrevs[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12127	_pg_timezone_names	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_timezone_names	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12128	pg_timezone_names	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_timezone_names	-	-	pg_timezone_names[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12131	_pg_config	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_config	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12132	pg_config	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_config	-	-	pg_config[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12135	_pg_shmem_allocations	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_shmem_allocations	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12136	pg_shmem_allocations	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shmem_allocations	-	-	pg_shmem_allocations[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12139	_pg_shmem_allocations_numa	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_shmem_allocations_numa	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12140	pg_shmem_allocations_numa	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shmem_allocations_numa	-	-	pg_shmem_allocations_numa[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12143	_pg_backend_memory_contexts	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_backend_memory_contexts	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12144	pg_backend_memory_contexts	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_backend_memory_contexts	-	-	pg_backend_memory_contexts[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12147	_pg_stat_all_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_all_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12148	pg_stat_all_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_all_tables	-	-	pg_stat_all_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12152	_pg_stat_xact_all_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_xact_all_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12153	pg_stat_xact_all_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_xact_all_tables	-	-	pg_stat_xact_all_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12157	_pg_stat_sys_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_sys_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12158	pg_stat_sys_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_sys_tables	-	-	pg_stat_sys_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12162	_pg_stat_xact_sys_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_xact_sys_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12163	pg_stat_xact_sys_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_xact_sys_tables	-	-	pg_stat_xact_sys_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12166	_pg_stat_user_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_user_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12167	pg_stat_user_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_user_tables	-	-	pg_stat_user_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12171	_pg_stat_xact_user_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_xact_user_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12172	pg_stat_xact_user_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_xact_user_tables	-	-	pg_stat_xact_user_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12175	_pg_statio_all_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_all_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12176	pg_statio_all_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_all_tables	-	-	pg_statio_all_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12180	_pg_statio_sys_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_sys_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12181	pg_statio_sys_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_sys_tables	-	-	pg_statio_sys_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12184	_pg_statio_user_tables	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_user_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12185	pg_statio_user_tables	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_user_tables	-	-	pg_statio_user_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12188	_pg_stat_all_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_all_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12189	pg_stat_all_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_all_indexes	-	-	pg_stat_all_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12193	_pg_stat_sys_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_sys_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12194	pg_stat_sys_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_sys_indexes	-	-	pg_stat_sys_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12197	_pg_stat_user_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_user_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12198	pg_stat_user_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_user_indexes	-	-	pg_stat_user_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12201	_pg_statio_all_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_all_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12202	pg_statio_all_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_all_indexes	-	-	pg_statio_all_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12206	_pg_statio_sys_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_sys_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12207	pg_statio_sys_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_sys_indexes	-	-	pg_statio_sys_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12210	_pg_statio_user_indexes	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_user_indexes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12211	pg_statio_user_indexes	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_user_indexes	-	-	pg_statio_user_indexes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12214	_pg_statio_all_sequences	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_all_sequences	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12215	pg_statio_all_sequences	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_all_sequences	-	-	pg_statio_all_sequences[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12219	_pg_statio_sys_sequences	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_sys_sequences	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12220	pg_statio_sys_sequences	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_sys_sequences	-	-	pg_statio_sys_sequences[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12223	_pg_statio_user_sequences	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_statio_user_sequences	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12224	pg_statio_user_sequences	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_statio_user_sequences	-	-	pg_statio_user_sequences[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12227	_pg_stat_activity	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_activity	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12228	pg_stat_activity	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_activity	-	-	pg_stat_activity[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12232	_pg_stat_replication	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_replication	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12233	pg_stat_replication	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_replication	-	-	pg_stat_replication[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12237	_pg_stat_slru	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_slru	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12238	pg_stat_slru	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_slru	-	-	pg_stat_slru[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12241	_pg_stat_wal_receiver	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_wal_receiver	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12242	pg_stat_wal_receiver	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_wal_receiver	-	-	pg_stat_wal_receiver[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12245	_pg_stat_recovery_prefetch	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_recovery_prefetch	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12246	pg_stat_recovery_prefetch	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_recovery_prefetch	-	-	pg_stat_recovery_prefetch[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12249	_pg_stat_subscription	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_subscription	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12250	pg_stat_subscription	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_subscription	-	-	pg_stat_subscription[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12254	_pg_stat_ssl	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_ssl	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12255	pg_stat_ssl	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_ssl	-	-	pg_stat_ssl[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12258	_pg_stat_gssapi	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_gssapi	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12259	pg_stat_gssapi	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_gssapi	-	-	pg_stat_gssapi[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12262	_pg_replication_slots	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_replication_slots	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12263	pg_replication_slots	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_replication_slots	-	-	pg_replication_slots[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12267	_pg_stat_replication_slots	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_replication_slots	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12268	pg_stat_replication_slots	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_replication_slots	-	-	pg_stat_replication_slots[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12271	_pg_stat_database	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_database	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12272	pg_stat_database	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_database	-	-	pg_stat_database[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12276	_pg_stat_database_conflicts	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_database_conflicts	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12277	pg_stat_database_conflicts	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_database_conflicts	-	-	pg_stat_database_conflicts[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12280	_pg_stat_user_functions	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_user_functions	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12281	pg_stat_user_functions	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_user_functions	-	-	pg_stat_user_functions[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12285	_pg_stat_xact_user_functions	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_xact_user_functions	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12286	pg_stat_xact_user_functions	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_xact_user_functions	-	-	pg_stat_xact_user_functions[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12290	_pg_stat_archiver	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_archiver	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12291	pg_stat_archiver	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_archiver	-	-	pg_stat_archiver[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12294	_pg_stat_bgwriter	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_bgwriter	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12295	pg_stat_bgwriter	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_bgwriter	-	-	pg_stat_bgwriter[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12298	_pg_stat_checkpointer	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_checkpointer	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12299	pg_stat_checkpointer	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_checkpointer	-	-	pg_stat_checkpointer[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12302	_pg_stat_io	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_io	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12303	pg_stat_io	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_io	-	-	pg_stat_io[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12306	_pg_stat_wal	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_wal	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12307	pg_stat_wal	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_wal	-	-	pg_stat_wal[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12310	_pg_stat_progress_analyze	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_progress_analyze	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12311	pg_stat_progress_analyze	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_progress_analyze	-	-	pg_stat_progress_analyze[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12315	_pg_stat_progress_vacuum	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_progress_vacuum	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12316	pg_stat_progress_vacuum	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_progress_vacuum	-	-	pg_stat_progress_vacuum[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12320	_pg_stat_progress_cluster	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_progress_cluster	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12321	pg_stat_progress_cluster	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_progress_cluster	-	-	pg_stat_progress_cluster[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12325	_pg_stat_progress_create_index	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_progress_create_index	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12326	pg_stat_progress_create_index	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_progress_create_index	-	-	pg_stat_progress_create_index[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12330	_pg_stat_progress_basebackup	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_progress_basebackup	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12331	pg_stat_progress_basebackup	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_progress_basebackup	-	-	pg_stat_progress_basebackup[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12334	_pg_stat_progress_copy	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_progress_copy	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12335	pg_stat_progress_copy	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_progress_copy	-	-	pg_stat_progress_copy[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12339	_pg_user_mappings	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_user_mappings	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12340	pg_user_mappings	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_user_mappings	-	-	pg_user_mappings[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12344	_pg_replication_origin_status	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_replication_origin_status	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12345	pg_replication_origin_status	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_replication_origin_status	-	-	pg_replication_origin_status[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12348	_pg_stat_subscription_stats	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_stat_subscription_stats	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12349	pg_stat_subscription_stats	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_stat_subscription_stats	-	-	pg_stat_subscription_stats[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12352	_pg_wait_events	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_wait_events	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12353	pg_wait_events	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_wait_events	-	-	pg_wait_events[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+12356	_pg_aios	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_aios	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+12357	pg_aios	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_aios	-	-	pg_aios[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13306	_cardinal_number	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.cardinal_number	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+13307	cardinal_number	information_schema	postgres	4	t	d	N	f	t	,	-	-	-	information_schema.cardinal_number[]	domain_in	int4out	domain_recv	int4send	-	-	-	i	p	f	integer	-1	0	0	NULL	NULL
+13309	_character_data	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.character_data	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	950	NULL	NULL
+13310	character_data	information_schema	postgres	-1	f	d	S	f	t	,	-	-	-	information_schema.character_data[]	domain_in	varcharout	domain_recv	varcharsend	-	-	-	i	x	f	character varying	-1	0	950	NULL	NULL
+13311	_sql_identifier	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.sql_identifier	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	950	NULL	NULL
+13312	sql_identifier	information_schema	postgres	64	f	d	S	f	t	,	-	-	-	information_schema.sql_identifier[]	domain_in	nameout	domain_recv	namesend	-	-	-	c	p	f	name	-1	0	950	NULL	NULL
+13314	_information_schema_catalog_name	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.information_schema_catalog_name	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13315	information_schema_catalog_name	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.information_schema_catalog_name	-	-	information_schema.information_schema_catalog_name[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13317	_time_stamp	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.time_stamp	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13318	time_stamp	information_schema	postgres	8	t	d	D	f	t	,	-	-	-	information_schema.time_stamp[]	domain_in	timestamptz_out	domain_recv	timestamptz_send	-	-	-	d	p	f	timestamp with time zone	2	0	0	CURRENT_TIMESTAMP(2)	NULL
+13319	_yes_or_no	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.yes_or_no	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	950	NULL	NULL
+13320	yes_or_no	information_schema	postgres	-1	f	d	S	f	t	,	-	-	-	information_schema.yes_or_no[]	domain_in	varcharout	domain_recv	varcharsend	-	-	-	i	x	f	character varying	7	0	950	NULL	NULL
+13323	_applicable_roles	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.applicable_roles	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13324	applicable_roles	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.applicable_roles	-	-	information_schema.applicable_roles[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13328	_administrable_role_authorizations	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.administrable_role_authorizations	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13329	administrable_role_authorizations	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.administrable_role_authorizations	-	-	information_schema.administrable_role_authorizations[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13332	_attributes	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.attributes	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13333	attributes	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.attributes	-	-	information_schema.attributes[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13337	_character_sets	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.character_sets	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13338	character_sets	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.character_sets	-	-	information_schema.character_sets[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13342	_check_constraint_routine_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.check_constraint_routine_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13343	check_constraint_routine_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.check_constraint_routine_usage	-	-	information_schema.check_constraint_routine_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13347	_check_constraints	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.check_constraints	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13348	check_constraints	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.check_constraints	-	-	information_schema.check_constraints[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13352	_collations	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.collations	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13353	collations	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.collations	-	-	information_schema.collations[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13357	_collation_character_set_applicability	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.collation_character_set_applicability	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13358	collation_character_set_applicability	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.collation_character_set_applicability	-	-	information_schema.collation_character_set_applicability[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13362	_column_column_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.column_column_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13363	column_column_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.column_column_usage	-	-	information_schema.column_column_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13367	_column_domain_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.column_domain_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13368	column_domain_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.column_domain_usage	-	-	information_schema.column_domain_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13372	_column_privileges	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.column_privileges	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13373	column_privileges	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.column_privileges	-	-	information_schema.column_privileges[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13377	_column_udt_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.column_udt_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13378	column_udt_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.column_udt_usage	-	-	information_schema.column_udt_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13387	_constraint_column_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.constraint_column_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13388	constraint_column_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.constraint_column_usage	-	-	information_schema.constraint_column_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13392	_constraint_table_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.constraint_table_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13393	constraint_table_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.constraint_table_usage	-	-	information_schema.constraint_table_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13397	_domain_constraints	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.domain_constraints	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13398	domain_constraints	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.domain_constraints	-	-	information_schema.domain_constraints[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13402	_domain_udt_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.domain_udt_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13403	domain_udt_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.domain_udt_usage	-	-	information_schema.domain_udt_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13406	_domains	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.domains	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13407	domains	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.domains	-	-	information_schema.domains[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13411	_enabled_roles	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.enabled_roles	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13412	enabled_roles	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.enabled_roles	-	-	information_schema.enabled_roles[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13415	_key_column_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.key_column_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13416	key_column_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.key_column_usage	-	-	information_schema.key_column_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13420	_parameters	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.parameters	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13421	parameters	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.parameters	-	-	information_schema.parameters[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13425	_referential_constraints	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.referential_constraints	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13426	referential_constraints	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.referential_constraints	-	-	information_schema.referential_constraints[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13430	_role_column_grants	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.role_column_grants	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13431	role_column_grants	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.role_column_grants	-	-	information_schema.role_column_grants[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13434	_routine_column_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.routine_column_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13435	routine_column_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.routine_column_usage	-	-	information_schema.routine_column_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13439	_routine_privileges	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.routine_privileges	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13440	routine_privileges	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.routine_privileges	-	-	information_schema.routine_privileges[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13444	_role_routine_grants	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.role_routine_grants	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13445	role_routine_grants	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.role_routine_grants	-	-	information_schema.role_routine_grants[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13448	_routine_routine_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.routine_routine_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13449	routine_routine_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.routine_routine_usage	-	-	information_schema.routine_routine_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13453	_routine_sequence_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.routine_sequence_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13454	routine_sequence_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.routine_sequence_usage	-	-	information_schema.routine_sequence_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13458	_routine_table_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.routine_table_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13459	routine_table_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.routine_table_usage	-	-	information_schema.routine_table_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13463	_routines	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.routines	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13464	routines	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.routines	-	-	information_schema.routines[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13468	_schemata	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.schemata	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13469	schemata	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.schemata	-	-	information_schema.schemata[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13472	_sequences	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.sequences	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13473	sequences	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.sequences	-	-	information_schema.sequences[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13477	_sql_features	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.sql_features	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13478	sql_features	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.sql_features	-	-	information_schema.sql_features[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13482	_sql_implementation_info	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.sql_implementation_info	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13483	sql_implementation_info	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.sql_implementation_info	-	-	information_schema.sql_implementation_info[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13487	_sql_parts	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.sql_parts	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13488	sql_parts	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.sql_parts	-	-	information_schema.sql_parts[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13492	_sql_sizing	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.sql_sizing	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13493	sql_sizing	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.sql_sizing	-	-	information_schema.sql_sizing[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13497	_table_constraints	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.table_constraints	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13498	table_constraints	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.table_constraints	-	-	information_schema.table_constraints[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13502	_table_privileges	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.table_privileges	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13503	table_privileges	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.table_privileges	-	-	information_schema.table_privileges[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13507	_role_table_grants	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.role_table_grants	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13508	role_table_grants	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.role_table_grants	-	-	information_schema.role_table_grants[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13511	_tables	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13512	tables	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.tables	-	-	information_schema.tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13516	_transforms	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.transforms	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13517	transforms	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.transforms	-	-	information_schema.transforms[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13521	_triggered_update_columns	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.triggered_update_columns	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13522	triggered_update_columns	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.triggered_update_columns	-	-	information_schema.triggered_update_columns[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13526	_triggers	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.triggers	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13527	triggers	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.triggers	-	-	information_schema.triggers[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13531	_udt_privileges	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.udt_privileges	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13532	udt_privileges	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.udt_privileges	-	-	information_schema.udt_privileges[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13536	_role_udt_grants	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.role_udt_grants	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13537	role_udt_grants	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.role_udt_grants	-	-	information_schema.role_udt_grants[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13540	_usage_privileges	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.usage_privileges	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13541	usage_privileges	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.usage_privileges	-	-	information_schema.usage_privileges[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13545	_role_usage_grants	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.role_usage_grants	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13546	role_usage_grants	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.role_usage_grants	-	-	information_schema.role_usage_grants[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13549	_user_defined_types	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.user_defined_types	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13550	user_defined_types	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.user_defined_types	-	-	information_schema.user_defined_types[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13554	_view_column_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.view_column_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13555	view_column_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.view_column_usage	-	-	information_schema.view_column_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13559	_view_routine_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.view_routine_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13560	view_routine_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.view_routine_usage	-	-	information_schema.view_routine_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13564	_view_table_usage	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.view_table_usage	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13565	view_table_usage	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.view_table_usage	-	-	information_schema.view_table_usage[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13569	_views	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.views	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13570	views	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.views	-	-	information_schema.views[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13574	_data_type_privileges	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.data_type_privileges	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13575	data_type_privileges	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.data_type_privileges	-	-	information_schema.data_type_privileges[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13579	_element_types	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.element_types	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13580	element_types	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.element_types	-	-	information_schema.element_types[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13584	__pg_foreign_table_columns	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema._pg_foreign_table_columns	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13585	_pg_foreign_table_columns	information_schema	postgres	-1	f	c	C	f	t	,	information_schema._pg_foreign_table_columns	-	-	information_schema._pg_foreign_table_columns[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13589	_column_options	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.column_options	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13590	column_options	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.column_options	-	-	information_schema.column_options[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13593	__pg_foreign_data_wrappers	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema._pg_foreign_data_wrappers	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13594	_pg_foreign_data_wrappers	information_schema	postgres	-1	f	c	C	f	t	,	information_schema._pg_foreign_data_wrappers	-	-	information_schema._pg_foreign_data_wrappers[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13597	_foreign_data_wrapper_options	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.foreign_data_wrapper_options	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13598	foreign_data_wrapper_options	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.foreign_data_wrapper_options	-	-	information_schema.foreign_data_wrapper_options[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13601	_foreign_data_wrappers	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.foreign_data_wrappers	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13602	foreign_data_wrappers	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.foreign_data_wrappers	-	-	information_schema.foreign_data_wrappers[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13605	__pg_foreign_servers	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema._pg_foreign_servers	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13606	_pg_foreign_servers	information_schema	postgres	-1	f	c	C	f	t	,	information_schema._pg_foreign_servers	-	-	information_schema._pg_foreign_servers[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13609	_foreign_server_options	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.foreign_server_options	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13610	foreign_server_options	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.foreign_server_options	-	-	information_schema.foreign_server_options[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13613	_foreign_servers	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.foreign_servers	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13614	foreign_servers	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.foreign_servers	-	-	information_schema.foreign_servers[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13617	__pg_foreign_tables	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema._pg_foreign_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13618	_pg_foreign_tables	information_schema	postgres	-1	f	c	C	f	t	,	information_schema._pg_foreign_tables	-	-	information_schema._pg_foreign_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13622	_foreign_table_options	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.foreign_table_options	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13623	foreign_table_options	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.foreign_table_options	-	-	information_schema.foreign_table_options[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13626	_foreign_tables	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.foreign_tables	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13627	foreign_tables	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.foreign_tables	-	-	information_schema.foreign_tables[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13630	__pg_user_mappings	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema._pg_user_mappings	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13631	_pg_user_mappings	information_schema	postgres	-1	f	c	C	f	t	,	information_schema._pg_user_mappings	-	-	information_schema._pg_user_mappings[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13635	_user_mapping_options	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.user_mapping_options	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13636	user_mapping_options	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.user_mapping_options	-	-	information_schema.user_mapping_options[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+13640	_user_mappings	information_schema	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	information_schema.user_mappings	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+13641	user_mappings	information_schema	postgres	-1	f	c	C	f	t	,	information_schema.user_mappings	-	-	information_schema.user_mappings[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+
+
+onlyif serenedb
+query
+SELECT oid, typname, typnamespace::regnamespace::text AS typnamespace,
+  pg_catalog.pg_get_userbyid(typowner) AS typowner, typlen, typbyval, typtype, typcategory, typispreferred,
+  typisdefined, typdelim, typrelid::regclass::text AS typrelid, typsubscript::text AS typsubscript,
+  typelem::regtype::text AS typelem, typarray::regtype::text AS typarray, typinput::text AS typinput,
+  typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typmodin::text AS typmodin,
+  typmodout::text AS typmodout, typanalyze::text AS typanalyze, typalign, typstorage, typnotnull,
+  typbasetype::regtype::text AS typbasetype, typtypmod, typndims, typcollation, typdefault,
+  (SELECT string_agg(x::text, ',' ORDER BY x::text COLLATE "C") FROM unnest(typacl) x) AS typacl
+FROM pg_catalog.pg_type
+WHERE oid < 16384
+  AND (oid)::text NOT IN ('13382', '13383', '3615', '3645')
+ORDER BY oid
+----
+oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typispreferred	typisdefined	typdelim	typrelid	typsubscript	typelem	typarray	typinput	typoutput	typreceive	typsend	typmodin	typmodout	typanalyze	typalign	typstorage	typnotnull	typbasetype	typtypmod	typndims	typcollation	typdefault	typacl
+16	bool	pg_catalog	postgres	1	t	b	B	t	t	,	-	-	-	boolean[]	boolin	boolout	boolrecv	boolsend	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
+17	bytea	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	bytea[]	byteain	byteaout	bytearecv	byteasend	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+18	char	pg_catalog	postgres	1	t	b	Z	f	t	,	-	-	-	"char"[]	charin	charout	charrecv	charsend	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
+19	name	pg_catalog	postgres	64	f	b	S	f	t	,	-	raw_array_subscript_handler	"char"	name[]	namein	nameout	namerecv	namesend	-	-	-	c	p	f	-	-1	0	950	NULL	NULL
+20	int8	pg_catalog	postgres	8	t	b	N	f	t	,	-	-	-	bigint[]	int8in	int8out	int8recv	int8send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+21	int2	pg_catalog	postgres	2	t	b	N	f	t	,	-	-	-	smallint[]	int2in	int2out	int2recv	int2send	-	-	-	s	p	f	-	-1	0	0	NULL	NULL
+22	int2vector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	smallint	int2vector[]	int2vectorin	int2vectorout	int2vectorrecv	int2vectorsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+23	int4	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	integer[]	int4in	int4out	int4recv	int4send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+24	regproc	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regproc[]	regprocin	regprocout	regprocrecv	regprocsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+25	text	pg_catalog	postgres	-1	f	b	S	t	t	,	-	-	-	text[]	textin	textout	textrecv	textsend	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+26	oid	pg_catalog	postgres	4	t	b	N	t	t	,	-	-	-	oid[]	oidin	oidout	oidrecv	oidsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+27	tid	pg_catalog	postgres	6	f	b	U	f	t	,	-	-	-	tid[]	tidin	tidout	tidrecv	tidsend	-	-	-	s	p	f	-	-1	0	0	NULL	NULL
+28	xid	pg_catalog	postgres	4	t	b	U	f	t	,	-	-	-	xid[]	xidin	xidout	xidrecv	xidsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+29	cid	pg_catalog	postgres	4	t	b	U	f	t	,	-	-	-	cid[]	cidin	cidout	cidrecv	cidsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+30	oidvector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	oid	oidvector[]	oidvectorin	oidvectorout	oidvectorrecv	oidvectorsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+71	pg_type	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_type	-	-	pg_type[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+75	pg_attribute	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_attribute	-	-	pg_attribute[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+81	pg_proc	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_proc	-	-	pg_proc[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+83	pg_class	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_class	-	-	pg_class[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+114	json	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	json[]	json_in	json_out	json_recv	json_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+194	pg_node_tree	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_node_tree_in	pg_node_tree_out	pg_node_tree_recv	pg_node_tree_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+199	_json	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	json	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+210	_pg_type	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_type	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+269	table_am_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	table_am_handler_in	table_am_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+270	_pg_attribute	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_attribute	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+271	_xid8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	xid8	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+272	_pg_proc	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_proc	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+273	_pg_class	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_class	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+700	float4	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	real[]	float4in	float4out	float4recv	float4send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+701	float8	pg_catalog	postgres	8	t	b	N	t	t	,	-	-	-	double precision[]	float8in	float8out	float8recv	float8send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+705	unknown	pg_catalog	postgres	-2	f	p	X	f	t	,	-	-	-	-	unknownin	unknownout	unknownrecv	unknownsend	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
+869	inet	pg_catalog	postgres	-1	f	b	I	t	t	,	-	-	-	inet[]	inet_in	inet_out	inet_recv	inet_send	-	-	-	i	m	f	-	-1	0	0	NULL	NULL
+1000	_bool	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	boolean	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1001	_bytea	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bytea	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1002	_char	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	"char"	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1003	_name	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	name	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	950	NULL	NULL
+1005	_int2	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	smallint	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1006	_int2vector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	int2vector	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1007	_int4	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	integer	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1008	_regproc	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regproc	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1009	_text	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	text	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	100	NULL	NULL
+1010	_tid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1011	_xid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	xid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1012	_cid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	cid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1013	_oidvector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	oidvector	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1014	_bpchar	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	character	-	array_in	array_out	array_recv	array_send	bpchartypmodin	bpchartypmodout	array_typanalyze	i	x	f	-	-1	0	100	NULL	NULL
+1015	_varchar	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	character varying	-	array_in	array_out	array_recv	array_send	varchartypmodin	varchartypmodout	array_typanalyze	i	x	f	-	-1	0	100	NULL	NULL
+1016	_int8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bigint	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1021	_float4	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	real	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1022	_float8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	double precision	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1028	_oid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	oid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1033	aclitem	pg_catalog	postgres	16	f	b	U	f	t	,	-	-	-	aclitem[]	aclitemin	aclitemout	-	-	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+1034	_aclitem	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	aclitem	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1041	_inet	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	inet	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1042	bpchar	pg_catalog	postgres	-1	f	b	S	f	t	,	-	-	-	character[]	bpcharin	bpcharout	bpcharrecv	bpcharsend	bpchartypmodin	bpchartypmodout	-	i	x	f	-	-1	0	100	NULL	NULL
+1043	varchar	pg_catalog	postgres	-1	f	b	S	f	t	,	-	-	-	character varying[]	varcharin	varcharout	varcharrecv	varcharsend	varchartypmodin	varchartypmodout	-	i	x	f	-	-1	0	100	NULL	NULL
+1082	date	pg_catalog	postgres	4	t	b	D	f	t	,	-	-	-	date[]	date_in	date_out	date_recv	date_send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+1083	time	pg_catalog	postgres	8	t	b	D	f	t	,	-	-	-	time without time zone[]	time_in	time_out	time_recv	time_send	timetypmodin	timetypmodout	-	d	p	f	-	-1	0	0	NULL	NULL
+1114	timestamp	pg_catalog	postgres	8	t	b	D	f	t	,	-	-	-	timestamp without time zone[]	timestamp_in	timestamp_out	timestamp_recv	timestamp_send	timestamptypmodin	timestamptypmodout	-	d	p	f	-	-1	0	0	NULL	NULL
+1115	_timestamp	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	timestamp without time zone	-	array_in	array_out	array_recv	array_send	timestamptypmodin	timestamptypmodout	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1182	_date	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	date	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1183	_time	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	time without time zone	-	array_in	array_out	array_recv	array_send	timetypmodin	timetypmodout	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1184	timestamptz	pg_catalog	postgres	8	t	b	D	t	t	,	-	-	-	timestamp with time zone[]	timestamptz_in	timestamptz_out	timestamptz_recv	timestamptz_send	timestamptztypmodin	timestamptztypmodout	-	d	p	f	-	-1	0	0	NULL	NULL
+1185	_timestamptz	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	timestamp with time zone	-	array_in	array_out	array_recv	array_send	timestamptztypmodin	timestamptztypmodout	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1186	interval	pg_catalog	postgres	16	f	b	T	t	t	,	-	-	-	interval[]	interval_in	interval_out	interval_recv	interval_send	intervaltypmodin	intervaltypmodout	-	d	p	f	-	-1	0	0	NULL	NULL
+1187	_interval	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	interval	-	array_in	array_out	array_recv	array_send	intervaltypmodin	intervaltypmodout	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1231	_numeric	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	numeric	-	array_in	array_out	array_recv	array_send	numerictypmodin	numerictypmodout	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1248	pg_database	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_database	-	-	pg_database[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+1263	_cstring	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	cstring	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1266	timetz	pg_catalog	postgres	12	f	b	D	f	t	,	-	-	-	time with time zone[]	timetz_in	timetz_out	timetz_recv	timetz_send	timetztypmodin	timetztypmodout	-	d	p	f	-	-1	0	0	NULL	NULL
+1270	_timetz	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	time with time zone	-	array_in	array_out	array_recv	array_send	timetztypmodin	timetztypmodout	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1560	bit	pg_catalog	postgres	-1	f	b	V	f	t	,	-	-	-	bit[]	bit_in	bit_out	bit_recv	bit_send	bittypmodin	bittypmodout	-	i	x	f	-	-1	0	0	NULL	NULL
+1561	_bit	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bit	-	array_in	array_out	array_recv	array_send	bittypmodin	bittypmodout	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1562	varbit	pg_catalog	postgres	-1	f	b	V	t	t	,	-	-	-	bit varying[]	varbit_in	varbit_out	varbit_recv	varbit_send	varbittypmodin	varbittypmodout	-	i	x	f	-	-1	0	0	NULL	NULL
+1563	_varbit	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bit varying	-	array_in	array_out	array_recv	array_send	varbittypmodin	varbittypmodout	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+1700	numeric	pg_catalog	postgres	-1	f	b	N	f	t	,	-	-	-	numeric[]	numeric_in	numeric_out	numeric_recv	numeric_send	numerictypmodin	numerictypmodout	-	i	m	f	-	-1	0	0	NULL	NULL
+2202	regprocedure	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regprocedure[]	regprocedurein	regprocedureout	regprocedurerecv	regproceduresend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2203	regoper	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regoper[]	regoperin	regoperout	regoperrecv	regopersend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2204	regoperator	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regoperator[]	regoperatorin	regoperatorout	regoperatorrecv	regoperatorsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2205	regclass	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regclass[]	regclassin	regclassout	regclassrecv	regclasssend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2206	regtype	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regtype[]	regtypein	regtypeout	regtyperecv	regtypesend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2207	_regprocedure	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regprocedure	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+2208	_regoper	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regoper	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+2209	_regoperator	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regoperator	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+2210	_regclass	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regclass	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+2211	_regtype	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regtype	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+2249	record	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	record[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+2275	cstring	pg_catalog	postgres	-2	f	p	P	f	t	,	-	-	-	cstring[]	cstring_in	cstring_out	cstring_recv	cstring_send	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
+2276	any	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	any_in	any_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2277	anyarray	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anyarray_in	anyarray_out	anyarray_recv	anyarray_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+2278	void	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	void_in	void_out	void_recv	void_send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2281	internal	pg_catalog	postgres	8	t	p	P	f	t	,	-	-	-	-	internal_in	internal_out	-	-	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+2287	_record	pg_catalog	postgres	-1	f	p	P	f	t	,	-	array_subscript_handler	record	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+2842	pg_authid	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_authid	-	-	pg_authid[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+2843	pg_auth_members	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_auth_members	-	-	pg_auth_members[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+2950	uuid	pg_catalog	postgres	16	f	b	U	f	t	,	-	-	-	uuid[]	uuid_in	uuid_out	uuid_recv	uuid_send	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
+2951	_uuid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	uuid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3220	pg_lsn	pg_catalog	postgres	8	t	b	U	f	t	,	-	-	-	pg_lsn[]	pg_lsn_in	pg_lsn_out	pg_lsn_recv	pg_lsn_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+3221	_pg_lsn	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_lsn	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3361	pg_ndistinct	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_ndistinct_in	pg_ndistinct_out	pg_ndistinct_recv	pg_ndistinct_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+3402	pg_dependencies	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_dependencies_in	pg_dependencies_out	pg_dependencies_recv	pg_dependencies_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+3500	anyenum	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anyenum_in	anyenum_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+3734	regconfig	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regconfig[]	regconfigin	regconfigout	regconfigrecv	regconfigsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+3735	_regconfig	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regconfig	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3769	regdictionary	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regdictionary[]	regdictionaryin	regdictionaryout	regdictionaryrecv	regdictionarysend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+3770	_regdictionary	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regdictionary	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3802	jsonb	pg_catalog	postgres	-1	f	b	U	f	t	,	-	jsonb_subscript_handler	-	jsonb[]	jsonb_in	jsonb_out	jsonb_recv	jsonb_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+3807	_jsonb	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	jsonb	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4066	pg_shseclabel	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shseclabel	-	-	pg_shseclabel[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+4089	regnamespace	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regnamespace[]	regnamespacein	regnamespaceout	regnamespacerecv	regnamespacesend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+4090	_regnamespace	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regnamespace	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4096	regrole	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regrole[]	regrolein	regroleout	regrolerecv	regrolesend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+4097	_regrole	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regrole	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4191	regcollation	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regcollation[]	regcollationin	regcollationout	regcollationrecv	regcollationsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+4192	_regcollation	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regcollation	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+5017	pg_mcv_list	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_mcv_list_in	pg_mcv_list_out	pg_mcv_list_recv	pg_mcv_list_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+5069	xid8	pg_catalog	postgres	8	t	b	U	f	t	,	-	-	-	xid8[]	xid8in	xid8out	xid8recv	xid8send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+6101	pg_subscription	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_subscription	-	-	pg_subscription[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 10000	_pg_attrdef	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_attrdef	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 10001	pg_attrdef	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_attrdef	-	-	pg_attrdef[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 10002	_pg_constraint	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_constraint	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
@@ -7892,6 +8450,7 @@ app.mood	ok
 app.mood	sad
 
 
+skipif serenedb
 query
 SELECT q.nspname, q.oid::regtype::text AS oid, q.typname, q.typtype, q.typnotnull,
   q.elemtypoid::regtype::text AS elemtypoid FROM (
@@ -8069,6 +8628,134 @@ pg_catalog	xml	xml	b	f	NULL
 information_schema	information_schema.yes_or_no	yes_or_no	d	f	character varying
 
 
+onlyif serenedb
+query
+SELECT q.nspname, q.oid::regtype::text AS oid, q.typname, q.typtype, q.typnotnull,
+  q.elemtypoid::regtype::text AS elemtypoid FROM (
+SELECT ns.nspname, t.oid, t.typname, t.typtype, t.typnotnull, t.elemtypoid FROM ( SELECT typ.oid, typ.typnamespace, typ.typname, typ.typtype, typ.typrelid, typ.typnotnull, typ.relkind, elemtyp.oid AS elemtypoid, elemtyp.typname AS elemtypname, elemcls.relkind AS elemrelkind, CASE WHEN elemproc.proname='array_recv' THEN 'a' ELSE elemtyp.typtype END AS elemtyptype FROM ( SELECT typ.oid, typnamespace, typname, typrelid, typnotnull, relkind, typelem AS elemoid, CASE WHEN proc.proname='array_recv' THEN 'a' ELSE typ.typtype END AS typtype, CASE WHEN proc.proname='array_recv' THEN typ.typelem WHEN typ.typtype='r' THEN rngsubtype WHEN typ.typtype='m' THEN (SELECT rngtypid FROM pg_range WHERE rngmultitypid = typ.oid) WHEN typ.typtype='d' THEN typ.typbasetype END AS elemtypoid FROM pg_type AS typ LEFT JOIN pg_class AS cls ON (cls.oid = typ.typrelid) LEFT JOIN pg_proc AS proc ON proc.oid = typ.typreceive LEFT JOIN pg_range ON (pg_range.rngtypid = typ.oid) ) AS typ LEFT JOIN pg_type AS elemtyp ON elemtyp.oid = elemtypoid LEFT JOIN pg_class AS elemcls ON (elemcls.oid = elemtyp.typrelid) LEFT JOIN pg_proc AS elemproc ON elemproc.oid = elemtyp.typreceive ) AS t JOIN pg_namespace AS ns ON (ns.oid = typnamespace) WHERE typtype IN ('b', 'r', 'm', 'e', 'd') OR (typtype = 'c' AND relkind='c') OR (typtype = 'p' AND typname IN ('record', 'void', 'unknown')) OR (typtype = 'a' AND ( elemtyptype IN ('b', 'r', 'm', 'e', 'd') OR (elemtyptype = 'p' AND elemtypname IN ('record', 'void')) OR (elemtyptype = 'c' AND elemrelkind='c') )) ORDER BY CASE WHEN typtype IN ('b', 'e', 'p') THEN 0 WHEN typtype = 'r' THEN 1 WHEN typtype = 'm' THEN 2 WHEN typtype = 'c' THEN 3 WHEN typtype = 'd' AND elemtyptype <> 'a' THEN 4 WHEN typtype = 'a' THEN 5 WHEN typtype = 'd' AND elemtyptype = 'a' THEN 6 END
+) q
+WHERE q.typname NOT IN ('_geometry', '_union', '_variant', 'datemultirange', 'daterange', 'geometry', 'int4multirange',
+    'int4range', 'int8multirange', 'int8range', 'nummultirange', 'numrange', 'tsmultirange', 'tsrange',
+    'tstzmultirange', 'tstzrange', 'union', 'variant')
+ORDER BY q.typname::text COLLATE "C"
+----
+nspname	oid	typname	typtype	typnotnull	elemtypoid
+pg_catalog	aclitem[]	_aclitem	a	f	aclitem
+app	app.address[]	_address	a	f	app.address
+pg_catalog	bit[]	_bit	a	f	bit
+pg_catalog	boolean[]	_bool	a	f	boolean
+pg_catalog	character[]	_bpchar	a	f	character
+pg_catalog	bytea[]	_bytea	a	f	bytea
+information_schema	information_schema.cardinal_number[]	_cardinal_number	a	f	information_schema.cardinal_number
+pg_catalog	"char"[]	_char	a	f	"char"
+information_schema	information_schema.character_data[]	_character_data	a	f	information_schema.character_data
+pg_catalog	cid[]	_cid	a	f	cid
+pg_catalog	date[]	_date	a	f	date
+pg_catalog	real[]	_float4	a	f	real
+pg_catalog	double precision[]	_float8	a	f	double precision
+pg_catalog	inet[]	_inet	a	f	inet
+pg_catalog	smallint[]	_int2	a	f	smallint
+pg_catalog	int2vector[]	_int2vector	a	f	int2vector
+pg_catalog	integer[]	_int4	a	f	integer
+pg_catalog	bigint[]	_int8	a	f	bigint
+pg_catalog	interval[]	_interval	a	f	interval
+pg_catalog	json[]	_json	a	f	json
+pg_catalog	jsonb[]	_jsonb	a	f	jsonb
+app	app.mood[]	_mood	a	f	app.mood
+pg_catalog	name[]	_name	a	f	name
+pg_catalog	numeric[]	_numeric	a	f	numeric
+pg_catalog	oid[]	_oid	a	f	oid
+pg_catalog	oidvector[]	_oidvector	a	f	oidvector
+pg_catalog	pg_lsn[]	_pg_lsn	a	f	pg_lsn
+pg_catalog	record[]	_record	a	f	record
+pg_catalog	regclass[]	_regclass	a	f	regclass
+pg_catalog	regcollation[]	_regcollation	a	f	regcollation
+pg_catalog	regconfig[]	_regconfig	a	f	regconfig
+pg_catalog	regdictionary[]	_regdictionary	a	f	regdictionary
+pg_catalog	regnamespace[]	_regnamespace	a	f	regnamespace
+pg_catalog	regoper[]	_regoper	a	f	regoper
+pg_catalog	regoperator[]	_regoperator	a	f	regoperator
+pg_catalog	regproc[]	_regproc	a	f	regproc
+pg_catalog	regprocedure[]	_regprocedure	a	f	regprocedure
+pg_catalog	regrole[]	_regrole	a	f	regrole
+pg_catalog	regtype[]	_regtype	a	f	regtype
+information_schema	information_schema.sql_identifier[]	_sql_identifier	a	f	information_schema.sql_identifier
+pg_catalog	text[]	_text	a	f	text
+pg_catalog	tid[]	_tid	a	f	tid
+pg_catalog	time without time zone[]	_time	a	f	time without time zone
+information_schema	information_schema.time_stamp[]	_time_stamp	a	f	information_schema.time_stamp
+pg_catalog	timestamp without time zone[]	_timestamp	a	f	timestamp without time zone
+pg_catalog	timestamp with time zone[]	_timestamptz	a	f	timestamp with time zone
+pg_catalog	time with time zone[]	_timetz	a	f	time with time zone
+pg_catalog	tsquery[]	_tsquery	a	f	tsquery
+pg_catalog	uuid[]	_uuid	a	f	uuid
+pg_catalog	bit varying[]	_varbit	a	f	bit varying
+pg_catalog	character varying[]	_varchar	a	f	character varying
+pg_catalog	xid[]	_xid	a	f	xid
+pg_catalog	xid8[]	_xid8	a	f	xid8
+information_schema	information_schema.yes_or_no[]	_yes_or_no	a	f	information_schema.yes_or_no
+pg_catalog	aclitem	aclitem	b	f	NULL
+app	app.address	address	c	f	NULL
+pg_catalog	bit	bit	b	f	NULL
+pg_catalog	boolean	bool	b	f	NULL
+pg_catalog	character	bpchar	b	f	NULL
+pg_catalog	bytea	bytea	b	f	NULL
+information_schema	information_schema.cardinal_number	cardinal_number	d	f	integer
+pg_catalog	"char"	char	b	f	NULL
+information_schema	information_schema.character_data	character_data	d	f	character varying
+pg_catalog	cid	cid	b	f	NULL
+pg_catalog	date	date	b	f	NULL
+pg_catalog	real	float4	b	f	NULL
+pg_catalog	double precision	float8	b	f	NULL
+pg_catalog	inet	inet	b	f	NULL
+pg_catalog	smallint	int2	b	f	NULL
+pg_catalog	int2vector	int2vector	b	f	NULL
+pg_catalog	integer	int4	b	f	NULL
+pg_catalog	bigint	int8	b	f	NULL
+pg_catalog	interval	interval	b	f	NULL
+pg_catalog	json	json	b	f	NULL
+pg_catalog	jsonb	jsonb	b	f	NULL
+app	app.mood	mood	e	f	NULL
+pg_catalog	name	name	b	f	NULL
+pg_catalog	numeric	numeric	b	f	NULL
+pg_catalog	oid	oid	b	f	NULL
+pg_catalog	oidvector	oidvector	b	f	NULL
+pg_catalog	pg_dependencies	pg_dependencies	b	f	NULL
+pg_catalog	pg_lsn	pg_lsn	b	f	NULL
+pg_catalog	pg_mcv_list	pg_mcv_list	b	f	NULL
+pg_catalog	pg_ndistinct	pg_ndistinct	b	f	NULL
+pg_catalog	pg_node_tree	pg_node_tree	b	f	NULL
+pg_catalog	record	record	p	f	NULL
+pg_catalog	regclass	regclass	b	f	NULL
+pg_catalog	regcollation	regcollation	b	f	NULL
+pg_catalog	regconfig	regconfig	b	f	NULL
+pg_catalog	regdictionary	regdictionary	b	f	NULL
+pg_catalog	regnamespace	regnamespace	b	f	NULL
+pg_catalog	regoper	regoper	b	f	NULL
+pg_catalog	regoperator	regoperator	b	f	NULL
+pg_catalog	regproc	regproc	b	f	NULL
+pg_catalog	regprocedure	regprocedure	b	f	NULL
+pg_catalog	regrole	regrole	b	f	NULL
+pg_catalog	regtype	regtype	b	f	NULL
+information_schema	information_schema.sql_identifier	sql_identifier	d	f	name
+pg_catalog	text	text	b	f	NULL
+pg_catalog	tid	tid	b	f	NULL
+pg_catalog	time without time zone	time	b	f	NULL
+information_schema	information_schema.time_stamp	time_stamp	d	f	timestamp with time zone
+pg_catalog	timestamp without time zone	timestamp	b	f	NULL
+pg_catalog	timestamp with time zone	timestamptz	b	f	NULL
+pg_catalog	time with time zone	timetz	b	f	NULL
+pg_catalog	tsquery	tsquery	b	f	NULL
+pg_catalog	unknown	unknown	p	f	NULL
+pg_catalog	uuid	uuid	b	f	NULL
+pg_catalog	bit varying	varbit	b	f	NULL
+pg_catalog	character varying	varchar	b	f	NULL
+pg_catalog	void	void	p	f	NULL
+pg_catalog	xid	xid	b	f	NULL
+pg_catalog	xid8	xid8	b	f	NULL
+information_schema	information_schema.yes_or_no	yes_or_no	d	f	character varying
+
+
 skipif serenedb
 query
 SELECT q.nspname, q.oid::regtype::text AS oid, q.typname, q.typtype, q.typnotnull,
@@ -8110,19 +8797,7 @@ nspname	oid	typname	typtype	typnotnull	elemtypoid
 pg_catalog	geometry[]	_geometry	a	f	geometry
 pg_catalog	union[]	_union	a	f	union
 pg_catalog	variant[]	_variant	a	f	variant
-pg_catalog	datemultirange	datemultirange	m	f	NULL
-pg_catalog	daterange	daterange	r	f	NULL
 pg_catalog	geometry	geometry	b	f	NULL
-pg_catalog	int4multirange	int4multirange	m	f	NULL
-pg_catalog	int4range	int4range	r	f	NULL
-pg_catalog	int8multirange	int8multirange	m	f	NULL
-pg_catalog	int8range	int8range	r	f	NULL
-pg_catalog	nummultirange	nummultirange	m	f	NULL
-pg_catalog	numrange	numrange	r	f	NULL
-pg_catalog	tsmultirange	tsmultirange	m	f	NULL
-pg_catalog	tsrange	tsrange	r	f	NULL
-pg_catalog	tstzmultirange	tstzmultirange	m	f	NULL
-pg_catalog	tstzrange	tstzrange	r	f	NULL
 pg_catalog	union	union	b	f	NULL
 pg_catalog	variant	variant	b	f	NULL
 
@@ -8673,6 +9348,7 @@ oid	?column?	nspname	typname
 23	t	pg_catalog	int4
 
 
+skipif serenedb
 query
 SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
 select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type b on b.oid = a.typelem where a.typcategory = 'A' group by b.oid, b.typarray order by b.oid
@@ -8989,6 +9665,293 @@ xid8	xid8[]
 xml	xml[]
 
 
+onlyif serenedb
+query
+SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
+select b.oid, b.typarray from pg_catalog.pg_type a left join pg_catalog.pg_type b on b.oid = a.typelem where a.typcategory = 'A' group by b.oid, b.typarray order by b.oid
+) q
+WHERE q.oid::regtype::text NOT IN ('geometry', 'information_schema."columns"', 'information_schema.columns', 'union',
+    'variant')
+ORDER BY q.oid::regtype::text COLLATE "C"
+----
+oid	typarray
+"char"	"char"[]
+aclitem	aclitem[]
+active_customers	active_customers[]
+app.address	app.address[]
+app.all_types	app.all_types[]
+app.child_tab	app.child_tab[]
+app.json_tab	app.json_tab[]
+app.mood	app.mood[]
+app.order_totals	app.order_totals[]
+app.unique_tab	app.unique_tab[]
+bigint	bigint[]
+bit	bit[]
+bit varying	bit varying[]
+boolean	boolean[]
+bytea	bytea[]
+character	character[]
+character varying	character varying[]
+cid	cid[]
+cstring	cstring[]
+customers	customers[]
+date	date[]
+double precision	double precision[]
+inet	inet[]
+information_schema._pg_foreign_data_wrappers	information_schema._pg_foreign_data_wrappers[]
+information_schema._pg_foreign_servers	information_schema._pg_foreign_servers[]
+information_schema._pg_foreign_table_columns	information_schema._pg_foreign_table_columns[]
+information_schema._pg_foreign_tables	information_schema._pg_foreign_tables[]
+information_schema._pg_user_mappings	information_schema._pg_user_mappings[]
+information_schema.administrable_role_authorizations	information_schema.administrable_role_authorizations[]
+information_schema.applicable_roles	information_schema.applicable_roles[]
+information_schema.attributes	information_schema.attributes[]
+information_schema.cardinal_number	information_schema.cardinal_number[]
+information_schema.character_data	information_schema.character_data[]
+information_schema.character_sets	information_schema.character_sets[]
+information_schema.check_constraint_routine_usage	information_schema.check_constraint_routine_usage[]
+information_schema.check_constraints	information_schema.check_constraints[]
+information_schema.collation_character_set_applicability	information_schema.collation_character_set_applicability[]
+information_schema.collations	information_schema.collations[]
+information_schema.column_column_usage	information_schema.column_column_usage[]
+information_schema.column_domain_usage	information_schema.column_domain_usage[]
+information_schema.column_options	information_schema.column_options[]
+information_schema.column_privileges	information_schema.column_privileges[]
+information_schema.column_udt_usage	information_schema.column_udt_usage[]
+information_schema.constraint_column_usage	information_schema.constraint_column_usage[]
+information_schema.constraint_table_usage	information_schema.constraint_table_usage[]
+information_schema.data_type_privileges	information_schema.data_type_privileges[]
+information_schema.domain_constraints	information_schema.domain_constraints[]
+information_schema.domain_udt_usage	information_schema.domain_udt_usage[]
+information_schema.domains	information_schema.domains[]
+information_schema.element_types	information_schema.element_types[]
+information_schema.enabled_roles	information_schema.enabled_roles[]
+information_schema.foreign_data_wrapper_options	information_schema.foreign_data_wrapper_options[]
+information_schema.foreign_data_wrappers	information_schema.foreign_data_wrappers[]
+information_schema.foreign_server_options	information_schema.foreign_server_options[]
+information_schema.foreign_servers	information_schema.foreign_servers[]
+information_schema.foreign_table_options	information_schema.foreign_table_options[]
+information_schema.foreign_tables	information_schema.foreign_tables[]
+information_schema.information_schema_catalog_name	information_schema.information_schema_catalog_name[]
+information_schema.key_column_usage	information_schema.key_column_usage[]
+information_schema.parameters	information_schema.parameters[]
+information_schema.referential_constraints	information_schema.referential_constraints[]
+information_schema.role_column_grants	information_schema.role_column_grants[]
+information_schema.role_routine_grants	information_schema.role_routine_grants[]
+information_schema.role_table_grants	information_schema.role_table_grants[]
+information_schema.role_udt_grants	information_schema.role_udt_grants[]
+information_schema.role_usage_grants	information_schema.role_usage_grants[]
+information_schema.routine_column_usage	information_schema.routine_column_usage[]
+information_schema.routine_privileges	information_schema.routine_privileges[]
+information_schema.routine_routine_usage	information_schema.routine_routine_usage[]
+information_schema.routine_sequence_usage	information_schema.routine_sequence_usage[]
+information_schema.routine_table_usage	information_schema.routine_table_usage[]
+information_schema.routines	information_schema.routines[]
+information_schema.schemata	information_schema.schemata[]
+information_schema.sequences	information_schema.sequences[]
+information_schema.sql_features	information_schema.sql_features[]
+information_schema.sql_identifier	information_schema.sql_identifier[]
+information_schema.sql_implementation_info	information_schema.sql_implementation_info[]
+information_schema.sql_parts	information_schema.sql_parts[]
+information_schema.sql_sizing	information_schema.sql_sizing[]
+information_schema.table_constraints	information_schema.table_constraints[]
+information_schema.table_privileges	information_schema.table_privileges[]
+information_schema.tables	information_schema.tables[]
+information_schema.time_stamp	information_schema.time_stamp[]
+information_schema.transforms	information_schema.transforms[]
+information_schema.triggered_update_columns	information_schema.triggered_update_columns[]
+information_schema.triggers	information_schema.triggers[]
+information_schema.udt_privileges	information_schema.udt_privileges[]
+information_schema.usage_privileges	information_schema.usage_privileges[]
+information_schema.user_defined_types	information_schema.user_defined_types[]
+information_schema.user_mapping_options	information_schema.user_mapping_options[]
+information_schema.user_mappings	information_schema.user_mappings[]
+information_schema.view_column_usage	information_schema.view_column_usage[]
+information_schema.view_routine_usage	information_schema.view_routine_usage[]
+information_schema.view_table_usage	information_schema.view_table_usage[]
+information_schema.views	information_schema.views[]
+information_schema.yes_or_no	information_schema.yes_or_no[]
+int2vector	int2vector[]
+integer	integer[]
+interval	interval[]
+json	json[]
+jsonb	jsonb[]
+name	name[]
+numeric	numeric[]
+oid	oid[]
+oidvector	oidvector[]
+order_items	order_items[]
+orders	orders[]
+pg_aggregate	pg_aggregate[]
+pg_aios	pg_aios[]
+pg_am	pg_am[]
+pg_amop	pg_amop[]
+pg_amproc	pg_amproc[]
+pg_attrdef	pg_attrdef[]
+pg_attribute	pg_attribute[]
+pg_auth_members	pg_auth_members[]
+pg_authid	pg_authid[]
+pg_available_extension_versions	pg_available_extension_versions[]
+pg_available_extensions	pg_available_extensions[]
+pg_backend_memory_contexts	pg_backend_memory_contexts[]
+pg_cast	pg_cast[]
+pg_class	pg_class[]
+pg_collation	pg_collation[]
+pg_config	pg_config[]
+pg_constraint	pg_constraint[]
+pg_conversion	pg_conversion[]
+pg_cursors	pg_cursors[]
+pg_database	pg_database[]
+pg_db_role_setting	pg_db_role_setting[]
+pg_default_acl	pg_default_acl[]
+pg_depend	pg_depend[]
+pg_description	pg_description[]
+pg_enum	pg_enum[]
+pg_event_trigger	pg_event_trigger[]
+pg_extension	pg_extension[]
+pg_file_settings	pg_file_settings[]
+pg_foreign_data_wrapper	pg_foreign_data_wrapper[]
+pg_foreign_server	pg_foreign_server[]
+pg_foreign_table	pg_foreign_table[]
+pg_group	pg_group[]
+pg_hba_file_rules	pg_hba_file_rules[]
+pg_ident_file_mappings	pg_ident_file_mappings[]
+pg_index	pg_index[]
+pg_indexes	pg_indexes[]
+pg_inherits	pg_inherits[]
+pg_init_privs	pg_init_privs[]
+pg_language	pg_language[]
+pg_largeobject	pg_largeobject[]
+pg_largeobject_metadata	pg_largeobject_metadata[]
+pg_locks	pg_locks[]
+pg_lsn	pg_lsn[]
+pg_matviews	pg_matviews[]
+pg_namespace	pg_namespace[]
+pg_opclass	pg_opclass[]
+pg_operator	pg_operator[]
+pg_opfamily	pg_opfamily[]
+pg_parameter_acl	pg_parameter_acl[]
+pg_partitioned_table	pg_partitioned_table[]
+pg_policies	pg_policies[]
+pg_policy	pg_policy[]
+pg_prepared_statements	pg_prepared_statements[]
+pg_prepared_xacts	pg_prepared_xacts[]
+pg_proc	pg_proc[]
+pg_publication	pg_publication[]
+pg_publication_namespace	pg_publication_namespace[]
+pg_publication_rel	pg_publication_rel[]
+pg_publication_tables	pg_publication_tables[]
+pg_range	pg_range[]
+pg_replication_origin	pg_replication_origin[]
+pg_replication_origin_status	pg_replication_origin_status[]
+pg_replication_slots	pg_replication_slots[]
+pg_rewrite	pg_rewrite[]
+pg_roles	pg_roles[]
+pg_rules	pg_rules[]
+pg_seclabel	pg_seclabel[]
+pg_seclabels	pg_seclabels[]
+pg_sequence	pg_sequence[]
+pg_sequences	pg_sequences[]
+pg_settings	pg_settings[]
+pg_shadow	pg_shadow[]
+pg_shdepend	pg_shdepend[]
+pg_shdescription	pg_shdescription[]
+pg_shmem_allocations	pg_shmem_allocations[]
+pg_shmem_allocations_numa	pg_shmem_allocations_numa[]
+pg_shseclabel	pg_shseclabel[]
+pg_stat_activity	pg_stat_activity[]
+pg_stat_all_indexes	pg_stat_all_indexes[]
+pg_stat_all_tables	pg_stat_all_tables[]
+pg_stat_archiver	pg_stat_archiver[]
+pg_stat_bgwriter	pg_stat_bgwriter[]
+pg_stat_checkpointer	pg_stat_checkpointer[]
+pg_stat_database	pg_stat_database[]
+pg_stat_database_conflicts	pg_stat_database_conflicts[]
+pg_stat_gssapi	pg_stat_gssapi[]
+pg_stat_io	pg_stat_io[]
+pg_stat_progress_analyze	pg_stat_progress_analyze[]
+pg_stat_progress_basebackup	pg_stat_progress_basebackup[]
+pg_stat_progress_cluster	pg_stat_progress_cluster[]
+pg_stat_progress_copy	pg_stat_progress_copy[]
+pg_stat_progress_create_index	pg_stat_progress_create_index[]
+pg_stat_progress_vacuum	pg_stat_progress_vacuum[]
+pg_stat_recovery_prefetch	pg_stat_recovery_prefetch[]
+pg_stat_replication	pg_stat_replication[]
+pg_stat_replication_slots	pg_stat_replication_slots[]
+pg_stat_slru	pg_stat_slru[]
+pg_stat_ssl	pg_stat_ssl[]
+pg_stat_subscription	pg_stat_subscription[]
+pg_stat_subscription_stats	pg_stat_subscription_stats[]
+pg_stat_sys_indexes	pg_stat_sys_indexes[]
+pg_stat_sys_tables	pg_stat_sys_tables[]
+pg_stat_user_functions	pg_stat_user_functions[]
+pg_stat_user_indexes	pg_stat_user_indexes[]
+pg_stat_user_tables	pg_stat_user_tables[]
+pg_stat_wal	pg_stat_wal[]
+pg_stat_wal_receiver	pg_stat_wal_receiver[]
+pg_stat_xact_all_tables	pg_stat_xact_all_tables[]
+pg_stat_xact_sys_tables	pg_stat_xact_sys_tables[]
+pg_stat_xact_user_functions	pg_stat_xact_user_functions[]
+pg_stat_xact_user_tables	pg_stat_xact_user_tables[]
+pg_statio_all_indexes	pg_statio_all_indexes[]
+pg_statio_all_sequences	pg_statio_all_sequences[]
+pg_statio_all_tables	pg_statio_all_tables[]
+pg_statio_sys_indexes	pg_statio_sys_indexes[]
+pg_statio_sys_sequences	pg_statio_sys_sequences[]
+pg_statio_sys_tables	pg_statio_sys_tables[]
+pg_statio_user_indexes	pg_statio_user_indexes[]
+pg_statio_user_sequences	pg_statio_user_sequences[]
+pg_statio_user_tables	pg_statio_user_tables[]
+pg_statistic	pg_statistic[]
+pg_statistic_ext	pg_statistic_ext[]
+pg_statistic_ext_data	pg_statistic_ext_data[]
+pg_stats	pg_stats[]
+pg_stats_ext	pg_stats_ext[]
+pg_stats_ext_exprs	pg_stats_ext_exprs[]
+pg_subscription	pg_subscription[]
+pg_subscription_rel	pg_subscription_rel[]
+pg_tables	pg_tables[]
+pg_tablespace	pg_tablespace[]
+pg_timezone_abbrevs	pg_timezone_abbrevs[]
+pg_timezone_names	pg_timezone_names[]
+pg_transform	pg_transform[]
+pg_trigger	pg_trigger[]
+pg_ts_config	pg_ts_config[]
+pg_ts_config_map	pg_ts_config_map[]
+pg_ts_dict	pg_ts_dict[]
+pg_ts_parser	pg_ts_parser[]
+pg_ts_template	pg_ts_template[]
+pg_type	pg_type[]
+pg_user	pg_user[]
+pg_user_mapping	pg_user_mapping[]
+pg_user_mappings	pg_user_mappings[]
+pg_views	pg_views[]
+pg_wait_events	pg_wait_events[]
+real	real[]
+regclass	regclass[]
+regcollation	regcollation[]
+regconfig	regconfig[]
+regdictionary	regdictionary[]
+regnamespace	regnamespace[]
+regoper	regoper[]
+regoperator	regoperator[]
+regproc	regproc[]
+regprocedure	regprocedure[]
+regrole	regrole[]
+regtype	regtype[]
+smallint	smallint[]
+text	text[]
+tid	tid[]
+time with time zone	time with time zone[]
+time without time zone	time without time zone[]
+timestamp with time zone	timestamp with time zone[]
+timestamp without time zone	timestamp without time zone[]
+tsquery	tsquery[]
+uuid	uuid[]
+xid	xid[]
+xid8	xid8[]
+
+
 skipif serenedb
 query
 SELECT q.oid::regtype::text AS oid, q.typarray::regtype::text AS typarray FROM (
@@ -9239,6 +10202,7 @@ orders_amount_desc_idx	CREATE INDEX orders_amount_desc_idx ON public.orders USIN
 orders_customer_idx	CREATE INDEX orders_customer_idx ON public.orders USING btree (customer_id)
 
 
+skipif serenedb
 query
 SELECT q.oid::regtype::text AS oid, q.typname, q.typelem::regtype::text AS typelem, q.typdelim,
   (q.typinput)::text AS typinput, q.rngsubtype, q.typtype, q.typbasetype FROM (
@@ -9580,6 +10544,314 @@ timestamp with time zone	timestamptz	-	,	timestamptz_in	NULL	b	0
 information_schema.yes_or_no	yes_or_no	-	,	domain_in	NULL	d	1043
 
 
+onlyif serenedb
+query
+SELECT q.oid::regtype::text AS oid, q.typname, q.typelem::regtype::text AS typelem, q.typdelim,
+  (q.typinput)::text AS typinput, q.rngsubtype, q.typtype, q.typbasetype FROM (
+SELECT t.oid, t.typname, t.typelem, t.typdelim, t.typinput, r.rngsubtype, t.typtype, t.typbasetype FROM pg_type as t LEFT JOIN pg_range as r ON oid = rngtypid WHERE t.typname IN ('int2', 'int4', 'int8', 'oid', 'float4', 'float8', 'numeric', 'bool', 'timestamp', 'timestamptz') OR t.typtype IN ('r', 'e', 'd') OR t.typinput = 'array_in(cstring,oid,integer)'::regprocedure OR t.typelem != 0
+) q
+WHERE q.typname NOT IN ('_columns', '_geometry', '_union', '_variant', 'daterange', 'int4range', 'int8range', 'numrange',
+    'tsrange', 'tstzrange')
+ORDER BY q.typname::text COLLATE "C"
+----
+oid	typname	typelem	typdelim	typinput	rngsubtype	typtype	typbasetype
+information_schema._pg_foreign_data_wrappers[]	__pg_foreign_data_wrappers	information_schema._pg_foreign_data_wrappers	,	array_in	NULL	b	0
+information_schema._pg_foreign_servers[]	__pg_foreign_servers	information_schema._pg_foreign_servers	,	array_in	NULL	b	0
+information_schema._pg_foreign_table_columns[]	__pg_foreign_table_columns	information_schema._pg_foreign_table_columns	,	array_in	NULL	b	0
+information_schema._pg_foreign_tables[]	__pg_foreign_tables	information_schema._pg_foreign_tables	,	array_in	NULL	b	0
+information_schema._pg_user_mappings[]	__pg_user_mappings	information_schema._pg_user_mappings	,	array_in	NULL	b	0
+aclitem[]	_aclitem	aclitem	,	array_in	NULL	b	0
+active_customers[]	_active_customers	active_customers	,	array_in	NULL	b	0
+app.address[]	_address	app.address	,	array_in	NULL	b	0
+information_schema.administrable_role_authorizations[]	_administrable_role_authorizations	information_schema.administrable_role_authorizations	,	array_in	NULL	b	0
+app.all_types[]	_all_types	app.all_types	,	array_in	NULL	b	0
+information_schema.applicable_roles[]	_applicable_roles	information_schema.applicable_roles	,	array_in	NULL	b	0
+information_schema.attributes[]	_attributes	information_schema.attributes	,	array_in	NULL	b	0
+bit[]	_bit	bit	,	array_in	NULL	b	0
+boolean[]	_bool	boolean	,	array_in	NULL	b	0
+character[]	_bpchar	character	,	array_in	NULL	b	0
+bytea[]	_bytea	bytea	,	array_in	NULL	b	0
+information_schema.cardinal_number[]	_cardinal_number	information_schema.cardinal_number	,	array_in	NULL	b	0
+"char"[]	_char	"char"	,	array_in	NULL	b	0
+information_schema.character_data[]	_character_data	information_schema.character_data	,	array_in	NULL	b	0
+information_schema.character_sets[]	_character_sets	information_schema.character_sets	,	array_in	NULL	b	0
+information_schema.check_constraint_routine_usage[]	_check_constraint_routine_usage	information_schema.check_constraint_routine_usage	,	array_in	NULL	b	0
+information_schema.check_constraints[]	_check_constraints	information_schema.check_constraints	,	array_in	NULL	b	0
+app.child_tab[]	_child_tab	app.child_tab	,	array_in	NULL	b	0
+cid[]	_cid	cid	,	array_in	NULL	b	0
+information_schema.collation_character_set_applicability[]	_collation_character_set_applicability	information_schema.collation_character_set_applicability	,	array_in	NULL	b	0
+information_schema.collations[]	_collations	information_schema.collations	,	array_in	NULL	b	0
+information_schema.column_column_usage[]	_column_column_usage	information_schema.column_column_usage	,	array_in	NULL	b	0
+information_schema.column_domain_usage[]	_column_domain_usage	information_schema.column_domain_usage	,	array_in	NULL	b	0
+information_schema.column_options[]	_column_options	information_schema.column_options	,	array_in	NULL	b	0
+information_schema.column_privileges[]	_column_privileges	information_schema.column_privileges	,	array_in	NULL	b	0
+information_schema.column_udt_usage[]	_column_udt_usage	information_schema.column_udt_usage	,	array_in	NULL	b	0
+information_schema.constraint_column_usage[]	_constraint_column_usage	information_schema.constraint_column_usage	,	array_in	NULL	b	0
+information_schema.constraint_table_usage[]	_constraint_table_usage	information_schema.constraint_table_usage	,	array_in	NULL	b	0
+cstring[]	_cstring	cstring	,	array_in	NULL	b	0
+customers[]	_customers	customers	,	array_in	NULL	b	0
+information_schema.data_type_privileges[]	_data_type_privileges	information_schema.data_type_privileges	,	array_in	NULL	b	0
+date[]	_date	date	,	array_in	NULL	b	0
+information_schema.domain_constraints[]	_domain_constraints	information_schema.domain_constraints	,	array_in	NULL	b	0
+information_schema.domain_udt_usage[]	_domain_udt_usage	information_schema.domain_udt_usage	,	array_in	NULL	b	0
+information_schema.domains[]	_domains	information_schema.domains	,	array_in	NULL	b	0
+information_schema.element_types[]	_element_types	information_schema.element_types	,	array_in	NULL	b	0
+information_schema.enabled_roles[]	_enabled_roles	information_schema.enabled_roles	,	array_in	NULL	b	0
+real[]	_float4	real	,	array_in	NULL	b	0
+double precision[]	_float8	double precision	,	array_in	NULL	b	0
+information_schema.foreign_data_wrapper_options[]	_foreign_data_wrapper_options	information_schema.foreign_data_wrapper_options	,	array_in	NULL	b	0
+information_schema.foreign_data_wrappers[]	_foreign_data_wrappers	information_schema.foreign_data_wrappers	,	array_in	NULL	b	0
+information_schema.foreign_server_options[]	_foreign_server_options	information_schema.foreign_server_options	,	array_in	NULL	b	0
+information_schema.foreign_servers[]	_foreign_servers	information_schema.foreign_servers	,	array_in	NULL	b	0
+information_schema.foreign_table_options[]	_foreign_table_options	information_schema.foreign_table_options	,	array_in	NULL	b	0
+information_schema.foreign_tables[]	_foreign_tables	information_schema.foreign_tables	,	array_in	NULL	b	0
+inet[]	_inet	inet	,	array_in	NULL	b	0
+information_schema.information_schema_catalog_name[]	_information_schema_catalog_name	information_schema.information_schema_catalog_name	,	array_in	NULL	b	0
+smallint[]	_int2	smallint	,	array_in	NULL	b	0
+int2vector[]	_int2vector	int2vector	,	array_in	NULL	b	0
+integer[]	_int4	integer	,	array_in	NULL	b	0
+bigint[]	_int8	bigint	,	array_in	NULL	b	0
+interval[]	_interval	interval	,	array_in	NULL	b	0
+json[]	_json	json	,	array_in	NULL	b	0
+app.json_tab[]	_json_tab	app.json_tab	,	array_in	NULL	b	0
+jsonb[]	_jsonb	jsonb	,	array_in	NULL	b	0
+information_schema.key_column_usage[]	_key_column_usage	information_schema.key_column_usage	,	array_in	NULL	b	0
+app.mood[]	_mood	app.mood	,	array_in	NULL	b	0
+name[]	_name	name	,	array_in	NULL	b	0
+numeric[]	_numeric	numeric	,	array_in	NULL	b	0
+oid[]	_oid	oid	,	array_in	NULL	b	0
+oidvector[]	_oidvector	oidvector	,	array_in	NULL	b	0
+order_items[]	_order_items	order_items	,	array_in	NULL	b	0
+app.order_totals[]	_order_totals	app.order_totals	,	array_in	NULL	b	0
+orders[]	_orders	orders	,	array_in	NULL	b	0
+information_schema.parameters[]	_parameters	information_schema.parameters	,	array_in	NULL	b	0
+pg_aggregate[]	_pg_aggregate	pg_aggregate	,	array_in	NULL	b	0
+pg_aios[]	_pg_aios	pg_aios	,	array_in	NULL	b	0
+pg_am[]	_pg_am	pg_am	,	array_in	NULL	b	0
+pg_amop[]	_pg_amop	pg_amop	,	array_in	NULL	b	0
+pg_amproc[]	_pg_amproc	pg_amproc	,	array_in	NULL	b	0
+pg_attrdef[]	_pg_attrdef	pg_attrdef	,	array_in	NULL	b	0
+pg_attribute[]	_pg_attribute	pg_attribute	,	array_in	NULL	b	0
+pg_auth_members[]	_pg_auth_members	pg_auth_members	,	array_in	NULL	b	0
+pg_authid[]	_pg_authid	pg_authid	,	array_in	NULL	b	0
+pg_available_extension_versions[]	_pg_available_extension_versions	pg_available_extension_versions	,	array_in	NULL	b	0
+pg_available_extensions[]	_pg_available_extensions	pg_available_extensions	,	array_in	NULL	b	0
+pg_backend_memory_contexts[]	_pg_backend_memory_contexts	pg_backend_memory_contexts	,	array_in	NULL	b	0
+pg_cast[]	_pg_cast	pg_cast	,	array_in	NULL	b	0
+pg_class[]	_pg_class	pg_class	,	array_in	NULL	b	0
+pg_collation[]	_pg_collation	pg_collation	,	array_in	NULL	b	0
+pg_config[]	_pg_config	pg_config	,	array_in	NULL	b	0
+pg_constraint[]	_pg_constraint	pg_constraint	,	array_in	NULL	b	0
+pg_conversion[]	_pg_conversion	pg_conversion	,	array_in	NULL	b	0
+pg_cursors[]	_pg_cursors	pg_cursors	,	array_in	NULL	b	0
+pg_database[]	_pg_database	pg_database	,	array_in	NULL	b	0
+pg_db_role_setting[]	_pg_db_role_setting	pg_db_role_setting	,	array_in	NULL	b	0
+pg_default_acl[]	_pg_default_acl	pg_default_acl	,	array_in	NULL	b	0
+pg_depend[]	_pg_depend	pg_depend	,	array_in	NULL	b	0
+pg_description[]	_pg_description	pg_description	,	array_in	NULL	b	0
+pg_enum[]	_pg_enum	pg_enum	,	array_in	NULL	b	0
+pg_event_trigger[]	_pg_event_trigger	pg_event_trigger	,	array_in	NULL	b	0
+pg_extension[]	_pg_extension	pg_extension	,	array_in	NULL	b	0
+pg_file_settings[]	_pg_file_settings	pg_file_settings	,	array_in	NULL	b	0
+pg_foreign_data_wrapper[]	_pg_foreign_data_wrapper	pg_foreign_data_wrapper	,	array_in	NULL	b	0
+pg_foreign_server[]	_pg_foreign_server	pg_foreign_server	,	array_in	NULL	b	0
+pg_foreign_table[]	_pg_foreign_table	pg_foreign_table	,	array_in	NULL	b	0
+pg_group[]	_pg_group	pg_group	,	array_in	NULL	b	0
+pg_hba_file_rules[]	_pg_hba_file_rules	pg_hba_file_rules	,	array_in	NULL	b	0
+pg_ident_file_mappings[]	_pg_ident_file_mappings	pg_ident_file_mappings	,	array_in	NULL	b	0
+pg_index[]	_pg_index	pg_index	,	array_in	NULL	b	0
+pg_indexes[]	_pg_indexes	pg_indexes	,	array_in	NULL	b	0
+pg_inherits[]	_pg_inherits	pg_inherits	,	array_in	NULL	b	0
+pg_init_privs[]	_pg_init_privs	pg_init_privs	,	array_in	NULL	b	0
+pg_language[]	_pg_language	pg_language	,	array_in	NULL	b	0
+pg_largeobject[]	_pg_largeobject	pg_largeobject	,	array_in	NULL	b	0
+pg_largeobject_metadata[]	_pg_largeobject_metadata	pg_largeobject_metadata	,	array_in	NULL	b	0
+pg_locks[]	_pg_locks	pg_locks	,	array_in	NULL	b	0
+pg_lsn[]	_pg_lsn	pg_lsn	,	array_in	NULL	b	0
+pg_matviews[]	_pg_matviews	pg_matviews	,	array_in	NULL	b	0
+pg_namespace[]	_pg_namespace	pg_namespace	,	array_in	NULL	b	0
+pg_opclass[]	_pg_opclass	pg_opclass	,	array_in	NULL	b	0
+pg_operator[]	_pg_operator	pg_operator	,	array_in	NULL	b	0
+pg_opfamily[]	_pg_opfamily	pg_opfamily	,	array_in	NULL	b	0
+pg_parameter_acl[]	_pg_parameter_acl	pg_parameter_acl	,	array_in	NULL	b	0
+pg_partitioned_table[]	_pg_partitioned_table	pg_partitioned_table	,	array_in	NULL	b	0
+pg_policies[]	_pg_policies	pg_policies	,	array_in	NULL	b	0
+pg_policy[]	_pg_policy	pg_policy	,	array_in	NULL	b	0
+pg_prepared_statements[]	_pg_prepared_statements	pg_prepared_statements	,	array_in	NULL	b	0
+pg_prepared_xacts[]	_pg_prepared_xacts	pg_prepared_xacts	,	array_in	NULL	b	0
+pg_proc[]	_pg_proc	pg_proc	,	array_in	NULL	b	0
+pg_publication[]	_pg_publication	pg_publication	,	array_in	NULL	b	0
+pg_publication_namespace[]	_pg_publication_namespace	pg_publication_namespace	,	array_in	NULL	b	0
+pg_publication_rel[]	_pg_publication_rel	pg_publication_rel	,	array_in	NULL	b	0
+pg_publication_tables[]	_pg_publication_tables	pg_publication_tables	,	array_in	NULL	b	0
+pg_range[]	_pg_range	pg_range	,	array_in	NULL	b	0
+pg_replication_origin[]	_pg_replication_origin	pg_replication_origin	,	array_in	NULL	b	0
+pg_replication_origin_status[]	_pg_replication_origin_status	pg_replication_origin_status	,	array_in	NULL	b	0
+pg_replication_slots[]	_pg_replication_slots	pg_replication_slots	,	array_in	NULL	b	0
+pg_rewrite[]	_pg_rewrite	pg_rewrite	,	array_in	NULL	b	0
+pg_roles[]	_pg_roles	pg_roles	,	array_in	NULL	b	0
+pg_rules[]	_pg_rules	pg_rules	,	array_in	NULL	b	0
+pg_seclabel[]	_pg_seclabel	pg_seclabel	,	array_in	NULL	b	0
+pg_seclabels[]	_pg_seclabels	pg_seclabels	,	array_in	NULL	b	0
+pg_sequence[]	_pg_sequence	pg_sequence	,	array_in	NULL	b	0
+pg_sequences[]	_pg_sequences	pg_sequences	,	array_in	NULL	b	0
+pg_settings[]	_pg_settings	pg_settings	,	array_in	NULL	b	0
+pg_shadow[]	_pg_shadow	pg_shadow	,	array_in	NULL	b	0
+pg_shdepend[]	_pg_shdepend	pg_shdepend	,	array_in	NULL	b	0
+pg_shdescription[]	_pg_shdescription	pg_shdescription	,	array_in	NULL	b	0
+pg_shmem_allocations[]	_pg_shmem_allocations	pg_shmem_allocations	,	array_in	NULL	b	0
+pg_shmem_allocations_numa[]	_pg_shmem_allocations_numa	pg_shmem_allocations_numa	,	array_in	NULL	b	0
+pg_shseclabel[]	_pg_shseclabel	pg_shseclabel	,	array_in	NULL	b	0
+pg_stat_activity[]	_pg_stat_activity	pg_stat_activity	,	array_in	NULL	b	0
+pg_stat_all_indexes[]	_pg_stat_all_indexes	pg_stat_all_indexes	,	array_in	NULL	b	0
+pg_stat_all_tables[]	_pg_stat_all_tables	pg_stat_all_tables	,	array_in	NULL	b	0
+pg_stat_archiver[]	_pg_stat_archiver	pg_stat_archiver	,	array_in	NULL	b	0
+pg_stat_bgwriter[]	_pg_stat_bgwriter	pg_stat_bgwriter	,	array_in	NULL	b	0
+pg_stat_checkpointer[]	_pg_stat_checkpointer	pg_stat_checkpointer	,	array_in	NULL	b	0
+pg_stat_database[]	_pg_stat_database	pg_stat_database	,	array_in	NULL	b	0
+pg_stat_database_conflicts[]	_pg_stat_database_conflicts	pg_stat_database_conflicts	,	array_in	NULL	b	0
+pg_stat_gssapi[]	_pg_stat_gssapi	pg_stat_gssapi	,	array_in	NULL	b	0
+pg_stat_io[]	_pg_stat_io	pg_stat_io	,	array_in	NULL	b	0
+pg_stat_progress_analyze[]	_pg_stat_progress_analyze	pg_stat_progress_analyze	,	array_in	NULL	b	0
+pg_stat_progress_basebackup[]	_pg_stat_progress_basebackup	pg_stat_progress_basebackup	,	array_in	NULL	b	0
+pg_stat_progress_cluster[]	_pg_stat_progress_cluster	pg_stat_progress_cluster	,	array_in	NULL	b	0
+pg_stat_progress_copy[]	_pg_stat_progress_copy	pg_stat_progress_copy	,	array_in	NULL	b	0
+pg_stat_progress_create_index[]	_pg_stat_progress_create_index	pg_stat_progress_create_index	,	array_in	NULL	b	0
+pg_stat_progress_vacuum[]	_pg_stat_progress_vacuum	pg_stat_progress_vacuum	,	array_in	NULL	b	0
+pg_stat_recovery_prefetch[]	_pg_stat_recovery_prefetch	pg_stat_recovery_prefetch	,	array_in	NULL	b	0
+pg_stat_replication[]	_pg_stat_replication	pg_stat_replication	,	array_in	NULL	b	0
+pg_stat_replication_slots[]	_pg_stat_replication_slots	pg_stat_replication_slots	,	array_in	NULL	b	0
+pg_stat_slru[]	_pg_stat_slru	pg_stat_slru	,	array_in	NULL	b	0
+pg_stat_ssl[]	_pg_stat_ssl	pg_stat_ssl	,	array_in	NULL	b	0
+pg_stat_subscription[]	_pg_stat_subscription	pg_stat_subscription	,	array_in	NULL	b	0
+pg_stat_subscription_stats[]	_pg_stat_subscription_stats	pg_stat_subscription_stats	,	array_in	NULL	b	0
+pg_stat_sys_indexes[]	_pg_stat_sys_indexes	pg_stat_sys_indexes	,	array_in	NULL	b	0
+pg_stat_sys_tables[]	_pg_stat_sys_tables	pg_stat_sys_tables	,	array_in	NULL	b	0
+pg_stat_user_functions[]	_pg_stat_user_functions	pg_stat_user_functions	,	array_in	NULL	b	0
+pg_stat_user_indexes[]	_pg_stat_user_indexes	pg_stat_user_indexes	,	array_in	NULL	b	0
+pg_stat_user_tables[]	_pg_stat_user_tables	pg_stat_user_tables	,	array_in	NULL	b	0
+pg_stat_wal[]	_pg_stat_wal	pg_stat_wal	,	array_in	NULL	b	0
+pg_stat_wal_receiver[]	_pg_stat_wal_receiver	pg_stat_wal_receiver	,	array_in	NULL	b	0
+pg_stat_xact_all_tables[]	_pg_stat_xact_all_tables	pg_stat_xact_all_tables	,	array_in	NULL	b	0
+pg_stat_xact_sys_tables[]	_pg_stat_xact_sys_tables	pg_stat_xact_sys_tables	,	array_in	NULL	b	0
+pg_stat_xact_user_functions[]	_pg_stat_xact_user_functions	pg_stat_xact_user_functions	,	array_in	NULL	b	0
+pg_stat_xact_user_tables[]	_pg_stat_xact_user_tables	pg_stat_xact_user_tables	,	array_in	NULL	b	0
+pg_statio_all_indexes[]	_pg_statio_all_indexes	pg_statio_all_indexes	,	array_in	NULL	b	0
+pg_statio_all_sequences[]	_pg_statio_all_sequences	pg_statio_all_sequences	,	array_in	NULL	b	0
+pg_statio_all_tables[]	_pg_statio_all_tables	pg_statio_all_tables	,	array_in	NULL	b	0
+pg_statio_sys_indexes[]	_pg_statio_sys_indexes	pg_statio_sys_indexes	,	array_in	NULL	b	0
+pg_statio_sys_sequences[]	_pg_statio_sys_sequences	pg_statio_sys_sequences	,	array_in	NULL	b	0
+pg_statio_sys_tables[]	_pg_statio_sys_tables	pg_statio_sys_tables	,	array_in	NULL	b	0
+pg_statio_user_indexes[]	_pg_statio_user_indexes	pg_statio_user_indexes	,	array_in	NULL	b	0
+pg_statio_user_sequences[]	_pg_statio_user_sequences	pg_statio_user_sequences	,	array_in	NULL	b	0
+pg_statio_user_tables[]	_pg_statio_user_tables	pg_statio_user_tables	,	array_in	NULL	b	0
+pg_statistic[]	_pg_statistic	pg_statistic	,	array_in	NULL	b	0
+pg_statistic_ext[]	_pg_statistic_ext	pg_statistic_ext	,	array_in	NULL	b	0
+pg_statistic_ext_data[]	_pg_statistic_ext_data	pg_statistic_ext_data	,	array_in	NULL	b	0
+pg_stats[]	_pg_stats	pg_stats	,	array_in	NULL	b	0
+pg_stats_ext[]	_pg_stats_ext	pg_stats_ext	,	array_in	NULL	b	0
+pg_stats_ext_exprs[]	_pg_stats_ext_exprs	pg_stats_ext_exprs	,	array_in	NULL	b	0
+pg_subscription[]	_pg_subscription	pg_subscription	,	array_in	NULL	b	0
+pg_subscription_rel[]	_pg_subscription_rel	pg_subscription_rel	,	array_in	NULL	b	0
+pg_tables[]	_pg_tables	pg_tables	,	array_in	NULL	b	0
+pg_tablespace[]	_pg_tablespace	pg_tablespace	,	array_in	NULL	b	0
+pg_timezone_abbrevs[]	_pg_timezone_abbrevs	pg_timezone_abbrevs	,	array_in	NULL	b	0
+pg_timezone_names[]	_pg_timezone_names	pg_timezone_names	,	array_in	NULL	b	0
+pg_transform[]	_pg_transform	pg_transform	,	array_in	NULL	b	0
+pg_trigger[]	_pg_trigger	pg_trigger	,	array_in	NULL	b	0
+pg_ts_config[]	_pg_ts_config	pg_ts_config	,	array_in	NULL	b	0
+pg_ts_config_map[]	_pg_ts_config_map	pg_ts_config_map	,	array_in	NULL	b	0
+pg_ts_dict[]	_pg_ts_dict	pg_ts_dict	,	array_in	NULL	b	0
+pg_ts_parser[]	_pg_ts_parser	pg_ts_parser	,	array_in	NULL	b	0
+pg_ts_template[]	_pg_ts_template	pg_ts_template	,	array_in	NULL	b	0
+pg_type[]	_pg_type	pg_type	,	array_in	NULL	b	0
+pg_user[]	_pg_user	pg_user	,	array_in	NULL	b	0
+pg_user_mapping[]	_pg_user_mapping	pg_user_mapping	,	array_in	NULL	b	0
+pg_user_mappings[]	_pg_user_mappings	pg_user_mappings	,	array_in	NULL	b	0
+pg_views[]	_pg_views	pg_views	,	array_in	NULL	b	0
+pg_wait_events[]	_pg_wait_events	pg_wait_events	,	array_in	NULL	b	0
+record[]	_record	record	,	array_in	NULL	p	0
+information_schema.referential_constraints[]	_referential_constraints	information_schema.referential_constraints	,	array_in	NULL	b	0
+regclass[]	_regclass	regclass	,	array_in	NULL	b	0
+regcollation[]	_regcollation	regcollation	,	array_in	NULL	b	0
+regconfig[]	_regconfig	regconfig	,	array_in	NULL	b	0
+regdictionary[]	_regdictionary	regdictionary	,	array_in	NULL	b	0
+regnamespace[]	_regnamespace	regnamespace	,	array_in	NULL	b	0
+regoper[]	_regoper	regoper	,	array_in	NULL	b	0
+regoperator[]	_regoperator	regoperator	,	array_in	NULL	b	0
+regproc[]	_regproc	regproc	,	array_in	NULL	b	0
+regprocedure[]	_regprocedure	regprocedure	,	array_in	NULL	b	0
+regrole[]	_regrole	regrole	,	array_in	NULL	b	0
+regtype[]	_regtype	regtype	,	array_in	NULL	b	0
+information_schema.role_column_grants[]	_role_column_grants	information_schema.role_column_grants	,	array_in	NULL	b	0
+information_schema.role_routine_grants[]	_role_routine_grants	information_schema.role_routine_grants	,	array_in	NULL	b	0
+information_schema.role_table_grants[]	_role_table_grants	information_schema.role_table_grants	,	array_in	NULL	b	0
+information_schema.role_udt_grants[]	_role_udt_grants	information_schema.role_udt_grants	,	array_in	NULL	b	0
+information_schema.role_usage_grants[]	_role_usage_grants	information_schema.role_usage_grants	,	array_in	NULL	b	0
+information_schema.routine_column_usage[]	_routine_column_usage	information_schema.routine_column_usage	,	array_in	NULL	b	0
+information_schema.routine_privileges[]	_routine_privileges	information_schema.routine_privileges	,	array_in	NULL	b	0
+information_schema.routine_routine_usage[]	_routine_routine_usage	information_schema.routine_routine_usage	,	array_in	NULL	b	0
+information_schema.routine_sequence_usage[]	_routine_sequence_usage	information_schema.routine_sequence_usage	,	array_in	NULL	b	0
+information_schema.routine_table_usage[]	_routine_table_usage	information_schema.routine_table_usage	,	array_in	NULL	b	0
+information_schema.routines[]	_routines	information_schema.routines	,	array_in	NULL	b	0
+information_schema.schemata[]	_schemata	information_schema.schemata	,	array_in	NULL	b	0
+information_schema.sequences[]	_sequences	information_schema.sequences	,	array_in	NULL	b	0
+information_schema.sql_features[]	_sql_features	information_schema.sql_features	,	array_in	NULL	b	0
+information_schema.sql_identifier[]	_sql_identifier	information_schema.sql_identifier	,	array_in	NULL	b	0
+information_schema.sql_implementation_info[]	_sql_implementation_info	information_schema.sql_implementation_info	,	array_in	NULL	b	0
+information_schema.sql_parts[]	_sql_parts	information_schema.sql_parts	,	array_in	NULL	b	0
+information_schema.sql_sizing[]	_sql_sizing	information_schema.sql_sizing	,	array_in	NULL	b	0
+information_schema.table_constraints[]	_table_constraints	information_schema.table_constraints	,	array_in	NULL	b	0
+information_schema.table_privileges[]	_table_privileges	information_schema.table_privileges	,	array_in	NULL	b	0
+information_schema.tables[]	_tables	information_schema.tables	,	array_in	NULL	b	0
+text[]	_text	text	,	array_in	NULL	b	0
+tid[]	_tid	tid	,	array_in	NULL	b	0
+time without time zone[]	_time	time without time zone	,	array_in	NULL	b	0
+information_schema.time_stamp[]	_time_stamp	information_schema.time_stamp	,	array_in	NULL	b	0
+timestamp without time zone[]	_timestamp	timestamp without time zone	,	array_in	NULL	b	0
+timestamp with time zone[]	_timestamptz	timestamp with time zone	,	array_in	NULL	b	0
+time with time zone[]	_timetz	time with time zone	,	array_in	NULL	b	0
+information_schema.transforms[]	_transforms	information_schema.transforms	,	array_in	NULL	b	0
+information_schema.triggered_update_columns[]	_triggered_update_columns	information_schema.triggered_update_columns	,	array_in	NULL	b	0
+information_schema.triggers[]	_triggers	information_schema.triggers	,	array_in	NULL	b	0
+tsquery[]	_tsquery	tsquery	,	array_in	NULL	b	0
+information_schema.udt_privileges[]	_udt_privileges	information_schema.udt_privileges	,	array_in	NULL	b	0
+app.unique_tab[]	_unique_tab	app.unique_tab	,	array_in	NULL	b	0
+information_schema.usage_privileges[]	_usage_privileges	information_schema.usage_privileges	,	array_in	NULL	b	0
+information_schema.user_defined_types[]	_user_defined_types	information_schema.user_defined_types	,	array_in	NULL	b	0
+information_schema.user_mapping_options[]	_user_mapping_options	information_schema.user_mapping_options	,	array_in	NULL	b	0
+information_schema.user_mappings[]	_user_mappings	information_schema.user_mappings	,	array_in	NULL	b	0
+uuid[]	_uuid	uuid	,	array_in	NULL	b	0
+bit varying[]	_varbit	bit varying	,	array_in	NULL	b	0
+character varying[]	_varchar	character varying	,	array_in	NULL	b	0
+information_schema.view_column_usage[]	_view_column_usage	information_schema.view_column_usage	,	array_in	NULL	b	0
+information_schema.view_routine_usage[]	_view_routine_usage	information_schema.view_routine_usage	,	array_in	NULL	b	0
+information_schema.view_table_usage[]	_view_table_usage	information_schema.view_table_usage	,	array_in	NULL	b	0
+information_schema.views[]	_views	information_schema.views	,	array_in	NULL	b	0
+xid[]	_xid	xid	,	array_in	NULL	b	0
+xid8[]	_xid8	xid8	,	array_in	NULL	b	0
+information_schema.yes_or_no[]	_yes_or_no	information_schema.yes_or_no	,	array_in	NULL	b	0
+boolean	bool	-	,	boolin	NULL	b	0
+information_schema.cardinal_number	cardinal_number	-	,	domain_in	NULL	d	23
+information_schema.character_data	character_data	-	,	domain_in	NULL	d	1043
+real	float4	-	,	float4in	NULL	b	0
+double precision	float8	-	,	float8in	NULL	b	0
+smallint	int2	-	,	int2in	NULL	b	0
+int2vector	int2vector	smallint	,	int2vectorin	NULL	b	0
+integer	int4	-	,	int4in	NULL	b	0
+bigint	int8	-	,	int8in	NULL	b	0
+app.mood	mood	-	,	enum_in	NULL	e	0
+name	name	"char"	,	namein	NULL	b	0
+numeric	numeric	-	,	numeric_in	NULL	b	0
+oid	oid	-	,	oidin	NULL	b	0
+oidvector	oidvector	oid	,	oidvectorin	NULL	b	0
+information_schema.sql_identifier	sql_identifier	-	,	domain_in	NULL	d	19
+information_schema.time_stamp	time_stamp	-	,	domain_in	NULL	d	1184
+timestamp without time zone	timestamp	-	,	timestamp_in	NULL	b	0
+timestamp with time zone	timestamptz	-	,	timestamptz_in	NULL	b	0
+information_schema.yes_or_no	yes_or_no	-	,	domain_in	NULL	d	1043
+
+
 skipif serenedb
 query
 SELECT q.oid::regtype::text AS oid, q.typname, q.typelem::regtype::text AS typelem, q.typdelim,
@@ -9615,12 +10887,6 @@ information_schema."columns"[]	_columns	information_schema."columns"	,	array_in	
 geometry[]	_geometry	geometry	,	array_in	NULL	b	0
 union[]	_union	union	,	array_in	NULL	b	0
 variant[]	_variant	variant	,	array_in	NULL	b	0
-daterange	daterange	-	,	range_in	NULL	r	0
-int4range	int4range	-	,	range_in	NULL	r	0
-int8range	int8range	-	,	range_in	NULL	r	0
-numrange	numrange	-	,	range_in	NULL	r	0
-tsrange	tsrange	-	,	range_in	NULL	r	0
-tstzrange	tstzrange	-	,	range_in	NULL	r	0
 
 
 query

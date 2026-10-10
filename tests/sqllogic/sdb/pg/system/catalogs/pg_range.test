@@ -71,15 +71,3 @@ WHERE t.typtype IN ('r', 'm')
 ORDER BY t.oid;
 ----
 oid	typname	typtype	typcategory	typarray	typinput
-3904	int4range	r	R	3905	range_in
-3906	numrange	r	R	3907	range_in
-3908	tsrange	r	R	3909	range_in
-3910	tstzrange	r	R	3911	range_in
-3912	daterange	r	R	3913	range_in
-3926	int8range	r	R	3927	range_in
-4451	int4multirange	m	R	6150	multirange_in
-4532	nummultirange	m	R	6151	multirange_in
-4533	tsmultirange	m	R	6152	multirange_in
-4534	tstzmultirange	m	R	6153	multirange_in
-4535	datemultirange	m	R	6155	multirange_in
-4536	int8multirange	m	R	6157	multirange_in

@@ -66,7 +66,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_publication              | 🟡            | Contains all publications created in the database. |
 | pg_publication_namespace    | 🟡            | Maps schemas to publications (many-to-many). |
 | pg_publication_rel          | 🟡            | Maps relations (tables) to publications (many-to-many). |
-| pg_range                    | 🟡            | Stores information about range types. |
+| pg_range                    | 🟡            | Stores information about range types. SereneDB has no range types. |
 | pg_replication_origin       | 🟡            | Contains replication origins shared across the cluster. |
 | pg_rewrite                  | 🟢            | Stores rewrite rules for tables and views. |
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
@@ -87,7 +87,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_ts_dict                  | 🟢            | Lists text search dictionaries (tokenizers). |
 | pg_ts_parser                | 🟡            | Contains text search parsers. |
 | pg_ts_template              | 🟡            | Stores text search templates. |
-| pg_type                     | 🟢            | Stores information about data types. |
+| pg_type                     | 🟢            | Stores information about data types. Of PostgreSQL's built-in types it lists those SereneDB supports; range and multirange, geometric, network address (`cidr`, `macaddr`), `money`, `xml`, `tsvector` and `jsonpath` types are absent, and so are the pseudo-types no SereneDB function uses. |
 | pg_user_mapping             | 🟡            | Contains user mappings for foreign data access. |
 
 ## System Views

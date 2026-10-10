@@ -22,6 +22,7 @@
 
 #include <string_view>
 #include <text_break_iterator.hpp>
+#include <type_traits>
 
 #include "iresearch/analysis/text/segment/fill.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -62,19 +63,25 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
 
   size_t MemoryUsage() const noexcept final { return 0; }
 
-  template<TokenLayout Layout, Accept A, bool KnownAscii>
-  bool DoFill(const duckdb::string_t& raw, TokenSink& sink) {
+  bool Scan(const duckdb::string_t& value, TokenSink& sink, TokenPoll& poll,
+            BlockTraits known) final {
+    return ScanPolled(*this, value, sink, poll, known);
+  }
+
+  template<TokenLayout Layout, Accept A, bool KnownAscii,
+           typename Poll = classify::NoPoll>
+  bool DoFill(const duckdb::string_t& raw, TokenSink& sink, Poll poll = {}) {
     if constexpr (S == Options::Separate::Word && KnownAscii) {
-      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw);
+      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw, poll);
       return true;
     } else {
-      return FillValue<Layout, A, KnownAscii>(sink, raw);
+      return FillValue<Layout, A, KnownAscii>(sink, raw, poll);
     }
   }
 
  private:
-  template<TokenLayout Layout, Accept A, bool KnownAscii>
-  bool FillValue(TokenSink& sink, const duckdb::string_t& value) {
+  template<TokenLayout Layout, Accept A, bool KnownAscii, typename Poll>
+  bool FillValue(TokenSink& sink, const duckdb::string_t& value, Poll poll) {
     const char* data = value.GetData();
     const uint32_t n = value.GetSize();
     if (n == 0) {
@@ -82,6 +89,8 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     }
     _break.SetText(data, n);
 
+    [[maybe_unused]] const auto due = BindPoll(poll, sink);
+    [[maybe_unused]] uint32_t polled = 0;
     uint32_t begin = 0;
     for (auto end = _break.Next(); end != duckdb::text::BreakIterator::DONE;
          end = _break.Next()) {
@@ -99,6 +108,14 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
                                                                  begin, stop);
       }
       begin = stop;
+      if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+        if (stop - polled >= classify::kPollBytes) {
+          polled = stop;
+          if (!due()) {
+            return true;
+          }
+        }
+      }
     }
     return true;
   }

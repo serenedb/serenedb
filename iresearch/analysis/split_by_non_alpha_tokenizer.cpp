@@ -28,19 +28,26 @@ Tokenizer::ptr SplitByNonAlphaTokenizer::Make(Options opts) {
   return std::make_unique<SplitByNonAlphaTokenizer>(opts);
 }
 
+bool SplitByNonAlphaTokenizer::Scan(const duckdb::string_t& value,
+                                    TokenSink& sink, TokenPoll& poll,
+                                    BlockTraits known) {
+  return ScanPolled(*this, value, sink, poll, known);
+}
+
 template<TokenLayout Layout, Case C, SplitByNonAlphaTokenizer::Options::Chars W,
-         bool KnownAscii>
-bool SplitByNonAlphaTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
+         bool KnownAscii, typename Poll>
+bool SplitByNonAlphaTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink,
+                                      Poll poll) {
   using Chars = Options::Chars;
   if constexpr (W == Chars::Ascii) {
-    words::SplitByNonAlphaFill<Layout, C, false>(raw, sink);
+    words::SplitByNonAlphaFill<Layout, C, false>(raw, sink, poll);
   } else if constexpr (W == Chars::AsciiBytes) {
-    words::SplitByNonAlphaFill<Layout, C, !KnownAscii>(raw, sink);
+    words::SplitByNonAlphaFill<Layout, C, !KnownAscii>(raw, sink, poll);
   } else if constexpr (W == Chars::Whitespace) {
-    words::SplitByNonSpaceFill<Layout, C, KnownAscii>(raw, sink);
+    words::SplitByNonSpaceFill<Layout, C, KnownAscii>(raw, sink, poll);
   } else {
     words::SplitByNonAlnumFill<Layout, C, W == Chars::Letters, KnownAscii>(
-      raw, sink);
+      raw, sink, poll);
   }
   return true;
 }

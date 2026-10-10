@@ -428,8 +428,10 @@ void PhraseCheck::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   }
 }
 
-bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out) {
+bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out,
+                        uint32_t anchors) {
   const auto values = Values(row);
+  _anchors = anchors;
   Start(_phrase->anchor.has_value());
   Analyze(values);
   if (Restart()) {
@@ -443,7 +445,7 @@ void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
     if (_done) {
       return;
     }
-    _analyzer.Analyze(*_tokenizer, value, *this);
+    _analyzer.Scan(*_tokenizer, value, *this);
   }
 }
 
@@ -497,20 +499,35 @@ void PhraseCheck::Start(bool anchored) {
 }
 
 void PhraseCheck::Consume(TokenBatch& batch, DocRuns) {
+  Take(batch);
+  _peeked = 0;
+  auto* anchor = std::get_if<Anchor>(&_state);
+  if (anchor && !_done && batch.count != 0) {
+    anchor->Carry(_phrase->anchor->left + _phrase->anchor->right);
+  }
+}
+
+bool PhraseCheck::Peek(TokenBatch& batch) {
+  Take(batch);
+  return !_done;
+}
+
+void PhraseCheck::Take(TokenBatch& batch) {
+  const auto from = std::exchange(_peeked, batch.count);
   const auto count = batch.count;
-  if (_done || count == 0) {
+  if (_done || from == count) {
     return;
   }
   if (_dense) {
-    std::iota(batch.pos, batch.pos + count, _last_pos + 1);
-    _last_pos += count;
+    std::iota(batch.pos + from, batch.pos + count, _last_pos + 1);
+    _last_pos += count - from;
   } else {
-    for (uint32_t i = 0; i != count; ++i) {
+    for (auto i = from; i != count; ++i) {
       batch.pos[i] += _value_base;
     }
     _last_pos = std::max(_last_pos, batch.pos[count - 1]);
   }
-  std::visit([&](auto& state) { Feed(state, batch); }, _state);
+  std::visit([&](auto& state) { Feed(state, batch, from); }, _state);
 }
 
 bool PhraseCheck::Restart() {
@@ -547,7 +564,7 @@ bool PhraseCheck::Counted(PhraseVerdict& out) const noexcept {
   return true;
 }
 
-void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch) {
+void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch, uint32_t from) {
   const auto& layout = *_phrase->anchor;
   anchor.batch_terms = batch.terms;
   anchor.batch_pos = batch.pos;
@@ -566,7 +583,7 @@ void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch) {
   }
   anchor.pending.resize(keep);
   const auto& word = *_phrase->slots[layout.slot].word;
-  for (uint32_t i = 0; i != batch.count; ++i) {
+  for (auto i = from; i != batch.count; ++i) {
     if (batch.terms[i] != word) {
       continue;
     }
@@ -584,7 +601,6 @@ void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch) {
       anchor.pending.push_back(at);
     }
   }
-  anchor.Carry(layout.left + layout.right);
 }
 
 bool PhraseCheck::Finish(Anchor&, PhraseVerdict& out) {
@@ -597,7 +613,7 @@ bool PhraseCheck::Hit(Anchor& anchor, size_t at) {
   if (const auto left = Ways<false>(anchor, slot, at)) {
     _freq += left * Ways<true>(anchor, slot, at);
   }
-  _done |= !_count && _freq != 0;
+  _done |= (!_count && _freq != 0) || (_anchors != 0 && --_anchors == 0);
   return _done;
 }
 
@@ -646,8 +662,9 @@ bool PhraseCheck::Over(Anchor& anchor) noexcept {
   return true;
 }
 
-void PhraseCheck::Feed(Automaton& automaton, const TokenBatch& batch) {
-  for (uint32_t i = 0; i != batch.count; ++i) {
+void PhraseCheck::Feed(Automaton& automaton, const TokenBatch& batch,
+                       uint32_t from) {
+  for (auto i = from; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
     if (pos != automaton.at) {
       Flush(automaton);
@@ -724,8 +741,9 @@ void PhraseCheck::Step(Automaton& automaton, uint64_t mask) {
   _freq += counts[layout.length - 1];
 }
 
-void PhraseCheck::Feed(Positions& positions, const TokenBatch& batch) {
-  for (uint32_t i = 0; i != batch.count; ++i) {
+void PhraseCheck::Feed(Positions& positions, const TokenBatch& batch,
+                       uint32_t from) {
+  for (auto i = from; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
     _phrase->ForEachSlot(batch.terms[i], [&](uint32_t slot) {
       auto& slot_positions = positions.slots[slot];

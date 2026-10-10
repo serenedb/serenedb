@@ -89,6 +89,10 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
     _gather.data[slot] = _freqs.data[_index];
   }
 
+  IRS_FORCE_INLINE uint32_t Freq() const noexcept {
+    return _freqs.data[_index];
+  }
+
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) {
     if (target <= _doc) [[unlikely]] {
       return _doc;

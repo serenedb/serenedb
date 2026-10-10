@@ -89,9 +89,17 @@ over their files.
   ellipsis, curly quotes) to ASCII, rejects `/tmp` in sqllogic tests and checks
   the license header. As a git hook it stashes unstaged changes, so in a
   checkout another session also edits, use `--files`.
-- The duckdb submodules and `duckdb_clickhouse`: `./scripts/format_duckdb.sh`
-  from the repo root -- clang-format 11.0.1 (in docker) over their changed
-  files, each with its own `.clang-format`.
+- The DuckDB family (the duckdb submodules, `database-connector`,
+  `duckdb_clickhouse`): `scripts/duckdb_family.sh`, which runs DuckDB's own
+  format.py, generators and Makefile targets with their pinned tools; `--help`
+  describes every mode. Never run a generator, format.py or clang-format there
+  by hand.
+  - `format` before every commit, and `format --check --range <a>..<b> <dir>`
+    before pushing a series: every commit, merges included, formatted on its
+    own.
+  - `regen` builds the duckdb fork's `regen:` commit, a DuckDB update's one or
+    a pull request's own, with DuckDB's generators in DuckDB's order;
+    `regen --check` proves it is current.
 
 ## Before writing tests
 

@@ -34,6 +34,8 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -43,6 +45,31 @@ namespace {
 constexpr uint32_t kPointHeapFetches = 1024;
 
 }  // namespace
+
+ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
+  : _query{filter.PrepareSegment(segment, {})} {
+  if (QueryBuilder::IsEmpty(*_query)) {
+    return;
+  }
+  auto node = _query->PlanFill({}, ScoreMergeType::Noop);
+  SDB_ASSERT(node);
+  if (auto* folded = node->Folded(); folded != nullptr) {
+    _set = std::make_unique<detail::LazyBitset>(std::move(*folded),
+                                                fill::DocsMask{nullptr});
+    return;
+  }
+  _set = std::make_unique<detail::LazyBitset>(
+    std::move(node), static_cast<doc_id_t>(segment.docs_count()),
+    fill::DocsMask{nullptr});
+}
+
+ColFilterLeaf::ColFilterLeaf(ColFilterLeaf&&) noexcept = default;
+ColFilterLeaf& ColFilterLeaf::operator=(ColFilterLeaf&&) noexcept = default;
+ColFilterLeaf::~ColFilterLeaf() = default;
+
+bool ColFilterLeaf::Contains(doc_id_t doc) {
+  return _set != nullptr && doc < _set->End() && _set->Contains(doc);
+}
 
 duckdb::TableFilterState& ColFilterStateCache::State(
   duckdb::ClientContext& context, const duckdb::TableFilter& filter) {
@@ -74,6 +101,18 @@ duckdb::DataChunk& ColFilterStateCache::Chunk(
       context, duckdb::vector<duckdb::LogicalType>{types.begin(), types.end()});
   }
   return *e.chunk;
+}
+
+std::span<ColFilterLeaf> ColFilterStateCache::Leaves(
+  const duckdb::TableFilter& filter, const SubReader& segment,
+  std::span<const std::shared_ptr<const Filter>> leaves) {
+  auto& e = Find(filter);
+  e.leaves.clear();
+  e.leaves.reserve(leaves.size());
+  for (const auto& leaf : leaves) {
+    e.leaves.emplace_back(*leaf, segment);
+  }
+  return e.leaves;
 }
 
 ColFilterStateCache::Entry& ColFilterStateCache::Find(
@@ -112,6 +151,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
                                               : irs::ColumnReader::ScanState{});
       }
       row.points.resize(row.readers.size());
+      row.leaves = spec.row_leaves;
       continue;
     }
     const auto* column = col_reader.Column(spec.field);
@@ -324,6 +364,15 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
         reader->GatherScatter(row.scans[j], anchor, sel, survivors, vector, 0);
       }
     }
+    for (size_t l = 0; l < row.leaves.size(); ++l) {
+      auto writer = duckdb::FlatVector::Writer<bool>(
+        chunk.data[row.readers.size() + l], survivors);
+      for (duckdb::idx_t k = 0; k < survivors; ++k) {
+        writer.WriteValue(row.leaves[l].Contains(
+          static_cast<doc_id_t>(anchor + sel.get_index(k)) +
+          doc_limits::min()));
+      }
+    }
     chunk.SetCardinality(survivors);
     auto& executor = *row.state->Cast<duckdb::ExpressionFilterState>().executor;
     const auto approved = executor.SelectExpression(chunk, _row_sel);
@@ -351,6 +400,12 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
           *_col_reader, *reader);
       }
       r.points[j]->FetchRow(row, vector, 0);
+    }
+    for (size_t l = 0; l < r.leaves.size(); ++l) {
+      auto writer =
+        duckdb::FlatVector::Writer<bool>(chunk.data[r.readers.size() + l], 1);
+      writer.WriteValue(
+        r.leaves[l].Contains(static_cast<doc_id_t>(row) + doc_limits::min()));
     }
     chunk.SetCardinality(1);
     auto& executor = *r.state->Cast<duckdb::ExpressionFilterState>().executor;

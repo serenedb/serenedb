@@ -39,6 +39,7 @@
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace duckdb {
@@ -47,6 +48,25 @@ class ClientContext;
 
 }  // namespace duckdb
 namespace irs {
+namespace detail {
+
+class LazyBitset;
+
+}  // namespace detail
+
+class ColFilterLeaf {
+ public:
+  ColFilterLeaf(const Filter& filter, const SubReader& segment);
+  ColFilterLeaf(ColFilterLeaf&&) noexcept;
+  ColFilterLeaf& operator=(ColFilterLeaf&&) noexcept;
+  ~ColFilterLeaf();
+
+  bool Contains(doc_id_t doc);
+
+ private:
+  QueryBuilder::ptr _query;
+  std::unique_ptr<detail::LazyBitset> _set;
+};
 
 struct ColFilterSpec {
   irs::field_id field;
@@ -78,6 +98,7 @@ struct ColFilterSpec {
   const duckdb::LogicalType* extract_type = nullptr;
   std::span<const irs::field_id> row_fields;
   std::span<const duckdb::LogicalType> row_types;
+  std::span<ColFilterLeaf> row_leaves;
 };
 
 // Per-worker cache of duckdb filter-evaluation state, keyed by the pushed
@@ -96,6 +117,9 @@ class ColFilterStateCache {
   duckdb::DataChunk& Chunk(duckdb::ClientContext& context,
                            const duckdb::TableFilter& filter,
                            std::span<const duckdb::LogicalType> types);
+  std::span<ColFilterLeaf> Leaves(
+    const duckdb::TableFilter& filter, const SubReader& segment,
+    std::span<const std::shared_ptr<const Filter>> leaves);
 
  private:
   struct Entry {
@@ -103,6 +127,7 @@ class ColFilterStateCache {
     duckdb::unique_ptr<duckdb::TableFilterState> state;
     std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
     std::unique_ptr<duckdb::DataChunk> chunk;
+    std::vector<ColFilterLeaf> leaves;
   };
 
   Entry& Find(const duckdb::TableFilter& filter);
@@ -291,6 +316,7 @@ class ColFilterChain {
     std::vector<const irs::ColumnReader*> readers;
     std::vector<irs::ColumnReader::ScanState> scans;
     std::vector<std::unique_ptr<irs::ColumnReader::PointReader>> points;
+    std::span<ColFilterLeaf> leaves;
   };
 
   duckdb::idx_t FilterRows(uint64_t anchor, duckdb::idx_t span,

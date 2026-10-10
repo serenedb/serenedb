@@ -133,7 +133,7 @@ Run Fill(Tokenizer& tokenizer, std::string_view value) {
 }
 
 Run Scan(Tokenizer& tokenizer, std::string_view value, size_t limit) {
-  irs::ValueAnalyzer analyzer;
+  irs::ScanAnalyzer analyzer;
   Collect out{limit, tokenizer.Traits().explicit_pos};
   if (!analyzer.Scan(tokenizer, tests::ToStringT(value), out)) {
     return {};

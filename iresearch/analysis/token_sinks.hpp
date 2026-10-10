@@ -224,6 +224,18 @@ class ValueAnalyzer {
     return true;
   }
 
+  size_t MemoryUsage() const noexcept { return sizeof(TokenSink); }
+
+ private:
+  TokenSink _writer;
+};
+
+class ScanAnalyzer {
+ public:
+  explicit ScanAnalyzer(
+    duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
+    : _writer{alloc} {}
+
   template<typename Consumer>
   IRS_FORCE_INLINE bool Scan(analysis::Tokenizer& tokenizer,
                              duckdb::string_t value, Consumer& out,

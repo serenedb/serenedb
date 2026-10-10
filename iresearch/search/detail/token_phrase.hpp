@@ -306,7 +306,7 @@ class PhraseCheck final : public TokenConsumer {
 
   const CompiledPhrase* _phrase;
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
-  ValueAnalyzer _analyzer;
+  ScanAnalyzer _analyzer;
   Rows _rows;
   std::variant<Anchor, Automaton, Positions> _state;
   bool _dense;

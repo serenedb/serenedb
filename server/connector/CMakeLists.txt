@@ -12,6 +12,8 @@ target_sources(
         inverted_index_bind.cpp
         search_filter_builder.cpp
         geo_filter_builder.cpp
+        curve_index.cpp
+        curve_filter_builder.cpp
         search_filter_printer.cpp
         duckdb_client_state.cpp
         scan/col_filter_verify.cpp

@@ -1,0 +1,42 @@
+control substitution on
+
+statement ok
+CREATE TABLE curve_metrics(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT);
+
+statement ok
+INSERT INTO curve_metrics VALUES
+ (1,0,0),
+ (2,100,100),
+ (3,NULL,NULL);
+
+statement ok
+CREATE INDEX curve_metrics_p ON curve_metrics USING inverted(id,(ROW(x,y)) curve(max_level=0)) INCLUDE(x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_metrics;
+
+statement ok
+SET enable_profiling = 'json';
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/curve_point.json';
+
+query
+SELECT max(id) FROM curve_metrics_p WHERE sdb_box_contains(ROW(x,y),ROW(-1,-1),ROW(1,1));
+----
+max
+1
+
+statement ok
+RESET enable_profiling;
+
+query
+SELECT max(CAST(j.atom AS BIGINT)) AS candidates
+FROM read_text('${__TEST_DIR__}/curve_point.json') f, json_tree(f.content) j
+WHERE j.key='rows_scanned';
+----
+candidates
+3
+
+statement ok
+DROP TABLE curve_metrics;

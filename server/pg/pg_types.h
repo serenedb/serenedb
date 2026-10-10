@@ -75,6 +75,7 @@ inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
 inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
 inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
 inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
+inline constexpr duckdb::idx_t kPgOpclassCurve = kMinSystem + 203;
 
 inline constexpr duckdb::idx_t kFirstSystemView = kMinSystem + 1000;
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;

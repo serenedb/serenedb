@@ -313,6 +313,7 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool units_exhausted = false;
   uint64_t rg_units = 0;
   uint64_t produced_rows = 0;
+  uint64_t candidate_rows = 0;
 
   void Classify(ScanGlobalState& g, uint32_t seg);
 };

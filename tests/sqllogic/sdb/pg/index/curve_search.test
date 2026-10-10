@@ -1,0 +1,376 @@
+statement ok
+CREATE TABLE curve_points(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, t TIMESTAMP);
+
+query
+SELECT opcname FROM pg_catalog.pg_opclass WHERE opcname = 'curve';
+----
+opcname
+curve
+
+query
+SELECT sdb_box_contains(NULL, ROW(0,0), ROW(1,1)) IS NULL AS n,
+ sdb_box_contains(ROW(NULL,1), ROW(0,0), ROW(1,1)) IS NULL AS component;
+----
+n	component
+t	t
+
+query
+SELECT sdb_box_contains(ROW(NULL,2), ROW(0,0), ROW(1,1)) AS outside,
+ sdb_box_contains(ROW(NULL,2), ROW(NULL,0), ROW(NULL,3)) AS partial;
+----
+outside	partial
+f	t
+
+statement ok
+INSERT INTO curve_points VALUES
+ (1, -5, -0.0, '2026-01-01'),
+ (2, 0, 0, '2026-01-02'),
+ (3, 5, 5, '2026-01-03'),
+ (4, 10, 10, '2026-01-04'),
+ (5, NULL, 5, '2026-01-03'),
+ (6, 5, NULL, '2026-01-03'),
+ (7, 9007199254740993, 5, '2026-01-03');
+
+statement ok
+CREATE INDEX curve_morton ON curve_points USING inverted(
+ id, (ROW(x, y, t)) curve(max_cells=16)) INCLUDE (x, y, t);
+
+statement ok
+CREATE INDEX curve_hilbert ON curve_points USING inverted(
+ id, (ROW(x, y, t)) curve(curve='hilbert', max_cells=1)) INCLUDE (x, y, t);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_points;
+
+query
+SELECT id FROM curve_morton WHERE sdb_box_contains(
+ ROW(x, y, t), ROW(0, 0::DOUBLE, TIMESTAMP '2026-01-01'),
+ ROW(5, 5::DOUBLE, TIMESTAMP '2026-01-03')) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM curve_hilbert WHERE sdb_box_contains(
+ ROW(x, y, t), ROW(0, 0::DOUBLE, TIMESTAMP '2026-01-01'),
+ ROW(5, 5::DOUBLE, TIMESTAMP '2026-01-03')) ORDER BY id;
+----
+ id
+2
+3
+
+query
+SELECT id FROM curve_morton WHERE sdb_box_contains(
+ ROW(x, y, t), ROW(9007199254740993::BIGINT, NULL, NULL),
+ ROW(9007199254740993::BIGINT, NULL, NULL));
+----
+id
+7
+
+query
+SELECT id FROM curve_hilbert WHERE sdb_box_contains(
+ ROW(x, y, t), ROW(NULL, 5::DOUBLE, NULL), ROW(NULL, 5::DOUBLE, NULL)) ORDER BY id;
+----
+id
+3
+5
+7
+
+query
+SELECT id FROM curve_morton WHERE NOT sdb_box_contains(
+ ROW(x, y, t), ROW(0, 0::DOUBLE, TIMESTAMP '2026-01-01'),
+ ROW(5, 5::DOUBLE, TIMESTAMP '2026-01-03')) ORDER BY id;
+----
+id
+1
+4
+7
+
+query
+SELECT count(*) AS n FROM curve_morton WHERE sdb_box_contains(
+ ROW(x, y, t), ROW(5, NULL, NULL), ROW(0, NULL, NULL));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM curve_morton WHERE
+ sdb_box_contains(ROW(x, y, t), ROW(-5, NULL, NULL), ROW(-5, NULL, NULL)) OR id=4;
+----
+n
+2
+
+query
+SELECT count(*) AS n FROM (
+ SELECT id FROM curve_morton WHERE sdb_box_contains(ROW(x,y,t),
+   ROW(-5, 0::DOUBLE, TIMESTAMP '2026-01-01'), ROW(5, 5::DOUBLE, TIMESTAMP '2026-01-03'))
+ EXCEPT
+ SELECT id FROM curve_points WHERE x BETWEEN -5 AND 5 AND y BETWEEN 0 AND 5
+   AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-03') differences;
+----
+n
+0
+
+statement ok
+PREPARE curve_query AS SELECT id FROM curve_morton WHERE
+ sdb_box_contains(ROW(x,y,t), ROW($1::BIGINT, NULL, NULL), ROW($2::BIGINT, NULL, NULL)) ORDER BY id;
+
+query
+EXECUTE curve_query(5, 10);
+----
+id
+3
+4
+6
+
+statement ok
+UPDATE curve_points SET x=4 WHERE id=4;
+
+statement ok
+DELETE FROM curve_points WHERE id=2;
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_points;
+
+query
+EXECUTE curve_query(0, 5);
+----
+id
+3
+4
+6
+
+query
+EXPLAIN SELECT id FROM curve_morton WHERE sdb_box_contains(ROW(x, y, t), ROW(0, NULL, NULL), ROW(5, NULL, NULL));
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────────╮
+│ Projections: #3                                                    │
+│ ~1 row                                                             │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ FILTER ─────────────────────────┴─────────────────────────────────╮
+│ Expression:                                                        │
+│ sdb_box_contains("row"(x, y, t), (0, NULL, NULL), (5, NULL, NULL)) │
+│ ~1 row                                                             │
+╰──────────────────────────────────┬─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────┴─────────────────────────────────╮
+│ Index: curve_morton                                                │
+│ Lookup: table                                                      │
+│ Projections: x (i), y (i), t (i), id (l)                           │
+│ ~6 rows                                                            │
+╰────────────────────────────────────────────────────────────────────╯
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted(x curve());
+----
+db error: ERROR: Column 'x': curve opclass requires a ROW of 2 to 8 integer, FLOAT, DOUBLE, DATE, TIMESTAMP or TIMESTAMPTZ coordinates, got BIGINT
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y)) curve(max_cells=0));
+----
+db error: ERROR: Column '"row"(x, y)': curve option 'max_cells' must be between 1 and 4096, got 0
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y)) curve(max_level=65));
+----
+db error: ERROR: Column '"row"(x, y)': curve option 'max_level' must be between 0 and 64, got 65
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y)) curve(max_level=NULL));
+----
+db error: ERROR: Column '"row"(x, y)': curve option 'max_level' must be between 0 and 64, got NULL
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y)) curve(curve='peano'));
+----
+db error: ERROR: Column '"row"(x, y)': curve option 'curve' must be one of: morton hilbert, got 'peano'
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y)) curve(level=3));
+----
+db error: ERROR: Column '"row"(x, y)': unknown curve option 'level'. Accepted options: curve (string: morton|hilbert, default morton), max_level (int 0-64, default 64), max_cells (int 1-4096, default 64), level_step (int 1-7, default 3)
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y,t)) curve(level_step=0));
+----
+db error: ERROR: Column '"row"(x, y, t)': curve option 'level_step' must be between 1 and 5, got 0
+
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((ROW(x,y,t)) curve(level_step=6));
+----
+db error: ERROR: Column '"row"(x, y, t)': curve option 'level_step' must be between 1 and 5, got 6
+
+
+statement error
+SELECT sdb_box_contains(ROW(1, 2), ROW(1.0::DOUBLE, 2), ROW(3, 4));
+----
+db error: ERROR: sdb_box_contains: bound DOUBLE does not match coordinate 1 of type INTEGER; cast the bound explicitly
+
+
+statement error
+SELECT sdb_box_contains(ROW(1, 2), ROW(1, 2, 3), ROW(3, 4, 5));
+----
+db error: ERROR: sdb_box_contains: bounds must be ROWs with 2 coordinates like the point TUPLE(INTEGER, INTEGER), got TUPLE(INTEGER, INTEGER, INTEGER)
+
+
+statement error
+SELECT sdb_box_contains(ROW('a', 2), ROW(1, 2), ROW(3, 4));
+----
+db error: ERROR: sdb_box_contains: the point must be a ROW of 2 to 8 integer, FLOAT, DOUBLE, DATE, TIMESTAMP or TIMESTAMPTZ coordinates, got TUPLE(VARCHAR, INTEGER)
+
+
+query
+SELECT sdb_box_contains(ROW(1::BIGINT, 2::DOUBLE), ROW(0, 0), ROW(5, 5)) AS promoted;
+----
+promoted
+t
+
+statement ok
+DEALLOCATE curve_query;
+
+statement ok
+DROP TABLE curve_points;
+
+statement ok
+CREATE TABLE curve_nullable(id INTEGER PRIMARY KEY, p STRUCT(x BIGINT, y DOUBLE));
+
+statement ok
+INSERT INTO curve_nullable VALUES (1, NULL), (2, ROW(NULL, 1)), (3, ROW(1, 1));
+
+statement ok
+CREATE INDEX curve_nullable_idx ON curve_nullable USING inverted(id, p curve());
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_nullable;
+
+query
+SELECT id FROM curve_nullable_idx WHERE p IS NULL;
+----
+id
+1
+
+query
+SELECT id FROM curve_nullable_idx WHERE p IS NOT NULL ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM curve_nullable_idx WHERE sdb_box_contains(p, ROW(0, 0::DOUBLE), ROW(2, 2::DOUBLE));
+----
+id
+3
+
+statement ok
+DROP TABLE curve_nullable;
+
+statement ok
+CREATE TABLE curve_nan(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE);
+
+statement ok
+INSERT INTO curve_nan VALUES (1, 1, 'NaN'), (2, 1, 'Infinity'), (3, 1, '-Infinity'), (4, 1, 0), (5, 1, -0.0);
+
+statement ok
+CREATE INDEX curve_nan_idx ON curve_nan USING inverted(id, (ROW(x, y)) curve()) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_nan;
+
+query
+SELECT id FROM curve_nan_idx WHERE sdb_box_contains(ROW(x, y), ROW(0, '-Infinity'::DOUBLE), ROW(2, 'Infinity'::DOUBLE)) ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+query
+SELECT id FROM curve_nan WHERE x BETWEEN 0 AND 2 AND y BETWEEN '-Infinity'::DOUBLE AND 'Infinity'::DOUBLE ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+query
+SELECT id FROM curve_nan_idx WHERE sdb_box_contains(ROW(x, y), ROW(0, 'NaN'::DOUBLE), ROW(2, 'NaN'::DOUBLE)) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM curve_nan_idx WHERE sdb_box_contains(ROW(x, y), ROW(0, 0), ROW(2, 0)) ORDER BY id;
+----
+id
+4
+5
+
+statement ok
+DROP TABLE curve_nan;
+
+statement ok
+CREATE TABLE curve_steps(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, z INTEGER);
+
+statement ok
+INSERT INTO curve_steps SELECT i, (i * 7919) % 1000, ((i * 104729) % 1000)::DOUBLE / 10, (i * 31) % 100 FROM range(2000) t(i);
+
+statement ok
+CREATE INDEX curve_steps_1 ON curve_steps USING inverted(id, (ROW(x, y, z)) curve(level_step=1)) INCLUDE (x, y, z);
+
+statement ok
+CREATE INDEX curve_steps_5 ON curve_steps USING inverted(id, (ROW(x, y, z)) curve(level_step=5, max_cells=8)) INCLUDE (x, y, z);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_steps;
+
+query
+SELECT
+ (SELECT count(*) FROM curve_steps_1 WHERE sdb_box_contains(ROW(x, y, z), ROW(100, 10, 20), ROW(400, 60, 70))) AS step1,
+ (SELECT count(*) FROM curve_steps_5 WHERE sdb_box_contains(ROW(x, y, z), ROW(100, 10, 20), ROW(400, 60, 70))) AS step5,
+ (SELECT count(*) FROM curve_steps WHERE x BETWEEN 100 AND 400 AND y BETWEEN 10 AND 60 AND z BETWEEN 20 AND 70) AS exact;
+----
+step1	step5	exact
+138	138	138
+
+statement ok
+DROP TABLE curve_steps;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY curve AS keyword();
+
+statement ok
+CREATE TABLE curve_shadow(id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+CREATE INDEX curve_shadow_idx ON curve_shadow USING inverted(id,body curve);
+
+statement error
+DROP TEXT SEARCH DICTIONARY curve;
+----
+db error: ERROR: Cannot drop entry "curve" because there are entries that depend on it.
+index "curve_shadow_idx" depends on tokenizer "curve".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement error
+CREATE INDEX curve_shadow_builtin ON curve_shadow USING inverted(body curve());
+----
+db error: ERROR: Column 'body': curve opclass requires a ROW of 2 to 8 integer, FLOAT, DOUBLE, DATE, TIMESTAMP or TIMESTAMPTZ coordinates, got VARCHAR
+
+
+statement ok
+DROP TABLE curve_shadow;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY curve;

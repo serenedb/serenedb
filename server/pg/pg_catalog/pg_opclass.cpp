@@ -67,6 +67,18 @@ MaterializedData SystemTableSnapshot<PgOpclass>::GetTableData() {
     .opckeytype = 0,
   });
 
+  values.push_back({
+    .oid = pg::kPgOpclassCurve,
+    .opcmethod = pg::kPgAmInverted,
+    .opcname = catalog::kCurveKind,
+    .opcnamespace = pg::kPgCatalogSchema,
+    .opcowner = pg::kRootUser,
+    .opcfamily = 0,
+    .opcintype = PgTypeOID::kRecord,
+    .opcdefault = false,
+    .opckeytype = 0,
+  });
+
   VisitEntries<catalog::TokenizerCatalogEntry>(
     _context, GetDatabase(),
     [&](const catalog::TokenizerCatalogEntry& tokenizer) {

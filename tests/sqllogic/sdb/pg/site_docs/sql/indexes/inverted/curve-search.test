@@ -1,0 +1,30 @@
+control substitution on
+
+# DOCS_TEST: points
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE measurements(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE);
+
+statement ok
+INSERT INTO measurements VALUES (1, 5, 10), (2, 50, 100);
+
+statement ok
+CREATE INDEX measurements_xy ON measurements USING inverted(
+  id, (ROW(x,y)) curve(max_cells=64)) INCLUDE (x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) measurements;
+
+query
+SELECT id FROM measurements_xy
+WHERE sdb_box_contains(ROW(x,y), ROW(0,0::DOUBLE), ROW(10,20::DOUBLE));
+----
+id
+1
+
+# DOCS_TEST_END
+
+statement ok
+DROP TABLE measurements;

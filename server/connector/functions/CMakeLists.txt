@@ -5,6 +5,7 @@ target_sources(
         catalog_introspect.cpp
         duckdb_aliases.cpp
         encode_key.cpp
+        curve.cpp
         es.cpp
         inout.cpp
         json.cpp

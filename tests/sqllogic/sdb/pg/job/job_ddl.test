@@ -15,6 +15,14 @@ DROP JOB IF EXISTS jd_nine;
 
 
 statement ok
+DROP JOB IF EXISTS jd_saturday;
+
+
+statement ok
+DROP TABLE IF EXISTS jd_spread_at;
+
+
+statement ok
 DROP JOB IF EXISTS jd_five;
 
 
@@ -297,6 +305,52 @@ FROM duckdb_jobs() WHERE job_name = 'jd_after_spread';
 ----
 spread
 t
+
+
+statement ok
+CREATE JOB jd_saturday EVERY 2 WEEKS OFFSET 5 DAYS 15 HOURS 10 MINUTES AS SELECT 1;
+
+
+query
+SELECT schedule FROM duckdb_jobs() WHERE job_name = 'jd_saturday';
+----
+schedule
+EVERY INTERVAL '14 days' OFFSET INTERVAL '5 days 15:10:00'
+
+
+query
+SELECT
+  extract(isodow FROM next_run AT TIME ZONE 'UTC') = 6
+    AND extract(hour FROM next_run AT TIME ZONE 'UTC') = 15
+    AND extract(minute FROM next_run AT TIME ZONE 'UTC') = 10
+    AND (((next_run AT TIME ZONE 'UTC')::DATE - DATE '1969-12-29') // 7) % 2 = 0 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_saturday';
+----
+aligned
+t
+
+
+statement ok
+CREATE TABLE jd_spread_at AS SELECT next_run FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+
+
+statement ok
+EXECUTE JOB jd_spread;
+
+
+query
+SELECT next_run = (SELECT next_run FROM jd_spread_at) AS steady FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+----
+steady
+t
+
+
+statement ok
+DROP TABLE jd_spread_at;
+
+
+statement ok
+DROP JOB jd_saturday;
 
 
 statement ok

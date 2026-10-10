@@ -58,7 +58,7 @@ EVERY 5 MONTHS                             -- when the month number since 1970-0
 EVERY 1 DAY OFFSET 2 HOURS RANDOMIZE FOR 1 HOUR  -- every day at a random time between 01:30 and 02:30
 ```
 
-`RANDOMIZE FOR spread` moves each run by a random amount within `spread`, centered on the scheduled time, so that many jobs on the same grid do not all start at once. The spread must be shorter than the interval.
+`RANDOMIZE FOR spread` moves each run by a pseudo-random amount within `spread`, centered on the scheduled time, so that many jobs on the same grid do not all start at once. The amount is fixed per job and per scheduled time, so `next_run` stays the same however often it is computed, and a manual `EXECUTE JOB` does not move it. The spread must be shorter than the interval.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_002" />
 

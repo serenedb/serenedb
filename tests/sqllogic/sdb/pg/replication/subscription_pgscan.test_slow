@@ -79,7 +79,7 @@ subname	worker_type
 rsub_basic	apply
 
 
-query
+query ok retry 120 backoff 250ms
 SELECT srsubstate, count(*) AS n FROM pg_subscription_rel GROUP BY srsubstate;
 ----
 srsubstate	n

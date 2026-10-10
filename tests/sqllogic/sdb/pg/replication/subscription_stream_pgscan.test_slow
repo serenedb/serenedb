@@ -105,7 +105,7 @@ n	copied
 1000	1000
 
 
-query
+query ok retry 120 backoff 250ms
 SELECT c.relname, r.srsubstate, r.srsublsn IS NOT NULL AS has_lsn FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid ORDER BY c.relname;
 ----
 relname	srsubstate	has_lsn

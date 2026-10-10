@@ -151,12 +151,16 @@ statement ok
 CALL postgres_execute('rcon_${__DATABASE__}', 'INSERT INTO rcon_multi VALUES (70, ''skipped'', 70)');
 
 
+statement ok
+CREATE TABLE rcon_target AS SELECT lsn FROM postgres_query('rcon_${__DATABASE__}', 'SELECT pg_current_wal_lsn()::text AS lsn');
+
+
 statement ok retry 20 backoff 250ms
-SELECT pg_replication_origin_advance('pg_' || s.oid, p.lsn) FROM pg_subscription s, postgres_query('rcon_${__DATABASE__}', 'SELECT pg_current_wal_lsn()::text AS lsn') p WHERE s.subname = 'rcon_sub';
+SELECT pg_replication_origin_advance('pg_' || s.oid, t.lsn) FROM pg_subscription s, rcon_target t WHERE s.subname = 'rcon_sub';
 
 
 query
-SELECT pg_replication_origin_progress('pg_' || s.oid, true) = p.lsn AS advanced FROM pg_subscription s, postgres_query('rcon_${__DATABASE__}', 'SELECT pg_current_wal_lsn()::text AS lsn') p WHERE s.subname = 'rcon_sub';
+SELECT pg_replication_origin_progress('pg_' || s.oid, true) = t.lsn AS advanced FROM pg_subscription s, rcon_target t WHERE s.subname = 'rcon_sub';
 ----
 advanced
 t

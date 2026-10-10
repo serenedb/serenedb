@@ -40,10 +40,17 @@
 
 namespace duckdb {
 
+class AttachedDatabase;
 class SQLStatement;
 class TableCatalogEntry;
 
 }  // namespace duckdb
+namespace sdb::catalog {
+
+class SereneDBCatalog;
+class SubscriptionCatalogEntry;
+
+}  // namespace sdb::catalog
 namespace sdb::replication {
 
 struct ReplicationTarget {
@@ -77,6 +84,7 @@ struct SyncTable {
   bool partitioned = false;
   bool generated = false;
   duckdb::idx_t owner = 0;
+  size_t relation = 0;
   duckdb::idx_t sync_id = 0;
 };
 
@@ -117,11 +125,15 @@ class SyncSession : public PublisherSession {
   void ApplyFailed(irs::pg::SqlErrorData error);
   duckdb::optional_ptr<duckdb::TableCatalogEntry> LookupTable(
     std::string_view schema, std::string_view table);
+  catalog::SereneDBCatalog& Catalog() const;
+  catalog::SubscriptionCatalogEntry* VisibleSubscription() const;
+  catalog::SubscriptionCatalogEntry& RequireSubscription() const;
   yaclib::Task<std::optional<int64_t>> RunPrepared(
     duckdb::PreparedStatement& prepared);
   void UseRole(duckdb::idx_t table_owner);
 
   ReplicationTarget _target;
+  duckdb::shared_ptr<duckdb::AttachedDatabase> _database;
   std::atomic<bool> _disable_requested{false};
   std::atomic<bool> _transient{false};
   irs::pg::SqlErrorData _apply_error;

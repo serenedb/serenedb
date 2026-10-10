@@ -405,9 +405,12 @@ yaclib::Task<bool> PublisherSession::Authenticate() {
           ok = false;
         }
         if (ok) {
-          network::pg::WriteSaslInitialResponse(
-            this->_send, network::pg::ScramClientSession::kMechanism,
-            scram.ClientFirst());
+          const auto first = scram.ClientFirst();
+          ok = first.has_value();
+          if (ok) {
+            network::pg::WriteSaslInitialResponse(
+              this->_send, network::pg::ScramClientSession::kMechanism, *first);
+          }
         }
         break;
       case kAuthSaslContinue: {

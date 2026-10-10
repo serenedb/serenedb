@@ -1794,15 +1794,27 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   CopyEodScanner scanner;
   bool eod = false;  // text marker seen: stop feeding, just drain to CopyDone
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  constexpr size_t kStage = 64 * 1024;
-  std::string stage;
+  constexpr size_t kBatchBytes = 64 * 1024;
+  std::vector<std::string_view> batch;
+  size_t batched = 0;
+  message::Chain retained;
+  this->_recv.RetainConsumed(&retained);
+  absl::Cleanup release_guard = [this] { this->_recv.RetainConsumed(nullptr); };
+  const auto stage = [&](std::string_view piece) {
+    if (!piece.empty()) {
+      batch.push_back(piece);
+      batched += piece.size();
+    }
+  };
   const auto flush = [&]() -> yaclib::Task<> {
-    if (!stage.empty() && !bridge.Aborted()) {
-      bridge.Publish(stage.data(), stage.size());
+    if (!batch.empty() && !bridge.Aborted()) {
+      bridge.Publish(batch);
       co_await bridge.Drained(*this->_ioexec);
       bridge.ResetDrained();
     }
-    stage.clear();
+    batch.clear();
+    batched = 0;
+    retained = {};
     co_return {};
   };
   for (;;) {
@@ -1836,22 +1848,24 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
       SDB_IF_FAILURE("copy_feeder_throw") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
-      if (!eod && !bridge.Aborted() && body < kStage &&
+      if (!eod && !bridge.Aborted() && body < kBatchBytes &&
           this->_recv.Front().size() >= body) {
         const std::string_view piece = this->_recv.Front().substr(0, body);
+        bool carried = false;
         if (is_text) {
           const auto scanned = scanner.Scan(piece);
-          stage.append(scanned.carry);
-          stage.append(scanned.data);
+          carried = !scanned.carry.empty();
+          stage(scanned.carry);
+          stage(scanned.data);
         } else {
-          stage.append(piece);
+          stage(piece);
         }
         this->_recv.Consume(body);
         if (is_text && scanner.Ended()) {
           co_await flush();
           eod = true;
           bridge.Finish();
-        } else if (stage.size() >= kStage) {
+        } else if (carried || batched >= kBatchBytes) {
           co_await flush();
         }
         continue;
@@ -1910,8 +1924,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                             type == PQ_MSG_NOTICE_RESPONSE))) {
       // The client's CopyFail carries its own failure text; PG echoes it,
       // reading it as a NUL-terminated string (truncate at the first NUL).
-      // In client mode the publisher reports a failed COPY TO STDOUT with an
-      // ErrorResponse and may interleave notices.
       std::string detail;
       detail.reserve(body);
       while (detail.size() < body) {

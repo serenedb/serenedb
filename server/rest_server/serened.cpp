@@ -80,8 +80,6 @@ int RunServer(int argc, char** argv) {
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
-    // Constructed after StartIoPool() (it needs the io pool); std::optional so
-    // its lifetime still brackets the DOWN sequence like the other features.
     std::optional<replication::SubscriptionEngine> subscriptions;
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency

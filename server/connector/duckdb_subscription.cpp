@@ -20,6 +20,7 @@
 
 #include "connector/duckdb_subscription.h"
 
+#include <algorithm>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/function.hpp>
 #include <duckdb/function/pragma_function.hpp>
@@ -38,6 +39,7 @@ namespace {
 std::vector<std::string> Publications(const duckdb::vector<duckdb::Value>& args,
                                       size_t first) {
   std::vector<std::string> result;
+  result.reserve(args.size() - std::min(first, args.size()));
   for (size_t i = first; i < args.size(); ++i) {
     result.push_back(args[i].GetValue<std::string>());
   }
@@ -47,11 +49,10 @@ std::vector<std::string> Publications(const duckdb::vector<duckdb::Value>& args,
 void CreateSubscriptionPragma(duckdb::ClientContext& context,
                               const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  const duckdb::named_parameter_map_t options(params.named_parameters.begin(),
-                                              params.named_parameters.end());
-  pg::CreateSubscription(
-    GetSereneDBContext(context), args[0].GetValue<std::string>(),
-    args[1].GetValue<std::string>(), Publications(args, 2), options);
+  pg::CreateSubscription(GetSereneDBContext(context),
+                         args[0].GetValue<std::string>(),
+                         args[1].GetValue<std::string>(), Publications(args, 2),
+                         params.named_parameters);
 }
 
 void DropSubscriptionPragma(duckdb::ClientContext& context,
@@ -65,12 +66,10 @@ void DropSubscriptionPragma(duckdb::ClientContext& context,
 void AlterSubscriptionPragma(duckdb::ClientContext& context,
                              const duckdb::FunctionParameters& params) {
   auto& args = params.values;
-  const duckdb::named_parameter_map_t options(params.named_parameters.begin(),
-                                              params.named_parameters.end());
   pg::AlterSubscription(
     GetSereneDBContext(context), args[0].GetValue<std::string>(),
     args[1].GetValue<std::string>(), args[2].GetValue<std::string>(),
-    Publications(args, 3), options);
+    Publications(args, 3), params.named_parameters);
 }
 
 }  // namespace

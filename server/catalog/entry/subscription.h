@@ -22,29 +22,10 @@
 
 #include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/parser/parsed_data/create_subscription_info.hpp>
-#include <string>
+#include <span>
 #include <vector>
 
 namespace sdb::catalog {
-
-struct SubscriptionConfig {
-  std::string conninfo;
-  std::vector<std::string> publications;
-  std::string slot_name;
-  bool enabled = true;
-  bool binary = false;
-  bool copy_data = true;
-  bool create_slot = true;
-  bool disable_on_error = false;
-  bool password_required = true;
-  bool run_as_owner = false;
-  bool failover = false;
-  std::string origin = "any";
-  std::string synchronous_commit = "off";
-  std::string streaming = "off";
-  uint64_t skip_lsn = 0;
-  std::vector<duckdb::SubscriptionRelation> relations;
-};
 
 class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
  public:
@@ -54,7 +35,9 @@ class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
     duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info,
     duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state);
 
-  const SubscriptionConfig& Config() const noexcept { return _config; }
+  const duckdb::CreateSubscriptionInfo& Config() const noexcept {
+    return *_info;
+  }
   std::vector<duckdb::SubscriptionRelation> Relations() const;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> AlterEntry(
@@ -65,7 +48,9 @@ class SubscriptionCatalogEntry final : public duckdb::SubscriptionCatalogEntry {
   std::string ToSQL() const final { return GetInfo()->ToString(); }
 
  private:
-  SubscriptionConfig _config;
+  void FoldSynced(std::span<duckdb::SubscriptionRelation> relations) const;
+
+  duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> _info;
 };
 
 }  // namespace sdb::catalog

@@ -27,6 +27,7 @@
 #include <cstring>
 #include <exception>
 #include <span>
+#include <string_view>
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
 
@@ -35,11 +36,8 @@ namespace sdb::pg {
 // COPY FROM STDIN rendezvous between the io feeder coroutine and the DuckDB
 // worker that runs the COPY. DuckDB's FileSystem::Read is a synchronous,
 // un-yielding call, so the worker BLOCKS here pulling CopyData while the io
-// coroutine feeds it. Strict lock-step with a single in-flight borrowed view
-// (no queue, no per-packet copy): the feeder publishes a view into the recv
-// buffer, the worker drains it, then the feeder advances to the next frame.
-// One OneShotEvent supports both the worker's blocking Wait() and the feeder's
-// co_await (AwaitOn).
+// coroutine feeds it. One OneShotEvent supports both the worker's blocking
+// Wait() and the feeder's co_await (AwaitOn).
 class CopyInBridge {
  public:
   // ---- DuckDB worker side (synchronous, blocks a scheduler thread) ----
@@ -53,9 +51,6 @@ class CopyInBridge {
       // races (the feeder can publish the next frame before the worker
       // re-checks _len, leaving a _data_ready Set unconsumed so the next
       // Publish/Finish double-Sets and corrupts the event -> SIGSEGV).
-      // `_err` is only read AFTER the Wait: the feeder writes it before the
-      // Set that this Wait pairs with, so the wake carries the happens-before
-      // (reading it before the Wait would race the feeder's Fail()).
       if (_armed) {
         _data_ready.Wait();
         _data_ready.Reset();
@@ -70,13 +65,8 @@ class CopyInBridge {
       const auto take = static_cast<size_t>(
         std::min<int64_t>(n - total, static_cast<int64_t>(_len)));
       std::memcpy(out + total, _ptr, take);
-      _ptr += take;
-      _len -= take;
       total += static_cast<int64_t>(take);
-      if (_len == 0) {
-        _armed = true;
-        _want_more.Set();  // ask the feeder for the next frame
-      }
+      Advance(take);
     }
     return total;
   }
@@ -95,9 +85,6 @@ class CopyInBridge {
       _data_ready.Wait();
       _data_ready.Reset();
       _armed = false;
-      // Read _err only after the Wait -- it pairs with the feeder's Set, which
-      // follows its _err write, so this is ordered (a pre-Wait read would
-      // race).
       if (_len == 0 && _err) {
         std::rethrow_exception(_err);
       }
@@ -109,14 +96,7 @@ class CopyInBridge {
   // re-arm the borrow latch and fire the want-more handshake so the feeder
   // advances to the next CopyData frame (which the next Window() will wait
   // for).
-  void Consume(size_t n) noexcept {
-    _ptr += n;
-    _len -= n;
-    if (_len == 0) {
-      _armed = true;
-      _want_more.Set();
-    }
-  }
+  void Consume(size_t n) noexcept { Advance(n); }
 
   // ---- io feeder side (coroutine) ----
   // The three feeder->worker signals (Publish/Finish/Fail) all Set _data_ready;
@@ -127,14 +107,19 @@ class CopyInBridge {
   // Drained() wake, and Abort() releases `_aborted` before Set()ing _want_more,
   // so the wake carries the happens-before that makes Aborted() observe true.
 
-  // Publish a borrowed view of the current CopyData payload, wake the worker.
-  void Publish(const char* data, size_t len) noexcept {
+  void Publish(std::span<const std::string_view> pieces) noexcept {
     if (Aborted()) {
       return;
     }
-    _ptr = data;
-    _len = len;
+    _pieces = pieces;
+    _piece = 0;
+    _ptr = pieces.front().data();
+    _len = pieces.front().size();
     _data_ready.Set();
+  }
+  void Publish(const char* data, size_t len) noexcept {
+    _single = {data, len};
+    Publish({&_single, 1});
   }
   // co_await until the worker has fully drained the published view.
   auto Drained(yaclib::IExecutor& io) noexcept {
@@ -170,8 +155,28 @@ class CopyInBridge {
   bool Closed() const noexcept { return _eof || _err || Aborted(); }
 
  private:
+  void Advance(size_t n) noexcept {
+    _ptr += n;
+    _len -= n;
+    if (_len != 0) {
+      return;
+    }
+    while (++_piece < _pieces.size()) {
+      if (!_pieces[_piece].empty()) {
+        _ptr = _pieces[_piece].data();
+        _len = _pieces[_piece].size();
+        return;
+      }
+    }
+    _armed = true;
+    _want_more.Set();
+  }
+
   yaclib::OneShotEvent _data_ready;
   yaclib::OneShotEvent _want_more;
+  std::span<const std::string_view> _pieces;
+  size_t _piece = 0;
+  std::string_view _single;
   const char* _ptr = nullptr;
   size_t _len = 0;
   bool _eof = false;

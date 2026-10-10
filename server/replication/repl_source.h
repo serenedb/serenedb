@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "replication/pgoutput.h"
+#include "server/utils/message_buffer.h"
 
 namespace duckdb {
 
@@ -65,25 +66,43 @@ struct RelInfo {
   std::vector<std::vector<size_t>> unique_keys;
 };
 
-struct ReplBatch {
-  ReplStream* stream = nullptr;
+struct RowShape {
   char op = 0;
-  uint32_t relid = 0;
-  const RelInfo* rel = nullptr;
+  bool full = false;
   std::vector<size_t> keys;
   std::vector<size_t> cols;
-  bool full = false;
+  std::vector<PgColumn> cells;
+  std::vector<PgColumn> old_cells;
+
+  bool SameAs(const RowShape& other) const noexcept {
+    return op == other.op && full == other.full && keys == other.keys &&
+           cols == other.cols;
+  }
+};
+
+struct ReplBatch {
+  ReplStream* stream = nullptr;
+  uint32_t relid = 0;
+  const RelInfo* rel = nullptr;
+  RowShape shape;
+  RowShape row;
   uint64_t rows = 0;
-  irs::containers::FlatHashSet<std::string> touched;
+  irs::containers::FlatHashSet<std::string_view> touched;
+  message::Buffer touched_keys{4 << 10, 1 << 20};
+  std::string old_key;
+  std::string new_key;
   std::function<bool(const PgOutputMessage&)> pass_through;
   duckdb::ColumnDataCollection* retained = nullptr;
+
+  void ResetTouched() noexcept {
+    touched.clear();
+    touched_keys.Clear();
+  }
 };
 
 std::optional<uint32_t> RowRelId(const PgOutputMessage& msg);
 
-bool RowShape(const PgOutputMessage& msg, const RelInfo& rel, char& op,
-              std::vector<size_t>& keys, std::vector<size_t>& cols,
-              std::vector<PgColumn>& cells, bool& full);
+bool ShapeRow(const PgOutputMessage& msg, const RelInfo& rel, RowShape& shape);
 
 duckdb::unique_ptr<duckdb::SQLStatement> BuildReplStatement(
   char op, std::string_view schema, std::string_view table,

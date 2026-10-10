@@ -109,14 +109,21 @@ std::string PublicationList(const std::vector<std::string>& publications) {
 std::vector<size_t> ReferencedFirstOrder(
   const std::vector<duckdb::optional_ptr<duckdb::TableCatalogEntry>>& locals) {
   const size_t n = locals.size();
-  irs::containers::FlatHashMap<std::string, size_t> index;
+  std::vector<duckdb::Identifier> schemas(n);
+  irs::containers::FlatHashMap<std::pair<std::string_view, std::string_view>,
+                               size_t>
+    index;
   index.reserve(n);
   for (size_t i = 0; i < n; ++i) {
     if (locals[i]) {
-      index.try_emplace(locals[i]->name.GetIdentifierName(), i);
+      schemas[i] = locals[i]->ParentSchemaName();
+      index.try_emplace(
+        std::pair{std::string_view{schemas[i].GetIdentifierName()},
+                  std::string_view{locals[i]->name.GetIdentifierName()}},
+        i);
     }
   }
-  std::vector<std::vector<std::string>> references(n);
+  std::vector<std::vector<size_t>> references(n);
   for (size_t i = 0; i < n; ++i) {
     if (!locals[i]) {
       continue;
@@ -126,8 +133,15 @@ std::vector<size_t> ReferencedFirstOrder(
         continue;
       }
       const auto& info = constraint->Cast<duckdb::ForeignKeyConstraint>().info;
-      if (info.type == duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
-        references[i].push_back(info.table.GetIdentifierName());
+      if (info.type != duckdb::ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE) {
+        continue;
+      }
+      const auto& schema = info.schema.empty() ? schemas[i] : info.schema;
+      const auto it =
+        index.find(std::pair{std::string_view{schema.GetIdentifierName()},
+                             std::string_view{info.table.GetIdentifierName()}});
+      if (it != index.end()) {
+        references[i].push_back(it->second);
       }
     }
   }
@@ -142,29 +156,20 @@ std::vector<size_t> ReferencedFirstOrder(
     state[start] = 1;
     stack.emplace_back(start, 0);
     while (!stack.empty()) {
-      const size_t node = stack.back().first;
-      size_t cursor = stack.back().second;
-      bool descended = false;
-      if (locals[node]) {
-        const auto& fks = references[node];
-        while (cursor < fks.size()) {
-          const auto it = index.find(fks[cursor]);
-          ++cursor;
-          if (it == index.end() || state[it->second] != 0) {
-            continue;
-          }
-          stack.back().second = cursor;
-          state[it->second] = 1;
-          stack.emplace_back(it->second, 0);
-          descended = true;
-          break;
-        }
+      auto& [node, cursor] = stack.back();
+      const auto& referenced = references[node];
+      while (cursor < referenced.size() && state[referenced[cursor]] != 0) {
+        ++cursor;
       }
-      if (!descended) {
+      if (cursor == referenced.size()) {
         state[node] = 2;
         order.push_back(node);
         stack.pop_back();
+        continue;
       }
+      const auto next = referenced[cursor++];
+      state[next] = 1;
+      stack.emplace_back(next, 0);
     }
   }
   return order;
@@ -178,7 +183,14 @@ PgReplicationClient::PgReplicationClient(network::IoExecutor& exec,
   : SyncSession{exec, std::move(target), host_index},
     _flushed_lsn{_target.start_lsn} {
   for (auto& outbox : _outboxes) {
-    outbox.messages.reserve(kOutboxMessages);
+    outbox.messages.reserve(kOutboxMessages + 1);
+  }
+  _relation_index.reserve(_target.relations.size());
+  for (size_t i = 0; i < _target.relations.size(); ++i) {
+    const auto& relation = _target.relations[i];
+    _relation_index.try_emplace(std::pair{std::string_view{relation.schema},
+                                          std::string_view{relation.table}},
+                                i);
   }
 }
 
@@ -224,10 +236,12 @@ yaclib::Task<> PgReplicationClient::RunClient() {
 
 yaclib::Task<bool> PgReplicationClient::SyncTables() {
   _sync_tables.clear();
-  for (const auto& relation : _target.relations) {
+  for (size_t i = 0; i < _target.relations.size(); ++i) {
+    const auto& relation = _target.relations[i];
     if (relation.state != 'r') {
       _sync_tables.push_back({.schema = relation.schema,
                               .table = relation.table,
+                              .relation = i,
                               .sync_id = relation.sync_id});
     }
   }
@@ -263,42 +277,81 @@ yaclib::Task<bool> PgReplicationClient::DescribeTables() {
         &rows)) {
     co_return false;
   }
-  irs::containers::FlatHashMap<std::string, size_t> index;
+  irs::containers::FlatHashMap<std::pair<std::string_view, std::string_view>,
+                               size_t>
+    index;
+  index.reserve(_sync_tables.size());
   for (size_t i = 0; i < _sync_tables.size(); ++i) {
-    index.emplace(
-      absl::StrCat(_sync_tables[i].schema, ".", _sync_tables[i].table), i);
+    index.emplace(std::pair{std::string_view{_sync_tables[i].schema},
+                            std::string_view{_sync_tables[i].table}},
+                  i);
   }
-  std::vector<std::string> first_publication(_sync_tables.size());
-  std::vector<bool> unfiltered(_sync_tables.size(), false);
-  std::vector<std::vector<std::string>> filters(_sync_tables.size());
+  struct Listed {
+    std::string_view first;
+    std::string_view current;
+    size_t matched = 0;
+    bool unfiltered = false;
+    std::vector<std::string_view> filters;
+  };
+  std::vector<Listed> listed(_sync_tables.size());
+  const auto same_columns = [&](size_t i) {
+    const auto& state = listed[i];
+    if (state.current == state.first ||
+        state.matched == _sync_tables[i].columns.size()) {
+      return true;
+    }
+    Fail(ERRCODE_FEATURE_NOT_SUPPORTED,
+         absl::StrCat("cannot use different column lists for table \"",
+                      _sync_tables[i].schema, ".", _sync_tables[i].table,
+                      "\" in different publications"));
+    return false;
+  };
   for (const auto& row : rows) {
     if (row.size() < 5 || !row[0] || !row[1] || !row[2] || !row[4]) {
       continue;
     }
-    const auto it = index.find(absl::StrCat(*row[0], ".", *row[1]));
+    const auto it = index.find(
+      std::pair{std::string_view{*row[0]}, std::string_view{*row[1]}});
     if (it == index.end()) {
       continue;
     }
     auto& table = _sync_tables[it->second];
-    auto& first = first_publication[it->second];
-    if (first.empty()) {
-      first = *row[4];
+    auto& state = listed[it->second];
+    const std::string_view publication = *row[4];
+    if (state.first.empty()) {
+      state.first = publication;
+      state.current = publication;
       table.partitioned = row.size() > 5 && row[5] && *row[5] == "p";
+    } else if (publication != state.current) {
+      if (!same_columns(it->second)) {
+        co_return false;
+      }
+      state.current = publication;
+      state.matched = 0;
     }
-    if (*row[4] == first) {
+    if (publication == state.first) {
       table.columns.push_back(*row[2]);
       table.generated |= row.size() > 6 && row[6] && *row[6] == "t";
+    } else if (state.matched < table.columns.size() &&
+               table.columns[state.matched] == *row[2]) {
+      ++state.matched;
+    } else {
+      state.matched = table.columns.size() + 1;
     }
     if (!row[3]) {
-      unfiltered[it->second] = true;
-    } else if (!std::ranges::contains(filters[it->second], *row[3])) {
-      filters[it->second].push_back(*row[3]);
+      state.unfiltered = true;
+    } else if (!std::ranges::contains(state.filters, *row[3])) {
+      state.filters.emplace_back(*row[3]);
     }
   }
   for (size_t i = 0; i < _sync_tables.size(); ++i) {
-    if (!unfiltered[i] && !filters[i].empty()) {
+    if (!same_columns(i)) {
+      co_return false;
+    }
+    const auto& state = listed[i];
+    if (!state.unfiltered && !state.filters.empty()) {
       _sync_tables[i].row_filter = absl::StrJoin(
-        filters[i], " OR ", [](std::string* out, const std::string& filter) {
+        state.filters, " OR ", [](std::string* out, std::string_view filter) {
           absl::StrAppend(out, "(", filter, ")");
         });
     }
@@ -331,6 +384,7 @@ yaclib::Task<bool> PgReplicationClient::SyncSequential() {
     if (!co_await SyncOne(table, *consistent_point, binary)) {
       co_return false;
     }
+    MarkSynced(table, *consistent_point);
   }
   co_return co_await Query("COMMIT") &&
     co_await Query(
@@ -362,7 +416,9 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
                 .lsn = *consistent_point,
                 .binary = _target.binary && ServerVersion() >= 16,
                 .done = std::vector<uint8_t>(_sync_tables.size(), 0)};
+  auto relations = std::exchange(_target.relations, {});
   auto target = _target;
+  _target.relations = std::move(relations);
   target.conninfo.hosts = {_host};
   auto* pool = Server::instance().IoPool();
   std::vector<duckdb::shared_ptr<TableSyncWorker>> sessions;
@@ -394,16 +450,17 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
       ok = false;
       continue;
     }
-    for (auto& relation : _target.relations) {
-      if (relation.sync_id == _sync_tables[i].sync_id) {
-        relation.state = 'r';
-        relation.lsn = plan.lsn;
-      }
-    }
+    MarkSynced(_sync_tables[i], plan.lsn);
   }
   co_return co_await Query(
     absl::StrCat("DROP_REPLICATION_SLOT ", pg::QuoteIdentifier(slot))) &&
     ok;
+}
+
+void PgReplicationClient::MarkSynced(const SyncTable& table, uint64_t lsn) {
+  auto& relation = _target.relations[table.relation];
+  relation.state = 'r';
+  relation.lsn = lsn;
 }
 
 yaclib::Task<bool> PgReplicationClient::StartReplication() {
@@ -838,26 +895,15 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
 
 void PgReplicationClient::UpdateDefinition(
   absl::FunctionRef<void(duckdb::CreateSubscriptionInfo&)> edit) {
-  auto& context = *this->_conn->context;
-  auto& catalog = duckdb::Catalog::GetCatalog(
-                    context, duckdb::Identifier{_target.database_name})
-                    .Cast<catalog::SereneDBCatalog>();
-  const auto transaction = catalog.GetCatalogTransaction(context);
-  auto entry = catalog.GetOidIndex().GetVisible(_target.subscription_oid,
-                                                transaction.view);
-  if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("subscription \"", _target.subscription_name,
-                            "\" does not exist"));
-  }
-  auto& current = entry->Cast<catalog::SubscriptionCatalogEntry>();
+  const auto& current = RequireSubscription();
   auto definition =
     duckdb::unique_ptr_cast<duckdb::CreateInfo, duckdb::CreateSubscriptionInfo>(
       current.GetInfo());
   edit(*definition);
   duckdb::ReplaceDefinitionInfo alter{std::move(definition)};
   alter.SetQualifiedName(duckdb::QualifiedName(current.name));
-  catalog.Alter(transaction, alter);
+  auto& catalog = Catalog();
+  catalog.Alter(catalog.GetCatalogTransaction(*this->_conn->context), alter);
 }
 
 const RelInfo* PgReplicationClient::Relation(uint32_t relation_id) const {
@@ -870,12 +916,12 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
   info.schema =
     message.namespace_name.empty() ? "pg_catalog" : message.namespace_name;
   info.table = message.relation_name;
-  for (const auto& relation : _target.relations) {
-    if (relation.schema == info.schema && relation.table == info.table) {
-      info.ready = relation.state == 'r';
-      info.sync_lsn = relation.lsn;
-      break;
-    }
+  if (const auto it = _relation_index.find(
+        std::pair{std::string_view{info.schema}, std::string_view{info.table}});
+      it != _relation_index.end()) {
+    const auto& relation = _target.relations[it->second];
+    info.ready = relation.state == 'r';
+    info.sync_lsn = relation.lsn;
   }
   this->_conn->context->RunFunctionInTransaction([&] {
     auto table = LookupTable(info.schema, info.table);
@@ -889,29 +935,26 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       std::ranges::any_of(table->GetConstraints(), [](const auto& constraint) {
         return constraint->type == duckdb::ConstraintType::FOREIGN_KEY;
       });
+    const auto& locals = table->GetColumns();
     info.columns.reserve(message.columns.size());
     for (const auto& remote : message.columns) {
-      RelColumn column{.name = remote.name, .is_key = remote.is_key};
-      bool found = false;
-      for (const auto& local : table->GetColumns().Logical()) {
-        if (local.Name().GetIdentifierName() != remote.name) {
-          continue;
-        }
-        found = true;
-        if (local.Generated()) {
-          info.generated_columns.push_back(remote.name);
-        } else {
-          column.type = local.Type();
-        }
-        break;
+      auto& column = info.columns.emplace_back(
+        RelColumn{.name = std::string{remote.name}, .is_key = remote.is_key});
+      const duckdb::Identifier name{remote.name};
+      if (!locals.ColumnExists(name)) {
+        info.missing_columns.push_back(column.name);
+        continue;
       }
-      if (!found) {
-        info.missing_columns.push_back(remote.name);
+      const auto& local = locals.GetColumn(name);
+      if (local.Generated()) {
+        info.generated_columns.push_back(column.name);
+      } else {
+        column.type = local.Type();
       }
-      info.columns.push_back(std::move(column));
     }
     const auto add_unique = [&](const auto& names) {
       std::vector<size_t> positions;
+      positions.reserve(names.size());
       for (const auto& name : names) {
         const auto it = std::ranges::find(info.columns, name, &RelColumn::name);
         if (it == info.columns.end()) {
@@ -923,7 +966,6 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
         info.unique_keys.push_back(std::move(positions));
       }
     };
-    const auto& columns = table->GetColumns();
     for (const auto& constraint : table->GetConstraints()) {
       if (constraint->type != duckdb::ConstraintType::UNIQUE) {
         continue;
@@ -932,8 +974,9 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       std::vector<std::string_view> names;
       if (unique.HasIndex()) {
         names.push_back(
-          columns.GetColumn(unique.GetIndex()).Name().GetIdentifierName());
+          locals.GetColumn(unique.GetIndex()).Name().GetIdentifierName());
       } else {
+        names.reserve(unique.GetColumnNames().size());
         for (const auto& name : unique.GetColumnNames()) {
           names.push_back(name.GetIdentifierName());
         }
@@ -1020,11 +1063,7 @@ yaclib::Task<bool> PgReplicationClient::ApplyMessage(
     co_return true;
   }
   CheckRelation(*relation);
-  std::vector<PgColumn> cells;
-  _batch.keys.clear();
-  _batch.cols.clear();
-  if (!RowShape(message, *relation, _batch.op, _batch.keys, _batch.cols, cells,
-                _batch.full)) {
+  if (!ShapeRow(message, *relation, _batch.shape)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
       ERR_MSG("invalid logical replication message: malformed tuple for "
@@ -1059,20 +1098,10 @@ void PgReplicationClient::PushRemoteLsn(uint64_t end_lsn) {
   if (!context.transaction.HasActiveTransaction()) {
     return;
   }
-  auto database = duckdb::DatabaseManager::Get(context).GetDatabase(
-    context, duckdb::Identifier{_target.database_name});
-  if (!database) {
-    return;
+  if (auto* subscription = VisibleSubscription()) {
+    duckdb::DuckTransaction::Get(context, *_database)
+      .PushReplicationLsn(*subscription, end_lsn);
   }
-  auto& catalog = database->GetCatalog().Cast<duckdb::DuckCatalog>();
-  auto& transaction = duckdb::DuckTransaction::Get(context, *database);
-  auto entry = catalog.GetOidIndex().GetVisible(_target.subscription_oid,
-                                                transaction.GetSnapshotView());
-  if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    return;
-  }
-  transaction.PushReplicationLsn(
-    entry->Cast<duckdb::SubscriptionCatalogEntry>(), end_lsn);
 }
 
 bool PgReplicationClient::CommitTxn(const CommitMessage& message) {
@@ -1300,9 +1329,8 @@ yaclib::Task<> PgReplicationClient::ApplyTruncate(
 
 std::string PgReplicationClient::ApplyContext() const {
   const auto* relation = _batch.rel;
-  const char* type = _batch.op == 'I'   ? "INSERT"
-                     : _batch.op == 'U' ? "UPDATE"
-                                        : "DELETE";
+  const auto op = _batch.shape.op;
+  const char* type = op == 'I' ? "INSERT" : op == 'U' ? "UPDATE" : "DELETE";
   return absl::StrCat("processing remote data for replication origin \"pg_",
                       _target.subscription_oid, "\" during message type \"",
                       type, "\" for replication target relation \"",
@@ -1334,8 +1362,8 @@ yaclib::Task<bool> PgReplicationClient::MultipleUniqueConflicts(
 
 yaclib::Task<bool> PgReplicationClient::RunBatch() {
   const auto& relation = *_batch.rel;
-  StmtKey key{_batch.op, _batch.relid, _batch.keys, _batch.cols, _batch.full};
-  auto it = _stmts.find(key);
+  const auto& shape = _batch.shape;
+  auto it = _stmts.find(StmtKeyView{_batch.relid, shape});
   if (it == _stmts.end()) {
     const auto names = [&](const std::vector<size_t>& indexes) {
       std::vector<std::string> result;
@@ -1346,22 +1374,27 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
       return result;
     };
     auto prepared = this->_conn->Prepare(
-      BuildReplStatement(_batch.op, relation.schema, relation.table,
-                         names(_batch.keys), names(_batch.cols), _batch.full));
+      BuildReplStatement(shape.op, relation.schema, relation.table,
+                         names(shape.keys), names(shape.cols), shape.full));
     if (prepared->HasError()) {
       prepared->GetErrorObject().Throw();
     }
-    it = _stmts.emplace(std::move(key), std::move(prepared)).first;
+    it = _stmts
+           .emplace(StmtKey{shape.op, _batch.relid, shape.keys, shape.cols,
+                            shape.full},
+                    std::move(prepared))
+           .first;
   }
   _batch.rows = 0;
-  _batch.touched.clear();
+  _batch.ResetTouched();
   std::optional<duckdb::ColumnDataCollection> retained;
-  if (_batch.op != 'D' && relation.unique_keys.size() > 1) {
+  if (shape.op != 'D' && relation.unique_keys.size() > 1) {
     duckdb::vector<duckdb::LogicalType> types;
-    for (const auto i : _batch.keys) {
+    types.reserve(shape.keys.size() + shape.cols.size());
+    for (const auto i : shape.keys) {
       types.push_back(relation.columns[i].type);
     }
-    for (const auto i : _batch.cols) {
+    for (const auto i : shape.cols) {
       types.push_back(relation.columns[i].type);
     }
     retained.emplace(duckdb::Allocator::DefaultAllocator(), std::move(types));
@@ -1379,8 +1412,8 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   }
   std::move(scan).Invoke();
   if (!affected) {
-    if (error.errcode == ERRCODE_UNIQUE_VIOLATION && _batch.op != 'D') {
-      const bool insert = _batch.op == 'I';
+    if (error.errcode == ERRCODE_UNIQUE_VIOLATION && shape.op != 'D') {
+      const bool insert = shape.op == 'I';
       std::string_view conflict = insert ? "insert_exists" : "update_exists";
       if (retained && co_await MultipleUniqueConflicts(*retained)) {
         conflict = "multiple_unique_conflicts";
@@ -1403,9 +1436,9 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
     ApplyFailed(std::move(error));
     co_return false;
   }
-  if (_batch.op != 'I' && static_cast<uint64_t>(*affected) < _batch.rows) {
+  if (shape.op != 'I' && static_cast<uint64_t>(*affected) < _batch.rows) {
     const auto missing = _batch.rows - static_cast<uint64_t>(*affected);
-    const bool update = _batch.op == 'U';
+    const bool update = shape.op == 'U';
     (update ? _conflicts.update_missing : _conflicts.delete_missing)
       .fetch_add(missing, std::memory_order_relaxed);
     SDB_INFO(REPLICATION, "conflict detected on relation \"", relation.schema,

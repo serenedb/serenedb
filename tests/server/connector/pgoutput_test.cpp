@@ -18,11 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Unit tests for the pgoutput (logical replication protocol) decoder. Each
-// test hand-builds the exact bytes PostgreSQL 18's proto.c would emit and
-// asserts the decoded structs, so the decoder is pinned to the real wire format
-// without needing a live publisher.
-
 #include <gtest/gtest.h>
 
 #include <exception>
@@ -34,7 +29,6 @@
 namespace sdb::replication {
 namespace {
 
-// Big-endian byte builder mirroring pq_send*.
 struct Builder {
   std::string b;
   void Byte(uint8_t v) { b.push_back(static_cast<char>(v)); }
@@ -139,7 +133,6 @@ TEST(PgOutput, RelationEmptyNamespaceIsPgCatalog) {
   auto msg = DecodePgOutput(x.b);
   auto* r = std::get_if<RelationMessage>(&msg);
   ASSERT_NE(r, nullptr);
-  // Decoder keeps the raw wire value ("" ); the worker maps it to pg_catalog.
   EXPECT_EQ(r->namespace_name, "");
 }
 

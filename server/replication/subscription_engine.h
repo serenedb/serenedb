@@ -25,6 +25,7 @@
 #include <atomic>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <memory>
 #include <optional>
@@ -79,7 +80,6 @@ class SubscriptionEngine final {
   std::vector<SubRuntime> RuntimeSnapshot(std::string_view database) const;
 
   struct SubStats {
-    duckdb::idx_t subscription = 0;
     uint64_t apply_error_count = 0;
     uint64_t sync_error_count = 0;
     uint64_t insert_exists = 0;
@@ -88,8 +88,20 @@ class SubscriptionEngine final {
     uint64_t delete_missing = 0;
     uint64_t multiple_unique_conflicts = 0;
     int64_t stats_reset = 0;
+
+    void Add(const ConflictCounters& conflicts) noexcept {
+      insert_exists += conflicts.insert_exists.load(std::memory_order_relaxed);
+      update_exists += conflicts.update_exists.load(std::memory_order_relaxed);
+      update_missing +=
+        conflicts.update_missing.load(std::memory_order_relaxed);
+      delete_missing +=
+        conflicts.delete_missing.load(std::memory_order_relaxed);
+      multiple_unique_conflicts +=
+        conflicts.multiple_unique_conflicts.load(std::memory_order_relaxed);
+    }
   };
-  std::vector<SubStats> Stats(std::string_view database) const;
+  irs::containers::FlatHashMap<duckdb::idx_t, SubStats> Stats(
+    std::string_view database) const;
   void ResetStats(std::optional<duckdb::idx_t> subscription);
   bool Running(duckdb::idx_t subscription) const;
 

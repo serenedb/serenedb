@@ -227,15 +227,7 @@ class PgWireSession
     }
   }
 
-  // Everything below is protected (not private) so the outbound replication
-  // subscriber (PgReplicationClient) can reuse the frame assembler, the recv/
-  // send transport, the CpuResumer split, the copy-in feeder and the
-  // local-apply drive while it substitutes its own client startup and
-  // stream-consume loop.
  protected:
-  // Client-mode construction (outbound subscriber): only the transport + frame
-  // assembler are wired up; the server-config members keep their defaults.
-  // There is no RecvLoop: the client reads the socket itself.
   struct ClientTag {};
   PgWireSession(IoExecutor& exec, asio_ns::ssl::context& ssl, ClientTag)
     requires(Kind == SocketKind::Client)

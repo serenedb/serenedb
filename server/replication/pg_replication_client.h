@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <absl/hash/hash.h>
+#include <absl/types/span.h>
 
 #include <array>
 #include <atomic>
@@ -104,6 +106,7 @@ class PgReplicationClient final : public SyncSession {
   yaclib::Task<bool> DescribeTables();
   yaclib::Task<bool> SyncSequential();
   yaclib::Task<bool> SyncParallel(size_t workers);
+  void MarkSynced(const SyncTable& table, uint64_t lsn);
   yaclib::Task<bool> StartReplication();
   yaclib::Task<> Feeder();
   yaclib::Future<> FeedbackLoop();
@@ -166,6 +169,9 @@ class PgReplicationClient final : public SyncSession {
   bool _in_flight = false;
 
   std::vector<SyncTable> _sync_tables;
+  irs::containers::FlatHashMap<std::pair<std::string_view, std::string_view>,
+                               size_t>
+    _relation_index;
 
   irs::containers::NodeHashMap<uint32_t, SpillBuffer> _spools;
   irs::containers::FlatHashMap<uint32_t,
@@ -191,17 +197,49 @@ class PgReplicationClient final : public SyncSession {
     std::vector<size_t> keys;
     std::vector<size_t> cols;
     bool full = false;
+  };
 
-    bool operator==(const StmtKey& o) const = default;
+  struct StmtKeyView {
+    char op = 0;
+    uint32_t relid = 0;
+    absl::Span<const size_t> keys;
+    absl::Span<const size_t> cols;
+    bool full = false;
+
+    StmtKeyView(const StmtKey& key)
+      : op{key.op},
+        relid{key.relid},
+        keys{key.keys},
+        cols{key.cols},
+        full{key.full} {}
+    StmtKeyView(uint32_t relid_p, const RowShape& shape)
+      : op{shape.op},
+        relid{relid_p},
+        keys{shape.keys},
+        cols{shape.cols},
+        full{shape.full} {}
+
+    bool operator==(const StmtKeyView&) const = default;
 
     template<typename H>
-    friend H AbslHashValue(H h, const StmtKey& k) {
+    friend H AbslHashValue(H h, const StmtKeyView& k) {
       return H::combine(std::move(h), k.op, k.relid, k.keys, k.cols, k.full);
     }
   };
 
+  struct StmtKeyHash {
+    using is_transparent = void;
+    size_t operator()(StmtKeyView key) const { return absl::HashOf(key); }
+  };
+
+  struct StmtKeyEq {
+    using is_transparent = void;
+    bool operator()(StmtKeyView a, StmtKeyView b) const { return a == b; }
+  };
+
   irs::containers::NodeHashMap<StmtKey,
-                               duckdb::unique_ptr<duckdb::PreparedStatement>>
+                               duckdb::unique_ptr<duckdb::PreparedStatement>,
+                               StmtKeyHash, StmtKeyEq>
     _stmts;
 };
 

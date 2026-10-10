@@ -65,6 +65,10 @@ void RequireSuperuser(duckdb::ClientContext& context, std::string_view name) {
   }
 }
 
+std::string_view View(const duckdb::string_t& text) {
+  return {text.GetData(), text.GetSize()};
+}
+
 void ReturnVoid(duckdb::Vector& result) {
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
   duckdb::ConstantVector::SetNull(result, true);
@@ -256,7 +260,7 @@ void CreateOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       writer.WriteNull();
       continue;
     }
-    const auto name = value.GetValue().GetString();
+    const auto name = View(value.GetValue());
     ValidateNewName(name);
     if (FindOrigin(context, name)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
@@ -282,7 +286,7 @@ void DropOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     if (!value.IsValid()) {
       continue;
     }
-    const auto name = value.GetValue().GetString();
+    const auto name = View(value.GetValue());
     const auto origin = RequireOrigin(context, name);
     if (origin.subscription) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
@@ -316,7 +320,7 @@ void OriginOid(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (auto value : names) {
     const auto origin = value.IsValid()
-                          ? FindOrigin(context, value.GetValue().GetString())
+                          ? FindOrigin(context, View(value.GetValue()))
                           : std::nullopt;
     if (!origin) {
       writer.WriteNull();
@@ -347,9 +351,8 @@ void OriginProgress(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       writer.WriteNull();
       continue;
     }
-    WriteLsn(
-      writer,
-      RequireOrigin(context, value.GetValue().GetString()).entry.RemoteLsn());
+    WriteLsn(writer,
+             RequireOrigin(context, View(value.GetValue())).entry.RemoteLsn());
   }
 }
 
@@ -363,8 +366,8 @@ void AdvanceOrigin(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     if (!names[i].IsValid() || !lsns[i].IsValid()) {
       continue;
     }
-    const auto lsn = RequireLsn(lsns[i].GetValue().GetString());
-    const auto origin = RequireOrigin(context, names[i].GetValue().GetString());
+    const auto lsn = RequireLsn(View(lsns[i].GetValue()));
+    const auto origin = RequireOrigin(context, View(names[i].GetValue()));
     RequireIdle(origin);
     Transaction(context, origin.catalog)
       .AssignReplicationLsn(origin.entry, lsn);
@@ -420,7 +423,7 @@ void SessionSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       }
       acquired_by = pids[i].GetValue();
     }
-    SetupSession(context, names[i].GetValue().GetString(), acquired_by);
+    SetupSession(context, View(names[i].GetValue()), acquired_by);
   }
   ReturnVoid(result);
 }
@@ -479,7 +482,7 @@ void XactSetup(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     if (!lsns[i].IsValid()) {
       continue;
     }
-    const auto lsn = RequireLsn(lsns[i].GetValue().GetString());
+    const auto lsn = RequireLsn(View(lsns[i].GetValue()));
     const auto origin = RequireOrigin(context, session.name);
     auto& transaction = Transaction(context, origin.catalog);
     transaction.ForgetReplicationLsn(origin.entry);

@@ -243,6 +243,13 @@ void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
     duckdb::Value::BIGINT(ms));
 }
 
+void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
+  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
+    ctx,
+    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
+    duckdb::Value::BIGINT(0));
+}
+
 // PG's rule for a GUC whose effect reaches past the session that set it is
 // PGC_SUSET: still readable by everyone, settable only by a superuser, 42501
 // otherwise. Every developer knob that can damage or kill the backend is in
@@ -298,13 +305,6 @@ void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
                     ERR_HINT("Available values: origin, replica, local."));
   }
   value = duckdb::Value{role};
-}
-
-void ResetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope) {
-  duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
-    ctx,
-    scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
-    duckdb::Value::BIGINT(0));
 }
 
 void RequireHbaSuperuser(duckdb::ClientContext& ctx) {

@@ -24,30 +24,6 @@
 #include <utility>
 
 namespace sdb::catalog {
-namespace {
-
-SubscriptionConfig MakeConfig(const duckdb::CreateSubscriptionInfo& info) {
-  return {
-    .conninfo = info.conninfo,
-    .publications = {info.publications.begin(), info.publications.end()},
-    .slot_name = info.slot_name,
-    .enabled = info.enabled,
-    .binary = info.binary,
-    .copy_data = info.copy_data,
-    .create_slot = info.create_slot,
-    .disable_on_error = info.disable_on_error,
-    .password_required = info.password_required,
-    .run_as_owner = info.run_as_owner,
-    .failover = info.failover,
-    .origin = info.origin,
-    .synchronous_commit = info.synchronous_commit,
-    .streaming = info.streaming,
-    .skip_lsn = info.skip_lsn,
-    .relations = {info.relations.begin(), info.relations.end()},
-  };
-}
-
-}  // namespace
 
 SubscriptionCatalogEntry::SubscriptionCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateSubscriptionInfo& info)
@@ -60,7 +36,9 @@ SubscriptionCatalogEntry::SubscriptionCatalogEntry(
   duckdb::shared_ptr<duckdb::ReplicationLsnState> lsn_state)
   : duckdb::SubscriptionCatalogEntry{catalog, info.GetQualifiedName().Name(),
                                      info.oid, std::move(lsn_state)},
-    _config{MakeConfig(info)} {
+    _info{
+      duckdb::unique_ptr_cast<duckdb::CreateInfo,
+                              duckdb::CreateSubscriptionInfo>(info.Copy())} {
   RaiseRemoteLsn(info.remote_lsn);
   comment = info.comment;
   tags = info.tags;
@@ -78,9 +56,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SubscriptionCatalogEntry::AlterEntry(
                                                      LsnState());
 }
 
-std::vector<duckdb::SubscriptionRelation> SubscriptionCatalogEntry::Relations()
-  const {
-  auto relations = _config.relations;
+void SubscriptionCatalogEntry::FoldSynced(
+  std::span<duckdb::SubscriptionRelation> relations) const {
   for (auto& relation : relations) {
     if (relation.state == 'r' || relation.sync_id == 0) {
       continue;
@@ -90,37 +67,27 @@ std::vector<duckdb::SubscriptionRelation> SubscriptionCatalogEntry::Relations()
       relation.lsn = *lsn;
     }
   }
+}
+
+std::vector<duckdb::SubscriptionRelation> SubscriptionCatalogEntry::Relations()
+  const {
+  std::vector<duckdb::SubscriptionRelation> relations{_info->relations.begin(),
+                                                      _info->relations.end()};
+  FoldSynced(relations);
   return relations;
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> SubscriptionCatalogEntry::GetInfo()
   const {
-  auto info = duckdb::make_uniq<duckdb::CreateSubscriptionInfo>();
-  info->SetName(name);
-  info->permissions = permissions;
-  info->conninfo = _config.conninfo;
-  info->publications = {_config.publications.begin(),
-                        _config.publications.end()};
-  info->slot_name = _config.slot_name;
-  info->enabled = _config.enabled;
-  info->binary = _config.binary;
-  info->copy_data = _config.copy_data;
-  info->create_slot = _config.create_slot;
-  info->disable_on_error = _config.disable_on_error;
-  info->password_required = _config.password_required;
-  info->run_as_owner = _config.run_as_owner;
-  info->failover = _config.failover;
-  info->origin = _config.origin;
-  info->synchronous_commit = _config.synchronous_commit;
-  info->streaming = _config.streaming;
-  auto relations = Relations();
-  info->relations = {std::make_move_iterator(relations.begin()),
-                     std::make_move_iterator(relations.end())};
-  info->remote_lsn = RemoteLsn();
-  info->skip_lsn = _config.skip_lsn;
-  info->comment = comment;
-  info->tags = tags;
-  return std::move(info);
+  auto info = _info->Copy();
+  auto& subscription = info->Cast<duckdb::CreateSubscriptionInfo>();
+  subscription.SetName(name);
+  subscription.permissions = permissions;
+  subscription.comment = comment;
+  subscription.tags = tags;
+  FoldSynced(subscription.relations);
+  subscription.remote_lsn = RemoteLsn();
+  return info;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SubscriptionCatalogEntry::Copy(

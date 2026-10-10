@@ -21,7 +21,6 @@
 #pragma once
 
 #include <atomic>
-#include <exception>
 #include <span>
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
@@ -54,18 +53,10 @@ class ReplStream {
     std::atomic_thread_fence(std::memory_order_seq_cst);
   }
   void Finish() noexcept {
-    if (_aborted.load(std::memory_order_acquire)) {
+    if (_aborted.load(std::memory_order_acquire) ||
+        _eof.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-    _eof.store(true, std::memory_order_release);
-    Wake();
-  }
-  void Fail(std::exception_ptr err) noexcept {
-    if (_aborted.load(std::memory_order_acquire)) {
-      return;
-    }
-    _err = std::move(err);
-    _eof.store(true, std::memory_order_release);
     Wake();
   }
   bool Aborted() const noexcept {
@@ -84,10 +75,7 @@ class ReplStream {
     return _msg.load(std::memory_order_acquire) != nullptr ||
            _eof.load(std::memory_order_acquire);
   }
-  const PgOutputMessage* Current() {
-    if (_eof.load(std::memory_order_acquire) && _err) {
-      std::rethrow_exception(_err);
-    }
+  const PgOutputMessage* Current() const noexcept {
     return _msg.load(std::memory_order_acquire);
   }
   std::span<const PgOutputMessage> TakeFresh() noexcept {
@@ -102,14 +90,11 @@ class ReplStream {
     _end = messages.data() + messages.size();
     _msg.store(messages.data(), std::memory_order_relaxed);
   }
-  const PgOutputMessage* PeekBlocking() {
+  const PgOutputMessage* PeekBlocking() noexcept {
     if (_armed) {
       _ready.Wait();
       _ready.Reset();
       _armed = false;
-    }
-    if (_eof.load(std::memory_order_acquire) && _err) {
-      std::rethrow_exception(_err);
     }
     return _msg.load(std::memory_order_acquire);
   }
@@ -145,7 +130,6 @@ class ReplStream {
   bool _fresh = false;
   std::atomic<bool> _eof{false};
   bool _armed = false;
-  std::exception_ptr _err;
   std::atomic<bool> _aborted{false};
   std::atomic<bool> _scan_active{false};
   network::CpuResumer* _task = nullptr;

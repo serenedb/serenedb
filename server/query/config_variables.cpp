@@ -1207,7 +1207,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "server_version",
       {
         LogicalTypeId::VARCHAR,
-        "Shows the PostgreSQL version SereneDB is compatible with.",
+        "Shows the server version.",
         [] { return duckdb::Value{"18.3"}; },
         nullptr,  // refused via kUnchangeableSettings
       },
@@ -1216,8 +1216,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "server_version_num",
       {
         LogicalTypeId::INTEGER,
-        "Shows the PostgreSQL version SereneDB is compatible with, as an "
-        "integer.",
+        "Shows the server version as an integer.",
         [] { return duckdb::Value::INTEGER(180003); },
         nullptr,  // refused via kUnchangeableSettings
       },

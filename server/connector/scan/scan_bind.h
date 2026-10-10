@@ -24,6 +24,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <duckdb/planner/table_filter.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
@@ -146,6 +147,7 @@ struct DeferredColumn {
 // the parameters' values, over the columns resolved at plan time.
 struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
+  std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
   std::shared_ptr<
     const std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, DeferredColumn>>
     columns;
@@ -297,10 +299,19 @@ double AnnOversample(duckdb::ClientContext& context,
 void RefreshVectorKnobs(VectorScorerOptions& vs,
                         duckdb::ClientContext& context);
 
-// The claimed WHERE of a scan whose plan deferred it, built with the
-// parameter values bound to this execution.
-std::shared_ptr<const irs::Filter> BuildDeferredFilter(
-  duckdb::ClientContext& context, const ScanBindData& scan);
+struct DeferredColumnFilter {
+  ColumnId column;
+  duckdb::LogicalType type;
+  duckdb::unique_ptr<duckdb::TableFilter> filter;
+};
+
+struct DeferredBuild {
+  std::shared_ptr<const irs::Filter> filter;
+  std::vector<DeferredColumnFilter> column_filters;
+};
+
+DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
+                                  const ScanBindData& scan);
 
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,

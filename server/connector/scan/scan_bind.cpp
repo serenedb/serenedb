@@ -27,6 +27,14 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/planner/expression/bound_between_expression.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
@@ -492,16 +500,19 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
-std::shared_ptr<const irs::Filter> BuildDeferredFilter(
-  duckdb::ClientContext& context, const ScanBindData& scan) {
+DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
+                                  const ScanBindData& scan) {
   SDB_ASSERT(scan.plan_cache.deferred);
   const auto& claim = *scan.plan_cache.deferred;
-  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
-  conjuncts.reserve(claim.conjuncts.size());
-  for (const auto& e : claim.conjuncts) {
-    conjuncts.push_back(optimizer::NormalizeClaimShape(
+  const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {
+    return optimizer::NormalizeClaimShape(
       context,
-      optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true)));
+      optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true));
+  };
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
+  for (const auto& e : claim.conjuncts) {
+    conjuncts.push_back(bound(e));
   }
   const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
     -> std::optional<SearchColumnInfo> {
@@ -517,6 +528,84 @@ std::shared_ptr<const irs::Filter> BuildDeferredFilter(
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
+  DeferredBuild out;
+  std::map<ColumnId,
+           std::pair<duckdb::LogicalType,
+                     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>>>
+    wide;
+  for (const auto& e : claim.ranges) {
+    auto range = bound(e);
+    auto probe = std::make_unique<irs::BooleanFilter>();
+    std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&range, 1};
+    FilterScorers probe_scorers;
+    if (MakeSearchFilter(*probe, single, getter, context, expr_getter,
+                         &probe_scorers, WideRanges::DeclineWide)
+          .ok()) {
+      conjuncts.push_back(std::move(range));
+      continue;
+    }
+    const duckdb::BoundColumnRefExpression* ref = nullptr;
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundColumnRefExpression>(
+      *range, [&](const duckdb::BoundColumnRefExpression& r) { ref = &r; });
+    SDB_ENSURE(ref != nullptr, "a deferred range reads one column");
+    const auto it =
+      claim.columns->find({ref->Binding().table_index.index,
+                           ref->Binding().column_index.GetIndex()});
+    SDB_ENSURE(it != claim.columns->end(),
+               "a deferred range's column was resolved at plan time");
+    auto& [type, parts] = wide[it->second.column];
+    type = ref->GetReturnType();
+    if (range->GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
+      using duckdb::BoundBetweenExpression;
+      using duckdb::ExpressionType;
+      const auto& between = range->Cast<duckdb::BoundFunctionExpression>();
+      parts.push_back(duckdb::BoundComparisonExpression::Create(
+        BoundBetweenExpression::LowerInclusive(between)
+          ? ExpressionType::COMPARE_GREATERTHANOREQUALTO
+          : ExpressionType::COMPARE_GREATERTHAN,
+        BoundBetweenExpression::Input(between).Copy(),
+        BoundBetweenExpression::LowerBound(between).Copy()));
+      parts.push_back(duckdb::BoundComparisonExpression::Create(
+        BoundBetweenExpression::UpperInclusive(between)
+          ? ExpressionType::COMPARE_LESSTHANOREQUALTO
+          : ExpressionType::COMPARE_LESSTHAN,
+        BoundBetweenExpression::Input(between).Copy(),
+        BoundBetweenExpression::UpperBound(between).Copy()));
+    } else {
+      parts.push_back(std::move(range));
+    }
+  }
+  for (auto& [column, typed] : wide) {
+    auto& [type, parts] = typed;
+    for (auto& part : parts) {
+      duckdb::ExpressionIterator::VisitExpressionMutable<
+        duckdb::BoundColumnRefExpression>(
+        part, [](duckdb::BoundColumnRefExpression& r,
+                 duckdb::unique_ptr<duckdb::Expression>& child) {
+          child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            r.GetAlias(), r.GetReturnType(), 0ULL);
+        });
+    }
+    duckdb::unique_ptr<duckdb::Expression> expr;
+    if (parts.size() == 1) {
+      expr = std::move(parts[0]);
+    } else {
+      auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+        duckdb::ExpressionType::CONJUNCTION_AND);
+      for (auto& part : parts) {
+        conjunction->GetChildrenMutable().push_back(std::move(part));
+      }
+      expr = std::move(conjunction);
+    }
+    out.column_filters.push_back(
+      {.column = column,
+       .type = std::move(type),
+       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(expr))});
+  }
+  if (conjuncts.empty()) {
+    return out;
+  }
   auto root = std::make_unique<irs::BooleanFilter>();
   FilterScorers scorers;
   const auto status =
@@ -538,7 +627,8 @@ std::shared_ptr<const irs::Filter> BuildDeferredFilter(
   }
   ctx.null_markers = &null_markers;
   irs::Optimize(filter, ctx);
-  return std::shared_ptr<const irs::Filter>{std::move(filter)};
+  out.filter = std::shared_ptr<const irs::Filter>{std::move(filter)};
+  return out;
 }
 
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,

@@ -322,3 +322,116 @@ v
 
 statement ok
 DEALLOCATE ap_empty_q;
+
+statement ok
+PREPARE ap_range AS SELECT pk FROM ap WHERE num <= $2
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_range([1600.4, 0, 0, 0, 0, 0, 0, 0], 1500);
+----
+pk
+1500
+1499
+1498
+
+query
+EXECUTE ap_range([1600.4, 0, 0, 0, 0, 0, 0, 0], 1000);
+----
+pk
+1000
+999
+998
+
+query
+EXECUTE ap_range([1600.4, 0, 0, 0, 0, 0, 0, 0], 1500);
+----
+pk
+1500
+1499
+1498
+
+query
+EXECUTE ap_range([1600.4, 0, 0, 0, 0, 0, 0, 0], NULL);
+----
+pk
+
+statement ok
+DEALLOCATE ap_range;
+
+statement ok
+PREPARE ap_between AS SELECT pk FROM ap WHERE num BETWEEN $2 AND $3
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_between([1600.4, 0, 0, 0, 0, 0, 0, 0], 1200, 1500);
+----
+pk
+1500
+1499
+1498
+
+query
+EXECUTE ap_between([1600.4, 0, 0, 0, 0, 0, 0, 0], 1490, 1500);
+----
+pk
+1500
+1499
+1498
+
+query
+EXECUTE ap_between([1600.4, 0, 0, 0, 0, 0, 0, 0], 1700, 1800);
+----
+pk
+1700
+1701
+1702
+
+statement ok
+DEALLOCATE ap_between;
+
+statement ok
+PREPARE ap_range_merge AS SELECT pk FROM ap WHERE num > 1200 AND num <= $2
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_range_merge([1600.4, 0, 0, 0, 0, 0, 0, 0], 1500);
+----
+pk
+1500
+1499
+1498
+
+query
+EXECUTE ap_range_merge([100.4, 0, 0, 0, 0, 0, 0, 0], 1500);
+----
+pk
+1201
+1202
+1203
+
+statement ok
+DEALLOCATE ap_range_merge;
+
+statement ok
+PREPARE ap_label_range AS SELECT pk FROM ap WHERE label = $2 AND num <= $3
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 3;
+
+query
+EXECUTE ap_label_range([1600.4, 0, 0, 0, 0, 0, 0, 0], 'odd', 1500);
+----
+pk
+1499
+1497
+1495
+
+query
+EXECUTE ap_label_range([1600.4, 0, 0, 0, 0, 0, 0, 0], 'even', 500);
+----
+pk
+500
+498
+496
+
+statement ok
+DEALLOCATE ap_label_range;

@@ -281,7 +281,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   // the plan deferred it; otherwise the one the plan built.
   std::shared_ptr<const irs::Filter> where = ss.search.filter;
   if (ss.plan_cache.deferred) {
-    state->owned_where = BuildDeferredFilter(context, ss);
     where = state->owned_where;
   }
   if (ss.score.vector) {

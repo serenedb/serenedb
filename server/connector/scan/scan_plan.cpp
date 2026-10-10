@@ -266,6 +266,42 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
   }
 }
 
+void AddDeferredColumnFilter(ScanGlobalState& state,
+                             DeferredColumnFilter&& deferred) {
+  using ColFilter = ScanGlobalState::ColFilter;
+  auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
+    return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
+           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty();
+  });
+  if (existing != state.col_filters.end()) {
+    auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      duckdb::ExpressionType::CONJUNCTION_AND);
+    conjunction->GetChildrenMutable().push_back(
+      duckdb::ExpressionFilter::GetExpressionFilter(*existing->filter,
+                                                    "AddDeferredColumnFilter")
+        .expr->Copy());
+    conjunction->GetChildrenMutable().push_back(
+      std::move(duckdb::ExpressionFilter::GetExpressionFilter(
+                  *deferred.filter, "AddDeferredColumnFilter")
+                  .expr));
+    deferred.filter =
+      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(conjunction));
+  }
+  const auto& owned =
+    state.deferred_filters.emplace_back(std::move(deferred.filter));
+  auto& cf = existing != state.col_filters.end()
+               ? *existing
+               : state.col_filters.emplace_back();
+  cf.field = deferred.column;
+  cf.filter = owned.get();
+  cf.null_check =
+    DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
+                       *owned, "AddDeferredColumnFilter")
+                       .expr);
+  cf.type = std::move(deferred.type);
+  cf.not_null = MakeNotNullReplacement(*owned, cf.type);
+}
+
 }  // namespace
 
 const irs::Filter& MatchAllFilter() {
@@ -463,6 +499,13 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   }
   if (bind_data.search.filter) {
     AddDeferredVerifyFilters(state, *bind_data.search.filter);
+  }
+  if (bind_data.plan_cache.deferred) {
+    auto built = BuildDeferredFilter(*context, bind_data);
+    state.owned_where = std::move(built.filter);
+    for (auto& column_filter : built.column_filters) {
+      AddDeferredColumnFilter(state, std::move(column_filter));
+    }
   }
   if (bind_data.IsHnswScored()) {
     if (!bind_data.score.top_k && !bind_data.score.top_k_expr &&

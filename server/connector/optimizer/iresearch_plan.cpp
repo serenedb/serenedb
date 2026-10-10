@@ -318,6 +318,49 @@ struct DeferredClaimBuilder {
   }
 };
 
+bool ClaimDeferredRange(const duckdb::unique_ptr<duckdb::Expression>& conjunct,
+                        const duckdb::unique_ptr<duckdb::Expression>& shaped,
+                        const connector::ColumnGetter& column_getter,
+                        const connector::ExpressionGetter& expression_getter,
+                        duckdb::ClientContext& context,
+                        DeferredClaimBuilder& deferred) {
+  if (deferred.used_expr_getter || !ColumnFilterCanTake(*shaped)) {
+    return false;
+  }
+  std::optional<duckdb::ColumnBinding> column;
+  bool one = true;
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    *shaped, [&](const duckdb::BoundColumnRefExpression& ref) {
+      if (!column) {
+        column = ref.Binding();
+      } else if (*column != ref.Binding()) {
+        one = false;
+      }
+    });
+  if (!column || !one) {
+    return false;
+  }
+  auto node = std::make_unique<irs::BooleanFilter>();
+  std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&shaped, 1};
+  connector::FilterScorers scorers;
+  const auto claimed = connector::MakeSearchFilter(
+    *node, single, column_getter, context, expression_getter, &scorers,
+    connector::WideRanges::Build);
+  const bool built = absl::c_any_of(
+    irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
+  if (!claimed.ok() || !built || deferred.used_expr_getter ||
+      !scorers.empty()) {
+    return false;
+  }
+  const auto it = deferred.columns.find(
+    {column->table_index.index, column->column_index.GetIndex()});
+  if (it == deferred.columns.end() || !it->second.column_stored) {
+    return false;
+  }
+  deferred.claim.ranges.push_back(conjunct->Copy());
+  return true;
+}
+
 bool TryClaimIResearchConjunctImpl(
   irs::BooleanFilter& root,
   const duckdb::unique_ptr<duckdb::Expression>& conjunct,
@@ -350,6 +393,10 @@ bool TryClaimIResearchConjunctImpl(
       irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
     if (!claimed.ok() || !built || deferred->used_expr_getter ||
         !shaped_scorers.empty()) {
+      if (ClaimDeferredRange(conjunct, shaped, column_getter, expression_getter,
+                             context, *deferred)) {
+        return true;
+      }
       deferred->declined_parameter = true;
       return false;
     }
@@ -1326,14 +1373,15 @@ bool ClaimSearchConjuncts(
       ++i;
     }
   }
-  if (deferred.declined_parameter ||
-      (!deferred.claim.conjuncts.empty() && deferred.used_expr_getter)) {
+  const bool deferring =
+    !deferred.claim.conjuncts.empty() || !deferred.claim.ranges.empty();
+  if (deferred.declined_parameter || (deferring && deferred.used_expr_getter)) {
     scan.plan_cache.declined_parameter = true;
   }
   if (!any_claimed) {
     return false;
   }
-  if (!deferred.claim.conjuncts.empty() && !deferred.used_expr_getter) {
+  if (deferring && !deferred.used_expr_getter) {
     // The whole WHERE is rebuilt at execution, the constant conjuncts with
     // it, so the executed filter is one boolean the optimizer has seen whole.
     for (auto& e : claimed_exprs) {

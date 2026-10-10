@@ -13765,11 +13765,20 @@ C
 POSIX
 
 
+skipif serenedb
 query
 SELECT count(*) > 700 AS populated FROM information_schema.sql_features
 ----
 populated
 t
+
+
+onlyif serenedb
+query
+SELECT count(*) > 700 AS populated FROM information_schema.sql_features
+----
+populated
+f
 
 
 statement ok

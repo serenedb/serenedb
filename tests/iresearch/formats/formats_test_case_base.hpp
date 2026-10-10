@@ -186,9 +186,9 @@ class BatchingTermIterator final : public irs::TermOnlyIterator {
   size_t NextTermsWithPostings(std::span<irs::bytes_view> terms,
                                std::span<irs::PostingRows> postings,
                                irs::IndexFeatures features) final {
-    _terms.clear();
     _spans.Clear(features);
     const bool has_freq = irs::IsSubsetOf(irs::IndexFeatures::Freq, features);
+    const size_t base = _terms.size();
     size_t n = 0;
     while (n < std::min(terms.size(), postings.size()) && _it->next()) {
       _terms.emplace_back(_it->value());
@@ -217,7 +217,7 @@ class BatchingTermIterator final : public irs::TermOnlyIterator {
     }
     for (size_t i = 0; i < n; ++i) {
       postings[i] = {.span = _spans.SpanOf(i)};
-      terms[i] = _terms[i];
+      terms[i] = _terms[base + i];
     }
     return n;
   }

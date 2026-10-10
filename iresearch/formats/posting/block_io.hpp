@@ -236,7 +236,11 @@ IRS_FORCE_INLINE uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev, uint32_t len,
   const auto split = static_cast<uint32_t>(below / kBits);
   const uint64_t keep = (uint64_t{1} << (below % kBits)) - 1;
   SDB_ASSERT(split < leaf.words);
-  bitset_at(bitset, split + 1, bitset[split] & keep);
+  if (keep != 0) {
+    bitset_at(bitset, split + 1, bitset[split] & keep);
+  } else if (split != 0) {
+    bitset_at(bitset, split, bitset[split - 1]);
+  }
 
   const auto rest = bitset[split] & ~keep;
   auto live = static_cast<uint32_t>(std::popcount(rest));

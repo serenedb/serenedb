@@ -499,7 +499,8 @@ std::vector<std::string> MakeKeys(size_t count) {
 std::map<TokenLayout, std::vector<Result>> AnalyseForPlan(
   const Spec& spec, std::span<const FieldPlan> plan,
   std::span<const std::string> values) {
-  auto reference = Make(spec);
+  auto conn = Connect();
+  auto reference = Make(spec, *conn.context);
   std::map<TokenLayout, std::vector<Result>> out;
   for (const auto& field : plan) {
     const auto layout = LayoutFromFeatures(field.features);
@@ -522,7 +523,8 @@ void BuildIndex(const Spec& spec, std::span<const FieldPlan> plan,
                 bool consolidate) {
   auto writer = index.Open();
   ASSERT_NE(nullptr, writer);
-  auto tokenizer = Make(spec);
+  auto conn = Connect();
+  auto tokenizer = Make(spec, *conn.context);
   ASSERT_NE(nullptr, tokenizer);
   const auto traits = tokenizer->Traits();
 
@@ -550,7 +552,8 @@ void BuildIndex(const Spec& spec, std::span<const FieldPlan> plan,
 void CheckInversion(const Spec& spec, std::span<const std::string> values,
                     bool exact, bool consolidate) {
   IndexUnderTest index;
-  auto reference = Make(spec);
+  auto conn = Connect();
+  auto reference = Make(spec, *conn.context);
   ASSERT_NE(nullptr, reference);
   const auto plan = PlanFor(reference->Traits());
   const auto keys = MakeKeys(values.size());
@@ -734,12 +737,13 @@ TEST(TokenizerInversion, MultiValueDocuments) {
     SCOPED_TRACE(testing::Message() << spec->name << " seed=" << Seed());
     const auto values =
       SpecCorpus(*spec, Seed() ^ 0x3117ull, ValueBudget(*spec, docs_wanted));
+    auto conn = Connect();
     for (const size_t per_doc : {size_t{2}, size_t{3}, size_t{7}}) {
       SCOPED_TRACE(testing::Message() << "values_per_doc=" << per_doc);
       const auto docs = GroupIntoDocs(values, per_doc);
       const auto keys = MakeKeys(docs.size());
 
-      auto reference = Make(*spec);
+      auto reference = Make(*spec, *conn.context);
       ASSERT_NE(nullptr, reference);
       const auto traits = reference->Traits();
       const auto plan = PlanFor(traits);
@@ -748,7 +752,7 @@ TEST(TokenizerInversion, MultiValueDocuments) {
       {
         auto writer = index.Open();
         ASSERT_NE(nullptr, writer);
-        auto tokenizer = Make(*spec);
+        auto tokenizer = Make(*spec, *conn.context);
         ASSERT_NE(nullptr, tokenizer);
         auto trx = writer->GetBatch();
         std::string error;
@@ -764,7 +768,7 @@ TEST(TokenizerInversion, MultiValueDocuments) {
         const bool with_freq = Has(field.features, IndexFeatures::Freq);
         const bool with_pos = Has(field.features, IndexFeatures::Pos);
         const bool with_offs = Has(field.features, IndexFeatures::Offs);
-        auto analyser = Make(*spec);
+        auto analyser = Make(*spec, *conn.context);
         ASSERT_NE(nullptr, analyser);
         for (size_t d = 0; d < docs.size(); ++d) {
           std::vector<Result> per_value;
@@ -792,7 +796,8 @@ TEST(TokenizerInversion, MultiValueDocuments) {
 
 TEST(TokenizerInversion, StoredBlobsReachTheSink) {
   for (const auto* spec : SelectedSpecs()) {
-    auto reference = Make(*spec);
+    auto conn = Connect();
+    auto reference = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, reference);
     if (!reference->Traits().store) {
       continue;
@@ -811,7 +816,7 @@ TEST(TokenizerInversion, StoredBlobsReachTheSink) {
     {
       auto writer = index.Open();
       ASSERT_NE(nullptr, writer);
-      auto tokenizer = Make(*spec);
+      auto tokenizer = Make(*spec, *conn.context);
       ASSERT_NE(nullptr, tokenizer);
       auto trx = writer->GetBatch();
       std::string error;
@@ -824,7 +829,7 @@ TEST(TokenizerInversion, StoredBlobsReachTheSink) {
     }
 
     const auto layout = LayoutFromFeatures(plan.front().features);
-    auto analyser = Make(*spec);
+    auto analyser = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, analyser);
     size_t expected_blobs = 0;
     for (size_t i = 0; i < values.size(); ++i) {
@@ -855,7 +860,8 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     ASSERT_FALSE(values.empty());
     const auto keys = MakeKeys(values.size());
 
-    auto reference = Make(*spec);
+    auto conn = Connect();
+    auto reference = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, reference);
     const auto traits = reference->Traits();
     const auto plan = PlanFor(traits);
@@ -879,7 +885,7 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     IndexUnderTest index;
     auto writer = index.Open();
     ASSERT_NE(nullptr, writer);
-    auto tokenizer = Make(*spec);
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
 
     {
@@ -924,7 +930,7 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
       const bool with_freq = Has(field.features, IndexFeatures::Freq);
       const bool with_pos = Has(field.features, IndexFeatures::Pos);
       const bool with_offs = Has(field.features, IndexFeatures::Offs);
-      auto analyser = Make(*spec);
+      auto analyser = Make(*spec, *conn.context);
       ASSERT_NE(nullptr, analyser);
       for (size_t i = 0; i < live.size(); ++i) {
         if (fate[i] == kRemoved) {
@@ -992,7 +998,8 @@ TEST_P(TokenizerInversionLoad, ConcurrentWriters) {
   const auto trimmed = std::span{values}.first(std::min(total, values.size()));
   const auto keys = MakeKeys(trimmed.size());
 
-  auto reference = Make(*spec);
+  auto conn = Connect();
+  auto reference = Make(*spec, *conn.context);
   ASSERT_NE(nullptr, reference);
   const auto plan = PlanFor(reference->Traits());
 
@@ -1007,7 +1014,8 @@ TEST_P(TokenizerInversionLoad, ConcurrentWriters) {
   const auto stride = (trimmed.size() + threads - 1) / threads;
   for (size_t t = 0; t < threads; ++t) {
     pool.emplace_back([&, t] {
-      auto tokenizer = Make(*spec);
+      auto worker_conn = Connect();
+      auto tokenizer = Make(*spec, *worker_conn.context);
       if (!tokenizer) {
         ++failures;
         return;

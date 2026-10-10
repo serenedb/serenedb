@@ -118,9 +118,7 @@ information_schema	b	74
 information_schema	c	69
 information_schema	d	5
 pg_catalog	c	144
-pg_catalog	m	6
-pg_catalog	p	26
-pg_catalog	r	6
+pg_catalog	p	10
 
 
 statement ok

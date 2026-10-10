@@ -22,6 +22,8 @@ PROCEDURES = {'array_subscript_handler': 'kArraySubscriptHandler'}
 
 SDB_OWNED_TYPES = ('tsquery', '_tsquery')
 
+PSEUDO_TYPES = ('any', 'internal', 'record')
+
 ENUM_PROCS = ('enum_in', 'enum_out', 'enum_recv', 'enum_send')
 
 COLLATIONS = ('default', 'C', 'POSIX')

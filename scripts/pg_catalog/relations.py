@@ -218,7 +218,7 @@ def named_oids(gen, sql, names):
 def generate(gen):
     reserved = {row[0] for row in gen.query(
         "SELECT word FROM pg_get_keywords() WHERE catcode <> 'U'")}
-    types = builtins.type_constants(gen)
+    types = builtins.builtin_type_constants(gen)
     oids = (named_oids(gen, 'SELECT %s::regnamespace::oid::int8',
                        config.SCHEMAS) +
             named_oids(gen, 'SELECT oid::int8 FROM pg_database '

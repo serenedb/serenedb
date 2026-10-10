@@ -77,7 +77,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kInterval, []() -> duckdb::LogicalType { return duckdb::LogicalType::INTERVAL; }, false},
   {kTimetz, []() -> duckdb::LogicalType { return duckdb::LogicalType::TIME_TZ; }, false},
   {kBit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, false},
-  {kVarbit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, false},
+  {kVarbit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, true},
   {kNumeric, []() -> duckdb::LogicalType { return duckdb::LogicalType::DECIMAL(18, 3); }, false},
   {kRegprocedure, &REGPROCEDURE, true},
   {kRegoper, &REGOPER, true},

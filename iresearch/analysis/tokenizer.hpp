@@ -311,17 +311,18 @@ class TypedTokenizer : public Tokenizer {
     });
     return filled;
   }
-};
 
-template<typename Impl>
-bool ScanWithProgress(Impl& impl, const duckdb::string_t& value, ScanSink& sink,
-                      BlockTraits known) {
-  const auto traits =
-    ComputeValueTraits(value, impl.Impl::WantedBlockTraits(), known);
-  return DispatchTags(impl, traits, [&](auto... tags) IRS_FORCE_INLINE {
-    return impl.template DoFill<TokenLayout::TermsPos, tags()...>(
-      value, sink, sink.Progress());
-  });
-}
+  template<typename Sink>
+  bool ScanWithProgress(const duckdb::string_t& value, Sink& sink,
+                        BlockTraits known) {
+    auto* impl = static_cast<Impl*>(this);
+    const auto traits =
+      ComputeValueTraits(value, impl->Impl::WantedBlockTraits(), known);
+    return DispatchTags(*impl, traits, [&](auto... tags) IRS_FORCE_INLINE {
+      return impl->template DoFill<TokenLayout::TermsPos, tags()...>(
+        value, sink, sink.Progress());
+    });
+  }
+};
 
 }  // namespace irs::analysis

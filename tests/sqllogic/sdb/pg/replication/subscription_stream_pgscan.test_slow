@@ -117,29 +117,11 @@ CALL postgres_execute('rstr_${__DATABASE__}', 'CREATE EXTENSION IF NOT EXISTS db
 
 
 statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT dblink_connect(''rstr_long'', ''dbname=postgres user=${PGUSER}'') AS long_conn, dblink_connect(''rstr_outer'', ''dbname=postgres user=${PGUSER}'') AS outer_conn, dblink_connect(''rstr_other'', ''dbname=postgres user=${PGUSER}'') AS other_conn');
+CALL postgres_execute('rstr_${__DATABASE__}', 'CREATE OR REPLACE FUNCTION rstr_interleave(long_sql text, other_sql text) RETURNS void LANGUAGE plpgsql AS $$ DECLARE remote int; BEGIN PERFORM dblink_connect(''rstr_long'', ''dbname=postgres user=${PGUSER}''); SELECT pid INTO remote FROM dblink(''rstr_long'', ''SELECT pg_backend_pid()'') AS t(pid int); PERFORM dblink_send_query(''rstr_long'', long_sql); FOR i IN 1..1000 LOOP PERFORM pg_stat_clear_snapshot(); EXIT WHEN EXISTS (SELECT FROM pg_stat_activity WHERE pid = remote AND wait_event = ''PgSleep''); PERFORM pg_sleep(0.01); END LOOP; PERFORM dblink_exec(''dbname=postgres user=${PGUSER}'', other_sql); LOOP EXIT WHEN NOT EXISTS (SELECT FROM dblink_get_result(''rstr_long'') AS r(status text)); END LOOP; PERFORM dblink_disconnect(''rstr_long''); END $$');
 
 
 statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT dblink_send_query(''rstr_long'', ''BEGIN; INSERT INTO rstr_big SELECT g, ''''long'''' FROM generate_series(600001, 620000) g; SELECT pg_sleep(3); INSERT INTO rstr_big SELECT g, ''''long'''' FROM generate_series(620001, 640000) g; COMMIT;'')');
-
-
-query ok retry 120 backoff 100ms
-SELECT * FROM postgres_query('rstr_${__DATABASE__}', 'SELECT count(*) AS sleeping FROM pg_stat_activity WHERE wait_event = ''PgSleep'' AND query LIKE ''%rstr_big%''');
-----
-sleeping
-1
-
-
-statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'INSERT INTO rstr_big VALUES (700001, ''between'')');
-
-
-query ok retry 120 backoff 250ms
-SELECT * FROM postgres_query('rstr_${__DATABASE__}', 'SELECT dblink_is_busy(''rstr_long'') AS busy');
-----
-busy
-0
+CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT rstr_interleave(''BEGIN; INSERT INTO rstr_big SELECT g, ''''long'''' FROM generate_series(600001, 620000) g; SELECT pg_sleep(3); INSERT INTO rstr_big SELECT g, ''''long'''' FROM generate_series(620001, 640000) g; COMMIT;'', ''INSERT INTO rstr_big VALUES (700001, ''''between'''')'')');
 
 
 query ok retry 240 backoff 250ms
@@ -150,25 +132,7 @@ long_rows	between_rows
 
 
 statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT dblink_send_query(''rstr_outer'', ''BEGIN; INSERT INTO rstr_big SELECT g, ''''outer'''' FROM generate_series(800001, 820000) g; SELECT pg_sleep(3); COMMIT;'')');
-
-
-query ok retry 120 backoff 100ms
-SELECT * FROM postgres_query('rstr_${__DATABASE__}', 'SELECT count(*) AS sleeping FROM pg_stat_activity WHERE wait_event = ''PgSleep'' AND query LIKE ''%rstr_big%''');
-----
-sleeping
-1
-
-
-statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT dblink_exec(''rstr_other'', ''INSERT INTO rstr_big SELECT g, ''''inner'''' FROM generate_series(900001, 920000) g'')');
-
-
-query ok retry 120 backoff 250ms
-SELECT * FROM postgres_query('rstr_${__DATABASE__}', 'SELECT dblink_is_busy(''rstr_outer'') AS busy');
-----
-busy
-0
+CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT rstr_interleave(''BEGIN; INSERT INTO rstr_big SELECT g, ''''outer'''' FROM generate_series(800001, 820000) g; SELECT pg_sleep(3); COMMIT;'', ''INSERT INTO rstr_big SELECT g, ''''inner'''' FROM generate_series(900001, 920000) g'')');
 
 
 query ok retry 240 backoff 250ms
@@ -176,10 +140,6 @@ SELECT count(*) FILTER (WHERE v = 'outer') AS outer_rows, count(*) FILTER (WHERE
 ----
 outer_rows	inner_rows
 20000	20000
-
-
-statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT dblink_disconnect(''rstr_long'') AS long_conn, dblink_disconnect(''rstr_outer'') AS outer_conn, dblink_disconnect(''rstr_other'') AS other_conn');
 
 
 statement ok
@@ -258,7 +218,7 @@ CALL postgres_execute('rstr_${__DATABASE__}', 'SELECT pg_reload_conf()');
 
 
 statement ok
-CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rstr_pub; DROP TABLE rstr_big, rstr_added, rstr_nocopy, rstr_late; END $$');
+CALL postgres_execute('rstr_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rstr_pub; DROP TABLE rstr_big, rstr_added, rstr_nocopy, rstr_late; DROP FUNCTION rstr_interleave; END $$');
 
 
 statement ok

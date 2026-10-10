@@ -107,6 +107,21 @@ class PgjdbcDriverTest {
         assertNotEquals("", ps.get("server_version"));
     }
 
+    @Test
+    @DisplayName("commit: a block that hit an error reports the rollback")
+    void commitOfAbortedBlockThrows() throws Exception {
+        for (Connection conn : List.of(extendedTextConn, simpleConn)) {
+            conn.setAutoCommit(false);
+            try (Statement st = conn.createStatement()) {
+                assertThrows(java.sql.SQLException.class, () -> st.executeQuery("SELECT * FROM papich_missing_table"));
+                assertThrows(java.sql.SQLException.class, conn::commit);
+            } finally {
+                conn.rollback();
+                conn.setAutoCommit(true);
+            }
+        }
+    }
+
     // ---- round-trip matrix ----------------------------------------------
 
     static Stream<SpecLoader.Case> cases() throws Exception {

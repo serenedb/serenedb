@@ -1,0 +1,89 @@
+# exclusive
+
+statement ok
+CREATE TABLE tcw (id INT, v INT)
+
+
+statement ok
+INSERT INTO tcw VALUES (1, 1)
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+INSERT INTO tcw VALUES (2, 2)
+
+
+connection s3
+statement ok
+BEGIN
+
+
+connection s3
+query
+SELECT count(*) AS n FROM tcw
+----
+n
+1
+
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 3000
+
+
+connection s1
+statement async ok
+COMMIT
+
+
+sleep 1s
+
+
+connection s2
+statement error
+TRUNCATE tcw
+----
+db error: ERROR: Attempting to truncate table "tcw" but another transaction has added rows to this table
+
+
+connection s1
+wait
+
+
+connection s3
+statement ok
+COMMIT
+
+
+statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 0
+
+
+connection s2
+query
+SELECT id, v FROM tcw ORDER BY id
+----
+id	v
+1	1
+2	2
+
+
+connection s2
+statement ok
+TRUNCATE tcw
+
+
+connection s2
+query
+SELECT count(*) AS n FROM tcw
+----
+n
+0
+
+
+statement ok
+DROP TABLE tcw

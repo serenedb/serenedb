@@ -500,8 +500,9 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
-DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
-                                  const ScanBindData& scan) {
+DeferredBuild BuildDeferredFilter(
+  duckdb::ClientContext& context, const ScanBindData& scan,
+  const search::InvertedIndexSnapshot& snapshot) {
   SDB_ASSERT(scan.plan_cache.deferred);
   const auto& claim = *scan.plan_cache.deferred;
   const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {
@@ -521,8 +522,12 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     if (it == claim.columns->end()) {
       return std::nullopt;
     }
-    return optimizer::ResolveSearchColumnById(context, scan, it->second.column,
-                                              it->second.column_stored);
+    auto info = optimizer::ResolveSearchColumnById(
+      context, scan, it->second.column, it->second.column_stored);
+    if (info && info->column_stored) {
+      info->stats = snapshot.reader.GetColumnStats(it->second.column);
+    }
+    return info;
   };
   const ExpressionGetter expr_getter =
     [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
@@ -533,17 +538,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
            std::pair<duckdb::LogicalType,
                      duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>>>
     wide;
-  for (const auto& e : claim.ranges) {
-    auto range = bound(e);
-    auto probe = std::make_unique<irs::BooleanFilter>();
-    std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&range, 1};
-    FilterScorers probe_scorers;
-    if (MakeSearchFilter(*probe, single, getter, context, expr_getter,
-                         &probe_scorers, WideRanges::DeclineWide)
-          .ok()) {
-      conjuncts.push_back(std::move(range));
-      continue;
-    }
+  const auto to_column = [&](duckdb::unique_ptr<duckdb::Expression> range) {
     const duckdb::BoundColumnRefExpression* ref = nullptr;
     duckdb::ExpressionIterator::VisitExpression<
       duckdb::BoundColumnRefExpression>(
@@ -574,6 +569,59 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
         BoundBetweenExpression::UpperBound(between).Copy()));
     } else {
       parts.push_back(std::move(range));
+    }
+  };
+  const auto probe_wide =
+    [&](const duckdb::unique_ptr<duckdb::Expression>& range) {
+      auto probe = std::make_unique<irs::BooleanFilter>();
+      std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&range, 1};
+      FilterScorers probe_scorers;
+      return !MakeSearchFilter(*probe, single, getter, context, expr_getter,
+                               &probe_scorers, WideRanges::DeclineWide)
+                .ok();
+    };
+  struct Interval {
+    std::optional<SearchColumnInfo> info;
+    double lo = 0;
+    double hi = 0;
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> ranges;
+  };
+  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, Interval> intervals;
+  for (const auto& e : claim.ranges) {
+    auto range = bound(e);
+    const auto bounds = ColumnRangeOf(*range);
+    if (!bounds) {
+      if (probe_wide(range)) {
+        to_column(std::move(range));
+      } else {
+        conjuncts.push_back(std::move(range));
+      }
+      continue;
+    }
+    const auto& binding = bounds->column->Binding();
+    auto [it, inserted] = intervals.try_emplace(
+      {binding.table_index.index, binding.column_index.GetIndex()});
+    auto& interval = it->second;
+    if (inserted) {
+      interval.info = getter(*bounds->column);
+      interval.lo = bounds->lo;
+      interval.hi = bounds->hi;
+    } else {
+      interval.lo = std::max(interval.lo, bounds->lo);
+      interval.hi = std::min(interval.hi, bounds->hi);
+    }
+    interval.ranges.push_back(std::move(range));
+  }
+  for (auto& [key, interval] : intervals) {
+    const auto fits =
+      interval.info ? RangeFitsIndex(*interval.info, interval.lo, interval.hi)
+                    : std::nullopt;
+    for (auto& range : interval.ranges) {
+      if (fits ? !*fits : probe_wide(range)) {
+        to_column(std::move(range));
+      } else {
+        conjuncts.push_back(std::move(range));
+      }
     }
   }
   for (auto& [column, typed] : wide) {

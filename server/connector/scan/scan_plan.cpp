@@ -410,6 +410,15 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
   }
 }
 
+void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
+                        const ScanBindData& bind_data) {
+  auto built = BuildDeferredFilter(context, bind_data, *state.snapshot);
+  state.owned_where = std::move(built.filter);
+  for (auto& column_filter : built.column_filters) {
+    AddDeferredColumnFilter(state, std::move(column_filter));
+  }
+}
+
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
                    const ScanBindData& bind_data,
                    duckdb::TableFunctionInitInput& input) {
@@ -522,13 +531,6 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   }
   if (bind_data.search.filter) {
     AddDeferredVerifyFilters(state, *bind_data.search.filter);
-  }
-  if (bind_data.plan_cache.deferred) {
-    auto built = BuildDeferredFilter(*context, bind_data);
-    state.owned_where = std::move(built.filter);
-    for (auto& column_filter : built.column_filters) {
-      AddDeferredColumnFilter(state, std::move(column_filter));
-    }
   }
   if (bind_data.IsHnswScored()) {
     if (!bind_data.score.top_k && !bind_data.score.top_k_expr &&

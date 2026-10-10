@@ -202,6 +202,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   const auto& snapshot = *state->snapshot;
   state->reader = &snapshot.reader;
   state->total_segments = snapshot.reader.size();
+  if (ss.plan_cache.deferred) {
+    ApplyDeferredClaim(*state, context, ss);
+  }
   state->vector_scorer = ss.score.vector ? &*ss.score.vector : nullptr;
   state->top_k = ss.score.top_k;
   state->top_offset = ss.score.top_n_consumed ? ss.score.top_offset : 0;

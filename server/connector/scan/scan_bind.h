@@ -310,8 +310,9 @@ struct DeferredBuild {
   std::vector<DeferredColumnFilter> column_filters;
 };
 
-DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
-                                  const ScanBindData& scan);
+DeferredBuild BuildDeferredFilter(
+  duckdb::ClientContext& context, const ScanBindData& scan,
+  const search::InvertedIndexSnapshot& snapshot);
 
 inline const irs::Scorer* ResolvePruneScorer(
   const std::optional<catalog::ScorerOptions>& topk,

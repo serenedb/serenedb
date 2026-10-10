@@ -366,7 +366,8 @@ bool TryClaimIResearchConjunctImpl(
   const connector::ColumnGetter& getter,
   const connector::ExpressionGetter& expr_getter,
   duckdb::ClientContext& context, connector::FilterScorers* scorers,
-  DeferredClaimBuilder* deferred) {
+  DeferredClaimBuilder* deferred,
+  std::optional<connector::WideRanges> range_mode = std::nullopt) {
   // A conjunct with an unbound parameter appears in a prepared statement's
   // template plan. Where the scan can read the parameter at execution
   // (`deferred`), the conjunct is claimed on its shape and rebuilt then; where
@@ -420,8 +421,9 @@ bool TryClaimIResearchConjunctImpl(
   }
   const auto claimed = connector::MakeSearchFilter(
     *node, single, *column_getter, context, *expression_getter, scorers,
-    ColumnFilterCanTake(*conjunct) ? connector::WideRanges::DeclineWide
-                                   : connector::WideRanges::Build);
+    ColumnFilterCanTake(*conjunct)
+      ? range_mode.value_or(connector::WideRanges::DeclineWide)
+      : connector::WideRanges::Build);
   const bool built = absl::c_any_of(
     irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
   if (!claimed.ok() || !built) {
@@ -475,6 +477,10 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       auto column_info = MakeSearchColumnInfo(field_id, info, std::move(type),
                                               dicts.Acquire(field_id));
       column_info.column_stored = bind_data.relation.IsSearchTable();
+      if (column && column_info.column_stored && bind_data.search.snapshot) {
+        column_info.stats =
+          bind_data.search.snapshot->reader.GetColumnStats(*column);
+      }
       if (column && table_backed && column_not_null(*column)) {
         column_info.null_field_id = irs::field_limits::invalid();
       }
@@ -1340,6 +1346,57 @@ bool TryClaimAnnRange(
   return false;
 }
 
+std::map<const duckdb::Expression*, connector::WideRanges> DecideColumnRanges(
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
+  const connector::ColumnGetter& getter, duckdb::ClientContext& context) {
+  struct Interval {
+    std::optional<connector::SearchColumnInfo> info;
+    double lo = 0;
+    double hi = 0;
+    std::vector<const duckdb::Expression*> conjuncts;
+  };
+  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, Interval> intervals;
+  for (const auto& filter : filters) {
+    if (filter->HasParameter() || !ColumnFilterCanTake(*filter)) {
+      continue;
+    }
+    const auto shaped = NormalizeClaimShape(context, filter->Copy());
+    const auto bounds = connector::ColumnRangeOf(*shaped);
+    if (!bounds) {
+      continue;
+    }
+    const auto& binding = bounds->column->Binding();
+    auto [it, inserted] = intervals.try_emplace(
+      {binding.table_index.index, binding.column_index.GetIndex()});
+    auto& interval = it->second;
+    if (inserted) {
+      interval.info = getter(*bounds->column);
+      interval.lo = bounds->lo;
+      interval.hi = bounds->hi;
+    } else {
+      interval.lo = std::max(interval.lo, bounds->lo);
+      interval.hi = std::min(interval.hi, bounds->hi);
+    }
+    interval.conjuncts.push_back(filter.get());
+  }
+  std::map<const duckdb::Expression*, connector::WideRanges> modes;
+  for (const auto& [key, interval] : intervals) {
+    if (!interval.info) {
+      continue;
+    }
+    const auto fits =
+      connector::RangeFitsIndex(*interval.info, interval.lo, interval.hi);
+    if (!fits) {
+      continue;
+    }
+    for (const auto* conjunct : interval.conjuncts) {
+      modes.emplace(conjunct, *fits ? connector::WideRanges::Build
+                                    : connector::WideRanges::DeclineAll);
+    }
+  }
+  return modes;
+}
+
 bool ClaimSearchConjuncts(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   connector::ScanBindData& scan, const SearchGetters& getters,
@@ -1357,11 +1414,16 @@ bool ClaimSearchConjuncts(
   deferred.column_id = &getters.column_id;
   DeferredClaimBuilder* const deferred_ptr =
     scan.score.vector && !scan.score.text ? &deferred : nullptr;
+  const auto range_modes = DecideColumnRanges(filters, getter, context);
   std::vector<std::shared_ptr<const duckdb::Expression>> claimed_exprs;
   for (size_t i = 0; i < filters.size();) {
-    if (TryClaimIResearchConjunctImpl(*root_and, filters[i], getter,
-                                      expr_getter, context, &filter_scorers,
-                                      deferred_ptr)) {
+    const auto mode = range_modes.find(filters[i].get());
+    if (TryClaimIResearchConjunctImpl(
+          *root_and, filters[i], getter, expr_getter, context, &filter_scorers,
+          deferred_ptr,
+          mode != range_modes.end()
+            ? std::optional<connector::WideRanges>{mode->second}
+            : std::nullopt)) {
       any_claimed = true;
       if (!filters[i]->HasParameter()) {
         claimed_exprs.push_back(filters[i]->Copy());
@@ -1744,6 +1806,20 @@ duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
     if (lo.IsNull() || hi.IsNull() || !IsPlainInteger(lo.type()) ||
         !IsPlainInteger(hi.type())) {
       return expr;
+    }
+    const auto& type = col->GetReturnType();
+    auto lo_fitted = lo.DefaultTryCastAs(type);
+    auto hi_fitted = hi.DefaultTryCastAs(type);
+    if (lo_fitted && hi_fitted && !lo_fitted->IsNull() &&
+        !hi_fitted->IsNull()) {
+      return duckdb::BoundBetweenExpression::Create(
+        col->Copy(),
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          std::move(*lo_fitted)),
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          std::move(*hi_fitted)),
+        duckdb::BoundBetweenExpression::LowerInclusive(between),
+        duckdb::BoundBetweenExpression::UpperInclusive(between));
     }
     return duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
       ExpressionType::CONJUNCTION_AND,

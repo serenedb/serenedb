@@ -87,11 +87,63 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────╮
 │ Index: snr                        │
 │ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ Column Filter: num <= 1000        │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+40
+39
+38
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr                        │
+│ Lookup: search                    │
 │ Index Filter:                     │
 │ ╭─ Granular Range ─╮              │
 │ │ Field: num       │              │
-│ │ Range: <=1000    │              │
+│ │ Range: <=40      │              │
 │ ╰──────────────────╯              │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num BETWEEN 1200 AND 1240
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1240
+1239
+1238
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num >= 1200 AND num <= 1240
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr                        │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Granular Range ──────╮         │
+│ │ Field: num            │         │
+│ │ Range: >=1200, <=1240 │         │
+│ ╰───────────────────────╯         │
 │ Score: l2_distance(emb, FLOAT[2]) │
 │ Top: 3                            │
 │ Projections: pk                   │

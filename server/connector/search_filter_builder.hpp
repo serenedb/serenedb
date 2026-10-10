@@ -37,6 +37,11 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/term_dict.h"
 
+namespace duckdb {
+
+class BaseStatistics;
+
+}  // namespace duckdb
 namespace sdb::connector {
 
 enum class WideRanges : uint8_t {
@@ -72,6 +77,7 @@ struct SearchColumnInfo {
   // search table stores every column), so a predicate the term index would
   // answer badly may be left to the column filter instead.
   bool column_stored = false;
+  const duckdb::BaseStatistics* stats = nullptr;
   const FieldSetGetter* index_fields = nullptr;
 };
 
@@ -86,6 +92,17 @@ using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
 
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::Expression&) const>;
+
+struct ColumnRange {
+  const duckdb::BoundColumnRefExpression* column = nullptr;
+  double lo = 0;
+  double hi = 0;
+};
+
+std::optional<ColumnRange> ColumnRangeOf(const duckdb::Expression& expr);
+
+std::optional<bool> RangeFitsIndex(const SearchColumnInfo& info, double lo,
+                                   double hi);
 
 // Builds iresearch filters into `root`'s `Must` bucket from an implicit-AND
 // list of DuckDB bound filter expressions (as found in a LogicalFilter). Each

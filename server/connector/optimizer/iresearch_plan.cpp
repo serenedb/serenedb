@@ -73,7 +73,6 @@
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_bind.h"
-#include "connector/scan/scan_function.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -1453,60 +1452,93 @@ void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
   LimitTsDictEnumerations(*plan);
 }
 
-std::optional<duckdb::ColumnBinding> ReadColumnOf(
-  duckdb::ClientContext& context, duckdb::LogicalGet& get,
-  const connector::ScanBindData& bind_data, duckdb::Expression& expr) {
+bool StoredColumn(const duckdb::LogicalGet& get,
+                  const connector::ScanBindData& bind_data,
+                  const duckdb::ColumnBinding& binding) {
+  const auto& column_ids = get.GetColumnIds();
+  if (binding.table_index != get.table_index ||
+      binding.column_index >= column_ids.size()) {
+    return false;
+  }
+  const auto col_idx = column_ids[binding.column_index].GetPrimaryIndex();
+  if (col_idx >= bind_data.columns.ids.size()) {
+    return false;
+  }
+  const auto col_id = bind_data.columns.ids[col_idx];
+  if (col_id > connector::kMaxRealColumnIdValue) {
+    return false;
+  }
+  if (bind_data.relation.IsSearchTable()) {
+    return true;
+  }
+  if (!bind_data.relation.IsInvertedIndex()) {
+    return false;
+  }
+  const auto* info = bind_data.relation.ScannedIndex().FindColumnInfo(col_id);
+  return info != nullptr && info->IsStored();
+}
+
+duckdb::vector<duckdb::ColumnBinding> StoredColumnsOf(
+  const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data,
+  const duckdb::Expression& expr) {
   if (expr.IsVolatile() || expr.CanThrow() || expr.HasParameter() ||
       expr.HasSubquery()) {
-    return std::nullopt;
-  }
-  const auto type = expr.GetExpressionType();
-  if (type != duckdb::ExpressionType::CONJUNCTION_OR &&
-      type != duckdb::ExpressionType::COMPARE_IN) {
-    return std::nullopt;
+    return {};
   }
   duckdb::vector<duckdb::ColumnBinding> bindings;
   duckdb::ColumnLifetimeAnalyzer::ExtractColumnBindings(expr, bindings);
-  if (bindings.empty() || bindings[0].table_index != get.table_index ||
-      absl::c_any_of(bindings,
-                     [&](const auto& b) { return b != bindings[0]; })) {
-    return std::nullopt;
+  duckdb::vector<duckdb::ColumnBinding> columns;
+  for (const auto& b : bindings) {
+    if (absl::c_find(columns, b) == columns.end()) {
+      columns.push_back(b);
+    }
   }
-  const auto& column_ids = get.GetColumnIds();
-  if (bindings[0].column_index >= column_ids.size()) {
-    return std::nullopt;
+  const auto type = expr.GetExpressionType();
+  if (columns.size() == 1 && type != duckdb::ExpressionType::CONJUNCTION_OR &&
+      type != duckdb::ExpressionType::COMPARE_IN) {
+    return {};
   }
-  const auto col_idx = column_ids[bindings[0].column_index].GetPrimaryIndex();
-  if (col_idx >= bind_data.columns.ids.size() ||
-      bind_data.columns.ids[col_idx] == connector::kInvertedIndexScoreId ||
-      !connector::IResearchPushdownExpression(context, get, expr)) {
-    return std::nullopt;
+  if (!absl::c_all_of(columns, [&](const duckdb::ColumnBinding& b) {
+        return StoredColumn(get, bind_data, b);
+      })) {
+    return {};
   }
-  return bindings[0];
+  return columns;
 }
 
 void TakeColumnConjuncts(
-  duckdb::ClientContext& context, duckdb::LogicalGet& get,
-  const connector::ScanBindData& bind_data,
+  duckdb::LogicalGet& get, const connector::ScanBindData& bind_data,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
   for (size_t i = 0; i < filters.size();) {
-    const auto column = ReadColumnOf(context, get, bind_data, *filters[i]);
-    if (!column) {
+    const auto columns = StoredColumnsOf(get, bind_data, *filters[i]);
+    if (columns.empty()) {
       ++i;
       continue;
     }
     auto filter_expr = std::move(filters[i]);
+    filters.erase(filters.begin() + i);
     duckdb::ExpressionIterator::VisitExpressionMutable<
       duckdb::BoundColumnRefExpression>(
-      filter_expr, [](duckdb::BoundColumnRefExpression& ref,
-                      duckdb::unique_ptr<duckdb::Expression>& child) {
+      filter_expr, [&](duckdb::BoundColumnRefExpression& ref,
+                       duckdb::unique_ptr<duckdb::Expression>& child) {
+        const auto index = static_cast<duckdb::idx_t>(
+          absl::c_find(columns, ref.Binding()) - columns.begin());
         child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-          ref.GetAlias(), ref.GetReturnType(), 0ULL);
+          ref.GetAlias(), ref.GetReturnType(), index);
       });
-    get.table_filters.PushFilter(
-      column->column_index,
-      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(filter_expr)));
-    filters.erase(filters.begin() + i);
+    if (columns.size() == 1) {
+      get.table_filters.PushFilter(
+        columns[0].column_index,
+        duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(filter_expr)));
+      continue;
+    }
+    duckdb::vector<duckdb::ProjectionIndex> column_indexes;
+    for (const auto& b : columns) {
+      column_indexes.push_back(b.column_index);
+    }
+    get.table_filters.PushMultiColumnFilter(
+      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(filter_expr),
+                                                  std::move(column_indexes)));
   }
 }
 
@@ -1551,7 +1583,7 @@ void IResearchPushdownComplexFilter(
     TryClaimSearchFilter(filters, get, bind_data, context);
   }
   if (bind_data.score.vector) {
-    TakeColumnConjuncts(context, get, bind_data, filters);
+    TakeColumnConjuncts(get, bind_data, filters);
   }
   DecidePlanCache(bind_data, filters);
 }

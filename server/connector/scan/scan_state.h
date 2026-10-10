@@ -204,6 +204,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     duckdb::LogicalType type;
     duckdb::unique_ptr<duckdb::TableFilter> not_null;
     std::vector<std::string_view> extract_path;
+    std::vector<irs::field_id> row_fields;
+    std::vector<duckdb::LogicalType> row_types;
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;

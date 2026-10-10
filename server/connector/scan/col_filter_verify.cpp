@@ -112,8 +112,10 @@ void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
       .not_null = cf.not_null.get(),
       .extract_path = cf.extract_path,
       .extract_type = &cf.type,
+      .row_fields = cf.row_fields,
+      .row_types = cf.row_types,
     };
-    if (spec.is_score) {
+    if (spec.is_score || !spec.row_fields.empty()) {
       out.active.push_back(spec);
       continue;
     }

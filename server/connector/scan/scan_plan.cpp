@@ -266,12 +266,32 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
   }
 }
 
+void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data,
+                     const duckdb::TableFilterSet& filters) {
+  for (const auto& filter : filters.GetMultiColumnFilters()) {
+    const auto& expr =
+      duckdb::ExpressionFilter::GetExpressionFilter(*filter, "BuildRowFilters");
+    auto& cf = state.col_filters.emplace_back();
+    cf.filter = filter.get();
+    for (const auto& column_index : expr.column_indexes) {
+      const auto bind_index = state.projected_columns[column_index.GetIndex()];
+      SDB_ENSURE(bind_index != duckdb::DConstants::INVALID_INDEX,
+                 "a row filter reads columns of the scanned relation");
+      cf.row_fields.push_back(bind_data.columns.ids[bind_index]);
+      cf.row_types.push_back(bind_data.columns.types[bind_index]);
+    }
+    cf.field = cf.row_fields.front();
+    cf.type = cf.row_types.front();
+  }
+}
+
 void AddDeferredColumnFilter(ScanGlobalState& state,
                              DeferredColumnFilter&& deferred) {
   using ColFilter = ScanGlobalState::ColFilter;
   auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
     return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
-           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty();
+           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty() &&
+           cf.row_fields.empty();
   });
   if (existing != state.col_filters.end()) {
     auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
@@ -496,6 +516,9 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   state.pushed_filters = input.filters.get();
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
+  }
+  if (input.filters && input.filters->HasMultiColumnFilters()) {
+    BuildRowFilters(state, bind_data, *input.filters);
   }
   if (bind_data.search.filter) {
     AddDeferredVerifyFilters(state, *bind_data.search.filter);

@@ -1,0 +1,142 @@
+statement ok
+CREATE TABLE hnsw_r (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR,
+  grp INTEGER);
+
+statement ok
+CREATE INDEX hnsw_r_idx ON hnsw_r
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (label, grp);
+
+statement ok
+INSERT INTO hnsw_r SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 7 FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r;
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+100
+101
+102
+98
+
+query
+SELECT pk FROM hnsw_r
+  WHERE label = 'even' OR grp = 3
+  ORDER BY abs(pk - 100.4) LIMIT 4;
+----
+pk
+100
+101
+102
+98
+
+query
+EXPLAIN SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: hnsw_r_idx                 │
+│ Lookup: table                     │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 4                            │
+│ Projections: pk                   │
+│ ~300 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even') = (grp = 3)
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+99
+103
+97
+105
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' OR grp = 3) AND pk >= 250
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+250
+252
+254
+
+query
+SELECT pk FROM hnsw_r
+  WHERE (label = 'even' OR grp = 3) AND pk >= 250
+  ORDER BY abs(pk - 100.4) LIMIT 3;
+----
+pk
+250
+252
+254
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' OR grp = 3)
+    AND emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 2.0
+  ORDER BY pk;
+----
+pk
+100
+101
+102
+
+query error an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+
+statement ok
+CREATE TABLE hnsw_rs (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR,
+  extra INTEGER, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX hnsw_rs_idx ON hnsw_rs
+  USING inverted(pk, num, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO hnsw_rs SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
+  i % 13, [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_rs;
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'even' OR extra = 0
+  ORDER BY emb <-> [1599.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1599
+1600
+1598
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'even' OR extra = 0
+  ORDER BY abs(pk - 1599.4) LIMIT 3;
+----
+pk
+1599
+1600
+1598
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'odd' OR num < 10
+  ORDER BY emb <-> [3.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+3
+4
+2

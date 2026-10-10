@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -113,19 +114,6 @@ std::vector<std::string> SplitList(std::string_view value) {
     return {};
   }
   return absl::StrSplit(value, ',');
-}
-
-std::string HomeFile(std::string_view name) {
-  const char* home = std::getenv("HOME");
-  if (home == nullptr || *home == '\0') {
-    return {};
-  }
-  return absl::StrCat(home, "/", name);
-}
-
-bool FileExists(const std::string& path) {
-  std::error_code ec;
-  return !path.empty() && std::filesystem::exists(path, ec);
 }
 
 using Options = absl::flat_hash_map<std::string, std::string>;
@@ -240,6 +228,19 @@ std::optional<std::string_view> MatchPassField(std::string_view& line,
 
 }  // namespace
 
+std::string HomeFile(std::string_view name) {
+  const char* home = std::getenv("HOME");
+  if (home == nullptr || *home == '\0') {
+    return {};
+  }
+  return absl::StrCat(home, "/", name);
+}
+
+bool FileExists(const std::string& path) {
+  std::error_code ec;
+  return !path.empty() && std::filesystem::exists(path, ec);
+}
+
 ConnInfo ParseConnInfo(std::string_view conninfo) {
   char* error = nullptr;
   std::unique_ptr<PQconninfoOption, decltype(&PQconninfoFree)> parsed{
@@ -258,6 +259,20 @@ ConnInfo ParseConnInfo(std::string_view conninfo) {
     }
   }
   ApplyService(keywords, options);
+  for (const auto* option = parsed.get(); option->keyword; ++option) {
+    if (option->envvar == nullptr || options.contains(option->keyword)) {
+      continue;
+    }
+    if (const char* env = std::getenv(option->envvar)) {
+      options.emplace(option->keyword, env);
+    }
+  }
+  const bool sslmode_given = options.contains("sslmode");
+  for (const auto* option = parsed.get(); option->keyword; ++option) {
+    if (option->compiled != nullptr) {
+      options.try_emplace(option->keyword, option->compiled);
+    }
+  }
   const auto value = [&](std::string_view keyword) -> std::string_view {
     const auto it = options.find(keyword);
     return it == options.end() ? std::string_view{} : it->second;
@@ -267,10 +282,12 @@ ConnInfo ParseConnInfo(std::string_view conninfo) {
   info.password = value("password");
   info.dbname = value("dbname");
   info.application_name = value("application_name");
-  if (const auto mode = value("sslmode"); !mode.empty()) {
+  info.sslrootcert = value("sslrootcert");
+  if (!sslmode_given && info.sslrootcert == "system") {
+    info.sslmode = SslMode::VerifyFull;
+  } else if (const auto mode = value("sslmode"); !mode.empty()) {
     info.sslmode = ParseSslMode(mode);
   }
-  info.sslrootcert = value("sslrootcert");
   info.sslcert = value("sslcert");
   info.sslkey = value("sslkey");
   info.sslpassword = value("sslpassword");
@@ -355,6 +372,48 @@ void ArrangeHosts(ConnInfo& conninfo, uint64_t seed, bool any_session) {
   }
 }
 
+std::string_view SslModeName(SslMode mode) {
+  switch (mode) {
+    case SslMode::Disable:
+      return "disable";
+    case SslMode::Allow:
+      return "allow";
+    case SslMode::Prefer:
+      return "prefer";
+    case SslMode::Require:
+      return "require";
+    case SslMode::VerifyCa:
+      return "verify-ca";
+    case SslMode::VerifyFull:
+      return "verify-full";
+  }
+  return "prefer";
+}
+
+std::span<const Encryption> EncryptionOrder(const ConnInfo& conninfo,
+                                            const ConnHost& host) {
+  static constexpr std::array kPlain{Encryption::Plain};
+  static constexpr std::array kTls{Encryption::Tls};
+  static constexpr std::array kPlainThenTls{Encryption::Plain, Encryption::Tls};
+  static constexpr std::array kTlsThenPlain{Encryption::Tls, Encryption::Plain};
+  if (host.IsUnixSocket()) {
+    return kPlain;
+  }
+  switch (conninfo.sslmode) {
+    case SslMode::Disable:
+      return kPlain;
+    case SslMode::Allow:
+      return kPlainThenTls;
+    case SslMode::Prefer:
+      return kTlsThenPlain;
+    case SslMode::Require:
+    case SslMode::VerifyCa:
+    case SslMode::VerifyFull:
+      return kTls;
+  }
+  return kTls;
+}
+
 std::string PasswordFromFile(const ConnInfo& conninfo, const ConnHost& host) {
   const auto& user = conninfo.user;
   const auto& dbname = conninfo.dbname.empty() ? user : conninfo.dbname;
@@ -362,7 +421,7 @@ std::string PasswordFromFile(const ConnInfo& conninfo, const ConnHost& host) {
     return {};
   }
   std::string_view hostname = host.host.empty() ? host.hostaddr : host.host;
-  if (hostname.empty() || hostname == DEFAULT_PGSOCKET_DIR) {
+  if (hostname.empty() || host.IsUnixSocket()) {
     hostname = "localhost";
   }
   struct stat status{};

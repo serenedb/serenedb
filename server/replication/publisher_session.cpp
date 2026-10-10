@@ -24,13 +24,14 @@
 #include <absl/random/random.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <array>
 #include <chrono>
-#include <cstdlib>
-#include <filesystem>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 #include <yaclib/async/contract.hpp>
 
@@ -57,26 +58,57 @@ constexpr int32_t kAuthSaslContinue = 11;
 constexpr int32_t kAuthSaslFinal = 12;
 
 network::TlsClientOptions ClientTlsOptions(const ConnInfo& conninfo) {
+  constexpr std::string_view kRootHint =
+    "\nEither provide the file, use the system's trusted roots with "
+    "sslrootcert=system, or change sslmode to disable server certificate "
+    "verification.";
+  auto root = conninfo.sslrootcert.empty() ? HomeFile(".postgresql/root.crt")
+                                           : conninfo.sslrootcert;
+  const bool system = root == "system";
+  const bool have_root = system || FileExists(root);
+  if (!have_root && (conninfo.sslmode == SslMode::VerifyCa ||
+                     conninfo.sslmode == SslMode::VerifyFull)) {
+    throw std::runtime_error{
+      root.empty()
+        ? absl::StrCat(
+            "could not get home directory to locate root certificate file",
+            kRootHint)
+        : absl::StrCat("root certificate file \"", root, "\" does not exist",
+                       kRootHint)};
+  }
   network::TlsClientOptions options{
-    .verify_peer =
-      conninfo.sslmode == SslMode::VerifyCa ||
-      conninfo.sslmode == SslMode::VerifyFull ||
-      (conninfo.sslmode == SslMode::Require && !conninfo.sslrootcert.empty()),
-    .root_cert = conninfo.sslrootcert,
-    .cert_file = conninfo.sslcert,
-    .key_file = conninfo.sslkey,
+    .verify_peer = have_root,
+    .root_cert = have_root ? std::move(root) : std::string{},
     .key_password = conninfo.sslpassword,
-    .crl_file = conninfo.sslcrl,
-    .crl_dir = conninfo.sslcrldir,
   };
-  if (options.verify_peer && options.root_cert.empty()) {
-    if (const char* home = std::getenv("HOME")) {
-      std::filesystem::path path{home};
-      path /= ".postgresql/root.crt";
-      if (std::filesystem::exists(path)) {
-        options.root_cert = path.string();
-      }
+  if (have_root && !system) {
+    options.crl_file = conninfo.sslcrl;
+    options.crl_dir = conninfo.sslcrldir;
+  }
+  if (FileExists(conninfo.sslcert)) {
+    auto key = conninfo.sslkey.empty() ? HomeFile(".postgresql/postgresql.key")
+                                       : conninfo.sslkey;
+    struct stat status{};
+    if (key.empty() || ::stat(key.c_str(), &status) != 0) {
+      throw std::runtime_error{absl::StrCat(
+        "certificate present, but not private key file \"", key, "\"")};
     }
+    if (!S_ISREG(status.st_mode)) {
+      throw std::runtime_error{
+        absl::StrCat("private key file \"", key, "\" is not a regular file")};
+    }
+    if ((status.st_uid == ::geteuid() &&
+         (status.st_mode & (S_IRWXG | S_IRWXO)) != 0) ||
+        (status.st_uid == 0 &&
+         (status.st_mode & (S_IWGRP | S_IXGRP | S_IRWXO)) != 0)) {
+      throw std::runtime_error{absl::StrCat(
+        "private key file \"", key,
+        "\" has group or world access; file must have permissions u=rw "
+        "(0600) or less if owned by the current user, or permissions "
+        "u=rw,g=r (0640) or less if owned by root")};
+    }
+    options.cert_file = conninfo.sslcert;
+    options.key_file = std::move(key);
   }
   return options;
 }
@@ -89,22 +121,48 @@ bool IsIpAddress(std::string_view host) {
 
 }  // namespace
 
-PublisherTls::PublisherTls(const ConnInfo& conninfo)
-  : tls{network::BuildClientTlsContext(ClientTlsOptions(conninfo))} {}
+PublisherTls::PublisherTls(const ConnInfo& conninfo, size_t host_index) {
+  if (!std::ranges::contains(
+        EncryptionOrder(conninfo, conninfo.hosts.at(host_index)),
+        Encryption::Tls)) {
+    return;
+  }
+  try {
+    tls = network::BuildClientTlsContext(ClientTlsOptions(conninfo));
+  } catch (const std::exception& ex) {
+    tls_error = ex.what();
+  }
+}
 
 PublisherSession::PublisherSession(network::IoExecutor& exec, ConnInfo conninfo,
-                                   size_t host_index,
+                                   size_t host_index, size_t encryption,
                                    std::string application_name,
                                    bool require_password)
-  : PublisherTls{conninfo},
+  : PublisherTls{conninfo, host_index},
     PgWireSession{exec, PublisherTls::tls, ClientTag{}},
     _conninfo{std::move(conninfo)},
     _host{_conninfo.hosts.at(host_index)},
     _application_name{_conninfo.application_name.empty()
                         ? std::move(application_name)
                         : _conninfo.application_name},
+    _encryption{encryption},
     _require_password{require_password},
     _password{_conninfo.password} {}
+
+void PublisherSession::SetupFailed() {
+  _retry_encryption =
+    !_plain_fallback &&
+    _encryption + 1 < EncryptionOrder(_conninfo, _host).size();
+}
+
+yaclib::Task<bool> PublisherSession::Guarded(yaclib::Task<bool> task) {
+  try {
+    co_return co_await std::move(task);
+  } catch (const std::exception& ex) {
+    Fail(network::pg::ToSqlError(ex));
+  }
+  co_return false;
+}
 
 std::string PublisherSession::SocketPath() const {
   return absl::StrCat(_host.host, "/.s.PGSQL.", _host.port);
@@ -134,6 +192,14 @@ void PublisherSession::Fail(int errcode, std::string message) {
 }
 
 yaclib::Task<bool> PublisherSession::Connect() {
+  if (_conninfo.sslrootcert == "system" &&
+      _conninfo.sslmode != SslMode::VerifyFull) {
+    Fail(ERRCODE_CONNECTION_FAILURE,
+         absl::StrCat("weak sslmode \"", SslModeName(_conninfo.sslmode),
+                      "\" may not be used with sslrootcert=system (use "
+                      "\"verify-full\")"));
+    co_return false;
+  }
   if (_password.empty()) {
     _password = PasswordFromFile(_conninfo, _host);
   }
@@ -278,9 +344,21 @@ yaclib::Task<bool> PublisherSession::OpenSocket() {
 }
 
 yaclib::Task<bool> PublisherSession::NegotiateTls() {
-  if (_host.IsUnixSocket() || _conninfo.sslmode == SslMode::Disable ||
-      _conninfo.sslmode == SslMode::Allow) {
+  if (EncryptionOrder(_conninfo, _host)[_encryption] == Encryption::Plain) {
     co_return true;
+  }
+  if (!tls_error.empty()) {
+    Fail(ERRCODE_CONNECTION_FAILURE,
+         absl::StrCat(ServerName(), ": ", tls_error));
+    SetupFailed();
+    co_return false;
+  }
+  if (_conninfo.sslmode == SslMode::VerifyFull && _host.host.empty()) {
+    Fail(ERRCODE_CONNECTION_FAILURE,
+         absl::StrCat(ServerName(),
+                      ": host name must be specified for a verified SSL "
+                      "connection"));
+    co_return false;
   }
   network::pg::WriteSslRequest(this->_send);
   this->KickSend();
@@ -289,25 +367,25 @@ yaclib::Task<bool> PublisherSession::NegotiateTls() {
   if (ec || n != 1) {
     Fail(ERRCODE_CONNECTION_FAILURE,
          absl::StrCat(ServerName(),
-                      ": server closed the connection "
-                      "unexpectedly"));
+                      ": server closed the connection unexpectedly"));
+    SetupFailed();
     co_return false;
   }
   if (answer[0] == 'N') {
-    if (_conninfo.sslmode >= SslMode::Require) {
-      Fail(ERRCODE_CONNECTION_FAILURE,
-           absl::StrCat(ServerName(),
-                        ": server does not support SSL, but SSL was "
-                        "required"));
-      co_return false;
+    if (_conninfo.sslmode == SslMode::Prefer) {
+      _plain_fallback = true;
+      co_return true;
     }
-    co_return true;
+    Fail(ERRCODE_CONNECTION_FAILURE,
+         absl::StrCat(ServerName(),
+                      ": server does not support SSL, but SSL was required"));
+    co_return false;
   }
   if (answer[0] != 'S') {
     Fail(ERRCODE_PROTOCOL_VIOLATION,
-         absl::StrCat(ServerName(),
-                      ": received invalid response to SSL negotiation: ",
-                      std::string(1, static_cast<char>(answer[0]))));
+         absl::StrCat(
+           ServerName(), ": received invalid response to SSL negotiation: ",
+           std::string_view{reinterpret_cast<const char*>(answer.data()), 1}));
     co_return false;
   }
   auto& stream = this->_socket.TlsStream();
@@ -316,8 +394,8 @@ yaclib::Task<bool> PublisherSession::NegotiateTls() {
     SSL_set_tlsext_host_name(stream.native_handle(), _host.host.c_str());
   }
   if (_conninfo.sslmode == SslMode::VerifyFull) {
-    stream.set_verify_callback(asio_ns::ssl::host_name_verification(
-      _host.host.empty() ? _host.hostaddr : _host.host));
+    stream.set_verify_callback(
+      asio_ns::ssl::host_name_verification(_host.host));
   }
   const auto handshake_ec =
     co_await this->_socket.Handshake(asio_ns::ssl::stream_base::client)
@@ -325,6 +403,7 @@ yaclib::Task<bool> PublisherSession::NegotiateTls() {
   if (handshake_ec) {
     Fail(ERRCODE_CONNECTION_FAILURE,
          absl::StrCat(ServerName(), ": SSL error: ", handshake_ec.message()));
+    SetupFailed();
     co_return false;
   }
   this->_socket.MarkTls();
@@ -354,7 +433,11 @@ yaclib::Task<bool> PublisherSession::Authenticate() {
     const char type = frame.type;
     const std::string_view payload = frame.payload;
     if (type == PQ_MSG_ERROR_RESPONSE) {
-      Fail(network::pg::ParseErrorResponse(payload));
+      auto error = network::pg::ParseErrorResponse(payload);
+      if (error.errcode != ERRCODE_CANNOT_CONNECT_NOW) {
+        SetupFailed();
+      }
+      Fail(std::move(error));
       this->_frames.Consume(frame);
       co_return false;
     }
@@ -552,11 +635,12 @@ yaclib::Task<> PublisherCall::Run(Body body,
   auto self = this->shared_from_this();
   auto writer = this->SendWriter();
   PublisherResult result;
-  result.connected = co_await Connect();
+  result.connected = co_await Guarded(Connect());
   if (result.connected) {
     result.server_version = ServerVersion();
-    result.ok = co_await body(*this);
+    result.ok = co_await Guarded(body(*this));
   }
+  result.retry_encryption = RetryEncryption();
   result.error = Error();
   this->Stop();
   co_await std::move(writer);
@@ -578,16 +662,21 @@ PublisherResult CallPublisher(const ConnInfo& conninfo,
     const auto host = attempt % conninfo.hosts.size();
     auto arranged = conninfo;
     ArrangeHosts(arranged, seed, attempt >= conninfo.hosts.size());
-    auto& exec = pool->Next();
-    auto call = duckdb::make_shared_ptr<PublisherCall>(
-      exec, std::move(arranged), host, std::string{application_name},
-      require_password);
-    auto [future, promise] = yaclib::MakeContract<PublisherResult>();
-    asio_ns::post(exec.Context(),
-                  [call, body, promise = std::move(promise)]() mutable {
-                    call->Start(std::move(body), std::move(promise));
-                  });
-    result = std::move(future).Get().Ok();
+    for (size_t encryption = 0;; ++encryption) {
+      auto& exec = pool->Next();
+      auto call = duckdb::make_shared_ptr<PublisherCall>(
+        exec, arranged, host, encryption, std::string{application_name},
+        require_password);
+      auto [future, promise] = yaclib::MakeContract<PublisherResult>();
+      asio_ns::post(exec.Context(),
+                    [call, body, promise = std::move(promise)]() mutable {
+                      call->Start(std::move(body), std::move(promise));
+                    });
+      result = std::move(future).Get().Ok();
+      if (result.connected || !result.retry_encryption) {
+        break;
+      }
+    }
     if (result.connected) {
       break;
     }

@@ -21,6 +21,7 @@
 #include "replication/subscription_engine.h"
 
 #include <absl/random/random.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <chrono>
@@ -218,25 +219,23 @@ void SubscriptionEngine::Sync(std::string_view database,
   }
 }
 
-std::vector<SubscriptionEngine::SubRuntime> SubscriptionEngine::RuntimeSnapshot(
-  std::string_view database) const {
-  std::vector<SubRuntime> result;
+irs::containers::FlatHashMap<duckdb::idx_t, SubscriptionEngine::SubRuntime>
+SubscriptionEngine::RuntimeSnapshot(std::string_view database) const {
+  irs::containers::FlatHashMap<duckdb::idx_t, SubRuntime> result;
   absl::MutexLock lock{&_mu};
   for (const auto& [subscription, state] : _subs) {
-    if (!state.client || state.database != database) {
+    if (!state.client || state.database != database ||
+        !state.client->Connected()) {
       continue;
     }
-    if (!state.client->Connected()) {
-      continue;
-    }
-    result.push_back({
-      .subscription = subscription,
-      .received_lsn = state.client->ReceivedLsn(),
-      .flushed_lsn = state.client->FlushedLsn(),
-      .last_send_time = state.client->LastSendTime(),
-      .last_receipt_time = state.client->LastReceiptTime(),
-      .latest_end_time = state.client->LatestEndTime(),
-    });
+    result.emplace(subscription,
+                   SubRuntime{
+                     .received_lsn = state.client->ReceivedLsn(),
+                     .flushed_lsn = state.client->FlushedLsn(),
+                     .last_send_time = state.client->LastSendTime(),
+                     .last_receipt_time = state.client->LastReceiptTime(),
+                     .latest_end_time = state.client->LatestEndTime(),
+                   });
   }
   return result;
 }
@@ -353,15 +352,41 @@ void SubscriptionEngine::Disable(std::string_view database,
   });
 }
 
+yaclib::Task<bool> SubscriptionEngine::Backoff(
+  duckdb::idx_t subscription, network::IoExecutor& exec,
+  std::chrono::milliseconds delay) {
+  auto [future, promise] = yaclib::MakeContract<>();
+  auto timer = std::make_shared<asio_ns::steady_timer>(exec.Context(), delay);
+  {
+    absl::MutexLock lock{&_mu};
+    auto it = _subs.find(subscription);
+    if (it == _subs.end() || it->second.stopping) {
+      co_return false;
+    }
+    it->second.retry = timer;
+  }
+  timer->async_wait(
+    [timer, p = std::move(promise)](const asio_ns::error_code&) mutable {
+      std::move(p).Set();
+    });
+  co_await std::move(future);
+  absl::MutexLock lock{&_mu};
+  if (auto it = _subs.find(subscription); it != _subs.end()) {
+    it->second.retry.reset();
+  }
+  co_return true;
+}
+
 yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
   auto& exec = _pool.Next();
-  std::string name;
+  std::string name = absl::StrCat(subscription);
   for (;;) {
     if (_stopping.load(std::memory_order_acquire)) {
       break;
     }
     std::string database;
     size_t host = 0;
+    size_t encryption = 0;
     uint64_t host_seed = 0;
     bool any_session = false;
     {
@@ -374,24 +399,28 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       state.restart = false;
       database = state.database;
       host = state.host;
-      if (host == 0 && !state.any_session) {
+      encryption = state.encryption;
+      if (host == 0 && encryption == 0 && !state.any_session) {
         state.host_seed = absl::Uniform<uint64_t>(absl::BitGen{});
       }
       host_seed = state.host_seed;
       any_session = state.any_session;
     }
-    auto target = ResolveTarget(database, subscription);
-    if (!target) {
-      break;
-    }
-    ArrangeHosts(target->conninfo, host_seed, any_session);
-    name = target->subscription_name;
-    const auto target_attrs = target->conninfo.target_session_attrs;
-    const auto hosts = std::max<size_t>(target->conninfo.hosts.size(), 1);
-    host %= hosts;
-    auto client =
-      duckdb::make_shared_ptr<PgReplicationClient>(exec, *target, host);
-    {
+    duckdb::shared_ptr<PgReplicationClient> client;
+    auto target_attrs = SessionAttrs::Any;
+    size_t hosts = 1;
+    try {
+      auto target = ResolveTarget(database, subscription);
+      if (!target) {
+        break;
+      }
+      ArrangeHosts(target->conninfo, host_seed, any_session);
+      name = target->subscription_name;
+      target_attrs = target->conninfo.target_session_attrs;
+      hosts = std::max<size_t>(target->conninfo.hosts.size(), 1);
+      host %= hosts;
+      client = duckdb::make_shared_ptr<PgReplicationClient>(exec, *target, host,
+                                                            encryption);
       absl::MutexLock lock{&_mu};
       auto it = _subs.find(subscription);
       if (it == _subs.end() || it->second.stopping) {
@@ -399,6 +428,23 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       }
       it->second.client = client;
       it->second.target = std::move(*target);
+    } catch (const std::exception& ex) {
+      SDB_WARN(REPLICATION, "subscription '", name,
+               "' cannot start: ", ex.what());
+    }
+    if (!client) {
+      {
+        absl::MutexLock lock{&_mu};
+        if (auto it = _subs.find(subscription); it != _subs.end()) {
+          ++it->second.stats.apply_error_count;
+        }
+      }
+      if (!co_await Backoff(
+            subscription, exec,
+            std::chrono::milliseconds{WalRetrieveRetryIntervalMillis()})) {
+        break;
+      }
+      continue;
     }
     co_await client->RunClient();
     const bool disable = client->DisableRequested();
@@ -413,7 +459,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       }
     }
     bool restart = false;
-    bool retry_round = false;
+    bool retry_now = false;
     std::chrono::milliseconds delay{WalRetrieveRetryIntervalMillis()};
     {
       absl::MutexLock lock{&_mu};
@@ -429,16 +475,24 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
                           !_stopping.load(std::memory_order_acquire);
       if (client->Connected()) {
         state.any_session = false;
+        state.encryption = 0;
       }
       if (failed || disable) {
         if (!client->Connected()) {
-          state.host = (host + 1) % hosts;
-          if (state.host == 0 && !state.any_session &&
-              target_attrs == SessionAttrs::PreferStandby) {
-            state.any_session = true;
-            retry_round = true;
-          } else if (state.host == 0) {
-            state.any_session = false;
+          if (client->RetryEncryption()) {
+            state.encryption = encryption + 1;
+            retry_now = true;
+          } else {
+            state.encryption = 0;
+            state.host = (host + 1) % hosts;
+            retry_now = state.host != 0;
+            if (state.host == 0 && !state.any_session &&
+                target_attrs == SessionAttrs::PreferStandby) {
+              state.any_session = true;
+              retry_now = true;
+            } else if (state.host == 0) {
+              state.any_session = false;
+            }
           }
         } else if (client->SyncFailed()) {
           ++state.stats.sync_error_count;
@@ -462,30 +516,11 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
                "' restarting with updated configuration");
       continue;
     }
-    if (!client->Connected() && (host + 1 < hosts || retry_round)) {
+    if (retry_now) {
       continue;
     }
-    auto [future, promise] = yaclib::MakeContract<>();
-    auto timer = std::make_shared<asio_ns::steady_timer>(exec.Context(), delay);
-    {
-      absl::MutexLock lock{&_mu};
-      auto it = _subs.find(subscription);
-      if (it == _subs.end() || it->second.stopping) {
-        break;
-      }
-      it->second.retry = timer;
-    }
-    timer->async_wait(
-      [timer, p = std::move(promise)](const asio_ns::error_code&) mutable {
-        std::move(p).Set();
-      });
-    co_await std::move(future);
-    {
-      absl::MutexLock lock{&_mu};
-      auto it = _subs.find(subscription);
-      if (it != _subs.end()) {
-        it->second.retry.reset();
-      }
+    if (!co_await Backoff(subscription, exec, delay)) {
+      break;
     }
   }
   bool relaunch = false;

@@ -134,7 +134,7 @@ ALTER SUBSCRIPTION rcon_sub DISABLE;
 
 
 query ok retry 120 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_subscription WHERE subname = 'rcon_sub';
+SELECT count(pid) AS n FROM pg_stat_subscription WHERE subname = 'rcon_sub';
 ----
 n
 0

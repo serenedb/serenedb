@@ -33,7 +33,19 @@
 namespace sdb::pg {
 namespace {
 
-constexpr uint64_t kNullMask = MaskFromNulls({
+constexpr uint64_t kNoWorker = MaskFromNulls({
+  GetIndex(&PgStatSubscription::worker_type),
+  GetIndex(&PgStatSubscription::pid),
+  GetIndex(&PgStatSubscription::leader_pid),
+  GetIndex(&PgStatSubscription::relid),
+  GetIndex(&PgStatSubscription::received_lsn),
+  GetIndex(&PgStatSubscription::last_msg_send_time),
+  GetIndex(&PgStatSubscription::last_msg_receipt_time),
+  GetIndex(&PgStatSubscription::latest_end_lsn),
+  GetIndex(&PgStatSubscription::latest_end_time),
+});
+
+constexpr uint64_t kApplyWorker = MaskFromNulls({
   GetIndex(&PgStatSubscription::leader_pid),
   GetIndex(&PgStatSubscription::relid),
 });
@@ -46,44 +58,43 @@ Timestamptz Time(int64_t micros) {
 
 template<>
 MaterializedData SystemTableSnapshot<PgStatSubscription>::GetTableData() {
-  std::vector<replication::SubscriptionEngine::SubRuntime> runtime;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               replication::SubscriptionEngine::SubRuntime>
+    runtime;
   if (auto* engine = replication::SubscriptionEngine::gInstance) {
     runtime =
       engine->RuntimeSnapshot(GetDatabase().GetName().GetIdentifierName());
   }
-  auto& database = GetDatabase().Cast<catalog::SereneDBCatalog>();
-  const auto transaction = database.GetCatalogTransaction(_context);
-  std::deque<std::string> names;
   std::deque<std::string> lsns;
   std::vector<PgStatSubscription> values;
-  for (const auto& subscription : runtime) {
-    auto entry = database.GetOidIndex().GetVisible(subscription.subscription,
-                                                   transaction.view);
-    if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-      continue;
-    }
-    const auto& name = names.emplace_back(entry->name.GetIdentifierName());
-    const auto& received =
-      lsns.emplace_back(FormatLsn(subscription.received_lsn));
-    const auto& flushed =
-      lsns.emplace_back(FormatLsn(subscription.flushed_lsn));
-    values.push_back(PgStatSubscription{
-      .subid = subscription.subscription,
-      .subname = name,
-      .worker_type = "apply",
-      .pid = static_cast<int32_t>(subscription.subscription & 0x7FFFFFFF),
-      .leader_pid = 0,
-      .relid = 0,
-      .received_lsn = received,
-      .last_msg_send_time = Time(subscription.last_send_time),
-      .last_msg_receipt_time = Time(subscription.last_receipt_time),
-      .latest_end_lsn = flushed,
-      .latest_end_time = Time(subscription.latest_end_time),
-    });
-  }
+  std::vector<uint64_t> null_masks;
+  auto& database = GetDatabase().Cast<catalog::SereneDBCatalog>();
+  database.GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+    .Scan(
+      database.GetCatalogTransaction(_context),
+      [&](duckdb::CatalogEntry& entry) {
+        auto& row = values.emplace_back(PgStatSubscription{
+          .subid = entry.oid,
+          .subname = entry.name.GetIdentifierName(),
+        });
+        const auto it = runtime.find(entry.oid);
+        if (it == runtime.end()) {
+          null_masks.push_back(kNoWorker);
+          return;
+        }
+        const auto& worker = it->second;
+        row.worker_type = "apply";
+        row.pid = static_cast<int32_t>(entry.oid & 0x7FFFFFFF);
+        row.received_lsn = lsns.emplace_back(FormatLsn(worker.received_lsn));
+        row.last_msg_send_time = Time(worker.last_send_time);
+        row.last_msg_receipt_time = Time(worker.last_receipt_time);
+        row.latest_end_lsn = lsns.emplace_back(FormatLsn(worker.flushed_lsn));
+        row.latest_end_time = Time(worker.latest_end_time);
+        null_masks.push_back(kApplyWorker);
+      });
   auto result = CreateColumns<PgStatSubscription>(values.size());
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, Roles());
+    WriteData(result, values[row], null_masks[row], row, Roles());
   }
   return {std::move(result), values.size()};
 }

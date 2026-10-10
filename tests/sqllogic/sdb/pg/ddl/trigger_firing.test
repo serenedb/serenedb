@@ -49,6 +49,67 @@ DELETE FROM tfire_log;
 
 
 statement ok
+PREPARE tfire_insert AS INSERT INTO tfire_t VALUES ($1);
+
+
+statement ok
+EXECUTE tfire_insert(10);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+origin
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+SET session_replication_role = replica;
+
+
+statement ok
+EXECUTE tfire_insert(11);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+replica
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+RESET session_replication_role;
+
+
+statement ok
+EXECUTE tfire_insert(12);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+origin
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+DEALLOCATE tfire_insert;
+
+
+statement ok
 SET session_replication_role = replica;
 
 

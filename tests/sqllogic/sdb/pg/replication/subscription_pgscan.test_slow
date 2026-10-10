@@ -188,10 +188,10 @@ ALTER SUBSCRIPTION rsub_basic DISABLE;
 
 
 query ok retry 120 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_subscription WHERE subname = 'rsub_basic';
+SELECT count(*) AS n, count(pid) AS workers FROM pg_stat_subscription WHERE subname = 'rsub_basic';
 ----
-n
-0
+n	workers
+1	0
 
 
 statement ok

@@ -62,6 +62,8 @@
 namespace sdb::replication {
 namespace {
 
+constexpr uint64_t kBatchRows = 1 << 17;
+
 bool ReadTuple(std::string_view tuple, size_t columns,
                std::vector<PgColumn>& cells) {
   PgTupleReader reader{tuple};
@@ -438,7 +440,7 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
     const PgOutputMessage* m = g.batch->stream->PeekBlocking();
-    if (m == nullptr || ReplStream::IsIdle(m)) {
+    if (m == nullptr || ReplStream::IsIdle(m) || g.batch->rows >= kBatchRows) {
       break;
     }
     if (std::holds_alternative<BeginMessage>(*m) ||

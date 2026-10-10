@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -27,6 +28,7 @@
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "replication/conninfo.h"
 
@@ -41,10 +43,17 @@ class ConnInfoTest : public ::testing::Test {
            ("sdb_conninfo_" + std::to_string(::getpid()) + "_" +
             ::testing::UnitTest::GetInstance()->current_test_info()->name());
     std::filesystem::create_directories(_dir);
+    std::vector<std::string> names;
+    for (char** env = environ; *env != nullptr; ++env) {
+      const std::string_view entry{*env};
+      if (entry.starts_with("PG")) {
+        names.emplace_back(entry.substr(0, entry.find('=')));
+      }
+    }
+    for (const auto& name : names) {
+      ::unsetenv(name.c_str());
+    }
     ::setenv("HOME", _dir.c_str(), 1);
-    ::unsetenv("PGSERVICE");
-    ::unsetenv("PGSERVICEFILE");
-    ::unsetenv("PGPASSFILE");
     ::setenv("PGSYSCONFDIR", (_dir / "sysconf").c_str(), 1);
   }
 
@@ -180,7 +189,7 @@ TEST_F(ConnInfoTest, PasswordFile) {
   info = ParseConnInfo("host=/tmp dbname=db user=u");
   EXPECT_EQ(PasswordFromFile(info, info.hosts[0]), "local");
   info = ParseConnInfo("host=/var/run/postgresql dbname=db user=u");
-  EXPECT_EQ(PasswordFromFile(info, info.hosts[0]), "");
+  EXPECT_EQ(PasswordFromFile(info, info.hosts[0]), "local");
   info = ParseConnInfo("host=x port=6000 dbname=db user=someone");
   EXPECT_EQ(PasswordFromFile(info, info.hosts[0]), "any\\host");
   info = ParseConnInfo("host=localhost user=u");
@@ -196,6 +205,50 @@ TEST_F(ConnInfoTest, PasswordFileOptionAndPermissions) {
   EXPECT_EQ(PasswordFromFile(info, info.hosts[0]), "from_option");
   ::chmod(file.c_str(), 0644);
   EXPECT_EQ(PasswordFromFile(info, info.hosts[0]), "");
+}
+
+TEST_F(ConnInfoTest, EnvironmentDefaults) {
+  ::setenv("PGHOST", "env.example", 1);
+  ::setenv("PGPORT", "6544", 1);
+  ::setenv("PGSSLMODE", "require", 1);
+  ::setenv("PGUSER", "env_user", 1);
+  auto info = ParseConnInfo("dbname=db");
+  EXPECT_EQ(info.hosts[0].host, "env.example");
+  EXPECT_EQ(info.hosts[0].port, "6544");
+  EXPECT_EQ(info.sslmode, SslMode::Require);
+  EXPECT_EQ(info.user, "env_user");
+  info = ParseConnInfo("host=explicit port=1 sslmode=disable user=u");
+  EXPECT_EQ(info.hosts[0].host, "explicit");
+  EXPECT_EQ(info.hosts[0].port, "1");
+  EXPECT_EQ(info.sslmode, SslMode::Disable);
+  EXPECT_EQ(info.user, "u");
+  Write(".pg_service.conf", "[svc]\nport=7000\n");
+  EXPECT_EQ(ParseConnInfo("service=svc").hosts[0].port, "7000");
+}
+
+TEST_F(ConnInfoTest, SystemRootCertDefaultsToVerifyFull) {
+  EXPECT_EQ(ParseConnInfo("host=h sslrootcert=system").sslmode,
+            SslMode::VerifyFull);
+  EXPECT_EQ(ParseConnInfo("host=h sslrootcert=system sslmode=require").sslmode,
+            SslMode::Require);
+  ::setenv("PGSSLMODE", "verify-ca", 1);
+  EXPECT_EQ(ParseConnInfo("host=h sslrootcert=system").sslmode,
+            SslMode::VerifyCa);
+}
+
+TEST_F(ConnInfoTest, EncryptionOrderFollowsSslMode) {
+  const auto order = [](std::string_view conninfo) {
+    const auto info = ParseConnInfo(conninfo);
+    const auto span = EncryptionOrder(info, info.hosts[0]);
+    return std::vector<Encryption>{span.begin(), span.end()};
+  };
+  using enum Encryption;
+  EXPECT_EQ(order("host=h sslmode=disable"), std::vector{Plain});
+  EXPECT_EQ(order("host=h sslmode=allow"), (std::vector{Plain, Tls}));
+  EXPECT_EQ(order("host=h sslmode=prefer"), (std::vector{Tls, Plain}));
+  EXPECT_EQ(order("host=h sslmode=require"), std::vector{Tls});
+  EXPECT_EQ(order("host=h sslmode=verify-full"), std::vector{Tls});
+  EXPECT_EQ(order("host=/tmp sslmode=require"), std::vector{Plain});
 }
 
 }  // namespace

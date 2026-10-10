@@ -236,7 +236,10 @@ TEST(PgOutput, TruncatedBufferThrows) {
   x.Byte('N');
   x.Int16(2);      // claims 2 cols
   x.TextCol("1");  // only 1 provided
-  EXPECT_THROW(DecodePgOutput(x.b), std::exception);
+  const auto message = DecodePgOutput(x.b);
+  PgTupleReader reader{std::get<InsertMessage>(message).new_tuple};
+  reader.Next();
+  EXPECT_THROW(reader.Next(), std::exception);
 }
 
 TEST(PgOutput, EmptyThrows) {

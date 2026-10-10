@@ -658,7 +658,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - `absl::btree_*` over `std::set`/`std::map` when appropriate
 - `std::span<const T>` over `std::initializer_list<T>` in parameters
 - `magic_enum` for enum names
-- `absl::c_any_of` (etc.) over `std::any_of(begin, end)`. Fall back to `std::ranges` when no `absl::c_*` exists (e.g. `std::ranges::sort(range, {}, proj)`).
+- `absl::c_*` (`absl/algorithm/container.h`) over `std::ranges` algorithms and over `std::any_of(begin, end)`; pre-commit `check-banned-calls` rejects a `std::ranges` algorithm that has an `absl::c_*` form. A projection becomes a lambda (`absl::c_sort(v, [](const T& l, const T& r) { return l.key < r.key; })`), and a sub-range keeps the iterator form (`std::sort(first, mid, comp)`). `std::ranges` stays for what absl lacks (`unique`, `min`, `to`, views).
 - Prefer imperative loops over ranges pipelines
 - Strings: `absl::StrCat`, `absl::StrAppend`, `absl::StrJoin`, `absl::StrSplit`
 - `absl::Substitute` when one argument appears in several positions and no printf-like formatting is needed

@@ -1,0 +1,60 @@
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE brc (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO brc SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) brc;
+
+statement ok
+SET sdb_faults = 'SearchTable::RebuildConfig';
+
+statement error
+CREATE INDEX brc_idx ON brc USING inverted (tag);
+----
+db error: ERROR: intentional debug error<slt:ignore>
+
+
+statement ok
+RESET sdb_faults;
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'brc' ORDER BY indexname;
+----
+indexname
+brc_pkey
+
+query
+SELECT count(*) AS n FROM brc WHERE tag = 't1';
+----
+n
+1000
+
+statement ok
+INSERT INTO brc VALUES (5001, 't1');
+
+statement ok
+VACUUM (REFRESH_TABLE) brc;
+
+statement ok
+CREATE INDEX brc_idx ON brc USING inverted (tag);
+
+query
+SELECT count(*) AS n FROM brc WHERE tag = 't1';
+----
+n
+1001
+
+query
+SELECT count(*) AS n FROM brc_idx WHERE tag @@ 't1';
+----
+n
+1001
+
+statement ok
+DROP TABLE brc;

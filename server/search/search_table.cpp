@@ -90,7 +90,7 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
   }
-  RebuildConfig();
+  RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
   OpenWriter(in_memory);
   ApplyOptions(options);
 }
@@ -303,35 +303,124 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
   return _config;
 }
 
-void SearchTable::RebuildConfig() {
+std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::ScanConfig()
+  const {
+  std::shared_lock lock(_table_lock);
+  return _scan_config;
+}
+
+std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
+  std::span<const IndexConfig> configs,
+  std::optional<duckdb::idx_t> skip) const {
   auto merged = std::make_shared<catalog::InvertedIndexConfig>();
   merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
   merged->declared_compression = _compression;
-  for (const auto& index : _configs) {
+  for (const auto& index : configs) {
+    if (index.oid == skip) {
+      continue;
+    }
     for (const auto& [id, field] : index.config->fields) {
       merged->fields.emplace(id, field);
     }
     merged->keys.insert(merged->keys.end(), index.config->keys.begin(),
                         index.config->keys.end());
   }
-  _config = std::move(merged);
+  return merged;
+}
+
+template<typename Configs>
+void SearchTable::RebuildConfig(Configs&& configs,
+                                std::optional<duckdb::idx_t> building_index) {
+  auto config = MergeConfigs(configs, std::nullopt);
+  auto scan_config =
+    building_index ? MergeConfigs(configs, building_index) : config;
+  SDB_IF_FAILURE("SearchTable::RebuildConfig") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
+  _configs = std::forward<Configs>(configs);
+  _building_index = building_index;
+  _config = std::move(config);
+  _scan_config = std::move(scan_config);
 }
 
 void SearchTable::MergeIndexConfig(
   duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
   std::unique_lock lock(_table_lock);
-  _configs.emplace_back(index_oid, std::move(config));
-  RebuildConfig();
+  auto configs = _configs;
+  configs.emplace_back(index_oid, std::move(config));
+  RebuildConfig(std::move(configs), _building_index);
+}
+
+SearchTable::BuildClaim SearchTable::BeginIndexBuild(
+  duckdb::idx_t index_oid,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+  if (_build_in_flight.exchange(true, std::memory_order_acq_rel)) {
+    return {};
+  }
+  BuildClaim claim{*this, index_oid};
+  std::unique_lock lock(_table_lock);
+  SDB_ASSERT(!_building_index);
+  auto configs = _configs;
+  configs.emplace_back(index_oid, std::move(config));
+  RebuildConfig(std::move(configs), index_oid);
+  return claim;
+}
+
+void SearchTable::FinishIndexBuild(duckdb::idx_t index_oid) noexcept {
+  std::unique_lock lock(_table_lock);
+  if (_building_index != index_oid) {
+    return;
+  }
+  _building_index.reset();
+  _scan_config = _config;
+}
+
+void SearchTable::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
+  std::unique_lock lock(_table_lock);
+  if (_building_index != index_oid) {
+    return;
+  }
+  _building_index.reset();
+  std::erase_if(
+    _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
+  _config = _scan_config;
+}
+
+void SearchTable::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }
+
+void SearchTable::BuildClaim::Release(bool finished) noexcept {
+  if (!_table) {
+    return;
+  }
+  if (finished) {
+    _table->FinishIndexBuild(_index_oid);
+  } else {
+    _table->AbortIndexBuild(_index_oid);
+  }
+  _table->_build_in_flight.store(false, std::memory_order_release);
+  _table = nullptr;
 }
 
 void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
   std::unique_lock lock(_table_lock);
-  std::erase_if(
-    _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
-  RebuildConfig();
+  if (std::erase_if(_configs, [&](const IndexConfig& index) {
+        return index.oid == index_oid;
+      }) == 0) {
+    return;
+  }
+  if (_building_index == index_oid) {
+    _building_index.reset();
+  }
+  // only for remove we want removal to stay in case of merge configs failure
+  // as this is DROP INDEX / Rollback and catalog already marked index as gone
+  // so nobody will repeat this removal. This will leave field config not
+  // updated but at least any next DLL will fix this and "stalled" fields will
+  // be not emitted anymore. If we leave _configs without deletion this will be
+  // not fixed until restart.
+  RebuildConfig(_configs, _building_index);
 }
 
 auto SearchTable::CompactUnsafeAsync(

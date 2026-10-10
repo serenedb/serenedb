@@ -84,6 +84,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     const duckdb::ColumnList& columns);
 
   std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
+  std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);
@@ -217,24 +218,38 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   class [[nodiscard]] BuildClaim {
    public:
-    explicit BuildClaim(SearchTable& table) noexcept
-      : _table{&table},
-        _claimed{
-          !table._build_in_flight.exchange(true, std::memory_order_acq_rel)} {}
-    ~BuildClaim() {
-      if (_claimed) {
-        _table->_build_in_flight.store(false, std::memory_order_release);
-      }
+    BuildClaim() noexcept = default;
+    BuildClaim(BuildClaim&& other) noexcept
+      : _table{std::exchange(other._table, nullptr)},
+        _index_oid{other._index_oid} {}
+    BuildClaim& operator=(BuildClaim&& other) noexcept {
+      BuildClaim{std::move(other)}.Swap(*this);
+      return *this;
     }
-    BuildClaim(const BuildClaim&) = delete;
-    BuildClaim& operator=(const BuildClaim&) = delete;
+    ~BuildClaim() { Release(/*finished=*/false); }
 
-    bool Claimed() const noexcept { return _claimed; }
+    bool Claimed() const noexcept { return _table != nullptr; }
+    void Finish() noexcept;
 
    private:
-    SearchTable* _table;
-    bool _claimed;
+    friend class SearchTable;
+
+    BuildClaim(SearchTable& table, duckdb::idx_t index_oid) noexcept
+      : _table{&table}, _index_oid{index_oid} {}
+
+    void Swap(BuildClaim& other) noexcept {
+      std::swap(_table, other._table);
+      std::swap(_index_oid, other._index_oid);
+    }
+    void Release(bool finished) noexcept;
+
+    SearchTable* _table = nullptr;
+    duckdb::idx_t _index_oid = 0;
   };
+
+  BuildClaim BeginIndexBuild(
+    duckdb::idx_t index_oid,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config);
 
   bool BuildInFlight() const noexcept {
     return _build_in_flight.load(std::memory_order_acquire);
@@ -280,7 +295,14 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   };
 
   void OpenWriter(bool in_memory);
-  void RebuildConfig();
+  std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
+    std::span<const IndexConfig> configs,
+    std::optional<duckdb::idx_t> skip) const;
+  template<typename Configs>
+  void RebuildConfig(Configs&& configs,
+                     std::optional<duckdb::idx_t> building_index);
+  void FinishIndexBuild(duckdb::idx_t index_oid) noexcept;
+  void AbortIndexBuild(duckdb::idx_t index_oid) noexcept;
 
   duckdb::idx_t _table_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
@@ -293,6 +315,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;
   std::shared_ptr<const catalog::InvertedIndexConfig> _config;
+  std::shared_ptr<const catalog::InvertedIndexConfig> _scan_config;
+  std::optional<duckdb::idx_t> _building_index;
   std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
   std::optional<irs::ScorerOptions> _topk_options;

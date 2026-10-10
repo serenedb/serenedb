@@ -361,14 +361,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
-
-  search::SearchTable::BuildClaim claim{shard};
-  if (!claim.Claimed()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                    ERR_MSG("an index build is already running on search "
-                            "table ",
-                            target.table_id));
-  }
+  SDB_ASSERT(shard.BuildInFlight(),
+             "RunSearchTableBackfill requires a held BuildClaim");
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
   // The statement pinned a reader of this shard at bind time and only drops it

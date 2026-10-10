@@ -11,6 +11,22 @@ DROP JOB IF EXISTS jd_hourly;
 
 
 statement ok
+DROP JOB IF EXISTS jd_nine;
+
+
+statement ok
+DROP JOB IF EXISTS jd_five;
+
+
+statement ok
+DROP JOB IF EXISTS jd_spread;
+
+
+statement ok
+DROP JOB IF EXISTS jd_after_spread;
+
+
+statement ok
 DROP JOB IF EXISTS jd_monthly;
 
 
@@ -210,6 +226,93 @@ FROM duckdb_jobs() WHERE job_name = 'jd_weekly';
 ----
 aligned
 t
+
+
+statement ok
+CREATE JOB jd_nine EVERY 1 WEEK 2 DAYS AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_five EVERY 5 MONTHS AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_spread EVERY 1 DAY OFFSET 2 HOURS RANDOMIZE FOR 1 HOUR AS SELECT 1;
+
+
+statement ok
+CREATE JOB jd_after_spread AFTER 1 HOUR RANDOMIZE FOR 10 MINUTES AS SELECT 1;
+
+
+query
+SELECT job_name, schedule FROM duckdb_jobs()
+WHERE job_name IN ('jd_nine', 'jd_five', 'jd_spread', 'jd_after_spread') ORDER BY job_name;
+----
+job_name	schedule
+jd_after_spread	AFTER INTERVAL '01:00:00' RANDOMIZE FOR INTERVAL '00:10:00'
+jd_five	EVERY INTERVAL '5 mons'
+jd_nine	EVERY INTERVAL '9 days'
+jd_spread	EVERY INTERVAL '1 day' OFFSET INTERVAL '02:00:00' RANDOMIZE FOR INTERVAL '01:00:00'
+
+
+query
+SELECT schedule_randomize = INTERVAL '1 hour' AS randomize_ok FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+----
+randomize_ok
+t
+
+
+query
+SELECT
+  ((next_run AT TIME ZONE 'UTC')::DATE - DATE '1969-12-29') % 9 = 0
+    AND extract(hour FROM next_run AT TIME ZONE 'UTC') = 0 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_nine';
+----
+aligned
+t
+
+
+query
+SELECT
+  ((extract(year FROM next_run AT TIME ZONE 'UTC') - 1970) * 12
+    + extract(month FROM next_run AT TIME ZONE 'UTC') - 1) % 5 = 0
+    AND extract(day FROM next_run AT TIME ZONE 'UTC') = 1 AS aligned
+FROM duckdb_jobs() WHERE job_name = 'jd_five';
+----
+aligned
+t
+
+
+query
+SELECT (next_run AT TIME ZONE 'UTC')::TIME BETWEEN TIME '01:30:00' AND TIME '02:30:00' AS spread
+FROM duckdb_jobs() WHERE job_name = 'jd_spread';
+----
+spread
+t
+
+
+query
+SELECT next_run BETWEEN now() + INTERVAL '54 minutes' AND now() + INTERVAL '66 minutes' AS spread
+FROM duckdb_jobs() WHERE job_name = 'jd_after_spread';
+----
+spread
+t
+
+
+statement ok
+DROP JOB jd_nine;
+
+
+statement ok
+DROP JOB jd_five;
+
+
+statement ok
+DROP JOB jd_spread;
+
+
+statement ok
+DROP JOB jd_after_spread;
 
 
 query
@@ -448,6 +551,18 @@ statement error
 CREATE JOB jd_invalid EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1;
 ----
 db error: ERROR: job schedule offset 02:00:00 must be shorter than the interval 01:00:00
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 MONTH OFFSET 40 DAYS AS SELECT 1;
+----
+db error: ERROR: job schedule offset 40 days must be shorter than the interval 1 mon
+
+
+statement error
+CREATE JOB jd_invalid EVERY 1 HOUR RANDOMIZE FOR 1 HOUR AS SELECT 1;
+----
+db error: ERROR: job schedule RANDOMIZE FOR 01:00:00 must not be negative and must be shorter than the interval 01:00:00
 
 
 statement error

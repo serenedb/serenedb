@@ -68,3 +68,43 @@ id
 
 statement ok
 DROP TABLE gci;
+
+
+statement ok
+CREATE TABLE gcm (id INT PRIMARY KEY, a INT, v INT GENERATED ALWAYS AS (a * 10) VIRTUAL, b TEXT);
+
+
+statement ok
+INSERT INTO gcm (id, a, b) VALUES (1, 1, 'red'), (2, 2, 'blue');
+
+
+statement ok
+CREATE INDEX gcm_inv ON gcm USING inverted (id, (b || 'x'), v included(), b::TEXT);
+
+
+statement ok
+INSERT INTO gcm (id, a, b) VALUES (3, 3, 'red');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) gcm;
+
+
+query
+SELECT id, v, b || 'x' AS bx FROM gcm_inv ORDER BY id;
+----
+id	v	bx
+1	10	redx
+2	20	bluex
+3	30	redx
+
+
+query
+SELECT id FROM gcm_inv WHERE b || 'x' = 'bluex';
+----
+id
+2
+
+
+statement ok
+DROP TABLE gcm;

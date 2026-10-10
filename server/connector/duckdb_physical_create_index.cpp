@@ -706,11 +706,12 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
 
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> projected_exprs;
   for (size_t i = 0; i < op.info->parsed_expressions.size(); ++i) {
-    if (op.info->parsed_expressions[i]->GetExpressionType() ==
-        duckdb::ExpressionType::COLUMN_REF) {
+    SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
+    SDB_ASSERT(i < op.unbound_expressions.size());
+    if (op.unbound_expressions[i]->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       continue;
     }
-    SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
     const auto& expr = *op.expressions[i];
     if (std::any_of(
           op.expressions.begin(), op.expressions.begin() + i,

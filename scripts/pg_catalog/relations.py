@@ -218,7 +218,11 @@ def generate(gen):
                        {name: const + 'Validator'
                         for name, const in config.LANGUAGES.items()}) +
             named_oids(gen, 'SELECT %s::regproc::oid::int8',
-                       config.PROCEDURES))
+                       config.PROCEDURES) +
+            named_oids(gen, 'SELECT oid::int8 FROM pg_collation WHERE '
+                            "collname = %s AND collnamespace = "
+                            "'pg_catalog'::regnamespace",
+                       config.COLLATIONS))
     tables, all_tables, known = [], [], set()
     for oid, schema, name, relkind, shared, superuser in relations(gen):
         known.add((schema, name))

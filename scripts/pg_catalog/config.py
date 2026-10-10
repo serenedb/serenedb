@@ -26,7 +26,11 @@ PSEUDO_TYPES = ('any', 'internal', 'record')
 
 ENUM_PROCS = ('enum_in', 'enum_out', 'enum_recv', 'enum_send')
 
-COLLATIONS = ('default', 'C', 'POSIX')
+COLLATIONS = {
+    'default': 'kDefaultCollation',
+    'C': 'kCCollation',
+    'POSIX': 'kPosixCollation',
+}
 
 FIRST_INITDB_OID = 10000
 

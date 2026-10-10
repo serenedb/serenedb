@@ -35,7 +35,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_auth_members             | 🟢            | Tracks role memberships. |
 | pg_cast                     | 🟡            | Contains information about type casts. |
 | pg_class                    | 🟢            | Stores information about tables, indexes, sequences and other relations. |
-| pg_collation                | 🟢            | Lists the built-in collations `default`, `C` and `POSIX`. |
+| pg_collation                | 🟢            | Lists PostgreSQL's `default`, `C` and `POSIX` and every [SereneDB collation](../sql/expressions/collations/index.md): `nocase`, `noaccent` and `nfc` (provider `b`) and the ICU locale collations (provider `i`). SereneDB collations are not deterministic: equal-comparing strings may differ in bytes. |
 | pg_constraint               | 🟢            | Stores information about table constraints. |
 | pg_conversion               | 🟡            | Contains information about encoding conversions. |
 | pg_database                 | 🟢            | Stores information about databases. |

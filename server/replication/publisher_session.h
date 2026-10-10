@@ -38,9 +38,10 @@ namespace sdb::replication {
 using PublisherRow = std::vector<std::optional<std::string>>;
 
 struct PublisherTls {
-  explicit PublisherTls(const ConnInfo& conninfo);
+  PublisherTls(const ConnInfo& conninfo, size_t host_index);
 
-  asio_ns::ssl::context tls;
+  asio_ns::ssl::context tls{asio_ns::ssl::context::tls_client};
+  std::string tls_error;
 };
 
 class PublisherSession
@@ -48,13 +49,16 @@ class PublisherSession
     public network::pg::PgWireSession<network::SocketKind::Client> {
  public:
   PublisherSession(network::IoExecutor& exec, ConnInfo conninfo,
-                   size_t host_index, std::string application_name,
-                   bool require_password);
+                   size_t host_index, size_t encryption,
+                   std::string application_name, bool require_password);
 
   int ServerVersion() const noexcept { return _server_version; }
   const irs::pg::SqlErrorData& Error() const noexcept { return _error; }
+  size_t EncryptionAttempt() const noexcept { return _encryption; }
+  bool RetryEncryption() const noexcept { return _retry_encryption; }
 
  protected:
+  yaclib::Task<bool> Guarded(yaclib::Task<bool> task);
   yaclib::Task<bool> Connect();
   yaclib::Task<bool> Query(std::string_view sql,
                            std::vector<PublisherRow>* rows = nullptr);
@@ -74,7 +78,11 @@ class PublisherSession
   yaclib::Task<bool> CheckSessionAttrs();
   std::string SocketPath() const;
   std::string ServerName() const;
+  void SetupFailed();
 
+  size_t _encryption;
+  bool _plain_fallback = false;
+  bool _retry_encryption = false;
   bool _require_password;
   std::string _password;
   std::string _hot_standby;
@@ -86,6 +94,7 @@ class PublisherSession
 struct PublisherResult {
   bool connected = false;
   bool ok = false;
+  bool retry_encryption = false;
   int server_version = 0;
   irs::pg::SqlErrorData error;
 };

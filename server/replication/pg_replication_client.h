@@ -71,7 +71,7 @@ struct ConflictCounters {
 class PgReplicationClient final : public SyncSession {
  public:
   PgReplicationClient(network::IoExecutor& exec, ReplicationTarget target,
-                      size_t host_index);
+                      size_t host_index, size_t encryption);
 
   yaclib::Task<> RunClient();
   void StopClient() { this->Stop(); }
@@ -103,6 +103,7 @@ class PgReplicationClient final : public SyncSession {
 
  private:
   yaclib::Task<bool> SyncTables();
+  std::string SyncSlotName() const;
   yaclib::Task<bool> DescribeTables();
   yaclib::Task<bool> SyncSequential();
   yaclib::Task<bool> SyncParallel(size_t workers);
@@ -185,6 +186,8 @@ class PgReplicationClient final : public SyncSession {
   bool _remote_txn = false;
   size_t _hold_commits = 0;
   std::vector<PgOutputMessage> _reordered;
+  irs::containers::FlatHashMap<uint32_t, size_t> _reorder_groups;
+  std::vector<std::vector<size_t>> _reorder_order;
   uint64_t _pending_lsn = 0;
   int64_t _pending_since = 0;
   size_t _pending_txns = 0;

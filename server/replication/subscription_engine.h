@@ -23,6 +23,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <atomic>
+#include <chrono>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -45,6 +46,7 @@ class SubscriptionCatalogEntry;
 }  // namespace catalog
 namespace network {
 
+class IoExecutor;
 class IoThreadPool;
 
 }  // namespace network
@@ -70,14 +72,14 @@ class SubscriptionEngine final {
   void Stop(duckdb::idx_t subscription);
 
   struct SubRuntime {
-    duckdb::idx_t subscription = 0;
     uint64_t received_lsn = 0;
     uint64_t flushed_lsn = 0;
     int64_t last_send_time = 0;
     int64_t last_receipt_time = 0;
     int64_t latest_end_time = 0;
   };
-  std::vector<SubRuntime> RuntimeSnapshot(std::string_view database) const;
+  irs::containers::FlatHashMap<duckdb::idx_t, SubRuntime> RuntimeSnapshot(
+    std::string_view database) const;
 
   struct SubStats {
     uint64_t apply_error_count = 0;
@@ -114,6 +116,7 @@ class SubscriptionEngine final {
     bool stopping = false;
     bool restart = false;
     size_t host = 0;
+    size_t encryption = 0;
     uint32_t transient_failures = 0;
     uint64_t host_seed = 0;
     bool any_session = false;
@@ -124,6 +127,9 @@ class SubscriptionEngine final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
   void StopLocked(SubState& state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
   void RestartLocked(SubState& state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
+  yaclib::Task<bool> Backoff(duckdb::idx_t subscription,
+                             network::IoExecutor& exec,
+                             std::chrono::milliseconds delay);
   yaclib::Task<> Supervise(duckdb::idx_t subscription);
   void Disable(std::string_view database, duckdb::idx_t subscription);
 

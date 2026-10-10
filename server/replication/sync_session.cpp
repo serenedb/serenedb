@@ -82,9 +82,13 @@ void CheckTargetColumns(std::string_view schema, std::string_view table,
 }
 
 SyncSession::SyncSession(network::IoExecutor& exec, ReplicationTarget target,
-                         size_t host_index)
-  : PublisherSession{exec, target.conninfo, host_index,
-                     target.subscription_name, target.require_password},
+                         size_t host_index, size_t encryption)
+  : PublisherSession{exec,
+                     target.conninfo,
+                     host_index,
+                     encryption,
+                     target.subscription_name,
+                     target.require_password},
     _target{std::move(target)} {}
 
 yaclib::Task<bool> SyncSession::RunJob(Job job) {
@@ -409,8 +413,9 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
 }
 
 TableSyncWorker::TableSyncWorker(network::IoExecutor& exec,
-                                 ReplicationTarget target, SyncPlan& plan)
-  : SyncSession{exec, std::move(target), 0}, _plan{plan} {}
+                                 ReplicationTarget target, size_t encryption,
+                                 SyncPlan& plan)
+  : SyncSession{exec, std::move(target), 0, encryption}, _plan{plan} {}
 
 void TableSyncWorker::Start(yaclib::Promise<bool> promise) {
   Run(std::move(promise)).Detach();
@@ -431,30 +436,35 @@ yaclib::Future<> TableSyncWorker::LocalMain() {
   co_return {};
 }
 
+yaclib::Task<bool> TableSyncWorker::CopyTables() {
+  if (!co_await Query("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ") ||
+      !co_await Query(absl::StrCat("SET TRANSACTION SNAPSHOT ",
+                                   pg::QuoteLiteral(_plan.snapshot)))) {
+    co_return false;
+  }
+  for (;;) {
+    const auto i = _plan.next.fetch_add(1, std::memory_order_relaxed);
+    if (i >= _plan.tables.size()) {
+      break;
+    }
+    if (!co_await SyncOne(_plan.tables[i], _plan.lsn, _plan.binary)) {
+      co_return false;
+    }
+    _plan.done[i] = 1;
+  }
+  co_return co_await Query("COMMIT");
+}
+
 yaclib::Task<> TableSyncWorker::Run(yaclib::Promise<bool> promise) {
   auto self = this->shared_from_this();
   auto writer = this->SendWriter();
-  bool ok = co_await Connect();
+  bool ok = co_await Guarded(Connect());
   if (ok) {
     auto local = LocalMain();
     this->_handed_off = true;
     this->_task->Start();
     co_await _setup_done.AwaitOn(*this->_ioexec);
-    ok = _setup_ok &&
-         co_await Query("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ") &&
-         co_await Query(absl::StrCat("SET TRANSACTION SNAPSHOT ",
-                                     pg::QuoteLiteral(_plan.snapshot)));
-    while (ok) {
-      const auto i = _plan.next.fetch_add(1, std::memory_order_relaxed);
-      if (i >= _plan.tables.size()) {
-        break;
-      }
-      ok = co_await SyncOne(_plan.tables[i], _plan.lsn, _plan.binary);
-      if (ok) {
-        _plan.done[i] = 1;
-      }
-    }
-    ok = ok && co_await Query("COMMIT");
+    ok = _setup_ok && co_await Guarded(CopyTables());
     co_await RunJob(Job::Stream);
     this->Stop();
     co_await std::move(local);

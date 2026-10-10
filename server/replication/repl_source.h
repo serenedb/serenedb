@@ -57,7 +57,7 @@ struct RelInfo {
   uint64_t sync_lsn = 0;
   duckdb::idx_t table_oid = 0;
   duckdb::idx_t owner = 0;
-  bool foreign_keys = false;
+  bool triggers = false;
   std::string schema;
   std::string table;
   std::vector<RelColumn> columns;

@@ -21,6 +21,8 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,6 +45,11 @@ enum class SessionAttrs : uint8_t {
   Primary,
   Standby,
   PreferStandby,
+};
+
+enum class Encryption : uint8_t {
+  Plain,
+  Tls,
 };
 
 struct ConnHost {
@@ -79,10 +86,18 @@ struct ConnInfo {
   bool operator==(const ConnInfo&) const = default;
 };
 
+std::string HomeFile(std::string_view name);
+bool FileExists(const std::string& path);
+
 ConnInfo ParseConnInfo(std::string_view conninfo);
 
 std::string PasswordFromFile(const ConnInfo& conninfo, const ConnHost& host);
 
 void ArrangeHosts(ConnInfo& conninfo, uint64_t seed, bool any_session);
+
+std::string_view SslModeName(SslMode mode);
+
+std::span<const Encryption> EncryptionOrder(const ConnInfo& conninfo,
+                                            const ConnHost& host);
 
 }  // namespace sdb::replication

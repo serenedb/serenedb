@@ -42,7 +42,7 @@ class ReplStream {
     }
     _end = messages.data() + messages.size();
     _fresh = true;
-    _msg.store(messages.data(), std::memory_order_release);
+    _msg.store(messages.data(), std::memory_order_seq_cst);
     Wake();
     return true;
   }
@@ -54,7 +54,7 @@ class ReplStream {
   }
   void Finish() noexcept {
     if (_aborted.load(std::memory_order_acquire) ||
-        _eof.exchange(true, std::memory_order_acq_rel)) {
+        _eof.exchange(true, std::memory_order_seq_cst)) {
       return;
     }
     Wake();
@@ -65,15 +65,18 @@ class ReplStream {
 
   void SetTask(network::CpuResumer* task) noexcept { _task = task; }
   void ScanActive(bool active) noexcept {
-    _scan_active.store(active, std::memory_order_release);
     if (active) {
+      if (_ready.Ready()) {
+        _ready.Reset();
+      }
       _armed = false;
     }
+    _scan_active.store(active, std::memory_order_seq_cst);
   }
 
   bool Ready() const noexcept {
-    return _msg.load(std::memory_order_acquire) != nullptr ||
-           _eof.load(std::memory_order_acquire);
+    return _msg.load(std::memory_order_seq_cst) != nullptr ||
+           _eof.load(std::memory_order_seq_cst);
   }
   const PgOutputMessage* Current() const noexcept {
     return _msg.load(std::memory_order_acquire);
@@ -118,7 +121,7 @@ class ReplStream {
 
  private:
   void Wake() noexcept {
-    if (_scan_active.load(std::memory_order_acquire)) {
+    if (_scan_active.load(std::memory_order_seq_cst)) {
       _ready.Set();
     } else if (_task != nullptr) {
       _task->RequestRun();

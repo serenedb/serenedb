@@ -22,7 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
@@ -32,6 +34,7 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
@@ -85,6 +88,7 @@ constexpr int64_t kPgEpochMicros = 946684800LL * 1000000;
 constexpr size_t kGroupTxns = 1000;
 constexpr size_t kOutboxBytes = 1 << 20;
 constexpr size_t kOutboxMessages = 4096;
+constexpr size_t kMaxStatements = 1024;
 constexpr int64_t kGroupMicros = 100000;
 
 int64_t SteadyMicros() {
@@ -179,8 +183,8 @@ std::vector<size_t> ReferencedFirstOrder(
 
 PgReplicationClient::PgReplicationClient(network::IoExecutor& exec,
                                          ReplicationTarget target,
-                                         size_t host_index)
-  : SyncSession{exec, std::move(target), host_index},
+                                         size_t host_index, size_t encryption)
+  : SyncSession{exec, std::move(target), host_index, encryption},
     _flushed_lsn{_target.start_lsn} {
   for (auto& outbox : _outboxes) {
     outbox.messages.reserve(kOutboxMessages + 1);
@@ -197,7 +201,7 @@ PgReplicationClient::PgReplicationClient(network::IoExecutor& exec,
 yaclib::Task<> PgReplicationClient::RunClient() {
   auto self = this->shared_from_this();
   auto writer = this->SendWriter();
-  if (co_await Connect()) {
+  if (co_await Guarded(Connect())) {
     _connected.store(true, std::memory_order_release);
     _stream.SetTask(this->_task.get());
     auto cpu = ReplicationMain();
@@ -205,11 +209,11 @@ yaclib::Task<> PgReplicationClient::RunClient() {
     this->_task->Start();
     co_await _setup_done.AwaitOn(*this->_ioexec);
     bool streaming = _setup_ok;
-    if (streaming && !co_await SyncTables()) {
+    if (streaming && !co_await Guarded(SyncTables())) {
       _sync_failed.store(true, std::memory_order_release);
       streaming = false;
     }
-    streaming = streaming && co_await StartReplication();
+    streaming = streaming && co_await Guarded(StartReplication());
     co_await RunJob(Job::Stream);
     if (streaming) {
       auto feedback = FeedbackLoop();
@@ -359,9 +363,13 @@ yaclib::Task<bool> PgReplicationClient::DescribeTables() {
   co_return true;
 }
 
+std::string PgReplicationClient::SyncSlotName() const {
+  return absl::StrFormat("pg_%u_sync_%016x", _target.subscription_oid,
+                         absl::Uniform<uint64_t>(absl::BitGen{}));
+}
+
 yaclib::Task<bool> PgReplicationClient::SyncSequential() {
-  const auto slot =
-    absl::StrCat(_target.slot_name, "_sync_", _target.subscription_oid);
+  const auto slot = SyncSlotName();
   std::vector<PublisherRow> rows;
   if (!co_await Query("BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ") ||
       !co_await Query(
@@ -395,8 +403,7 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
   if (!co_await DescribeTables()) {
     co_return false;
   }
-  const auto slot =
-    absl::StrCat(_target.slot_name, "_sync_", _target.subscription_oid);
+  const auto slot = SyncSlotName();
   std::vector<PublisherRow> rows;
   if (!co_await Query(
         absl::StrCat("CREATE_REPLICATION_SLOT ", pg::QuoteIdentifier(slot),
@@ -427,7 +434,8 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
   results.reserve(workers);
   for (size_t i = 0; i < workers; ++i) {
     auto& exec = pool->Next();
-    auto worker = duckdb::make_shared_ptr<TableSyncWorker>(exec, target, plan);
+    auto worker = duckdb::make_shared_ptr<TableSyncWorker>(
+      exec, target, EncryptionAttempt(), plan);
     auto [future, promise] = yaclib::MakeContract<bool>();
     asio_ns::post(exec.Context(),
                   [worker, promise = std::move(promise)]() mutable {
@@ -613,8 +621,9 @@ yaclib::Task<> PgReplicationClient::Feeder() {
     if (this->SendBroken() || _stream.Aborted()) {
       break;
     }
-    if (this->_frames.TryAssemble(FrameKind::Typed, this->_max_message)
-          .status == FrameStatus::NeedMore) {
+    auto frame =
+      this->_frames.TryAssemble(FrameKind::Typed, this->_max_message);
+    if (frame.status == FrameStatus::NeedMore) {
       if (_published || !_outboxes[_staging].messages.empty()) {
         _outboxes[_staging].messages.emplace_back(StreamStopMessage{});
       }
@@ -623,8 +632,8 @@ yaclib::Task<> PgReplicationClient::Feeder() {
       }
       _published = false;
       SendFeedback(false, false);
+      frame = co_await NextFrame(FrameKind::Typed, this->_max_message);
     }
-    auto frame = co_await NextFrame(FrameKind::Typed, this->_max_message);
     if (frame.status != FrameStatus::Ok) {
       break;
     }
@@ -931,9 +940,12 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
     info.mapped = true;
     info.table_oid = table->oid;
     info.owner = table->permissions.owner;
-    info.foreign_keys =
-      std::ranges::any_of(table->GetConstraints(), [](const auto& constraint) {
-        return constraint->type == duckdb::ConstraintType::FOREIGN_KEY;
+    table->ScanTriggers(
+      table->ParentCatalog().GetCatalogTransaction(*this->_conn->context),
+      [&](duckdb::CatalogEntry& entry) {
+        info.triggers =
+          info.triggers || entry.Cast<duckdb::TriggerCatalogEntry>().Fires(
+                             duckdb::ReplicationRole::REPLICA);
       });
     const auto& locals = table->GetColumns();
     info.columns.reserve(message.columns.size());
@@ -1002,6 +1014,9 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
               }
               add_unique(names);
             });
+  });
+  absl::erase_if(_stmts, [&](const auto& entry) {
+    return entry.first.relid == message.relation_id;
   });
   _relations[message.relation_id] = std::move(info);
 }
@@ -1175,7 +1190,8 @@ bool PgReplicationClient::Reorder(std::span<const PgOutputMessage> messages) {
     return false;
   }
   size_t commits = 0;
-  irs::containers::FlatHashMap<uint32_t, size_t> groups;
+  auto& groups = _reorder_groups;
+  groups.clear();
   uint64_t first_lsn = _remote_txn ? _final_lsn : UINT64_MAX;
   for (size_t i = 0; i < prefix; ++i) {
     const auto& message = messages[i];
@@ -1195,7 +1211,7 @@ bool PgReplicationClient::Reorder(std::span<const PgOutputMessage> messages) {
       return false;
     }
     const auto* relation = Relation(*relation_id);
-    if (relation == nullptr || !relation->mapped || relation->foreign_keys ||
+    if (relation == nullptr || !relation->mapped || relation->triggers ||
         !relation->ready || first_lsn < relation->sync_lsn ||
         !relation->missing_columns.empty() ||
         !relation->generated_columns.empty()) {
@@ -1206,7 +1222,13 @@ bool PgReplicationClient::Reorder(std::span<const PgOutputMessage> messages) {
   if (groups.size() < 2) {
     return false;
   }
-  std::vector<std::vector<size_t>> order(groups.size());
+  auto& order = _reorder_order;
+  if (order.size() < groups.size()) {
+    order.resize(groups.size());
+  }
+  for (size_t g = 0; g < groups.size(); ++g) {
+    order[g].clear();
+  }
   for (size_t i = 0; i < prefix; ++i) {
     if (const auto relation_id = RowRelId(messages[i])) {
       order[groups.at(*relation_id)].push_back(i);
@@ -1218,8 +1240,8 @@ bool PgReplicationClient::Reorder(std::span<const PgOutputMessage> messages) {
   if (leading_begin) {
     _reordered.push_back(messages[0]);
   }
-  for (const auto& group : order) {
-    for (const auto i : group) {
+  for (size_t g = 0; g < groups.size(); ++g) {
+    for (const auto i : order[g]) {
       _reordered.push_back(messages[i]);
     }
   }
@@ -1379,6 +1401,9 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
     if (prepared->HasError()) {
       prepared->GetErrorObject().Throw();
     }
+    if (_stmts.size() >= kMaxStatements) {
+      _stmts.clear();
+    }
     it = _stmts
            .emplace(StmtKey{shape.op, _batch.relid, shape.keys, shape.cols,
                             shape.full},
@@ -1397,7 +1422,9 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
     for (const auto i : shape.cols) {
       types.push_back(relation.columns[i].type);
     }
-    retained.emplace(duckdb::Allocator::DefaultAllocator(), std::move(types));
+    retained.emplace(
+      duckdb::BufferManager::GetBufferManager(*this->_conn->context),
+      std::move(types));
     _batch.retained = &*retained;
   }
   absl::Cleanup release = [this] { _batch.retained = nullptr; };

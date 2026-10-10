@@ -95,7 +95,7 @@ void CheckTargetColumns(std::string_view schema, std::string_view table,
 class SyncSession : public PublisherSession {
  public:
   SyncSession(network::IoExecutor& exec, ReplicationTarget target,
-              size_t host_index);
+              size_t host_index, size_t encryption);
 
   bool DisableRequested() const noexcept {
     return _disable_requested.load(std::memory_order_acquire);
@@ -169,11 +169,12 @@ struct SyncPlan {
 class TableSyncWorker final : public SyncSession {
  public:
   TableSyncWorker(network::IoExecutor& exec, ReplicationTarget target,
-                  SyncPlan& plan);
+                  size_t encryption, SyncPlan& plan);
 
   void Start(yaclib::Promise<bool> promise);
 
  private:
+  yaclib::Task<bool> CopyTables();
   yaclib::Task<> Run(yaclib::Promise<bool> promise);
   yaclib::Future<> LocalMain();
 

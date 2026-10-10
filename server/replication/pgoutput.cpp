@@ -52,6 +52,12 @@ class Cursor {
     return result;
   }
 
+  std::string_view Rest() {
+    const auto rest = _buf.substr(_pos);
+    _pos = _buf.size();
+    return rest;
+  }
+
   std::string_view Tuple() {
     const auto start = _pos;
     const auto columns = Int16();
@@ -183,7 +189,7 @@ PgOutputMessage DecodePgOutput(std::string_view payload, bool in_stream) {
       if (c.Byte() != 'N') {
         Malformed("insert without a new tuple");
       }
-      m.new_tuple = c.Tuple();
+      m.new_tuple = c.Rest();
       return m;
     }
     case 'U': {
@@ -200,7 +206,7 @@ PgOutputMessage DecodePgOutput(std::string_view payload, bool in_stream) {
       if (kind != 'N') {
         Malformed("update without a new tuple");
       }
-      m.new_tuple = c.Tuple();
+      m.new_tuple = c.Rest();
       return m;
     }
     case 'D': {
@@ -212,7 +218,7 @@ PgOutputMessage DecodePgOutput(std::string_view payload, bool in_stream) {
         Malformed("delete without an old tuple");
       }
       m.old_is_key = kind == 'K';
-      m.old_tuple = c.Tuple();
+      m.old_tuple = c.Rest();
       return m;
     }
     case 'T': {

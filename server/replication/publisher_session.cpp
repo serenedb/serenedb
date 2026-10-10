@@ -29,9 +29,10 @@
 
 #include <array>
 #include <chrono>
+#include <exception>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
-#include <stdexcept>
 #include <utility>
 #include <yaclib/async/contract.hpp>
 
@@ -68,13 +69,13 @@ network::TlsClientOptions ClientTlsOptions(const ConnInfo& conninfo) {
   const bool have_root = system || FileExists(root);
   if (!have_root && (conninfo.sslmode == SslMode::VerifyCa ||
                      conninfo.sslmode == SslMode::VerifyFull)) {
-    throw std::runtime_error{
-      root.empty()
-        ? absl::StrCat(
-            "could not get home directory to locate root certificate file",
-            kRootHint)
-        : absl::StrCat("root certificate file \"", root, "\" does not exist",
-                       kRootHint)};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_CONNECTION_FAILURE),
+      ERR_MSG(
+        root.empty()
+          ? "could not get home directory to locate root certificate file"
+          : absl::StrCat("root certificate file \"", root, "\" does not exist"),
+        kRootHint));
   }
   network::TlsClientOptions options{
     .verify_peer = have_root,
@@ -90,22 +91,25 @@ network::TlsClientOptions ClientTlsOptions(const ConnInfo& conninfo) {
                                        : conninfo.sslkey;
     struct stat status{};
     if (key.empty() || ::stat(key.c_str(), &status) != 0) {
-      throw std::runtime_error{absl::StrCat(
-        "certificate present, but not private key file \"", key, "\"")};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_CONNECTION_FAILURE),
+        ERR_MSG("certificate present, but not private key file \"", key, "\""));
     }
     if (!S_ISREG(status.st_mode)) {
-      throw std::runtime_error{
-        absl::StrCat("private key file \"", key, "\" is not a regular file")};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_CONNECTION_FAILURE),
+        ERR_MSG("private key file \"", key, "\" is not a regular file"));
     }
     if ((status.st_uid == ::geteuid() &&
          (status.st_mode & (S_IRWXG | S_IRWXO)) != 0) ||
         (status.st_uid == 0 &&
          (status.st_mode & (S_IWGRP | S_IXGRP | S_IRWXO)) != 0)) {
-      throw std::runtime_error{absl::StrCat(
-        "private key file \"", key,
-        "\" has group or world access; file must have permissions u=rw "
-        "(0600) or less if owned by the current user, or permissions "
-        "u=rw,g=r (0640) or less if owned by root")};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_CONNECTION_FAILURE),
+        ERR_MSG("private key file \"", key,
+                "\" has group or world access; file must have permissions "
+                "u=rw (0600) or less if owned by the current user, or "
+                "permissions u=rw,g=r (0640) or less if owned by root"));
     }
     options.cert_file = conninfo.sslcert;
     options.key_file = std::move(key);

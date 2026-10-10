@@ -191,7 +191,9 @@ struct ScaleScore : public irs::ScorerBase<ScaleScore, tests::sort::StatsT> {
 
   irs::ScoreFunction PrepareScorer(const irs::ScoreContext& ctx) const final {
     const auto* scale = irs::get<irs::ScaleBlockAttr>(ctx.doc_attrs);
-    EXPECT_NE(nullptr, scale);
+    if (scale == nullptr) {
+      return irs::ScoreFunction::Constant(irs::kNoBoost);
+    }
     return irs::ScoreFunction::Make<Scorer>(scale);
   }
 };
@@ -240,6 +242,12 @@ struct Outcome {
   irs::score_t scale = irs::kNoBoost;
 };
 
+bool Boosted(const irs::ByPhraseOptions& phrase) {
+  return std::ranges::any_of(phrase, [](const auto& slot) {
+    return std::holds_alternative<irs::ByEditDistanceOptions>(slot.part);
+  });
+}
+
 Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   WhitespaceTokenizer whitespace;
   ExplicitTokenizer explicit_positions;
@@ -281,7 +289,7 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
     EXPECT_EQ(1U, freqs.size());
     out.freq = static_cast<uint32_t>(freqs.front());
   }
-  if (out.matched && phrase.slop() != 0) {
+  if (out.matched && (phrase.slop() != 0 || Boosted(phrase))) {
     const auto scales = Scores<ScaleScore>(filter, *reader);
     EXPECT_EQ(1U, scales.size());
     if (!scales.empty()) {
@@ -304,6 +312,76 @@ Outcome Verify(const irs::ByPhraseOptions& phrase, const Doc& doc) {
 
 bool Matches(const irs::ByPhraseOptions& phrase, const Doc& doc) {
   return Verify(phrase, doc).matched;
+}
+
+struct ReferenceSlot {
+  std::vector<std::pair<std::string_view, irs::score_t>> words;
+  uint32_t min = 0;
+  uint32_t max = 0;
+};
+
+Outcome Reference(std::span<const std::string_view> doc,
+                  std::span<const ReferenceSlot> slots) {
+  std::vector<std::vector<std::pair<uint32_t, irs::score_t>>> hits(
+    slots.size());
+  for (uint32_t i = 0; i != doc.size(); ++i) {
+    for (size_t s = 0; s != slots.size(); ++s) {
+      for (const auto& [word, boost] : slots[s].words) {
+        if (word == doc[i]) {
+          hits[s].emplace_back(irs::pos_limits::min() + i, boost);
+        }
+      }
+    }
+  }
+  Outcome out{.scale = 0.f};
+  const auto walk = [&](this const auto& self, size_t s, uint32_t prev,
+                        irs::score_t floor) -> void {
+    if (s == slots.size()) {
+      ++out.freq;
+      out.scale = std::max(out.scale, floor);
+      return;
+    }
+    for (const auto& [pos, boost] : hits[s]) {
+      if (s == 0 ||
+          (pos >= prev + slots[s].min && pos <= prev + slots[s].max)) {
+        self(s + 1, pos, std::min(floor, boost));
+      }
+    }
+  };
+  walk(0, 0, irs::kNoBoost);
+  out.matched = out.freq != 0;
+  if (!out.matched) {
+    out.scale = irs::kNoBoost;
+  }
+  return out;
+}
+
+template<typename Options>
+Options& Push(irs::ByPhraseOptions& phrase, const ReferenceSlot& slot,
+              bool first) {
+  return first ? phrase.push_back<Options>()
+               : phrase.push_back<Options>(slot.min, slot.max);
+}
+
+std::string Describe(std::span<const std::string_view> doc,
+                     std::span<const ReferenceSlot> slots) {
+  std::string out = absl::StrCat("doc: ", absl::StrJoin(doc, " "), " phrase:");
+  for (const auto& slot : slots) {
+    absl::StrAppend(&out, " [", slot.min, ",", slot.max, "]");
+    for (const auto& [word, boost] : slot.words) {
+      absl::StrAppend(&out, word, "/");
+    }
+  }
+  return out;
+}
+
+void WidenOneGap(std::span<ReferenceSlot> slots, std::mt19937& rng) {
+  if (std::ranges::none_of(slots.subspan(1), [](const ReferenceSlot& slot) {
+        return slot.min != slot.max;
+      })) {
+    slots[std::uniform_int_distribution<size_t>{1, slots.size() - 1}(rng)]
+      .max += 1;
+  }
 }
 
 }  // namespace
@@ -362,6 +440,127 @@ TEST(PhrasePositionsTest, interval_gap_counts_every_combination) {
   phrase.push_back<irs::ByTermOptions>(1, 2).term = Bytes("d");
   EXPECT_EQ(3U, Verify(phrase, Doc{"a x c c d d"}).freq);
   EXPECT_EQ(0U, Verify(phrase, Doc{"a x c x x d"}).freq);
+}
+
+TEST(PhrasePositionsTest, interval_phrase_agrees_with_reference) {
+  constexpr std::string_view kWords[] = {"a", "b", "c", "d", "x"};
+  std::mt19937 rng{20261010};
+  for (size_t round = 0; round != 300; ++round) {
+    std::array<int, std::size(kWords)> weights;
+    for (auto& weight : weights) {
+      weight = std::uniform_int_distribution{0, 6}(rng);
+    }
+    weights.back() += 2;
+    std::discrete_distribution<size_t> pick{weights.begin(), weights.end()};
+    std::vector<std::string_view> doc(
+      std::uniform_int_distribution<size_t>{0, 24}(rng));
+    for (auto& word : doc) {
+      word = kWords[pick(rng)];
+    }
+
+    std::vector<ReferenceSlot> slots(
+      std::uniform_int_distribution<size_t>{2, 4}(rng));
+    std::uniform_int_distribution<size_t> term{0, 3};
+    for (size_t s = 0; s != slots.size(); ++s) {
+      auto& slot = slots[s];
+      if (s != 0) {
+        slot.min = std::uniform_int_distribution<uint32_t>{1, 3}(rng);
+        slot.max =
+          slot.min + std::uniform_int_distribution<uint32_t>{0, 2}(rng);
+      }
+      slot.words.emplace_back(kWords[term(rng)], irs::kNoBoost);
+      if (std::bernoulli_distribution{0.25}(rng)) {
+        const auto other = kWords[term(rng)];
+        if (other != slot.words.front().first) {
+          slot.words.emplace_back(other, irs::kNoBoost);
+        }
+      }
+    }
+    WidenOneGap(slots, rng);
+
+    irs::ByPhraseOptions phrase;
+    for (size_t s = 0; s != slots.size(); ++s) {
+      const auto& slot = slots[s];
+      if (slot.words.size() == 1) {
+        Push<irs::ByTermOptions>(phrase, slot, s == 0).term =
+          Bytes(slot.words.front().first);
+      } else {
+        auto& set = Push<irs::TermSetOptions>(phrase, slot, s == 0);
+        for (const auto& [word, boost] : slot.words) {
+          set.terms.emplace(Bytes(word));
+        }
+      }
+    }
+
+    SCOPED_TRACE(Describe(doc, slots));
+    const auto expected = Reference(doc, slots);
+    const auto out = Verify(phrase, Doc{absl::StrJoin(doc, " ")});
+    EXPECT_EQ(expected.matched, out.matched);
+    EXPECT_EQ(expected.freq, out.freq);
+  }
+}
+
+TEST(PhrasePositionsTest, interval_phrase_scale_agrees_with_reference) {
+  constexpr std::string_view kWords[] = {"a",   "c",     "golf", "gold",
+                                         "gol", "golfs", "x"};
+  constexpr std::pair<std::string_view, irs::score_t> kNear[] = {
+    {"golf", 1.f}, {"gold", 0.75f}, {"golfs", 0.75f}, {"gol", 1.f - 1.f / 3.f}};
+  std::mt19937 rng{20261011};
+  for (size_t round = 0; round != 200; ++round) {
+    std::array<int, std::size(kWords)> weights;
+    for (auto& weight : weights) {
+      weight = std::uniform_int_distribution{0, 6}(rng);
+    }
+    weights.back() += 2;
+    std::discrete_distribution<size_t> pick{weights.begin(), weights.end()};
+    std::vector<std::string_view> doc(
+      std::uniform_int_distribution<size_t>{0, 24}(rng));
+    for (auto& word : doc) {
+      word = kWords[pick(rng)];
+    }
+
+    std::vector<ReferenceSlot> slots(
+      std::uniform_int_distribution<size_t>{2, 4}(rng));
+    const auto near =
+      std::uniform_int_distribution<size_t>{0, slots.size() - 1}(rng);
+    std::uniform_int_distribution<size_t> term{0, 1};
+    for (size_t s = 0; s != slots.size(); ++s) {
+      auto& slot = slots[s];
+      if (s != 0) {
+        slot.min = std::uniform_int_distribution<uint32_t>{1, 3}(rng);
+        slot.max =
+          slot.min + std::uniform_int_distribution<uint32_t>{0, 2}(rng);
+      }
+      if (s == near) {
+        slot.words.assign(std::begin(kNear), std::end(kNear));
+      } else {
+        slot.words.emplace_back(kWords[term(rng)], irs::kNoBoost);
+      }
+    }
+    WidenOneGap(slots, rng);
+
+    irs::ByPhraseOptions phrase;
+    for (size_t s = 0; s != slots.size(); ++s) {
+      const auto& slot = slots[s];
+      if (s == near) {
+        auto& edit = Push<irs::ByEditDistanceOptions>(phrase, slot, s == 0);
+        edit.term = Bytes("golf");
+        edit.max_distance = 1;
+      } else {
+        Push<irs::ByTermOptions>(phrase, slot, s == 0).term =
+          Bytes(slot.words.front().first);
+      }
+    }
+
+    SCOPED_TRACE(Describe(doc, slots));
+    const auto expected = Reference(doc, slots);
+    const auto out = Verify(phrase, Doc{absl::StrJoin(doc, " ")});
+    EXPECT_EQ(expected.matched, out.matched);
+    EXPECT_EQ(expected.freq, out.freq);
+    if (expected.matched) {
+      EXPECT_FLOAT_EQ(expected.scale, out.scale);
+    }
+  }
 }
 
 TEST(PhrasePositionsTest, stacked_document_tokens) {

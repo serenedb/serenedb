@@ -98,6 +98,13 @@ db error: ERROR: subscription "rauth_bad" could not connect to the publisher: <s
 
 
 statement error
+CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=verify-ca sslrootcert=/nonexistent/rauth_root.crt' PUBLICATION rauth_tls;
+----
+db error: ERROR: subscription "rauth_bad" could not connect to the publisher: <slt:ignore>: root certificate file "/nonexistent/rauth_root.crt" does not exist
+Either provide the file, use the system's trusted roots with sslrootcert=system, or change sslmode to disable server certificate verification.
+
+
+statement error
 CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=require sslrootcert=system' PUBLICATION rauth_tls;
 ----
 db error: ERROR: subscription "rauth_bad" could not connect to the publisher: weak sslmode "require" may not be used with sslrootcert=system (use "verify-full")

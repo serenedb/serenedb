@@ -71,7 +71,7 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> FindDatabase(
   return database;
 }
 
-const catalog::SubscriptionCatalogEntry* EnabledSubscription(
+const catalog::SubscriptionCatalogEntry* CommittedSubscription(
   duckdb::AttachedDatabase& attached, duckdb::idx_t subscription) {
   auto entry = attached.GetCatalog()
                  .Cast<duckdb::DuckCatalog>()
@@ -80,8 +80,23 @@ const catalog::SubscriptionCatalogEntry* EnabledSubscription(
   if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     return nullptr;
   }
-  const auto& found = entry->Cast<catalog::SubscriptionCatalogEntry>();
-  return found.Config().enabled ? &found : nullptr;
+  return &entry->Cast<catalog::SubscriptionCatalogEntry>();
+}
+
+enum class Presence : uint8_t {
+  Missing,
+  Disabled,
+  Enabled,
+};
+
+Presence Lookup(std::string_view database, duckdb::idx_t subscription) {
+  auto attached = FindDatabase(database);
+  const auto* entry =
+    attached ? CommittedSubscription(*attached, subscription) : nullptr;
+  if (!entry) {
+    return Presence::Missing;
+  }
+  return entry->Config().enabled ? Presence::Enabled : Presence::Disabled;
 }
 
 std::optional<ReplicationTarget> ResolveTarget(std::string_view database,
@@ -90,18 +105,13 @@ std::optional<ReplicationTarget> ResolveTarget(std::string_view database,
   if (!attached) {
     return std::nullopt;
   }
-  const auto* entry = EnabledSubscription(*attached, subscription);
-  if (!entry) {
+  const auto* entry = CommittedSubscription(*attached, subscription);
+  if (!entry || !entry->Config().enabled) {
     return std::nullopt;
   }
   auto target = MakeReplicationTarget(*entry, database);
   target.database_oid = attached->oid;
   return target;
-}
-
-bool Enabled(std::string_view database, duckdb::idx_t subscription) {
-  auto attached = FindDatabase(database);
-  return attached && EnabledSubscription(*attached, subscription);
 }
 
 }  // namespace
@@ -192,10 +202,20 @@ void SubscriptionEngine::stop() {
 
 void SubscriptionEngine::Sync(std::string_view database,
                               duckdb::idx_t subscription, bool restart) {
-  const bool enabled = Enabled(database, subscription);
+  const auto presence = Lookup(database, subscription);
+  std::optional<ReplicationTarget> target;
+  if (presence == Presence::Enabled && !restart) {
+    try {
+      target = ResolveTarget(database, subscription);
+    } catch (const std::exception&) {
+    }
+  }
   absl::MutexLock lock{&_mu};
+  if (presence == Presence::Missing) {
+    _stats.erase(subscription);
+  }
   auto it = _subs.find(subscription);
-  if (!enabled) {
+  if (presence != Presence::Enabled) {
     if (it != _subs.end()) {
       StopLocked(it->second);
     }
@@ -205,16 +225,8 @@ void SubscriptionEngine::Sync(std::string_view database,
     LaunchLocked(database, subscription);
     return;
   }
-  if (restart || !it->second.client) {
-    RestartLocked(it->second);
-    return;
-  }
-  auto target = ResolveTarget(database, subscription);
-  if (!target) {
-    StopLocked(it->second);
-    return;
-  }
-  if (!it->second.target || !SameConfig(*it->second.target, *target)) {
+  if (restart || !it->second.client || !target || !it->second.target ||
+      !SameConfig(*it->second.target, *target)) {
     RestartLocked(it->second);
   }
 }
@@ -241,35 +253,49 @@ SubscriptionEngine::RuntimeSnapshot(std::string_view database) const {
 }
 
 irs::containers::FlatHashMap<duckdb::idx_t, SubscriptionEngine::SubStats>
-SubscriptionEngine::Stats(std::string_view database) const {
-  irs::containers::FlatHashMap<duckdb::idx_t, SubStats> result;
+SubscriptionEngine::Stats() const {
   absl::MutexLock lock{&_mu};
+  auto stats = _stats;
   for (const auto& [subscription, state] : _subs) {
-    if (state.database != database) {
-      continue;
-    }
-    auto& stats = result.try_emplace(subscription, state.stats).first->second;
     if (state.client) {
-      stats.Add(state.client->Conflicts());
+      stats[subscription].Add(state.client->Conflicts());
     }
   }
-  return result;
+  return stats;
 }
 
 void SubscriptionEngine::ResetStats(std::optional<duckdb::idx_t> subscription) {
   const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
                      std::chrono::system_clock::now().time_since_epoch())
                      .count();
-  absl::MutexLock lock{&_mu};
-  for (auto& [id, state] : _subs) {
-    if (subscription && *subscription != id) {
+  std::vector<duckdb::idx_t> subscriptions;
+  auto& manager =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
+  for (const auto& database : manager.GetDatabases()) {
+    auto& catalog = database->GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
       continue;
     }
-    state.stats = {.stats_reset = now};
-    if (state.client) {
-      state.client->ResetConflicts();
+    catalog.Cast<duckdb::DuckCatalog>()
+      .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+      .Scan([&](duckdb::CatalogEntry& entry) {
+        if (!subscription || *subscription == entry.oid) {
+          subscriptions.push_back(entry.oid);
+        }
+      });
+  }
+  absl::MutexLock lock{&_mu};
+  for (const auto id : subscriptions) {
+    _stats[id] = {.stats_reset = now};
+    if (auto it = _subs.find(id); it != _subs.end() && it->second.client) {
+      it->second.client->ResetConflicts();
     }
   }
+}
+
+SubscriptionEngine::SubStats& SubscriptionEngine::StatsLocked(
+  duckdb::idx_t subscription) {
+  return _stats[subscription];
 }
 
 bool SubscriptionEngine::Running(duckdb::idx_t subscription) const {
@@ -380,11 +406,11 @@ yaclib::Task<bool> SubscriptionEngine::Backoff(
 yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
   auto& exec = _pool.Next();
   std::string name = absl::StrCat(subscription);
+  std::string database;
   for (;;) {
     if (_stopping.load(std::memory_order_acquire)) {
       break;
     }
-    std::string database;
     size_t host = 0;
     size_t encryption = 0;
     uint64_t host_seed = 0;
@@ -435,9 +461,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
     if (!client) {
       {
         absl::MutexLock lock{&_mu};
-        if (auto it = _subs.find(subscription); it != _subs.end()) {
-          ++it->second.stats.apply_error_count;
-        }
+        ++StatsLocked(subscription).apply_error_count;
       }
       if (!co_await Backoff(
             subscription, exec,
@@ -468,7 +492,8 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
         break;
       }
       auto& state = it->second;
-      state.stats.Add(client->Conflicts());
+      auto& stats = StatsLocked(subscription);
+      stats.Add(client->Conflicts());
       state.client.reset();
       restart = state.restart;
       const bool failed = !restart && !state.stopping &&
@@ -495,9 +520,9 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
             }
           }
         } else if (client->SyncFailed()) {
-          ++state.stats.sync_error_count;
+          ++stats.sync_error_count;
         } else if (!client->Transient()) {
-          ++state.stats.apply_error_count;
+          ++stats.apply_error_count;
         }
       }
       if (disable || state.stopping ||
@@ -523,6 +548,8 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       break;
     }
   }
+  const bool missing =
+    !database.empty() && Lookup(database, subscription) == Presence::Missing;
   bool relaunch = false;
   {
     absl::MutexLock lock{&_mu};
@@ -535,6 +562,9 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       } else {
         _subs.erase(it);
       }
+    }
+    if (missing) {
+      _stats.erase(subscription);
     }
   }
   if (relaunch) {

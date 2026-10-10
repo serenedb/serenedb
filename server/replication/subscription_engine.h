@@ -102,8 +102,7 @@ class SubscriptionEngine final {
         conflicts.multiple_unique_conflicts.load(std::memory_order_relaxed);
     }
   };
-  irs::containers::FlatHashMap<duckdb::idx_t, SubStats> Stats(
-    std::string_view database) const;
+  irs::containers::FlatHashMap<duckdb::idx_t, SubStats> Stats() const;
   void ResetStats(std::optional<duckdb::idx_t> subscription);
   bool Running(duckdb::idx_t subscription) const;
 
@@ -120,12 +119,13 @@ class SubscriptionEngine final {
     uint32_t transient_failures = 0;
     uint64_t host_seed = 0;
     bool any_session = false;
-    SubStats stats;
   };
 
   void LaunchLocked(std::string_view database, duckdb::idx_t subscription)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
   void StopLocked(SubState& state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
+  SubStats& StatsLocked(duckdb::idx_t subscription)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
   void RestartLocked(SubState& state) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mu);
   yaclib::Task<bool> Backoff(duckdb::idx_t subscription,
                              network::IoExecutor& exec,
@@ -137,6 +137,8 @@ class SubscriptionEngine final {
   std::atomic<bool> _stopping{false};
   mutable absl::Mutex _mu;
   irs::containers::NodeHashMap<duckdb::idx_t, SubState> _subs
+    ABSL_GUARDED_BY(_mu);
+  irs::containers::FlatHashMap<duckdb::idx_t, SubStats> _stats
     ABSL_GUARDED_BY(_mu);
 };
 

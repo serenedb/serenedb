@@ -460,6 +460,7 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   auto& t = g.topk;
   t.limit = *g.top_k;
   t.offset = g.top_offset;
+  t.shared_fetch = g.has_lookup_filter || t.limit > STANDARD_VECTOR_SIZE;
   const auto* vs = g.vector_scorer;
   if (vs != nullptr && !vs->exact &&
       (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
@@ -551,7 +552,11 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
       Merge(g);
       t.merge_barrier.Release(input);
     } else {
-      if (t.merge_barrier.Park(input)) {
+      if (!t.shared_fetch) {
+        output.SetChildCardinality(0);
+        return;
+      }
+      if (t.merge_barrier.Park(input, ctx)) {
         l.parked_on = &t.merge_barrier;
         return;
       }

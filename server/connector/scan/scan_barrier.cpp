@@ -21,6 +21,7 @@
 #include <chrono>
 #include <duckdb/common/mutex.hpp>
 #include <duckdb/parallel/interrupt.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <thread>
 
@@ -67,14 +68,16 @@ void ScanBarrier::Release(duckdb::TableFunctionInput& input) {
   _notification.Notify();
 }
 
-bool ScanBarrier::Park(duckdb::TableFunctionInput& input) {
-  if (CanSpin()) {
+bool ScanBarrier::Park(duckdb::TableFunctionInput& input,
+                       duckdb::ClientContext& context) {
+  const auto& scheduler = duckdb::TaskScheduler::GetScheduler(context);
+  if (CanSpin() && scheduler.GetNumberOfTasks() == 0) {
     const auto budget = gParkCost.load(std::memory_order_relaxed);
     const auto start = Now();
     for (uint32_t i = 1; !Released(); ++i) {
       CpuRelax();
       if (i % 64 == 0) {
-        if (Now() - start >= budget) {
+        if (Now() - start >= budget || scheduler.GetNumberOfTasks() != 0) {
           break;
         }
         std::this_thread::yield();

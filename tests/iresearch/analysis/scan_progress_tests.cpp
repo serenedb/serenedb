@@ -144,7 +144,7 @@ Run Scan(Tokenizer& tokenizer, std::string_view value, size_t limit) {
 struct Fixture {
   std::string name;
   std::function<Tokenizer::ptr()> make;
-  bool polls;
+  bool reports;
 };
 
 constexpr irs::Case kCases[] = {irs::Case::None, irs::Case::Lower,
@@ -403,7 +403,7 @@ std::string Repeat(std::string_view piece, size_t times) {
   return out;
 }
 
-TEST(token_poll_test, scan_matches_fill) {
+TEST(scan_progress_test, scan_matches_fill) {
   const auto corpus = Corpus();
   for (const auto& fixture : Fixtures()) {
     SCOPED_TRACE(fixture.name);
@@ -417,7 +417,7 @@ TEST(token_poll_test, scan_matches_fill) {
   }
 }
 
-TEST(token_poll_test, stopped_scan_is_prefix) {
+TEST(scan_progress_test, stopped_scan_is_prefix) {
   const auto corpus = Corpus();
   for (const auto& fixture : Fixtures()) {
     SCOPED_TRACE(fixture.name);
@@ -435,7 +435,7 @@ TEST(token_poll_test, stopped_scan_is_prefix) {
         if (all.size() >= limit) {
           EXPECT_GE(part.size(), limit) << value;
         }
-        if (!fixture.polls) {
+        if (!fixture.reports) {
           EXPECT_EQ(part.size(), all.size()) << value;
           EXPECT_EQ(got.peeks, 0U) << value;
         }
@@ -444,7 +444,7 @@ TEST(token_poll_test, stopped_scan_is_prefix) {
   }
 }
 
-TEST(token_poll_test, scan_stops_early) {
+TEST(scan_progress_test, scan_stops_early) {
   const std::string values[] = {Repeat("Word. ", 5000),
                                 Repeat("W\xC3\xB6rd \xC3\xBC"
                                        "ber. ",
@@ -455,7 +455,7 @@ TEST(token_poll_test, scan_stops_early) {
     for (const auto& value : values) {
       const auto got = Scan(*tokenizer, value, 10);
       ASSERT_TRUE(got.tokens);
-      if (fixture.polls) {
+      if (fixture.reports) {
         EXPECT_EQ(got.peeks, 1U) << value.substr(0, 16);
         EXPECT_GE(got.tokens->size(), 10U) << value.substr(0, 16);
         EXPECT_LT(got.tokens->size(), 200U) << value.substr(0, 16);
@@ -466,7 +466,7 @@ TEST(token_poll_test, scan_stops_early) {
   }
 }
 
-TEST(token_poll_test, cjk_scan_stops_early) {
+TEST(scan_progress_test, cjk_scan_stops_early) {
   using Separate = TextTokenizer::Options::Separate;
   using IcuSeparate = IcuTextTokenizer::Options::Separate;
   const auto value = Repeat("日本語のテキストです。", 2000);
@@ -503,7 +503,7 @@ TEST(token_poll_test, cjk_scan_stops_early) {
   }
 }
 
-TEST(token_poll_test, failed_scan_rejects_the_value) {
+TEST(scan_progress_test, failed_scan_rejects_the_value) {
   std::vector<Tokenizer::ptr> stages;
   stages.emplace_back(std::make_unique<FailOnMarker>());
   stages.emplace_back(CreateTokenizer(
@@ -522,7 +522,7 @@ TEST(token_poll_test, failed_scan_rejects_the_value) {
   }
 }
 
-TEST(token_poll_test, scan_rebinds_a_sink_bound_for_another_fill) {
+TEST(scan_progress_test, scan_rebinds_a_sink_bound_for_another_fill) {
   auto stages = Filters(1);
   stages.insert(
     stages.begin(),
@@ -549,8 +549,9 @@ TEST(token_poll_test, scan_rebinds_a_sink_bound_for_another_fill) {
   } consumer;
   const auto scan = [&] {
     terms.clear();
-    irs::TokenPoll poll{sink.writer, consumer};
-    EXPECT_TRUE(pipeline->Scan(tests::ToStringT(value), sink.writer, poll, {}));
+    irs::ScanProgress progress{sink.writer, consumer};
+    EXPECT_TRUE(
+      pipeline->Scan(tests::ToStringT(value), sink.writer, progress, {}));
     sink.writer.Finish();
     return terms;
   };

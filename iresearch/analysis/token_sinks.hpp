@@ -231,8 +231,8 @@ class ValueAnalyzer {
     static_assert(Consumer::kLayout == TokenLayout::TermsPos);
     _writer.Bind(out, nullptr);
     out.Prepare(value);
-    TokenPoll poll{_writer, out};
-    if (!tokenizer.Scan(value, _writer, poll, traits)) [[unlikely]] {
+    ScanProgress progress{_writer, out};
+    if (!tokenizer.Scan(value, _writer, progress, traits)) [[unlikely]] {
       _writer.Discard();
       out.Discard();
       return false;

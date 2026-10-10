@@ -219,7 +219,7 @@ class ArenaTerm final : util::Noncopyable {
 };
 
 class TokenSink final : util::Noncopyable {
-  friend class TokenPoll;
+  friend class ScanProgress;
 
  public:
   explicit TokenSink(

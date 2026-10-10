@@ -27,13 +27,13 @@
 
 namespace irs {
 
-class TokenPoll final : util::Noncopyable {
+class ScanProgress final : util::Noncopyable {
  public:
   template<typename Consumer>
-  TokenPoll(TokenSink& sink, Consumer& consumer) noexcept
+  ScanProgress(TokenSink& sink, Consumer& consumer) noexcept
     : _sink{sink}, _target{&consumer}, _peek{&PeekConsumer<Consumer>} {}
 
-  TokenPoll(TokenSink& sink, TokenPoll& outer) noexcept
+  ScanProgress(TokenSink& sink, ScanProgress& outer) noexcept
     : _sink{sink}, _target{&outer}, _peek{&PeekOuter} {}
 
   IRS_FORCE_INLINE bool operator()(const TokenSink& sink) {
@@ -55,8 +55,8 @@ class TokenPoll final : util::Noncopyable {
 
   static bool PeekOuter(void* outer, TokenSink& sink) {
     sink.Flush();
-    auto& poll = *static_cast<TokenPoll*>(outer);
-    return poll(poll._sink);
+    auto& progress = *static_cast<ScanProgress*>(outer);
+    return progress(progress._sink);
   }
 
   IRS_NO_INLINE bool Peek() {
@@ -73,14 +73,14 @@ class TokenPoll final : util::Noncopyable {
   uint32_t _stride = kFirstStride;
 };
 
-IRS_FORCE_INLINE inline analysis::classify::NoPoll BindPoll(
-  analysis::classify::NoPoll poll, const TokenSink&) noexcept {
-  return poll;
+IRS_FORCE_INLINE inline analysis::classify::NoProgress BindProgress(
+  analysis::classify::NoProgress progress, const TokenSink&) noexcept {
+  return progress;
 }
 
-IRS_FORCE_INLINE inline auto BindPoll(TokenPoll* poll,
-                                      const TokenSink& sink) noexcept {
-  return [poll, &sink] IRS_FORCE_INLINE { return (*poll)(sink); };
+IRS_FORCE_INLINE inline auto BindProgress(ScanProgress* progress,
+                                          const TokenSink& sink) noexcept {
+  return [progress, &sink] IRS_FORCE_INLINE { return (*progress)(sink); };
 }
 
 }  // namespace irs

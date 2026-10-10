@@ -63,25 +63,27 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
 
   size_t MemoryUsage() const noexcept final { return 0; }
 
-  bool Scan(const duckdb::string_t& value, TokenSink& sink, TokenPoll& poll,
-            BlockTraits known) final {
-    return ScanPolled(*this, value, sink, poll, known);
+  bool Scan(const duckdb::string_t& value, TokenSink& sink,
+            ScanProgress& progress, BlockTraits known) final {
+    return ScanWithProgress(*this, value, sink, progress, known);
   }
 
   template<TokenLayout Layout, Accept A, bool KnownAscii,
-           typename Poll = classify::NoPoll>
-  bool DoFill(const duckdb::string_t& raw, TokenSink& sink, Poll poll = {}) {
+           typename Progress = classify::NoProgress>
+  bool DoFill(const duckdb::string_t& raw, TokenSink& sink,
+              Progress progress = {}) {
     if constexpr (S == Options::Separate::Word && KnownAscii) {
-      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw, poll);
+      segment::WordFillValue<Layout, Case::None, A, true>(sink, raw, progress);
       return true;
     } else {
-      return FillValue<Layout, A, KnownAscii>(sink, raw, poll);
+      return FillValue<Layout, A, KnownAscii>(sink, raw, progress);
     }
   }
 
  private:
-  template<TokenLayout Layout, Accept A, bool KnownAscii, typename Poll>
-  bool FillValue(TokenSink& sink, const duckdb::string_t& value, Poll poll) {
+  template<TokenLayout Layout, Accept A, bool KnownAscii, typename Progress>
+  bool FillValue(TokenSink& sink, const duckdb::string_t& value,
+                 Progress progress) {
     const char* data = value.GetData();
     const uint32_t n = value.GetSize();
     if (n == 0) {
@@ -89,8 +91,8 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     }
     _break.SetText(data, n);
 
-    [[maybe_unused]] const auto due = BindPoll(poll, sink);
-    [[maybe_unused]] uint32_t polled = 0;
+    [[maybe_unused]] const auto report = BindProgress(progress, sink);
+    [[maybe_unused]] uint32_t reported = 0;
     uint32_t begin = 0;
     for (auto end = _break.Next(); end != duckdb::text::BreakIterator::DONE;
          end = _break.Next()) {
@@ -108,10 +110,10 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
                                                                  begin, stop);
       }
       begin = stop;
-      if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
-        if (stop - polled >= classify::kPollBytes) {
-          polled = stop;
-          if (!due()) {
+      if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
+        if (stop - reported >= classify::kBytesPerProgress) {
+          reported = stop;
+          if (!report()) {
             return true;
           }
         }

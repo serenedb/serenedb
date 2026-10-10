@@ -29,25 +29,25 @@ Tokenizer::ptr SplitByNonAlphaTokenizer::Make(Options opts) {
 }
 
 bool SplitByNonAlphaTokenizer::Scan(const duckdb::string_t& value,
-                                    TokenSink& sink, TokenPoll& poll,
+                                    TokenSink& sink, ScanProgress& progress,
                                     BlockTraits known) {
-  return ScanPolled(*this, value, sink, poll, known);
+  return ScanWithProgress(*this, value, sink, progress, known);
 }
 
 template<TokenLayout Layout, Case C, SplitByNonAlphaTokenizer::Options::Chars W,
-         bool KnownAscii, typename Poll>
+         bool KnownAscii, typename Progress>
 bool SplitByNonAlphaTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink,
-                                      Poll poll) {
+                                      Progress progress) {
   using Chars = Options::Chars;
   if constexpr (W == Chars::Ascii) {
-    words::SplitByNonAlphaFill<Layout, C, false>(raw, sink, poll);
+    words::SplitByNonAlphaFill<Layout, C, false>(raw, sink, progress);
   } else if constexpr (W == Chars::AsciiBytes) {
-    words::SplitByNonAlphaFill<Layout, C, !KnownAscii>(raw, sink, poll);
+    words::SplitByNonAlphaFill<Layout, C, !KnownAscii>(raw, sink, progress);
   } else if constexpr (W == Chars::Whitespace) {
-    words::SplitByNonSpaceFill<Layout, C, KnownAscii>(raw, sink, poll);
+    words::SplitByNonSpaceFill<Layout, C, KnownAscii>(raw, sink, progress);
   } else {
     words::SplitByNonAlnumFill<Layout, C, W == Chars::Letters, KnownAscii>(
-      raw, sink, poll);
+      raw, sink, progress);
   }
   return true;
 }

@@ -128,20 +128,21 @@ class RejectingWords final
   }
 };
 
-class PolledWords final : public irs::analysis::TypedTokenizer<PolledWords> {
+class ProgressWords final
+  : public irs::analysis::TypedTokenizer<ProgressWords> {
  public:
   irs::TokenTraits Traits() const noexcept final { return {}; }
 
   static constexpr std::string_view type_name() noexcept {
-    return "test_polled_words";
+    return "test_progress_words";
   }
 
   bool Scan(const duckdb::string_t& value, irs::TokenSink& sink,
-            irs::TokenPoll& poll, irs::BlockTraits) final {
+            irs::ScanProgress& progress, irs::BlockTraits) final {
     const std::string_view data{value.GetData(), value.GetSize()};
     for (const auto word : absl::StrSplit(data, ' ', absl::SkipEmpty())) {
       sink.Emit<irs::TokenLayout::TermsPos>(irs::MakeTermView(word));
-      if (!poll(sink)) {
+      if (!progress(sink)) {
         break;
       }
     }
@@ -710,7 +711,7 @@ TEST(PhraseCheckTest, array_rows_skip_null_rows_and_elements) {
 
 TEST(PhraseCheckTest, peeked_tokens_are_fed_once) {
   const auto text = absl::StrCat(Repeat("a b", 15), " x x");
-  EXPECT_EQ(15U, Verify<PolledWords>(Phrase("a b"), text).freq);
+  EXPECT_EQ(15U, Verify<ProgressWords>(Phrase("a b"), text).freq);
 }
 
 TEST(PhraseCheckTest, rejected_values_contribute_no_tokens) {

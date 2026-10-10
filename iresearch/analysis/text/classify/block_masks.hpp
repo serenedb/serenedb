@@ -34,7 +34,6 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
-#include <type_traits>
 #include <vector>
 
 #include "iresearch/types.hpp"
@@ -363,14 +362,16 @@ IRS_FORCE_INLINE void DrainClassified(const byte_type* data, size_t size,
                [&](uint32_t bit) IRS_FORCE_INLINE { on_delim(base + bit); });
 }
 
-struct NoPoll {};
+struct NoProgress {
+  static constexpr bool operator()() noexcept { return true; }
+};
 
-inline constexpr size_t kPollBytes = 64;
+inline constexpr size_t kBytesPerProgress = 64;
 
-template<typename ClassifyBlock, typename OnRun, typename Poll = NoPoll>
+template<typename ClassifyBlock, typename OnRun, typename Progress = NoProgress>
 IRS_FORCE_INLINE void ForEachRun(const byte_type* data, size_t size,
                                  ClassifyBlock classify, OnRun on_run,
-                                 Poll poll = {}) {
+                                 Progress progress = {}) {
   constexpr size_t kBlock = kClassifyBlock;
   constexpr size_t kChunk = 2 * kBlock;
   constexpr uint64_t kAll = ~uint64_t{0};
@@ -411,10 +412,8 @@ IRS_FORCE_INLINE void ForEachRun(const byte_type* data, size_t size,
     const uint32_t ahead = classify(data + base + kChunk);
     step(lo | (uint64_t{hi} << kBlock), base, carry,
          uint64_t{ahead & 1} << (kChunk - 1), kAll);
-    if constexpr (!std::is_same_v<Poll, NoPoll>) {
-      if (!poll()) {
-        return;
-      }
+    if (!progress()) {
+      return;
     }
     carry = hi >> (kBlock - 1);
     lo = ahead;

@@ -27,12 +27,12 @@
 #include <string_view>
 #include <type_traits>
 
+#include "iresearch/analysis/scan_progress.hpp"
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"
 #include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
 #include "iresearch/analysis/text/words/unicode.hpp"
-#include "iresearch/analysis/token_poll.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
@@ -108,9 +108,10 @@ IRS_FORCE_INLINE bool AcceptSegment(const char* data,
   }
 }
 
-template<typename Finder, typename OnMatch, typename Poll = classify::NoPoll>
+template<typename Finder, typename OnMatch,
+         typename Progress = classify::NoProgress>
 void ForEachSzMatch(Finder finder, const char* data, size_t n,
-                    OnMatch&& on_match, Poll poll = {}) {
+                    OnMatch&& on_match, Progress progress = {}) {
   constexpr size_t kBatch = 64;
   size_t starts[kBatch];
   size_t lengths[kBatch];
@@ -127,10 +128,8 @@ void ForEachSzMatch(Finder finder, const char* data, size_t n,
       break;
     }
     offset += consumed;
-    if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
-      if (!poll()) {
-        return;
-      }
+    if (!progress()) {
+      return;
     }
   }
 }
@@ -179,9 +178,9 @@ IRS_FORCE_INLINE void EmitTrimmedSegment(TokenSink& sink, const char* data,
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Ascii,
-         typename Poll = classify::NoPoll>
+         typename Progress = classify::NoProgress>
 IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value,
-                                 Poll poll = {}) {
+                                 Progress progress = {}) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   const auto emit = [&](const words::Segment& seg) IRS_FORCE_INLINE {
@@ -197,11 +196,11 @@ IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value,
     }
   };
   if constexpr (!Ascii) {
-    words::ScanUnicode(value, emit, BindPoll(poll, sink));
+    words::ScanUnicode(value, emit, BindProgress(progress, sink));
   } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-    words::ScanAsciiRuns(value, emit, BindPoll(poll, sink));
+    words::ScanAsciiRuns(value, emit, BindProgress(progress, sink));
   } else {
-    words::ScanAscii(value, emit, BindPoll(poll, sink));
+    words::ScanAscii(value, emit, BindProgress(progress, sink));
   }
 }
 
@@ -216,19 +215,19 @@ IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Ascii,
-         typename Poll = classify::NoPoll>
+         typename Progress = classify::NoProgress>
 IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
-                                     Poll poll = {}) {
+                                     Progress progress = {}) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   if constexpr (Ascii) {
-    [[maybe_unused]] const auto due = BindPoll(poll, sink);
-    [[maybe_unused]] uint32_t polled = 0;
+    [[maybe_unused]] const auto report = BindProgress(progress, sink);
+    [[maybe_unused]] uint32_t reported = 0;
     for (uint32_t i = 0; i != n; ++i) {
-      if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
-        if (i - polled >= classify::kPollBytes) {
-          polled = i;
-          if (!due()) {
+      if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
+        if (i - reported >= classify::kBytesPerProgress) {
+          reported = i;
+          if (!report()) {
             return;
           }
         }
@@ -245,7 +244,7 @@ IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
                                                 static_cast<uint32_t>(begin),
                                                 static_cast<uint32_t>(end));
       },
-      BindPoll(poll, sink));
+      BindProgress(progress, sink));
   }
 }
 

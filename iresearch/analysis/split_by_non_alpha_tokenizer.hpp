@@ -67,12 +67,12 @@ class SplitByNonAlphaTokenizer final
             .keeps_ascii = true};
   }
 
-  bool Scan(const duckdb::string_t& value, TokenSink& sink, TokenPoll& poll,
-            BlockTraits known) final;
+  bool Scan(const duckdb::string_t& value, TokenSink& sink,
+            ScanProgress& progress, BlockTraits known) final;
 
   template<TokenLayout Layout, Case C, Options::Chars W, bool KnownAscii,
-           typename Poll = classify::NoPoll>
-  bool DoFill(duckdb::string_t value, TokenSink& sink, Poll poll = {});
+           typename Progress = classify::NoProgress>
+  bool DoFill(duckdb::string_t value, TokenSink& sink, Progress progress = {});
 
  private:
   Options _options;

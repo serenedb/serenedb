@@ -83,7 +83,7 @@ using network::pg::FrameStatus;
 constexpr auto kFeedbackTick = std::chrono::seconds{1};
 constexpr int64_t kPgEpochMicros = 946684800LL * 1000000;
 constexpr size_t kGroupTxns = 1000;
-constexpr size_t kArenaBytes = 1 << 20;
+constexpr size_t kOutboxBytes = 1 << 20;
 constexpr size_t kOutboxMessages = 4096;
 constexpr int64_t kGroupMicros = 100000;
 
@@ -177,8 +177,9 @@ PgReplicationClient::PgReplicationClient(network::IoExecutor& exec,
                                          size_t host_index)
   : SyncSession{exec, std::move(target), host_index},
     _flushed_lsn{_target.start_lsn} {
-  _arena.reserve(kArenaBytes);
-  _outbox.reserve(kOutboxMessages);
+  for (auto& outbox : _outboxes) {
+    outbox.messages.reserve(kOutboxMessages);
+  }
 }
 
 yaclib::Task<> PgReplicationClient::RunClient() {
@@ -450,62 +451,73 @@ yaclib::Task<bool> PgReplicationClient::StartReplication() {
   }
 }
 
-yaclib::Task<bool> PgReplicationClient::Publish(
-  std::span<const PgOutputMessage> messages) {
-  if (!_stream.Publish(messages)) {
-    co_return false;
-  }
-  _publishing = true;
-  _published = true;
-  co_await _stream.Drained(*this->_ioexec);
-  _stream.ResetDrained();
-  _publishing = false;
-  _last_activity = SteadyMicros();
-  co_return true;
+void PgReplicationClient::Outbox::Clear() noexcept {
+  messages.clear();
+  recv = {};
+  copies.Clear();
+  bytes = 0;
 }
 
-bool PgReplicationClient::Stage(std::string_view payload, bool in_stream) {
-  if (_outbox.size() >= kOutboxMessages ||
-      _arena.size() + payload.size() > _arena.capacity()) {
-    return false;
+yaclib::Task<> PgReplicationClient::AwaitDrained() {
+  if (!_in_flight) {
+    co_return {};
   }
-  const auto offset = _arena.size();
-  _arena.append(payload);
-  _outbox.push_back(
-    DecodePgOutput({_arena.data() + offset, payload.size()}, in_stream));
-  return true;
+  co_await _stream.Drained(*this->_ioexec);
+  _stream.ResetDrained();
+  _in_flight = false;
+  _last_activity = SteadyMicros();
+  _outboxes[_staging ^ 1].Clear();
+  co_return {};
+}
+
+bool PgReplicationClient::Full() const noexcept {
+  const auto& outbox = _outboxes[_staging];
+  return outbox.messages.size() >= kOutboxMessages ||
+         outbox.bytes >= kOutboxBytes;
 }
 
 yaclib::Task<bool> PgReplicationClient::Flush() {
-  if (_outbox.empty()) {
+  auto& outbox = _outboxes[_staging];
+  if (outbox.messages.empty()) {
+    if (!_in_flight) {
+      outbox.recv = {};
+    }
     co_return true;
   }
-  const bool ok = co_await Publish(_outbox);
-  _outbox.clear();
-  _arena.clear();
-  co_return ok;
+  co_await AwaitDrained();
+  if (!_stream.Publish(outbox.messages)) {
+    co_return false;
+  }
+  _in_flight = true;
+  _published = true;
+  _staging ^= 1;
+  this->_recv.RetainConsumed(&_outboxes[_staging].recv);
+  co_return true;
 }
 
 yaclib::Task<bool> PgReplicationClient::Enqueue(std::string_view payload,
-                                                bool in_stream) {
-  if (Stage(payload, in_stream)) {
-    co_return true;
-  }
-  if (!co_await Flush()) {
+                                                bool in_stream, bool borrowed) {
+  if (Full() && !co_await Flush()) {
     co_return false;
   }
-  if (Stage(payload, in_stream)) {
-    co_return true;
+  auto& outbox = _outboxes[_staging];
+  if (!borrowed) {
+    message::Writer writer{outbox.copies};
+    auto* data = writer.Alloc(payload.size());
+    std::memcpy(data, payload.data(), payload.size());
+    writer.Commit(false);
+    payload = {reinterpret_cast<const char*>(data), payload.size()};
   }
-  const auto message = DecodePgOutput(payload, in_stream);
-  co_return co_await Publish({&message, 1});
+  outbox.bytes += payload.size();
+  outbox.messages.push_back(DecodePgOutput(payload, in_stream));
+  co_return true;
 }
 
 yaclib::Task<bool> PgReplicationClient::Enqueue(PgOutputMessage message) {
-  if (_outbox.size() >= kOutboxMessages && !co_await Flush()) {
+  if (Full() && !co_await Flush()) {
     co_return false;
   }
-  _outbox.push_back(std::move(message));
+  _outboxes[_staging].messages.push_back(std::move(message));
   co_return true;
 }
 
@@ -521,7 +533,7 @@ yaclib::Task<bool> PgReplicationClient::ReplayStream(
     auto reader = spool->second.Read();
     std::string_view payload;
     while (reader.Next(payload)) {
-      if (!co_await Enqueue(payload, true)) {
+      if (!co_await Enqueue(payload, true, false)) {
         co_return false;
       }
     }
@@ -539,22 +551,21 @@ yaclib::Task<bool> PgReplicationClient::ReplayStream(
 yaclib::Task<> PgReplicationClient::Feeder() {
   auto& buffers = duckdb::BufferManager::GetBufferManager(
     irs::DuckDBEngine::Instance().instance());
+  this->_recv.RetainConsumed(&_outboxes[_staging].recv);
   for (;;) {
     if (this->SendBroken() || _stream.Aborted()) {
       break;
     }
     if (this->_frames.TryAssemble(FrameKind::Typed, this->_max_message)
           .status == FrameStatus::NeedMore) {
+      if (_published || !_outboxes[_staging].messages.empty()) {
+        _outboxes[_staging].messages.emplace_back(StreamStopMessage{});
+      }
       if (!co_await Flush()) {
         break;
       }
-      if (_published) {
-        _published = false;
-        if (!co_await Publish({ReplStream::Idle(), 1})) {
-          break;
-        }
-        _published = false;
-      }
+      _published = false;
+      SendFeedback(false, false);
     }
     auto frame = co_await NextFrame(FrameKind::Typed, this->_max_message);
     if (frame.status != FrameStatus::Ok) {
@@ -589,9 +600,7 @@ yaclib::Task<> PgReplicationClient::Feeder() {
         std::memory_order_relaxed);
       const bool reply = payload[17] != 0;
       this->_frames.Consume(frame);
-      if (reply) {
-        SendFeedback(false);
-      }
+      SendFeedback(false, reply);
       continue;
     }
     if (payload[0] != 'w' || payload.size() <= 25) {
@@ -656,7 +665,7 @@ yaclib::Task<> PgReplicationClient::Feeder() {
             }
             spool.Append(message);
           } else {
-            ok = co_await Enqueue(message, false);
+            ok = co_await Enqueue(message, false, frame.recv_consume != 0);
           }
           break;
       }
@@ -670,21 +679,31 @@ yaclib::Task<> PgReplicationClient::Feeder() {
       break;
     }
   }
+  if (co_await Flush()) {
+    co_await AwaitDrained();
+    _outboxes[_staging].recv = {};
+  }
+  this->_recv.RetainConsumed(nullptr);
   _stream.Finish();
   co_return {};
 }
 
-void PgReplicationClient::SendFeedback(bool reply) {
+void PgReplicationClient::SendFeedback(bool reply, bool force) {
   if (this->SendBroken()) {
     return;
   }
   const auto received = _received_lsn.load(std::memory_order_relaxed);
   auto flushed = _flushed_lsn.load(std::memory_order_relaxed);
-  if (!_publishing && _outbox.empty() &&
+  const bool pending = _in_flight && !_stream.IsDrained();
+  if (!pending && _outboxes[_staging].messages.empty() &&
       _apply_idle.load(std::memory_order_acquire) && !_streamed_xid &&
       _spools.empty() && received > flushed) {
     flushed = received;
   }
+  if (!force && !reply && flushed == _reported_flush) {
+    return;
+  }
+  _reported_flush = flushed;
   std::array<char, 34> body{};
   body[0] = 'r';
   absl::big_endian::Store64(body.data() + 1, received);
@@ -713,7 +732,8 @@ yaclib::Future<> PgReplicationClient::FeedbackLoop() {
     }
     const auto now = SteadyMicros();
     const auto timeout = WalReceiverTimeoutMillis() * 1000;
-    const auto silent = _publishing ? 0 : now - _last_activity;
+    const bool pending = _in_flight && !_stream.IsDrained();
+    const auto silent = pending ? 0 : now - _last_activity;
     if (timeout > 0 && silent >= timeout) {
       Fail(ERRCODE_CONNECTION_FAILURE,
            "terminating logical replication worker due to timeout");
@@ -728,7 +748,7 @@ yaclib::Future<> PgReplicationClient::FeedbackLoop() {
     const auto interval = WalReceiverStatusIntervalMillis() * 1000;
     if (ping || (interval > 0 && now - reported_at >= interval)) {
       reported_at = now;
-      SendFeedback(ping);
+      SendFeedback(ping, true);
     }
   }
   co_return {};
@@ -774,7 +794,7 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
         if (flushed != reported) {
           reported = flushed;
           asio_ns::post(this->_io, [self = this->shared_from_this(), this] {
-            SendFeedback(false);
+            SendFeedback(false, false);
           });
         }
       }

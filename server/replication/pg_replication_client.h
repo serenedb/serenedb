@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <duckdb/main/prepared_statement.hpp>
@@ -45,6 +46,7 @@
 #include "replication/repl_stream.h"
 #include "replication/spill_buffer.h"
 #include "replication/sync_session.h"
+#include "server/utils/message_buffer.h"
 
 namespace sdb::replication {
 
@@ -105,14 +107,15 @@ class PgReplicationClient final : public SyncSession {
   yaclib::Task<bool> StartReplication();
   yaclib::Task<> Feeder();
   yaclib::Future<> FeedbackLoop();
-  yaclib::Task<bool> Publish(std::span<const PgOutputMessage> messages);
-  bool Stage(std::string_view payload, bool in_stream);
+  yaclib::Task<> AwaitDrained();
+  bool Full() const noexcept;
   yaclib::Task<bool> Flush();
-  yaclib::Task<bool> Enqueue(std::string_view payload, bool in_stream);
+  yaclib::Task<bool> Enqueue(std::string_view payload, bool in_stream,
+                             bool borrowed);
   yaclib::Task<bool> Enqueue(PgOutputMessage message);
   yaclib::Task<bool> ReplayStream(uint32_t xid,
                                   const StreamCommitMessage& commit);
-  void SendFeedback(bool reply);
+  void SendFeedback(bool reply, bool force);
 
   yaclib::Future<> ReplicationMain();
   yaclib::Task<> ReplicationLoop();
@@ -146,12 +149,21 @@ class PgReplicationClient final : public SyncSession {
   std::atomic<int64_t> _last_receipt_time{0};
   std::atomic<int64_t> _latest_end_time{0};
   ConflictCounters _conflicts;
-  bool _publishing = false;
   bool _published = false;
   int64_t _last_activity = 0;
+  uint64_t _reported_flush = 0;
   std::optional<asio_ns::steady_timer> _feedback_timer;
-  std::string _arena;
-  std::vector<PgOutputMessage> _outbox;
+  struct Outbox {
+    std::vector<PgOutputMessage> messages;
+    message::Chain recv;
+    message::Buffer copies{4 << 10, 1 << 20};
+    size_t bytes = 0;
+
+    void Clear() noexcept;
+  };
+  std::array<Outbox, 2> _outboxes;
+  size_t _staging = 0;
+  bool _in_flight = false;
 
   std::vector<SyncTable> _sync_tables;
 

@@ -153,10 +153,6 @@ void ClusterCatalog::OnCatalogLogDecided() {
   SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
 
-void ClusterCatalog::BeginCatalogLogCommit() {
-  _commits_in_flight.fetch_add(1, std::memory_order_acq_rel);
-}
-
 void ClusterCatalog::EndCatalogLogCommit() {
   const auto version = duckdb::DuckTransactionManager::Get(GetAttached())
                          .GetLastCommittedCatalogVersion();
@@ -164,7 +160,6 @@ void ClusterCatalog::EndCatalogLogCommit() {
       version) {
     _catalog_generation.fetch_add(1, std::memory_order_acq_rel);
   }
-  _commits_in_flight.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
@@ -185,8 +180,7 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
     return;
   }
   auto lock = storage.GetCommitLock();
-  if (storage.GetWALSize() < threshold() ||
-      _commits_in_flight.load(std::memory_order_acquire) > 0) {
+  if (storage.GetWALSize() < threshold()) {
     return;
   }
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> quiescent;
@@ -257,7 +251,11 @@ void ClusterCatalog::CompactCatalogLog() {
       storage, path, size, duckdb::WALInitState::UNINITIALIZED);
   }
   _live_bytes.store(size, std::memory_order_relaxed);
-  SyncDirectory(std::filesystem::path{path}.parent_path());
+  try {
+    SyncDirectory(std::filesystem::path{path}.parent_path());
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "catalog log rewrite: ", e.what());
+  }
 }
 
 bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,

@@ -63,7 +63,7 @@ class SearchEngine final {
   // Launch the per-target refresh + compaction loops, registering their Futures
   // so stop() can join them. Templated on the storage type
   // (InvertedIndexStorage or SearchTable); instantiated for both in the .cpp.
-  template<class Storage>
+  template<typename Storage>
   void StartTasks(const std::shared_ptr<Storage>& storage);
 
   // Loops poll this so they bail out of long-running cycles promptly.

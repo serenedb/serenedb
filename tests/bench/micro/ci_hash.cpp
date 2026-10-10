@@ -388,7 +388,8 @@ struct HashFn {
   size_t operator()(std::string_view s) const { return Fn(s.data(), s.size()); }
 };
 
-template<template<class...> class Set, uint64_t (*Fn)(const char*, size_t)>
+template<template<typename...> typename Set,
+         uint64_t (*Fn)(const char*, size_t)>
 void BmSet(benchmark::State& state) {
   const auto& d = GetData(static_cast<size_t>(state.range(0)));
   Set<std::string, HashFn<Fn>, CaseInsensitiveStringEquality> set(
@@ -403,9 +404,9 @@ void BmSet(benchmark::State& state) {
     benchmark::DoNotOptimize(set.count(d.queries[i]));
   }
 }
-template<class K, class H, class E>
+template<typename K, typename H, typename E>
 using StdSet = std::unordered_set<K, H, E>;
-template<class K, class H, class E>
+template<typename K, typename H, typename E>
 using AbslSet = absl::flat_hash_set<K, H, E>;
 
 // Quality at scale: current Jenkins (A) vs abseil-of-lowered gold (C) vs fused

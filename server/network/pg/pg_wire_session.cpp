@@ -20,6 +20,7 @@
 
 #include "network/pg/pg_wire_session.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
 
@@ -916,7 +917,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
     const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return std::ranges::binary_search(closure->closure, group_oid);
+    return absl::c_binary_search(closure->closure, group_oid);
   };
 
   hba::ClientInfo client;

@@ -63,6 +63,10 @@ tests/drivers/c/harness
 # Matches the stuff that's gonna replace developers
 /.claude/*
 !/.claude/skills/
+!/.claude/rules/
+!/.claude/settings.json
+/CLAUDE.local.md
+/compile_commands.json
 
 # Local act secrets (fakes for local CI runs)
 .secrets

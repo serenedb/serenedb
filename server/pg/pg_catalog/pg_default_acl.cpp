@@ -20,7 +20,8 @@
 
 #include "pg/pg_catalog/pg_default_acl.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 
@@ -65,7 +66,7 @@ MaterializedData SystemTableSnapshot<PgDefaultAcl>::GetTableData() {
   if (database) {
     for (const auto& entry : database->permissions.defaults) {
       if (entry.scope != kInvalidOid &&
-          !std::ranges::contains(schemas, entry.scope)) {
+          !absl::c_contains(schemas, entry.scope)) {
         continue;
       }
       values.push_back(PgDefaultAcl{

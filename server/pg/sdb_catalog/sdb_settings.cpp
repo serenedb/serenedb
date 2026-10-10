@@ -20,10 +20,10 @@
 
 #include "sdb_settings.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/flags/commandlineflag.h>
 #include <absl/flags/reflection.h>
 
-#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -69,8 +69,10 @@ MaterializedData SystemTableSnapshot<SdbSettings>::GetTableData() {
   for (auto [_, flag] : absl::GetAllFlags()) {
     flags.push_back(flag);
   }
-  std::ranges::sort(
-    flags, {}, [](const absl::CommandLineFlag* flag) { return flag->Name(); });
+  absl::c_sort(flags, [](const absl::CommandLineFlag* lhs,
+                         const absl::CommandLineFlag* rhs) {
+    return lhs->Name() < rhs->Name();
+  });
 
   std::vector<std::string> storage;
   storage.reserve(flags.size() * 4);

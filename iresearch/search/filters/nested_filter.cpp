@@ -438,7 +438,7 @@ auto ResolveRule(const SubReader& segment,
                     match);
 }
 
-template<template<typename> class Impl, typename Result, typename Rule,
+template<template<typename> typename Impl, typename Result, typename Rule,
          typename... Head>
 Result MakeNestedDocs(ParentDocs::ptr parent, lead::Node::ptr child, Rule rule,
                       Head&&... head) {
@@ -449,7 +449,7 @@ Result MakeNestedDocs(ParentDocs::ptr parent, lead::Node::ptr child, Rule rule,
     std::forward_as_tuple(std::move(child)), std::move(rule));
 }
 
-template<template<typename> class Impl, typename Result, typename Rule,
+template<template<typename> typename Impl, typename Result, typename Rule,
          typename... Head>
 Result MakeNestedScored(ParentDocs::ptr parent, lead::Node::ptr child,
                         std::unique_ptr<ColumnArgsFetcher> fetcher,
@@ -548,7 +548,7 @@ lead::Node::ptr ChildDocs(const ByNestedQuery& query) {
   return child;
 }
 
-template<template<typename> class Impl, typename Result, typename... Head>
+template<template<typename> typename Impl, typename Result, typename... Head>
 Result PlanNestedDocs(const ByNestedQuery& query, Head&&... head) {
   auto child = ChildDocs(query);
   if (!child) {
@@ -563,7 +563,7 @@ Result PlanNestedDocs(const ByNestedQuery& query, Head&&... head) {
                            });
 }
 
-template<template<typename> class Impl, typename Result, typename... Head>
+template<template<typename> typename Impl, typename Result, typename... Head>
 Result PlanNestedScored(const ByNestedQuery& query, detail::ScoredCtx ctx,
                         Head&&... head) {
   auto fetcher = std::make_unique<ColumnArgsFetcher>();

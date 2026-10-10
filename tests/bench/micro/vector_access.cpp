@@ -64,7 +64,7 @@ const std::vector<std::string>& Corpus() {
   return corpus;
 }
 
-template<class T, bool UseValues>
+template<typename T, bool UseValues>
 uint64_t Read(duckdb::Vector& vec, duckdb::idx_t count);
 
 template<>
@@ -166,7 +166,7 @@ struct Source {
   }
 };
 
-template<class T, bool UseValues>
+template<typename T, bool UseValues>
 void Run(benchmark::State& state, Shape shape) {
   const auto type = std::is_same_v<T, duckdb::string_t>
                       ? duckdb::LogicalType::VARCHAR

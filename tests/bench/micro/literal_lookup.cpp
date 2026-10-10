@@ -4851,7 +4851,7 @@ const duckdb::case_insensitive_set_view_t& GetAbslFlatViewCi(
   static const duckdb::case_insensitive_set_view_t s(a, a + N);
   return s;
 }
-template<class SetT, std::size_t N>
+template<typename SetT, std::size_t N>
 SetT MakeStringTSet(const std::string_view (&a)[N]) {
   SetT s;
   for (auto v : a) {
@@ -4969,7 +4969,7 @@ void RunSortedCI(benchmark::State& s, const std::vector<std::string_view>& v,
 // Look up the std::string key directly: each hash set uses ITS OWN default
 // hash/eq for CS, and DuckDB's CIHash/CIEquals for CI. count(const string&) is
 // exact-key (no transparency needed), zero-copy.
-template<class SetT>
+template<typename SetT>
 void RunHash(benchmark::State& s, const SetT& set,
              const std::vector<std::string>& q) {
   std::size_t i = 0, m = q.size() - 1;
@@ -4978,7 +4978,7 @@ void RunHash(benchmark::State& s, const SetT& set,
     benchmark::DoNotOptimize(set.count(q[i]));
   }
 }
-template<class SetT>
+template<typename SetT>
 void RunHashStringT(benchmark::State& s, const SetT& set,
                     const std::vector<std::string>& q) {
   std::size_t i = 0, m = q.size() - 1;
@@ -4988,7 +4988,7 @@ void RunHashStringT(benchmark::State& s, const SetT& set,
       duckdb::string_t(q[i].data(), static_cast<uint32_t>(q[i].size()))));
   }
 }
-template<class SetT>
+template<typename SetT>
 void RunTrivCs(benchmark::State& s, const SetT& set,
                const std::vector<std::string>& q) {
   std::size_t i = 0, m = q.size() - 1;
@@ -4997,7 +4997,7 @@ void RunTrivCs(benchmark::State& s, const SetT& set,
     benchmark::DoNotOptimize(set.Contains(std::string_view(q[i])));
   }
 }
-template<class SetT>
+template<typename SetT>
 void RunTrivCi(benchmark::State& s, const SetT& set,
                const std::vector<std::string>& q) {
   std::size_t i = 0, m = q.size() - 1;

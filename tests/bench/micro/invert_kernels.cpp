@@ -545,7 +545,7 @@ void BM_ColumnarKeyword(benchmark::State& state) {
                        benchmark::Counter::kIsRate);
 }
 
-template<bool Batch, class C>
+template<bool Batch, typename C>
 void RunDictResolve(benchmark::State& state, const C& corpus) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
   auto& rm = IResourceManager::gNoop;
@@ -847,7 +847,7 @@ size_t BenchTermHash(duckdb::string_t term) noexcept {
     {reinterpret_cast<const byte_type*>(term.GetData()), term.GetSize()});
 }
 
-template<class C>
+template<typename C>
 void RunDictRef(benchmark::State& state, const C& corpus, size_t reserve = 0) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
   auto& rm = IResourceManager::gNoop;
@@ -869,7 +869,7 @@ void RunDictRef(benchmark::State& state, const C& corpus, size_t reserve = 0) {
                        benchmark::Counter::kIsRate);
 }
 
-template<class C>
+template<typename C>
 void RunDictDirect(benchmark::State& state, const C& corpus) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
   for (auto _ : state) {
@@ -1071,7 +1071,7 @@ enum class CtorKind {
   Overread,
   Branchless,
 };
-template<CtorKind Kind, class C>
+template<CtorKind Kind, typename C>
 void RunConstruct(benchmark::State& state, const C& corpus) {
   for (auto _ : state) {
     for (size_t i = 0; i < kTokens; ++i) {
@@ -1231,7 +1231,7 @@ struct PairKeyEq {
   }
 };
 
-template<class C>
+template<typename C>
 void RunDictPairMap(benchmark::State& state, const C& corpus) {
   duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
   for (auto _ : state) {
@@ -1355,7 +1355,7 @@ void BM_DictResolveSweep(benchmark::State& state) {
 
 constexpr uint32_t kChunk = STANDARD_VECTOR_SIZE;
 
-template<class C>
+template<typename C>
 std::vector<duckdb::Vector> BuildVarcharChunks(const C& corpus,
                                                uint32_t null_stride) {
   const size_t nchunks = kTokens / kChunk;
@@ -1386,7 +1386,7 @@ void SetUvfCounters(benchmark::State& state, size_t nchunks) {
                        benchmark::Counter::kIsRate);
 }
 
-template<class C>
+template<typename C>
 void RunInvertBlockKeyword(benchmark::State& state, const C& corpus,
                            IndexFeatures features = kFeatures) {
   auto chunks = BuildVarcharChunks(corpus, 0);
@@ -1413,7 +1413,7 @@ void BM_ColKeywordBlockLowCard(benchmark::State& s) {
   RunInvertBlockKeyword(s, GetLowCardCorpus());
 }
 
-template<class C>
+template<typename C>
 void RunKeywordPerValue(benchmark::State& state, const C& corpus,
                         IndexFeatures features) {
   auto mem = DefaultMemory();
@@ -1442,7 +1442,7 @@ void BM_TermsBlockUnique(benchmark::State& s) {
   RunInvertBlockKeyword(s, GetUniqueCorpus(), kTermsFeatures);
 }
 
-template<class C>
+template<typename C>
 void RunInvertBlockKeywordWarm(benchmark::State& state, const C& corpus,
                                IndexFeatures features) {
   auto chunks = BuildVarcharChunks(corpus, 0);
@@ -1470,7 +1470,7 @@ void BM_TermsBlockHighCardWarm(benchmark::State& s) {
   RunInvertBlockKeywordWarm(s, GetCorpus(), kTermsFeatures);
 }
 
-template<class C>
+template<typename C>
 void RunUvfKeyword(benchmark::State& state, const C& corpus,
                    uint32_t null_stride) {
   auto chunks = BuildVarcharChunks(corpus, null_stride);
@@ -1713,7 +1713,7 @@ void BM_UvfNull(benchmark::State& state) {
   SetUvfCounters(state, chunks.size());
 }
 
-template<class C>
+template<typename C>
 void RunKeywordsStream(benchmark::State& state, const C& corpus) {
   auto mem = DefaultMemory();
   for (auto _ : state) {

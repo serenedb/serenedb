@@ -264,7 +264,7 @@ The suite runs with every other suite when duckdb or a dependency they share cha
 
 ### Changing the DuckDB on-disk format
 
-A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [CONTRIBUTING.md](../../CONTRIBUTING.md#duckdb-database-files), then:
+A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [Storage compatibility](../../.claude/rules/storage.md#duckdb-database-files), then:
 
 - if DuckDB can store the change, add its DDL/DML to `base.sql` or `changes.sql` and a query to `check_base.sql` or `check_changes.sql`;
 - if it cannot, add the refusal to `third_party/duckdb/test/sql/storage/serenedb_state_in_duckdb_file.test`;
@@ -298,6 +298,15 @@ The `iceberg` suite runs most of duckdb_iceberg's tests against a live catalog: 
 Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upstream's own data generators (`scripts/data_generators`, PySpark 4.0 with the Iceberg runtime jar checked into the submodule) twice: against the REST catalog (`fixture`), and into `data/generated/iceberg/spark-local` (`local`). Many tests compare what DuckDB writes with what Spark wrote, so the reference data comes from Spark itself. The build image carries PySpark, a Java 21 runtime for it (Spark 4.0's Hadoop does not run on newer Java) and the Ivy cache of the Spark packages, so nothing is downloaded. Outside the image (no `pyspark` on the host), `run.sh` runs the generator in `BUILD_IMAGE` (default `serenedb/serenedb-build-ubuntu:latest`). Its log is `out/test-results/iceberg-data.log`.
 
 The suite then runs in three `unittest` calls: the extension's tests without the catalog directories in parallel, then, in upstream CI's order and with its `--order lex`, `catalog_test_config_setup` with upstream's `fixture.json`, and `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). The catalog tests share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind.
+
+## Changing a fork
+
+- **A bug:** first check whether upstream already fixed it
+  (`git log -S <symbol> upstream/main -- <file>`). If so, `git cherry-pick -x`
+  it. Syncing with upstream follows the update recipe above, not cherry-picks.
+- **No comments** in fork code, and no provenance markers ("SereneDB fork:").
+- Regeneration, commits, the fork PR and the gitlink bump:
+  ["When you change ..."](../../.claude/rules/when-you-change.md).
 
 ## Traps
 

@@ -55,6 +55,11 @@ repos:
         language: python
         entry: python3 scripts/fix_lambda_empty_parens.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: fix-template-typename
+        name: Fix template <class> to template <typename>
+        language: python
+        entry: python3 scripts/fix_template_typename.py
+        files: \.(cpp|cc|hpp|hh|h|ipp|tpp)$
 
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v21.1.8
@@ -79,6 +84,11 @@ repos:
         language: python
         entry: python3 scripts/check_namespace_format.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
+      - id: check-banned-calls
+        name: Check banned C++ library calls in server/ and iresearch/
+        language: python
+        entry: python3 scripts/check_banned_calls.py
+        files: ^(server|iresearch)/.*\.(cpp|cc|hpp|hh|h|ipp|tpp)$
       - id: check-system-table-claims
         name: Check system-table compatibility claims
         language: python

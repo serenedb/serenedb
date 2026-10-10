@@ -592,8 +592,8 @@ auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
     });
 }
 
-template<template<typename> class Walk, typename Result, typename Gate,
-         template<typename> class Two, typename Query, typename... Prefix>
+template<template<typename> typename Walk, typename Result, typename Gate,
+         template<typename> typename Two, typename Query, typename... Prefix>
 Result MakeVectorDocs(const Query& query, score_t edge, probe::Node::ptr inner,
                       Prefix&&... prefix) {
   return ResolveVector<Gate, false>(
@@ -605,8 +605,8 @@ Result MakeVectorDocs(const Query& query, score_t edge, probe::Node::ptr inner,
     });
 }
 
-template<template<typename> class Walk, typename Result, typename Gate,
-         bool Rescore, template<typename> class Two, typename Query,
+template<template<typename> typename Walk, typename Result, typename Gate,
+         bool Rescore, template<typename> typename Two, typename Query,
          typename... Prefix>
 Result MakeVectorScored(const Query& query, const TermReader& field,
                         const detail::ScoreArgs& score, score_t edge,

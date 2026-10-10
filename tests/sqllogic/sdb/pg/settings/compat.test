@@ -2,14 +2,14 @@ query
 SHOW work_mem;
 ----
 work_mem
-4096
+4MB
 
 
 query
 SELECT current_setting('lock_timeout') AS lock_timeout, current_setting('max_connections') AS max_connections;
 ----
 lock_timeout	max_connections
-0	100
+0	0
 
 
 query
@@ -51,25 +51,31 @@ lock_timeout
 
 
 statement error
-SET block_size = '16384';
+SET max_identifier_length = 100;
 ----
-db error: ERROR: parameter "block_size" cannot be changed
+db error: ERROR: parameter "max_identifier_length" cannot be changed
+
+
+statement error
+SET max_connections = 10;
+----
+db error: ERROR: parameter "max_connections" cannot be changed
 
 
 statement error
 SET wal_level = 'minimal';
 ----
-db error: ERROR: parameter "wal_level" cannot be changed
+db error: ERROR: unrecognized configuration parameter "wal_level"<slt:ignore>
 
 
 query
 SELECT name, context, setting
 FROM pg_settings
-WHERE name IN ('block_size', 'lock_timeout', 'wal_level', 'work_mem')
+WHERE name IN ('lock_timeout', 'max_connections', 'max_identifier_length', 'work_mem')
 ORDER BY name;
 ----
 name	context	setting
-block_size	internal	8192
 lock_timeout	user	0
-wal_level	postmaster	replica
+max_connections	postmaster	0
+max_identifier_length	internal	63
 work_mem	user	4096

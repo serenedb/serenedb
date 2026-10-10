@@ -78,7 +78,7 @@ Steps 3 and 4 run every time `serened` is linked, which includes every change to
 
 ### PostgreSQL catalog code
 
-Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: built-in types and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL, default and lookup key), `pg_catalog` and `information_schema` view definitions, the rows of the `information_schema.sql_*` tables, setting descriptions for `pg_settings`, the keyword list `quote_ident` uses, and the signatures of stub set-returning functions. The output is `server/pg/catalog/generated/*.gen.inc`, and nothing else lives in that directory.
+Everything SereneDB copies from PostgreSQL's system catalogs is generated, never written by hand: the built-in types SereneDB supports and the functions they reference, the oids of catalog tables, schemas, access methods and languages, each catalog table's columns (type, NOT NULL, default and lookup key), `pg_catalog` and `information_schema` view definitions, the rows of the `information_schema.sql_*` tables, the keyword list `quote_ident` uses, and the signatures of stub set-returning functions. The output is `server/pg/catalog/generated/*.gen.inc`, and nothing else lives in that directory. Only what PostgreSQL defines is copied; what describes SereneDB itself, such as which types exist or what a setting's value is, is written by hand.
 
 `scripts/generate_pg_catalog.py` reads a running PostgreSQL and its source tree of the same version:
 
@@ -90,7 +90,9 @@ python3 scripts/generate_pg_catalog.py --pg 127.0.0.1:55433 --pg-src pg-src
 
 What SereneDB decides on its own is kept apart from the generated output:
 
-- `scripts/pg_catalog/config.py` lists the views SereneDB implements natively as tables, SereneDB's own `sdb_*` tables, how each PostgreSQL column type is stored, the row estimates the planner sees, the settings it exposes, and the few PostgreSQL types it substitutes in stub functions.
+- `scripts/pg_catalog/config.py` lists the views SereneDB implements natively as tables, SereneDB's own `sdb_*` tables, how each PostgreSQL column type is stored, the row estimates the planner sees, the pseudo-types SereneDB's own rows use, and the few PostgreSQL types it substitutes in stub functions.
+- `server/pg/types.cpp` maps each PostgreSQL type SereneDB supports to a DuckDB type; the generator lists exactly those built-in types in `pg_type`, with their arrays.
+- `server/pg/catalog/tables/settings.h` lists the PostgreSQL settings SereneDB accepts, with SereneDB's own values and descriptions; a setting SereneDB does not implement is accepted only when clients or `pg_dump` scripts set it, and its description says it has no effect.
 - `server/pg/catalog/views/overrides/<schema>.<view>.sql` holds a view body SereneDB rewrites; the generator uses it in place of PostgreSQL's.
 - `server/pg/catalog/tables/{pg_catalog,information_schema,sdb}/<table>.cpp` produces the rows of one catalog table and sets SereneDB's constant column values; `sdb/` holds SereneDB's own `sdb_*` tables, which live in `pg_catalog`. The generator registers every such file in `generated/registry.gen.inc` and stops on a file named after no catalog table. A catalog without a file exists with no rows.
 

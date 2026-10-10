@@ -170,25 +170,6 @@ def table_lines(gen, oid, schema, name, relkind, shared, superuser, types):
              f'{const}Columns}};'])
 
 
-def data_rows(gen, schema, name, order):
-    cursor = gen.conn.execute(f'SELECT * FROM {schema}.{name} ORDER BY {order}')
-    columns = [column.name for column in cursor.description]
-    overrides = config.DATA_CELLS.get((schema, name), {})
-    const = relation_constant(schema, name)
-
-    def cell(row, i):
-        override = overrides.get((str(row[0]), columns[i]))
-        if override is not None:
-            return override
-        return 'std::nullopt' if row[i] is None else cpp_str(str(row[i]))
-
-    cells = [', '.join(cell(row, i) for i in range(len(row))) + ','
-             for row in cursor.fetchall()]
-    return ([f'constexpr SystemCell {const}Rows[] = {{']
-            + ['  ' + line for line in cells] + ['};',
-            f'SystemTable g{const[1:]}{{{const}Sql, {const}Rows}};'])
-
-
 REGISTRY = os.path.join(GENERATED_DIR, 'registry.gen.inc')
 
 
@@ -200,13 +181,12 @@ def table_files():
 
 
 def registry():
-    coded = [relation_constant(schema, name)[1:]
-             for _, schema, name in table_files()]
-    data = [relation_constant(*table)[1:] for table in config.DATA_TABLES]
+    coded = sorted(relation_constant(schema, name)[1:]
+                   for _, schema, name in table_files())
     return generated('the files in server/pg/catalog/tables', [
-        f'extern SystemTable g{name};' for name in sorted(coded)] +
+        f'extern SystemTable g{name};' for name in coded] +
         ['SystemTable* const kSystemTables[] = {'] +
-        [f'  &g{name},' for name in sorted(coded + data)] + ['};'])
+        [f'  &g{name},' for name in coded] + ['};'])
 
 
 def named_oids(gen, sql, names):
@@ -256,13 +236,8 @@ def generate(gen):
     tables.append('};')
     gen.write('catalog_oids.gen.inc', oids)
     gen.write('tables.gen.inc', tables)
-    data = []
-    for (schema, name), order in config.DATA_TABLES.items():
-        data += data_rows(gen, schema, name, order)
-    gen.write('information_schema_tables.gen.inc', data)
     for path, schema, name in table_files():
         if (schema, name) not in known:
             raise SystemExit(f'{path} names no catalog table')
     gen.write('keywords.gen.inc',
               [cpp_str(word) + ',' for word in sorted(reserved)])
-

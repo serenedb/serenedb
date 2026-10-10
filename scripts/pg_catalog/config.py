@@ -182,22 +182,7 @@ SDB_TABLES = {
     )),
 }
 
-DATA_CELLS = {
-    ('information_schema', 'sql_implementation_info'): {
-        ('10004', 'character_value'): '"C.UTF-8"',
-        ('17', 'character_value'): '"SereneDB"',
-        ('18', 'character_value'): 'SERENEDB_VERSION',
-    },
-}
-
 SUPERUSER_ONLY = {('pg_catalog', 'pg_foreign_server')}
-
-DATA_TABLES = {
-    ('information_schema', 'sql_features'): 'feature_id, sub_feature_id',
-    ('information_schema', 'sql_implementation_info'): 'implementation_info_id',
-    ('information_schema', 'sql_parts'): 'feature_id',
-    ('information_schema', 'sql_sizing'): 'sizing_id',
-}
 
 STUB_FUNCTIONS = (
     'pg_lock_status',

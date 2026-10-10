@@ -53,10 +53,10 @@ implementation_info_id	implementation_info_name	integer_value	character_value	co
 18	DBMS VERSION	NULL	server version	NULL
 2	DATA SOURCE NAME	NULL	(empty)	NULL
 23	CURSOR COMMIT BEHAVIOR	1	NULL	close cursors and retain prepared statements
-26	DEFAULT TRANSACTION ISOLATION	2	NULL	READ COMMITTED; user-settable
+26	DEFAULT TRANSACTION ISOLATION	4	NULL	REPEATABLE READ; user-settable
 28	IDENTIFIER CASE	3	NULL	stored in mixed case - case sensitive
 46	TRANSACTION CAPABLE	2	NULL	both DML and DDL
-85	NULL COLLATION	0	NULL	nulls higher than non-nulls
+85	NULL COLLATION	4	NULL	nulls sort at the end
 94	SPECIAL CHARACTERS	NULL	(empty)	all non-ASCII characters allowed
 
 

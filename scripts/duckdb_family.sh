@@ -4,7 +4,7 @@
 # formatted or generated is copied here.
 #
 # Directories: duckdb, duckdb_avro, duckdb_azure, duckdb_httpfs, duckdb_iceberg, duckdb_inet,
-# duckdb_markdown, duckdb_postgres, duckdb_spatial and database-connector (submodules under third_party/)
+# duckdb_markdown, duckdb_postgres, duckdb_spatial, duckdb_yaml and database-connector (submodules under third_party/)
 # and duckdb_clickhouse (in-tree). Without <dir> arguments, every checked-out one.
 #
 # scripts/duckdb_family.sh format [--check] [--staged | --all] [<dir>...]
@@ -56,7 +56,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 THIRD_PARTY="$REPO_ROOT/third_party"
 DUCKDB="$THIRD_PARTY/duckdb"
 SUBMODULES=(duckdb duckdb_avro duckdb_azure duckdb_httpfs duckdb_iceberg duckdb_inet duckdb_markdown duckdb_postgres
-	duckdb_spatial database-connector)
+	duckdb_spatial duckdb_yaml database-connector)
 INTREE=(duckdb_clickhouse)
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/serenedb-duckdb"
 FORMAT_VENV="$CACHE/format-venv"

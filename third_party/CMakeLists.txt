@@ -644,6 +644,20 @@ target_include_directories(
 )
 
 ################################################################################
+## yaml-cpp
+################################################################################
+
+sdb_update_module(${GIT_EXECUTABLE} "yaml-cpp" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+set(YAML_ALLOW_GLOBAL_SETTERS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_FORMAT_SOURCE OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(yaml-cpp)
+
+################################################################################
 ## duckdb
 ################################################################################
 
@@ -687,7 +701,7 @@ set(BUILD_EXTENSIONS
     FORCE
 )
 set(STATICALLY_LINK_EXTENSIONS
-    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+    "core_functions;parquet;tpch;tpcds;json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;yaml;clickhouse_scanner"
     CACHE STRING
     ""
     FORCE
@@ -698,6 +712,7 @@ set(STATICALLY_LINK_EXTENSIONS
 set(DUCKDB_EXTENSION_CONFIGS
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_yaml/extension_config.cmake"
     CACHE STRING
     ""
     FORCE
@@ -712,6 +727,7 @@ sdb_update_module(${GIT_EXECUTABLE} "duckdb_postgres" ${CMAKE_CURRENT_SOURCE_DIR
 sdb_update_module(${GIT_EXECUTABLE} "postgres" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_inet" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_markdown" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
+sdb_update_module(${GIT_EXECUTABLE} "duckdb_yaml" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "duckdb_spatial" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_DIR} "README.md")
 
@@ -721,6 +737,13 @@ sdb_update_module(${GIT_EXECUTABLE} "database-connector" ${CMAKE_CURRENT_SOURCE_
 include_directories(SYSTEM ${CMAKE_CURRENT_SOURCE_DIR}/simdutf/include)
 
 add_subdirectory(duckdb)
+
+target_link_libraries(
+    iceberg_catalog_rest_storage_authorization
+    PRIVATE OpenSSL::Crypto
+)
+target_link_libraries(iceberg_extension PUBLIC OpenSSL::Crypto)
+target_link_libraries(iceberg_loadable_extension OpenSSL::Crypto)
 
 if(TARGET duckdb_shell)
     target_compile_definitions(
@@ -763,6 +786,7 @@ target_link_libraries(
         icu_extension
         inet_extension
         markdown_extension
+        yaml_extension
         spatial_extension
         # SIMD string-encoding routines (base64 + UTF-8/UTF-16/Latin-1). This
         # one PUBLIC edge propagates the simdutf include to duckdb core and to

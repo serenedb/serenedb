@@ -194,3 +194,11 @@
 	path = third_party/geographiclib-c
 	url = https://github.com/serenedb/geographiclib-c.git
 	shallow = true
+[submodule "third_party/duckdb_yaml"]
+	path = third_party/duckdb_yaml
+	url = https://github.com/serenedb/duckdb_yaml.git
+	shallow = true
+[submodule "third_party/yaml-cpp"]
+	path = third_party/yaml-cpp
+	url = https://github.com/serenedb/yaml-cpp.git
+	shallow = true

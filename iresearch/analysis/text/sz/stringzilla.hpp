@@ -49,8 +49,10 @@
 #include <stringzilla/utf8_tokens/sve2.h>
 #include <stringzilla/utf8_uncased_fold/neon.h>
 #include <stringzilla/utf8_uncased_fold/sve2.h>
+#if SZ_USE_SVE || SZ_USE_SVE2
 #include <sys/auxv.h>
 #include <sys/prctl.h>
+#endif
 #endif
 
 #include <cstddef>
@@ -78,7 +80,7 @@ inline bool HasAvx512Bw() noexcept {
                            __builtin_cpu_supports("avx512bw");
   return kHas;
 }
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) && (SZ_USE_SVE || SZ_USE_SVE2)
 inline bool HasSve() noexcept {
   static const bool kHas = (getauxval(AT_HWCAP) & HWCAP_SVE) != 0;
   return kHas;
@@ -114,12 +116,16 @@ inline size_t Norm(const char* in, size_t n, sz_normal_form_t form,
   }
   return sz_utf8_norm_haswell(in, n, form, out);
 #elif defined(__aarch64__)
+#if SZ_USE_SVE2
   if (HasSve2()) {
     return sz_utf8_norm_sve2(in, n, form, out);
   }
+#endif
+#if SZ_USE_SVE
   if (HasSve()) {
     return sz_utf8_norm_sve(in, n, form, out);
   }
+#endif
   return sz_utf8_norm_neon(in, n, form, out);
 #else
   return sz_utf8_norm_serial(in, n, form, out);
@@ -180,9 +186,11 @@ inline size_t Fold(const char* in, size_t n, char* out) noexcept {
   }
   return sz_utf8_uncased_fold_haswell(in, n, out);
 #elif defined(__aarch64__)
+#if SZ_USE_SVE2
   if (HasWideSve2()) {
     return sz_utf8_uncased_fold_sve2(in, n, out);
   }
+#endif
   return sz_utf8_uncased_fold_neon(in, n, out);
 #else
   return sz_utf8_uncased_fold_serial(in, n, out);
@@ -252,10 +260,12 @@ inline SegmentFn GraphemesFor(const char* text, size_t length) noexcept {
 inline size_t Sentences(const char* text, size_t length, size_t* starts,
                         size_t* lengths, size_t capacity,
                         size_t* consumed) noexcept {
+#if SZ_USE_SVE2
   if (HasSve2()) {
     return sz_utf8_sentences_sve2(text, length, starts, lengths, capacity,
                                   consumed);
   }
+#endif
   return sz_utf8_sentences_neon(text, length, starts, lengths, capacity,
                                 consumed);
 }
@@ -263,18 +273,22 @@ inline size_t Sentences(const char* text, size_t length, size_t* starts,
 inline size_t Newlines(const char* text, size_t length, size_t* offsets,
                        size_t* lengths, size_t capacity,
                        size_t* consumed) noexcept {
+#if SZ_USE_SVE2
   if (HasWideSve2()) {
     return sz_utf8_newlines_sve2(text, length, offsets, lengths, capacity,
                                  consumed);
   }
+#endif
   return sz_utf8_newlines_neon(text, length, offsets, lengths, capacity,
                                consumed);
 }
 
 inline SegmentFn GraphemesFor(const char*, size_t) noexcept {
+#if SZ_USE_SVE2
   if (HasWideSve2()) {
     return sz_utf8_graphemes_sve2;
   }
+#endif
   return sz_utf8_graphemes_neon;
 }
 #else

@@ -483,10 +483,18 @@ if(ARCH_AMD64)
         PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
-    target_compile_definitions(
-        iresearch-static
-        PUBLIC SZ_USE_NEON=1 SZ_USE_SVE=1 SZ_USE_SVE2=1
-    )
+    target_compile_definitions(iresearch-static PUBLIC SZ_USE_NEON=1)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(
+            iresearch-static
+            PUBLIC SZ_USE_SVE=1 SZ_USE_SVE2=1
+        )
+    else()
+        target_compile_definitions(
+            iresearch-static
+            PUBLIC SZ_USE_SVE=0 SZ_USE_SVE2=0
+        )
+    endif()
 endif()
 
 target_link_libraries(

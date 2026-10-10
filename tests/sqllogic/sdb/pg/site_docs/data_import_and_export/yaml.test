@@ -1,0 +1,37 @@
+control substitution on
+
+statement count 1
+COPY (SELECT E'name: gateway\nversion: 1.10\n---\nname: worker\nversion: 2.0')
+TO '${__TEST_DIR__}/config.yaml' (FORMAT CSV, HEADER false, QUOTE '');
+
+# DOCS_TEST: read_documents
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, version FROM read_yaml('${__TEST_DIR__}/config.yaml') ORDER BY name;
+----
+name	version
+gateway	1.1
+worker	2
+
+# DOCS_TEST: preserve_version
+
+# DOCS_TEST_BODY
+
+query
+SELECT name, version FROM read_yaml('${__TEST_DIR__}/config.yaml', columns={'version': 'VARCHAR'}) ORDER BY name;
+----
+name	version
+gateway	1.10
+worker	2.0
+
+# DOCS_TEST: scalars
+
+# DOCS_TEST_BODY
+
+query
+SELECT yaml_to_json('country: no') AS config;
+----
+config
+{"country":"no"}

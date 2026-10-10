@@ -277,7 +277,7 @@ void Prefetch(const void* addr, size_t size) noexcept {
 }
 
 void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__APPLE__)
   for (uint64_t at = 0; at < size; at += kWillNeedChunk) {
     ::posix_fadvise(
       fd, static_cast<off_t>(offset + at),
@@ -294,7 +294,11 @@ bool IsResident(const void* addr, size_t size) noexcept {
   }
   constexpr size_t kMaxPages = 1024;
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  char resident[kMaxPages];
+#else
   unsigned char resident[kMaxPages];
+#endif
   for (size_t done = 0; done < total; done += kMaxPages * kPage) {
     const auto len = std::min(total - done, kMaxPages * kPage);
     if (::mincore(reinterpret_cast<void*>(aligned + done), len, resident) !=
@@ -318,8 +322,13 @@ size_t Residency(const void* addr, size_t size,
   }
   const auto page = SystemPage();
   const auto [aligned, total] = PageRange(addr, size);
+#ifdef __APPLE__
+  auto* vec = reinterpret_cast<char*>(pages.data());
+#else
+  auto* vec = pages.data();
+#endif
   if ((total + page - 1) / page > pages.size() ||
-      ::mincore(reinterpret_cast<void*>(aligned), total, pages.data()) != 0) {
+      ::mincore(reinterpret_cast<void*>(aligned), total, vec) != 0) {
     return 0;
   }
   return page;

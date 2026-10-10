@@ -1,0 +1,100 @@
+hash-threshold 100
+
+control substitution on
+
+query
+SELECT country, version, missing IS NULL AS is_null
+FROM parse_yaml(E'country: no\nversion: 1.10\nmissing: ~');
+----
+country	version	is_null
+no	1.1	t
+
+statement count 1
+COPY (SELECT E'id: 1\nconfig: {port: 80}\n---\nid: 2\nconfig: {host: localhost}')
+TO '${__TEST_DIR__}/yaml_docs.yaml' (FORMAT CSV, HEADER false, QUOTE '');
+
+query
+SELECT id, config.port, config.host
+FROM read_yaml('${__TEST_DIR__}/yaml_docs.yaml') ORDER BY id;
+----
+id	port	host
+1	80	NULL
+2	NULL	localhost
+
+statement count 1
+COPY (SELECT E'id: 3\nconfig: {port: 443}')
+TO '${__TEST_DIR__}/yaml_more.yaml' (FORMAT CSV, HEADER false, QUOTE '');
+
+query
+SELECT count(*) AS documents FROM read_yaml('${__TEST_DIR__}/yaml_*.yaml');
+----
+documents
+3
+
+query
+SELECT pg_typeof(config)::text AS struct_t, pg_typeof(ports)::text AS list_t,
+       pg_typeof(clock)::text AS time_t, pg_typeof(day)::text AS date_t
+FROM parse_yaml(E'config: {port: 80}\nports: [80, 443]\nclock: 12:30\nday: 2024-01-15');
+----
+struct_t	list_t	time_t	date_t
+record	bigint[]	time	date
+
+query
+SELECT pg_typeof(data)::text AS json_t FROM parse_yaml(E'data: 1\n---\ndata: text') LIMIT 1;
+----
+json_t
+json
+
+statement count 1
+COPY (SELECT E'id: 1\n---\nid: invalid')
+TO '${__TEST_DIR__}/yaml_conversion.yml' (FORMAT CSV, HEADER false, QUOTE '');
+
+statement error yaml_conversion\.yml', document 2: line 3, column 5:
+SELECT * FROM read_yaml('${__TEST_DIR__}/yaml_conversion.yml', sample_size=1);
+
+query
+SELECT config.port, config.host
+FROM parse_yaml(E'defaults: &defaults {port: 80, host: localhost}\nconfig: {<<: *defaults, port: 443}');
+----
+port	host
+443	localhost
+
+query
+SELECT yaml_to_json(E'country: no\nversion: "1.10"')::json =
+       '{"country":"no","version":"1.10"}'::json AS agrees;
+----
+agrees
+t
+
+statement error nesting
+SELECT * FROM parse_yaml('loop: &loop {self: *loop}');
+
+query
+SELECT clock, config, ports
+FROM parse_yaml(E'clock: 12:30\nconfig: {port: 80, host: localhost}\nports: [80, 443]');
+----
+clock	config	ports
+12:30:00	(80,localhost)	{80,443}
+
+query
+SELECT data FROM parse_yaml(E'data: 1\n---\ndata: text');
+----
+data
+1
+"text"
+
+query
+SELECT value FROM parse_yaml(E'value: 1\n---\nvalue: -1') ORDER BY value;
+----
+value
+-1
+1
+
+statement ok
+SET timezone = 'UTC';
+
+query
+SELECT stamp FROM parse_yaml('stamp: 2024-01-15T12:30:00Z');
+----
+stamp
+2024-01-15 12:30:00+00

@@ -28,6 +28,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -57,6 +58,7 @@ struct LocalTableChangesEntry {
     uint32_t band_watermark = 0;
     // Rowids to remove. Empty for a TRUNCATE.
     std::vector<int64_t> delete_rows;
+    std::vector<uint64_t> delete_positions;
     bool truncate = false;
     bool clears_shard = false;
 
@@ -97,13 +99,27 @@ struct LocalTableChangesEntry {
     pk_segments.push_back({pk_base, chunk.size()});
   }
 
-  void AppendDeletes(std::span<const int64_t> rows) {
+  void AppendDeletes(std::span<const int64_t> rows,
+                     std::span<const uint64_t> positions) {
+    SDB_ENSURE(positions.size() == rows.size(),
+               "search table: ", positions.size(), " row positions for ",
+               rows.size(), " deleted rows");
     if (rows.empty()) {
       return;
     }
+    const auto band = static_cast<uint32_t>(pk_segments.size());
+    if (ops.size() > applied_ops && ops.back().IsDelete() &&
+        ops.back().band_watermark == band) {
+      auto& op = ops.back();
+      op.delete_rows.insert(op.delete_rows.end(), rows.begin(), rows.end());
+      op.delete_positions.insert(op.delete_positions.end(), positions.begin(),
+                                 positions.end());
+      return;
+    }
     auto& op = ops.emplace_back();
-    op.band_watermark = static_cast<uint32_t>(pk_segments.size());
+    op.band_watermark = band;
     op.delete_rows.assign(rows.begin(), rows.end());
+    op.delete_positions.assign(positions.begin(), positions.end());
   }
 
   // A truncate removes every row, including the ones this transaction has just

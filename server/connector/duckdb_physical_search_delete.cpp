@@ -106,16 +106,11 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
   // buffer is replayed, after exactly the rows that precede it, which is what
   // reproduces the ordering these statements would have had. Rowids stay raw
   // until then; the record carries them that way too.
-  duckdb::UnifiedVectorFormat rowid;
-  chunk.data[gstate.pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
-                                                                 rowid);
-  const auto* rowid_data = duckdb::UnifiedVectorFormat::GetData<int64_t>(rowid);
   std::vector<int64_t> rows;
-  rows.reserve(num_rows);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    rows.push_back(rowid_data[rowid.sel->get_index(row)]);
-  }
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows);
+  std::vector<uint64_t> positions;
+  CollectRemovedRows(chunk, gstate.pk_columns, rows, positions);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, rows,
+                                               positions);
 
   if (gstate.returned) {
     duckdb::DataChunk row;

@@ -1,0 +1,498 @@
+statement ok
+CREATE TABLE pa (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+INSERT INTO pa SELECT i, i % 10, 'v' || i FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pa;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO pa SELECT i, i % 10, 'w' || i FROM generate_series(10000, 209999) g(i);
+
+statement ok
+DELETE FROM pa WHERE id < 1000;
+
+statement ok
+UPDATE pa SET g = -1 WHERE id BETWEEN 2000 AND 2999;
+
+statement ok
+INSERT INTO pa SELECT i, 0, 'z' FROM generate_series(300000, 300009) g(i);
+
+statement ok
+DELETE FROM pa WHERE id % 10 = 5 AND id >= 3000 AND id < 10000;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pa;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d, count(*) FILTER (WHERE g = -1) AS upd, count(*) FILTER (WHERE id < 1000) AS gone FROM pa;
+----
+n	d	upd	gone
+208310	208310	1000	0
+
+statement ok
+VACUUM (COMPACT_TABLE) pa;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM pa;
+----
+n	d
+208310	208310
+
+statement ok
+DROP TABLE pa;
+
+statement ok
+CREATE TABLE pb1 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+CREATE TABLE pb2 (id BIGINT, g INT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pb1 SELECT i, 0 FROM generate_series(0, 999) g(i);
+
+statement ok
+INSERT INTO pb2 SELECT i, 0 FROM generate_series(0, 999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pb1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pb2;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM pb1 WHERE id % 2 = 0;
+
+statement ok
+UPDATE pb2 SET g = 7 WHERE id < 100;
+
+statement ok
+DELETE FROM pb2 WHERE id >= 900;
+
+statement ok
+DELETE FROM pb1 WHERE id = 1;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pb1;
+
+statement ok
+VACUUM (REFRESH_TABLE) pb2;
+
+query
+SELECT (SELECT count(*) FROM pb1) AS a, (SELECT count(*) FROM pb2) AS b, (SELECT count(*) FROM pb2 WHERE g = 7) AS seven;
+----
+a	b	seven
+499	900	100
+
+statement ok
+DROP TABLE pb1;
+
+statement ok
+DROP TABLE pb2;
+
+statement ok
+CREATE TABLE pc (id BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pc SELECT i FROM generate_series(0, 999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+statement ok
+BEGIN;
+
+statement ok
+TRUNCATE pc;
+
+statement ok
+INSERT INTO pc SELECT i FROM generate_series(5000, 5009) g(i);
+
+statement ok
+DELETE FROM pc WHERE id < 10;
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) pc;
+
+query
+SELECT count(*) AS n, min(id) AS lo FROM pc;
+----
+n	lo
+10	5000
+
+statement ok
+DROP TABLE pc;
+
+statement ok
+CREATE TABLE pd (id BIGINT, g INT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pd SELECT i, i % 10, 'v' FROM generate_series(0, 9999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pd;
+
+statement ok
+DELETE FROM pd WHERE id % 3 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd;
+
+statement ok
+UPDATE pd SET v = 'x' WHERE g = 4;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d, count(*) FILTER (WHERE v = 'x') AS x, count(*) FILTER (WHERE g = 4 AND v <> 'x') AS stale FROM pd;
+----
+n	d	x	stale
+6666	6666	667	0
+
+statement ok
+UPDATE pd SET v = 'y' WHERE g = 4 AND id > 5000;
+
+statement ok
+VACUUM (REFRESH_TABLE) pd;
+
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d, count(*) FILTER (WHERE v = 'y') AS y FROM pd;
+----
+n	d	y
+6666	6666	333
+
+statement ok
+DROP TABLE pd;
+
+statement ok
+CREATE TABLE pe (id BIGINT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(0, 99) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(100, 199) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(200, 299) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(300, 399) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(400, 499) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(500, 599) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(600, 699) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(700, 799) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(800, 899) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(900, 999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1000, 1099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1100, 1199) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1200, 1299) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1300, 1399) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1400, 1499) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1500, 1599) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1600, 1699) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1700, 1799) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1800, 1899) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(1900, 1999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2000, 2099) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2100, 2199) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2200, 2299) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2300, 2399) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2400, 2499) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2500, 2599) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2600, 2699) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2700, 2799) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2800, 2899) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+statement ok
+INSERT INTO pe SELECT i FROM generate_series(2900, 2999) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(DISTINCT sdb_row_position$ >> 32) AS segments FROM pe;
+----
+segments
+30
+
+statement ok
+DELETE FROM pe WHERE id % 7 = 3;
+
+statement ok
+VACUUM (REFRESH_TABLE) pe;
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE id % 7 = 3) AS left FROM pe;
+----
+n	left
+2571	0
+
+statement ok
+DROP TABLE pe;
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pf_bm AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE pf (id BIGINT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, optimize_top_k = 'bm25(1.2, 0.75)');
+
+statement ok
+CREATE INDEX pf_idx ON pf USING inverted (body pf_bm);
+
+statement ok
+INSERT INTO pf VALUES (1, 'quick fox'), (2, 'fox'), (3, 'dog');
+
+statement ok
+VACUUM (REFRESH_TABLE) pf;
+
+query
+SELECT count(sdb_row_position$) AS n FROM pf WHERE id < 3;
+----
+n
+2
+
+statement error row positions are not served by this scan
+SELECT sdb_row_position$ FROM pf_idx WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf_idx.tableoid) DESC LIMIT 1;
+
+statement error row positions are not served by this scan
+SELECT id, sdb_row_position$ FROM pf WHERE body @@ ts_phrase('fox') ORDER BY BM25(pf.tableoid) DESC LIMIT 1;
+
+statement ok
+DELETE FROM pf WHERE body = 'fox';
+
+statement ok
+VACUUM (REFRESH_TABLE) pf;
+
+query
+SELECT id FROM pf ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+DROP TABLE pf;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pf_bm;
+
+
+statement ok
+CREATE TABLE pg (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+
+statement ok
+INSERT INTO pg SELECT i, 'v' || i FROM generate_series(1, 5000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pg;
+
+query
+EXPLAIN UPDATE pg SET v = 'x' WHERE id = 3;
+----
+QUERY PLAN
+╭─ EXTENSION ─────────────────────╮
+╰────────────────┬────────────────╯
+╭─ PROJECTION ───┴────────────────╮
+│ Projections: 'x', #0, rowid,    │
+│              sdb_row_position$  │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: pg                       │
+│ Lookup: search                  │
+│ Projections: id, generated_pk,  │
+│              row_position       │
+│ Column Filter: id = 3           │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pg_bm AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE INDEX pg_idx ON pg USING inverted (v pg_bm);
+
+statement ok
+VACUUM (REFRESH_TABLE) pg;
+
+query
+SELECT count(sdb_row_position$) AS n FROM pg_idx WHERE v @@ ts_phrase('v42');
+----
+n
+1
+
+statement ok
+DELETE FROM pg WHERE id IN (SELECT id FROM pg ORDER BY id DESC LIMIT 2);
+
+statement ok
+DELETE FROM pg WHERE id IN (SELECT id FROM pg_idx WHERE v @@ ts_phrase('v42'));
+
+statement ok
+VACUUM (REFRESH_TABLE) pg;
+
+query
+SELECT count(*) AS n, max(id) AS hi, count(*) FILTER (WHERE id = 42) AS v42 FROM pg;
+----
+n	hi	v42
+4997	4998	0
+
+statement ok
+DROP TABLE pg;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pg_bm;

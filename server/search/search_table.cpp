@@ -60,7 +60,10 @@ catalog::CompressionByColumn SearchTable::DeclaredCompression(
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
     if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(column.Oid(), column.CompressionType());
+      compression.emplace(
+        column.Oid(),
+        catalog::DeclaredCodec{.type = column.CompressionType(),
+                               .compression_level = column.CompressionLevel()});
     }
   }
   return compression;
@@ -85,7 +88,8 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
-    _compression{std::move(compression)} {
+    _compression{std::move(compression)},
+    _codec_params{options.codec} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -104,6 +108,21 @@ void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
     options.compaction_max_segments_bytes;
   _maint_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
+  {
+    std::unique_lock lock(_table_lock);
+    if (_codec_params != options.codec) {
+      _codec_params = options.codec;
+      RebuildConfig();
+    }
+  }
+  NudgeCompaction();
+}
+
+void SearchTable::SetDeclaredCompression(
+  catalog::CompressionByColumn compression) {
+  std::unique_lock lock(_table_lock);
+  _compression = std::move(compression);
+  RebuildConfig();
 }
 
 SearchTable::~SearchTable() {
@@ -305,9 +324,10 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
 
 void SearchTable::RebuildConfig() {
   auto merged = std::make_shared<catalog::InvertedIndexConfig>();
-  merged->pk = {.index_term = true, .column = catalog::PkColumnKind::None};
+  merged->pk = {.index_term = false, .column = catalog::PkColumnKind::None};
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
+  merged->codec_params = _codec_params;
   merged->declared_compression = _compression;
   for (const auto& index : _configs) {
     for (const auto& [id, field] : index.config->fields) {
@@ -315,6 +335,28 @@ void SearchTable::RebuildConfig() {
     }
     merged->keys.insert(merged->keys.end(), index.config->keys.begin(),
                         index.config->keys.end());
+    for (const auto& key : index.config->keys) {
+      if (key.field_id == key.column_id ||
+          !irs::field_limits::valid(key.column_id)) {
+        continue;
+      }
+      const auto* field = index.config->FindEntry(key.field_id);
+      if (!field) {
+        continue;
+      }
+      const auto& options = field->column_options;
+      const bool own_codec =
+        options.compression != duckdb::CompressionType::COMPRESSION_AUTO;
+      if (!own_codec && !options.hyperloglog) {
+        continue;
+      }
+      auto& declared = merged->declared_compression[key.column_id];
+      if (own_codec) {
+        declared.type = options.compression;
+        declared.compression_level = options.compression_level;
+      }
+      declared.hyperloglog = declared.hyperloglog || options.hyperloglog;
+    }
   }
   _config = std::move(merged);
 }
@@ -385,6 +427,9 @@ ResultWithTime SearchTable::CleanupUnsafe() {
 void SearchTable::VacuumRefresh() {
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
+  if (code == RefreshResult::Done) {
+    NudgeCompaction();
+  }
   CleanupUnsafe();
 }
 
@@ -422,6 +467,7 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
       CompactUnsafe(bucket, kProgress, empty, field_options.get());
       merged |= !empty;
     }
+    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
     RefreshUnsafe(/*wait=*/true, nullptr, code);
     if (!merged) {
       break;

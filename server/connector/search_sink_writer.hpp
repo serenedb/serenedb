@@ -135,8 +135,6 @@ class SearchSinkInsertBaseImpl {
     _document.reset();
   }
 
-  std::vector<duckdb::string_t>& KeyTerms() noexcept { return _key_terms; }
-
  protected:
   struct Field {
     irs::field_id Id() const noexcept { return id; }
@@ -287,7 +285,6 @@ class SearchSinkInsertBaseImpl {
 
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
   StoreAppender _store_appender;
-  std::vector<duckdb::string_t> _key_terms;
   std::vector<IndexedExpression> _indexed_expressions;
   irs::containers::FlatHashMap<ColumnId, std::vector<irs::field_id>>
     _terms_by_column;
@@ -315,6 +312,14 @@ class SearchSinkDeleteBaseImpl {
   irs::IndexWriter::Transaction* _trx;
   std::shared_ptr<SearchRemoveFilter> _remove_filter;
 };
+
+std::shared_ptr<const irs::DocRemoval> MakeRowRemoval(
+  std::span<const int64_t> rowids, std::span<const uint64_t> positions);
+
+void CollectRemovedRows(duckdb::DataChunk& chunk,
+                        std::span<const primary_key::PKColumn> columns,
+                        std::vector<int64_t>& rows,
+                        std::vector<uint64_t>& positions);
 
 class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
                                            public SearchSinkInsertBaseImpl {

@@ -459,3 +459,22 @@ ALTER TABLE events SET (compaction_interval = 0);
 
 statement ok
 ALTER TABLE events RESET (compaction_interval);
+
+# DOCS_TEST: example_038
+
+statement ok
+DROP TABLE IF EXISTS events;
+
+statement ok
+CREATE TABLE events (id INTEGER PRIMARY KEY, msg VARCHAR, level INTEGER) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER TABLE events ALTER COLUMN msg SET COMPRESSION dict_zstd(compression_level = 9);
+
+statement ok
+ALTER TABLE events ALTER COLUMN level SET COMPRESSION rle;
+
+statement ok
+ALTER TABLE events ALTER COLUMN msg SET COMPRESSION DEFAULT;

@@ -47,8 +47,6 @@
 
 #include "connector/duckdb_client_state.h"
 #include "connector/full_scanner.h"
-#include "connector/primary_key.h"
-#include "connector/search_remove_filter.hpp"
 #include "connector/search_sink_writer.hpp"
 #include "connector/term_dict.h"
 #include "pg/connection_context.h"
@@ -106,8 +104,8 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      uint64_t snapshot_tick) {
   const auto* col_reader = sub.GetColReader();
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
-  FullScanner scanner{
-    *col_reader, source.projections, {}, &context, source.filter_states};
+  FullScanner scanner{*col_reader, source.projections,   {},
+                      &context,    source.filter_states, false};
   auto it_mask = sub.MaskedDocs();
   const bool has_mask = sub.docs_mask() != nullptr;
   const uint64_t docs = sub.Meta().docs_count;
@@ -153,24 +151,6 @@ void Publish(search::SearchTable& shard) {
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("search-table build: publish failed: ", result.res.message()));
   }
-}
-
-std::shared_ptr<SearchRemoveFilter> MakeRemoval(std::vector<int64_t> rowids) {
-  if (rowids.empty()) {
-    return nullptr;
-  }
-  // Sorted rowids encode to sorted terms, so the remove filter walks each
-  // segment's term dictionary sequentially.
-  absl::c_sort(rowids);
-  auto removal =
-    std::make_shared<SearchRemoveFilter>(rowids.size(), term_dict::kPKFieldId);
-  std::string key;
-  for (const auto rowid : rowids) {
-    key.clear();
-    primary_key::AppendGenerated(key, static_cast<uint64_t>(rowid));
-    removal->Add(key);
-  }
-  return removal;
 }
 
 struct Slice {
@@ -322,13 +302,15 @@ bool RebuildGroup(duckdb::ClientContext& context,
 
   bool truncated = false;
   const bool replaced_ok = shard.ReplaceSegments(
-    replaced, adopted, [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
+    replaced, adopted, [&](irs::IndexWriter::QueryContext& removal) {
       auto [rowids, truncate_tick] = shard.DrainDeleteLog();
       if (truncate_tick > snapshot_tick) {
         truncated = true;
         return false;
       }
-      removal = MakeRemoval(std::move(rowids));
+      if (auto rows = MakeRowRemoval(rowids, {})) {
+        removal = {std::move(rows), irs::writer_limits::kMinTick};
+      }
       return true;
     });
   const auto swapped = truncated     ? SwapResult::Truncated

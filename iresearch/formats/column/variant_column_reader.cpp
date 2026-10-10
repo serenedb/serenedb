@@ -37,7 +37,8 @@ namespace irs {
 
 VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
                                          std::unique_ptr<ColumnReader> validity,
-                                         std::vector<VariantRgMeta>&& rgs)
+                                         std::vector<VariantRgMeta>&& rgs,
+                                         uint64_t file_id)
   : ColumnReader{id, std::move(type), {}, std::move(validity), {}} {
   _variant_rgs.reserve(rgs.size());
   _variant_offsets.reserve(rgs.size() + 1);
@@ -45,9 +46,9 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   auto stats = duckdb::VariantStats::CreateEmpty(_type);
   for (auto& rg : rgs) {
     VariantRg vrg;
-    vrg.unshredded = Make(std::move(*rg.unshredded));
+    vrg.unshredded = Make(std::move(*rg.unshredded), file_id);
     if (rg.shredded) {
-      vrg.shredded = Make(std::move(*rg.shredded));
+      vrg.shredded = Make(std::move(*rg.shredded), file_id);
       duckdb::child_list_t<duckdb::LogicalType> intermediate_children;
       intermediate_children.emplace_back("unshredded", vrg.unshredded->Type());
       intermediate_children.emplace_back("shredded", vrg.shredded->Type());
@@ -96,10 +97,10 @@ void VariantColumnReader::SeekVariantRg(ScanState& s, size_t rg,
   auto& vstate = VariantState(s).rgs[rg];
   if (!vstate.unshredded) {
     vstate.unshredded =
-      std::make_unique<ScanState>(rg_meta.unshredded->InitScan(*s.ctx));
+      std::make_unique<ScanState>(rg_meta.unshredded->InitScan(s.ctx));
     if (rg_meta.shredded) {
       vstate.shredded =
-        std::make_unique<ScanState>(rg_meta.shredded->InitScan(*s.ctx));
+        std::make_unique<ScanState>(rg_meta.shredded->InitScan(s.ctx));
     }
     vstate.local_pos = 0;
   }
@@ -179,7 +180,7 @@ VariantColumnReader::ShreddedLeafScan(
     vstate.leaf_reader = FindShreddedLeaf(*_variant_rgs[rg].shredded, path);
     SDB_ASSERT(vstate.leaf_reader);
     vstate.leaf =
-      std::make_unique<ScanState>(vstate.leaf_reader->InitScan(*s.ctx));
+      std::make_unique<ScanState>(vstate.leaf_reader->InitScan(s.ctx));
   }
   return {vstate.leaf_reader, vstate.leaf.get()};
 }

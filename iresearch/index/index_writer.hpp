@@ -53,6 +53,7 @@ namespace duckdb {
 class DatabaseInstance;
 }
 #include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -199,6 +200,7 @@ class IndexWriter : private util::Noncopyable {
  public:
   struct QueryContext {
     using FilterPtr = std::shared_ptr<const irs::Filter>;
+    using RemovalPtr = std::shared_ptr<const DocRemoval>;
 
     QueryContext() = default;
 
@@ -210,9 +212,16 @@ class IndexWriter : private util::Noncopyable {
       : QueryContext{{FilterPtr{}, &filter}, tick} {}
     QueryContext(irs::Filter::ptr&& filter, uint64_t tick)
       : QueryContext{FilterPtr{std::move(filter)}, tick} {}
+    QueryContext(RemovalPtr removal, uint64_t tick)
+      : removal{std::move(removal)}, tick{tick} {
+      SDB_ASSERT(this->removal);
+    }
+
+    explicit operator bool() const noexcept { return filter || removal; }
 
     FilterPtr filter;
-    uint64_t tick;
+    RemovalPtr removal;
+    uint64_t tick = writer_limits::kMinTick;
   };
   static_assert(std::is_nothrow_move_constructible_v<QueryContext>);
 
@@ -451,10 +460,9 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t CurrentSegmentId() const noexcept;
 
-  bool ReplaceSegments(
-    std::span<const std::string_view> replaced,
-    std::span<const std::string_view> adopted_metas,
-    absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
+  bool ReplaceSegments(std::span<const std::string_view> replaced,
+                       std::span<const std::string_view> adopted_metas,
+                       absl::FunctionRef<bool(QueryContext&)> removal_provider);
 
   static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
                                IndexWriterOptions opts = {});
@@ -500,6 +508,7 @@ class IndexWriter : private util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
     std::optional<MergeWriter> merger;
+    std::optional<MergeWriter> remap;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
@@ -548,7 +557,7 @@ class IndexWriter : private util::Noncopyable {
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
-    QueryContext::FilterPtr removal;
+    QueryContext removal;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);

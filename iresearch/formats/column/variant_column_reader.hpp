@@ -46,7 +46,7 @@ class VariantColumnReader final : public ColumnReader {
  public:
   VariantColumnReader(field_id id, duckdb::LogicalType type,
                       std::unique_ptr<ColumnReader> validity,
-                      std::vector<VariantRgMeta>&& rgs);
+                      std::vector<VariantRgMeta>&& rgs, uint64_t file_id);
 
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
     return s.variant ? s.variant->cursor : 0;

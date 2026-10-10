@@ -23,6 +23,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -32,6 +34,8 @@ std::string FileName(std::string_view prefix, uint64_t gen);
 
 // Returns string in the following format : _{gen}
 inline std::string FileName(uint64_t gen) { return FileName("_", gen); }
+
+std::optional<uint64_t> SegmentNumber(std::string_view name) noexcept;
 
 // Returns string in the following format : {name}.{ext}
 void FileName(std::string& out, std::string_view name, std::string_view ext);

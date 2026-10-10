@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/col_reader.hpp"
 
+#include <absl/random/random.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -29,8 +30,10 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
+#include <limits>
 #include <map>
 #include <utility>
+#include <vector>
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -76,6 +79,12 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
   }
   for (const auto& m : meta.validity) {
     CheckBlockRange(m, meta.id, footer_offset);
+  }
+  for (const auto& d : meta.dictionaries) {
+    SDB_ENSURE(d.byte_size != 0 && d.file_offset + d.byte_size <= footer_offset,
+               ".col reader: dictionary on column id ", meta.id,
+               " out of range (offset ", d.file_offset, ", size ", d.byte_size,
+               ")");
   }
   for (const auto& c : meta.children) {
     CheckColumnMetaRanges(c, footer_offset);
@@ -164,6 +173,8 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
     return;
   }
   auto fin = _ctx.In().Dup();
+  std::vector<ColumnMeta> metas;
+  uint64_t file_id = 0;
   format_utils::ReadFooter(
     *fin, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& footer, uint64_t data_size) {
@@ -172,13 +183,8 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         kColFieldColumns, "columns",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            auto meta = DeserializeColumnMeta(obj);
+            auto& meta = metas.emplace_back(DeserializeColumnMeta(obj));
             CheckColumnMetaRanges(meta, data_size);
-            auto col = ColumnReader::Make(std::move(meta));
-            const auto id = col->Id();
-            const bool ok = _by_id.emplace(id, col.get()).second;
-            SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
-            _columns.push_back(std::move(col));
           });
         });
       footer.ReadOptionalList(
@@ -194,11 +200,29 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
             _norm_columns.push_back(std::move(column));
           });
         });
+      file_id = footer.ReadPropertyWithExplicitDefault<uint64_t>(
+        kColFieldFileId, "file_id", 0);
       footer.Unset<duckdb::DatabaseInstance>();
     });
+  if (file_id == 0) {
+    file_id = NewColFileId();
+  }
+  for (auto& meta : metas) {
+    auto col = ColumnReader::Make(std::move(meta), file_id);
+    const auto id = col->Id();
+    const bool ok = _by_id.emplace(id, col.get()).second;
+    SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
+    _columns.push_back(std::move(col));
+  }
 }
 
 ColReader::~ColReader() = default;
+
+uint64_t NewColFileId() {
+  absl::BitGen gen;
+  return absl::Uniform<uint64_t>(absl::IntervalClosed, gen, 1,
+                                 std::numeric_limits<uint64_t>::max());
+}
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {
   auto it = _by_id.find(id);

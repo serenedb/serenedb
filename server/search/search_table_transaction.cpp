@@ -33,7 +33,6 @@
 #include <vector>
 
 #include "connector/column_id.h"
-#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
@@ -160,8 +159,6 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
   }
 
   const auto table_id = shard.GetTableId();
-  connector::SearchSinkDeleteBaseImpl remover{trx};
-  std::string key;
   size_t op_idx = entry.applied_ops;
   uint64_t emitted = 0;
 
@@ -172,13 +169,7 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
       }
       return;
     }
-    remover.InitImpl(op.delete_rows.size());
-    for (const auto row : op.delete_rows) {
-      key.clear();
-      connector::primary_key::AppendGenerated(key, static_cast<uint64_t>(row));
-      remover.DeleteRowImpl(key);
-    }
-    remover.FinishImpl();
+    trx.Remove(connector::MakeRowRemoval(op.delete_rows, op.delete_positions));
   };
   auto drain_ops = [&] {
     while (op_idx < entry.ops.size() && op_rows[op_idx] <= emitted) {
@@ -250,12 +241,13 @@ SearchTableTransaction::EnsureSerialSearchTransaction(
 }
 
 void SearchTableTransaction::AddSearchDeletes(
-  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
+  const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows,
+  std::span<const uint64_t> positions) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
-  _changes[shard->GetTableId()].AppendDeletes(rows);
+  _changes[shard->GetTableId()].AppendDeletes(rows, positions);
 }
 
 void SearchTableTransaction::AddSearchTruncate(

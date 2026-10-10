@@ -142,17 +142,11 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
   // buffer is replayed, ordered against exactly the rows that precede it. The
   // new row is buffered straight after, so it still outranks the removal of the
   // version it replaces.
-  duckdb::UnifiedVectorFormat old_pk;
-  chunk.data[gstate.old_pk_columns[0].input_col_idx].ToUnifiedFormat(num_rows,
-                                                                     old_pk);
-  const auto* old_pk_data =
-    duckdb::UnifiedVectorFormat::GetData<int64_t>(old_pk);
   std::vector<int64_t> old_rows;
-  old_rows.reserve(num_rows);
-  for (duckdb::idx_t row = 0; row < num_rows; ++row) {
-    old_rows.push_back(old_pk_data[old_pk.sel->get_index(row)]);
-  }
-  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows);
+  std::vector<uint64_t> old_positions;
+  CollectRemovedRows(chunk, gstate.old_pk_columns, old_rows, old_positions);
+  gstate.sdb_txn->SearchTxn().AddSearchDeletes(gstate.search_table, old_rows,
+                                               old_positions);
 
   duckdb::DataChunk new_row;
   new_row.InitializeEmpty(gstate.chunk_types);

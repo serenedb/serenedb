@@ -82,6 +82,7 @@
 #include "connector/duckdb_physical_search_update.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
+#include "connector/scan/scan_bind.h"
 #include "connector/view_index_bind.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
@@ -213,6 +214,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanInsert(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     *entry, op.types, op.estimated_cardinality, op.return_chunk);
   insert.children.emplace_back(*plan);
+  connector::ShareScanPayloads(*plan);
   return insert;
 }
 
@@ -244,6 +246,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanCreateTableAs(
   auto& insert = planner.Make<connector::SereneDBSearchInsert>(
     std::move(op.info), op.estimated_cardinality);
   insert.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return insert;
 }
 
@@ -270,6 +273,7 @@ duckdb::PhysicalOperator& SereneDBCatalog::PlanUpdate(
     *entry, op.columns, std::move(op.expressions), op.types,
     op.estimated_cardinality, op.return_chunk);
   update.children.emplace_back(plan);
+  connector::ShareScanPayloads(plan);
   return update;
 }
 
@@ -426,6 +430,10 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
     return duckdb::ErrorData{
       duckdb::BinderException("unrecognized parameter \"%s\"", unknown->first)};
   }
+  for (const auto& column : info.Base().columns.Logical()) {
+    CheckColumnCompression(
+      column, search ? TableEngine::Search : TableEngine::Transactional);
+  }
   return {};
 }
 
@@ -559,6 +567,29 @@ static void RefuseViewAlter(const duckdb::AlterTableInfo& info,
                   ERR_DETAIL("This operation is not supported for views."));
 }
 
+static void CheckAlterCompression(const duckdb::AlterTableInfo& info,
+                                  const duckdb::TableCatalogEntry& table) {
+  const auto engine = dynamic_cast<const SearchTableEntry*>(&table)
+                        ? TableEngine::Search
+                        : TableEngine::Transactional;
+  if (info.alter_table_type == duckdb::AlterTableType::ADD_COLUMN) {
+    CheckColumnCompression(info.Cast<duckdb::AddColumnInfo>().new_column,
+                           engine);
+    return;
+  }
+  if (info.alter_table_type != duckdb::AlterTableType::SET_COLUMN_COMPRESSION) {
+    return;
+  }
+  const auto& set = info.Cast<duckdb::SetColumnCompressionInfo>();
+  if (!table.ColumnExists(set.column_name)) {
+    return;
+  }
+  auto column = table.GetColumn(set.column_name).Copy();
+  column.SetCompressionType(set.compression_type);
+  column.SetCompressionLevel(set.compression_level);
+  CheckColumnCompression(column, engine);
+}
+
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
                                              duckdb::AlterInfo& info) {
   duckdb::CatalogEntryRetriever retriever{context};
@@ -580,6 +611,11 @@ void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,
   }
   if (lookup.entry->type == duckdb::CatalogType::VIEW_ENTRY) {
     RefuseViewAlter(info.Cast<duckdb::AlterTableInfo>(), name);
+    return;
+  }
+  if (lookup.entry->type == duckdb::CatalogType::TABLE_ENTRY) {
+    CheckAlterCompression(info.Cast<duckdb::AlterTableInfo>(),
+                          lookup.entry->Cast<duckdb::TableCatalogEntry>());
   }
 }
 

@@ -42,9 +42,9 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
     const auto* col_reader = reader[l.unit.seg].GetColReader();
     SDB_ENSURE(col_reader != nullptr,
                "bulk cs scan: segment has no columnstore reader");
-    slot = std::make_unique<FullScanner>(*col_reader, g.cs_projections,
-                                         l.seg_cls.active, g.client_context,
-                                         l.filter_states);
+    slot = std::make_unique<FullScanner>(
+      *col_reader, g.cs_projections, l.seg_cls.active, g.client_context,
+      l.filter_states, g.Bind().share_payloads);
   }
   l.scanner = slot.get();
 }
@@ -60,6 +60,7 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
+    const auto first_row = l.doc_cursor;
     duckdb::idx_t produced;
     if (l.has_mask) {
       const auto first =
@@ -75,6 +76,8 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     l.doc_cursor += take;
     if (produced != 0) {
+      WriteRowPositions(g, l.unit.seg, first_row, scanner.LastSelection(),
+                        produced, output);
       WriteVirtualColumns(g, produced, nullptr, output);
       return produced;
     }

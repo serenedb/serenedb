@@ -61,6 +61,15 @@ set(IResearch_core_sources
     ./formats/column/norm_column_reader.cpp
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
+    ./formats/column/codecs/byte_codec.cpp
+    ./formats/column/codecs/fsst_codec.cpp
+    ./formats/column/codecs/numeric_scan.cpp
+    ./formats/column/codecs/numeric_writer.cpp
+    ./formats/column/codecs/registry.cpp
+    ./formats/column/codecs/sequence_codec.cpp
+    ./formats/column/codecs/string_scan.cpp
+    ./formats/column/codecs/string_writer.cpp
+    ./formats/column/codecs/trained_dictionary.cpp
     ./formats/column/read_context.cpp
     ./formats/format_utils.cpp
     ./formats/posting/block_codec.cpp
@@ -80,6 +89,7 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
+    ./index/doc_removal.cpp
     ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp
@@ -472,6 +482,7 @@ target_include_directories(
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
     PUBLIC
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
@@ -524,6 +535,8 @@ target_link_libraries(
     PUBLIC s2
     PUBLIC duckdb_static
     PRIVATE lz4_static
+    PRIVATE duckdb_fsst
+    PRIVATE zxc::zxc_lib
     PRIVATE stemmer-static
 )
 

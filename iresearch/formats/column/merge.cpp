@@ -29,10 +29,13 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -80,6 +83,83 @@ class HyperLogLogMerger {
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
+constexpr size_t kSampleWindows = 32;
+constexpr size_t kSampleWindowBytes =
+  codecs::kTrainSampleBytes / kSampleWindows + codecs::kSamplePieceBytes;
+constexpr size_t kSampleWindowVectors = 64;
+
+void SampleDictionary(std::span<const MergeSource> sources, field_id id,
+                      std::span<const std::shared_ptr<ReadContext>> ctxs,
+                      ColumnWriter& cw) {
+  struct Range {
+    size_t source;
+    const ColumnReader* col;
+    uint64_t rows;
+  };
+  std::vector<Range> ranges;
+  uint64_t total = 0;
+  for (size_t si = 0; si < sources.size(); ++si) {
+    if (!sources[si].col_reader) {
+      continue;
+    }
+    const auto* col = sources[si].col_reader->Column(id);
+    if (!col || col->RowCount() == 0) {
+      continue;
+    }
+    ranges.push_back({si, col, col->RowCount()});
+    total += col->RowCount();
+  }
+  if (total == 0) {
+    return;
+  }
+  absl::flat_hash_set<uint64_t> seen;
+  std::string window;
+  size_t r = 0;
+  uint64_t base = 0;
+  for (size_t w = 0; w < kSampleWindows; ++w) {
+    const uint64_t target = total * w / kSampleWindows;
+    while (target >= base + ranges[r].rows) {
+      base += ranges[r].rows;
+      ++r;
+    }
+    const auto& range = ranges[r];
+    auto state = range.col->InitScan(ctxs[range.source]);
+    uint64_t row = target - base;
+    const uint64_t stop =
+      std::min(range.rows, total * (w + 1) / kSampleWindows - base);
+    range.col->Skip(state, row);
+    ColumnReader::VectorScratch scratch{range.col->Type()};
+    seen.clear();
+    window.clear();
+    for (size_t v = 0; v < kSampleWindowVectors && row < stop &&
+                       window.size() < kSampleWindowBytes;
+         ++v) {
+      const auto take =
+        std::min<duckdb::idx_t>(stop - row, STANDARD_VECTOR_SIZE);
+      auto& batch = scratch.Reset();
+      range.col->Scan(state, batch, take);
+      duckdb::UnifiedVectorFormat format;
+      batch.ToUnifiedFormat(take, format);
+      const auto* data =
+        duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
+      for (duckdb::idx_t i = 0; i < take && window.size() < kSampleWindowBytes;
+           ++i) {
+        const auto idx = format.sel->get_index(i);
+        if (!format.validity.RowIsValid(idx)) {
+          continue;
+        }
+        const auto& s = data[idx];
+        if (seen.insert(duckdb::Hash(s)).second) {
+          window.append(s.GetData(), s.GetSize());
+        }
+      }
+      row += take;
+    }
+    const std::string_view view{window};
+    cw.SampleDictionary({&view, 1});
+  }
+}
+
 }  // namespace
 
 bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
@@ -101,10 +181,10 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     return true;
   }
 
-  std::vector<std::optional<ReadContext>> source_ctxs(sources.size());
+  std::vector<std::shared_ptr<ReadContext>> source_ctxs(sources.size());
   for (size_t i = 0; i < sources.size(); ++i) {
     if (sources[i].col_reader) {
-      source_ctxs[i].emplace(*sources[i].col_reader);
+      source_ctxs[i] = std::make_shared<ReadContext>(*sources[i].col_reader);
     }
   }
 
@@ -140,16 +220,22 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
     const auto opts = field_options
                         ? field_options->GetColumnOptions(field_id_v)
                         : ColumnOptions{};
+    const auto codec_params =
+      field_options ? field_options->CodecParams(opts) : ColCodecParams{};
 
     auto& cw =
       output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        row_group_size, opts.compression, false);
+                        row_group_size, opts.compression, false, codec_params);
     if (opts.ann_info) {
       output.AttachAnn(field_id_v, *opts.ann_info).SetMergeSources(sources);
     }
 
     if (opts.hyperloglog) {
       hyperloglog.Begin();
+    }
+
+    if (cw.TrainsDictionary()) {
+      SampleDictionary(sources, field_id_v, source_ctxs, cw);
     }
 
     ColumnReader::VectorScratch batch_scratch{first_col->Type()};
@@ -176,7 +262,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       const bool stored_hll =
         opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
 
-      auto state = col->InitScan(*source_ctxs[si]);
+      auto state = col->InitScan(source_ctxs[si]);
       cw.PadNullsTo(out_doc);
       const auto total = col->RowCount();
       uint64_t pos = 0;

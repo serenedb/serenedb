@@ -27,12 +27,28 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
 
+#include <charconv>
+#include <system_error>
+
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 
 std::string FileName(std::string_view prefix, uint64_t gen) {
   return absl::StrCat(prefix, gen);
+}
+
+std::optional<uint64_t> SegmentNumber(std::string_view name) noexcept {
+  if (name.size() < 2 || name.front() != '_') {
+    return std::nullopt;
+  }
+  uint64_t number = 0;
+  const auto* end = name.data() + name.size();
+  const auto [ptr, ec] = std::from_chars(name.data() + 1, end, number);
+  if (ec != std::errc{} || ptr != end) {
+    return std::nullopt;
+  }
+  return number;
 }
 
 void FileName(std::string& result, std::string_view name,

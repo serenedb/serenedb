@@ -21,6 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/function/compression_function.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/formats/term_reader.hpp>
@@ -34,6 +39,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <random>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -2200,6 +2206,186 @@ TEST_P(MergeWriterTestCase, test_merge_writer_columns_remove) {
     EXPECT_FALSE(anothers.contains("shared_value_1"));
     EXPECT_TRUE(anothers.contains("shared_value_2"));
     EXPECT_TRUE(anothers.contains("shared_value_3"));
+  }
+}
+
+TEST_P(MergeWriterTestCase, MergeKeepsTheColumnCompressionLevel) {
+  constexpr irs::field_id kLevelId = kDocStringId;
+  constexpr size_t kDocsPerSegment = 100;
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t s = 0; s < 2; ++s) {
+      auto batch = writer->GetBatch();
+      for (size_t i = 0; i < kDocsPerSegment; ++i) {
+        auto doc = batch.Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        tests::InsertField(doc, foo);
+        auto& cw = doc.GetColWriter()->OpenColumn(
+          kLevelId, duckdb::LogicalType::VARCHAR, /*skip_validity=*/false,
+          DEFAULT_ROW_GROUP_SIZE,
+          duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+          /*hyperloglog=*/false, irs::ColCodecParams{.compression_level = 1});
+        duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
+          duckdb::StringVector::AddString(
+            v, "value-" + std::to_string(s * kDocsPerSegment + i));
+        cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(),
+                  v, 1);
+      }
+      batch.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  for (const uint8_t column_level : {uint8_t{0}, uint8_t{9}}) {
+    SCOPED_TRACE(testing::Message("column level ")
+                 << static_cast<int>(column_level));
+    irs::FunctionFieldOptions field_options{
+      [column_level](irs::field_id id) {
+        if (id != kLevelId) {
+          return irs::ColumnOptions{};
+        }
+        return irs::ColumnOptions{
+          .compression = duckdb::CompressionType::COMPRESSION_DICT_ZSTD,
+          .compression_level = column_level};
+      },
+      irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+    field_options.codec_params = irs::ColCodecParams{.compression_level = 2};
+    irs::MemoryDirectory merged_dir;
+    irs::SegmentMeta merged_meta;
+    const irs::SegmentWriterOptions options{
+      .db = &::irs::DuckDBEngine::Instance().instance(),
+      .field_options = &field_options,
+    };
+    irs::MergeWriter writer(merged_dir, options);
+    writer.Reset(reader.begin(), reader.end());
+    ASSERT_TRUE(irs::GetReady(writer.Flush(merged_meta)));
+
+    auto segment = irs::SegmentReaderImpl::Open(
+      merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+    const auto* cs = segment->GetColReader();
+    ASSERT_NE(nullptr, cs);
+    const auto* col = cs->Column(kLevelId);
+    ASSERT_NE(nullptr, col);
+    ASSERT_FALSE(col->DataBlocks().empty());
+    irs::ReadContext ctx{*cs};
+    irs::BlockWindow window{};
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(block.codec->type,
+                duckdb::CompressionType::COMPRESSION_DICT_ZSTD);
+      window = col->Locate(row, window);
+      auto seg = col->OpenSegment(window.block, ctx);
+      auto info = seg->GetCompressionFunction().get_segment_info(
+        duckdb::QueryContext{}, *seg);
+      EXPECT_EQ(info["level"], column_level == 0 ? "2" : "9");
+      row += block.tuple_count;
+    }
+  }
+}
+
+TEST_P(MergeWriterTestCase, MergeTrainsTextDictionaryFromTheWholeColumn) {
+  constexpr irs::field_id kTextId = kDocStringId;
+  constexpr size_t kDocsPerSegment = 30000;
+  const auto value = [](size_t g) {
+    static constexpr std::string_view kVerbs[] = {
+      "handled request", "rejected payment", "retried connection",
+      "flushed cache",   "opened session",   "closed stream",
+      "queued job",      "scheduled task"};
+    static constexpr std::string_view kServices[] = {
+      "checkout", "frontend", "cart", "shipping", "currency", "ads", "email"};
+    static constexpr std::string_view kAlphabet =
+      "abcdefghijklmnopqrstuvwxyz0123456789";
+    std::mt19937_64 rng{g * 0x9E3779B97F4A7C15ULL + 7};
+    std::string id;
+    for (int i = 0; i < 16; ++i) {
+      id.push_back(kAlphabet[rng() % kAlphabet.size()]);
+    }
+    return "2026-10-05T12:" + std::to_string(rng() % 60) + " INFO " +
+           std::string{kServices[rng() % std::size(kServices)]} + " " +
+           std::string{kVerbs[rng() % std::size(kVerbs)]} + " id=" + id +
+           " user=" + std::to_string(rng() % 100000) + " took " +
+           std::to_string(rng() % 997) + "ms";
+  };
+  irs::MemoryDirectory dir;
+  {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t s = 0; s < 2; ++s) {
+      auto batch = writer->GetBatch();
+      for (size_t i = 0; i < kDocsPerSegment; ++i) {
+        auto doc = batch.Insert();
+        tests::StringField foo{"foo", "bar"};
+        foo.id = kFooId;
+        tests::InsertField(doc, foo);
+        auto& cw = doc.GetColWriter()->OpenColumn(
+          kTextId, duckdb::LogicalType::VARCHAR, /*skip_validity=*/false,
+          DEFAULT_ROW_GROUP_SIZE, duckdb::CompressionType::COMPRESSION_AUTO,
+          /*hyperloglog=*/false,
+          irs::ColCodecParams{.tier = irs::WriteTier::Flush});
+        duckdb::Vector v{duckdb::LogicalType::VARCHAR, 1};
+        duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v)[0] =
+          duckdb::StringVector::AddString(v, value(s * kDocsPerSegment + i));
+        cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(),
+                  v, 1);
+      }
+      batch.Commit();
+      ASSERT_TRUE(writer->RefreshCommit());
+    }
+  }
+  auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+
+  irs::FunctionFieldOptions field_options{
+    [](irs::field_id) { return irs::ColumnOptions{}; },
+    irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+  irs::MemoryDirectory merged_dir;
+  irs::SegmentMeta merged_meta;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance(),
+    .field_options = &field_options,
+  };
+  irs::MergeWriter writer(merged_dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_TRUE(irs::GetReady(writer.Flush(merged_meta)));
+
+  auto segment = irs::SegmentReaderImpl::Open(
+    merged_dir, merged_meta, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2 * kDocsPerSegment, segment->docs_count());
+  const auto* cs = segment->GetColReader();
+  ASSERT_NE(nullptr, cs);
+  const auto* col = cs->Column(kTextId);
+  ASSERT_NE(nullptr, col);
+  ASSERT_FALSE(col->DataBlocks().empty());
+  irs::ReadContext ctx{*cs};
+  bool trained = false;
+  for (size_t b = 0; b < col->DataBlocks().size() && !trained; ++b) {
+    auto seg = col->OpenSegment(b, ctx);
+    auto info = seg->GetCompressionFunction().get_segment_info(
+      duckdb::QueryContext{}, *seg);
+    trained = info["dictionary"] == "trained:1";
+  }
+  EXPECT_TRUE(trained);
+
+  auto state = col->InitScan(ctx);
+  uint64_t row = 0;
+  while (row < col->RowCount()) {
+    const auto take =
+      std::min<uint64_t>(col->RowCount() - row, STANDARD_VECTOR_SIZE);
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, take);
+    out.Flatten(take);
+    const auto* data = duckdb::FlatVector::GetData<duckdb::string_t>(out);
+    for (uint64_t k = 0; k < take; ++k) {
+      ASSERT_EQ(data[k].GetString(), value(row + k)) << "row " << row + k;
+    }
+    row += take;
   }
 }
 

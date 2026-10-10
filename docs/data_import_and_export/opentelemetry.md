@@ -79,6 +79,11 @@ value the column cannot hold) answers `400`, which clients do not retry, and
 a transient server condition (a transaction conflict, out of memory, shutdown)
 answers `503`, which they do.
 
+Each export is written in one transaction, so a failed export stores nothing:
+a metrics export whose points span several `otel_metrics_*` tables is written
+to all of them or to none, and a client retry cannot duplicate the tables
+that succeeded the first time.
+
 ### Encodings
 
 Both OTLP encodings are accepted, and the response always uses the request's:

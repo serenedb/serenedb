@@ -20,33 +20,71 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <exception>
+#include <iresearch/utils/assert.hpp>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "network/http/handler.h"
 
 namespace sdb::network {
+
+class PreparedCache {
+ public:
+  PreparedEntry& Get(std::string_view sql, size_t capacity) {
+    SDB_ASSERT(capacity != 0);
+    ++_tick;
+    Slot* victim = nullptr;
+    for (auto& slot : _slots) {
+      if (slot.entry.sql == sql) {
+        slot.last_use = _tick;
+        return slot.entry;
+      }
+      if (victim == nullptr || slot.last_use < victim->last_use) {
+        victim = &slot;
+      }
+    }
+    if (_slots.size() < capacity) {
+      _slots.reserve(capacity);
+      victim = &_slots.emplace_back();
+    } else {
+      victim->entry.statement.reset();
+    }
+    victim->entry.sql = sql;
+    victim->last_use = _tick;
+    return victim->entry;
+  }
+
+  size_t Size() const noexcept { return _slots.size(); }
+
+ private:
+  struct Slot {
+    PreparedEntry entry;
+    uint64_t last_use = 0;
+  };
+
+  std::vector<Slot> _slots;
+  uint64_t _tick = 0;
+};
 
 inline std::optional<duckdb::ErrorData> EnsurePrepared(RequestContext& ctx,
                                                        PreparedEntry& entry,
                                                        const std::string& sql) {
   try {
     auto& connection = ctx.Connection();
-    if (entry.statement != nullptr && entry.sql != sql) {
-      entry.statement.reset();
-    }
     if (entry.statement == nullptr) {
       auto statement = connection.Prepare(sql);
       if (statement->HasError()) {
         return statement->GetErrorObject();
       }
       entry.statement = std::move(statement);
-      entry.sql = sql;
     }
   } catch (const std::exception& error) {
     return duckdb::ErrorData{error};

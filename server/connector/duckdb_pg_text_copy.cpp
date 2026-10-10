@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -34,6 +36,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -44,6 +47,7 @@
 #include <vector>
 
 #include "connector/copy_byte_source.h"
+#include "connector/copy_from_blocks.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
@@ -249,31 +253,67 @@ duckdb::CopyFunctionExecutionMode ExecutionMode(bool, bool) {
 struct PgTextCopyFromBindData final : public duckdb::TableFunctionData {
   PgTextCopyFromBindData(duckdb::vector<duckdb::LogicalType> types,
                          std::string path, char delim, std::string null_str,
-                         bool header)
+                         bool header, bool parallel)
     : sql_types{std::move(types)},
       file_path{std::move(path)},
       delim{delim},
       null_str{std::move(null_str)},
-      header{header} {}
+      header{header},
+      parallel{parallel} {}
   duckdb::vector<duckdb::LogicalType> sql_types;
   std::string file_path;
   char delim;
   std::string null_str;
   bool header;
+  bool parallel;
 };
 
-struct PgTextCopyFromGlobalState final
-  : public duckdb::GlobalTableFunctionState {
-  std::unique_ptr<ByteSource> source;
-  std::vector<sdb::pg::DeserializationFunction<sdb::pg::VectorSink>>
-    deserializers;
-  std::string partial;  // bytes pulled but not yet ending in a full row
-  bool finished = false;
+struct PgTextCopyFromGlobalState final : public CopyFromGlobalState {
+  std::string carry;
+  std::string partial;          // bytes pulled but not yet ending in a full row
   bool header_pending = false;  // drop the first line (COPY ... HEADER)
+
+ protected:
+  std::string CutBlock() final {
+    std::string data = std::exchange(carry, {});
+    if (header_pending) {
+      DropHeader(data);
+    }
+    bool has_row_end = data.find(kRowSep) != std::string::npos;
+    while (!finished && (!has_row_end || data.size() < kCopyBlockBytes)) {
+      has_row_end |= Pull(data).find(kRowSep) != std::string_view::npos;
+    }
+    if (!finished) {
+      const size_t rows_end = data.rfind(kRowSep) + 1;
+      carry.assign(data, rows_end);
+      data.resize(rows_end);
+    }
+    return data;
+  }
+
+ private:
+  void DropHeader(std::string& data) {
+    header_pending = false;
+    size_t header_end = data.find(kRowSep);
+    while (header_end == std::string::npos) {
+      if (finished) {
+        data.clear();
+        return;
+      }
+      Pull(data);
+      header_end = data.find(kRowSep);
+    }
+    data.erase(0, header_end + 1);
+  }
+};
+
+struct PgTextCopyFromLocalState final : public CopyFromLocalState {
+  bool dctx_ready = false;
+  std::string field_buf;
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
-  duckdb::ClientContext&, duckdb::CopyFromFunctionBindInput& input,
+  duckdb::ClientContext& context, duckdb::CopyFromFunctionBindInput& input,
   duckdb::vector<duckdb::Identifier>&,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   // HEADER lands in parsed_options (still populated here -- the binder folds it
@@ -282,7 +322,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   ResolveTextCopyOptions(input.info.options, opts);
   return duckdb::make_uniq<PgTextCopyFromBindData>(
     expected_types, input.info.file_path, opts.delim, std::move(opts.null_str),
-    opts.header);
+    opts.header, ParallelCopyFrom(context, input));
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
@@ -315,13 +355,28 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
                 "connection (transport not attached)"));
     }
     result->source = std::make_unique<BridgeByteSource>(*bridge);
-    return result;
+  } else {
+    // file / real-stdin: block-buffered reader over the OS FileHandle.
+    result->source = std::make_unique<HandleByteSource>(
+      duckdb::FileSystem::GetFileSystem(context).OpenFile(
+        bind.file_path, duckdb::FileFlags::FILE_FLAGS_READ));
   }
-  // file / real-stdin: block-buffered reader over the OS FileHandle.
-  result->source = std::make_unique<HandleByteSource>(
-    duckdb::FileSystem::GetFileSystem(context).OpenFile(
-      bind.file_path, duckdb::FileFlags::FILE_FLAGS_READ));
+  result->deserializers.reserve(bind.sql_types.size());
+  for (const auto& type : bind.sql_types) {
+    result->deserializers.push_back(
+      sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
+        type, sdb::pg::VarFormat::Text));
+  }
+  if (bind.parallel) {
+    result->StartParallel(context);
+  }
   return result;
+}
+
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitLocalFrom(
+  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
+  duckdb::GlobalTableFunctionState*) {
+  return duckdb::make_uniq<PgTextCopyFromLocalState>();
 }
 
 // Decode one PG TEXT field body that contains a backslash escape, unescaping
@@ -478,8 +533,8 @@ void ProcessRow(
   }
 }
 
-void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
-              duckdb::DataChunk& output) {
+void ScanSerial(duckdb::ClientContext& context,
+                duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<PgTextCopyFromGlobalState>();
   const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
   auto& source = *g.source;
@@ -488,14 +543,6 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     return;
   }
 
-  if (g.deserializers.size() != bind.sql_types.size()) {
-    g.deserializers.reserve(bind.sql_types.size());
-    for (const auto& type : bind.sql_types) {
-      g.deserializers.push_back(
-        sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
-          type, sdb::pg::VarFormat::Text));
-    }
-  }
   sdb::pg::DeserializeContext dctx;
   sdb::pg::FillDeserializeContext(context, dctx);
   std::string field_buf;  // reused per field across this chunk
@@ -553,6 +600,43 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     }
     source.DrainToEof();
     g.finished = true;
+  }
+
+  // SetChildCardinality (not SetCardinality): fork vectors carry their own
+  // v_size, and a downstream size-deriving op reads it; SetCardinality leaves
+  // the column vectors at v_size 0 -> "Mismatch in input vector sizes".
+  output.SetChildCardinality(row);
+}
+
+void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
+              duckdb::DataChunk& output) {
+  if (!input.bind_data->Cast<PgTextCopyFromBindData>().parallel) {
+    ScanSerial(context, input, output);
+    return;
+  }
+  auto& g = input.global_state->Cast<PgTextCopyFromGlobalState>();
+  auto& local = input.local_state->Cast<PgTextCopyFromLocalState>();
+  const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
+  if (!local.dctx_ready) {
+    sdb::pg::FillDeserializeContext(context, local.dctx);
+    local.dctx_ready = true;
+  }
+  duckdb::idx_t row = 0;
+  while (row < STANDARD_VECTOR_SIZE) {
+    if (local.Exhausted()) {
+      if (row != 0 || local.Claim(g, input) != TakeResult::Item) {
+        break;
+      }
+      continue;
+    }
+    const auto rest = std::string_view{local.block.data}.substr(local.pos);
+    const auto nl = rest.find(kRowSep);
+    // PG accepts a missing trailing newline: the last block may end mid-row.
+    const auto line = nl == std::string_view::npos ? rest : rest.substr(0, nl);
+    ProcessRow(line, bind, g.deserializers, local.dctx, output, row,
+               local.field_buf);
+    ++row;
+    local.pos += nl == std::string_view::npos ? rest.size() : nl + 1;
   }
 
   // SetChildCardinality (not SetCardinality): fork vectors carry their own
@@ -619,7 +703,8 @@ void RegisterPgTextCopyFunction(duckdb::DatabaseInstance& db) {
   func.copy_from_bind = BindFrom;
   func.copy_from_function =
     duckdb::TableFunction("pg_text_copy_from", {}, ScanFrom,
-                          /*bind=*/nullptr, InitGlobalFrom);
+                          /*bind=*/nullptr, InitGlobalFrom, InitLocalFrom);
+  func.copy_from_function.get_partition_data = CopyFromPartitionData;
   loader.RegisterFunction(std::move(func));
 }
 

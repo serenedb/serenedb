@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 
 #include <cstddef>
@@ -27,21 +28,45 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
-#include <vector>
 
 #include "server/utils/message_sequence_view.h"
 
 namespace sdb::network::http {
 
-// One response's compression stream: Encode appends compressed bytes to sink,
-// finish=true closes the stream.
+inline constexpr int kNoLevel = 0;
+
+class EncodeOutput {
+ public:
+  virtual void Write(size_t capacity,
+                     absl::FunctionRef<size_t(uint8_t*)> fill) = 0;
+
+ protected:
+  ~EncodeOutput() = default;
+};
+
+class StringOutput final : public EncodeOutput {
+ public:
+  explicit StringOutput(std::string& out) : _out{out} {}
+
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final;
+
+ private:
+  std::string& _out;
+};
+
 class ContentEncoder {
  public:
   virtual ~ContentEncoder() = default;
 
-  virtual void Encode(std::string_view in, bool finish,
-                      absl::FunctionRef<void(std::string_view)> sink) = 0;
+  virtual void Encode(std::string_view in, bool finish, EncodeOutput& out) = 0;
+
+  void Encode(std::string_view in, bool finish,
+              absl::FunctionRef<void(std::string_view)> sink);
+
+  // Compresses a whole body into `out` (replacing its contents).
+  virtual void EncodeAll(std::string_view in, std::string& out);
 };
 
 class ContentDecoder {
@@ -55,12 +80,12 @@ class ContentDecoder {
 // https://www.rfc-editor.org/rfc/rfc9110#name-content-codings
 struct ContentCoding {
   std::string_view token;
-  std::unique_ptr<ContentEncoder> (*make)();
+  std::unique_ptr<ContentEncoder> (*make)(int level);
   std::unique_ptr<ContentDecoder> (*make_decoder)();
 };
 
-// Every coding the server implements (gzip, zstd, lz4, zxc); nullptr for a
-// token none of them answers to.
+// Every coding the server implements; `x-gzip` names gzip. nullptr for a token
+// none of them answers to.
 const ContentCoding* FindContentCoding(std::string_view token);
 
 // A fixed body smaller than this is sent as-is: the codec framing would eat
@@ -79,6 +104,7 @@ enum class Acceptance : uint8_t {
 
 struct Negotiation {
   const ContentCoding* coding = nullptr;
+  int level = kNoLevel;
   Acceptance acceptance = Acceptance::Ok;
 };
 
@@ -90,7 +116,10 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding);
 
 inline constexpr size_t kMaxContentCodings = 2;
 
-std::optional<std::vector<const ContentCoding*>> ParseContentEncoding(
+using ContentCodings =
+  absl::InlinedVector<const ContentCoding*, kMaxContentCodings>;
+
+std::optional<ContentCodings> ParseContentEncoding(
   std::string_view content_encoding);
 
 void DecodeContent(const message::SequenceView& body,

@@ -140,16 +140,18 @@ class BulkHandler final : public HttpHandler {
     }
     const auto start = std::chrono::steady_clock::now();
 
-    auto& entry = ctx.PreparedSlot(PreparedSlotId::EsBulk);
-    if (auto error = EnsurePrepared(
-          ctx, entry,
-          absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
-                       " SELECT * FROM es_bulk_source(", SqlLiteral(index),
-                       ")"))) {
+    const std::string_view source = connector::EsBulkSpansMorsels(body)
+                                      ? "es_bulk_source_parallel"
+                                      : "es_bulk_source";
+    const auto sql =
+      absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                   " SELECT * FROM ", source, "(", SqlLiteral(index), ")");
+    auto& entry = ctx.PreparedSlot(PreparedSlotId::EsBulk, sql);
+    if (auto error = EnsurePrepared(ctx, entry, sql)) {
       WriteSqlError(writer, *error, index);
       co_return {};
     }
-    std::string items;
+    std::vector<std::string> items;
     const connector::EsBulkInput input{.body = body, .items = &items};
     auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
     connection.SetSideChannel(&input);
@@ -164,9 +166,34 @@ class BulkHandler final : public HttpHandler {
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
-    WriteJson(writer, HttpStatus::Ok,
-              absl::StrCat("{\"took\":", TookMs(start),
-                           ",\"errors\":false,\"items\":[", items, "]}"));
+    const std::string head = absl::StrCat("{\"took\":", TookMs(start),
+                                          ",\"errors\":false,\"items\":[");
+    static constexpr std::string_view kTail = "]}";
+    size_t length = head.size() + kTail.size();
+    size_t parts = 0;
+    for (const auto& part : items) {
+      if (!part.empty()) {
+        length += part.size();
+        ++parts;
+      }
+    }
+    const size_t commas = parts == 0 ? 0 : parts - 1;
+    length += commas;
+    writer.WriteHead(HttpStatus::Ok, kJsonContentType, length, kProductHeader);
+    writer.Write(head);
+    bool first = true;
+    for (const auto& part : items) {
+      if (part.empty()) {
+        continue;
+      }
+      if (!first) {
+        writer.Write(",");
+      }
+      writer.Write(part);
+      first = false;
+    }
+    writer.Write(kTail);
+    writer.Finish();
     co_return {};
   }
 };

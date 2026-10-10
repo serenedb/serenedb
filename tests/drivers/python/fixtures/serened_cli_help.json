@@ -174,7 +174,7 @@
           "flag": "--listen",
           "type": "",
           "defaultValue": "postgres://127.0.0.1:7890",
-          "description": "Listener URL(s), comma-separated or repeated (last-wins). Each is one listener: postgres://host:port[?sslmode=...], http(s)://host:port?api=es, postgres:///path/to.sock (unix).",
+          "description": "Listener URL(s), comma-separated or repeated (last-wins). Each is one listener: postgres://host:port[?sslmode=...], http(s)://host:port?api=es, postgres:///path/to.sock (unix). A TCP listener needs an explicit port; a path after the port is ignored.",
           "source": "server",
           "category": "server",
           "categoryLabel": "Server"

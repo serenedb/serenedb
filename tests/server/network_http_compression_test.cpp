@@ -28,11 +28,13 @@
 #include <zstd.h>
 #include <zxc.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -45,6 +47,7 @@
 
 #include "network/acceptor.h"
 #include "network/cancel_registry.h"
+#include "network/http/codecs/codec.h"
 #include "network/http/compression.h"
 #include "network/http/handler.h"
 #include "network/http/router.h"
@@ -59,6 +62,7 @@ using network::http::DecodeContent;
 using network::http::FindContentCoding;
 using network::http::HttpStatus;
 using network::http::kMinCompressBytes;
+using network::http::kNoLevel;
 using network::http::NegotiateContentCoding;
 using network::http::ParseContentEncoding;
 
@@ -280,9 +284,9 @@ Response Split(const std::string& raw) {
   return response;
 }
 
-std::string Gunzip(std::string_view in) {
+std::string Gunzip(std::string_view in, int window_bits = 15 + 16) {
   z_stream stream{};
-  EXPECT_EQ(inflateInit2(&stream, 15 + 16), Z_OK);
+  EXPECT_EQ(inflateInit2(&stream, window_bits), Z_OK);
   stream.next_in =
     const_cast<Bytef*>(reinterpret_cast<const Bytef*>(in.data()));
   stream.avail_in = static_cast<uInt>(in.size());
@@ -353,10 +357,10 @@ std::string Unzxc(std::string_view in) {
   return out;
 }
 
-std::string Gzip(std::string_view in) {
+std::string Gzip(std::string_view in, int window_bits = 15 + 16) {
   z_stream stream{};
-  EXPECT_EQ(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8,
-                         Z_DEFAULT_STRATEGY),
+  EXPECT_EQ(deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                         window_bits, 8, Z_DEFAULT_STRATEGY),
             Z_OK);
   std::string out(deflateBound(&stream, in.size()), '\0');
   stream.next_in =
@@ -450,6 +454,9 @@ std::string Encode(std::string_view coding, std::string_view in) {
   if (coding == "gzip") {
     return Gzip(in);
   }
+  if (coding == "deflate") {
+    return Gzip(in, 15);
+  }
   if (coding == "zstd") {
     return Zstd(in);
   }
@@ -469,6 +476,9 @@ std::string Decode(std::string_view coding, std::string_view in) {
   if (coding == "gzip") {
     return Gunzip(in);
   }
+  if (coding == "deflate") {
+    return Gunzip(in, 15);
+  }
   if (coding == "zstd") {
     return Unzstd(in);
   }
@@ -478,8 +488,8 @@ std::string Decode(std::string_view coding, std::string_view in) {
   return Unzxc(in);
 }
 
-constexpr std::array<std::string_view, 6> kCodings{"gzip", "zstd", "lz4",
-                                                   "zxc",  "br",   "snappy"};
+constexpr std::array<std::string_view, 7> kCodings{
+  "gzip", "deflate", "zstd", "lz4", "zxc", "br", "snappy"};
 
 std::string DecodeAll(std::string_view body, std::string_view field,
                       size_t max_bytes = size_t{64} << 20) {
@@ -707,6 +717,26 @@ TEST(NetworkHttpCompression, DecodeContentCorruptOrTruncated) {
   }
 }
 
+std::string ZstdWithWindowLog(std::string_view in, int window_log) {
+  auto* cctx = ZSTD_createCCtx();
+  ZSTD_CCtx_setParameter(cctx, ZSTD_c_windowLog, window_log);
+  std::string out(ZSTD_compressBound(in.size()), '\0');
+  ZSTD_outBuffer output{out.data(), out.size(), 0};
+  ZSTD_inBuffer head{in.data(), in.size() / 2, 0};
+  ZSTD_compressStream2(cctx, &output, &head, ZSTD_e_continue);
+  ZSTD_inBuffer tail{in.data() + head.size, in.size() - head.size, 0};
+  EXPECT_EQ(ZSTD_compressStream2(cctx, &output, &tail, ZSTD_e_end), 0u);
+  ZSTD_freeCCtx(cctx);
+  out.resize(output.pos);
+  return out;
+}
+
+TEST(NetworkHttpCompression, ZstdWindowAboveEightMibIsRejected) {
+  EXPECT_EQ(DecodeAll(ZstdWithWindowLog(kLarge, 23), "zstd"), kLarge);
+  EXPECT_EQ(DecodeErrcode(ZstdWithWindowLog(kLarge, 24), "zstd"),
+            ERRCODE_DATA_EXCEPTION);
+}
+
 TEST(NetworkHttpCompression, DecodeContentSizeLimit) {
   for (const auto coding : kCodings) {
     const auto encoded = Encode(coding, kLarge);
@@ -837,4 +867,187 @@ TEST(NetworkHttpCompression, SnappyBothDirections) {
   const auto echo = Split(harness.Post(Snappy(kLarge), "snappy", "snappy"));
   EXPECT_TRUE(echo.Has("Content-Encoding: snappy"));
   EXPECT_EQ(Unsnappy(echo.body), kLarge);
+}
+
+TEST(NetworkHttpCompression, NegotiateLevels) {
+  auto negotiated = NegotiateContentCoding("zstd(1)");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.coding->token, "zstd");
+  EXPECT_EQ(negotiated.level, 1);
+
+  negotiated = NegotiateContentCoding("gzip(9);q=0.5, br(4)");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.coding->token, "br");
+  EXPECT_EQ(negotiated.level, 4);
+
+  negotiated = NegotiateContentCoding("zstd");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.level, kNoLevel);
+
+  for (const auto header : {"zstd(x)", "zstd(1", "zstd()", "zstd(1)x"}) {
+    EXPECT_EQ(NegotiateContentCoding(header).acceptance, Acceptance::Malformed)
+      << header;
+  }
+}
+
+TEST(NetworkHttpCompression, XGzipIsGzip) {
+  const auto negotiated = NegotiateContentCoding("x-gzip");
+  ASSERT_NE(negotiated.coding, nullptr);
+  EXPECT_EQ(negotiated.coding->token, "gzip");
+  const auto codings = ParseContentEncoding("x-gzip, zstd(3)");
+  ASSERT_TRUE(codings.has_value());
+  ASSERT_EQ(codings->size(), 2u);
+  EXPECT_EQ((*codings)[0]->token, "gzip");
+  EXPECT_EQ((*codings)[1]->token, "zstd");
+  EXPECT_EQ(DecodeAll(Gzip(kLarge), "x-gzip"), kLarge);
+}
+
+TEST(NetworkHttpCompression, EveryLevelRoundTrips) {
+  for (const auto token : kCodings) {
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    for (const int level : {kNoLevel, -100000, 1, 3, 100000}) {
+      std::string encoded;
+      coding->make(level)->EncodeAll(kLarge, encoded);
+      EXPECT_EQ(Decode(token, encoded), kLarge) << token << " level " << level;
+      std::string streamed;
+      coding->make(level)->Encode(
+        kLarge, true, [&](std::string_view part) { streamed.append(part); });
+      EXPECT_EQ(Decode(token, streamed), kLarge) << token << " level " << level;
+    }
+  }
+}
+
+class RecordingOutput final : public network::http::EncodeOutput {
+ public:
+  void Write(size_t capacity, absl::FunctionRef<size_t(uint8_t*)> fill) final {
+    max_capacity = std::max(max_capacity, capacity);
+    const size_t size = bytes.size();
+    bytes.resize(size + capacity);
+    bytes.resize(size + fill(reinterpret_cast<uint8_t*>(bytes.data() + size)));
+  }
+
+  std::string bytes;
+  size_t max_capacity = 0;
+};
+
+TEST(NetworkHttpCompression, StreamingWritesFitTheSendChunk) {
+  const auto body = Payload(1 << 20) + Incompressible(256 * 1024);
+  for (const auto token : kCodings) {
+    if (token == "snappy") {
+      continue;
+    }
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    auto encoder = coding->make(kNoLevel);
+    RecordingOutput out;
+    std::string_view rest = body;
+    for (size_t piece = 1; !rest.empty(); piece = piece * 3 + 7) {
+      const auto part = rest.substr(0, piece);
+      rest.remove_prefix(part.size());
+      encoder->Encode(part, rest.empty(), out);
+    }
+    EXPECT_LE(out.max_capacity, network::kSendFlushSize) << token;
+    EXPECT_EQ(Decode(token, out.bytes), body) << token;
+  }
+}
+
+TEST(NetworkHttpCompression, SmallWritesCompressLikeOneWrite) {
+  const auto body = Payload(256 * 1024);
+  for (const auto token : kCodings) {
+    if (token == "snappy") {
+      continue;
+    }
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    RecordingOutput whole;
+    coding->make(kNoLevel)->Encode(body, true, whole);
+    auto encoder = coding->make(kNoLevel);
+    RecordingOutput pieces;
+    std::string_view rest = body;
+    while (!rest.empty()) {
+      const auto part = rest.substr(0, 37);
+      rest.remove_prefix(part.size());
+      encoder->Encode(part, rest.empty(), pieces);
+    }
+    EXPECT_EQ(Decode(token, pieces.bytes), body) << token;
+    EXPECT_LE(pieces.bytes.size(),
+              whole.bytes.size() + whole.bytes.size() / 10 + 64)
+      << token;
+  }
+}
+
+TEST(NetworkHttpCompression, DefaultZstdContextsFitTheRetainedCap) {
+  const auto body = Payload(8 << 20);
+  std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> cctx{ZSTD_createCCtx(),
+                                                            ZSTD_freeCCtx};
+  ZSTD_CCtx_setParameter(cctx.get(), ZSTD_c_compressionLevel,
+                         ZSTD_CLEVEL_DEFAULT);
+  std::array<char, network::http::kOutBlock> block;
+  std::string compressed;
+  ZSTD_inBuffer input{body.data(), body.size(), 0};
+  size_t remaining = 0;
+  do {
+    ZSTD_outBuffer output{block.data(), block.size(), 0};
+    remaining = ZSTD_compressStream2(cctx.get(), &output, &input, ZSTD_e_end);
+    ASSERT_FALSE(ZSTD_isError(remaining));
+    compressed.append(block.data(), output.pos);
+  } while (remaining != 0);
+  EXPECT_LE(ZSTD_sizeof_CCtx(cctx.get()), network::http::kZstdMaxRetainedBytes);
+
+  std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> dctx{ZSTD_createDCtx(),
+                                                            ZSTD_freeDCtx};
+  ZSTD_inBuffer packed{compressed.data(), compressed.size(), 0};
+  size_t decoded = 0;
+  while (packed.pos < packed.size) {
+    ZSTD_outBuffer output{block.data(), block.size(), 0};
+    ASSERT_FALSE(
+      ZSTD_isError(ZSTD_decompressStream(dctx.get(), &output, &packed)));
+    decoded += output.pos;
+  }
+  EXPECT_EQ(decoded, body.size());
+  EXPECT_LE(ZSTD_sizeof_DCtx(dctx.get()), network::http::kZstdMaxRetainedBytes);
+}
+
+std::string VariedJson() {
+  std::string body;
+  for (size_t i = 0; body.size() < 256 * 1024; ++i) {
+    absl::StrAppend(&body, R"({"id":)", i * 7919 % 100003, R"(,"size":)",
+                    i * 104729 % 65536, R"(,"path":"/img/)", i % 977, "\"}\n");
+  }
+  return body;
+}
+
+TEST(NetworkHttpCompression, LevelChangesTheOutput) {
+  const auto body = VariedJson();
+  for (const auto token : {"zstd", "gzip", "deflate", "br"}) {
+    const auto* coding = FindContentCoding(token);
+    std::string fast;
+    std::string dense;
+    coding->make(1)->EncodeAll(body, fast);
+    coding->make(100000)->EncodeAll(body, dense);
+    EXPECT_LT(dense.size(), fast.size()) << token;
+  }
+}
+
+TEST(NetworkHttpCompression, LevelsAreCappedToBoundMemory) {
+  const auto body = VariedJson();
+  for (const auto& [token, cap, beyond] :
+       {std::tuple{"zstd", 8, 22}, std::tuple{"br", 6, 11},
+        std::tuple{"lz4", 9, 12}, std::tuple{"zxc", 5, 7},
+        std::tuple{"br", 1, -3}, std::tuple{"gzip", 1, -5},
+        std::tuple{"deflate", 1, -5}}) {
+    const auto* coding = FindContentCoding(token);
+    ASSERT_NE(coding, nullptr) << token;
+    std::string capped;
+    std::string clamped;
+    coding->make(cap)->EncodeAll(body, capped);
+    coding->make(beyond)->EncodeAll(body, clamped);
+    EXPECT_EQ(clamped, capped) << token;
+  }
+}
+
+TEST(NetworkHttpCompression, DeflateAcceptsRawDeflate) {
+  EXPECT_EQ(DecodeAll(Gzip(kLarge, -15), "deflate"), kLarge);
+  EXPECT_EQ(DecodeAll(Gzip(kLarge, 15), "deflate"), kLarge);
 }

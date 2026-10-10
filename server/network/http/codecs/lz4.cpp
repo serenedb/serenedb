@@ -21,92 +21,161 @@
 #include <lz4frame.h>
 
 #include <algorithm>
-#include <vector>
+#include <iresearch/utils/string_utils.hpp>
+#include <memory>
+#include <string>
+#include <string_view>
 
 #include "network/http/codecs/codec.h"
+#include "network/http/pooled.h"
 
 namespace sdb::network::http {
 namespace {
 
 // https://github.com/lz4/lz4/blob/dev/lib/lz4frame.h
-class Lz4Encoder final : public ContentEncoder {
- public:
-  Lz4Encoder() {
-    const auto rc = LZ4F_createCompressionContext(&_cctx, LZ4F_VERSION);
+inline constexpr size_t kSlice = kOutBlock;
+inline constexpr int kMaxLevel = 9;
+
+struct CompressState {
+  CompressState() {
+    const auto rc = LZ4F_createCompressionContext(&cctx, LZ4F_VERSION);
     if (LZ4F_isError(rc)) {
       ThrowCodecError("lz4", LZ4F_getErrorName(rc));
     }
-    _out.resize(std::max(LZ4F_compressBound(kSlice, &_prefs),
-                         LZ4F_compressBound(0, &_prefs)));
+    prefs.autoFlush = 1;
+    out_size = std::max(LZ4F_compressBound(kSlice, &prefs),
+                        LZ4F_compressBound(0, &prefs));
   }
 
-  ~Lz4Encoder() override { LZ4F_freeCompressionContext(_cctx); }
+  ~CompressState() { LZ4F_freeCompressionContext(cctx); }
 
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
+  bool Reset() noexcept {
+    pending.clear();
+    return true;
+  }
+
+  LZ4F_cctx* cctx = nullptr;
+  LZ4F_preferences_t prefs{};
+  size_t out_size = 0;
+  std::string pending;
+};
+
+struct DecompressState {
+  DecompressState() {
+    const auto rc = LZ4F_createDecompressionContext(&dctx, LZ4F_VERSION);
+    if (LZ4F_isError(rc)) {
+      ThrowCodecError("lz4", LZ4F_getErrorName(rc));
+    }
+  }
+
+  ~DecompressState() { LZ4F_freeDecompressionContext(dctx); }
+
+  bool Reset() noexcept {
+    LZ4F_resetDecompressionContext(dctx);
+    return true;
+  }
+
+  LZ4F_dctx* dctx = nullptr;
+  std::array<uint8_t, kOutBlock> out;
+};
+
+class Lz4Encoder final : public ContentEncoder {
+ public:
+  explicit Lz4Encoder(int level) {
+    _state->prefs.compressionLevel = ClampLevel(level, 0, 0, kMaxLevel);
+  }
+
+  void Encode(std::string_view in, bool finish, EncodeOutput& out) override {
+    auto& state = *_state;
     if (!_started) {
-      Emit(LZ4F_compressBegin(_cctx, _out.data(), _out.size(), &_prefs), sink);
+      out.Write(LZ4F_HEADER_SIZE_MAX, [&](uint8_t* dst) {
+        return Check(LZ4F_compressBegin(state.cctx, dst, LZ4F_HEADER_SIZE_MAX,
+                                        &state.prefs));
+      });
       _started = true;
     }
+    auto& pending = state.pending;
     while (!in.empty()) {
-      const auto slice = in.substr(0, kSlice);
-      Emit(LZ4F_compressUpdate(_cctx, _out.data(), _out.size(), slice.data(),
-                               slice.size(), nullptr),
-           sink);
-      in.remove_prefix(slice.size());
+      if (pending.empty() && in.size() >= kSlice) {
+        Compress(in.substr(0, kSlice), out);
+        in.remove_prefix(kSlice);
+        continue;
+      }
+      const auto take = std::min(kSlice - pending.size(), in.size());
+      pending.append(in.substr(0, take));
+      in.remove_prefix(take);
+      if (pending.size() == kSlice) {
+        Compress(pending, out);
+        pending.clear();
+      }
     }
     if (finish) {
-      Emit(LZ4F_compressEnd(_cctx, _out.data(), _out.size(), nullptr), sink);
+      if (!pending.empty()) {
+        Compress(pending, out);
+        pending.clear();
+      }
+      out.Write(state.out_size, [&](uint8_t* dst) {
+        return Check(
+          LZ4F_compressEnd(state.cctx, dst, state.out_size, nullptr));
+      });
     }
+  }
+
+  void EncodeAll(std::string_view in, std::string& out) override {
+    auto& state = *_state;
+    irs::utils::StrResize(
+      out, LZ4F_HEADER_SIZE_MAX + LZ4F_compressBound(in.size(), &state.prefs));
+    auto* dst = reinterpret_cast<uint8_t*>(out.data());
+    size_t pos =
+      Check(LZ4F_compressBegin(state.cctx, dst, out.size(), &state.prefs));
+    pos += Check(LZ4F_compressUpdate(state.cctx, dst + pos, out.size() - pos,
+                                     in.data(), in.size(), nullptr));
+    pos +=
+      Check(LZ4F_compressEnd(state.cctx, dst + pos, out.size() - pos, nullptr));
+    out.resize(pos);
   }
 
  private:
-  static constexpr size_t kSlice = kOutBlock;
-
-  void Emit(size_t rc, absl::FunctionRef<void(std::string_view)> sink) {
+  static size_t Check(size_t rc) {
     if (LZ4F_isError(rc)) {
       ThrowCodecError("lz4", LZ4F_getErrorName(rc));
     }
-    if (rc != 0) {
-      sink({reinterpret_cast<const char*>(_out.data()), rc});
-    }
+    return rc;
   }
 
-  LZ4F_cctx* _cctx = nullptr;
-  LZ4F_preferences_t _prefs{};
-  std::vector<uint8_t> _out;
+  void Compress(std::string_view slice, EncodeOutput& out) {
+    auto& state = *_state;
+    out.Write(state.out_size, [&](uint8_t* dst) {
+      return Check(LZ4F_compressUpdate(state.cctx, dst, state.out_size,
+                                       slice.data(), slice.size(), nullptr));
+    });
+  }
+
+  Pooled<CompressState> _state;
   bool _started = false;
 };
 
 class Lz4Decoder final : public ContentDecoder {
  public:
-  Lz4Decoder() {
-    const auto rc = LZ4F_createDecompressionContext(&_dctx, LZ4F_VERSION);
-    if (LZ4F_isError(rc)) {
-      ThrowCodecError("lz4", LZ4F_getErrorName(rc));
-    }
-  }
-
-  ~Lz4Decoder() override { LZ4F_freeDecompressionContext(_dctx); }
-
   void Decode(std::string_view in, bool finish,
               absl::FunctionRef<void(std::string_view)> sink) override {
+    auto& out = _state->out;
     for (;;) {
-      size_t produced = _out.size();
+      size_t produced = out.size();
       size_t consumed = in.size();
-      const size_t rc = LZ4F_decompress(_dctx, _out.data(), &produced,
+      const size_t rc = LZ4F_decompress(_state->dctx, out.data(), &produced,
                                         in.data(), &consumed, nullptr);
       if (LZ4F_isError(rc)) {
         ThrowCorrupt("lz4", LZ4F_getErrorName(rc));
       }
       in.remove_prefix(consumed);
       if (produced != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), produced});
+        sink({reinterpret_cast<const char*>(out.data()), produced});
       }
       if (consumed != 0 || produced != 0) {
         _pending = rc;
       }
-      if (in.empty() && produced < _out.size()) {
+      if (in.empty() && produced < out.size()) {
         break;
       }
     }
@@ -116,15 +185,14 @@ class Lz4Decoder final : public ContentDecoder {
   }
 
  private:
-  LZ4F_dctx* _dctx = nullptr;
+  Pooled<DecompressState> _state;
   size_t _pending = 1;
-  std::array<uint8_t, kOutBlock> _out;
 };
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeLz4Encoder() {
-  return std::make_unique<Lz4Encoder>();
+std::unique_ptr<ContentEncoder> MakeLz4Encoder(int level) {
+  return std::make_unique<Lz4Encoder>(level);
 }
 
 std::unique_ptr<ContentDecoder> MakeLz4Decoder() {

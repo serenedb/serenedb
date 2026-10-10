@@ -17,6 +17,8 @@ add_executable(
     network_h1_codec_test.cpp
     network_header_test.cpp
     network_http_compression_test.cpp
+    network_http_pooled_test.cpp
+    network_http_prepared_cache_test.cpp
     network_http_test.cpp
     network_listen_spec_test.cpp
     network_pg_bind_decoder_test.cpp

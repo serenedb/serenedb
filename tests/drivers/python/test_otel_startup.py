@@ -165,3 +165,110 @@ def test_single_worker_thread_does_not_deadlock(tmp_path: Path) -> None:
         assert server.count("es.single") == 1000
     finally:
         server.close()
+
+
+def test_failed_metrics_export_writes_no_table(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        server.pg.execute("DROP TABLE otel_metrics_summary")
+        conn = http.client.HTTPConnection("127.0.0.1", server.http_port,
+                                          timeout=60)
+        headers = {"Content-Type": "application/json",
+                   "Authorization": "Basic cG9zdGdyZXM6"}
+        body = (FIXTURES / "metrics/mixed_batch.json").read_bytes()
+        conn.request("POST", "/v1/metrics", body=body, headers=headers)
+        response = conn.getresponse()
+        response.read()
+        assert response.status == 500
+        for table in ("otel_metrics_gauge", "otel_metrics_sum",
+                      "otel_metrics_histogram"):
+            assert server.count(table) == 0, table
+
+        body = (FIXTURES / "logs/basic.json").read_bytes()
+        conn.request("POST", "/v1/logs", body=body, headers=headers)
+        response = conn.getresponse()
+        response.read()
+        assert response.status == 200
+        conn.close()
+        assert server.count("otel_logs") > 0
+    finally:
+        server.close()
+
+
+def test_metrics_export_inserts_only_its_kinds(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        server.pg.execute("DROP TABLE otel_metrics_summary")
+        export = json.loads((FIXTURES / "metrics/mixed_batch.json").read_text())
+        for resource in export["resourceMetrics"]:
+            for scope in resource["scopeMetrics"]:
+                scope["metrics"] = [
+                    metric for metric in scope["metrics"] if "gauge" in metric]
+        conn = http.client.HTTPConnection("127.0.0.1", server.http_port,
+                                          timeout=60)
+        conn.request("POST", "/v1/metrics", body=json.dumps(export),
+                     headers={"Content-Type": "application/json",
+                              "Authorization": "Basic cG9zdGdyZXM6"})
+        response = conn.getresponse()
+        response.read()
+        conn.close()
+        assert response.status == 200
+        assert server.count("otel_metrics_gauge") > 0
+    finally:
+        server.close()
+
+
+def _logs_export(resources: int, scopes: int, records: int) -> bytes:
+    return json.dumps({"resourceLogs": [{
+        "resource": {"attributes": [
+            {"key": "service.name", "value": {"stringValue": f"svc{r}"}}]},
+        "scopeLogs": [{
+            "scope": {"name": f"scope{s}"},
+            "logRecords": [{
+                "timeUnixNano": str(1_700_000_000_000_000_000 + i),
+                "body": {"stringValue": f"svc{r}/scope{s}/{i}"},
+            } for i in range(records)],
+        } for s in range(scopes)],
+    } for r in range(resources)]}).encode()
+
+
+def _metrics_export(resources: int, metrics: int, points: int) -> bytes:
+    def metric(r: int, m: int) -> dict:
+        data = {"dataPoints": [{
+            "timeUnixNano": str(1_700_000_000_000_000_000 + p),
+            "asDouble": float(p),
+        } for p in range(points)]}
+        if m % 2:
+            data["aggregationTemporality"] = 2
+            return {"name": f"svc{r}/sum{m}", "sum": data}
+        return {"name": f"svc{r}/gauge{m}", "gauge": data}
+
+    return json.dumps({"resourceMetrics": [{
+        "resource": {"attributes": [
+            {"key": "service.name", "value": {"stringValue": f"svc{r}"}}]},
+        "scopeMetrics": [{"scope": {"name": "scope"},
+                          "metrics": [metric(r, m) for m in range(metrics)]}],
+    } for r in range(resources)]}).encode()
+
+
+def test_large_export_is_split_without_losing_rows(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel")
+    try:
+        body = _logs_export(resources=3, scopes=2, records=12_000)
+        assert server.post("/v1/logs", body, "application/json") == 200
+        assert server.count("otel_logs") == 72_000
+        assert server.pg.execute(
+            "SELECT count(DISTINCT body) FROM otel_logs").fetchone()[0] == 72_000
+        assert server.pg.execute(
+            "SELECT count(*) FROM otel_logs WHERE body NOT LIKE "
+            "service_name || '/' || scope_name || '/%'").fetchone()[0] == 0
+
+        body = _metrics_export(resources=2, metrics=40, points=1_000)
+        assert server.post("/v1/metrics", body, "application/json") == 200
+        for table in ("otel_metrics_gauge", "otel_metrics_sum"):
+            assert server.count(table) == 40_000, table
+            assert server.pg.execute(
+                f"SELECT count(*) FROM {table} WHERE metric_name NOT LIKE "
+                "service_name || '/%'").fetchone()[0] == 0, table
+    finally:
+        server.close()

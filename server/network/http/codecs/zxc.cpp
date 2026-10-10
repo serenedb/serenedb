@@ -21,7 +21,7 @@
 #include <zxc.h>
 
 #include <algorithm>
-#include <vector>
+#include <memory>
 
 #include "network/http/codecs/codec.h"
 
@@ -31,7 +31,7 @@ namespace {
 // https://github.com/serenedb/zxc/blob/main/include/zxc_pstream.h
 class ZxcEncoder final : public ContentEncoder {
  public:
-  ZxcEncoder() : _stream{zxc_cstream_create(nullptr)} {
+  explicit ZxcEncoder(int level) : _stream{CreateStream(level)} {
     if (_stream == nullptr) {
       ThrowCodecError("zxc", "stream creation failed");
     }
@@ -39,45 +39,49 @@ class ZxcEncoder final : public ContentEncoder {
 
   ~ZxcEncoder() override { zxc_cstream_free(_stream); }
 
-  void Encode(std::string_view in, bool finish,
-              absl::FunctionRef<void(std::string_view)> sink) override {
+  void Encode(std::string_view in, bool finish, EncodeOutput& out) override {
     zxc_inbuf_t input{.src = in.data(), .size = in.size(), .pos = 0};
-    Drain(sink, [&](zxc_outbuf_t& out) {
-      return zxc_cstream_compress(_stream, &out, &input);
+    Drain(out, [&](zxc_outbuf_t& output) {
+      return zxc_cstream_compress(_stream, &output, &input);
     });
     if (finish) {
-      Drain(sink,
-            [&](zxc_outbuf_t& out) { return zxc_cstream_end(_stream, &out); });
+      Drain(out, [&](zxc_outbuf_t& output) {
+        return zxc_cstream_end(_stream, &output);
+      });
     }
   }
 
  private:
   template<typename Step>
-  void Drain(absl::FunctionRef<void(std::string_view)> sink, Step step) {
-    for (;;) {
-      zxc_outbuf_t output{.dst = _out.data(), .size = _out.size(), .pos = 0};
-      const int64_t rc = step(output);
-      // zxc errors are sticky: without this the loop would call the failing
-      // function forever (zxc_pstream.h, "Errors are sticky").
-      if (rc < 0) {
-        ThrowCodecError("zxc", zxc_error_name(static_cast<int>(rc)));
-      }
-      if (output.pos != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), output.pos});
-      }
-      if (rc == 0) {
-        return;
-      }
-      if (output.pos == 0) {
-        ThrowCodecError("zxc",
-                        "stream reported pending bytes but produced "
-                        "none");
-      }
-    }
+  static void Drain(EncodeOutput& out, Step step) {
+    int64_t rc = 0;
+    do {
+      out.Write(kOutBlock, [&](uint8_t* dst) {
+        zxc_outbuf_t output{.dst = dst, .size = kOutBlock, .pos = 0};
+        rc = step(output);
+        // zxc errors are sticky: without this the loop would call the failing
+        // function forever (zxc_pstream.h, "Errors are sticky").
+        if (rc < 0) {
+          ThrowCodecError("zxc", zxc_error_name(static_cast<int>(rc)));
+        }
+        if (rc != 0 && output.pos == 0) {
+          ThrowCodecError("zxc",
+                          "stream reported pending bytes but produced "
+                          "none");
+        }
+        return output.pos;
+      });
+    } while (rc != 0);
+  }
+
+  static zxc_cstream* CreateStream(int level) {
+    zxc_compress_opts_t opts{};
+    opts.level = ClampLevel(level, zxc_default_level(), zxc_min_level(),
+                            ZXC_LEVEL_COMPACT);
+    return zxc_cstream_create(&opts);
   }
 
   zxc_cstream* _stream;
-  std::array<uint8_t, 4 * kOutBlock> _out;
 };
 
 class ZxcDecoder final : public ContentDecoder {
@@ -86,7 +90,8 @@ class ZxcDecoder final : public ContentDecoder {
     if (_stream == nullptr) {
       ThrowCodecError("zxc", "stream creation failed");
     }
-    _out.resize(std::max(zxc_dstream_out_size(_stream), kOutBlock));
+    _out_size = std::max(zxc_dstream_out_size(_stream), kOutBlock);
+    _out = std::make_unique_for_overwrite<uint8_t[]>(_out_size);
   }
 
   ~ZxcDecoder() override { zxc_dstream_free(_stream); }
@@ -95,13 +100,13 @@ class ZxcDecoder final : public ContentDecoder {
               absl::FunctionRef<void(std::string_view)> sink) override {
     zxc_inbuf_t input{.src = in.data(), .size = in.size(), .pos = 0};
     for (;;) {
-      zxc_outbuf_t output{.dst = _out.data(), .size = _out.size(), .pos = 0};
+      zxc_outbuf_t output{.dst = _out.get(), .size = _out_size, .pos = 0};
       const int64_t rc = zxc_dstream_decompress(_stream, &output, &input);
       if (rc < 0) {
         ThrowCorrupt("zxc", zxc_error_name(static_cast<int>(rc)));
       }
       if (output.pos != 0) {
-        sink({reinterpret_cast<const char*>(_out.data()), output.pos});
+        sink({reinterpret_cast<const char*>(_out.get()), output.pos});
       }
       if (rc == 0) {
         break;
@@ -114,13 +119,14 @@ class ZxcDecoder final : public ContentDecoder {
 
  private:
   zxc_dstream* _stream;
-  std::vector<uint8_t> _out;
+  std::unique_ptr<uint8_t[]> _out;
+  size_t _out_size = 0;
 };
 
 }  // namespace
 
-std::unique_ptr<ContentEncoder> MakeZxcEncoder() {
-  return std::make_unique<ZxcEncoder>();
+std::unique_ptr<ContentEncoder> MakeZxcEncoder(int level) {
+  return std::make_unique<ZxcEncoder>(level);
 }
 
 std::unique_ptr<ContentDecoder> MakeZxcDecoder() {

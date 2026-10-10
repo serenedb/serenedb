@@ -18,7 +18,7 @@ Add an HTTP listener with `?api=es`:
 serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es'
 ```
 
-`--listen` takes every endpoint in one comma-separated value, so keep the PostgreSQL endpoint in the same list.
+`--listen` takes every endpoint in one comma-separated value, so keep the PostgreSQL endpoint in the same list. Every TCP endpoint needs an explicit port: `http://127.0.0.1?api=es` stops the server at startup with `missing or invalid port`. A path after the port, as in `postgres://127.0.0.1:7890/postgres`, is ignored.
 
 Indices live in the listener's database, which is `postgres` unless `db=` names another one, as in `?api=es&db=shop`. That database must exist, or the server does not start and logs `database 'shop' does not exist`.
 

@@ -916,7 +916,7 @@ TEST_F(SearchRowRemovalTest, RemovalReachesReplacementSegments) {
   std::vector<std::string_view> replaced{sources.begin(), sources.end()};
   std::vector<std::string_view> adopted{metas.begin(), metas.end()};
   ASSERT_TRUE(_writer->ReplaceSegments(
-    replaced, adopted, irs::IndexWriter::QueryContext::RemovalPtr{}));
+    replaced, adopted, [](irs::IndexWriter::QueryContext&) { return true; }));
   _writer->RefreshCommit();
   for (const auto rowid : victims) {
     _model.erase(rowid);
@@ -944,7 +944,11 @@ TEST_F(SearchRowRemovalTest, ReplaceSegmentsCarriesARowidRemoval) {
   const auto removal = MakeRowRemoval(victims, {});
   std::vector<std::string_view> replaced{sources.begin(), sources.end()};
   std::vector<std::string_view> adopted{metas.begin(), metas.end()};
-  ASSERT_TRUE(_writer->ReplaceSegments(replaced, adopted, removal));
+  ASSERT_TRUE(_writer->ReplaceSegments(
+    replaced, adopted, [&](irs::IndexWriter::QueryContext& out) {
+      out = {removal, irs::writer_limits::kMinTick};
+      return true;
+    }));
   _writer->RefreshCommit();
   for (const auto rowid : victims) {
     _model.erase(rowid);

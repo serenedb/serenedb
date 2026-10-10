@@ -162,6 +162,7 @@ struct MethodOption {
 
 struct Rule {
   uint32_t seq = 0;  // authoring order == precedence
+  uint32_t line_number = 0;
   ConnType conntype = ConnType::Host;
   AddrMatcher address;  // meaningful only when conntype != Local
   NameMatcher database;
@@ -266,6 +267,7 @@ void LoadPersistedHba();
 // table (P4). `address`/`netmask` are empty for `local` and keyword addresses.
 struct RenderedRule {
   uint32_t rule_number = 0;
+  uint32_t line_number = 0;
   std::string file_name;  // the config file the ruleset was loaded from
   std::string type;       // local / host / hostssl / ...
   std::vector<std::string>

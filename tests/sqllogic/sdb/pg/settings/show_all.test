@@ -64,6 +64,7 @@ ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
+check_function_bodies	on	Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE.
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables cleanup. Default: 1.
@@ -84,6 +85,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_table_access_method	heap	Sets the default table access method for new tables.
+default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -161,6 +164,7 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification for deletion-vector files. This unsafe compatibility option permits reading invalid bare-blob files written by DuckDB Iceberg 1.5.3.
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
+idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction.
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -171,19 +175,27 @@ initial_column_segment_size	2048	The initial memory (in bytes) reserved for the 
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
 IntervalStyle	postgres	Sets the display format for interval values.
-is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
+lc_messages	C	Sets the language in which messages are displayed.
+lc_monetary	C	Sets the locale for formatting monetary amounts.
+lc_numeric	C	Sets the locale for formatting numbers.
+lc_time	C	Sets the locale for formatting date and time values.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
+lock_timeout	0	Sets the maximum allowed duration of any wait for a lock.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
 logging_level	<slt:ignore>	Determines which 'severity' of log messages will be logged.
 logging_mode	<slt:ignore>	Determines which types of log messages are logged.
 logging_storage	<slt:ignore>	Set the logging storage, options are 'memory', 'stdout', 'file', '<custom>'.
+maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations.
 match_recognize_max_states	1000000	The maximum number of pattern states MATCH_RECOGNIZE explores for a single match, before it refuses the pattern (0 = no limit). A match is never refused below what matching the pattern without backtracking would take.
+max_connections	0	Sets the maximum number of concurrent client connections.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
+max_identifier_length	63	Shows the maximum identifier length.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
+max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
@@ -199,6 +211,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
@@ -243,8 +256,8 @@ recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during r
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
-role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
+row_security	on	Enables row security.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -296,28 +309,31 @@ sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is al
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
 sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a search-table CREATE INDEX rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
-search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
+search_path	<slt:ignore>	Sets the schema search order for names that are not schema-qualified.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
 segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
-session_authorization	postgres	Sets the current session's user name.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
+statement_timeout	0	Sets the maximum allowed duration of any statement.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+synchronous_commit	on	Sets the current transaction's synchronization level.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
 threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
+transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
+transaction_read_only	off	Sets the current transaction's read-only status.
+transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
@@ -325,9 +341,11 @@ variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
 warnings_as_errors	off	Escalate all warnings to errors.
+work_mem	4096	Sets the maximum memory to be used for query workspaces.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.
 
 
@@ -401,6 +419,7 @@ ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
+check_function_bodies	on	Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE.
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables cleanup. Default: 1.
@@ -421,6 +440,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_table_access_method	heap	Sets the default table access method for new tables.
+default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -498,6 +519,7 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification for deletion-vector files. This unsafe compatibility option permits reading invalid bare-blob files written by DuckDB Iceberg 1.5.3.
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
+idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction.
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -508,19 +530,27 @@ initial_column_segment_size	2048	The initial memory (in bytes) reserved for the 
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
 IntervalStyle	postgres	Sets the display format for interval values.
-is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
+lc_messages	C	Sets the language in which messages are displayed.
+lc_monetary	C	Sets the locale for formatting monetary amounts.
+lc_numeric	C	Sets the locale for formatting numbers.
+lc_time	C	Sets the locale for formatting date and time values.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
+lock_timeout	0	Sets the maximum allowed duration of any wait for a lock.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
 logging_level	<slt:ignore>	Determines which 'severity' of log messages will be logged.
 logging_mode	<slt:ignore>	Determines which types of log messages are logged.
 logging_storage	<slt:ignore>	Set the logging storage, options are 'memory', 'stdout', 'file', '<custom>'.
+maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations.
 match_recognize_max_states	1000000	The maximum number of pattern states MATCH_RECOGNIZE explores for a single match, before it refuses the pattern (0 = no limit). A match is never refused below what matching the pattern without backtracking would take.
+max_connections	0	Sets the maximum number of concurrent client connections.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
+max_identifier_length	63	Shows the maximum identifier length.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
+max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
@@ -536,6 +566,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
@@ -580,8 +611,8 @@ recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during r
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
-role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
+row_security	on	Enables row security.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -633,28 +664,31 @@ sdb_scan_no_split_row_groups	1	A segment with at most this many row groups is al
 sdb_scan_order	auto	The order an inverted-index scan claims its segments in: 'smallest_first' and 'largest_first' order them by live document count; 'order' is best-first by the ORDER BY column's row-group statistics when the query has a scan order (and 'largest_first' otherwise); 'auto' (default) is 'order' under a scan order and 'largest_first' otherwise.
 sdb_scan_split	auto	How an inverted-index scan shares a segment between workers: 'tail' gives each worker its own segment and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; 'always' puts every worker on the same segment until it is claimed; 'never' scans each segment whole on one worker; 'auto' (default) is 'always' under an ORDER BY scan order and 'tail' otherwise.
 search_backfill_group_bytes	1073741824	Bytes of existing segments a search-table CREATE INDEX rewrites before swapping them in and moving on. Bounds the build's peak disk (~2x one group) and the length of each publish; a value above the table's size means a single swap. 0 = no limit (one swap for the whole table). Default 1073741824 (1GB).
-search_path	<slt:ignore>	Sets the default catalog search path as a comma-separated list of values.
+search_path	<slt:ignore>	Sets the schema search order for names that are not schema-qualified.
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
 segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
-session_authorization	postgres	Sets the current session's user name.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
+statement_timeout	0	Sets the maximum allowed duration of any statement.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+synchronous_commit	on	Sets the current transaction's synchronization level.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
 threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
+transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.
 transaction_isolation	read committed	Sets the current transaction's isolation level.
+transaction_read_only	off	Sets the current transaction's read-only status.
+transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
@@ -662,7 +696,9 @@ variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
 warnings_as_errors	off	Escalate all warnings to errors.
+work_mem	4096	Sets the maximum memory to be used for query workspaces.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.

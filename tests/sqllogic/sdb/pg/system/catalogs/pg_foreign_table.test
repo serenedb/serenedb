@@ -1,0 +1,76 @@
+statement ok
+DROP TABLE IF EXISTS meepo_ft_net;
+
+
+statement ok
+DROP ROLE IF EXISTS meepo_ft_dig;
+
+
+statement ok
+CREATE ROLE meepo_ft_dig LOGIN PASSWORD 'meepo_ft_dig_pw';
+
+
+statement ok
+CREATE TABLE meepo_ft_net (id int PRIMARY KEY, clone text);
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_foreign_table'::regclass;
+----
+oid	relname	relkind	relnatts
+3118	pg_foreign_table	r	3
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_foreign_table'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+ftrelid	oid	t
+ftserver	oid	t
+ftoptions	text[]	f
+
+
+query
+SELECT * FROM pg_foreign_table;
+----
+ftrelid	ftserver	ftoptions
+
+
+query
+SELECT ftserver FROM pg_foreign_table WHERE ftrelid = 'meepo_ft_net'::regclass;
+----
+ftserver
+
+
+query
+SELECT count(*) AS n FROM pg_class c JOIN pg_foreign_table f ON f.ftrelid = c.oid WHERE c.relkind = 'f';
+----
+n
+0
+
+
+connection meepo_conn user=meepo_ft_dig password=meepo_ft_dig_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_foreign_table', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection meepo_conn user=meepo_ft_dig password=meepo_ft_dig_pw
+query
+SELECT ftrelid, ftserver, ftoptions FROM pg_foreign_table;
+----
+ftrelid	ftserver	ftoptions
+
+
+connection default
+statement ok
+DROP TABLE meepo_ft_net;
+
+
+statement ok
+DROP ROLE meepo_ft_dig;

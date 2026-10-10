@@ -49,8 +49,8 @@
 #include <vector>
 
 #include "pg/deserialize.h"
-#include "pg/pg_types.h"
 #include "pg/serialize.h"
+#include "pg/types.h"
 #include "server/utils/message_buffer.h"
 
 namespace {

@@ -45,7 +45,6 @@
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
-#include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "server/utils/message_buffer.h"
 

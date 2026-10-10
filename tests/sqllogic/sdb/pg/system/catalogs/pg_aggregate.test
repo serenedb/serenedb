@@ -1,0 +1,121 @@
+statement ok
+DROP FUNCTION IF EXISTS roshan_agg_bash(int4);
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_aggregate'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+aggfnoid	regproc	t
+aggkind	"char"	t
+aggnumdirectargs	smallint	t
+aggtransfn	regproc	t
+aggfinalfn	regproc	t
+aggcombinefn	regproc	t
+aggserialfn	regproc	t
+aggdeserialfn	regproc	t
+aggmtransfn	regproc	t
+aggminvtransfn	regproc	t
+aggmfinalfn	regproc	t
+aggfinalextra	boolean	t
+aggmfinalextra	boolean	t
+aggfinalmodify	"char"	t
+aggmfinalmodify	"char"	t
+aggsortop	oid	t
+aggtranstype	oid	t
+aggtransspace	integer	t
+aggmtranstype	oid	t
+aggmtransspace	integer	t
+agginitval	text	f
+aggminitval	text	f
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_aggregate a WHERE NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.oid = a.aggfnoid AND p.prokind = 'a')) AS orphans,
+  (SELECT count(*) FROM pg_proc p WHERE p.prokind = 'a' AND NOT EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid)) AS missing,
+  (SELECT count(*) - count(DISTINCT aggfnoid) FROM pg_aggregate) AS duplicates,
+  (SELECT count(*) FROM pg_aggregate WHERE aggkind NOT IN ('n', 'o', 'h')) AS bad_kind,
+  (SELECT count(*) > 0 FROM pg_aggregate) AS has_rows;
+----
+orphans	missing	duplicates	bad_kind	has_rows
+0	0	0	0	t
+
+
+query
+SELECT a.aggfnoid::regprocedure::text AS agg, a.aggkind, a.aggnumdirectargs, a.aggfinalextra, a.aggmfinalextra, a.aggfinalmodify, a.aggmfinalmodify, a.aggsortop, a.aggtransspace, a.aggmtransspace
+FROM pg_aggregate a
+WHERE a.aggfnoid = 'count()'::regprocedure;
+----
+agg	aggkind	aggnumdirectargs	aggfinalextra	aggmfinalextra	aggfinalmodify	aggmfinalmodify	aggsortop	aggtransspace	aggmtransspace
+count()	n	0	f	f	r	r	0	0	0
+
+
+query
+SELECT p.proname, p.prokind, count(*) > 0 AS has_aggregate
+FROM pg_proc p JOIN pg_aggregate a ON a.aggfnoid = p.oid
+WHERE p.proname IN ('count', 'sum', 'max', 'array_agg', 'string_agg')
+GROUP BY p.proname, p.prokind
+ORDER BY p.proname;
+----
+proname	prokind	has_aggregate
+array_agg	a	t
+count	a	t
+max	a	t
+string_agg	a	t
+sum	a	t
+
+
+query
+SELECT count(*) AS n FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid WHERE p.proname IN ('upper', 'row_number', 'array_in');
+----
+n
+0
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT aggfnoid::oid AS fn, aggkind, aggnumdirectargs FROM pg_aggregate
+   WHERE aggfnoid IN (SELECT oid FROM pg_proc WHERE proname IN ('count', 'sum')))
+  EXCEPT
+  (SELECT aggfnoid::oid AS fn, aggkind, aggnumdirectargs FROM pg_aggregate
+   WHERE aggfnoid::oid::int8 + 0 IN (SELECT oid::int8 FROM pg_proc WHERE proname IN ('count', 'sum')))
+) d;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS n FROM pg_aggregate WHERE aggfnoid = 'count()'::regprocedure;
+----
+n
+1
+
+
+query
+SELECT count(*) AS n FROM pg_aggregate WHERE aggfnoid = 'upper(text)'::regprocedure;
+----
+n
+0
+
+
+statement ok
+CREATE FUNCTION roshan_agg_bash(a int4) RETURNS int4 LANGUAGE sql AS 'SELECT a + 1';
+
+
+query
+SELECT count(*) AS n
+FROM pg_aggregate a JOIN pg_proc p ON p.oid = a.aggfnoid
+WHERE p.proname = 'roshan_agg_bash';
+----
+n
+0
+
+
+statement ok
+DROP FUNCTION roshan_agg_bash(int4);

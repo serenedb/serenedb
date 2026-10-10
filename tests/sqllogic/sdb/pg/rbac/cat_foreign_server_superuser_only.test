@@ -1,0 +1,34 @@
+statement ok
+DROP ROLE IF EXISTS cat_fs_intern;
+
+
+statement ok
+CREATE ROLE cat_fs_intern LOGIN PASSWORD 'cat_fs_intern_pw';
+
+
+connection c_fs_intern user=cat_fs_intern password=cat_fs_intern_pw
+statement error
+SELECT count(*) FROM pg_foreign_server;
+----
+db error: ERROR: permission denied for table pg_foreign_server<slt:ignore>
+
+
+connection c_fs_intern user=cat_fs_intern password=cat_fs_intern_pw
+query
+SELECT count(*) > 0 AS readable FROM pg_class WHERE oid = 'pg_foreign_server'::regclass;
+----
+readable
+t
+
+
+connection default
+query
+SELECT count(*) >= 0 AS readable FROM pg_foreign_server;
+----
+readable
+t
+
+
+connection default
+statement ok
+DROP ROLE cat_fs_intern;

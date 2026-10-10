@@ -56,7 +56,7 @@
 #include "connector/pg_logical_types.h"
 #include "icu-datefunc.hpp"
 #include "icu-helpers.hpp"
-#include "pg/pg_types.h"
+#include "pg/types.h"
 
 namespace sdb::pg {
 

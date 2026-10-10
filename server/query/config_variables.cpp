@@ -21,14 +21,11 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
-#include <fast_float/fast_float.h>
 
-#include <algorithm>
-#include <cmath>
+#include <array>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
@@ -43,17 +40,18 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <iterator>
-#include <limits>
 #include <magic_enum/magic_enum.hpp>
-#include <ranges>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/catalog/tables/settings.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
@@ -131,12 +129,10 @@ void RejectZero(duckdb::ClientContext&, duckdb::SetScope,
   }
 }
 
-template<irs::utils::detail::FixedString Name>
-void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
-                 duckdb::Value& value) {
-  constexpr std::string_view kName{Name};
+void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
+                     const duckdb::Value& value) {
   duckdb::Value current;
-  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{kName}, current)) {
+  if (!ctx.TryGetCurrentSetting(duckdb::Identifier{name}, current)) {
     return;
   }
   bool equal = false;
@@ -153,69 +149,22 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
   connector::GetSereneDBContext(ctx).AddNotice(SQL_ERROR_DATA(
     ERR_CODE(ERRCODE_WARNING),
     ERR_MSG(
-      "parameter \"", kName,
+      "parameter \"", name,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
-constexpr std::pair<std::string_view, double> kTimeUnits[] = {
-  {"us", 0.001},  {"ms", 1},      {"s", 1000},
-  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
-};
-
-int64_t ParseStatementTimeout(std::string_view text) {
-  const auto invalid = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"statement_timeout\": \"", text,
-              "\""),
-      ERR_HINT("Valid units for this parameter are \"us\", "
-               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
-  };
-  const auto trimmed = absl::StripAsciiWhitespace(text);
-  double number = 0;
-  const auto [ptr, ec] = fast_float::from_chars(
-    trimmed.data(), trimmed.data() + trimmed.size(), number);
-  if (ec != std::errc{}) {
-    invalid();
-  }
-  const auto unit = absl::StripLeadingAsciiWhitespace(
-    trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
-  double scale = 1;
-  if (!unit.empty()) {
-    const auto it = std::ranges::find(
-      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
-    if (it == std::end(kTimeUnits)) {
-      invalid();
-    }
-    scale = it->second;
-  }
-  const auto ms = std::round(number * scale);
-  if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(absl::StrFormat("%g", ms),
-                            " ms is outside the valid range for parameter "
-                            "\"statement_timeout\" (0 ms .. 2147483647 ms)"));
-  }
-  return static_cast<int64_t>(ms);
-}
-
-std::string FormatStatementTimeout(int64_t ms) {
-  if (ms == 0) {
-    return "0";
-  }
-  for (const auto& [unit, scale] : std::views::reverse(kTimeUnits)) {
-    const auto factor = static_cast<int64_t>(scale);
-    if (factor != 0 && ms % factor == 0) {
-      return absl::StrCat(ms / factor, unit);
-    }
-  }
-  return absl::StrCat(ms, "ms");
+template<irs::utils::detail::FixedString Name>
+void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
+                 duckdb::Value& value) {
+  NoticeIfChanged(ctx, std::string_view{Name}, value);
 }
 
 void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
                          duckdb::Value& value) {
-  const auto ms = value.IsNull() ? 0 : ParseStatementTimeout(value.ToString());
-  value = duckdb::Value{FormatStatementTimeout(ms)};
+  const auto& guc = *pg::FindGuc("statement_timeout");
+  const auto ms =
+    value.IsNull() ? 0 : pg::CheckGucInteger(guc, value.ToString());
+  value = duckdb::Value{pg::GucIntegerText(guc, ms)};
   duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
     ctx,
     scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
@@ -359,41 +308,79 @@ void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
                           "\" to \"", new_str, "\""));
 }
 
-void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
+struct DateStyle {
+  std::string_view style = "ISO";
+  std::string_view order = "MDY";
+};
+
+std::optional<bool> ApplyDateStyle(DateStyle& date_style,
+                                   std::string_view field) {
+  const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
+  if (token == "ISO" || token == "SQL") {
+    date_style.style = token == "ISO" ? "ISO" : "SQL";
+    return false;
+  }
+  if (token == "POSTGRES" || token == "GERMAN") {
+    date_style.style = token == "POSTGRES" ? "Postgres" : "German";
+    return false;
+  }
+  if (token == "YMD") {
+    date_style.order = "YMD";
+    return true;
+  }
+  if (token == "DMY" || token.starts_with("EURO")) {
+    date_style.order = "DMY";
+    return true;
+  }
+  if (token == "MDY" || token == "US" || token.starts_with("NONEURO")) {
+    date_style.order = "MDY";
+    return true;
+  }
+  if (token == "DEFAULT") {
+    date_style = {};
+    return true;
+  }
+  return std::nullopt;
+}
+
+void CheckDateStyle(duckdb::ClientContext& ctx, duckdb::SetScope,
                     duckdb::Value& value) {
   if (value.IsNull()) {
     return;
   }
+  DateStyle date_style;
+  duckdb::Value current;
+  if (ctx.TryGetCurrentSetting("DateStyle", current) && !current.IsNull()) {
+    for (std::string_view field : absl::StrSplit(current.ToString(), ',')) {
+      ApplyDateStyle(date_style, field);
+    }
+  }
   const std::string raw = value.ToString();
+  bool ordered = false;
   for (std::string_view field : absl::StrSplit(raw, ',', absl::SkipEmpty())) {
-    const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
-    static constexpr std::string_view kKnown[] = {
-      "ISO", "SQL", "POSTGRES", "GERMAN", "YMD", "DMY", "MDY", "US", "DEFAULT"};
-    const bool ok = absl::StartsWith(token, "EURO") ||
-                    absl::StartsWith(token, "NONEURO") ||
-                    std::ranges::any_of(
-                      kKnown, [&](std::string_view k) { return k == token; });
-    if (!ok) {
+    const auto order = ApplyDateStyle(date_style, field);
+    if (!order) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("invalid value for parameter \"DateStyle\": \"", raw, "\""));
     }
+    ordered |= *order;
   }
+  if (date_style.style == "German" && !ordered) {
+    date_style.order = "DMY";
+  }
+  value = duckdb::Value{absl::StrCat(date_style.style, ", ", date_style.order)};
+  NoticeIfChanged(ctx, "DateStyle", value);
 }
 
-void CheckIntervalStyle(duckdb::ClientContext&, duckdb::SetScope,
+void CheckIntervalStyle(duckdb::ClientContext& ctx, duckdb::SetScope,
                         duckdb::Value& value) {
   if (value.IsNull()) {
     return;
   }
-  const auto token = absl::AsciiStrToUpper(value.ToString());
-  if (token != "POSTGRES" && token != "POSTGRES_VERBOSE" &&
-      token != "SQL_STANDARD" && token != "ISO_8601") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("invalid value for parameter \"IntervalStyle\": "
-                            "\"",
-                            value.ToString(), "\""));
-  }
+  value = duckdb::Value{
+    pg::NormalizeGucValue(*pg::FindGuc("IntervalStyle"), value.ToString())};
+  NoticeIfChanged(ctx, "IntervalStyle", value);
 }
 
 void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
@@ -1355,11 +1342,43 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "server_version_num",
 };
 
+namespace {
+
+const pg::Guc* CompatGuc(std::string_view name) {
+  if (kVariableIndex.contains(name) ||
+      duckdb::DBConfig::GetOptionByName(duckdb::Identifier{name})) {
+    return nullptr;
+  }
+  return pg::FindGuc(name);
+}
+
+}  // namespace
+
 bool IsUnchangeableSetting(std::string_view name) {
-  return kUnchangeableSettings.contains(name);
+  if (kUnchangeableSettings.contains(name)) {
+    return true;
+  }
+  const auto* guc = CompatGuc(name);
+  return guc && guc->context != "user" && guc->context != "superuser";
 }
 
 namespace {
+
+template<size_t I>
+void SetCompatGuc(duckdb::ClientContext& ctx, duckdb::SetScope,
+                  duckdb::Value& value) {
+  if (value.IsNull()) {
+    return;
+  }
+  const auto& guc = pg::kGucs[I];
+  value = duckdb::Value{pg::NormalizeGucValue(guc, value.ToString())};
+  NoticeIfChanged(ctx, guc.name, value);
+}
+
+constexpr auto kSetCompatGuc = []<size_t... I>(std::index_sequence<I...>) {
+  return std::array<duckdb::set_option_callback_t, sizeof...(I)>{
+    &SetCompatGuc<I>...};
+}(std::make_index_sequence<std::size(pg::kGucs)>{});
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
                  const VariableDescription& desc) {
@@ -1381,6 +1400,21 @@ namespace connector {
 void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
+  }
+  for (size_t i = 0; i < std::size(pg::kGucs); ++i) {
+    const auto& guc = pg::kGucs[i];
+    const duckdb::Identifier setting{guc.name};
+    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+    if (!CompatGuc(guc.name) ||
+        config.TryGetSettingIndex(setting, option).IsValid()) {
+      continue;
+    }
+    config.AddExtensionOption(
+      setting, std::string{guc.short_desc}, duckdb::LogicalType::VARCHAR,
+      duckdb::Value{guc.configured ? guc.configured()
+                                   : std::string{guc.setting}},
+      kSetCompatGuc[i], nullptr, duckdb::SetScope::AUTOMATIC,
+      IsUnchangeableSetting(guc.name));
   }
 }
 

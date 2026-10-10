@@ -1,0 +1,121 @@
+statement ok
+DROP TABLE IF EXISTS sven_am_cleave;
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_am'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+amname	name	t
+amhandler	regproc	t
+amtype	"char"	t
+
+
+query
+SELECT oid, amname, amtype FROM pg_am WHERE oid = 2;
+----
+oid	amname	amtype
+2	heap	t
+
+
+query
+SELECT amname, amtype FROM pg_am ORDER BY amname;
+----
+amname	amtype
+heap	t
+inverted	i
+iresearch	t
+secondary	i
+
+
+query
+SELECT count(*) = count(DISTINCT oid) AS oids_unique, count(*) = count(DISTINCT amname) AS names_unique, bool_and(amtype IN ('t', 'i')) AS known_types
+FROM pg_am;
+----
+oids_unique	names_unique	known_types
+t	t	t
+
+
+query
+SELECT amname FROM pg_am WHERE amname = 'inverted';
+----
+amname
+inverted
+
+
+statement ok
+CREATE TABLE sven_am_cleave (pk int PRIMARY KEY, emb float[4], body text);
+
+
+statement ok
+CREATE INDEX sven_am_cleave_body ON sven_am_cleave (body);
+
+
+statement ok
+CREATE INDEX sven_am_cleave_inv ON sven_am_cleave USING inverted(pk, emb hnsw (metric = 'l2'));
+
+
+query
+SELECT c.relname, c.relkind, a.amname, a.amtype
+FROM pg_class c JOIN pg_am a ON a.oid = c.relam
+WHERE c.relname LIKE 'sven\_am\_cleave%'
+ORDER BY c.relname;
+----
+relname	relkind	amname	amtype
+sven_am_cleave	r	heap	t
+sven_am_cleave_body	i	secondary	i
+sven_am_cleave_inv	i	inverted	i
+sven_am_cleave_pkey	i	secondary	i
+
+
+query
+SELECT count(*) AS dangling
+FROM pg_class c
+WHERE c.relam <> 0 AND NOT EXISTS (SELECT 1 FROM pg_am a WHERE a.oid = c.relam);
+----
+dangling
+0
+
+
+query
+SELECT count(*) AS mismatched
+FROM pg_class c JOIN pg_am a ON a.oid = c.relam
+WHERE (c.relkind = 'i' AND a.amtype <> 'i') OR (c.relkind IN ('r', 'm') AND a.amtype <> 't');
+----
+mismatched
+0
+
+
+query
+SELECT count(*) AS dangling
+FROM pg_opclass o
+WHERE NOT EXISTS (SELECT 1 FROM pg_am a WHERE a.oid = o.opcmethod);
+----
+dangling
+0
+
+
+query
+SELECT amname, amhandler::oid AS handler, amhandler::text AS handler_name
+FROM pg_am ORDER BY amname;
+----
+amname	handler	handler_name
+heap	3	heap_tableam_handler
+inverted	0	-
+iresearch	0	-
+secondary	0	-
+
+
+statement ok
+DROP TABLE sven_am_cleave;
+
+
+query
+SELECT count(*) AS left_over FROM pg_class WHERE relname LIKE 'sven\_am\_cleave%';
+----
+left_over
+0

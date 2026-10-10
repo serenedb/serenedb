@@ -1,0 +1,434 @@
+statement ok
+DROP FUNCTION IF EXISTS rubick_prc_steal(int4, int4);
+
+
+statement ok
+DROP FUNCTION IF EXISTS rubick_prc_lift();
+
+
+statement ok
+DROP MACRO IF EXISTS rubick_prc_echo;
+
+
+statement ok
+DROP MACRO TABLE IF EXISTS rubick_prc_spells;
+
+
+statement ok
+DROP TABLE IF EXISTS rubick_prc_saved;
+
+
+statement ok
+DROP MACRO IF EXISTS rubick_prc_moods;
+
+
+statement ok
+DROP MACRO IF EXISTS rubick_prc_void;
+
+
+statement ok
+DROP MACRO IF EXISTS rubick_prc_hidden_fn;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rubick_prc_hidden CASCADE;
+
+
+statement ok
+DROP MACRO IF EXISTS rubick_prc_cast;
+
+
+statement ok
+DROP MACRO TABLE IF EXISTS rubick_prc_table;
+
+
+statement ok
+DROP TYPE IF EXISTS rubick_prc_mood;
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_proc'::regclass AND attnum > 0 AND attname <> 'proargtypes'
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+proname	name	t
+pronamespace	oid	t
+proowner	oid	t
+prolang	oid	t
+procost	real	t
+prorows	real	t
+provariadic	oid	t
+prosupport	regproc	t
+prokind	"char"	t
+prosecdef	boolean	t
+proleakproof	boolean	t
+proisstrict	boolean	t
+proretset	boolean	t
+provolatile	"char"	t
+proparallel	"char"	t
+pronargs	smallint	t
+pronargdefaults	smallint	t
+prorettype	oid	t
+proallargtypes	oid[]	f
+proargmodes	"char"[]	f
+proargnames	text[]	f
+proargdefaults	pg_node_tree	f
+protrftypes	oid[]	f
+prosrc	text	t
+probin	text	f
+prosqlbody	pg_node_tree	f
+proconfig	text[]	f
+proacl	aclitem[]	f
+
+
+query
+SELECT oid, proname, pronamespace, prolang, procost, prorows, provariadic, prosupport::text AS prosupport, prokind, prosecdef, proleakproof, proisstrict, proretset, provolatile, proparallel, pronargs, pronargdefaults, prorettype, prosrc, probin IS NULL AS no_bin, proallargtypes IS NULL AS no_allargs, proargnames IS NULL AS no_names, proconfig IS NULL AS no_config, proacl IS NULL AS no_acl
+FROM pg_proc
+WHERE oid IN (3, 42, 43, 46, 750, 1242, 2246, 2400, 3504, 3505, 3506, 3507, 3532, 3533)
+ORDER BY oid;
+----
+oid	proname	pronamespace	prolang	procost	prorows	provariadic	prosupport	prokind	prosecdef	proleakproof	proisstrict	proretset	provolatile	proparallel	pronargs	pronargdefaults	prorettype	prosrc	no_bin	no_allargs	no_names	no_config	no_acl
+3	heap_tableam_handler	11	12	1	0	0	-	f	f	f	t	f	v	s	1	0	269	heap_tableam_handler	t	t	t	t	t
+42	int4in	11	12	1	0	0	-	f	f	f	t	f	i	s	1	0	23	int4in	t	t	t	t	t
+43	int4out	11	12	1	0	0	-	f	f	f	t	f	i	s	1	0	2275	int4out	t	t	t	t	t
+46	textin	11	12	1	0	0	-	f	f	f	t	f	i	s	1	0	25	textin	t	t	t	t	t
+750	array_in	11	12	1	0	0	-	f	f	f	t	f	s	s	3	0	2277	array_in	t	t	t	t	t
+1242	boolin	11	12	1	0	0	-	f	f	f	t	f	i	s	1	0	16	boolin	t	t	t	t	t
+2246	fmgr_internal_validator	11	12	1	0	0	-	f	f	f	t	f	s	s	1	0	2278	fmgr_internal_validator	t	t	t	t	t
+2400	array_recv	11	12	1	0	0	-	f	f	f	t	f	s	s	3	0	2277	array_recv	t	t	t	t	t
+3504	anyenum_in	11	12	1	0	0	-	f	f	f	t	f	i	s	1	0	3500	anyenum_in	t	t	t	t	t
+3505	anyenum_out	11	12	1	0	0	-	f	f	f	t	f	s	s	1	0	2275	anyenum_out	t	t	t	t	t
+3506	enum_in	11	12	1	0	0	-	f	f	f	t	f	s	s	2	0	3500	enum_in	t	t	t	t	t
+3507	enum_out	11	12	1	0	0	-	f	f	f	t	f	s	s	1	0	2275	enum_out	t	t	t	t	t
+3532	enum_recv	11	12	1	0	0	-	f	f	f	t	f	s	s	2	0	3500	enum_recv	t	t	t	t	t
+3533	enum_send	11	12	1	0	0	-	f	f	f	t	f	s	s	1	0	17	enum_send	t	t	t	t	t
+
+
+query
+SELECT 'array_in'::regproc::oid AS by_name, 750::regproc::text AS name, 'array_in(cstring,oid,integer)'::regprocedure::oid AS by_sig, 750::regprocedure::text AS sig, 'pg_catalog.int4out'::regproc::oid AS qualified, to_regproc('int4in')::oid AS to_reg, to_regprocedure('int4in(cstring)')::oid AS to_reg_sig, to_regproc('rubick_prc_nope') IS NULL AS missing;
+----
+by_name	name	by_sig	sig	qualified	to_reg	to_reg_sig	missing
+750	array_in	750	array_in(cstring,oid,integer)	43	42	42	t
+
+
+query
+SELECT p.proname, p.prokind, p.prorettype::regtype::text AS rettype, p.pronargs, p.proretset, l.lanname
+FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+WHERE p.oid = 'upper(text)'::regprocedure;
+----
+proname	prokind	rettype	pronargs	proretset	lanname
+upper	f	text	1	f	internal
+
+
+query
+SELECT t.typname, p.proname AS input, q.proname AS output
+FROM pg_type t
+JOIN pg_proc p ON p.oid = t.typinput
+JOIN pg_proc q ON q.oid = t.typoutput
+WHERE t.oid IN (16, 23, 1007, 2249, 13307)
+ORDER BY t.oid;
+----
+typname	input	output
+bool	boolin	boolout
+int4	int4in	int4out
+_int4	array_in	array_out
+record	record_in	record_out
+cardinal_number	domain_in	int4out
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_proc p WHERE p.pronamespace NOT IN (SELECT oid FROM pg_namespace)) AS bad_namespace,
+  (SELECT count(*) FROM pg_proc p WHERE p.oid < 16384 AND p.prolang NOT IN (SELECT oid FROM pg_language) AND p.prolang <> 13) AS bad_language,
+  (SELECT count(*) FROM pg_proc p WHERE p.prokind NOT IN ('f', 'p', 'a', 'w')) AS bad_kind,
+  (SELECT count(*) FROM pg_proc p WHERE p.provolatile NOT IN ('i', 's', 'v')) AS bad_volatile,
+  (SELECT count(*) FROM pg_proc p WHERE p.proparallel NOT IN ('s', 'r', 'u')) AS bad_parallel;
+----
+bad_namespace	bad_language	bad_kind	bad_volatile	bad_parallel
+0	0	0	0	0
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE oid IN (42, 750, 3506, 'upper(text)'::regprocedure)
+   EXCEPT
+   SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE oid::int8 + 0 IN (42, 750, 3506, 'upper(text)'::regprocedure::int8))
+  UNION ALL
+  (SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE oid::int8 + 0 IN (42, 750, 3506, 'upper(text)'::regprocedure::int8)
+   EXCEPT
+   SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE oid IN (42, 750, 3506, 'upper(text)'::regprocedure))
+) d;
+----
+diff
+0
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE proname IN ('int4in', 'enum_in', 'upper', 'count')
+   EXCEPT
+   SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE proname || '' IN ('int4in', 'enum_in', 'upper', 'count'))
+  UNION ALL
+  (SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE proname || '' IN ('int4in', 'enum_in', 'upper', 'count')
+   EXCEPT
+   SELECT oid, proname, pronargs, prorettype FROM pg_proc WHERE proname IN ('int4in', 'enum_in', 'upper', 'count'))
+) d;
+----
+diff
+0
+
+
+query
+SELECT oid, proname FROM pg_proc WHERE oid = 3506;
+----
+oid	proname
+3506	enum_in
+
+
+statement ok
+CREATE FUNCTION rubick_prc_steal(dist int4, dmg int4) RETURNS int4 LANGUAGE sql AS 'SELECT dist * dmg';
+
+
+statement ok
+CREATE FUNCTION rubick_prc_lift() RETURNS text LANGUAGE sql AS $$SELECT 'lifted'$$;
+
+
+query
+SELECT proname, pronamespace::regnamespace::text AS nsp, proowner::regrole::text AS owner, prolang, procost, prorows, provariadic, prosupport::text AS prosupport, prokind, prosecdef, proleakproof, proisstrict, proretset, provolatile, proparallel, pronargs, pronargdefaults, prorettype::regtype::text AS rettype, proargnames, proconfig IS NULL AS no_config, proacl IS NULL AS no_acl
+FROM pg_proc
+WHERE proname IN ('rubick_prc_steal', 'rubick_prc_lift')
+ORDER BY proname;
+----
+proname	nsp	owner	prolang	procost	prorows	provariadic	prosupport	prokind	prosecdef	proleakproof	proisstrict	proretset	provolatile	proparallel	pronargs	pronargdefaults	rettype	proargnames	no_config	no_acl
+rubick_prc_lift	public	postgres	14	100	0	0	-	f	f	f	f	f	v	u	0	0	text	NULL	t	t
+rubick_prc_steal	public	postgres	14	100	0	0	-	f	f	f	f	f	v	u	2	0	integer	{dist,dmg}	t	t
+
+
+query
+SELECT p.oid::regprocedure::text AS sig, p.oid::regproc::text AS name, pg_get_function_arguments(p.oid) AS args, pg_get_function_identity_arguments(p.oid) AS identity, pg_get_function_result(p.oid) AS result
+FROM pg_proc p
+WHERE p.proname IN ('rubick_prc_steal', 'rubick_prc_lift')
+ORDER BY p.proname;
+----
+sig	name	args	identity	result
+rubick_prc_lift()	rubick_prc_lift	(empty)	(empty)	text
+rubick_prc_steal(integer,integer)	rubick_prc_steal	dist integer, dmg integer	dist integer, dmg integer	integer
+
+
+query
+SELECT 'rubick_prc_steal'::regproc = 'rubick_prc_steal(int4,int4)'::regprocedure AS same, to_regprocedure('rubick_prc_steal(integer,integer)') IS NOT NULL AS found, to_regprocedure('rubick_prc_steal(text)') IS NULL AS wrong_sig;
+----
+same	found	wrong_sig
+t	t	t
+
+
+query
+SELECT p.proname, t.typname
+FROM pg_proc p JOIN pg_type t ON t.oid = p.prorettype
+WHERE p.proname LIKE 'rubick\_prc\_%'
+ORDER BY p.proname;
+----
+proname	typname
+rubick_prc_lift	text
+rubick_prc_steal	int4
+
+
+query
+SELECT count(*) AS diff
+FROM (
+  (SELECT oid, proname, pronargs FROM pg_proc WHERE oid IN ('rubick_prc_steal'::regproc, 'rubick_prc_lift'::regproc)
+   EXCEPT
+   SELECT oid, proname, pronargs FROM pg_proc WHERE proname IN ('rubick_prc_steal', 'rubick_prc_lift'))
+  UNION ALL
+  (SELECT oid, proname, pronargs FROM pg_proc WHERE proname IN ('rubick_prc_steal', 'rubick_prc_lift')
+   EXCEPT
+   SELECT oid, proname, pronargs FROM pg_proc WHERE oid IN ('rubick_prc_steal'::regproc, 'rubick_prc_lift'::regproc))
+) d;
+----
+diff
+0
+
+
+query
+SELECT rubick_prc_steal(3, 4) AS stolen, rubick_prc_lift() AS lifted;
+----
+stolen	lifted
+12	lifted
+
+
+statement ok
+CREATE MACRO rubick_prc_echo(a) AS a;
+
+
+statement ok
+CREATE MACRO rubick_prc_spells(n) AS TABLE SELECT n AS spell;
+
+
+query
+SELECT p.proname, p.prokind, p.proretset, p.pronargs, p.proargnames, l.lanname
+FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+WHERE p.proname IN ('rubick_prc_echo', 'rubick_prc_spells')
+ORDER BY p.proname;
+----
+proname	prokind	proretset	pronargs	proargnames	lanname
+rubick_prc_echo	f	f	1	{a}	sql
+rubick_prc_spells	f	t	1	{n}	sql
+
+
+statement ok
+CREATE TABLE rubick_prc_saved AS SELECT 'rubick_prc_steal'::regproc::oid AS steal, 'rubick_prc_lift'::regproc::oid AS lift;
+
+
+statement ok
+DROP FUNCTION rubick_prc_steal(int4, int4);
+
+
+statement ok
+DROP FUNCTION rubick_prc_lift();
+
+
+statement ok
+DROP MACRO rubick_prc_echo;
+
+
+statement ok
+DROP MACRO TABLE rubick_prc_spells;
+
+
+query
+SELECT
+  (SELECT count(*) FROM pg_proc WHERE proname LIKE 'rubick\_prc\_%') AS by_name,
+  (SELECT count(*) FROM pg_proc WHERE oid IN (SELECT steal FROM rubick_prc_saved UNION ALL SELECT lift FROM rubick_prc_saved)) AS by_oid,
+  to_regproc('rubick_prc_steal') IS NULL AS gone;
+----
+by_name	by_oid	gone
+0	0	t
+
+
+statement ok
+DROP TABLE rubick_prc_saved;
+
+
+statement ok
+CREATE TYPE rubick_prc_mood AS ENUM ('calm');
+
+
+statement ok
+CREATE FUNCTION rubick_prc_moods(x rubick_prc_mood[]) RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+query
+SELECT pg_get_function_arguments(p.oid) AS args, p.oid::regprocedure::text AS sig
+FROM pg_proc p
+WHERE p.proname = 'rubick_prc_moods';
+----
+args	sig
+x rubick_prc_mood[]	rubick_prc_moods(rubick_prc_mood[])
+
+
+query
+SELECT 'rubick_prc_moods(rubick_prc_mood[])'::regprocedure::text AS sig;
+----
+sig
+rubick_prc_moods(rubick_prc_mood[])
+
+
+statement ok
+DROP FUNCTION rubick_prc_moods(rubick_prc_mood[]);
+
+
+statement ok
+DROP TYPE rubick_prc_mood;
+
+
+statement ok
+CREATE SCHEMA rubick_prc_hidden;
+
+
+statement ok
+CREATE TYPE rubick_prc_hidden.mood AS ENUM ('calm');
+
+
+statement ok
+CREATE FUNCTION rubick_prc_hidden_fn(x rubick_prc_hidden.mood) RETURNS rubick_prc_hidden.mood
+LANGUAGE sql AS 'SELECT x';
+
+
+query
+SELECT pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result
+FROM pg_proc p
+WHERE p.proname = 'rubick_prc_hidden_fn';
+----
+args	result
+x rubick_prc_hidden.mood	rubick_prc_hidden.mood
+
+
+statement ok
+DROP FUNCTION rubick_prc_hidden_fn(rubick_prc_hidden.mood);
+
+
+statement ok
+DROP SCHEMA rubick_prc_hidden CASCADE;
+
+
+statement ok
+CREATE PROCEDURE rubick_prc_cast(x int) LANGUAGE sql AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION rubick_prc_table() RETURNS TABLE(a int, b text) LANGUAGE sql AS $$ SELECT 1, 'x' $$;
+
+
+query
+SELECT proname, prokind, prorettype::regtype::text AS ret, proretset
+FROM pg_proc
+WHERE proname IN ('rubick_prc_cast', 'rubick_prc_table')
+ORDER BY 1;
+----
+proname	prokind	ret	proretset
+rubick_prc_cast	p	void	f
+rubick_prc_table	f	record	t
+
+
+statement ok
+DROP PROCEDURE rubick_prc_cast;
+
+
+statement ok
+DROP FUNCTION rubick_prc_table;
+
+
+query
+SELECT pg_get_function_arguments('enum_in'::regproc) AS args, pg_get_function_result('enum_in'::regproc) AS result;
+----
+args	result
+cstring, oid	anyenum
+
+
+statement ok
+CREATE FUNCTION rubick_prc_void() RETURNS VOID LANGUAGE sql AS 'SELECT NULL';
+
+
+query
+SELECT p.prorettype::regtype::text AS ret, pg_get_function_result(p.oid) AS result
+FROM pg_proc p
+WHERE p.proname = 'rubick_prc_void';
+----
+ret	result
+void	void
+
+
+query
+SELECT pg_typeof(NULL::void)::text AS typ;
+----
+typ
+void
+
+
+statement ok
+DROP FUNCTION rubick_prc_void();

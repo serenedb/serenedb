@@ -1,0 +1,454 @@
+statement ok
+CREATE SCHEMA tinker_snap
+
+
+statement ok
+CREATE TABLE tinker_snap.march (id INT CONSTRAINT tinker_snap_laser PRIMARY KEY, x INT)
+
+
+statement ok
+CREATE TABLE tinker_snap.rearm (id INT)
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+march
+rearm
+
+
+statement ok
+CREATE TABLE tinker_snap.keen (id INT, mana INT NOT NULL)
+
+
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+rearm
+
+
+query
+SELECT attname FROM pg_attribute WHERE attrelid = 'tinker_snap.keen'::regclass AND attnotnull ORDER BY attnum
+----
+attname
+mana
+
+
+query
+SELECT count(*) FROM pg_attribute WHERE attrelid = 'tinker_snap.keen'::regclass AND attnum > 0 AND NOT attnotnull
+----
+count
+1
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+statement ok
+CREATE TABLE tinker_snap.matrix (id INT CONSTRAINT tinker_snap_defense PRIMARY KEY)
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+matrix
+rearm
+
+
+connection s1
+query
+SELECT relname, relkind FROM pg_class WHERE relname = 'tinker_snap_defense'
+----
+relname	relkind
+tinker_snap_defense	i
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+rearm
+
+
+connection s2
+query
+SELECT count(*) FROM pg_class WHERE relname = 'tinker_snap_defense'
+----
+count
+0
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s2
+query
+SELECT relname, relkind FROM pg_class WHERE relname = 'tinker_snap_defense'
+----
+relname	relkind
+tinker_snap_defense	i
+
+
+connection s1
+statement ok
+BEGIN
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+matrix
+rearm
+
+
+connection s2
+statement ok
+DROP TABLE tinker_snap.march
+
+
+connection s2
+statement ok
+CREATE TABLE tinker_snap.blink (id INT CONSTRAINT tinker_snap_conveyance PRIMARY KEY)
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+blink
+keen
+matrix
+rearm
+
+
+connection s2
+query
+SELECT relname FROM pg_class WHERE relname IN ('tinker_snap_laser', 'tinker_snap_conveyance')
+----
+relname
+tinker_snap_conveyance
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+keen
+march
+matrix
+rearm
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relname IN ('tinker_snap_laser', 'tinker_snap_conveyance')
+----
+relname
+tinker_snap_laser
+
+
+connection s1
+statement ok
+COMMIT
+
+
+connection s1
+query
+SELECT relname FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname
+blink
+keen
+matrix
+rearm
+
+
+statement ok
+CREATE TABLE tinker_snap.audit (msg TEXT)
+
+
+statement ok
+CREATE TRIGGER tinker_snap_trg AFTER INSERT ON tinker_snap.rearm FOR EACH STATEMENT INSERT INTO tinker_snap.audit VALUES ('rearm')
+
+
+statement ok
+CREATE TABLE tinker_snap.heat (id INT REFERENCES tinker_snap.matrix (id))
+
+
+query
+SELECT relname, relhastriggers FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname	relhastriggers
+audit	f
+blink	f
+heat	t
+keen	f
+matrix	t
+rearm	t
+
+
+query
+SELECT relname, relhastriggers FROM pg_class WHERE relname = 'rearm'
+----
+relname	relhastriggers
+rearm	t
+
+
+statement ok
+DROP TRIGGER tinker_snap_trg ON tinker_snap.rearm
+
+
+query
+SELECT relname, relhastriggers FROM pg_class WHERE relnamespace = 'tinker_snap'::regnamespace AND relkind = 'r' ORDER BY 1
+----
+relname	relhastriggers
+audit	f
+blink	f
+heat	t
+keen	f
+matrix	t
+rearm	f
+
+
+statement ok
+DROP SCHEMA tinker_snap CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_arrays
+
+
+statement ok
+CREATE TYPE tinker_arrays.tinkerarr_mood AS ENUM ('march')
+
+
+statement ok
+CREATE TABLE tinker_arrays.tinkerarr_many (a1 tinker_arrays.tinkerarr_mood[], a2 tinker_arrays.tinkerarr_mood[], a3 tinker_arrays.tinkerarr_mood[], a4 tinker_arrays.tinkerarr_mood[], a5 tinker_arrays.tinkerarr_mood[], a6 tinker_arrays.tinkerarr_mood[], a7 tinker_arrays.tinkerarr_mood[], a8 tinker_arrays.tinkerarr_mood[], a9 tinker_arrays.tinkerarr_mood[], a10 tinker_arrays.tinkerarr_mood[], a11 tinker_arrays.tinkerarr_mood[], a12 tinker_arrays.tinkerarr_mood[], a13 tinker_arrays.tinkerarr_mood[], a14 tinker_arrays.tinkerarr_mood[], a15 tinker_arrays.tinkerarr_mood[], a16 tinker_arrays.tinkerarr_mood[], a17 tinker_arrays.tinkerarr_mood[], a18 tinker_arrays.tinkerarr_mood[], a19 tinker_arrays.tinkerarr_mood[], a20 tinker_arrays.tinkerarr_mood[], a21 tinker_arrays.tinkerarr_mood[], a22 tinker_arrays.tinkerarr_mood[], a23 tinker_arrays.tinkerarr_mood[], a24 tinker_arrays.tinkerarr_mood[], a25 tinker_arrays.tinkerarr_mood[], a26 tinker_arrays.tinkerarr_mood[], a27 tinker_arrays.tinkerarr_mood[], a28 tinker_arrays.tinkerarr_mood[], a29 tinker_arrays.tinkerarr_mood[], a30 tinker_arrays.tinkerarr_mood[], a31 tinker_arrays.tinkerarr_mood[], a32 tinker_arrays.tinkerarr_mood[], a33 tinker_arrays.tinkerarr_mood[], a34 tinker_arrays.tinkerarr_mood[], a35 tinker_arrays.tinkerarr_mood[], a36 tinker_arrays.tinkerarr_mood[], a37 tinker_arrays.tinkerarr_mood[], a38 tinker_arrays.tinkerarr_mood[], a39 tinker_arrays.tinkerarr_mood[], a40 tinker_arrays.tinkerarr_mood[], a41 tinker_arrays.tinkerarr_mood[], a42 tinker_arrays.tinkerarr_mood[], a43 tinker_arrays.tinkerarr_mood[], a44 tinker_arrays.tinkerarr_mood[], a45 tinker_arrays.tinkerarr_mood[], a46 tinker_arrays.tinkerarr_mood[], a47 tinker_arrays.tinkerarr_mood[], a48 tinker_arrays.tinkerarr_mood[], a49 tinker_arrays.tinkerarr_mood[], a50 tinker_arrays.tinkerarr_mood[], a51 tinker_arrays.tinkerarr_mood[], a52 tinker_arrays.tinkerarr_mood[], a53 tinker_arrays.tinkerarr_mood[], a54 tinker_arrays.tinkerarr_mood[], a55 tinker_arrays.tinkerarr_mood[], a56 tinker_arrays.tinkerarr_mood[], a57 tinker_arrays.tinkerarr_mood[], a58 tinker_arrays.tinkerarr_mood[], a59 tinker_arrays.tinkerarr_mood[], a60 tinker_arrays.tinkerarr_mood[], a61 tinker_arrays.tinkerarr_mood[], a62 tinker_arrays.tinkerarr_mood[], a63 tinker_arrays.tinkerarr_mood[], a64 tinker_arrays.tinkerarr_mood[], a65 tinker_arrays.tinkerarr_mood[], a66 tinker_arrays.tinkerarr_mood[])
+
+
+query
+SELECT count(*) AS n, min(udt_name) AS lo, max(udt_name) AS hi FROM information_schema.columns WHERE table_schema = 'tinker_arrays' AND table_name = 'tinkerarr_many'
+----
+n	lo	hi
+66	_tinkerarr_mood	_tinkerarr_mood
+
+
+statement ok
+CREATE TYPE tinker_arrays._tinkerarr_mood AS ENUM ('rearm')
+
+
+query
+SELECT count(*) AS n, min(udt_name) AS lo, max(udt_name) AS hi FROM information_schema.columns WHERE table_schema = 'tinker_arrays' AND table_name = 'tinkerarr_many'
+----
+n	lo	hi
+66	__tinkerarr_mood	__tinkerarr_mood
+
+
+query
+SELECT typname FROM pg_type WHERE typnamespace = 'tinker_arrays'::regnamespace ORDER BY 1
+----
+typname
+___tinkerarr_mood
+__tinkerarr_mood
+_tinkerarr_many
+_tinkerarr_mood
+tinkerarr_many
+tinkerarr_mood
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE TYPE tinker_arrays.tinkerarr_keen AS ENUM ('laser')
+
+
+query
+SELECT count(*) AS n, min(udt_name) AS lo, max(udt_name) AS hi FROM information_schema.columns WHERE table_schema = 'tinker_arrays' AND table_name = 'tinkerarr_many'
+----
+n	lo	hi
+66	__tinkerarr_mood	__tinkerarr_mood
+
+
+statement ok
+ROLLBACK
+
+
+statement ok
+DROP SCHEMA tinker_arrays CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_defaults
+
+
+statement ok
+CREATE SEQUENCE tinker_defaults.tinkerdef_seq
+
+
+statement ok
+CREATE TABLE tinker_defaults.tinkerdef_a_wide (w1 INT DEFAULT 1, w2 INT DEFAULT 2, w3 INT DEFAULT 3, w4 INT DEFAULT 4, w5 INT DEFAULT 5, w6 INT DEFAULT 6, w7 INT DEFAULT 7, w8 INT DEFAULT 8, w9 INT DEFAULT 9, w10 INT DEFAULT 10, w11 INT DEFAULT 11, w12 INT DEFAULT 12, w13 INT DEFAULT 13, w14 INT DEFAULT 14, w15 INT DEFAULT 15, w16 INT DEFAULT 16, w17 INT DEFAULT 17, w18 INT DEFAULT 18, w19 INT DEFAULT 19, w20 INT DEFAULT 20, w21 INT DEFAULT 21, w22 INT DEFAULT 22, w23 INT DEFAULT 23, w24 INT DEFAULT 24, w25 INT DEFAULT 25, w26 INT DEFAULT 26, w27 INT DEFAULT 27, w28 INT DEFAULT 28, w29 INT DEFAULT 29, w30 INT DEFAULT 30, w31 INT DEFAULT 31, w32 INT DEFAULT 32, w33 INT DEFAULT 33, w34 INT DEFAULT 34, w35 INT DEFAULT 35, w36 INT DEFAULT 36, w37 INT DEFAULT 37, w38 INT DEFAULT 38, w39 INT DEFAULT 39, w40 INT DEFAULT 40, w41 INT DEFAULT 41, w42 INT DEFAULT 42, w43 INT DEFAULT 43, w44 INT DEFAULT 44, w45 INT DEFAULT 45, w46 INT DEFAULT 46, w47 INT DEFAULT 47, w48 INT DEFAULT 48, w49 INT DEFAULT 49, w50 INT DEFAULT 50, w51 INT DEFAULT 51, w52 INT DEFAULT 52, w53 INT DEFAULT 53, w54 INT DEFAULT 54, w55 INT DEFAULT 55, w56 INT DEFAULT 56, w57 INT DEFAULT 57, w58 INT DEFAULT 58, w59 INT DEFAULT 59, w60 INT DEFAULT 60, w61 INT DEFAULT 61, w62 INT DEFAULT 62, w63 INT DEFAULT 63, w64 INT DEFAULT 64, w65 INT DEFAULT 65, w66 INT DEFAULT 66)
+
+
+statement ok
+CREATE TABLE tinker_defaults.tinkerdef_t (a INT DEFAULT 1, b TIMESTAMP DEFAULT now(), c TEXT DEFAULT 'x' || 'y', d BIGINT DEFAULT nextval('tinker_defaults.tinkerdef_seq'), e INT GENERATED ALWAYS AS (a * 2), f INT)
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass ORDER BY 1
+----
+adnum	def
+1	1
+2	now()
+3	('x' || 'y')
+4	nextval('tinker_defaults.tinkerdef_seq')
+5	CAST((a * 2) AS INTEGER)
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass ORDER BY 1
+----
+adnum	def
+1	1
+2	now()
+3	('x' || 'y')
+4	nextval('tinker_defaults.tinkerdef_seq')
+5	CAST((a * 2) AS INTEGER)
+
+
+statement ok
+ALTER TABLE tinker_defaults.tinkerdef_t ALTER COLUMN a SET DEFAULT 5
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass AND adnum = 1
+----
+adnum	def
+1	5
+
+
+statement ok
+BEGIN
+
+
+statement ok
+ALTER TABLE tinker_defaults.tinkerdef_t ALTER COLUMN a SET DEFAULT 7
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass AND adnum = 1
+----
+adnum	def
+1	7
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT adnum, pg_get_expr(adbin, adrelid) AS def FROM (SELECT * FROM pg_attrdef LIMIT 100000000) WHERE adrelid = 'tinker_defaults.tinkerdef_t'::regclass AND adnum = 1
+----
+adnum	def
+1	5
+
+
+statement ok
+DROP SCHEMA tinker_defaults CASCADE
+
+
+statement ok
+CREATE SCHEMA tinker_edges
+
+
+statement ok
+CREATE TABLE tinker_edges.base (a INT, b INT)
+
+
+statement ok
+CREATE VIEW tinker_edges.over AS SELECT a FROM tinker_edges.base
+
+
+statement ok
+CREATE INDEX tinker_edges_base_b ON tinker_edges.base (b)
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+pg_rewrite	tinker_edges.over	1	n
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+pg_rewrite	tinker_edges.over	1	n
+
+
+statement ok
+CREATE OR REPLACE VIEW tinker_edges.over AS SELECT 1 AS a
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+
+
+statement ok
+BEGIN
+
+
+statement ok
+CREATE OR REPLACE VIEW tinker_edges.over AS SELECT b AS a FROM tinker_edges.base
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+pg_rewrite	tinker_edges.over	2	n
+
+
+statement ok
+ROLLBACK
+
+
+query
+SELECT classid::regclass::text AS class, objid::regclass::text AS obj, refobjsubid, deptype FROM (SELECT * FROM pg_depend LIMIT 100000000) WHERE refobjid = 'tinker_edges.base'::regclass AND classid <> 'pg_type'::regclass ORDER BY 1, 2, 3
+----
+class	obj	refobjsubid	deptype
+pg_class	tinker_edges.tinker_edges_base_b	2	a
+
+
+statement ok
+DROP SCHEMA tinker_edges CASCADE

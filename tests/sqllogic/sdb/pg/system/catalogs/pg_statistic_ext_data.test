@@ -1,0 +1,83 @@
+statement ok
+DROP ROLE IF EXISTS zeus_statistic_ext_data_bolt;
+
+
+statement ok
+CREATE ROLE zeus_statistic_ext_data_bolt LOGIN PASSWORD 'zeus_statistic_ext_data_pw';
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, relpersistence, reltype
+FROM pg_class
+WHERE relname = 'pg_statistic_ext_data';
+----
+oid	relkind	relnatts	relisshared	relpersistence	reltype
+3429	r	6	f	p	10033
+
+
+query
+SELECT attname, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_statistic_ext_data'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	attnotnull
+stxoid	t
+stxdinherit	t
+stxdndistinct	f
+stxddependencies	f
+stxdmcv	f
+stxdexpr	f
+
+
+query
+SELECT attname, atttypid, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'pg_statistic_ext_data'::regclass AND attnum > 0 AND attname <> 'stxdexpr'
+ORDER BY attnum;
+----
+attname	atttypid	type
+stxoid	26	oid
+stxdinherit	16	boolean
+stxdndistinct	3361	pg_ndistinct
+stxddependencies	3402	pg_dependencies
+stxdmcv	5017	pg_mcv_list
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_statistic_ext_data;
+----
+readable
+t
+
+
+query
+SELECT stxoid FROM pg_statistic_ext_data WHERE stxoid = 0;
+----
+stxoid
+
+
+query
+SELECT has_table_privilege('zeus_statistic_ext_data_bolt', 'pg_statistic_ext_data', 'SELECT') AS can_read;
+----
+can_read
+f
+
+
+connection zeus_statistic_ext_data user=zeus_statistic_ext_data_bolt password=zeus_statistic_ext_data_pw
+statement error
+SELECT count(*) FROM pg_statistic_ext_data;
+----
+db error: ERROR: permission denied for table pg_statistic_ext_data<slt:ignore>
+
+
+connection zeus_statistic_ext_data user=zeus_statistic_ext_data_bolt password=zeus_statistic_ext_data_pw
+statement error
+SELECT stxoid FROM pg_statistic_ext_data WHERE stxoid = 0;
+----
+db error: ERROR: permission denied for table pg_statistic_ext_data<slt:ignore>
+
+
+connection default
+statement ok
+DROP ROLE zeus_statistic_ext_data_bolt;

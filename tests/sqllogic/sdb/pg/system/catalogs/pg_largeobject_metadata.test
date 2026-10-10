@@ -1,0 +1,76 @@
+statement ok
+DROP ROLE IF EXISTS aegis_lom_holder;
+
+
+query
+SELECT oid, relname, relkind, relnamespace::regnamespace::text AS nsp, relnatts
+FROM pg_class WHERE oid = 'pg_largeobject_metadata'::regclass;
+----
+oid	relname	relkind	nsp	relnatts
+2995	pg_largeobject_metadata	r	pg_catalog	3
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute WHERE attrelid = 'pg_largeobject_metadata'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+lomowner	oid	t
+lomacl	aclitem[]	f
+
+
+query
+SELECT count(*) >= 0 AS readable FROM pg_largeobject_metadata;
+----
+readable
+t
+
+
+query
+SELECT count(*) FROM pg_largeobject_metadata WHERE oid = 0;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_largeobject_metadata m
+LEFT JOIN pg_authid a ON a.oid = m.lomowner
+WHERE a.oid IS NULL;
+----
+count
+0
+
+
+statement ok
+CREATE ROLE aegis_lom_holder LOGIN PASSWORD 'reincarnation';
+
+
+query
+SELECT count(*) FROM pg_largeobject_metadata WHERE lomowner = 'aegis_lom_holder'::regrole;
+----
+count
+0
+
+
+connection c_aegis_lom user=aegis_lom_holder password=reincarnation
+query
+SELECT count(*) FROM pg_largeobject_metadata WHERE lomowner = 'aegis_lom_holder'::regrole;
+----
+count
+0
+
+
+connection c_aegis_lom user=aegis_lom_holder password=reincarnation
+query
+SELECT has_table_privilege('pg_largeobject_metadata', 'SELECT') AS readable;
+----
+readable
+t
+
+
+connection default
+statement ok
+DROP ROLE aegis_lom_holder;

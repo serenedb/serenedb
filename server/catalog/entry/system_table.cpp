@@ -26,6 +26,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/default/default_generator.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
@@ -35,22 +36,24 @@
 
 #include "catalog/catalog.h"
 #include "connector/column_id.h"
-#include "connector/system_table_scan.h"
-#include "pg/pg_types.h"
-#include "pg/system_catalog.h"
-#include "pg/virtual_table.h"
+#include "pg/catalog/engine/registry.h"
+#include "pg/catalog/engine/scan_function.h"
+#include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/oids.h"
 
 namespace sdb::catalog {
 namespace {
 
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
-  const pg::VirtualTable& table) {
-  duckdb::CreateTableInfo info{schema, duckdb::Identifier{table.GetName()}};
-  info.oid = table.Id();
-  for (const auto& [name, type] :
-       duckdb::StructType::GetChildTypes(table.RowType())) {
-    info.columns.AddColumn(duckdb::ColumnDefinition{name, type});
+  const pg::SystemTable& table) {
+  duckdb::CreateTableInfo info{schema, duckdb::Identifier{table.Sql().name}};
+  info.oid = table.Sql().oid;
+  for (duckdb::idx_t i = 0; i < table.Sql().columns.size(); ++i) {
+    if (table.Sql().columns[i].not_null) {
+      info.constraints.emplace_back(
+        duckdb::make_uniq<duckdb::NotNullConstraint>(duckdb::LogicalIndex{i}));
+    }
   }
   return duckdb::make_uniq<SystemTableEntry>(catalog, schema, info, table);
 }
@@ -72,22 +75,17 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeView(
 duckdb::unique_ptr<duckdb::CatalogEntry> MakeMacro(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   const pg::StaticFunction& function, duckdb::MacroType kind) {
-  const auto& [info, permissions] = function;
-  if (!info || info->macros[0]->type != kind) {
+  if (!function) {
     return nullptr;
   }
-  auto copy = info->Copy();
+  auto copy = function->Copy();
   auto& macro_info = copy->Cast<duckdb::CreateMacroInfo>();
-  duckdb::unique_ptr<duckdb::CatalogEntry> entry;
   if (kind == duckdb::MacroType::SCALAR_MACRO) {
-    entry = duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
-                                                               macro_info);
-  } else {
-    entry = duckdb::make_uniq<duckdb::TableMacroCatalogEntry>(catalog, schema,
+    return duckdb::make_uniq<duckdb::ScalarMacroCatalogEntry>(catalog, schema,
                                                               macro_info);
   }
-  entry->permissions = permissions;
-  return entry;
+  return duckdb::make_uniq<duckdb::TableMacroCatalogEntry>(catalog, schema,
+                                                           macro_info);
 }
 
 duckdb::MacroType MacroKindOf(duckdb::CatalogType set) noexcept {
@@ -108,8 +106,9 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
     const auto& schema = _schema.name.GetIdentifierName();
     const auto& entry = name.GetIdentifierName();
     if (_set != duckdb::CatalogType::TABLE_ENTRY) {
-      return MakeMacro(catalog, _schema, pg::GetSystemFunction(schema, entry),
-                       MacroKindOf(_set));
+      const auto kind = MacroKindOf(_set);
+      return MakeMacro(catalog, _schema,
+                       pg::GetSystemFunction(schema, entry, kind), kind);
     }
     if (const auto* table = pg::GetSystemTable(schema, entry)) {
       return MakeTable(catalog, _schema, *table);
@@ -121,19 +120,18 @@ class SystemEntryGenerator final : public duckdb::DefaultGenerator {
     duckdb::vector<duckdb::Identifier> names;
     const auto& schema = _schema.name.GetIdentifierName();
     if (_set != duckdb::CatalogType::TABLE_ENTRY) {
-      const auto kind = MacroKindOf(_set);
-      pg::VisitSystemFunctions(schema, [&](const pg::StaticFunction& function) {
-        if (function.first->macros[0]->type == kind) {
-          names.emplace_back(function.first->GetFunctionName());
-        }
-      });
+      pg::VisitSystemFunctions(
+        schema, MacroKindOf(_set),
+        [&](std::string_view function, const duckdb::CreateMacroInfo&) {
+          names.emplace_back(function);
+        });
       return names;
     }
-    pg::VisitSystemTables(schema, [&](const pg::VirtualTable& table) {
-      names.emplace_back(table.GetName());
+    pg::VisitSystemTables(schema, [&](const pg::SystemTable& table) {
+      names.emplace_back(table.Sql().name);
     });
     pg::VisitSystemViews(schema, [&](const pg::StaticView& view) {
-      names.emplace_back(view.info->GetViewName());
+      names.emplace_back(view.name);
     });
     return names;
   }
@@ -158,7 +156,7 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
     info.oid = name == duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}
                  ? pg::kPgCatalogSchema
                  : pg::kPgInformationSchema;
-    info.permissions.owner = pg::kRootUser;
+    info.permissions = pg::SchemaPermissions();
     auto schema = duckdb::make_uniq<duckdb::DuckSchemaEntry>(catalog, info);
     for (const auto set :
          {duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::MACRO_ENTRY,
@@ -180,14 +178,14 @@ class SystemSchemaGenerator final : public duckdb::DefaultGenerator {
 SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    duckdb::SchemaCatalogEntry& schema,
                                    duckdb::CreateTableInfo& info,
-                                   const pg::VirtualTable& table)
-  : duckdb::TableCatalogEntry{catalog, schema, info},
-    _columns{std::move(info.columns)},
-    _table{table} {
+                                   const pg::SystemTable& table)
+  : duckdb::TableCatalogEntry{catalog, schema, info}, _table{table} {
   internal = true;
-  permissions.owner = pg::kRootUser;
-  const auto acl = table.GetAcl();
-  permissions.acl.assign(acl.begin(), acl.end());
+  permissions = pg::SystemPermissions(table.Sql().superuser_only);
+}
+
+const duckdb::ColumnList& SystemTableEntry::GetColumns() const {
+  return _table.Columns();
 }
 
 duckdb::TableFunction SystemTableEntry::GetScanFunction(
@@ -200,13 +198,21 @@ duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {
   result.insert({connector::kColumnIdentifierTableOid,
                  duckdb::TableColumn{duckdb::Identifier{"tableoid"},
                                      duckdb::LogicalType::BIGINT}});
+  result.insert({duckdb::COLUMN_IDENTIFIER_EMPTY,
+                 duckdb::TableColumn{duckdb::Identifier{""},
+                                     duckdb::LogicalType::BOOLEAN}});
   return result;
 }
 
+void RefuseSystemCatalog(const duckdb::CatalogEntry& relation) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("permission denied: \"", relation.name.GetIdentifierName(),
+            "\" is a system catalog"));
+}
+
 duckdb::Catalog& SystemTableEntry::GetStorageCatalog(duckdb::ClientContext&) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                  ERR_MSG("permission denied: \"", name.GetIdentifierName(),
-                          "\" is a system catalog"));
+  RefuseSystemCatalog(*this);
 }
 
 SystemViewEntry::SystemViewEntry(duckdb::Catalog& catalog,

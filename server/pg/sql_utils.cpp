@@ -20,147 +20,44 @@
 
 #include "sql_utils.h"
 
-#include <algorithm>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
+
 #include <duckdb/function/scalar_macro_function.hpp>
 #include <duckdb/function/table_macro_function.hpp>
-#include <duckdb/parser/constraint.hpp>
-#include <duckdb/parser/constraints/not_null_constraint.hpp>
-#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <vector>
 
 namespace sdb::pg {
-
-int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
-                         duckdb::idx_t column_id) {
-  for (const auto& column : table.GetColumns().Logical()) {
-    if (column.Oid() == column_id) {
-      return static_cast<int16_t>(column.Logical().index + 1);
-    }
-  }
-  return 0;
-}
-
-std::vector<int16_t> KeyConstraintAttnums(
-  const duckdb::TableCatalogEntry& table,
-  const duckdb::UniqueConstraint& constraint) {
-  if (constraint.HasIndex()) {
-    return {static_cast<int16_t>(constraint.GetIndex().index + 1)};
-  }
-  const auto& columns = table.GetColumns();
-  std::vector<int16_t> out;
-  out.reserve(constraint.GetColumnNames().size());
-  for (const auto& name : constraint.GetColumnNames()) {
-    // Zero is what postgres writes for a key part this relation does not list.
-    out.emplace_back(
-      columns.ColumnExists(name)
-        ? static_cast<int16_t>(columns.GetColumn(name).Logical().index + 1)
-        : 0);
-  }
-  return out;
-}
-
-std::string ConstraintName(const duckdb::TableCatalogEntry& table,
-                           const duckdb::Constraint& constraint) {
-  if (!constraint.constraint_name.empty() ||
-      constraint.type != duckdb::ConstraintType::NOT_NULL) {
-    return constraint.constraint_name;
-  }
-  return table.name.GetIdentifierName() + "_" +
-         table.GetColumns()
-           .GetColumn(constraint.Cast<duckdb::NotNullConstraint>().index)
-           .Name()
-           .GetIdentifierName() +
-         "_not_null";
-}
-
-std::string QuoteIdentifier(std::string_view ident) {
-  bool safe =
-    !ident.empty() &&
-    ((ident.front() >= 'a' && ident.front() <= 'z') || ident.front() == '_');
-  for (const auto c : ident) {
-    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-      safe = false;
-      break;
-    }
-  }
-  if (safe) {
-    const auto category = duckdb::KeywordHelper::KeywordCategoryType(ident);
-    safe = category == duckdb::KeywordCategory::KEYWORD_NONE ||
-           category == duckdb::KeywordCategory::KEYWORD_UNRESERVED;
-  }
-  if (safe) {
-    return std::string{ident};
-  }
-  std::string out;
-  out.reserve(ident.size() + 2);
-  out += '"';
-  for (const auto c : ident) {
-    if (c == '"') {
-      out += '"';
-    }
-    out += c;
-  }
-  out += '"';
-  return out;
-}
-
 namespace {
 
-template<typename Match>
-KeyIndex FindKeyIndexIn(duckdb::ClientContext& context,
-                        duckdb::SchemaCatalogEntry& schema, Match&& match) {
-  KeyIndex found;
-  schema.Scan(
-    context, duckdb::CatalogType::TABLE_ENTRY,
-    [&](duckdb::CatalogEntry& entry) {
-      if (found.table || entry.type != duckdb::CatalogType::TABLE_ENTRY) {
-        return;
-      }
-      const auto& table = entry.Cast<duckdb::TableCatalogEntry>();
-      for (const auto& constraint : table.GetConstraints()) {
-        if (constraint->type != duckdb::ConstraintType::UNIQUE) {
-          continue;
-        }
-        const auto& unique = constraint->Cast<duckdb::UniqueConstraint>();
-        if (match(table, unique)) {
-          found = {&table, &unique};
-          return;
-        }
-      }
-    });
-  return found;
+constexpr std::string_view kQuotedKeywords[] = {
+#include "pg/catalog/generated/keywords.gen.inc"
+};
+
+bool ReservedKeyword(std::string_view ident) {
+  if (absl::c_binary_search(kQuotedKeywords, ident)) {
+    return true;
+  }
+  const auto category = duckdb::KeywordHelper::KeywordCategoryType(ident);
+  return category != duckdb::KeywordCategory::KEYWORD_NONE &&
+         category != duckdb::KeywordCategory::KEYWORD_UNRESERVED;
 }
 
 }  // namespace
 
-KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
-                      duckdb::idx_t oid) {
-  KeyIndex found;
-  for (auto& schema : database.GetSchemas(context)) {
-    found = FindKeyIndexIn(context, schema.get(),
-                           [&](const duckdb::TableCatalogEntry&,
-                               const duckdb::UniqueConstraint& unique) {
-                             return unique.index_oid == oid;
-                           });
-    if (found.table) {
-      break;
-    }
+std::string QuoteIdentifier(std::string_view ident) {
+  const bool safe = !ident.empty() && !absl::ascii_isdigit(ident.front()) &&
+                    absl::c_all_of(ident,
+                                   [](char c) {
+                                     return absl::ascii_islower(c) ||
+                                            absl::ascii_isdigit(c) || c == '_';
+                                   }) &&
+                    !ReservedKeyword(ident);
+  if (safe) {
+    return std::string{ident};
   }
-  return found;
-}
-
-KeyIndex FindKeyIndex(duckdb::ClientContext& context,
-                      duckdb::SchemaCatalogEntry& schema,
-                      std::string_view name) {
-  return FindKeyIndexIn(context, schema,
-                        [&](const duckdb::TableCatalogEntry& table,
-                            const duckdb::UniqueConstraint& unique) {
-                          return ConstraintName(table, unique) == name;
-                        });
+  return duckdb::KeywordHelper::WriteQuotedAndEscaped(ident, '"');
 }
 
 std::string MacroBody(const duckdb::MacroFunction& macro) {
@@ -176,10 +73,9 @@ std::string MacroParameterName(const duckdb::MacroFunction& macro,
                        ->Cast<duckdb::ColumnRefExpression>()
                        .GetColumnName()
                        .GetIdentifierName();
-  const bool positional = name.size() > 1 && name.front() == '$' &&
-                          std::all_of(name.begin() + 1, name.end(), [](char c) {
-                            return c >= '0' && c <= '9';
-                          });
+  const bool positional =
+    name.size() > 1 && name.front() == '$' &&
+    absl::c_all_of(std::string_view{name}.substr(1), absl::ascii_isdigit);
   return positional ? std::string{} : name;
 }
 

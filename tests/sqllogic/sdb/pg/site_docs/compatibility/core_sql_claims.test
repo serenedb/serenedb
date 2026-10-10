@@ -450,6 +450,26 @@ SELECT NULL::path;
 statement error
 SELECT NULL::pg_lsn;
 
+# types: regclass, regtype, regproc, regprocedure, regnamespace, regrole, regcollation, regdictionary
+statement ok
+SELECT 'pg_class'::regclass::text, 'int4'::regtype::text, 'pg_catalog.array_in'::regproc::text, 'int4in(cstring)'::regprocedure::text, 'pg_catalog'::regnamespace::text, '"C"'::regcollation::text;
+
+# types: regoper, regoperator, regconfig
+statement ok
+SELECT 0::regoper::text, 0::regoperator::text, 0::regconfig::text;
+
+# sysinfo: format_type
+statement ok
+SELECT format_type(1700, 655366);
+
+# sysinfo: to_regclass
+statement ok
+SELECT to_regclass('pg_class')::text, to_regtype('int4')::text, to_regproc('array_in')::text, to_regnamespace('public')::text;
+
+# sysinfo: pg_get_keywords
+statement ok
+SELECT word, catcode, catdesc FROM pg_get_keywords();
+
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;

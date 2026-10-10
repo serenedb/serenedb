@@ -1,0 +1,117 @@
+statement ok
+DROP FUNCTION IF EXISTS meepo_lang_clone(int4);
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_language'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+lanname	name	t
+lanowner	oid	t
+lanispl	boolean	t
+lanpltrusted	boolean	t
+lanplcallfoid	oid	t
+laninline	oid	t
+lanvalidator	oid	t
+lanacl	aclitem[]	f
+
+
+query
+SELECT oid, lanname, lanispl, lanpltrusted, lanplcallfoid, laninline, lanvalidator, lanvalidator::regproc::text AS validator, lanacl IS NULL AS no_acl
+FROM pg_language
+WHERE lanname IN ('internal', 'sql')
+ORDER BY oid;
+----
+oid	lanname	lanispl	lanpltrusted	lanplcallfoid	laninline	lanvalidator	validator	no_acl
+12	internal	f	f	0	0	2246	fmgr_internal_validator	t
+14	sql	f	t	0	0	2248	fmgr_sql_validator	t
+
+
+query
+SELECT lanname FROM pg_language WHERE oid = 14;
+----
+lanname
+sql
+
+
+query
+SELECT lanname FROM pg_language WHERE oid IN (12, 14, 99999) ORDER BY oid;
+----
+lanname
+internal
+sql
+
+
+query
+SELECT count(*) = count(DISTINCT oid) AS oids_unique, count(*) = count(DISTINCT lanname) AS names_unique
+FROM pg_language;
+----
+oids_unique	names_unique
+t	t
+
+
+query
+SELECT l.lanname, p.proname, p.prolang = l.oid AS own_language
+FROM pg_language l JOIN pg_proc p ON p.oid = l.lanvalidator
+WHERE l.lanname IN ('internal', 'sql')
+ORDER BY l.oid;
+----
+lanname	proname	own_language
+internal	fmgr_internal_validator	t
+sql	fmgr_sql_validator	f
+
+
+query
+SELECT count(*) AS bad_owner FROM pg_language l WHERE NOT EXISTS (SELECT 1 FROM pg_authid a WHERE a.oid = l.lanowner);
+----
+bad_owner
+0
+
+
+query
+SELECT p.proname, l.lanname
+FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+WHERE p.oid IN (42, 750, 2246)
+ORDER BY p.oid;
+----
+proname	lanname
+int4in	internal
+array_in	internal
+fmgr_internal_validator	internal
+
+
+statement ok
+CREATE FUNCTION meepo_lang_clone(n int4) RETURNS int4 LANGUAGE sql AS 'SELECT n + 1';
+
+
+query
+SELECT p.proname, l.lanname, l.lanpltrusted
+FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+WHERE p.proname = 'meepo_lang_clone';
+----
+proname	lanname	lanpltrusted
+meepo_lang_clone	sql	t
+
+
+query
+SELECT count(*) AS dangling
+FROM pg_proc p
+WHERE p.oid >= 16384 AND NOT EXISTS (SELECT 1 FROM pg_language l WHERE l.oid = p.prolang);
+----
+dangling
+0
+
+
+statement ok
+DROP FUNCTION meepo_lang_clone(int4);
+
+
+query
+SELECT count(*) AS left_over FROM pg_proc WHERE proname = 'meepo_lang_clone';
+----
+left_over
+0

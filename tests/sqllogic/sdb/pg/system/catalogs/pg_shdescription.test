@@ -1,0 +1,89 @@
+statement ok
+DROP DATABASE IF EXISTS sven_shdesc_db;
+
+
+statement ok
+DROP ROLE IF EXISTS sven_shdesc_role;
+
+
+query
+SELECT oid, relkind, relnatts, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_shdescription';
+----
+oid	relkind	relnatts	reltype	nsp
+2396	r	3	10062	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_shdescription'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+objoid	oid	t
+classoid	oid	t
+description	text	t
+
+
+statement ok
+CREATE ROLE sven_shdesc_role;
+
+
+statement ok
+CREATE DATABASE sven_shdesc_db;
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdescription
+WHERE objoid = 'sven_shdesc_role'::regrole;
+----
+n
+0
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdescription
+WHERE objoid = (SELECT oid FROM pg_database WHERE datname = 'sven_shdesc_db')
+  AND classoid = 'pg_database'::regclass;
+----
+n
+0
+
+
+query
+SELECT shobj_description('sven_shdesc_role'::regrole, 'pg_authid') IS NULL AS role_none,
+       shobj_description((SELECT oid FROM pg_database WHERE datname = 'sven_shdesc_db'), 'pg_database') IS NULL AS db_none;
+----
+role_none	db_none
+t	t
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdescription d
+JOIN pg_authid a ON a.oid = d.objoid
+WHERE a.rolname = 'sven_shdesc_role';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n
+FROM pg_shdescription
+WHERE objoid = (SELECT oid FROM pg_database WHERE datname = 'postgres');
+----
+n
+0
+
+
+statement ok
+DROP DATABASE sven_shdesc_db;
+
+
+statement ok
+DROP ROLE sven_shdesc_role;

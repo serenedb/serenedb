@@ -1,0 +1,41 @@
+query
+SELECT format_type('oidvector'::regtype, NULL) AS oidvector,
+       format_type('int2vector'::regtype, NULL) AS int2vector,
+       format_type('_int4'::regtype, NULL) AS int4_array;
+----
+oidvector	int2vector	int4_array
+oidvector	int2vector	integer[]
+
+
+query
+SELECT 'int4in'::regproc::regprocedure::text AS proc,
+       'int4in(cstring)'::regprocedure::oid = 'int4in'::regproc::oid AS same;
+----
+proc	same
+int4in(cstring)	t
+
+
+query
+SELECT pg_function_is_visible('int4in'::regproc) AS builtin_proc,
+       pg_type_is_visible('_int4'::regtype) AS array_type,
+       pg_table_is_visible('pg_class'::regclass) AS system_table;
+----
+builtin_proc	array_type	system_table
+t	t	t
+
+
+query
+SELECT 'information_schema._pg_user_mappings'::regtype::oid
+     <> 'pg_catalog._pg_user_mappings'::regtype::oid AS distinct_types;
+----
+distinct_types
+t
+
+
+query
+SELECT quote_ident('qualify') AS duckdb_reserved,
+       quote_ident('select') AS pg_reserved,
+       quote_ident('name') AS unreserved;
+----
+duckdb_reserved	pg_reserved	unreserved
+"qualify"	"select"	name

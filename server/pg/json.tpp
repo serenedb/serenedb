@@ -27,7 +27,6 @@
 
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "pg/sql_utils.h"
 
 namespace sdb::pg::functions {
 

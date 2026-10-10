@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <duckdb/common/named_parameter_map.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>

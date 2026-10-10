@@ -3854,7 +3854,7 @@ coro_sec	s3	{s3://coro-objects-bucket}	t	f
 
 
 query
-SELECT which_secret('s3://coro-objects-bucket/f.parquet', 's3') AS s;
+SELECT name AS s FROM which_secret('s3://coro-objects-bucket/f.parquet', 's3');
 ----
 s
 coro_sec

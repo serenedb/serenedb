@@ -332,6 +332,7 @@ std::optional<Rule> ParseLine(const std::vector<std::vector<Token>>& fields,
                               uint32_t seq, ParseError& err, size_t line_no) {
   Rule rule;
   rule.seq = seq;
+  rule.line_number = static_cast<uint32_t>(line_no);
 
   auto fail = [&](std::string msg) -> std::optional<Rule> {
     err = {line_no, std::move(msg)};
@@ -852,9 +853,12 @@ void Renumber(Ruleset& rs) {
 
 Ruleset ParseTrusted(std::string_view text) {
   ParseError err;
-  auto rs = Parse(text, err);
   // The safety text is a compile-time constant; a parse failure is a bug.
-  return rs.value_or(Ruleset{});
+  auto rs = Parse(text, err).value_or(Ruleset{});
+  for (auto& rule : rs.rules) {
+    rule.line_number = 0;
+  }
+  return rs;
 }
 
 // The live ruleset, accessed via std::atomic_load/store free functions (the
@@ -1014,30 +1018,6 @@ std::string AddrToText(int family, const std::array<uint8_t, 16>& bytes) {
   return {};
 }
 
-// Render the CIDR prefix length back to text, e.g. "127.0.0.0/8". A
-// non-contiguous mask (from the separate-netmask column) has no prefix form, so
-// the caller falls back to emitting the netmask separately.
-std::optional<int> ContiguousPrefix(const std::array<uint8_t, 16>& mask,
-                                    int family) {
-  const int width = family == AF_INET6 ? 16 : 4;
-  int bits = 0;
-  bool seen_zero = false;
-  for (int i = 0; i < width; ++i) {
-    for (int b = 7; b >= 0; --b) {
-      const bool set = (mask[i] >> b) & 1;
-      if (set) {
-        if (seen_zero) {
-          return std::nullopt;  // 1 after a 0 => non-contiguous
-        }
-        ++bits;
-      } else {
-        seen_zero = true;
-      }
-    }
-  }
-  return bits;
-}
-
 }  // namespace
 
 std::vector<RenderedRule> RenderHbaRules() {
@@ -1050,7 +1030,10 @@ std::vector<RenderedRule> RenderHbaRules() {
   for (const auto& rule : ruleset->rules) {
     RenderedRule r;
     r.rule_number = rule.seq + 1;  // 1-based, like PG
-    r.file_name = file;
+    r.line_number = rule.line_number;
+    if (rule.line_number != 0) {
+      r.file_name = file;
+    }
     r.type = ConnTypeName(rule.conntype);
     std::ranges::transform(rule.database.tokens,
                            std::back_inserter(r.databases), &AuthToken::value);
@@ -1075,17 +1058,10 @@ std::vector<RenderedRule> RenderHbaRules() {
       case AddrMatcher::Kind::Hostname:
         r.address = rule.address.hostname;
         break;
-      case AddrMatcher::Kind::Mask: {
-        const int fam = rule.address.family;
-        const auto base = AddrToText(fam, rule.address.addr);
-        if (const auto prefix = ContiguousPrefix(rule.address.mask, fam)) {
-          r.address = absl::StrCat(base, "/", *prefix);  // CIDR form
-        } else {
-          r.address = base;  // non-contiguous: address + separate netmask
-          r.netmask = AddrToText(fam, rule.address.mask);
-        }
+      case AddrMatcher::Kind::Mask:
+        r.address = AddrToText(rule.address.family, rule.address.addr);
+        r.netmask = AddrToText(rule.address.family, rule.address.mask);
         break;
-      }
     }
     out.push_back(std::move(r));
   }

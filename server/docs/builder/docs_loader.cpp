@@ -53,8 +53,8 @@
 #include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "search/search_table.h"
 #include "utils/file_utils.h"
 

@@ -13,6 +13,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
+        exclude: ^tests/sqllogic/any/pg/system/catalog_conformance\.test$
       - id: check-ast
       - id: check-case-conflict
       - id: check-executables-have-shebangs
@@ -79,12 +80,12 @@ repos:
         language: python
         entry: python3 scripts/check_namespace_format.py
         files: \.(cpp|cc|c|hpp|hh|h|ipp|tpp)$
-      - id: check-system-table-claims
-        name: Check system-table compatibility claims
+      - id: check-system-table-generated
+        name: Check generated system-table registry and claims
         language: python
-        entry: python3 scripts/generate_system_table_claims.py --check
+        entry: python3 scripts/generate_pg_catalog.py --check
         pass_filenames: false
-        files: (system_table_claims\.test|generate_system_table_claims\.py)$
+        files: (^server/pg/catalog/tables/|^server/pg/catalog/generated/registry\.gen\.inc$|system_table_claims\.test$|system-table-compatibility\.md$|^scripts/generate_pg_catalog\.py$|^scripts/pg_catalog/)
       - id: check-llm-symbols
         name: Check LLM Unicode symbols
         language: python

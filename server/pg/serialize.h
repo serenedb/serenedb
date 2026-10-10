@@ -41,6 +41,8 @@ class ZoneLUT;
 }  // namespace duckdb
 namespace sdb::pg {
 
+struct Session;
+
 enum class VarFormat : int16_t {
   Text = 0,
   Binary = 1,
@@ -71,8 +73,8 @@ struct SerializationContext {
   message::Writer* writer = nullptr;
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
-  // The session a regclass / regnamespace rendering resolves through.
   duckdb::ClientContext* client = nullptr;
+  std::shared_ptr<const Session> session;
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
   bool in_record = false;

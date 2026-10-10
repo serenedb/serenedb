@@ -81,8 +81,9 @@
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
+#include "pg/catalog/engine/registry.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
-#include "pg/pg_types.h"
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"
 #include "search/inverted_index_storage.h"
@@ -121,6 +122,8 @@ duckdb::unique_ptr<duckdb::TableCatalogEntry> SereneDBCatalog::MakeTableEntry(
         sequence_info.SetQualification(GetName(), schema.name);
         sequence_info.SetSequenceName(entry->PkSequenceName());
         sequence_info.cache = kPkSequenceCache;
+        sequence_info.tags[std::string{kGeneratedPkSequenceTag}] =
+          entry->name.GetIdentifierName();
         info.Base().dependencies.AddOwnedDependency(
           *schema.CreateSequence(transaction, sequence_info));
       }
@@ -174,13 +177,20 @@ duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
   }
 }
 
+std::vector<duckdb::CatalogEntry*> VisibleEntries(
+  duckdb::CatalogTransaction transaction, duckdb::CatalogSet& set) {
+  std::vector<duckdb::CatalogEntry*> entries;
+  set.Scan(transaction,
+           [&](duckdb::CatalogEntry& entry) { entries.emplace_back(&entry); });
+  return entries;
+}
+
 }  // namespace
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry>
-SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
+SereneDBCatalog::FindSchemaById(duckdb::CatalogTransaction transaction,
                                 duckdb::idx_t id) {
-  auto entry =
-    GetOidIndex().GetVisible(id, GetCatalogTransaction(context).view);
+  auto entry = GetOidIndex().GetVisible(id, transaction.view);
   if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
     return nullptr;
   }
@@ -369,6 +379,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindCreateIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::TableCatalogEntry& table,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (table.internal) {
+    RefuseSystemCatalog(table);
+  }
   BindIndexDefinition(binder, stmt, table);
   if (auto* search = dynamic_cast<SearchTableEntry*>(&table)) {
     return connector::BindCreateIndexOnSearchTable(binder, stmt, *search,
@@ -391,6 +404,9 @@ SereneDBCatalog::BindCreateViewIndex(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   duckdb::ViewCatalogEntry& view,
   duckdb::unique_ptr<duckdb::LogicalOperator> plan) {
+  if (view.internal) {
+    RefuseSystemCatalog(view);
+  }
   BindIndexDefinition(binder, stmt, view);
   return connector::BindCreateIndexOnView(binder, stmt, view, std::move(plan));
 }
@@ -429,6 +445,39 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
+std::shared_ptr<const CatalogSnapshot> SereneDBCatalog::Snapshot(
+  duckdb::ClientContext& context, duckdb::CatalogSet& set) {
+  const auto version = GetCatalogVersion(context).GetIndex();
+  if (version >= duckdb::TRANSACTION_ID_START) {
+    return nullptr;
+  }
+  std::shared_ptr<const CatalogSnapshot> cached;
+  {
+    absl::ReaderMutexLock lock{&_snapshots_mutex};
+    if (_snapshots_version == version) {
+      if (const auto it = _snapshots.find(&set); it != _snapshots.end()) {
+        cached = it->second;
+      }
+    }
+  }
+  if (cached) {
+    SDB_ASSERT(cached->entries ==
+               VisibleEntries(GetCatalogTransaction(context), set));
+    return cached;
+  }
+  auto snapshot = std::make_shared<CatalogSnapshot>();
+  snapshot->entries = VisibleEntries(GetCatalogTransaction(context), set);
+  absl::MutexLock lock{&_snapshots_mutex};
+  if (_snapshots_version > version) {
+    return snapshot;
+  }
+  if (_snapshots_version < version) {
+    _snapshots.clear();
+    _snapshots_version = version;
+  }
+  return _snapshots.try_emplace(&set, std::move(snapshot)).first->second;
+}
+
 duckdb::shared_ptr<duckdb::WriteAheadLog> SereneDBCatalog::CatalogLog() {
   if (_detached.load(std::memory_order_acquire)) {
     return nullptr;
@@ -452,15 +501,7 @@ void SereneDBCatalog::Initialize(bool load_builtin) {
   info.SetQualifiedName(duckdb::QualifiedName(
     {duckdb::Identifier{irs::StaticStrings::kPublic}}, duckdb::Identifier()));
   info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-  info.permissions.owner = pg::kRootUser;
-  info.permissions.acl = {
-    {.grantee = pg::kRootUser,
-     .grantor = pg::kRootUser,
-     .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
-    {.grantee = pg::kPublicGrantee,
-     .grantor = pg::kRootUser,
-     .privs = duckdb::AclMode::Usage},
-  };
+  info.permissions = pg::SchemaPermissions();
   info.oid = pg::kPgPublicSchema;
   CreateSchema(data, info);
   MountSystemSchemas(*this);

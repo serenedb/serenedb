@@ -1,0 +1,150 @@
+statement ok
+DROP TABLE IF EXISTS pudge_shape_child;
+
+
+statement ok
+DROP TABLE IF EXISTS pudge_shape_parent;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS rubick_shape_steal;
+
+
+statement ok
+CREATE TABLE pudge_shape_parent (id INT PRIMARY KEY, label VARCHAR, note TEXT);
+
+
+statement ok
+CREATE TABLE pudge_shape_child (id INT, parent_id INT REFERENCES pudge_shape_parent(id));
+
+
+query
+SELECT a.relid::text AS relid, a.depth
+FROM pg_catalog.pg_partition_ancestors('pudge_shape_child'::regclass) WITH ORDINALITY AS a(relid, depth);
+----
+relid	depth
+pudge_shape_child	1
+
+
+query
+SELECT c.relname, a.relid::text AS ancestor, a.depth
+FROM pg_catalog.pg_class c,
+     pg_catalog.pg_partition_ancestors(c.oid) WITH ORDINALITY AS a(relid, depth)
+WHERE c.relname IN ('pudge_shape_parent', 'pudge_shape_child')
+ORDER BY c.relname;
+----
+relname	ancestor	depth
+pudge_shape_child	pudge_shape_child	1
+pudge_shape_parent	pudge_shape_parent	1
+
+
+query
+SELECT t.tgname
+FROM pg_catalog.pg_trigger t
+WHERE t.tgrelid = 'pudge_shape_child'::regclass
+  AND (SELECT u.tgrelid
+       FROM pg_catalog.pg_trigger AS u,
+            pg_catalog.pg_partition_ancestors(t.tgrelid) WITH ORDINALITY AS a(relid, depth)
+       WHERE u.tgname = t.tgname AND u.tgrelid = a.relid AND u.tgparentid = 0
+       ORDER BY a.depth LIMIT 1) IS NOT NULL
+ORDER BY 1;
+----
+tgname
+
+
+query
+SELECT att.attname, nspc.nspname IS NOT NULL AS has_collation_schema, coll.collname
+FROM pg_attribute att
+JOIN pg_type ty ON ty.oid = att.atttypid
+LEFT JOIN (pg_collation coll JOIN pg_namespace nspc ON coll.collnamespace = nspc.oid)
+  ON att.attcollation = coll.oid
+WHERE att.attrelid = 'pudge_shape_parent'::regclass AND att.attnum > 0
+ORDER BY att.attnum;
+----
+attname	has_collation_schema	collname
+id	f	NULL
+label	t	default
+note	t	default
+
+
+query
+SELECT attname, attgenerated, attidentity
+FROM pg_attribute
+WHERE attrelid = 'pg_class'::regclass AND attnum = 1;
+----
+attname	attgenerated	attidentity
+oid	(empty)	(empty)
+
+
+query
+SELECT typname, typtypmod, typdefault, typnotnull
+FROM pg_type
+WHERE oid IN (13318, 13320, 13307)
+ORDER BY typname;
+----
+typname	typtypmod	typdefault	typnotnull
+cardinal_number	-1	NULL	f
+time_stamp	2	CURRENT_TIMESTAMP(2)	f
+yes_or_no	7	NULL	f
+
+
+query
+SELECT column_name, data_type, character_maximum_length, datetime_precision
+FROM information_schema.columns
+WHERE table_schema = 'information_schema' AND table_name = 'sql_features'
+  AND column_name IN ('is_supported', 'feature_id')
+ORDER BY column_name;
+----
+column_name	data_type	character_maximum_length	datetime_precision
+feature_id	character varying	NULL	NULL
+is_supported	character varying	3	NULL
+
+
+query
+SELECT domain_name, character_maximum_length, datetime_precision
+FROM information_schema.domains
+WHERE domain_schema = 'information_schema' AND domain_name IN ('yes_or_no', 'time_stamp')
+ORDER BY domain_name;
+----
+domain_name	character_maximum_length	datetime_precision
+time_stamp	NULL	2
+yes_or_no	3	NULL
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rubick_shape_steal AS keyword();
+
+
+query
+SELECT c.opcname, m.amname, c.opcintype::regtype::text AS intype, c.opcnamespace = 'public'::regnamespace AS in_public
+FROM pg_opclass c JOIN pg_am m ON m.oid = c.opcmethod
+WHERE c.opcname = 'rubick_shape_steal';
+----
+opcname	amname	intype	in_public
+rubick_shape_steal	inverted	text	t
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY rubick_shape_steal;
+
+
+query
+SELECT count(*) AS left_behind FROM pg_opclass WHERE opcname = 'rubick_shape_steal';
+----
+left_behind
+0
+
+
+query
+SELECT short_desc FROM pg_settings WHERE name = 'statement_timeout';
+----
+short_desc
+Sets the maximum allowed duration of any statement.
+
+
+statement ok
+DROP TABLE pudge_shape_child;
+
+
+statement ok
+DROP TABLE pudge_shape_parent;

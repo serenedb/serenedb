@@ -1,0 +1,87 @@
+statement ok
+DROP TEXT SEARCH DICTIONARY IF EXISTS tango_tsprs_munch;
+
+
+statement ok
+DROP ROLE IF EXISTS tango_tsprs_tree;
+
+
+statement ok
+CREATE ROLE tango_tsprs_tree LOGIN PASSWORD 'tango_tsprs_tree_pw';
+
+
+query
+SELECT oid::int AS oid, relname, relkind, relnatts FROM pg_class WHERE oid = 'pg_catalog.pg_ts_parser'::regclass;
+----
+oid	relname	relkind	relnatts
+3601	pg_ts_parser	r	8
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_ts_parser'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+prsname	name	t
+prsnamespace	oid	t
+prsstart	regproc	t
+prstoken	regproc	t
+prsend	regproc	t
+prsheadline	regproc	t
+prslextype	regproc	t
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tango_tsprs_munch AS split_text_csv(' ');
+
+
+query
+SELECT * FROM pg_ts_parser;
+----
+oid	prsname	prsnamespace	prsstart	prstoken	prsend	prsheadline	prslextype
+
+
+query
+SELECT prsname FROM pg_ts_parser WHERE prsname = 'tango_tsprs_munch';
+----
+prsname
+
+
+query
+SELECT prsname FROM pg_ts_parser WHERE oid = 'tango_tsprs_munch'::regdictionary::oid;
+----
+prsname
+
+
+query
+SELECT count(*) AS n FROM pg_ts_parser p JOIN pg_proc f ON f.oid = p.prstoken;
+----
+n
+0
+
+
+connection tango_conn user=tango_tsprs_tree password=tango_tsprs_tree_pw
+query
+SELECT has_table_privilege('pg_catalog.pg_ts_parser', 'SELECT') AS can_select;
+----
+can_select
+t
+
+
+connection tango_conn user=tango_tsprs_tree password=tango_tsprs_tree_pw
+query
+SELECT prsname, prsnamespace FROM pg_ts_parser;
+----
+prsname	prsnamespace
+
+
+connection default
+statement ok
+DROP TEXT SEARCH DICTIONARY tango_tsprs_munch;
+
+
+statement ok
+DROP ROLE tango_tsprs_tree;

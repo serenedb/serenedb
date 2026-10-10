@@ -1,0 +1,87 @@
+statement ok
+DROP TABLE IF EXISTS techies_pol_mine;
+
+
+query
+SELECT oid, relkind, relnatts, relisshared, reltype, relnamespace::regnamespace::text AS nsp
+FROM pg_class
+WHERE relname = 'pg_policy';
+----
+oid	relkind	relnatts	relisshared	reltype	nsp
+3256	r	8	f	10084	pg_catalog
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_policy'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+oid	oid	t
+polname	name	t
+polrelid	oid	t
+polcmd	"char"	t
+polpermissive	boolean	t
+polroles	oid[]	t
+polqual	pg_node_tree	f
+polwithcheck	pg_node_tree	f
+
+
+query
+SELECT relname, relkind
+FROM pg_class
+WHERE oid = 'pg_catalog.pg_policies'::regclass;
+----
+relname	relkind
+pg_policies	v
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'pg_catalog.pg_policies'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type
+schemaname	name
+tablename	name
+policyname	name
+permissive	text
+roles	name[]
+cmd	text
+qual	text
+with_check	text
+
+
+statement ok
+CREATE TABLE techies_pol_mine (id INT, owner TEXT);
+
+
+query
+SELECT polname, polcmd, polpermissive
+FROM pg_policy
+WHERE polrelid = 'techies_pol_mine'::regclass;
+----
+polname	polcmd	polpermissive
+
+
+query
+SELECT policyname, permissive, cmd
+FROM pg_policies
+WHERE tablename = 'techies_pol_mine';
+----
+policyname	permissive	cmd
+
+
+query
+SELECT relrowsecurity, relforcerowsecurity
+FROM pg_class
+WHERE oid = 'techies_pol_mine'::regclass;
+----
+relrowsecurity	relforcerowsecurity
+f	f
+
+
+statement ok
+DROP TABLE techies_pol_mine;

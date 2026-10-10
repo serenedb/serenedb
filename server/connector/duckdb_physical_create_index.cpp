@@ -77,7 +77,6 @@
 #include "connector/view_fast_path.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
-#include "pg/sql_utils.h"
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/tick_domain.h"

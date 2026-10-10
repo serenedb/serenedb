@@ -945,7 +945,9 @@ void SearchSinkDeleteBaseImpl::FinishImpl() {
 
 std::shared_ptr<const irs::DocRemoval> MakeRowRemoval(
   std::span<const int64_t> rowids, std::span<const uint64_t> positions) {
-  SDB_ASSERT(positions.empty() || positions.size() == rowids.size());
+  SDB_ENSURE(positions.empty() || positions.size() == rowids.size(),
+             "search table: ", positions.size(), " row positions for ",
+             rowids.size(), " removed rows");
   if (rowids.empty()) {
     return nullptr;
   }
@@ -963,7 +965,8 @@ void CollectRemovedRows(duckdb::DataChunk& chunk,
                         std::span<const primary_key::PKColumn> columns,
                         std::vector<int64_t>& rows,
                         std::vector<uint64_t>& positions) {
-  SDB_ASSERT(columns.size() == 2);
+  SDB_ENSURE(columns.size() == 2, "search table: removed rows need the rowid ",
+             "and row position columns, got ", columns.size());
   const auto num_rows = chunk.size();
   duckdb::UnifiedVectorFormat rowid;
   chunk.data[columns[0].input_col_idx].ToUnifiedFormat(num_rows, rowid);

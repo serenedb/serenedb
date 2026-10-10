@@ -1076,6 +1076,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   const auto flushed = build.FlushAndFsync();
   ASSERT_EQ(1, flushed.size());
   const auto replacement = MetaFilesOf(flushed);
+  const std::string name{flushed.front().meta.name};
   build.Abort();  // the swap adopts it; this transaction must not commit it
 
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count())
@@ -1088,7 +1089,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
   // One generation: sources gone, replacement in, in the same published meta.
   const auto after = CommittedNames(*_writer);
   ASSERT_EQ(1, after.size());
-  EXPECT_EQ(flushed.front().meta.name, after.front());
+  EXPECT_EQ(name, after.front());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the sources' rows are still reachable, so both halves were published";
   const auto synced = _dir->TakeSynced();
@@ -1829,6 +1830,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   const auto flushed = build.FlushAndFsync();
   const auto replacement = MetaFilesOf(flushed);
   const auto files = FilesOf(flushed);
+  const std::string name{flushed.front().meta.name};
 
   // The order the build uses: reference through adoption, then abort.
   ASSERT_TRUE(Replace(*_writer, sources, replacement));
@@ -1840,7 +1842,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   }
   ASSERT_TRUE(_writer->RefreshCommit());
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
-  EXPECT_EQ(flushed.front().meta.name, CommittedNames(*_writer).front());
+  EXPECT_EQ(name, CommittedNames(*_writer).front());
 }
 
 TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {

@@ -28,6 +28,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -100,7 +101,9 @@ struct LocalTableChangesEntry {
 
   void AppendDeletes(std::span<const int64_t> rows,
                      std::span<const uint64_t> positions) {
-    SDB_ASSERT(positions.size() == rows.size());
+    SDB_ENSURE(positions.size() == rows.size(),
+               "search table: ", positions.size(), " row positions for ",
+               rows.size(), " deleted rows");
     if (rows.empty()) {
       return;
     }

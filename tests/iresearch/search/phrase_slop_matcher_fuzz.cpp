@@ -37,6 +37,7 @@
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
+#include <optional>
 #include <queue>
 #include <random>
 #include <string>
@@ -199,7 +200,59 @@ spm::MatchResult LuceneRun(const Case& c) {
   return res;
 }
 
-spm::MatchResult Reference(const Case& c) { return LuceneRun(c); }
+std::optional<int64_t> SpreadByBruteForce(const Case& c) {
+  const size_t n = c.slots.size();
+  if (n < 2) {
+    return std::nullopt;
+  }
+  std::vector<int64_t> offsets(n, 0);
+  for (size_t i = 1; i < n; ++i) {
+    offsets[i] = offsets[i - 1] + c.expected_steps[i - 1];
+  }
+  std::vector<value_t> taken(n);
+  std::optional<int64_t> best;
+  const auto dfs = [&](auto& self, size_t i, int64_t lo, int64_t hi) -> void {
+    if (i == n) {
+      best = hi - lo;
+      return;
+    }
+    for (const auto pos : c.slots[i]) {
+      bool clash = false;
+      for (size_t j = 0; j != i && !clash; ++j) {
+        clash =
+          taken[j] == pos && (c.groups.empty() || c.groups[j] == c.groups[i]);
+      }
+      if (clash) {
+        continue;
+      }
+      const int64_t shift = static_cast<int64_t>(pos) - offsets[i];
+      const int64_t next_lo = i == 0 ? shift : std::min(lo, shift);
+      const int64_t next_hi = i == 0 ? shift : std::max(hi, shift);
+      if (next_hi - next_lo > static_cast<int64_t>(c.slop) ||
+          (best && next_hi - next_lo >= *best)) {
+        continue;
+      }
+      taken[i] = pos;
+      self(self, i + 1, next_lo, next_hi);
+    }
+  };
+  dfs(dfs, 0, 0, 0);
+  return best;
+}
+
+spm::MatchResult Reference(const Case& c) {
+  auto res = LuceneRun(c);
+  if (res.any) {
+    return res;
+  }
+  if (const auto spread = SpreadByBruteForce(c)) {
+    res.freq = 1;
+    res.weight = 1.0 / (1.0 + static_cast<double>(*spread));
+    res.best_distance = static_cast<value_t>(*spread);
+    res.any = true;
+  }
+  return res;
+}
 
 std::string Show(const Case& c) {
   std::string s = "slop=" + std::to_string(c.slop) + " expected=[";
@@ -484,7 +537,6 @@ Case RandomCase(std::mt19937_64& rng) {
   return c;
 }
 
-// Hand-checked edge cases: reference value verified against ES semantics.
 int RunEdgeCases() {
   int failures = 0;
   auto expect = [&](const Case& c, bool want_any, uint64_t want_freq,
@@ -577,6 +629,26 @@ int RunEdgeCases() {
          false, 0, 0, "increment0_adjacent_slop0_miss");
   expect({.slots = {{3}, {4}}, .expected_steps = {0}, .groups = {}, .slop = 1},
          true, 1, 1, "increment0_adjacent_slop1_hit");
+  expect({.slots = {{1, 2}, {1}},
+          .expected_steps = {1},
+          .groups = {0, 0},
+          .slop = 2},
+         true, 1, 2, "collision_lesser_exhausted");
+  expect({.slots = {{1, 3}, {1}},
+          .expected_steps = {1},
+          .groups = {0, 0},
+          .slop = 3},
+         true, 1, 3, "collision_pattern_takes_later_word");
+  expect({.slots = {{1, 2}, {1}, {3}},
+          .expected_steps = {1, 1},
+          .groups = {0, 0, 0},
+          .slop = 3},
+         true, 1, 2, "collision_three_slots");
+  expect({.slots = {{1, 2, 101}, {1, 101}},
+          .expected_steps = {1},
+          .groups = {0, 0},
+          .slop = 2},
+         true, 1, 2, "collision_lesser_jumps_away");
   // Empty slot -> no match.
   expect({.slots = {{}, {1}}, .expected_steps = {1}, .groups = {}, .slop = 5},
          false, 0, 0, "empty_slot");

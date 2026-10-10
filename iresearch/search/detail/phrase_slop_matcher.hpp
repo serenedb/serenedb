@@ -29,8 +29,11 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <numeric>
+#include <optional>
 #include <span>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -50,6 +53,28 @@ struct MatchResult {
   score_t boost = 0.f;
   PosAttr::value_t best_distance = 0;
   bool any = false;
+  bool collided = false;
+};
+
+struct SpreadOwner {
+  uint32_t group;
+  PosAttr::value_t pos;
+  uint32_t slot;
+};
+
+struct SpreadScratch {
+  std::vector<std::vector<PosAttr::value_t>> lists;
+  std::vector<std::vector<uint32_t>> list_starts;
+  std::vector<std::vector<uint32_t>> list_ends;
+  std::vector<std::vector<score_t>> list_boosts;
+  std::vector<int64_t> shifts;
+  std::vector<uint32_t> group;
+  std::vector<size_t> first;
+  std::vector<size_t> last;
+  std::vector<size_t> assign;
+  std::vector<size_t> chosen;
+  std::vector<SpreadOwner> owners;
+  std::vector<std::pair<uint32_t, PosAttr::value_t>> visited;
 };
 
 struct MatchScratch {
@@ -60,6 +85,14 @@ struct MatchScratch {
   std::vector<uint32_t> snap_start;
   std::vector<uint32_t> snap_end;
   std::vector<score_t> snap_boost;
+  std::unique_ptr<SpreadScratch> spread;
+
+  SpreadScratch& Spread() {
+    if (!spread) {
+      spread = std::make_unique<SpreadScratch>();
+    }
+    return *spread;
+  }
 };
 
 struct GroupPair {
@@ -152,6 +185,7 @@ MatchResult SweepOf(Cursors& cur, std::span<const int64_t> offsets,
                                                        offsets[a] < offsets[b]))
                                 ? a
                                 : b;
+        res.collided = true;
         if (!advance(lesser)) {
           return false;
         }
@@ -240,67 +274,241 @@ MatchResult SweepOf(Cursors& cur, std::span<const int64_t> offsets,
   return res;
 }
 
+inline bool Augment(std::span<const std::vector<PosAttr::value_t>> lists,
+                    uint32_t slot, SpreadScratch& scratch) {
+  const auto group = scratch.group[slot];
+  const auto& list = lists[slot];
+  for (auto idx = scratch.first[slot]; idx != scratch.last[slot]; ++idx) {
+    const std::pair key{group, list[idx]};
+    if (absl::c_linear_search(scratch.visited, key)) {
+      continue;
+    }
+    scratch.visited.push_back(key);
+    const auto owner =
+      absl::c_find_if(scratch.owners, [&](const SpreadOwner& owner) {
+        return owner.group == key.first && owner.pos == key.second;
+      });
+    if (owner == scratch.owners.end()) {
+      scratch.owners.push_back({key.first, key.second, slot});
+      scratch.assign[slot] = idx;
+      return true;
+    }
+    const auto at = static_cast<size_t>(owner - scratch.owners.begin());
+    if (Augment(lists, scratch.owners[at].slot, scratch)) {
+      scratch.owners[at].slot = slot;
+      scratch.assign[slot] = idx;
+      return true;
+    }
+  }
+  return false;
+}
+
+inline bool Assign(std::span<const std::vector<PosAttr::value_t>> lists,
+                   std::span<const int64_t> offsets, int64_t lo, int64_t hi,
+                   SpreadScratch& scratch) {
+  for (size_t i = 0; i != lists.size(); ++i) {
+    const auto& list = lists[i];
+    const auto first = absl::c_lower_bound(
+      list, lo + offsets[i], [](PosAttr::value_t pos, int64_t bound) {
+        return static_cast<int64_t>(pos) < bound;
+      });
+    const auto last =
+      std::upper_bound(first, list.end(), hi + offsets[i],
+                       [](int64_t bound, PosAttr::value_t pos) {
+                         return bound < static_cast<int64_t>(pos);
+                       });
+    if (first == last) {
+      return false;
+    }
+    scratch.first[i] = static_cast<size_t>(first - list.begin());
+    scratch.last[i] = static_cast<size_t>(last - list.begin());
+  }
+  scratch.owners.clear();
+  for (uint32_t i = 0; i != lists.size(); ++i) {
+    scratch.visited.clear();
+    if (!Augment(lists, i, scratch)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+inline std::optional<int64_t> SmallestSpread(
+  std::span<const std::vector<PosAttr::value_t>> lists,
+  std::span<const int64_t> offsets, int64_t slop,
+  std::span<const GroupPair> pairs, SpreadScratch& scratch) {
+  const auto n = lists.size();
+  scratch.group.resize(n);
+  std::iota(scratch.group.begin(), scratch.group.end(), uint32_t{0});
+  for (const auto& pair : pairs) {
+    scratch.group[pair.b] = std::min(scratch.group[pair.b], pair.a);
+  }
+  scratch.first.resize(n);
+  scratch.last.resize(n);
+  scratch.assign.resize(n);
+  auto& shifts = scratch.shifts;
+  shifts.clear();
+  for (size_t i = 0; i != n; ++i) {
+    for (const auto pos : lists[i]) {
+      shifts.push_back(static_cast<int64_t>(pos) - offsets[i]);
+    }
+  }
+  absl::c_sort(shifts);
+  shifts.erase(std::unique(shifts.begin(), shifts.end()), shifts.end());
+  std::optional<int64_t> best;
+  for (auto lo = shifts.begin(); lo != shifts.end(); ++lo) {
+    const auto cap = best ? std::min(slop, *best - 1) : slop;
+    if (cap < 0) {
+      break;
+    }
+    const auto end = std::upper_bound(lo, shifts.end(), *lo + cap);
+    if (!Assign(lists, offsets, *lo, *(end - 1), scratch)) {
+      continue;
+    }
+    const auto hi = std::partition_point(lo, end - 1, [&](int64_t at) {
+      return !Assign(lists, offsets, *lo, at, scratch);
+    });
+    Assign(lists, offsets, *lo, *hi, scratch);
+    best = *hi - *lo;
+    scratch.chosen = scratch.assign;
+  }
+  return best;
+}
+
+template<typename Cursors, typename Collect>
+MatchResult MatchBySpread(Cursors& cur, std::span<const int64_t> offsets,
+                          int64_t slop, std::span<const GroupPair> pairs,
+                          SpreadScratch& scratch, MatchResult res,
+                          Collect& collect) {
+  const auto spread =
+    SmallestSpread(cur.Lists(), offsets, slop, pairs, scratch);
+  if (!spread) {
+    return res;
+  }
+  cur.CaptureAt(scratch.chosen);
+  res.freq = 1;
+  res.weight = 1.0 / (1.0 + static_cast<double>(*spread));
+  res.boost = cur.Boost();
+  res.best_distance = static_cast<PosAttr::value_t>(*spread);
+  res.any = true;
+  collect();
+  return res;
+}
+
+template<size_t N, typename Cursors, typename Collect>
+IRS_NO_INLINE MatchResult SweepGroups(Cursors& cur,
+                                      std::span<const int64_t> offsets,
+                                      int64_t slop,
+                                      std::span<const GroupPair> pairs,
+                                      MatchScratch& scratch, bool early_exit,
+                                      Collect& collect) {
+  auto res =
+    SweepOf<N, true>(cur, offsets, slop, pairs, scratch, early_exit, collect);
+  if (res.any || !res.collided) [[likely]] {
+    return res;
+  }
+  if constexpr (requires { cur.Lists(); }) {
+    return MatchBySpread(cur, offsets, slop, pairs, scratch.Spread(), res,
+                         collect);
+  } else {
+    auto lists = cur.Buffer();
+    return MatchBySpread(lists, offsets, slop, pairs, scratch.Spread(), res,
+                         collect);
+  }
+}
+
 template<size_t N, typename Cursors, typename Collect>
 MatchResult Sweep(Cursors& cur, std::span<const int64_t> offsets, int64_t slop,
                   std::span<const GroupPair> pairs, MatchScratch& scratch,
                   bool early_exit, Collect&& collect) {
-  if (!pairs.empty()) {
-    return SweepOf<N, true>(cur, offsets, slop, pairs, scratch, early_exit,
-                            std::forward<Collect>(collect));
+  if (pairs.empty()) {
+    return SweepOf<N, false>(cur, offsets, slop, pairs, scratch, early_exit,
+                             std::forward<Collect>(collect));
   }
-  return SweepOf<N, false>(cur, offsets, slop, pairs, scratch, early_exit,
-                           std::forward<Collect>(collect));
+  return SweepGroups<N>(cur, offsets, slop, pairs, scratch, early_exit,
+                        collect);
 }
 
-class SpanCursors {
+template<bool Offs = false, bool HasBoost = false>
+class ListCursors {
  public:
-  SpanCursors(const std::vector<std::vector<PosAttr::value_t>>& slots,
+  ListCursors(std::span<const std::vector<PosAttr::value_t>> slots,
               MatchScratch& scratch)
-    : _slots{&slots}, _idx{&scratch.cursor}, _snap{&scratch.snap} {
-    _idx->assign(slots.size(), 0);
-    _snap->resize(slots.size());
+    : _slots{slots}, _scratch{&scratch} {
+    scratch.cursor.assign(slots.size(), 0);
+    scratch.snap.resize(slots.size());
+    if constexpr (Offs) {
+      scratch.snap_start.resize(slots.size());
+      scratch.snap_end.resize(slots.size());
+    }
+    if constexpr (HasBoost) {
+      scratch.snap_boost.resize(slots.size());
+    }
   }
 
   PosAttr::value_t Start(size_t i) {
-    (*_idx)[i] = 0;
-    const auto& slot = (*_slots)[i];
+    _scratch->cursor[i] = 0;
+    const auto& slot = _slots[i];
     return slot.empty() ? pos_limits::eof() : slot.front();
   }
 
   PosAttr::value_t Advance(size_t i) {
-    const auto& slot = (*_slots)[i];
-    const auto idx = ++(*_idx)[i];
+    const auto& slot = _slots[i];
+    const auto idx = ++_scratch->cursor[i];
     return idx < slot.size() ? slot[idx] : pos_limits::eof();
   }
 
   PosAttr::value_t Seek(size_t i, PosAttr::value_t target) {
-    const auto& slot = (*_slots)[i];
-    auto& idx = (*_idx)[i];
+    const auto& slot = _slots[i];
+    auto& idx = _scratch->cursor[i];
     while (idx != slot.size() && slot[idx] < target) {
       ++idx;
     }
     return idx != slot.size() ? slot[idx] : pos_limits::eof();
   }
 
-  PosAttr::value_t Value(size_t i) const { return (*_slots)[i][(*_idx)[i]]; }
+  PosAttr::value_t Value(size_t i) const {
+    return _slots[i][_scratch->cursor[i]];
+  }
 
-  void Capture() {
-    for (size_t i = 0; i != _slots->size(); ++i) {
-      (*_snap)[i] = Value(i);
+  void Capture() { CaptureAt(_scratch->cursor); }
+
+  void CaptureAt(std::span<const size_t> at) {
+    auto& scratch = *_scratch;
+    for (size_t i = 0; i != _slots.size(); ++i) {
+      scratch.snap[i] = _slots[i][at[i]];
+      if constexpr (Offs) {
+        scratch.snap_start[i] = scratch.spread->list_starts[i][at[i]];
+        scratch.snap_end[i] = scratch.spread->list_ends[i][at[i]];
+      }
+      if constexpr (HasBoost) {
+        scratch.snap_boost[i] = scratch.spread->list_boosts[i][at[i]];
+      }
     }
   }
 
-  score_t Boost() const noexcept { return kNoBoost; }
+  score_t Boost() const noexcept {
+    if constexpr (HasBoost) {
+      return *absl::c_min_element(_scratch->snap_boost);
+    } else {
+      return kNoBoost;
+    }
+  }
 
   const std::vector<PosAttr::value_t>& Snapshot() const noexcept {
-    return *_snap;
+    return _scratch->snap;
+  }
+
+  std::span<const std::vector<PosAttr::value_t>> Lists() const noexcept {
+    return _slots;
   }
 
  private:
-  const std::vector<std::vector<PosAttr::value_t>>* _slots;
-  std::vector<size_t>* _idx;
-  std::vector<PosAttr::value_t>* _snap;
+  std::span<const std::vector<PosAttr::value_t>> _slots;
+  MatchScratch* _scratch;
 };
+
+using SpanCursors = ListCursors<>;
 
 struct MatchSpan {
   PosAttr::value_t leftmost;
@@ -357,6 +565,43 @@ class IterCursors {
   }
 
   PosAttr::value_t Value(size_t i) const { return (*_pos)[i].first->value(); }
+
+  ListCursors<Offs, HasBoost> Buffer() {
+    auto& spread = _scratch->Spread();
+    const auto n = _pos->size();
+    spread.lists.resize(n);
+    if constexpr (Offs) {
+      spread.list_starts.resize(n);
+      spread.list_ends.resize(n);
+    }
+    if constexpr (HasBoost) {
+      spread.list_boosts.resize(n);
+    }
+    for (size_t i = 0; i != n; ++i) {
+      spread.lists[i].clear();
+      if constexpr (Offs) {
+        spread.list_starts[i].clear();
+        spread.list_ends[i].clear();
+      }
+      if constexpr (HasBoost) {
+        spread.list_boosts[i].clear();
+      }
+      Traits::ResetPos((*_pos)[i]);
+      for (auto pos = Advance(i); !pos_limits::eof(pos); pos = Advance(i)) {
+        spread.lists[i].push_back(pos);
+        if constexpr (Offs) {
+          const auto& offs = Traits::Offsets((*_pos)[i]);
+          spread.list_starts[i].push_back(offs.start);
+          spread.list_ends[i].push_back(offs.end);
+        }
+        if constexpr (HasBoost) {
+          spread.list_boosts[i].push_back(Traits::Boost((*_pos)[i]));
+        }
+      }
+    }
+    return {std::span<const std::vector<PosAttr::value_t>>{spread.lists},
+            *_scratch};
+  }
 
   void Capture() {
     if constexpr (kSnapshots) {

@@ -56,7 +56,7 @@ CREATE SUBSCRIPTION rcin_standby CONNECTION 'host=${PGHOST} port=${PGPORT} dbnam
 
 onlyif pgsocket
 statement ok
-CREATE SUBSCRIPTION rcin_unix CONNECTION 'host=${PGSOCKETDIR} dbname=postgres user=${PGUSER} sslmode=require' PUBLICATION rcin_pub_unix WITH (slot_name = 'rcin_unix');
+CREATE SUBSCRIPTION rcin_unix CONNECTION 'host=${PGSOCKETDIR:} dbname=postgres user=${PGUSER} sslmode=require' PUBLICATION rcin_pub_unix WITH (slot_name = 'rcin_unix');
 
 
 statement ok

@@ -39,11 +39,6 @@
 #include "server/utils/asio_ns.h"
 
 namespace sdb {
-namespace catalog {
-
-class SubscriptionCatalogEntry;
-
-}  // namespace catalog
 namespace network {
 
 class IoExecutor;
@@ -51,10 +46,6 @@ class IoThreadPool;
 
 }  // namespace network
 namespace replication {
-
-ReplicationTarget MakeReplicationTarget(
-  const catalog::SubscriptionCatalogEntry& subscription,
-  std::string_view database);
 
 class SubscriptionEngine final {
  public:
@@ -130,7 +121,8 @@ class SubscriptionEngine final {
   yaclib::Task<bool> Backoff(duckdb::idx_t subscription,
                              network::IoExecutor& exec,
                              std::chrono::milliseconds delay);
-  yaclib::Task<> Supervise(duckdb::idx_t subscription);
+  yaclib::Task<> Supervise(duckdb::idx_t subscription,
+                           network::IoExecutor& exec);
   void Disable(std::string_view database, duckdb::idx_t subscription);
 
   network::IoThreadPool& _pool;

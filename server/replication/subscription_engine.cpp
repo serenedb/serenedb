@@ -34,6 +34,7 @@
 #include <iresearch/utils/log.hpp>
 #include <utility>
 #include <yaclib/async/contract.hpp>
+#include <yaclib/coro/on.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -71,16 +72,17 @@ duckdb::shared_ptr<duckdb::AttachedDatabase> FindDatabase(
   return database;
 }
 
-const catalog::SubscriptionCatalogEntry* CommittedSubscription(
-  duckdb::AttachedDatabase& attached, duckdb::idx_t subscription) {
-  auto entry = attached.GetCatalog()
-                 .Cast<duckdb::DuckCatalog>()
-                 .GetOidIndex()
-                 .GetCommitted(subscription);
-  if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    return nullptr;
-  }
-  return &entry->Cast<catalog::SubscriptionCatalogEntry>();
+template<typename Read>
+void ReadCommitted(duckdb::AttachedDatabase& attached,
+                   duckdb::idx_t subscription, Read&& read) {
+  attached.GetCatalog()
+    .Cast<duckdb::DuckCatalog>()
+    .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+    .Scan([&](duckdb::CatalogEntry& entry) {
+      if (entry.oid == subscription) {
+        read(entry.Cast<catalog::SubscriptionCatalogEntry>());
+      }
+    });
 }
 
 enum class Presence : uint8_t {
@@ -90,41 +92,26 @@ enum class Presence : uint8_t {
 };
 
 Presence Lookup(std::string_view database, duckdb::idx_t subscription) {
-  auto attached = FindDatabase(database);
-  const auto* entry =
-    attached ? CommittedSubscription(*attached, subscription) : nullptr;
-  if (!entry) {
-    return Presence::Missing;
+  auto presence = Presence::Missing;
+  if (auto attached = FindDatabase(database)) {
+    ReadCommitted(*attached, subscription,
+                  [&](const catalog::SubscriptionCatalogEntry& entry) {
+                    presence = entry.Config().enabled ? Presence::Enabled
+                                                      : Presence::Disabled;
+                  });
   }
-  return entry->Config().enabled ? Presence::Enabled : Presence::Disabled;
+  return presence;
 }
-
-std::optional<ReplicationTarget> ResolveTarget(std::string_view database,
-                                               duckdb::idx_t subscription) {
-  auto attached = FindDatabase(database);
-  if (!attached) {
-    return std::nullopt;
-  }
-  const auto* entry = CommittedSubscription(*attached, subscription);
-  if (!entry || !entry->Config().enabled) {
-    return std::nullopt;
-  }
-  auto target = MakeReplicationTarget(*entry, database);
-  target.database_oid = attached->oid;
-  return target;
-}
-
-}  // namespace
 
 ReplicationTarget MakeReplicationTarget(
-  const catalog::SubscriptionCatalogEntry& subscription,
+  const duckdb::CreateSubscriptionInfo& config, duckdb::idx_t subscription,
   std::string_view database) {
-  const auto& config = subscription.Config();
   ReplicationTarget target;
   target.conninfo = ParseConnInfo(config.conninfo);
-  target.subscription_oid = subscription.oid;
+  target.subscription_oid = subscription;
   target.database_name.assign(database);
-  target.subscription_name = subscription.name.GetIdentifierName();
+  target.subscription_name =
+    config.GetQualifiedName().Name().GetIdentifierName();
   target.publications = config.publications;
   target.slot_name = config.slot_name;
   target.binary = config.binary;
@@ -132,10 +119,10 @@ ReplicationTarget MakeReplicationTarget(
   target.disable_on_error = config.disable_on_error;
   target.run_as_owner = config.run_as_owner;
   target.origin = config.origin;
-  target.start_lsn = subscription.RemoteLsn();
+  target.start_lsn = config.remote_lsn;
   target.skip_lsn = config.skip_lsn;
-  target.relations = subscription.Relations();
-  target.owner_id = subscription.permissions.owner;
+  target.relations.assign(config.relations.begin(), config.relations.end());
+  target.owner_id = config.permissions.owner;
   auto roles = auth::RolesOf(nullptr);
   target.owner_name = roles->NameOf(target.owner_id);
   const auto* owner = roles->Find(target.owner_id);
@@ -146,6 +133,32 @@ ReplicationTarget MakeReplicationTarget(
   }
   return target;
 }
+
+std::optional<ReplicationTarget> ResolveTarget(std::string_view database,
+                                               duckdb::idx_t subscription) {
+  auto attached = FindDatabase(database);
+  if (!attached) {
+    return std::nullopt;
+  }
+  duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> config;
+  ReadCommitted(*attached, subscription,
+                [&](const catalog::SubscriptionCatalogEntry& entry) {
+                  if (entry.Config().enabled) {
+                    config =
+                      duckdb::unique_ptr_cast<duckdb::CreateInfo,
+                                              duckdb::CreateSubscriptionInfo>(
+                        entry.GetInfo());
+                  }
+                });
+  if (!config) {
+    return std::nullopt;
+  }
+  auto target = MakeReplicationTarget(*config, subscription, database);
+  target.database_oid = attached->oid;
+  return target;
+}
+
+}  // namespace
 
 SubscriptionEngine::SubscriptionEngine(network::IoThreadPool& pool)
   : _pool(pool) {
@@ -327,8 +340,9 @@ void SubscriptionEngine::LaunchLocked(std::string_view database,
   }
   it->second.database.assign(database);
   auto& exec = _pool.Next();
-  asio_ns::post(exec.Context(),
-                [this, subscription] { Supervise(subscription).Detach(); });
+  asio_ns::post(exec.Context(), [this, subscription, &exec] {
+    Supervise(subscription, exec).Detach();
+  });
 }
 
 void SubscriptionEngine::StopLocked(SubState& state) {
@@ -403,8 +417,8 @@ yaclib::Task<bool> SubscriptionEngine::Backoff(
   co_return true;
 }
 
-yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
-  auto& exec = _pool.Next();
+yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription,
+                                             network::IoExecutor& exec) {
   std::string name = absl::StrCat(subscription);
   std::string database;
   for (;;) {
@@ -452,6 +466,9 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       if (it == _subs.end() || it->second.stopping) {
         break;
       }
+      if (it->second.restart) {
+        continue;
+      }
       it->second.client = client;
       it->second.target = std::move(*target);
     } catch (const std::exception& ex) {
@@ -471,6 +488,7 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
       continue;
     }
     co_await client->RunClient();
+    co_await yaclib::On(exec);
     const bool disable = client->DisableRequested();
     if (disable) {
       SDB_WARN(REPLICATION, "subscription \"", name,
@@ -569,8 +587,9 @@ yaclib::Task<> SubscriptionEngine::Supervise(duckdb::idx_t subscription) {
   }
   if (relaunch) {
     auto& next = _pool.Next();
-    asio_ns::post(next.Context(),
-                  [this, subscription] { Supervise(subscription).Detach(); });
+    asio_ns::post(next.Context(), [this, subscription, &next] {
+      Supervise(subscription, next).Detach();
+    });
   }
   co_return {};
 }

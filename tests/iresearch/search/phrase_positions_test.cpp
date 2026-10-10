@@ -445,7 +445,7 @@ TEST(PhrasePositionsTest, interval_gap_counts_every_combination) {
 TEST(PhrasePositionsTest, interval_phrase_agrees_with_reference) {
   constexpr std::string_view kWords[] = {"a", "b", "c", "d", "x"};
   std::mt19937 rng{20261010};
-  for (size_t round = 0; round != 300; ++round) {
+  for (size_t round = 0; round != 500; ++round) {
     std::array<int, std::size(kWords)> weights;
     for (auto& weight : weights) {
       weight = std::uniform_int_distribution{0, 6}(rng);
@@ -453,13 +453,13 @@ TEST(PhrasePositionsTest, interval_phrase_agrees_with_reference) {
     weights.back() += 2;
     std::discrete_distribution<size_t> pick{weights.begin(), weights.end()};
     std::vector<std::string_view> doc(
-      std::uniform_int_distribution<size_t>{0, 24}(rng));
+      std::uniform_int_distribution<size_t>{0, 40}(rng));
     for (auto& word : doc) {
       word = kWords[pick(rng)];
     }
 
     std::vector<ReferenceSlot> slots(
-      std::uniform_int_distribution<size_t>{2, 4}(rng));
+      std::uniform_int_distribution<size_t>{2, 6}(rng));
     std::uniform_int_distribution<size_t> term{0, 3};
     for (size_t s = 0; s != slots.size(); ++s) {
       auto& slot = slots[s];
@@ -506,7 +506,7 @@ TEST(PhrasePositionsTest, interval_phrase_scale_agrees_with_reference) {
   constexpr std::pair<std::string_view, irs::score_t> kNear[] = {
     {"golf", 1.f}, {"gold", 0.75f}, {"golfs", 0.75f}, {"gol", 1.f - 1.f / 3.f}};
   std::mt19937 rng{20261011};
-  for (size_t round = 0; round != 200; ++round) {
+  for (size_t round = 0; round != 400; ++round) {
     std::array<int, std::size(kWords)> weights;
     for (auto& weight : weights) {
       weight = std::uniform_int_distribution{0, 6}(rng);
@@ -514,13 +514,13 @@ TEST(PhrasePositionsTest, interval_phrase_scale_agrees_with_reference) {
     weights.back() += 2;
     std::discrete_distribution<size_t> pick{weights.begin(), weights.end()};
     std::vector<std::string_view> doc(
-      std::uniform_int_distribution<size_t>{0, 24}(rng));
+      std::uniform_int_distribution<size_t>{0, 40}(rng));
     for (auto& word : doc) {
       word = kWords[pick(rng)];
     }
 
     std::vector<ReferenceSlot> slots(
-      std::uniform_int_distribution<size_t>{2, 4}(rng));
+      std::uniform_int_distribution<size_t>{2, 6}(rng));
     const auto near =
       std::uniform_int_distribution<size_t>{0, slots.size() - 1}(rng);
     std::uniform_int_distribution<size_t> term{0, 1};

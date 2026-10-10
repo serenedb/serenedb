@@ -339,6 +339,9 @@ class PhraseMatcher {
   static constexpr bool kHasScale = HasBoost;
   static constexpr bool kHasFreq = HasFreq;
   static constexpr bool kOffsets = Offs;
+  static constexpr size_t kRarestLeadSlots = 4;
+  static constexpr bool kRarestLead =
+    HasIntervals && !Offs && (N == 0 || N >= kRarestLeadSlots);
 
   explicit PhraseMatcher(size_t size) : _pos{size} {}
 
@@ -382,8 +385,8 @@ class PhraseMatcher {
   }
 
   uint32_t DocFreqBound() {
+    const auto freq = LeadFreq();
     if constexpr (HasIntervals) {
-      const auto freq = Rarest()->first->DocFreq();
       uint64_t by_window = uint64_t{freq} * _freq_scale;
       uint64_t by_occurrence = 1;
       for (const auto& slot : _pos) {
@@ -394,8 +397,7 @@ class PhraseMatcher {
       }
       return static_cast<uint32_t>(std::min<uint64_t>(by_occurrence, kMaxFreq));
     }
-    OrderByDocFreq();
-    return _pos.front().first->DocFreq();
+    return freq;
   }
 
   uint32_t FreqBoundOf(uint32_t freq) const noexcept {
@@ -425,13 +427,26 @@ class PhraseMatcher {
     if constexpr (HasBoost) {
       _phrase_boost = 0.f;
     }
-    if constexpr (Offs) {
-      return NextPositionGeneric();
-    } else if constexpr (HasIntervals) {
-      return NextPositionRarest();
+    if constexpr (HasIntervals || Offs) {
+      if constexpr (kRarestLead) {
+        if (_pos.size() >= kRarestLeadSlots) {
+          return NextPositionRarest();
+        }
+      }
+      return NextPositionGeneric<Ordered>();
     } else {
       return NextPositionOptimized<Ordered>();
     }
+  }
+
+  uint32_t LeadFreq() {
+    if constexpr (kRarestLead) {
+      if (_pos.size() >= kRarestLeadSlots) {
+        return Rarest()->first->DocFreq();
+      }
+    }
+    OrderByDocFreq();
+    return _pos.front().first->DocFreq();
   }
 
   IRS_FORCE_INLINE void TakeBoost() noexcept {
@@ -444,12 +459,16 @@ class PhraseMatcher {
     }
   }
 
+  template<bool Ordered = false>
   uint32_t NextPositionGeneric() {
+    if constexpr (!Ordered) {
+      OrderByDocFreq();
+    }
     uint32_t phrase_freq = 0;
     auto& lead = *_pos.front().first;
     lead.next();
     auto lead_it = std::begin(_pos);
-    ExecutionStrategy strategy{lead_it, lead};
+    ExecutionStrategy strategy{lead_it, lead, _reversed};
     SDB_ASSERT(_pos.size() > 1);
 
     for (auto end = std::end(_pos); !pos_limits::eof(lead.value());) {
@@ -509,6 +528,7 @@ class PhraseMatcher {
     return phrase_freq;
   }
 
+ private:
   struct Side {
     uint32_t matches = 0;
     PosAttr::value_t lead_bound = 0;
@@ -669,7 +689,13 @@ class PhraseMatcher {
   }
 
   void OrderByDocFreq() {
-    if constexpr (!Offs) {
+    if constexpr (Offs) {
+    } else if constexpr (HasIntervals) {
+      if (_pos.back().first->DocFreq() < _pos.front().first->DocFreq()) {
+        absl::c_reverse(_pos);
+        _reversed = !_reversed;
+      }
+    } else {
       absl::c_sort(_pos, [](const auto& l, const auto& r) {
         return l.first->DocFreq() < r.first->DocFreq();
       });
@@ -723,6 +749,7 @@ class PhraseMatcher {
   uint32_t _phrase_freq = 0;
   [[no_unique_address]] utils::Need<HasBoost, score_t> _phrase_boost{};
   uint32_t _freq_scale = 1;
+  bool _reversed = false;
 };
 
 template<bool Offs, bool HasFreq, bool HasIntervals, size_t N = 0>

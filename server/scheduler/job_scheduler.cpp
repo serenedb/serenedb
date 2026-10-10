@@ -164,7 +164,8 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
                    " exceeded. Use \"SET sdb_job_max_depth TO x\" to "
                    "increase the maximum job depth.")};
   }
-  const auto user = auth::RolesOf(nullptr)->NameOf(job.owner);
+  const auto roles = auth::RolesOf(nullptr);
+  const auto user = roles->NameOf(job.owner);
   if (user.empty()) {
     return duckdb::ErrorData{
       duckdb::ExceptionType::CATALOG,

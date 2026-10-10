@@ -85,7 +85,7 @@ FROM duckdb_jobs() WHERE starts_with(job_name, 'jrec_') ORDER BY job_name;
 job_name	schedule	suspended	body
 jrec_babsky_job	AFTER INTERVAL '02:00:00'	f	INSERT INTO jrec_ticks (VALUES ('babsky', N))
 jrec_every	EVERY INTERVAL '00:00:01'	f	INSERT INTO jrec_ticks (VALUES ('every', N))
-jrec_idx	AFTER INTERVAL '00:00:00.1'	f	PRAGMA serenedb_reindex_by_id(N);
+jrec_idx	AFTER INTERVAL '00:00:00.1'	f	PRAGMA serenedb_reindex_by_id(CAST(N AS BIGINT));
 jrec_parked	EVERY INTERVAL '01:00:00' OFFSET INTERVAL '00:07:00'	t	INSERT INTO jrec_ticks (VALUES ('parked', N))
 
 

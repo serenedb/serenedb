@@ -70,6 +70,7 @@ struct ConnInfo {
   std::string password;
   std::string dbname;
   std::string application_name;
+  std::string options;
   SslMode sslmode = SslMode::Prefer;
   std::string sslrootcert;
   std::string sslcert;

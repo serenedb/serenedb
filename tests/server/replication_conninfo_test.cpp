@@ -226,6 +226,14 @@ TEST_F(ConnInfoTest, EnvironmentDefaults) {
   EXPECT_EQ(ParseConnInfo("service=svc").hosts[0].port, "7000");
 }
 
+TEST_F(ConnInfoTest, Options) {
+  EXPECT_EQ(ParseConnInfo("host=h options='-c work_mem=8MB'").options,
+            "-c work_mem=8MB");
+  ::setenv("PGOPTIONS", "-c geqo=off", 1);
+  EXPECT_EQ(ParseConnInfo("host=h").options, "-c geqo=off");
+  EXPECT_EQ(ParseConnInfo("host=h options=").options, "");
+}
+
 TEST_F(ConnInfoTest, SystemRootCertDefaultsToVerifyFull) {
   EXPECT_EQ(ParseConnInfo("host=h sslrootcert=system").sslmode,
             SslMode::VerifyFull);

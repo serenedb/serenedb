@@ -282,6 +282,7 @@ ConnInfo ParseConnInfo(std::string_view conninfo) {
   info.password = value("password");
   info.dbname = value("dbname");
   info.application_name = value("application_name");
+  info.options = value("options");
   info.sslrootcert = value("sslrootcert");
   if (!sslmode_given && info.sslrootcert == "system") {
     info.sslmode = SslMode::VerifyFull;

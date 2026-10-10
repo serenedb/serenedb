@@ -1,0 +1,95 @@
+control substitution on
+
+statement ok
+DROP DATABASE IF EXISTS dbsrv_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE dbsrv_${__DATABASE__};
+
+
+connection inside
+statement ok
+USE dbsrv_${__DATABASE__};
+
+
+connection inside
+statement ok
+CREATE SERVER dbsrv_a_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+connection inside
+statement ok
+CREATE SERVER dbsrv_b_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+connection inside
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname LIKE 'dbsrv_%';
+----
+n
+2
+
+
+connection inside
+statement ok
+CREATE VIEW dbsrv_v AS SELECT count(*) AS n FROM dbsrv_a_${__DATABASE__}.information_schema.tables;
+
+
+connection inside
+statement ok
+USE postgres;
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases()
+WHERE database_name IN ('dbsrv_a_${__DATABASE__}', 'dbsrv_b_${__DATABASE__}');
+----
+n
+2
+
+
+statement ok
+DROP DATABASE dbsrv_${__DATABASE__};
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases()
+WHERE database_name IN ('dbsrv_${__DATABASE__}', 'dbsrv_a_${__DATABASE__}', 'dbsrv_b_${__DATABASE__}');
+----
+n
+0
+
+
+statement ok
+CREATE DATABASE dbsrv_${__DATABASE__};
+
+
+connection inside
+statement ok
+USE dbsrv_${__DATABASE__};
+
+
+connection inside
+query
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname LIKE 'dbsrv_%';
+----
+n
+0
+
+
+connection inside
+statement ok
+CREATE SERVER dbsrv_a_${__DATABASE__} FOREIGN DATA WRAPPER postgres_fdw
+  OPTIONS (host '${PGHOST}', port '${PGPORT}', database 'postgres', user '${PGUSER}');
+
+
+connection inside
+statement ok
+USE postgres;
+
+
+statement ok
+DROP DATABASE dbsrv_${__DATABASE__};

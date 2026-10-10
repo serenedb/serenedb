@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 namespace sdb::connector {
@@ -56,7 +57,7 @@ std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
 
 DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
                     irs::field_id column, const duckdb::LogicalType& type,
-                    const char* name, duckdb::scalar_function_t function,
+                    std::string_view name, duckdb::scalar_function_t function,
                     duckdb::unique_ptr<duckdb::FunctionData> bind,
                     duckdb::init_local_state_t init = nullptr);
 

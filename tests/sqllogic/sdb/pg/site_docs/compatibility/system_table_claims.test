@@ -239,9 +239,12 @@ SELECT * FROM pg_catalog."pg_event_trigger" LIMIT 0;
 statement ok
 SELECT * FROM pg_catalog."pg_extension" LIMIT 0;
 
-# sys_tables: pg_foreign_data_wrapper (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_foreign_data_wrapper" LIMIT 0;
+# sys_tables: pg_foreign_data_wrapper (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_foreign_data_wrapper";
+----
+populated
+t
 
 # sys_tables: pg_foreign_server (🟢)
 statement ok

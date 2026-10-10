@@ -184,7 +184,7 @@ WHERE s.srvname = 'analytics';
 
 </DocCallout>
 
-Two gaps are worth knowing: `srvfdw` is always `0` — the wrapper name is not currently exposed through the catalog — and `pg_foreign_data_wrapper` is an empty compatibility stub, so wrappers cannot be enumerated from SQL. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
+`pg_foreign_data_wrapper` lists the three wrappers, and `srvfdw` points at the server's one, so psql's `\des` and `\dew` and `information_schema.foreign_servers` show them. Every role may use the wrappers: each grants `USAGE` to `PUBLIC`, and `CREATE SERVER` needs the `CREATE` privilege on the database instead. See [System Table Compatibility](../../../compatibility/system-table-compatibility.md).
 
 ## Privileges
 

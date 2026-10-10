@@ -19,6 +19,7 @@ extern SystemTable gPgDefaultAcl;
 extern SystemTable gPgDepend;
 extern SystemTable gPgDescription;
 extern SystemTable gPgEnum;
+extern SystemTable gPgForeignDataWrapper;
 extern SystemTable gPgForeignServer;
 extern SystemTable gPgHbaFileRules;
 extern SystemTable gPgIndex;
@@ -57,6 +58,7 @@ SystemTable* const kSystemTables[] = {
   &gPgDepend,
   &gPgDescription,
   &gPgEnum,
+  &gPgForeignDataWrapper,
   &gPgForeignServer,
   &gPgHbaFileRules,
   &gPgIndex,

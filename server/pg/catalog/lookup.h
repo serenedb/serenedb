@@ -42,6 +42,8 @@
 #include <string_view>
 #include <vector>
 
+#include "pg/catalog/oids.h"
+
 namespace duckdb {
 
 class IndexCatalogEntry;
@@ -84,6 +86,12 @@ inline constexpr std::array kPrivChars{
   PrivChar{duckdb::AclMode::Set, 's'},
   PrivChar{duckdb::AclMode::AlterSystem, 'A'},
 };
+
+inline constexpr std::array kForeignDataWrapperAcl{duckdb::AclItem{
+  .grantee = kPublicGrantee,
+  .grantor = kRootUser,
+  .privs = duckdb::AclMode::Usage,
+}};
 
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
                const auth::RoleGraph& roles);

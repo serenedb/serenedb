@@ -89,6 +89,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JobsBind(
   add("schedule_kind", duckdb::LogicalType::VARCHAR);
   add("schedule_interval", duckdb::LogicalType::INTERVAL);
   add("schedule_offset", duckdb::LogicalType::INTERVAL);
+  add("schedule_randomize", duckdb::LogicalType::INTERVAL);
   add("suspended", duckdb::LogicalType::BOOLEAN);
   add("running", duckdb::LogicalType::BOOLEAN);
   add("next_run", duckdb::LogicalType::TIMESTAMP_TZ);
@@ -144,6 +145,7 @@ void JobsExecute(duckdb::ClientContext& context,
       duckdb::Value{duckdb::EnumUtil::ToString(job.Schedule().kind)});
     output.SetValue(col++, count, job.Schedule().interval);
     output.SetValue(col++, count, job.Schedule().offset);
+    output.SetValue(col++, count, job.Schedule().randomize);
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(job.Suspended()));
     output.SetValue(col++, count, duckdb::Value::BOOLEAN(status.running > 0));
     output.SetValue(

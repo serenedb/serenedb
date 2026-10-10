@@ -29,6 +29,7 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/operator/date_trunc_operators.hpp>
+#include <duckdb/common/random_engine.hpp>
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -53,6 +54,7 @@ namespace sdb {
 namespace {
 
 constexpr const char* kJobRunKey = "sdb_job_run";
+constexpr int64_t kShortestMonthDays = 28;
 
 class JobRun final : public duckdb::ClientContextState {
  public:
@@ -65,35 +67,48 @@ bool IsNegative(const duckdb::interval_t& value) {
   return value.months < 0 || value.days < 0 || value.micros < 0;
 }
 
+int64_t ShortestLength(const duckdb::interval_t& value) {
+  return (value.months * kShortestMonthDays + value.days) *
+           duckdb::Interval::MICROS_PER_DAY +
+         value.micros;
+}
+
 duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
                             duckdb::timestamp_t after) {
   auto every = schedule.interval.GetValue<duckdb::interval_t>();
   auto shift = schedule.offset.GetValue<duckdb::interval_t>();
+  const auto spread = duckdb::Interval::GetMicro(
+    schedule.randomize.GetValue<duckdb::interval_t>());
+  const auto jitter =
+    spread == 0 ? int64_t{0}
+                : static_cast<int64_t>(duckdb::RandomEngine{}.NextRandom(
+                    -spread / 2.0, spread / 2.0));
   if (schedule.kind == duckdb::JobScheduleKind::AFTER) {
-    return duckdb::Interval::Add(after, every);
+    return duckdb::timestamp_t(duckdb::Interval::Add(after, every).value +
+                               jitter);
   }
   const auto shift_micros =
     duckdb::Interval::GetMicro(duckdb::interval_t{0, shift.days, shift.micros});
-  const auto from = after.value - shift_micros;
+  const auto from = after.value + spread / 2 - shift_micros;
   if (every.months == 0) {
     const auto width = duckdb::Interval::GetMicro(every);
     const auto origin =
-      duckdb::DateTrunc::FromDays(duckdb::Date::FromDate(2000, 1, 3).days)
+      duckdb::DateTrunc::FromDays(duckdb::Date::FromDate(1969, 12, 29).days)
         .value;
     return duckdb::timestamp_t(
       origin + (duckdb::DateTrunc::FloorDiv(from - origin, width) + 1) * width +
-      shift_micros);
+      shift_micros + jitter);
   }
   const int64_t width = every.months;
   const int64_t origin =
-    2000 * duckdb::Interval::MONTHS_PER_YEAR + shift.months;
+    1970 * duckdb::Interval::MONTHS_PER_YEAR + shift.months;
   const auto from_month =
     duckdb::DateTrunc::MonthIndex(duckdb::timestamp_t(from));
   const auto month =
     origin +
     (duckdb::DateTrunc::FloorDiv(from_month - origin, width) + 1) * width;
   return duckdb::timestamp_t(duckdb::DateTrunc::MonthIndexStart(month).value +
-                             shift_micros);
+                             shift_micros + jitter);
 }
 
 JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
@@ -179,27 +194,29 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
                     ERR_MSG("job schedule offset must not be negative, got ",
                             schedule.offset.ToString()));
   }
-  if (every.months != 0) {
-    if (schedule.kind == duckdb::JobScheduleKind::EVERY &&
-        (every.days != 0 || every.micros != 0)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("EVERY interval cannot mix months with days or time, got ",
-                schedule.interval.ToString()));
-    }
-    if (shift.months >= every.months) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("job schedule offset ", schedule.offset.ToString(),
-                " must be shorter than the interval ",
-                schedule.interval.ToString()));
-    }
-  } else if (shift.months != 0 || duckdb::Interval::GetMicro(shift) >=
-                                    duckdb::Interval::GetMicro(every)) {
+  if (schedule.kind == duckdb::JobScheduleKind::EVERY && every.months != 0 &&
+      (every.days != 0 || every.micros != 0)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("EVERY interval cannot mix months with days or time, got ",
+              schedule.interval.ToString()));
+  }
+  const auto shortest = ShortestLength(every);
+  if ((every.months == 0 && shift.months != 0) ||
+      ShortestLength(shift) >= shortest) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("job schedule offset ", schedule.offset.ToString(),
                             " must be shorter than the interval ",
                             schedule.interval.ToString()));
+  }
+  const auto spread = schedule.randomize.GetValue<duckdb::interval_t>();
+  if (IsNegative(spread) || duckdb::Interval::GetMicro(spread) >= shortest) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("job schedule RANDOMIZE FOR ", schedule.randomize.ToString(),
+              " must not be negative and must be shorter than "
+              "the interval ",
+              schedule.interval.ToString()));
   }
   NextRun(schedule, duckdb::Timestamp::GetCurrentTimestamp());
 }

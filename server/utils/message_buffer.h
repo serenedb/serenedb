@@ -127,6 +127,7 @@ class Buffer {
   }
   std::string_view Front() noexcept;
   void Consume(size_t size);
+  void RetainConsumed(Chain* sink) noexcept { _retained = sink; }
 
   size_t ReadableSize() noexcept;
   SequenceView ReadableView(size_t length) noexcept;
@@ -160,6 +161,7 @@ class Buffer {
   void SendData() const;
 
   void FreeTill(const Chunk* end);
+  void Release(Chunk* chunk);
 
   void RefreshReadable() noexcept {
     _consumed = _committed.load(std::memory_order_acquire);
@@ -184,6 +186,7 @@ class Buffer {
 
   Chunk* _head{nullptr};
   Chunk* _tail{nullptr};
+  Chain* _retained{nullptr};
 };
 
 // RAII handle for writing one message into a Buffer, and the ONLY producer-side

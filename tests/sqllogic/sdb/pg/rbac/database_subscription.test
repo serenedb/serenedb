@@ -1,0 +1,40 @@
+statement ok
+DROP ROLE IF EXISTS dbsub_vedernikoff;
+
+
+statement ok
+CREATE ROLE dbsub_vedernikoff;
+
+
+statement ok
+CREATE SUBSCRIPTION dbsub_sub1 CONNECTION 'host=localhost dbname=mydb' PUBLICATION dbsub_pub1 WITH (connect = false, slot_name = NONE);
+
+
+statement ok
+GRANT TEMP ON DATABASE postgres TO dbsub_vedernikoff;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname LIKE 'dbsub_%' ORDER BY subname;
+----
+subname
+dbsub_sub1
+
+
+statement ok
+REVOKE ALL ON DATABASE postgres FROM dbsub_vedernikoff;
+
+
+query
+SELECT subname FROM pg_subscription WHERE subname LIKE 'dbsub_%' ORDER BY subname;
+----
+subname
+dbsub_sub1
+
+
+statement ok
+DROP SUBSCRIPTION dbsub_sub1;
+
+
+statement ok
+DROP ROLE dbsub_vedernikoff;

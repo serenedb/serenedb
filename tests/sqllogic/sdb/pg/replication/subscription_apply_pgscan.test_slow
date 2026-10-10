@@ -1,0 +1,496 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rapp_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rapp\_%''');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rapp_text_pub; DROP PUBLICATION IF EXISTS rapp_bin_pub; DROP PUBLICATION IF EXISTS rapp_pub; DROP SCHEMA IF EXISTS rapp_text CASCADE; DROP SCHEMA IF EXISTS rapp_bin CASCADE; DROP TABLE IF EXISTS rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter, rapp_tparent, rapp_tseq; DROP TYPE IF EXISTS rapp_mood; END $$');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ DECLARE s text; BEGIN FOREACH s IN ARRAY ARRAY[''rapp_text'', ''rapp_bin''] LOOP EXECUTE format(''CREATE SCHEMA %I'', s); EXECUTE format(''CREATE TABLE %I.types (id int PRIMARY KEY, i2 smallint, i8 bigint, num numeric(12,3), f4 real, f8 double precision, b boolean, t text, vc varchar(10), bt bytea, d date, tm time, ts timestamp, tz timestamptz, iv interval, u uuid, j json, ai int[], at text[])'', s); EXECUTE format(''INSERT INTO %I.types VALUES (1, -32768, 9223372036854775807, -123456789.125, 1.5, -2.25e-10, true, ''''tab\there "quoted" \\ back'''', ''''short'''', ''''\x00ff10'''', ''''2024-02-29'''', ''''23:59:59.999999'''', ''''1999-12-31 23:59:59.5'''', ''''2024-01-01 00:00:00+00'''', ''''1 year 2 mons 3 days 04:05:06'''', ''''a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'''', ''''{"k": [1, 2, {"x": null}]}'''', ''''{1,NULL,3}'''', ''''{"a b",NULL,"c,d"}'''')'', s); END LOOP; CREATE PUBLICATION rapp_text_pub FOR TABLE rapp_text.types; CREATE PUBLICATION rapp_bin_pub FOR TABLE rapp_bin.types; END $$');
+
+
+statement ok
+CREATE SCHEMA rapp_text;
+
+
+statement ok
+CREATE SCHEMA rapp_bin;
+
+
+statement ok
+CREATE TABLE rapp_text.types (id INTEGER PRIMARY KEY, i2 SMALLINT, i8 BIGINT, num DECIMAL(12, 3), f4 REAL, f8 DOUBLE, b BOOLEAN, t TEXT, vc VARCHAR(10), bt BYTEA, d DATE, tm TIME, ts TIMESTAMP, tz TIMESTAMPTZ, iv INTERVAL, u UUID, j JSON, ai INTEGER[], at TEXT[]);
+
+
+statement ok
+CREATE TABLE rapp_bin.types (id INTEGER PRIMARY KEY, i2 SMALLINT, i8 BIGINT, num DECIMAL(12, 3), f4 REAL, f8 DOUBLE, b BOOLEAN, t TEXT, vc VARCHAR(10), bt BYTEA, d DATE, tm TIME, ts TIMESTAMP, tz TIMESTAMPTZ, iv INTERVAL, u UUID, j JSON, ai INTEGER[], at TEXT[]);
+
+
+statement ok
+CREATE SUBSCRIPTION rapp_text CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rapp_text_pub WITH (slot_name = 'rapp_text');
+
+
+statement ok
+CREATE SUBSCRIPTION rapp_bin CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rapp_bin_pub WITH (slot_name = 'rapp_bin', binary = true);
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ DECLARE s text; BEGIN FOREACH s IN ARRAY ARRAY[''rapp_text'', ''rapp_bin''] LOOP EXECUTE format(''INSERT INTO %I.types (id) VALUES (2)'', s); EXECUTE format(''INSERT INTO %I.types SELECT 3, i2, i8, num, f4, f8, b, t, vc, bt, d, tm, ts, tz, iv, u, j, ai, at FROM %I.types WHERE id = 1'', s, s); END LOOP; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rapp_text.types) AS text_rows, (SELECT count(*) FROM rapp_bin.types) AS bin_rows;
+----
+text_rows	bin_rows
+3	3
+
+
+query
+SELECT id, i2, i8, num, f4, f8::TEXT AS f8, b, t, vc, bt, d, tm, ts::TEXT AS ts, tz, iv, u, j, ai, at FROM rapp_text.types ORDER BY id;
+----
+id	i2	i8	num	f4	f8	b	t	vc	bt	d	tm	ts	tz	iv	u	j	ai	at
+1	-32768	9223372036854775807	-123456789.125	1.5	-2.25e-10	t	tab\\there "quoted" \\\\ back	short	\\x00ff10	2024-02-29	23:59:59.999999	1999-12-31 23:59:59.5	2024-01-01 00:00:00+00	1 year 2 mons 3 days 04:05:06	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	{"k": [1, 2, {"x": null}]}	{1,NULL,3}	{"a b",NULL,"c,d"}
+2	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	-32768	9223372036854775807	-123456789.125	1.5	-2.25e-10	t	tab\\there "quoted" \\\\ back	short	\\x00ff10	2024-02-29	23:59:59.999999	1999-12-31 23:59:59.5	2024-01-01 00:00:00+00	1 year 2 mons 3 days 04:05:06	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	{"k": [1, 2, {"x": null}]}	{1,NULL,3}	{"a b",NULL,"c,d"}
+
+
+query
+SELECT count(*) AS differences FROM (SELECT id, i2, i8, num, f4, f8, b, t, vc, bt, d, tm, ts, tz, iv, u, j::TEXT, ai, at FROM rapp_text.types EXCEPT SELECT id, i2, i8, num, f4, f8, b, t, vc, bt, d, tm, ts, tz, iv, u, j::TEXT, ai, at FROM rapp_bin.types);
+----
+differences
+0
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rapp_full (a int, b text); ALTER TABLE rapp_full REPLICA IDENTITY FULL; CREATE TABLE rapp_index (a int NOT NULL, b int NOT NULL, v text); CREATE UNIQUE INDEX rapp_index_ab ON rapp_index (a, b); ALTER TABLE rapp_index REPLICA IDENTITY USING INDEX rapp_index_ab; CREATE TABLE rapp_toast (id int PRIMARY KEY, big text, small int); CREATE TABLE rapp_conflict (id int PRIMARY KEY, v text); CREATE TABLE rapp_owned (id int PRIMARY KEY); CREATE TABLE rapp_alter (id int PRIMARY KEY, n int); INSERT INTO rapp_alter VALUES (1, 7); CREATE TYPE rapp_mood AS ENUM (''sad'', ''happy''); CREATE TABLE rapp_tparent (id int PRIMARY KEY); CREATE TABLE rapp_tseq (id int PRIMARY KEY, v text); CREATE PUBLICATION rapp_pub FOR TABLE rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter, rapp_tparent, rapp_tseq; END $$');
+
+
+statement ok
+CREATE TABLE rapp_full (a INTEGER, b TEXT);
+
+
+statement ok
+CREATE TABLE rapp_index (a INTEGER NOT NULL, b INTEGER NOT NULL, v TEXT);
+
+
+statement ok
+CREATE TABLE rapp_toast (id INTEGER PRIMARY KEY, big TEXT, small INTEGER);
+
+
+statement ok
+CREATE TABLE rapp_conflict (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rapp_alter (id INTEGER PRIMARY KEY, n BIGINT, m TEXT);
+
+
+statement ok
+CREATE TABLE rapp_tparent (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rapp_tchild (id INTEGER, parent INTEGER REFERENCES rapp_tparent (id));
+
+
+statement ok
+CREATE TABLE rapp_tseq (id SERIAL PRIMARY KEY, v TEXT);
+
+
+statement ok
+DROP ROLE IF EXISTS rapp_sub_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS rapp_table_owner;
+
+
+statement ok
+CREATE ROLE rapp_table_owner;
+
+
+statement ok
+CREATE ROLE rapp_sub_owner;
+
+
+statement ok
+CREATE TABLE rapp_owned (id INTEGER PRIMARY KEY);
+
+
+statement ok
+ALTER TABLE rapp_owned OWNER TO rapp_table_owner;
+
+
+statement ok
+CREATE SUBSCRIPTION rapp_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rapp_pub WITH (slot_name = 'rapp_sub');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS ready FROM pg_subscription_rel r JOIN pg_subscription s ON s.oid = r.srsubid WHERE s.subname = 'rapp_sub' AND r.srsubstate = 'r' AND r.srsublsn IS NOT NULL;
+----
+ready
+8
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_full VALUES (1, ''x''), (1, ''x''), (2, NULL), (3, ''y'')');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN UPDATE rapp_full SET b = ''z'' WHERE a = 2; DELETE FROM rapp_full WHERE ctid = (SELECT min(ctid) FROM rapp_full WHERE a = 1); UPDATE rapp_full SET a = 30 WHERE a = 3; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT a, b FROM rapp_full ORDER BY a;
+----
+a	b
+1	x
+2	z
+30	y
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_index VALUES (1, 1, ''one''), (1, 2, ''two''), (2, 1, ''three'')');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN UPDATE rapp_index SET v = ''TWO'' WHERE a = 1 AND b = 2; UPDATE rapp_index SET b = 9 WHERE a = 2; DELETE FROM rapp_index WHERE a = 1 AND b = 1; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT a, b, v FROM rapp_index ORDER BY a, b;
+----
+a	b	v
+1	2	TWO
+2	9	three
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_toast SELECT 1, string_agg(md5(g::text), '''') , 0 FROM generate_series(1, 400) g');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'UPDATE rapp_toast SET small = small + 1');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'UPDATE rapp_toast SET small = small + 1');
+
+
+query ok retry 120 backoff 250ms
+SELECT small, length(big) AS len, md5(big) = (SELECT * FROM postgres_query('rapp_${__DATABASE__}', 'SELECT md5(big) FROM rapp_toast')) AS same FROM rapp_toast;
+----
+small	len	same
+2	12800	t
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'UPDATE rapp_toast SET big = NULL, small = 3');
+
+
+query ok retry 120 backoff 250ms
+SELECT small, big IS NULL AS cleared FROM rapp_toast;
+----
+small	cleared
+3	t
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_conflict VALUES (1, ''one''), (2, ''two''), (3, ''three'')');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rapp_conflict;
+----
+n
+3
+
+
+statement ok
+DELETE FROM rapp_conflict WHERE id IN (1, 2);
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN UPDATE rapp_conflict SET v = ''ONE'' WHERE id = 1; DELETE FROM rapp_conflict WHERE id = 2; UPDATE rapp_conflict SET v = ''THREE'' WHERE id = 3; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT id, v FROM rapp_conflict ORDER BY id;
+----
+id	v
+3	THREE
+
+
+query
+SELECT confl_update_missing, confl_delete_missing, confl_insert_exists, apply_error_count FROM pg_stat_subscription_stats WHERE subname = 'rapp_sub';
+----
+confl_update_missing	confl_delete_missing	confl_insert_exists	apply_error_count
+1	1	0	0
+
+
+statement ok
+INSERT INTO rapp_conflict VALUES (4, 'local');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_conflict VALUES (4, ''remote''), (5, ''five'')');
+
+
+query ok retry 120 backoff 250ms
+SELECT confl_insert_exists >= 1 AS conflicted, apply_error_count >= 1 AS failed FROM pg_stat_subscription_stats WHERE subname = 'rapp_sub';
+----
+conflicted	failed
+t	t
+
+
+query
+SELECT id, v FROM rapp_conflict ORDER BY id;
+----
+id	v
+3	THREE
+4	local
+
+
+statement ok
+DELETE FROM rapp_conflict WHERE id = 4;
+
+
+query ok retry 120 backoff 250ms
+SELECT id, v FROM rapp_conflict ORDER BY id;
+----
+id	v
+3	THREE
+4	remote
+5	five
+
+
+connection local_writer
+statement ok
+BEGIN;
+
+
+connection local_writer
+statement ok
+UPDATE rapp_conflict SET v = 'local' WHERE id = 5;
+
+
+connection default
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'UPDATE rapp_conflict SET v = ''FIVE'' WHERE id = 5');
+
+
+sleep 3s
+
+
+connection default
+query
+SELECT v FROM rapp_conflict WHERE id = 5;
+----
+v
+five
+
+
+connection local_writer
+statement ok
+COMMIT;
+
+
+connection default
+query ok retry 120 backoff 250ms
+SELECT v FROM rapp_conflict WHERE id = 5;
+----
+v
+FIVE
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN ALTER TABLE rapp_alter ALTER COLUMN n TYPE bigint; ALTER TABLE rapp_alter ADD COLUMN m rapp_mood; INSERT INTO rapp_alter VALUES (2, 5000000000, ''happy''); UPDATE rapp_alter SET m = ''sad'' WHERE id = 1; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT id, n, m FROM rapp_alter ORDER BY id;
+----
+id	n	m
+1	7	sad
+2	5000000000	happy
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rapp_tparent VALUES (1), (2); INSERT INTO rapp_tseq VALUES (1, ''a''), (2, ''b''); END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rapp_tparent) AS parents, (SELECT count(*) FROM rapp_tseq) AS seqs;
+----
+parents	seqs
+2	2
+
+
+statement ok
+INSERT INTO rapp_tchild VALUES (10, 1);
+
+
+query
+SELECT nextval('rapp_tseq_id_seq') + nextval('rapp_tseq_id_seq') AS n;
+----
+n
+3
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'TRUNCATE rapp_tparent CASCADE');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rapp_tparent) AS parents, (SELECT count(*) FROM rapp_tchild) AS children;
+----
+parents	children
+0	0
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'TRUNCATE rapp_tseq RESTART IDENTITY');
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rapp_tseq;
+----
+n
+0
+
+
+query
+SELECT nextval('rapp_tseq_id_seq') AS n;
+----
+n
+1
+
+
+statement ok
+ALTER SUBSCRIPTION rapp_sub SET (disable_on_error = true);
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_subscription WHERE subname = 'rapp_sub';
+----
+n
+1
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'ALTER TABLE rapp_conflict ADD COLUMN extra int');
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_conflict VALUES (6, ''six'', 60)');
+
+
+query ok retry 120 backoff 250ms
+SELECT subenabled FROM pg_subscription WHERE subname = 'rapp_sub';
+----
+subenabled
+f
+
+
+statement ok
+ALTER TABLE rapp_conflict ADD COLUMN extra INTEGER;
+
+
+statement ok
+ALTER SUBSCRIPTION rapp_sub ENABLE;
+
+
+query ok retry 120 backoff 250ms
+SELECT id, v, extra FROM rapp_conflict WHERE id = 6;
+----
+id	v	extra
+6	six	60
+
+
+statement ok
+ALTER SUBSCRIPTION rapp_sub SET (disable_on_error = false, password_required = false);
+
+
+statement ok
+ALTER SUBSCRIPTION rapp_sub OWNER TO rapp_sub_owner;
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'INSERT INTO rapp_owned VALUES (1)');
+
+
+sleep 2s
+
+
+query
+SELECT count(*) AS n FROM rapp_owned;
+----
+n
+0
+
+
+statement ok
+GRANT rapp_table_owner TO rapp_sub_owner;
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rapp_owned;
+----
+n
+1
+
+
+query
+SELECT o.roname = 'pg_' || s.oid AS named, st.remote_lsn <> '0/0' AS advanced FROM pg_subscription s JOIN pg_replication_origin o ON o.roident = s.oid JOIN pg_replication_origin_status st ON st.external_id = o.roname WHERE s.subname = 'rapp_sub';
+----
+named	advanced
+t	t
+
+
+query
+SELECT last_msg_send_time IS NOT NULL AS sent, last_msg_receipt_time IS NOT NULL AS received FROM pg_stat_subscription WHERE subname = 'rapp_sub';
+----
+sent	received
+t	t
+
+
+statement ok
+ALTER SUBSCRIPTION rapp_sub OWNER TO CURRENT_USER;
+
+
+statement ok
+DROP SUBSCRIPTION rapp_sub;
+
+
+statement ok
+DROP SUBSCRIPTION rapp_text;
+
+
+statement ok
+DROP SUBSCRIPTION rapp_bin;
+
+
+statement ok
+DROP TABLE rapp_owned;
+
+
+statement ok
+DROP ROLE rapp_sub_owner;
+
+
+statement ok
+DROP ROLE rapp_table_owner;
+
+
+statement ok
+CALL postgres_execute('rapp_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rapp_text_pub; DROP PUBLICATION rapp_bin_pub; DROP PUBLICATION rapp_pub; DROP SCHEMA rapp_text CASCADE; DROP SCHEMA rapp_bin CASCADE; DROP TABLE rapp_full, rapp_index, rapp_toast, rapp_conflict, rapp_owned, rapp_alter, rapp_tparent, rapp_tseq; DROP TYPE rapp_mood; END $$');
+
+
+statement ok
+DETACH rapp_${__DATABASE__};

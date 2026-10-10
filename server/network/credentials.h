@@ -103,6 +103,14 @@ bool RandomBytes(std::span<uint8_t> out);
 
 std::optional<std::string> Base64Decode(std::string_view text);
 
+struct ScramClientProof {
+  std::array<uint8_t, kScramKeyLen> client_proof{};
+  std::array<uint8_t, kScramKeyLen> server_signature{};
+};
+std::optional<ScramClientProof> ScramClientProofFromPassword(
+  std::string_view password, std::span<const uint8_t> salt, int iterations,
+  std::string_view auth_message);
+
 // Verify the SCRAM client proof against the verifier + AuthMessage
 // (constant-time). `proof` must be kScramKeyLen bytes.
 bool VerifyClientProof(const ScramVerifier& verifier,

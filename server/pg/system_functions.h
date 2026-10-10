@@ -748,18 +748,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
       WHERE false;
   END;)"},
 
-  {"pg_catalog", "pg_show_replication_origin_status",
-   R"(()
-  RETURNS TABLE( local_id BIGINT,
-                 external_id TEXT,
-                 remote_lsn TEXT,
-                 local_lsn TEXT)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-      SELECT NULL::BIGINT, NULL::TEXT, NULL::TEXT, NULL::TEXT
-      WHERE false;
-  END;)"},
-
   {"pg_catalog", "pg_stat_get_subscription_stats",
    R"((subid OID)
   RETURNS TABLE( subid BIGINT,
@@ -772,14 +760,16 @@ inline constexpr SystemMacro kExternalMacros[] = {
                  confl_delete_origin_differs BIGINT,
                  confl_delete_missing BIGINT,
                  confl_multiple_unique_conflicts BIGINT,
-                 stats_reset TIMESTAMP)
+                 stats_reset TIMESTAMPTZ)
   LANGUAGE SQL
   BEGIN ATOMIC
-      SELECT NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
-             NULL::BIGINT, NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
-             NULL::BIGINT, NULL::BIGINT, NULL::BIGINT,
-             NULL::TIMESTAMP
-      WHERE false;
+      SELECT s.subid, s.apply_error_count, s.sync_error_count,
+             s.confl_insert_exists, s.confl_update_origin_differs,
+             s.confl_update_exists, s.confl_update_missing,
+             s.confl_delete_origin_differs, s.confl_delete_missing,
+             s.confl_multiple_unique_conflicts, s.stats_reset
+      FROM pg_catalog.pg_stat_subscription_stats s
+      WHERE s.subid = $1;
   END;)"},
 
   {"pg_catalog", "pg_get_wait_events",

@@ -1,0 +1,130 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rlsn_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rsub_lsn''');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'DROP PUBLICATION IF EXISTS rsub_lsn_pub');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'DROP TABLE IF EXISTS rsub_lsn_rows');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'CREATE TABLE rsub_lsn_rows (id integer PRIMARY KEY, payload text)');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'CREATE PUBLICATION rsub_lsn_pub FOR TABLE rsub_lsn_rows');
+
+onlyif serenedb
+statement ok
+CREATE TABLE rsub_lsn_rows (id INTEGER PRIMARY KEY, payload TEXT);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION rsub_lsn CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsub_lsn_pub WITH (copy_data = false);
+
+onlyif serenedb
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rlsn_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_lsn'' AND active');
+----
+n
+1
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'INSERT INTO rsub_lsn_rows SELECT g, ''first'' FROM generate_series(1, 500) g');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'INSERT INTO rsub_lsn_rows SELECT g, ''second'' FROM generate_series(501, 1000) g');
+
+onlyif serenedb
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM rsub_lsn_rows;
+----
+n
+1000
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'INSERT INTO rsub_lsn_rows SELECT g, ''racing'' FROM generate_series(1001, 3000) g');
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname, subenabled FROM pg_subscription;
+----
+subname	subenabled
+rsub_lsn	t
+
+onlyif serenedb
+connection after_crash
+statement ok
+ATTACH IF NOT EXISTS 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rlsn_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'INSERT INTO rsub_lsn_rows SELECT g, ''after crash'' FROM generate_series(3001, 3500) g');
+
+onlyif serenedb
+connection after_crash
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi FROM rsub_lsn_rows;
+----
+n	ids	lo	hi
+3500	3500	1	3500
+
+onlyif serenedb
+connection after_crash
+query
+SELECT apply_error_count FROM pg_stat_subscription_stats WHERE subname = 'rsub_lsn';
+----
+apply_error_count
+0
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP SUBSCRIPTION rsub_lsn;
+
+onlyif serenedb
+connection after_crash
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rlsn_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_lsn''');
+----
+n
+0
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'DROP PUBLICATION rsub_lsn_pub');
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rlsn_${__DATABASE__}', 'DROP TABLE rsub_lsn_rows');
+
+onlyif serenedb
+connection after_crash
+statement ok
+DETACH rlsn_${__DATABASE__};

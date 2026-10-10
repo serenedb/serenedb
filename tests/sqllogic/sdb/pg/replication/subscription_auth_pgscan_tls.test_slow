@@ -1,0 +1,223 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rauth_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rauth\_%''');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ DECLARE r text; BEGIN FOREACH r IN ARRAY ARRAY[''rauth_md5'', ''rauth_scram'', ''rauth_plain'', ''rauth_allow'', ''rauth_nossl'', ''rauth_tls''] LOOP EXECUTE format(''DROP PUBLICATION IF EXISTS %I'', r); EXECUTE format(''DROP TABLE IF EXISTS %I'', r); EXECUTE format(''DROP ROLE IF EXISTS %I'', r); END LOOP; DROP TABLE IF EXISTS rauth_pem; END $$');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ DECLARE r text; BEGIN FOREACH r IN ARRAY ARRAY[''rauth_md5'', ''rauth_scram'', ''rauth_plain'', ''rauth_allow'', ''rauth_nossl'', ''rauth_tls''] LOOP EXECUTE format(''CREATE TABLE %I (id integer PRIMARY KEY, v text)'', r); EXECUTE format(''INSERT INTO %I VALUES (1, %L)'', r, r); EXECUTE format(''CREATE PUBLICATION %I FOR TABLE %I'', r, r); END LOOP; END $$');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ BEGIN EXECUTE format(''CREATE ROLE rauth_md5 LOGIN REPLICATION PASSWORD %L'', ''md5'' || md5(''md5 secret'' || ''rauth_md5'')); CREATE ROLE rauth_scram LOGIN REPLICATION PASSWORD ''scram secret''; CREATE ROLE rauth_plain LOGIN REPLICATION PASSWORD ''plain secret''; CREATE ROLE rauth_tls LOGIN REPLICATION PASSWORD ''tls secret''; CREATE ROLE rauth_nossl LOGIN REPLICATION PASSWORD ''nossl secret''; CREATE ROLE rauth_allow; GRANT SELECT ON rauth_allow TO rauth_tls; GRANT SELECT ON rauth_nossl TO rauth_nossl; GRANT SELECT ON rauth_md5 TO rauth_md5; GRANT SELECT ON rauth_scram TO rauth_scram; GRANT SELECT ON rauth_plain TO rauth_plain; GRANT SELECT ON rauth_tls TO rauth_tls; END $$');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'CREATE TABLE rauth_pem (pem text)');
+
+
+statement ok
+INSERT INTO rauth_${__DATABASE__}.public.rauth_pem SELECT content FROM read_text('${RESOURCES}/ca.pem');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ BEGIN COPY (SELECT unnest(string_to_array(rtrim(pem, E''\n''), E''\n'')) FROM rauth_pem) TO PROGRAM ''umask 077 && cat > rauth.pem''; EXECUTE format(''COPY (SELECT unnest(ARRAY[''''local all all trust'''', ''''host all rauth_md5 all md5'''', ''''host all rauth_scram all scram-sha-256'''', ''''host all rauth_plain all password'''', ''''hostnossl all rauth_tls all reject'''', ''''hostssl all rauth_tls all scram-sha-256'''', ''''hostssl all rauth_nossl all reject'''', ''''host all rauth_nossl all scram-sha-256'''', ''''host all all all trust'''', ''''local replication all trust'''', ''''host replication all all trust''''])) TO %L'', current_setting(''hba_file'')); END $$');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM SET ssl_cert_file = ''rauth.pem''', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM SET ssl_key_file = ''rauth.pem''', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM SET ssl = on', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'SELECT pg_reload_conf()');
+
+
+query ok retry 40 backoff 250ms
+SELECT * FROM postgres_query('rauth_${__DATABASE__}', 'SELECT current_setting(''ssl'') AS ssl');
+----
+ssl
+on
+
+
+statement ok
+CREATE TABLE rauth_md5 (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rauth_scram (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rauth_plain (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rauth_tls (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rauth_nossl (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement ok
+CREATE TABLE rauth_allow (id INTEGER PRIMARY KEY, v TEXT);
+
+
+statement error
+CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_md5 password=wrong sslmode=disable' PUBLICATION rauth_md5;
+----
+db error: ERROR: subscription "rauth_bad" could not connect to the publisher: <slt:ignore>password authentication failed for user "rauth_md5"
+
+
+statement error
+CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=disable' PUBLICATION rauth_tls;
+----
+db error: ERROR: subscription "rauth_bad" could not connect to the publisher: <slt:ignore>pg_hba.conf rejects connection<slt:ignore>
+
+
+statement error
+CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=verify-full sslrootcert=${RESOURCES}/ca.pem' PUBLICATION rauth_tls;
+----
+db error: ERROR: subscription "rauth_bad" could not connect to the publisher: <slt:ignore>
+
+
+statement error
+CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=verify-ca sslrootcert=/nonexistent/rauth_root.crt' PUBLICATION rauth_tls;
+----
+db error: ERROR: subscription "rauth_bad" could not connect to the publisher: <slt:ignore>: root certificate file "/nonexistent/rauth_root.crt" does not exist
+Either provide the file, use the system's trusted roots with sslrootcert=system, or change sslmode to disable server certificate verification.
+
+
+statement error
+CREATE SUBSCRIPTION rauth_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=require sslrootcert=system' PUBLICATION rauth_tls;
+----
+db error: ERROR: subscription "rauth_bad" could not connect to the publisher: weak sslmode "require" may not be used with sslrootcert=system (use "verify-full")
+
+
+statement ok
+CREATE SUBSCRIPTION rauth_md5 CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_md5 password=''md5 secret'' sslmode=disable' PUBLICATION rauth_md5 WITH (slot_name = 'rauth_md5');
+
+
+statement ok
+CREATE SUBSCRIPTION rauth_scram CONNECTION 'postgresql://rauth_scram:scram%20secret@${PGHOST}:${PGPORT}/postgres?sslmode=prefer&application_name=rauth_app' PUBLICATION rauth_scram WITH (slot_name = 'rauth_scram');
+
+
+statement ok
+CREATE SUBSCRIPTION rauth_plain CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_plain password=''plain secret'' sslmode=disable connect_timeout=5' PUBLICATION rauth_plain WITH (slot_name = 'rauth_plain');
+
+
+statement ok
+CREATE SUBSCRIPTION rauth_tls CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=verify-ca sslrootcert=${RESOURCES}/ca.pem' PUBLICATION rauth_tls WITH (slot_name = 'rauth_tls', binary = true);
+
+
+statement ok
+CREATE SUBSCRIPTION rauth_nossl CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_nossl password=''nossl secret'' sslmode=prefer' PUBLICATION rauth_nossl WITH (slot_name = 'rauth_nossl');
+
+
+statement ok
+CREATE SUBSCRIPTION rauth_allow CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rauth_tls password=''tls secret'' sslmode=allow' PUBLICATION rauth_allow WITH (slot_name = 'rauth_allow');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT v FROM rauth_md5) AS md5, (SELECT v FROM rauth_scram) AS scram, (SELECT v FROM rauth_plain) AS plain, (SELECT v FROM rauth_tls) AS tls, (SELECT v FROM rauth_nossl) AS nossl, (SELECT v FROM rauth_allow) AS allow;
+----
+md5	scram	plain	tls	nossl	allow
+rauth_md5	rauth_scram	rauth_plain	rauth_tls	rauth_nossl	rauth_allow
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ DECLARE r text; BEGIN FOREACH r IN ARRAY ARRAY[''rauth_md5'', ''rauth_scram'', ''rauth_plain'', ''rauth_allow'', ''rauth_nossl'', ''rauth_tls''] LOOP EXECUTE format(''INSERT INTO %I SELECT g, %L FROM generate_series(2, 101) g'', r, r); END LOOP; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rauth_md5) AS md5, (SELECT count(*) FROM rauth_scram) AS scram, (SELECT count(*) FROM rauth_plain) AS plain, (SELECT count(*) FROM rauth_tls) AS tls, (SELECT count(*) FROM rauth_nossl) AS nossl, (SELECT count(*) FROM rauth_allow) AS allow;
+----
+md5	scram	plain	tls	nossl	allow
+101	101	101	101	101	101
+
+
+query ok retry 40 backoff 250ms
+SELECT * FROM postgres_query('rauth_${__DATABASE__}', 'SELECT s.usename, s.application_name, coalesce(l.ssl, false) AS ssl FROM pg_stat_replication s LEFT JOIN pg_stat_ssl l ON l.pid = s.pid WHERE s.usename LIKE ''rauth\_%'' ORDER BY s.usename, s.application_name');
+----
+usename	application_name	ssl
+rauth_md5	rauth_md5	f
+rauth_nossl	rauth_nossl	f
+rauth_plain	rauth_plain	f
+rauth_scram	rauth_app	t
+rauth_tls	rauth_allow	t
+rauth_tls	rauth_tls	t
+
+
+statement ok
+DROP SUBSCRIPTION rauth_md5;
+
+
+statement ok
+DROP SUBSCRIPTION rauth_scram;
+
+
+statement ok
+DROP SUBSCRIPTION rauth_plain;
+
+
+statement ok
+DROP SUBSCRIPTION rauth_tls;
+
+
+statement ok
+DROP SUBSCRIPTION rauth_nossl;
+
+
+statement ok
+DROP SUBSCRIPTION rauth_allow;
+
+
+query
+SELECT * FROM postgres_query('rauth_${__DATABASE__}', 'SELECT count(*) AS slots FROM pg_replication_slots WHERE slot_name LIKE ''rauth\_%''');
+----
+slots
+0
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ BEGIN EXECUTE format(''COPY (SELECT unnest(ARRAY[''''local all all trust'''', ''''host all all all trust'''', ''''local replication all trust'''', ''''host replication all all trust''''])) TO %L'', current_setting(''hba_file'')); END $$');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ssl', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ssl_key_file', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'ALTER SYSTEM RESET ssl_cert_file', use_transaction := false);
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'SELECT pg_reload_conf()');
+
+
+statement ok
+CALL postgres_execute('rauth_${__DATABASE__}', 'DO $$ DECLARE r text; BEGIN FOREACH r IN ARRAY ARRAY[''rauth_md5'', ''rauth_scram'', ''rauth_plain'', ''rauth_allow'', ''rauth_nossl'', ''rauth_tls''] LOOP EXECUTE format(''DROP PUBLICATION %I'', r); EXECUTE format(''DROP TABLE %I'', r); EXECUTE format(''DROP ROLE %I'', r); END LOOP; DROP TABLE rauth_pem; END $$');
+
+
+statement ok
+DETACH rauth_${__DATABASE__};

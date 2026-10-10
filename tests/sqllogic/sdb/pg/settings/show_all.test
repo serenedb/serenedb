@@ -186,6 +186,7 @@ max_execution_time	0	The maximum execution time per query in milliseconds (0 = n
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
@@ -303,6 +304,7 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -323,6 +325,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
@@ -522,6 +527,7 @@ max_execution_time	0	The maximum execution time per query in milliseconds (0 = n
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
@@ -639,6 +645,7 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -659,6 +666,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.

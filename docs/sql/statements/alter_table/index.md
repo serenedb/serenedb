@@ -228,6 +228,14 @@ For a table created with `WITH (storage = 'search')`, `SET (option = value, …)
 
 `SET` and `RESET` of storage options are supported only for search tables.
 
+## `ENABLE` / `DISABLE TRIGGER`
+
+`DISABLE TRIGGER name` stops a trigger of the table from firing, and `ENABLE TRIGGER name` lets it fire again. With `ALL` or `USER` instead of a name the change applies to every trigger of the table. Like in PostgreSQL, a trigger can also be enabled for a [replication role](../../../configuration/overview.md): `ENABLE REPLICA TRIGGER` makes it fire only in sessions where `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md), and `ENABLE ALWAYS TRIGGER` makes it fire in every session. A plain `ENABLE TRIGGER` trigger fires when the role is `origin` (the default) or `local`. `pg_trigger.tgenabled` shows the state as `O`, `D`, `R` or `A`. The change is transactional.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_037" />
+
+Foreign keys are not triggers in SereneDB, so `DISABLE TRIGGER ALL` does not turn off foreign key checks; a session with `session_replication_role` set to `replica` skips them.
+
 ## Search tables
 
 A search table's columns are fixed: `ADD COLUMN`, `DROP COLUMN`, `ALTER COLUMN TYPE`, `DROP CONSTRAINT` and adding a `PRIMARY KEY` or `UNIQUE` constraint are rejected. Renaming the table or a column, `ALTER COLUMN SET DEFAULT` / `DROP DEFAULT`, `SET NOT NULL` / `DROP NOT NULL`, adding a `CHECK` constraint and `COMMENT ON COLUMN` change only the table's definition. A search table does not check `NOT NULL` and `CHECK` constraints when rows are written, whether they were declared at `CREATE TABLE` or added later.

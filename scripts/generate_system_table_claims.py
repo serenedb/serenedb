@@ -40,6 +40,9 @@ EXEMPT = {
 }
 
 FIXTURE = """statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
+
+statement ok
 DROP SCHEMA IF EXISTS stc_s CASCADE
 
 statement ok
@@ -125,9 +128,15 @@ INSERT INTO stc_parent VALUES (1, 'a')
 
 statement ok
 INSERT INTO stc_child VALUES (1, 1, 5, 'n', 'ok')
+
+statement ok
+CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION stc_pub WITH (connect = false, slot_name = NONE)
 """
 
 TEARDOWN = """statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
+
+statement ok
 DROP SCHEMA IF EXISTS stc_s CASCADE
 
 statement ok

@@ -61,6 +61,8 @@ class SettingRef {
   uint32_t Enum(duckdb::ClientContext& context,
                 std::span<const std::string_view> options) const;
 
+  duckdb::Value Global(const duckdb::DBConfig& config) const;
+
  private:
   struct Slot {
     const duckdb::DBConfig* config = nullptr;
@@ -83,6 +85,9 @@ struct VariableDescription {
 };
 
 std::string_view GetOriginalName(std::string_view name);
+
+int64_t ParseDurationMillis(std::string_view name, std::string_view text,
+                            double unitless_ms);
 
 bool IsUnchangeableSetting(std::string_view name);
 

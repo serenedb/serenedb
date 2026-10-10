@@ -118,6 +118,8 @@ std::string KindName(CatalogType type) {
       return "text search dictionary";
     case CatalogType::FOREIGN_SERVER_ENTRY:
       return "foreign server";
+    case CatalogType::SUBSCRIPTION_ENTRY:
+      return "subscription";
     default:
       return "object";
   }
@@ -1324,11 +1326,25 @@ class Enforcer {
     }
   }
 
-  void RequireDatabaseUnused(const duckdb::AttachedDatabase& database) {
+  void RequireDatabaseUnused(duckdb::AttachedDatabase& database) {
     if (duckdb::DatabaseManager::GetDefaultDatabase(_context) ==
         database.GetName()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                       ERR_MSG("cannot drop the currently open database"));
+    }
+    auto& catalog = database.GetCatalog().Cast<duckdb::DuckCatalog>();
+    size_t subscriptions = 0;
+    catalog.GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY)
+      .Scan([&](duckdb::CatalogEntry&) { ++subscriptions; });
+    if (subscriptions != 0) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OBJECT_IN_USE),
+        ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+                "\" is being used by logical replication subscription"),
+        ERR_DETAIL(
+          subscriptions == 1
+            ? std::string{"There is 1 subscription."}
+            : absl::StrCat("There are ", subscriptions, " subscriptions.")));
     }
     const auto others = pg::ProgressRegistry::Instance().OtherSessions(
       static_cast<int64_t>(database.oid), _connection.GetBackendPid(),

@@ -1,0 +1,275 @@
+statement ok
+CREATE TABLE tfire_t (id INTEGER);
+
+
+statement ok
+CREATE TABLE tfire_log (name TEXT);
+
+
+statement ok
+CREATE TRIGGER tfire_origin AFTER INSERT ON tfire_t INSERT INTO tfire_log VALUES ('origin');
+
+
+statement ok
+CREATE TRIGGER tfire_replica AFTER INSERT ON tfire_t INSERT INTO tfire_log VALUES ('replica');
+
+
+statement ok
+ALTER TABLE tfire_t ENABLE REPLICA TRIGGER tfire_replica;
+
+
+query
+SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'tfire_t'::regclass ORDER BY tgname;
+----
+tgname	tgenabled
+tfire_origin	O
+tfire_replica	R
+
+
+query
+SHOW session_replication_role;
+----
+session_replication_role
+origin
+
+
+statement ok
+INSERT INTO tfire_t VALUES (1);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+origin
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+PREPARE tfire_insert AS INSERT INTO tfire_t VALUES ($1);
+
+
+statement ok
+EXECUTE tfire_insert(10);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+origin
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+SET session_replication_role = replica;
+
+
+statement ok
+EXECUTE tfire_insert(11);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+replica
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+RESET session_replication_role;
+
+
+statement ok
+EXECUTE tfire_insert(12);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+origin
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+DEALLOCATE tfire_insert;
+
+
+statement ok
+SET session_replication_role = replica;
+
+
+statement ok
+INSERT INTO tfire_t VALUES (2);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+replica
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+SET session_replication_role = 'LOCAL';
+
+
+query
+SHOW session_replication_role;
+----
+session_replication_role
+local
+
+
+statement ok
+INSERT INTO tfire_t VALUES (3);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+origin
+
+
+statement ok
+DELETE FROM tfire_log;
+
+
+statement ok
+ALTER TABLE tfire_t ENABLE ALWAYS TRIGGER tfire_replica;
+
+
+statement ok
+ALTER TABLE tfire_t DISABLE TRIGGER tfire_origin;
+
+
+query
+SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'tfire_t'::regclass ORDER BY tgname;
+----
+tgname	tgenabled
+tfire_origin	D
+tfire_replica	A
+
+
+statement ok
+INSERT INTO tfire_t VALUES (4);
+
+
+query
+SELECT name FROM tfire_log ORDER BY name;
+----
+name
+replica
+
+
+statement ok
+ALTER TABLE tfire_t ENABLE TRIGGER ALL;
+
+
+query
+SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'tfire_t'::regclass ORDER BY tgname;
+----
+tgname	tgenabled
+tfire_origin	O
+tfire_replica	O
+
+
+statement error
+ALTER TABLE tfire_t DISABLE TRIGGER tfire_missing;
+----
+db error: ERROR: trigger "tfire_missing" for table "tfire_t" does not exist
+
+
+statement error
+SET session_replication_role = sometimes;
+----
+db error: ERROR: invalid value for parameter "session_replication_role": "sometimes"
+HINT: Available values: origin, replica, local.
+
+
+statement ok
+CREATE TABLE tfire_parent (id INTEGER PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE tfire_child (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES tfire_parent (id));
+
+
+statement error
+INSERT INTO tfire_child VALUES (1, 10);
+----
+db error: ERROR: Violates foreign key constraint because key "id: 10" does not exist in the referenced table
+
+
+statement ok
+SET session_replication_role = replica;
+
+
+statement ok
+INSERT INTO tfire_child VALUES (1, 10);
+
+
+statement ok
+RESET session_replication_role;
+
+
+query
+SELECT current_setting('session_replication_role') AS role, (SELECT count(*) FROM tfire_child) AS children;
+----
+role	children
+origin	1
+
+
+statement ok
+DROP ROLE IF EXISTS tfire_plain;
+
+
+statement ok
+CREATE ROLE tfire_plain LOGIN PASSWORD 'tfire_pw';
+
+
+connection plain user=tfire_plain password=tfire_pw
+statement error
+SET session_replication_role = replica;
+----
+db error: ERROR: permission denied to set parameter "session_replication_role"
+
+
+connection default
+statement ok
+DROP ROLE tfire_plain;
+
+
+statement ok
+DROP TABLE tfire_child;
+
+
+statement ok
+DROP TABLE tfire_parent;
+
+
+statement ok
+DROP TABLE tfire_t;
+
+
+statement ok
+DROP TABLE tfire_log;

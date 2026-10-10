@@ -58,6 +58,67 @@
 #include "query/config_variable_names.h"
 
 namespace sdb {
+namespace {
+
+constexpr std::pair<std::string_view, double> kTimeUnits[] = {
+  {"us", 0.001},  {"ms", 1},      {"s", 1000},
+  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
+};
+
+}  // namespace
+
+int64_t ParseDurationMillis(std::string_view name, std::string_view text,
+                            double unitless_ms) {
+  const auto invalid = [&] {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
+      ERR_HINT("Valid units for this parameter are \"us\", "
+               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
+  };
+  const auto trimmed = absl::StripAsciiWhitespace(text);
+  double number = 0;
+  const auto [ptr, ec] = fast_float::from_chars(
+    trimmed.data(), trimmed.data() + trimmed.size(), number);
+  if (ec != std::errc{}) {
+    invalid();
+  }
+  const auto unit = absl::StripLeadingAsciiWhitespace(
+    trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
+  double scale = unitless_ms;
+  if (!unit.empty()) {
+    const auto it = std::ranges::find(
+      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
+    if (it == std::end(kTimeUnits)) {
+      invalid();
+    }
+    scale = it->second;
+  }
+  const auto ms = std::round(number * scale);
+  if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(absl::StrFormat("%g", ms),
+                            " ms is outside the valid range for parameter \"",
+                            name, "\" (0 ms .. 2147483647 ms)"));
+  }
+  return static_cast<int64_t>(ms);
+}
+
+duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
+  duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
+  const auto index =
+    config.TryGetSettingIndex(duckdb::Identifier{_name}, option);
+  SDB_ASSERT(index.IsValid());
+  duckdb::Value value;
+  if (config.user_settings.TryGetSetting(index.GetIndex(), value)) {
+    return value;
+  }
+  duckdb::ExtensionOption extension;
+  const auto found = config.user_settings.TryGetExtensionOption(
+    duckdb::Identifier{_name}, extension);
+  SDB_ASSERT(found);
+  return extension.default_value;
+}
 
 duckdb::Value SettingRef::Read(duckdb::ClientContext& context) const {
   auto& config = duckdb::DBConfig::GetConfig(context);
@@ -155,49 +216,11 @@ void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
-constexpr std::pair<std::string_view, double> kTimeUnits[] = {
-  {"us", 0.001},  {"ms", 1},      {"s", 1000},
-  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
-};
-
 int64_t ParseStatementTimeout(std::string_view text) {
-  const auto invalid = [&] {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("invalid value for parameter \"statement_timeout\": \"", text,
-              "\""),
-      ERR_HINT("Valid units for this parameter are \"us\", "
-               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
-  };
-  const auto trimmed = absl::StripAsciiWhitespace(text);
-  double number = 0;
-  const auto [ptr, ec] = fast_float::from_chars(
-    trimmed.data(), trimmed.data() + trimmed.size(), number);
-  if (ec != std::errc{}) {
-    invalid();
-  }
-  const auto unit = absl::StripLeadingAsciiWhitespace(
-    trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
-  double scale = 1;
-  if (!unit.empty()) {
-    const auto it = std::ranges::find(
-      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
-    if (it == std::end(kTimeUnits)) {
-      invalid();
-    }
-    scale = it->second;
-  }
-  const auto ms = std::round(number * scale);
-  if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG(absl::StrFormat("%g", ms),
-                            " ms is outside the valid range for parameter "
-                            "\"statement_timeout\" (0 ms .. 2147483647 ms)"));
-  }
-  return static_cast<int64_t>(ms);
+  return ParseDurationMillis("statement_timeout", text, 1);
 }
 
-std::string FormatStatementTimeout(int64_t ms) {
+std::string FormatDuration(int64_t ms) {
   if (ms == 0) {
     return "0";
   }
@@ -213,7 +236,7 @@ std::string FormatStatementTimeout(int64_t ms) {
 void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
                          duckdb::Value& value) {
   const auto ms = value.IsNull() ? 0 : ParseStatementTimeout(value.ToString());
-  value = duckdb::Value{FormatStatementTimeout(ms)};
+  value = duckdb::Value{FormatDuration(ms)};
   duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
     ctx,
     scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
@@ -243,6 +266,45 @@ void RequireSuperuser(duckdb::ClientContext& ctx, std::string_view name,
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                   ERR_MSG("permission denied to set parameter \"", name, "\""),
                   ERR_DETAIL(detail));
+}
+
+template<irs::utils::detail::FixedString Name, int64_t UnitlessMs>
+void SetServerDuration(duckdb::ClientContext& ctx, duckdb::SetScope,
+                       duckdb::Value& value) {
+  constexpr std::string_view kName{Name};
+  RequireSuperuser(ctx, kName,
+                   "Only roles with the SUPERUSER attribute may change "
+                   "server-wide replication settings.");
+  value = duckdb::Value{FormatDuration(ParseDurationMillis(
+    kName, value.ToString(), static_cast<double>(UnitlessMs)))};
+}
+
+template<irs::utils::detail::FixedString Name>
+void SetServerCount(duckdb::ClientContext& ctx, duckdb::SetScope,
+                    duckdb::Value&) {
+  RequireSuperuser(ctx, std::string_view{Name},
+                   "Only roles with the SUPERUSER attribute may change "
+                   "server-wide replication settings.");
+}
+
+void SetReplicationRole(duckdb::ClientContext& ctx, duckdb::SetScope,
+                        duckdb::Value& value) {
+  auto* conn = connector::GetSereneDBContextPtr(ctx);
+  if (conn && !auth::ClosureFor(&ctx, conn->GetRoleId())->is_superuser) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+      ERR_MSG(
+        "permission denied to set parameter \"session_replication_role\""));
+  }
+  const auto role = absl::AsciiStrToLower(value.ToString());
+  if (role != "origin" && role != "replica" && role != "local") {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter "
+                            "\"session_replication_role\": \"",
+                            value.ToString(), "\""),
+                    ERR_HINT("Available values: origin, replica, local."));
+  }
+  value = duckdb::Value{role};
 }
 
 void RequireHbaSuperuser(duckdb::ClientContext& ctx) {
@@ -1177,6 +1239,66 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] { return duckdb::Value{"0"}; },
         SetStatementTimeout,
         ResetStatementTimeout,
+      },
+    },
+    {
+      kWalReceiverTimeoutSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "Terminates a logical replication worker whose publisher sent "
+        "nothing for this long (milliseconds without a unit); 0 disables the "
+        "timeout. Server-wide, superuser only.",
+        [] { return duckdb::Value{"1min"}; },
+        SetServerDuration<"wal_receiver_timeout", 1>,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kWalReceiverStatusIntervalSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "How often a logical replication worker reports its position to the "
+        "publisher (seconds without a unit); 0 disables the periodic "
+        "reports. Server-wide, superuser only.",
+        [] { return duckdb::Value{"10s"}; },
+        SetServerDuration<"wal_receiver_status_interval", 1000>,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kWalRetrieveRetryIntervalSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "How long a failed logical replication worker waits before it "
+        "reconnects (milliseconds without a unit). Server-wide, superuser "
+        "only.",
+        [] { return duckdb::Value{"5s"}; },
+        SetServerDuration<"wal_retrieve_retry_interval", 1>,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      kMaxSyncWorkersPerSubscriptionSetting,
+      {
+        LogicalTypeId::UINTEGER,
+        "How many tables one subscription copies at the same time during "
+        "its initial synchronization. Server-wide, superuser only.",
+        [] { return duckdb::Value::UINTEGER(2); },
+        SetServerCount<"max_sync_workers_per_subscription">,
+        nullptr,
+        duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "session_replication_role",
+      {
+        LogicalTypeId::VARCHAR,
+        "Sets the session's behavior for triggers and rewrite rules.",
+        [] { return duckdb::Value{"origin"}; },
+        SetReplicationRole,
       },
     },
     {

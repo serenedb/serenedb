@@ -139,7 +139,7 @@ query
 SELECT short_desc FROM pg_settings WHERE name = 'statement_timeout';
 ----
 short_desc
-Sets the maximum allowed duration of any statement. Accepted for compatibility but not currently enforced.
+Sets the maximum allowed duration of any statement.
 
 
 statement ok

@@ -30,6 +30,7 @@
 #include <array>
 #include <chrono>
 #include <exception>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -282,6 +283,12 @@ yaclib::Task<bool> PublisherSession::CheckSessionAttrs() {
 }
 
 yaclib::Task<bool> PublisherSession::OpenSocket() {
+  SDB_IF_FAILURE("publisher_slow_connect") {
+    asio_ns::steady_timer delay{this->_io, std::chrono::seconds{3}};
+    co_await network::Async<void>([&](auto&& handler) {
+      delay.async_wait(std::forward<decltype(handler)>(handler));
+    }).NoThrow();
+  }
   std::optional<asio_ns::steady_timer> timeout;
   if (_conninfo.connect_timeout.count() > 0) {
     timeout.emplace(this->_io, _conninfo.connect_timeout);
@@ -341,6 +348,10 @@ yaclib::Task<bool> PublisherSession::OpenSocket() {
   }
   if (timeout) {
     timeout->cancel();
+  }
+  if (this->SendBroken()) {
+    this->Close();
+    co_return false;
   }
   if (connect_ec) {
     Fail(ERRCODE_CONNECTION_FAILURE,

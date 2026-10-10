@@ -44,18 +44,18 @@ ORDER BY sizing_id;
 sizing_id	sizing_name	supported_value	comments
 0	MAXIMUM DRIVER CONNECTIONS	NULL	NULL
 1	MAXIMUM CONCURRENT ACTIVITIES	0	NULL
-30	MAXIMUM COLUMN NAME LENGTH	63	Might be less, depending on character set.
-31	MAXIMUM CURSOR NAME LENGTH	63	Might be less, depending on character set.
-32	MAXIMUM SCHEMA NAME LENGTH	63	Might be less, depending on character set.
-34	MAXIMUM CATALOG NAME LENGTH	63	Might be less, depending on character set.
-35	MAXIMUM TABLE NAME LENGTH	63	Might be less, depending on character set.
+30	MAXIMUM COLUMN NAME LENGTH	63	SereneDB keeps longer names in full.
+31	MAXIMUM CURSOR NAME LENGTH	63	SereneDB keeps longer names in full.
+32	MAXIMUM SCHEMA NAME LENGTH	63	SereneDB keeps longer names in full.
+34	MAXIMUM CATALOG NAME LENGTH	63	SereneDB keeps longer names in full.
+35	MAXIMUM TABLE NAME LENGTH	63	SereneDB keeps longer names in full.
 97	MAXIMUM COLUMNS IN GROUP BY	0	NULL
 99	MAXIMUM COLUMNS IN ORDER BY	0	NULL
 100	MAXIMUM COLUMNS IN SELECT	1664	NULL
 101	MAXIMUM COLUMNS IN TABLE	1600	NULL
 106	MAXIMUM TABLES IN SELECT	0	NULL
-107	MAXIMUM USER NAME LENGTH	63	Might be less, depending on character set.
-10005	MAXIMUM IDENTIFIER LENGTH	63	Might be less, depending on character set.
+107	MAXIMUM USER NAME LENGTH	63	SereneDB keeps longer names in full.
+10005	MAXIMUM IDENTIFIER LENGTH	63	SereneDB keeps longer names in full.
 20000	MAXIMUM STATEMENT OCTETS	0	NULL
 20001	MAXIMUM STATEMENT OCTETS DATA	0	NULL
 20002	MAXIMUM STATEMENT OCTETS SCHEMA	0	NULL
@@ -63,8 +63,8 @@ sizing_id	sizing_name	supported_value	comments
 25001	MAXIMUM CURRENT TRANSFORM GROUP LENGTH	NULL	NULL
 25002	MAXIMUM CURRENT PATH LENGTH	0	NULL
 25003	MAXIMUM CURRENT ROLE LENGTH	NULL	NULL
-25004	MAXIMUM SESSION USER LENGTH	63	Might be less, depending on character set.
-25005	MAXIMUM SYSTEM USER LENGTH	63	Might be less, depending on character set.
+25004	MAXIMUM SESSION USER LENGTH	63	SereneDB keeps longer names in full.
+25005	MAXIMUM SYSTEM USER LENGTH	63	SereneDB keeps longer names in full.
 
 
 query

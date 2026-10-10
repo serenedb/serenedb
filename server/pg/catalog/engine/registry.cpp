@@ -41,11 +41,9 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/views/system_views.h"
 #include "pg/types.h"
-#include "server/utils/build.h"
 
 namespace sdb::pg {
 
-#include "pg/catalog/generated/information_schema_tables.gen.inc"
 #include "pg/catalog/generated/registry.gen.inc"
 
 namespace {

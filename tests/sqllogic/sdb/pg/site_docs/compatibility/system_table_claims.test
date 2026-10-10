@@ -874,12 +874,9 @@ SELECT count(*) > 0 AS populated FROM information_schema."sequences";
 populated
 t
 
-# sys_infoschema: sql_features (🟢)
-query
-SELECT count(*) > 0 AS populated FROM information_schema."sql_features";
-----
-populated
-t
+# sys_infoschema: sql_features (🟡)
+statement ok
+SELECT * FROM information_schema."sql_features" LIMIT 0;
 
 # sys_infoschema: sql_implementation_info (🟢)
 query

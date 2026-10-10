@@ -1,0 +1,162 @@
+statement ok
+DROP TABLE IF EXISTS xrot_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS xrot_intern;
+
+
+statement ok
+DROP ROLE IF EXISTS xrot_readers;
+
+
+statement ok
+CREATE TABLE xrot_ledger (id int);
+
+
+statement ok
+INSERT INTO xrot_ledger VALUES (1), (2);
+
+
+statement ok
+CREATE ROLE xrot_readers;
+
+
+statement ok
+GRANT SELECT ON xrot_ledger TO xrot_readers;
+
+
+statement ok
+CREATE ROLE xrot_intern LOGIN PASSWORD 'xrot_intern_pw';
+
+
+statement ok
+GRANT xrot_readers TO xrot_intern;
+
+
+connection c_rr user=xrot_intern password=xrot_intern_pw
+statement ok
+BEGIN;
+
+
+connection c_rr user=xrot_intern password=xrot_intern_pw
+query
+SELECT count(*) AS n FROM xrot_ledger;
+----
+n
+2
+
+
+connection default
+statement ok
+REVOKE xrot_readers FROM xrot_intern;
+
+
+connection c_rr user=xrot_intern password=xrot_intern_pw
+query
+SELECT count(*) AS n FROM xrot_ledger;
+----
+n
+2
+
+
+connection c_rr user=xrot_intern password=xrot_intern_pw
+statement ok
+COMMIT;
+
+
+connection c_rr user=xrot_intern password=xrot_intern_pw
+statement error
+SELECT count(*) FROM xrot_ledger;
+----
+db error: ERROR: permission denied for table xrot_ledger
+
+
+connection default
+statement ok
+GRANT xrot_readers TO xrot_intern;
+
+
+connection c_rc user=xrot_intern password=xrot_intern_pw
+statement ok
+BEGIN ISOLATION LEVEL READ COMMITTED;
+
+
+connection c_rc user=xrot_intern password=xrot_intern_pw
+query
+SELECT count(*) AS n FROM xrot_ledger;
+----
+n
+2
+
+
+connection default
+statement ok
+REVOKE xrot_readers FROM xrot_intern;
+
+
+connection c_rc user=xrot_intern password=xrot_intern_pw
+statement error
+SELECT count(*) FROM xrot_ledger;
+----
+db error: ERROR: permission denied for table xrot_ledger
+
+
+connection c_rc user=xrot_intern password=xrot_intern_pw
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+GRANT xrot_readers TO xrot_intern;
+
+
+connection c_tbl user=xrot_intern password=xrot_intern_pw
+statement ok
+BEGIN;
+
+
+connection c_tbl user=xrot_intern password=xrot_intern_pw
+query
+SELECT count(*) AS n FROM xrot_ledger;
+----
+n
+2
+
+
+connection default
+statement ok
+REVOKE SELECT ON xrot_ledger FROM xrot_readers;
+
+
+connection c_tbl user=xrot_intern password=xrot_intern_pw
+query
+SELECT count(*) AS n FROM xrot_ledger;
+----
+n
+2
+
+
+connection c_tbl user=xrot_intern password=xrot_intern_pw
+statement ok
+COMMIT;
+
+
+connection c_tbl user=xrot_intern password=xrot_intern_pw
+statement error
+SELECT count(*) FROM xrot_ledger;
+----
+db error: ERROR: permission denied for table xrot_ledger
+
+
+statement ok
+DROP TABLE xrot_ledger;
+
+
+statement ok
+DROP ROLE xrot_intern;
+
+
+statement ok
+DROP ROLE xrot_readers;

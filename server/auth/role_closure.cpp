@@ -161,22 +161,34 @@ duckdb::shared_ptr<RoleCache> RoleCacheOf(catalog::ClusterCatalog& cluster) {
     RoleCache::ObjectType());
 }
 
-duckdb::idx_t CommittedVersion(catalog::ClusterCatalog& cluster) {
-  return duckdb::DuckTransactionManager::Get(cluster.GetAttached())
-    .GetLastCommittedCatalogVersion();
+std::pair<duckdb::CatalogTransaction, duckdb::idx_t> RoleSnapshot(
+  catalog::ClusterCatalog& cluster, duckdb::ClientContext* context) {
+  if (context && context->transaction.HasActiveTransaction()) {
+    auto transaction = cluster.GetCatalogTransaction(*context);
+    return {
+      transaction,
+      transaction.transaction->Cast<duckdb::DuckTransaction>().catalog_version};
+  }
+  const auto durable =
+    duckdb::DuckTransactionManager::Get(cluster.GetAttached())
+      .GetDurableSnapshot();
+  return {duckdb::CatalogTransaction{cluster.GetDatabase(),
+                                     duckdb::TRANSACTION_ID_START - 1,
+                                     durable.visibility_bound},
+          durable.catalog_version};
 }
 
 std::shared_ptr<const RoleGraph> CommittedRoles(
-  catalog::ClusterCatalog& cluster) {
+  catalog::ClusterCatalog& cluster, duckdb::CatalogTransaction transaction,
+  duckdb::idx_t version) {
   auto cache = RoleCacheOf(cluster);
-  const auto version = CommittedVersion(cluster);
   {
     std::lock_guard guard{cache->mutex};
     if (cache->roles && cache->version == version) {
       return cache->roles;
     }
   }
-  auto roles = BuildRoleGraph(cluster, cluster.LoginTransaction());
+  auto roles = BuildRoleGraph(cluster, transaction);
   std::lock_guard guard{cache->mutex};
   if (!cache->roles || version > cache->version) {
     cache->version = version;
@@ -184,18 +196,6 @@ std::shared_ptr<const RoleGraph> CommittedRoles(
     cache->closures.clear();
   }
   return roles;
-}
-
-bool WritesCatalog(duckdb::ClientContext& context,
-                   catalog::ClusterCatalog& cluster) {
-  if (!context.transaction.HasActiveTransaction()) {
-    return false;
-  }
-  auto transaction = context.transaction.ActiveTransaction().TryGetTransaction(
-    cluster.GetAttached());
-  return transaction &&
-         transaction->Cast<duckdb::DuckTransaction>().catalog_version >=
-           duckdb::TRANSACTION_ID_START;
 }
 
 }  // namespace
@@ -228,26 +228,25 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
 }
 
 std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context) {
-  if (!context) {
-    return CommittedRoles(catalog::ClusterOf());
+  auto& cluster =
+    context ? catalog::ClusterOf(*context->db) : catalog::ClusterOf();
+  const auto [transaction, version] = RoleSnapshot(cluster, context);
+  if (version >= duckdb::TRANSACTION_ID_START) {
+    return BuildRoleGraph(cluster, transaction);
   }
-  auto& cluster = catalog::ClusterOf(*context->db);
-  if (WritesCatalog(*context, cluster)) {
-    return BuildRoleGraph(cluster, cluster.GetCatalogTransaction(*context));
-  }
-  return CommittedRoles(cluster);
+  return CommittedRoles(cluster, transaction, version);
 }
 
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
                                               duckdb::idx_t role) {
   auto& cluster =
     context ? catalog::ClusterOf(*context->db) : catalog::ClusterOf();
-  if (context && WritesCatalog(*context, cluster)) {
-    return std::make_shared<const RoleClosure>(ComputeRoleClosure(
-      *BuildRoleGraph(cluster, cluster.GetCatalogTransaction(*context)), role));
+  const auto [transaction, version] = RoleSnapshot(cluster, context);
+  if (version >= duckdb::TRANSACTION_ID_START) {
+    return std::make_shared<const RoleClosure>(
+      ComputeRoleClosure(*BuildRoleGraph(cluster, transaction), role));
   }
   auto cache = RoleCacheOf(cluster);
-  const auto version = CommittedVersion(cluster);
   {
     std::lock_guard guard{cache->mutex};
     if (cache->roles && cache->version == version) {
@@ -258,7 +257,7 @@ std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
     }
   }
   auto closure = std::make_shared<const RoleClosure>(
-    ComputeRoleClosure(*CommittedRoles(cluster), role));
+    ComputeRoleClosure(*CommittedRoles(cluster, transaction, version), role));
   std::lock_guard guard{cache->mutex};
   if (cache->version == version) {
     cache->closures.try_emplace(role, closure);

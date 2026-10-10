@@ -33,6 +33,10 @@ CREATE ROLE papich_viewer LOGIN PASSWORD 'pv_pw';
 
 
 statement ok
+SET GLOBAL debug_wal_fsync_sleep_ms = 3000;
+
+
+statement ok
 SET sdb_faults = 'pause_after_catalog_decision';
 
 
@@ -41,12 +45,7 @@ statement async ok
 GRANT papich_readers TO papich_viewer;
 
 
-connection default
-query ok retry 40 backoff 250ms
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'GRANT papich_readers%';
-----
-n
-1
+sleep 1s
 
 
 connection viewer user=papich_viewer password=pv_pw
@@ -57,8 +56,26 @@ db error: ERROR: permission denied for table papich_scores
 
 
 connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_after_catalog_decision:parked';
+
+
+connection viewer user=papich_viewer password=pv_pw
+query
+SELECT count(*) AS n FROM papich_scores;
+----
+n
+2
+
+
+connection default
 statement ok
-SET sdb_faults = '-pause_after_catalog_decision';
+SET GLOBAL debug_wal_fsync_sleep_ms = 0;
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_after_catalog_decision:release';
 
 
 connection granter

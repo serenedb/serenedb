@@ -105,7 +105,7 @@ void ClusterCatalog::OnCatalogLogPrepared() {
 void ClusterCatalog::OnCatalogLogDecided() {
   SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
-  SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
+  SDB_PARK_ONCE_ON_FAILURE("pause_after_catalog_decision");
 }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
@@ -127,10 +127,6 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
   }
   auto lock = storage.GetCommitLock();
   if (storage.GetWALSize() < threshold()) {
-    return;
-  }
-  auto commits = _commit_lock.TryGetExclusiveLock();
-  if (!commits) {
     return;
   }
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> quiescent;

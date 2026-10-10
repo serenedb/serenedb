@@ -65,6 +65,8 @@ Two of [PostgreSQL's transaction isolation levels](https://www.postgresql.org/do
 
 Pick one with `BEGIN ISOLATION LEVEL READ COMMITTED`. `SERIALIZABLE` is refused with `transaction isolation level "serializable" is not supported`.
 
+Privileges and role memberships belong to the snapshot as well: a `GRANT` or `REVOKE` that another session commits applies to a `REPEATABLE READ` transaction once it ends, and to a `READ COMMITTED` one from its next statement, unless it has written. PostgreSQL applies it from the next statement of any transaction.
+
 `ALTER TABLE` and `DROP TABLE` wait for the commits that are already writing the table to finish, then change it. A transaction that wrote to the table but commits only after the change fails at `COMMIT` with a serialization failure; PostgreSQL would have made the `ALTER TABLE` wait for that transaction instead.
 
 ## Example

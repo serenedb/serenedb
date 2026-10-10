@@ -28,7 +28,6 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
-#include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <mutex>
@@ -60,9 +59,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
                                     duckdb::idx_t catalog_oid) final;
   void OnCatalogLogPrepared() final;
   void OnCatalogLogDecided() final;
-  duckdb::unique_ptr<duckdb::StorageLockKey> BeginCatalogLogCommit() final {
-    return _commit_lock.GetSharedLock();
-  }
   void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
                       bool compactable);
   void MaybeCompactCatalogLog();
@@ -100,7 +96,6 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   std::mutex _log_mutex;
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
-  duckdb::StorageLock _commit_lock;
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
 };

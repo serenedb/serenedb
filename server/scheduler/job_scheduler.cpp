@@ -29,8 +29,8 @@
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/operator/date_trunc_operators.hpp>
-#include <duckdb/common/random_engine.hpp>
 #include <duckdb/common/types/date.hpp>
+#include <duckdb/common/types/hash.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -73,23 +73,12 @@ int64_t ShortestLength(const duckdb::interval_t& value) {
          value.micros;
 }
 
-duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
-                            duckdb::timestamp_t after) {
-  auto every = schedule.interval.GetValue<duckdb::interval_t>();
-  auto shift = schedule.offset.GetValue<duckdb::interval_t>();
-  const auto spread = duckdb::Interval::GetMicro(
-    schedule.randomize.GetValue<duckdb::interval_t>());
-  const auto jitter =
-    spread == 0 ? int64_t{0}
-                : static_cast<int64_t>(duckdb::RandomEngine{}.NextRandom(
-                    -spread / 2.0, spread / 2.0));
-  if (schedule.kind == duckdb::JobScheduleKind::AFTER) {
-    return duckdb::timestamp_t(duckdb::Interval::Add(after, every).value +
-                               jitter);
-  }
+duckdb::timestamp_t NextGridPoint(const duckdb::interval_t& every,
+                                  const duckdb::interval_t& shift,
+                                  int64_t after) {
   const auto shift_micros =
     duckdb::Interval::GetMicro(duckdb::interval_t{0, shift.days, shift.micros});
-  const auto from = after.value + spread / 2 - shift_micros;
+  const auto from = after - shift_micros;
   if (every.months == 0) {
     const auto width = duckdb::Interval::GetMicro(every);
     const auto origin =
@@ -97,7 +86,7 @@ duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
         .value;
     return duckdb::timestamp_t(
       origin + (duckdb::DateTrunc::FloorDiv(from - origin, width) + 1) * width +
-      shift_micros + jitter);
+      shift_micros);
   }
   const int64_t width = every.months;
   const int64_t origin =
@@ -108,7 +97,34 @@ duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
     origin +
     (duckdb::DateTrunc::FloorDiv(from_month - origin, width) + 1) * width;
   return duckdb::timestamp_t(duckdb::DateTrunc::MonthIndexStart(month).value +
-                             shift_micros + jitter);
+                             shift_micros);
+}
+
+int64_t Jitter(duckdb::idx_t seed, duckdb::timestamp_t slot, int64_t spread) {
+  if (spread == 0) {
+    return 0;
+  }
+  const auto hash =
+    duckdb::CombineHash(duckdb::Hash(seed), duckdb::Hash(slot.value));
+  return static_cast<int64_t>(hash % static_cast<uint64_t>(spread)) -
+         spread / 2;
+}
+
+duckdb::timestamp_t NextRun(const duckdb::JobSchedule& schedule,
+                            duckdb::idx_t seed, duckdb::timestamp_t after) {
+  const auto every = schedule.interval.GetValue<duckdb::interval_t>();
+  const auto spread = duckdb::Interval::GetMicro(
+    schedule.randomize.GetValue<duckdb::interval_t>());
+  if (schedule.kind == duckdb::JobScheduleKind::AFTER) {
+    const auto slot = duckdb::Interval::Add(after, every);
+    return duckdb::timestamp_t(slot.value + Jitter(seed, slot, spread));
+  }
+  const auto shift = schedule.offset.GetValue<duckdb::interval_t>();
+  auto slot = NextGridPoint(every, shift, after.value - spread / 2);
+  if (slot.value + Jitter(seed, slot, spread) <= after.value) {
+    slot = NextGridPoint(every, shift, slot.value);
+  }
+  return duckdb::timestamp_t(slot.value + Jitter(seed, slot, spread));
 }
 
 JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
@@ -117,6 +133,7 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
     .catalog = job.ParentCatalog().GetName(),
     .schema = job.schema_info,
     .name = job.name,
+    .oid = job.oid,
     .owner = job.permissions.owner,
     .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
 }
@@ -218,7 +235,7 @@ void VerifySchedule(const duckdb::JobSchedule& schedule) {
               "the interval ",
               schedule.interval.ToString()));
   }
-  NextRun(schedule, duckdb::Timestamp::GetCurrentTimestamp());
+  NextRun(schedule, 0, duckdb::Timestamp::GetCurrentTimestamp());
 }
 
 void JobScheduler::Start() {
@@ -240,7 +257,7 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
     return;
   }
   const auto timer = ++state->timer;
-  status.next_run = NextRun(status.schedule, now);
+  status.next_run = NextRun(status.schedule, state->definition.oid, now);
   if (status.suspended) {
     return;
   }
@@ -262,7 +279,7 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
     const bool busy = !concurrent && status.running > 0;
     if (busy || now < status.next_run) {
       if (busy) {
-        status.next_run = NextRun(status.schedule, now);
+        status.next_run = NextRun(status.schedule, state->definition.oid, now);
       }
       BackgroundScheduler::instance().RunAt(
         status.next_run, [this, state, timer] { Run(state, timer); });
@@ -272,7 +289,7 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
     _runs.Add();
     job = state->definition;
     if (concurrent) {
-      status.next_run = NextRun(status.schedule, now);
+      status.next_run = NextRun(status.schedule, job.oid, now);
       BackgroundScheduler::instance().RunAt(
         status.next_run, [this, state, timer] { Run(state, timer); });
     }
@@ -321,7 +338,7 @@ duckdb::ErrorData JobScheduler::RunBody(
     std::erase(state->contexts, context);
     auto& status = state->status;
     if (state->timer != 0 && !status.schedule.concurrent) {
-      status.next_run = NextRun(status.schedule, run.finish);
+      status.next_run = NextRun(status.schedule, job.oid, run.finish);
     }
     ++status.run_count;
     status.failure_count += !run.success;

@@ -490,7 +490,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
   switch (index_alter.alter_index_type) {
     case duckdb::AlterIndexType::SET_INDEX_OPTIONS: {
       auto& options = index_alter.Cast<duckdb::SetIndexOptionsInfo>().options;
-      if (auto node = options.extract(std::string{kReindexIntervalSetting})) {
+      if (auto node = options.extract(kReindexIntervalSetting)) {
         RequireViewBackedOption(node.key(), view_backed);
         reindex_interval =
           connector::ValidateSetting(context, node.key(), node.mapped());

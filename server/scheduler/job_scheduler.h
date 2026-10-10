@@ -78,6 +78,7 @@ struct JobDefinition {
   duckdb::Identifier catalog;
   duckdb::shared_ptr<duckdb::SchemaInfo> schema;
   duckdb::Identifier name;
+  duckdb::idx_t oid = 0;
   duckdb::idx_t owner = 0;
   std::shared_ptr<duckdb::SQLStatement> body;
 };

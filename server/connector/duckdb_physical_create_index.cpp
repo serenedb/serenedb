@@ -257,8 +257,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     const auto transaction =
       _schema_entry.ParentCatalog().GetCatalogTransaction(context);
     uint32_t reindex_interval = 0;
-    if (auto node =
-          _info->options.extract(std::string{kReindexIntervalSetting})) {
+    if (auto node = _info->options.extract(kReindexIntervalSetting)) {
       reindex_interval = node.mapped().GetValue<uint32_t>();
     }
     auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);

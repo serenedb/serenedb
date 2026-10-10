@@ -93,6 +93,7 @@ void ClusterCatalog::OpenCatalogLog(
   _compactable = compactable;
   _live_bytes.store(GetAttached().GetStorageManager().GetWALSize(),
                     std::memory_order_relaxed);
+  auth::PublishRoles(*this);
 }
 
 void ClusterCatalog::OnCatalogLogPrepared() {
@@ -108,6 +109,8 @@ void ClusterCatalog::OnCatalogLogDecided() {
   SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
   SDB_WAIT_ON_FAILURE("pause_after_catalog_decision");
 }
+
+void ClusterCatalog::EndCatalogLogCommit() { auth::PublishRoles(*this); }
 
 void ClusterCatalog::MaybeCompactCatalogLog() {
   if (!_compactable) {
@@ -128,10 +131,6 @@ void ClusterCatalog::MaybeCompactCatalogLog() {
   }
   auto lock = storage.GetCommitLock();
   if (storage.GetWALSize() < threshold()) {
-    return;
-  }
-  auto commits = _commit_lock.TryGetExclusiveLock();
-  if (!commits) {
     return;
   }
   std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> quiescent;

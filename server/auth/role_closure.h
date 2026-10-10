@@ -38,6 +38,11 @@ namespace duckdb {
 class ClientContext;
 
 }  // namespace duckdb
+namespace sdb::catalog {
+
+class ClusterCatalog;
+
+}  // namespace sdb::catalog
 namespace sdb::auth {
 
 struct RoleGraph {
@@ -114,6 +119,8 @@ std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);
 
 std::shared_ptr<const RoleClosure> ClosureFor(duckdb::ClientContext* context,
                                               duckdb::idx_t role);
+
+void PublishRoles(catalog::ClusterCatalog& cluster);
 
 RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role);
 

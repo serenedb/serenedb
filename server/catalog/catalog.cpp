@@ -193,7 +193,7 @@ SereneDBCatalog::FindSchemaById(duckdb::ClientContext& context,
 duckdb::unique_ptr<duckdb::StandardEntry> SereneDBCatalog::MakeTokenizerEntry(
   duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
   duckdb::CreateTokenizerInfo& info) {
-  if (!info.definition.empty()) {
+  if (info.config.empty()) {
     pg::CompileTokenizer(transaction.GetContext(), info);
   }
   return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);

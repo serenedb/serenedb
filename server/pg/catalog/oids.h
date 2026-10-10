@@ -74,6 +74,8 @@ inline constexpr const ForeignDataWrapper* FindForeignDataWrapper(
   return nullptr;
 }
 
+inline constexpr duckdb::idx_t kFirstCollation = kMinSystem + 1'000;
+
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
 
 inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;

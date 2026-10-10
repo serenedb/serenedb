@@ -98,8 +98,36 @@ dangling
 0
 
 
+query
+SELECT (SELECT count(*) FROM pg_collation) - 3 = (SELECT count(*) FROM pragma_collations()) AS every_duckdb_collation,
+       (SELECT count(*) FROM pg_collation WHERE oid >= 17384 AND collname NOT IN (SELECT collname FROM pragma_collations())) AS unknown
+----
+every_duckdb_collation	unknown
+t	0
+
+
+query
+SELECT collname, collnamespace::regnamespace::text AS nsp, collprovider, collisdeterministic, collcollate, collctype, colllocale
+FROM pg_collation
+WHERE collname IN ('nocase', 'noaccent', 'nfc', 'de')
+ORDER BY collname;
+----
+collname	nsp	collprovider	collisdeterministic	collcollate	collctype	colllocale
+de	pg_catalog	i	f	NULL	NULL	de
+nfc	pg_catalog	b	f	NULL	NULL	NULL
+noaccent	pg_catalog	b	f	NULL	NULL	NULL
+nocase	pg_catalog	b	f	NULL	NULL	NULL
+
+
+query
+SELECT 'nocase'::regcollation::text AS by_name, ('nocase'::regcollation::oid)::regcollation::text AS by_oid
+----
+by_name	by_oid
+nocase	nocase
+
+
 statement ok
-CREATE TABLE invoker_col_spells (name text, code varchar(10), n int);
+CREATE TABLE invoker_col_spells (name text, code varchar(10), n int, folded text COLLATE nocase, german text COLLATE de, bytes text COLLATE "C", stacked text COLLATE "nocase.noaccent");
 
 
 query
@@ -112,6 +140,22 @@ attname	coll
 name	"default"
 code	"default"
 n	-
+folded	nocase
+german	de
+bytes	"C"
+stacked	-
+
+
+query
+SELECT column_name, collation_name
+FROM information_schema.columns
+WHERE table_name = 'invoker_col_spells' AND collation_name IS NOT NULL
+ORDER BY ordinal_position;
+----
+column_name	collation_name
+folded	nocase
+german	de
+bytes	C
 
 
 statement ok

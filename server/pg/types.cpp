@@ -333,7 +333,11 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
     result.byval = builtin->byval;
     result.align = builtin->align;
     result.storage = builtin->storage;
-    result.collation = builtin->collation;
+    const auto collation = element->id() == TypeId::VARCHAR
+                             ? duckdb::StringType::GetCollation(*element)
+                             : std::string{};
+    result.collation =
+      collation.empty() ? builtin->collation : CollationOid(collation);
     return result;
   }
   const bool is_enum = element->id() == TypeId::ENUM;

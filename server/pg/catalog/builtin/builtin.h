@@ -82,6 +82,7 @@ struct BuiltinCollation {
   std::string_view name;
   char provider;
   std::string_view locale;
+  bool deterministic = true;
 };
 
 std::span<const BuiltinType> BuiltinTypes();
@@ -94,5 +95,6 @@ int32_t BuiltinProcOid(std::string_view name);
 
 std::span<const BuiltinCollation> BuiltinCollations();
 const BuiltinCollation* FindBuiltinCollation(int64_t oid);
+int32_t CollationOid(std::string_view collation);
 
 }  // namespace sdb::pg

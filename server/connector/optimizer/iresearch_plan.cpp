@@ -267,6 +267,12 @@ duckdb::idx_t AppendVirtualGetColumn(connector::ScanBindData& bind_data,
   return get_col_idx;
 }
 
+bool ColumnFilterCanTake(const duckdb::Expression& conjunct) {
+  return duckdb::BoundComparisonExpression::IsComparison(conjunct) ||
+         conjunct.GetExpressionType() ==
+           duckdb::ExpressionType::COMPARE_BETWEEN;
+}
+
 // A parameterized conjunct is claimed on its shape: built once with NULLs in
 // the parameters' places to prove the filter compiles, then rebuilt at every
 // execution with the values (connector::BuildDeferredFilter). Its columns are
@@ -334,7 +340,8 @@ bool TryClaimIResearchConjunctImpl(
     const auto expression_getter = deferred->Recording(expr_getter);
     const auto claimed = connector::MakeSearchFilter(
       *node, single, column_getter, context, expression_getter, &shaped_scorers,
-      connector::WideRanges::DeclineAll);
+      ColumnFilterCanTake(*shaped) ? connector::WideRanges::DeclineAll
+                                   : connector::WideRanges::Build);
     const bool built = absl::c_any_of(
       irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
     if (!claimed.ok() || !built || deferred->used_expr_getter ||
@@ -363,7 +370,8 @@ bool TryClaimIResearchConjunctImpl(
   }
   const auto claimed = connector::MakeSearchFilter(
     *node, single, *column_getter, context, *expression_getter, scorers,
-    connector::WideRanges::DeclineWide);
+    ColumnFilterCanTake(*conjunct) ? connector::WideRanges::DeclineWide
+                                   : connector::WideRanges::Build);
   const bool built = absl::c_any_of(
     irs::kAllOccur, [&](irs::Occur occur) { return node->Size(occur) != 0; });
   if (!claimed.ok() || !built) {

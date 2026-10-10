@@ -97,3 +97,71 @@ QUERY PLAN
 │ Projections: pk                   │
 │ ~400 rows                         │
 ╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE tag = 'even' OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1400
+1402
+1398
+
+query
+EXPLAIN SELECT pk FROM snr WHERE tag = 'even' OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: snr                               │
+│ Lookup: search                           │
+│ Index Filter:                            │
+│ ╭─ Or ───────────╮                       │
+│ ╰────────┬───────╯                       │
+│          ├────────────────────╮          │
+│ ╭─ Terms ┴───────╮  ╭─ Granular Range ─╮ │
+│ │ Field: tag     │  │ Field: num       │ │
+│ │ Values: 'even' │  │ Range: >1500     │ │
+│ ╰────────────────╯  ╰──────────────────╯ │
+│ Score: l2_distance(emb, FLOAT[2])        │
+│ Top: 3                                   │
+│ Projections: pk                          │
+│ ~400 rows                                │
+╰──────────────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num < 10 OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1501
+1502
+1503
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num < 10 OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: snr                                 │
+│ Lookup: search                             │
+│ Index Filter:                              │
+│ ╭─ Or ─────────────╮                       │
+│ ╰─────────┬────────╯                       │
+│           ├─────────────────────╮          │
+│ ╭─ Granular Range ─╮  ╭─ Granular Range ─╮ │
+│ │ Field: num       │  │ Field: num       │ │
+│ │ Range: <10       │  │ Range: >1500     │ │
+│ ╰──────────────────╯  ╰──────────────────╯ │
+│ Score: l2_distance(emb, FLOAT[2])          │
+│ Top: 3                                     │
+│ Projections: pk                            │
+│ ~400 rows                                  │
+╰────────────────────────────────────────────╯
+
+query
+SELECT count(*) FROM snr WHERE tag = 'even' OR num > 1500;
+----
+count
+1250

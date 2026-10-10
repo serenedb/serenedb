@@ -189,7 +189,8 @@ class InvertedIndexStorage final
   ResultWithTime CleanupUnsafe();
   StoreStats UpdateStatsUnsafe(InvertedIndexSnapshotPtr data) const;
 
-  void Refresh(const irs::ProgressReportCallback& progress = nullptr);
+  [[nodiscard]] absl::Status Refresh(
+    const irs::ProgressReportCallback& progress = nullptr);
 
   duckdb::idx_t GetId() const noexcept { return _index_id; }
   // The database whose attachment holds this index's catalog entry.
@@ -383,5 +384,8 @@ class InvertedIndexStorage final
   irs::IResourceManager* _compactions_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _file_descriptors_count{&irs::IResourceManager::gNoop};
 };
+
+void ThrowIfRefreshFailed(const absl::Status& status,
+                          std::string_view index_name);
 
 }  // namespace sdb::search

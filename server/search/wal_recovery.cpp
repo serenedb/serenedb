@@ -64,7 +64,10 @@ struct FinishReplayTask final : duckdb::BaseExecutorTask {
     if (index) {
       (*index)->FinishReplay();
     }
-    storage->Refresh();
+    if (const auto status = storage->Refresh(); !status.ok()) {
+      SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
+               "' after WAL replay failed: ", status.message());
+    }
   }
 
   std::string TaskType() const final { return "InvertedFinishReplay"; }

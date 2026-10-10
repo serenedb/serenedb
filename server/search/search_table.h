@@ -204,8 +204,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   StoreStats GetStats() const;
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
-  void VacuumRefresh();
-  void VacuumCompact(uint32_t target_segments);
+  [[nodiscard]] absl::Status VacuumRefresh();
+  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();

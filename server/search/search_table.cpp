@@ -382,18 +382,22 @@ ResultWithTime SearchTable::CleanupUnsafe() {
   return {std::move(result), time_ms};
 }
 
-void SearchTable::VacuumRefresh() {
+absl::Status SearchTable::VacuumRefresh() {
   RefreshResult code = RefreshResult::Undefined;
-  RefreshUnsafe(/*wait=*/true, nullptr, code);
-  CleanupUnsafe();
+  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+    return res;
+  }
+  return CleanupUnsafe().res;
 }
 
-void SearchTable::VacuumCompact(uint32_t target_segments) {
+absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
   const auto target = std::max<uint32_t>(1, target_segments);
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
-  RefreshUnsafe(/*wait=*/true, nullptr, code);
+  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+    return res;
+  }
   for (size_t pass = 0; pass < 8; ++pass) {
     std::vector<std::vector<std::string>> buckets(target);
     {
@@ -419,15 +423,21 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      CompactUnsafe(bucket, kProgress, empty, field_options.get());
+      if (auto res =
+            CompactUnsafe(bucket, kProgress, empty, field_options.get()).res;
+          !res.ok()) {
+        return res;
+      }
       merged |= !empty;
     }
-    RefreshUnsafe(/*wait=*/true, nullptr, code);
+    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+      return res;
+    }
     if (!merged) {
       break;
     }
   }
-  CleanupUnsafe();
+  return CleanupUnsafe().res;
 }
 
 }  // namespace sdb::search

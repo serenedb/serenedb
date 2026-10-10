@@ -1220,6 +1220,9 @@ void IndexWriter::SegmentContext::Flush() {
   };
 
   DocumentMask docs_mask;
+  SDB_IF_FAILURE("IndexWriter::Flush") {
+    throw IoError{"intentional debug error"};
+  }
   writer->flush(writer_meta, docs_mask);
   if (writer_meta.meta.live_docs_count == 0) {
     return;

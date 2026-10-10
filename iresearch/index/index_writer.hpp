@@ -311,25 +311,7 @@ class IndexWriter : private util::Noncopyable {
       return CommitImpl(first_tick + _queries);
     }
 
-    bool FlushAndCommit() noexcept {
-      try {
-        Flush();
-      } catch (...) {
-        return false;
-      }
-      return Commit();
-    }
-
     std::span<const FlushedSegment> FlushAndFsync();
-
-    bool FlushAndCommit(uint64_t last_tick) noexcept {
-      try {
-        Flush();
-      } catch (...) {
-        return false;
-      }
-      return Commit(last_tick);
-    }
 
     bool Commit(uint64_t last_tick) noexcept {
       auto* segment = _active.Segment();

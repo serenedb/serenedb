@@ -246,8 +246,8 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   // On the worker, in parallel with the others, rather than deferring the tail
   // to the single-threaded refresh commit; the fsync is what lets the WAL
   // reference these by name instead of copying the rows. The tick is still
-  // assigned serially in SearchTableTransaction::Commit -- so never
-  // FlushAndCommit -- and the returned span points into the segment context.
+  // assigned serially in SearchTableTransaction::Commit -- so this only
+  // flushes -- and the returned span points into the segment context.
   std::vector<search::SearchDbWal::SegmentRef> segments;
   const bool owns_segment = lstate->bulk && lstate->search_trx != nullptr;
   if (owns_segment) {

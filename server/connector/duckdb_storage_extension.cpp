@@ -20,6 +20,8 @@
 
 #include "connector/duckdb_storage_extension.h"
 
+#include <absl/strings/str_cat.h>
+
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
@@ -149,7 +151,8 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
           });
       });
     for (auto& storage : storages) {
-      storage->Refresh();
+      search::ThrowIfRefreshFailed(storage->Refresh(),
+                                   absl::StrCat(storage->GetId()));
     }
   }
 };

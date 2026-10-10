@@ -337,10 +337,10 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
   _storage->_reindex_cv.SignalAll();
 }
 
-void InvertedIndexStorage::Refresh(
+absl::Status InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
-  std::ignore = RefreshUnsafe(/*wait=*/true, progress, code);
+  return RefreshUnsafe(/*wait=*/true, progress, code).res;
 }
 
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
@@ -595,6 +595,15 @@ std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
     rows.insert(rows.end(), batch.begin(), batch.end());
   }
   return rows;
+}
+
+void ThrowIfRefreshFailed(const absl::Status& status,
+                          std::string_view index_name) {
+  if (!status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("failed to refresh index '", index_name,
+                            "': ", status.message()));
+  }
 }
 
 }  // namespace sdb::search

@@ -1,6 +1,6 @@
 # A search table's refresh that fails is counted in sdb_metrics the same way an
 # index's own storage counts it. The fault point fires after the commit itself,
-# so the rows are published and the failure is only recorded.
+# so the rows are published.
 
 statement ok
 CREATE TABLE stf (id BIGINT PRIMARY KEY, r TEXT)
@@ -15,8 +15,11 @@ INSERT INTO stf VALUES (1, 'a'), (2, 'b'), (3, 'c');
 statement ok
 SET sdb_faults = 'Search::FailOnCommit';
 
-statement ok
+statement error
 VACUUM (REFRESH_TABLE) stf;
+----
+db error: ERROR: failed to refresh search table 'stf': debug failure point
+
 
 statement ok
 RESET sdb_faults;

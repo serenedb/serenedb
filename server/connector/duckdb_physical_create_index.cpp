@@ -594,15 +594,24 @@ duckdb::SinkCombineResultType SereneDBPhysicalCreateIndex::Combine(
   // leaving it for the single-threaded Finalize refresh to write.
   auto& trx = *lstate.search_trx;
   trx.RegisterFlush();
-  const bool committed = trx.FlushAndCommit(
-    search::TickDomain::Instance().Next(trx.GetQueries() + 1));
-  lstate.search_trx.reset();
-  if (committed) {
-    // The final commit went through: nothing pending here anymore, drop
-    // out of the begin computation.
-    AdvanceUncommittedMin(gstate, lstate.uncommitted_min_slot,
-                          std::numeric_limits<int64_t>::max());
+  try {
+    trx.Flush();
+  } catch (const std::exception& e) {
+    lstate.search_trx.reset();
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("failed to flush index '", gstate.index_name, "': ", e.what()));
   }
+  const bool committed =
+    trx.Commit(search::TickDomain::Instance().Next(trx.GetQueries() + 1));
+  lstate.search_trx.reset();
+  if (!committed) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("failed to commit index '", gstate.index_name, "'"));
+  }
+  AdvanceUncommittedMin(gstate, lstate.uncommitted_min_slot,
+                        std::numeric_limits<int64_t>::max());
   return duckdb::SinkCombineResultType::FINISHED;
 }
 
@@ -646,12 +655,12 @@ duckdb::SinkFinalizeType SereneDBPhysicalCreateIndex::Finalize(
     }
   }
   SDB_IF_FAILURE("refresh_before_manifest_publish") {
-    inverted_storage.Refresh();
+    search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
   }
   if (gstate.file_manifest) {
     inverted_storage.SetFileManifest(gstate.file_manifest);
   }
-  inverted_storage.Refresh();
+  search::ThrowIfRefreshFailed(inverted_storage.Refresh(), gstate.index_name);
   SDB_IF_FAILURE("crash_before_finish_creation") { SDB_IMMEDIATE_ABORT(); }
   inverted_storage.FinishCreation();
   if (IsDuckDBTable() && !IsReindexPass()) {

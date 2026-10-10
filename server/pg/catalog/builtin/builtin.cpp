@@ -22,8 +22,15 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/match.h>
 
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/collate_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <vector>
 
 #include "pg/types.h"
 
@@ -94,6 +101,39 @@ static_assert(absl::c_is_sorted(kTypes, kByOid) &&
               absl::c_is_sorted(kProcs, kByOid) &&
               absl::c_is_sorted(kCollations, kByOid));
 
+const std::vector<BuiltinCollation>& Collations() {
+  static const auto kAll = [] {
+    auto& db = irs::DuckDBEngine::Instance().instance();
+    std::vector<const duckdb::CollateCatalogEntry*> entries;
+    duckdb::Catalog::GetSystemCatalog(db)
+      .GetSchema(duckdb::CatalogTransaction::GetSystemTransaction(db),
+                 duckdb::Identifier{DEFAULT_SCHEMA})
+      .Scan(duckdb::CatalogType::COLLATION_ENTRY,
+            [&](duckdb::CatalogEntry& entry) {
+              entries.emplace_back(&entry.Cast<duckdb::CollateCatalogEntry>());
+            });
+    absl::c_sort(entries, [](const auto* lhs, const auto* rhs) {
+      return lhs->name.GetIdentifierName() < rhs->name.GetIdentifierName();
+    });
+    std::vector<BuiltinCollation> collations{std::begin(kCollations),
+                                             std::end(kCollations)};
+    for (const auto* entry : entries) {
+      const std::string_view name = entry->name.GetIdentifierName();
+      const bool icu =
+        absl::StartsWith(entry->function.name.GetIdentifierName(), "collate_");
+      collations.push_back(
+        {.oid = static_cast<int32_t>(kFirstCollation + collations.size() -
+                                     std::size(kCollations)),
+         .name = name,
+         .provider = icu ? 'i' : 'b',
+         .locale = icu ? name : std::string_view{},
+         .deterministic = entry->not_required_for_equality});
+    }
+    return collations;
+  }();
+  return kAll;
+}
+
 static_assert(absl::c_all_of(kTypes, [](const BuiltinType& type) {
   return type.type != 'd' ||
          absl::c_any_of(kTypes, [&](const BuiltinType& base) {
@@ -159,10 +199,29 @@ int32_t BuiltinProcOid(std::string_view name) {
   return it->oid;
 }
 
-std::span<const BuiltinCollation> BuiltinCollations() { return kCollations; }
+std::span<const BuiltinCollation> BuiltinCollations() { return Collations(); }
 
 const BuiltinCollation* FindBuiltinCollation(int64_t oid) {
-  return FindByOid(kCollations, oid);
+  return FindByOid(Collations(), oid);
+}
+
+int32_t CollationOid(std::string_view collation) {
+  if (collation == "default") {
+    return static_cast<int32_t>(kDefaultCollation);
+  }
+  if (absl::EqualsIgnoreCase(collation, "c") ||
+      absl::EqualsIgnoreCase(collation, "binary")) {
+    return static_cast<int32_t>(kCCollation);
+  }
+  if (absl::EqualsIgnoreCase(collation, "posix")) {
+    return static_cast<int32_t>(kPosixCollation);
+  }
+  const auto& collations = Collations();
+  const auto it = absl::c_find_if(collations, [&](const BuiltinCollation& row) {
+    return row.provider != 'd' && row.provider != 'c' &&
+           absl::EqualsIgnoreCase(row.name, collation);
+  });
+  return it == collations.end() ? 0 : it->oid;
 }
 
 }  // namespace sdb::pg

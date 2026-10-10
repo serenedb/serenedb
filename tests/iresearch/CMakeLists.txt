@@ -40,6 +40,7 @@ set(iresearch-tests_sources
     ./analysis/wordnet_synonyms_tokenizer_tests.cpp
     ./analysis/path_hierarchy_tokenizer_test.cpp
     ./analysis/token_attributes_test.cpp
+    ./analysis/token_poll_tests.cpp
     ./analysis/tokenizer_tests.cpp
     ./analysis/tokenizer_fuzz_corpus.cpp
     ./analysis/tokenizer_fuzz_mutator.cpp

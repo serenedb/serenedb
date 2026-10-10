@@ -46,8 +46,8 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_enum                     | 🟢            | Contains information about enum types. |
 | pg_event_trigger            | 🟡            | Stores information about event triggers. |
 | pg_extension                | 🟡            | Contains information about installed extensions. |
-| pg_foreign_data_wrapper     | 🟡            | Stores information about foreign-data wrappers. |
-| pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** — its `srvoptions` carry credentials and are shown unredacted. `srvfdw` is always `0`. |
+| pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`. Every role may use them, so each grants `USAGE` to `PUBLIC`. |
+| pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** — its `srvoptions` carry credentials and are shown unredacted. `srvfdw` names the server's wrapper in `pg_foreign_data_wrapper`. |
 | pg_foreign_table            | 🟡            | Stores information about foreign tables. |
 | pg_index                    | 🟢            | Contains information about indexes. |
 | pg_inherits                 | 🟡            | Tracks table inheritance hierarchies. |

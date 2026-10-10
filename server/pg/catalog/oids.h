@@ -53,6 +53,27 @@ inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
 inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
 inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
 
+struct ForeignDataWrapper {
+  duckdb::idx_t oid;
+  std::string_view name;
+};
+
+inline constexpr std::array kForeignDataWrappers{
+  ForeignDataWrapper{kMinSystem + 500, "clickhouse_fdw"},
+  ForeignDataWrapper{kMinSystem + 501, "iceberg_fdw"},
+  ForeignDataWrapper{kMinSystem + 502, "postgres_fdw"},
+};
+
+inline constexpr const ForeignDataWrapper* FindForeignDataWrapper(
+  std::string_view name) {
+  for (const auto& wrapper : kForeignDataWrappers) {
+    if (wrapper.name == name) {
+      return &wrapper;
+    }
+  }
+  return nullptr;
+}
+
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
 
 inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;

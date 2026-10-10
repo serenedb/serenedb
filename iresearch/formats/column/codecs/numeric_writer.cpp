@@ -55,6 +55,8 @@ struct LeafOption {
 };
 
 constexpr LeafOption kLeaflessPlan[] = {{NumericLeaf::None, 0, 0}};
+constexpr LeafOption kRefreshPlan[] = {{NumericLeaf::None, 0, 0},
+                                       {NumericLeaf::Lz4, 1, kLz4Penalty}};
 constexpr LeafOption kCompactionPlan[] = {
   {NumericLeaf::None, 0, 0},
   {NumericLeaf::Lz4, 1, kLz4Penalty},
@@ -153,8 +155,11 @@ class TypedSealer final : public NumericSealer {
   std::optional<NumericSegment> Seal(const ColCodecParams& params,
                                      uint64_t rival_bytes,
                                      NumericTuning& tuning, bool due) final {
-    if (std::is_floating_point_v<T> || params.tier == WriteTier::Flush) {
+    if (std::is_floating_point_v<T>) {
       return SealWith(kLeaflessPlan, rival_bytes, tuning, due);
+    }
+    if (params.tier == WriteTier::Flush) {
+      return SealWith(kRefreshPlan, rival_bytes, tuning, due);
     }
     return SealWith(kCompactionPlan, rival_bytes, tuning, due);
   }

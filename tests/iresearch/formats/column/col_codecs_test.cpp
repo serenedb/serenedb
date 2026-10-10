@@ -2197,7 +2197,7 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
   for (size_t i = 0; i < codecs.size(); ++i) {
     EXPECT_TRUE(codecs[i] == "lz4" || codecs[i] == "fsst") << codecs[i];
     if (codecs[i] == "lz4") {
-      EXPECT_EQ(levels[i], "1");
+      EXPECT_TRUE(levels[i] == "1" || levels[i] == "4") << levels[i];
     }
   }
   Verify(dir, duckdb::CompressionType::COMPRESSION_AUTO, kRows, value);

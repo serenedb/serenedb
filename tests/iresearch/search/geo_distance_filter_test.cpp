@@ -259,6 +259,41 @@ TEST(GeoDistanceFilterTest, equal) {
   }
 }
 
+TEST(GeoDistanceFilterTest, plan_kinds) {
+  using Kind = GeoPlan::Kind;
+  GeoDistanceFilterOptions options;
+  options.origin = S2LatLng::FromDegrees(55.70, 37.61).ToPoint();
+  EXPECT_EQ(Kind::All, PlanGeo(options)->kind);
+
+  options.range.max = -1.;
+  options.range.max_type = BoundType::Inclusive;
+  EXPECT_EQ(Kind::Empty, PlanGeo(options)->kind);
+
+  options.range.max = 1000.;
+  const auto within = PlanGeo(options);
+  EXPECT_EQ(Kind::Cells, within->kind);
+  EXPECT_FALSE(within->terms.empty());
+  EXPECT_TRUE(
+    std::holds_alternative<GeoDistanceAcceptor<true>>(within->acceptor));
+
+  options.range.min = 0.;
+  options.range.min_type = BoundType::Inclusive;
+  const auto ring = PlanGeo(options);
+  EXPECT_EQ(Kind::Cells, ring->kind);
+  EXPECT_TRUE((std::holds_alternative<GeoDistanceRangeAcceptor<true, true>>(
+    ring->acceptor)));
+
+  options.range.max_type = BoundType::Unbounded;
+  options.range.min_type = BoundType::Exclusive;
+  EXPECT_EQ(Kind::AllButCentre, PlanGeo(options)->kind);
+
+  options.range.min_type = BoundType::Inclusive;
+  EXPECT_EQ(Kind::All, PlanGeo(options)->kind);
+
+  options.plan = within;
+  EXPECT_EQ(within, PlanGeo(options));
+}
+
 TEST(GeoDistanceFilterTest, boost) {
   {
     GeoDistanceFilter q;

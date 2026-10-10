@@ -30,7 +30,7 @@ A column's trailing `WITH (...)` sets per-column **feature flags** controlling w
 | Flag | Default | Enables |
 | :--- | :--- | :--- |
 | `frequency` | `false` | Term frequency — required for [relevance scoring](../../indexes/inverted/ranking.md) |
-| `position` | `false` | Term positions — required for [phrase / proximity](../../indexes/inverted/full-text-search.md#phrase-search) queries |
+| `position` | `false` | Term positions — answer [phrase / proximity](../../indexes/inverted/full-text-search.md#phrase-search) queries from the index alone; without them a phrase needs the column's text in the index ([phrases without positions](../../indexes/inverted/full-text-search.md#phrases-without-positions)) |
 | `offset` | `false` | Character offsets — required for [highlighting](../../indexes/inverted/full-text-search.md#highlighting) |
 | `norm` | `false` | The length-normalization factor used by some scorers |
 
@@ -38,7 +38,7 @@ The same flags can be set on the dictionary itself, in which case every column u
 
 ## `INCLUDE` columns
 
-Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
+Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. A column listed both in `USING inverted (...)` and in `INCLUDE (...)` is searchable and stored, which lets [phrase queries](../../indexes/inverted/full-text-search.md#phrases-without-positions) on it work without `position`; an indexed expression gets the same when it is listed a second time with `included()` to store its value, as in `USING inverted (id, (lower(body)) words, (lower(body)) included())`. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
 
 ## Index options
 

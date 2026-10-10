@@ -65,6 +65,10 @@ The indexed column must be `JSON` or `GEOMETRY`. GeoJSON uses `[longitude, latit
 
 </DocCallout>
 
+### How rows are checked
+
+The cell terms only find candidates: the rows whose cells overlap the query's. Each candidate's stored geometry is then tested against the predicate, so the result is exact. When the predicate is a required condition of the query, that test runs last, only for the rows that pass every other condition: `EXPLAIN` lists the predicate under `Table Filter` with `Verify: table filter`, and the `Index Filter` shows the cell lookup with `Verify: false`. Under `OR`, under `NOT`, next to `ts_offsets()`, in `ts_dict_agg` and with a vector score, the test runs as the index finds the rows, shown as `Verify: inline`.
+
 ## See also
 
 - [Inverted Index](./index.md) · [Full-Text Search](./full-text-search.md)

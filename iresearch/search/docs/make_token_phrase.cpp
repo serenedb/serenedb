@@ -18,20 +18,14 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include "iresearch/search/detail/token_phrase_of.hpp"
+#include "iresearch/search/docs/plan.hpp"
+#include "iresearch/search/docs/walk.hpp"
 
-#include <iresearch/search/filters/filter.hpp>
+namespace irs::docs {
 
-namespace sdb::connector {
+Root::ptr Make(const TokenPhraseQuery& query, const Context&) {
+  return detail::MakeTokenPhrase<Walk, Root::ptr>(query, 0);
+}
 
-struct ScanGlobalState;
-
-// Moves the stored-terms check of wildcard and regexp n-gram filters out of
-// the query into a table filter. Only the root and the Must children of a
-// root BooleanFilter qualify: a document passes the root only if it passes
-// each of them, so checking it after the rest of the tree gives the same set.
-void DeferWildcardVerify(irs::Filter& root);
-
-void AddDeferredVerifyFilters(ScanGlobalState& state, const irs::Filter& root);
-
-}  // namespace sdb::connector
+}  // namespace irs::docs

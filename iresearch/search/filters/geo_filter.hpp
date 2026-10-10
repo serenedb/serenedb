@@ -24,6 +24,12 @@
 #include <s2/s2cap.h>
 #include <s2/s2region_term_indexer.h>
 
+#include <memory>
+#include <string>
+#include <variant>
+#include <vector>
+
+#include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -40,6 +46,8 @@ enum class StoredType : uint8_t {
   S2Centroid,
 };
 
+struct GeoPlan;
+
 struct GeoFilterOptionsBase {
   std::string prefix;
   S2RegionTermIndexer::Options options;
@@ -50,6 +58,7 @@ struct GeoFilterOptionsBase {
   bool source_is_point{false};
   std::vector<std::string> point_latitude;
   std::vector<std::string> point_longitude;
+  std::shared_ptr<const GeoPlan> plan;
 };
 
 enum class GeoFilterType : uint8_t {
@@ -152,5 +161,33 @@ struct GeoDistanceAcceptor {
     return Incl ? filter.Contains(point) : filter.InteriorContains(point);
   }
 };
+
+using GeoAcceptor = std::variant<
+  GeoIntersectsAcceptor, GeoContainsAcceptor, GeoIsContainedAcceptor,
+  GeoDistanceAcceptor<false>, GeoDistanceAcceptor<true>,
+  GeoDistanceRangeAcceptor<false, false>, GeoDistanceRangeAcceptor<false, true>,
+  GeoDistanceRangeAcceptor<true, false>, GeoDistanceRangeAcceptor<true, true>>;
+
+using GeoParser = std::variant<SourceJsonParser, SourceWkbParser,
+                               SourcePointParser, S2ShapeParser, S2PointParser>;
+
+struct GeoPlan {
+  enum class Kind : uint8_t {
+    Empty,
+    All,
+    AllButCentre,
+    Cells,
+  };
+
+  Kind kind = Kind::Empty;
+  std::vector<std::string> terms;
+  GeoAcceptor acceptor;
+};
+
+GeoParser ParserOf(const GeoFilterOptionsBase& options);
+
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options);
+
+std::shared_ptr<const GeoPlan> PlanGeo(const GeoDistanceFilterOptions& options);
 
 }  // namespace irs

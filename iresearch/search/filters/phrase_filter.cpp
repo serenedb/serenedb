@@ -22,29 +22,41 @@
 
 #include "phrase_filter.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_format.h>
 
+#include <algorithm>
+#include <boost/utility/compare_pointees.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
+#include "iresearch/search/detail/token_phrase.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/filters/wildcard_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
+#include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/phrase_state.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
+#include "iresearch/search/scorers/unscored.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -443,6 +455,87 @@ void ApplyTermGroups(const ByPhraseOptions& options,
   }
 }
 
+std::vector<std::vector<bstring>> SpecTerms(
+  const ByPhraseOptions& options, const ByPhraseOptions& spec,
+  std::span<std::vector<bstring>> part_terms) {
+  std::vector<size_t> sources;
+  size_t slot = 0;
+  for (const auto& info : options) {
+    if (ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion) {
+      sources.push_back(slot);
+    }
+    ++slot;
+  }
+  std::vector<std::vector<bstring>> out(spec.size());
+  auto source = sources.begin();
+  slot = 0;
+  for (const auto& info : spec) {
+    if (ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion) {
+      SDB_ASSERT(source != sources.end());
+      out[slot] = std::move(part_terms[*source++]);
+    }
+    ++slot;
+  }
+  return out;
+}
+
+QueryBuilder::ptr MakeTokenPhraseQuery(
+  const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
+  const PhraseState& state, const ByPhraseOptions& options,
+  const ColumnReader& column, std::span<std::vector<bstring>> part_terms) {
+  const auto& tokens = options.tokens();
+  auto sub = ctx;
+  sub.collector = nullptr;
+  BooleanBuilder builder{segment,        ctx.memory,           0,
+                         kNoBoost,       ScoreMergeType::Noop, nullptr,
+                         ctx.needs_terms};
+  SDB_ASSERT(state.Slots() == options.size());
+  containers::FlatHashSet<bytes_view> words;
+  std::vector<CompiledPhrase::WordStat> stats(tokens->spec ? 0
+                                                           : options.size());
+  size_t slot = 0;
+  for (const auto& info : options) {
+    const auto begin = state.offsets[slot];
+    const auto end = state.offsets[++slot];
+    if (end - begin == 1) {
+      const auto* word = std::get_if<ByTermOptions>(&info.part);
+      if (word && !tokens->spec) {
+        const auto& meta = state.metas[begin];
+        stats[slot - 1] = {.docs = meta.docs_count, .freq = meta.freq};
+      }
+      if (!word || words.emplace(word->term).second) {
+        builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
+      }
+      continue;
+    }
+    auto terms = memory::make_tracked<MultiTermQuery>(
+      ctx.memory, segment, ctx.memory, kNoBoost, ScoreMergeType::Noop);
+    terms->State().Prepare(&reader);
+    for (auto i = begin; i != end; ++i) {
+      terms->State().Push(state.metas[i], kNoBoost);
+    }
+    builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
+  }
+  auto approx = builder.Finish();
+  if (!approx || QueryBuilder::IsEmpty(*approx)) {
+    return QueryBuilder::Empty();
+  }
+  std::vector<std::vector<bstring>> spec_terms;
+  if (tokens->spec) {
+    spec_terms = SpecTerms(options, *tokens->spec, part_terms);
+    const TermReader* readers[] = {&reader};
+    stats = CompiledPhrase::WordStats(*tokens->spec, readers);
+  }
+  auto query = memory::make_tracked<TokenPhraseQuery>(
+    ctx.memory, segment, reader, std::move(approx), tokens, column,
+    tokens->Check(options),
+    tokens->spec ? std::span<const std::vector<bstring>>{spec_terms}
+                 : std::span<const std::vector<bstring>>{part_terms},
+    stats, ctx.boost);
+  query->SetStats(ctx.Record());
+  return query;
+}
+
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        irs::field_id field,
@@ -456,7 +549,18 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   PhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  if (!detail::ResolvePhrase(reader, state.handles)) {
+  const auto& tokens = options.tokens();
+  const ColumnReader* column = nullptr;
+  if (tokens) {
+    if (!reader || !detail::DocOf(*reader)) {
+      return QueryBuilder::Empty();
+    }
+    const auto* col_reader = segment.GetColReader();
+    column = col_reader ? col_reader->Column(tokens->text) : nullptr;
+    if (!column) {
+      return QueryBuilder::Empty();
+    }
+  } else if (!detail::ResolvePhrase(reader, state.handles)) {
     return QueryBuilder::Empty();
   }
   if (collector) {
@@ -496,13 +600,13 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0) {
+    if (options.slop() != 0 || tokens) {
       part_terms.resize(phrase_size);
     }
   }
 
   state.metas.reserve(counts.terms);
-  const bool boosted = counts.boosted && !is_ord_empty;
+  const bool boosted = counts.boosted && !is_ord_empty && !tokens;
   if (boosted) {
     state.boosts.reserve(counts.terms);
   }
@@ -574,6 +678,11 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     state.boosts.clear();
   }
 
+  if (tokens) {
+    return MakeTokenPhraseQuery(segment, ctx, *reader, state, options, *column,
+                                part_terms);
+  }
+
   if (phrase_size == 1 && state.metas.size() == 1) {
     return MakeTermQuery(ctx.memory, segment, state.reader, state.metas.front(),
                          ctx.boost, ctx.Record());
@@ -629,8 +738,75 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
     scorer, counts.terms, counts.expanded, stats, threads);
 }
 
+Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
+                       bool constant) {
+  return std::visit(
+    [&]<typename Options>(Options& options) -> Filter::ptr {
+      if constexpr (std::is_same_v<Options, TermSetOptions>) {
+        if (options.terms.empty()) {
+          return Filter::empty();
+        }
+        auto node = std::make_unique<BooleanFilter>();
+        for (const auto& term : options.terms) {
+          node->Add(TermClause{.field = field, .term = term}, Occur::Should);
+        }
+        node->SetMinShouldMatch(1);
+        if (constant) {
+          node->SetMergeType(ScoreMergeType::Max);
+        }
+        return node;
+      } else {
+        auto node = std::make_unique<typename Options::FilterType>();
+        *node->mutable_field_id() = field;
+        *node->mutable_options() = std::move(options);
+        return node;
+      }
+    },
+    part);
+}
+
+Filter::ptr PartsConjunction(const ByPhrase& phrase, const Scorer* scorer) {
+  const auto* own = phrase.GetScorer();
+  const auto* effective = own ? own : scorer;
+  const bool constant =
+    effective && effective->type() == Type<ConstantScore>::id();
+  if (effective && !constant && !IsUnscored(*effective)) {
+    return nullptr;
+  }
+  auto conjunction = std::make_unique<BooleanFilter>();
+  for (const auto& info : phrase.options()) {
+    conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
+                     Occur::Must);
+  }
+  auto& terms = conjunction->Bucket(Occur::Must).terms;
+  terms.erase(std::ranges::unique(terms).begin(), terms.end());
+  if (effective) {
+    conjunction->SetScorer(own);
+    conjunction->SetBoost(phrase.GetBoost());
+    if (constant) {
+      conjunction->SetMergeType(ScoreMergeType::Max);
+    }
+  }
+  return conjunction;
+}
+
+bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {
+  return _phrase == rhs._phrase && _slop == rhs._slop &&
+         _word_separator == rhs._word_separator &&
+         boost::equal_pointees(_tokens, rhs._tokens);
+}
+
 bool ByPhraseOptions::LowerParts() {
   bool changed = false;
+  if (_tokens && _tokens->spec) {
+    auto spec = *_tokens->spec;
+    if (spec.LowerParts()) {
+      auto tokens = std::make_shared<PhraseTokens>(*_tokens);
+      tokens->spec = std::move(spec);
+      _tokens = std::move(tokens);
+      changed = true;
+    }
+  }
   for (auto& info : _phrase) {
     if (const auto* t = std::get_if<TermSetOptions>(&info.part);
         t != nullptr && t->terms.size() == 1) {

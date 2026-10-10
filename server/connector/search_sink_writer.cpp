@@ -947,8 +947,9 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
   auto config = shard.Config();
   std::vector<IndexedExpression> indexed_exprs;
-  for (const auto& key : config->keys) {
-    if (key.normalized_expression.empty()) {
+  for (size_t i = 0; i < config->keys.size(); ++i) {
+    const auto& key = config->keys[i];
+    if (key.normalized_expression.empty() || !config->FirstKeyOf(i)) {
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);

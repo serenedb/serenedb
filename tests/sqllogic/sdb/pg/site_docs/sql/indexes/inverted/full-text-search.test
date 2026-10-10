@@ -448,3 +448,66 @@ ORDER BY id;
 id	offsets
 1	{6,9}
 2	{0,3}
+
+# DOCS_TEST: phrase_without_positions
+
+statement ok
+CREATE TABLE notes (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY notes_en AS
+    split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE INDEX notes_idx ON notes
+    USING inverted (id, body notes_en) INCLUDE (body);
+
+statement ok
+INSERT INTO notes VALUES
+    (1, 'the quick brown fox jumps'),
+    (2, 'a brown fox and a quick dog'),
+    (3, 'quick brown fox, quick brown fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) notes;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, BM25(notes_idx.tableoid) > 0 AS scored
+FROM notes_idx
+WHERE body @@ ts_phrase('quick brown fox')
+ORDER BY id;
+----
+id	scored
+1	t
+3	t
+
+# DOCS_TEST: phrase_without_positions_plan
+
+# DOCS_TEST_BODY
+
+query
+EXPLAIN SELECT id FROM notes_idx WHERE body @@ ts_phrase('quick brown fox');
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
+│ Index: notes_idx                                         │
+│ Lookup: table                                            │
+│ Index Filter:                                            │
+│ ╭─ And ───────────────────────────╮                      │
+│ ╰────────────────┬────────────────╯                      │
+│ ╭─ Terms ────────┴────────────────╮                      │
+│ │ Field: body(string)             │                      │
+│ │ Values: 'brown', 'fox', 'quick' │                      │
+│ ╰─────────────────────────────────╯                      │
+│ Table Filter:                                            │
+│ ╭─ Phrase ─────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                  │ │
+│ │ Parts:                                               │ │
+│ │ Term:quick(0, 0); Term:brown(1, 1); Term:fox(1, 1);  │ │
+│ │ Verify: table filter                                 │ │
+│ ╰──────────────────────────────────────────────────────╯ │
+│ Projections: id                                          │
+│ ~1 row                                                   │
+╰──────────────────────────────────────────────────────────╯

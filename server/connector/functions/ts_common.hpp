@@ -233,6 +233,7 @@ void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     bool require_all);
 void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
                   const SearchColumnInfo& column_info, std::string_view text);
+bool MatchesPhrases(const SearchColumnInfo& column_info);
 
 using TokenGroups = std::vector<std::vector<irs::bstring>>;
 
@@ -312,9 +313,14 @@ irs::analysis::ShingleTokenizer* QueryShingle(
   const FilterContext& ctx, const SearchColumnInfo& column_info);
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
                                          const SearchColumnInfo& column_info);
-void PlanShinglePhrases(
-  irs::Filter& root,
-  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of);
+
+struct PhraseField {
+  const SearchColumnInfo* info = nullptr;
+  const irs::analysis::ShingleTokenizer* shingle = nullptr;
+};
+
+void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
+                 absl::FunctionRef<PhraseField(irs::field_id)> field_of);
 
 enum class TSQueryOp {
   Unknown,

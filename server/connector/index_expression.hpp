@@ -44,10 +44,6 @@ std::string SerializeBoundExpression(const duckdb::Expression& expr);
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
 
-duckdb::unique_ptr<duckdb::Expression> ResolveBoundColumnRefsForChunk(
-  const duckdb::Expression& expr, const duckdb::DataChunk& chunk,
-  duckdb::idx_t table_id, std::span<const ColumnId> slot_to_col_id);
-
 duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      duckdb::DataChunk& chunk,
                                      duckdb::idx_t table_id,

@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <atomic>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -42,6 +43,7 @@
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -551,11 +553,13 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
         continue;
       }
       SDB_ASSERT(slot < chunk.ColumnCount());
-      const auto* entry = config.FindEntry(keys[k].field_id);
-      if (!entry || entry->IsTokenized()) {
-        RejectJsonObjectArrayLeaves(chunk.data[slot], num_rows);
+      if (config.FirstKeyOf(k)) {
+        const auto* entry = config.FindEntry(keys[k].field_id);
+        if (!entry || entry->IsTokenized()) {
+          RejectJsonObjectArrayLeaves(chunk.data[slot], num_rows);
+        }
+        expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
       }
-      expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
       ++slot;
     }
   }
@@ -702,12 +706,22 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
 
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> projected_exprs;
   for (size_t i = 0; i < op.info->parsed_expressions.size(); ++i) {
-    if (op.info->parsed_expressions[i]->GetExpressionType() ==
-        duckdb::ExpressionType::COLUMN_REF) {
+    SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
+    SDB_ASSERT(i < op.unbound_expressions.size());
+    if (op.unbound_expressions[i]->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_COLUMN_REF) {
       continue;
     }
-    SDB_ASSERT(i < op.expressions.size() && op.expressions[i]);
-    projected_exprs.push_back(op.expressions[i]->Copy());
+    const auto& expr = *op.expressions[i];
+    if (std::any_of(
+          op.expressions.begin(), op.expressions.begin() + i,
+          [&](const auto& earlier) { return earlier->Equals(expr); })) {
+      projected_exprs.push_back(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{expr.GetReturnType()}));
+    } else {
+      projected_exprs.push_back(expr.Copy());
+    }
   }
   const auto scan_column_count = input.table_scan.types.size();
 

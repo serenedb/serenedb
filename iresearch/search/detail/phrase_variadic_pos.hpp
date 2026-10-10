@@ -94,10 +94,13 @@ class PhraseVariadicPositions {
       _value = pos.value();
       return true;
     }
+    if (pos_limits::eof(_value)) {
+      return false;
+    }
     auto min = pos_limits::eof();
     for (uint32_t i = 0; i != _size; ++i) {
       auto& pos = *_live[i];
-      if (pos.value() <= _value && !pos.next()) {
+      if (pos.value() <= _value && pos_limits::eof(pos.seek(_value + 1))) {
         continue;
       }
       if (pos.value() < min) {

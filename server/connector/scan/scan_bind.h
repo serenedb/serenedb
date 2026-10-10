@@ -37,6 +37,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
+#include "connector/scan/deferred_check.h"
 #include "connector/score_emit.h"
 #include "connector/view_fast_path.h"
 #include "search/inverted_index_storage.h"
@@ -58,6 +59,7 @@ enum class ScanEntryKind : uint8_t {
 
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
+  std::vector<DeferredCheck> deferred;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
   search::InvertedIndexSnapshotPtr snapshot;
 
@@ -160,6 +162,16 @@ struct RelationSpec {
   const catalog::InvertedIndexConfig& ScannedIndex() const noexcept {
     SDB_ASSERT(inverted_config);
     return *inverted_config;
+  }
+  bool Stores(ColumnId column) const noexcept {
+    if (IsSearchTable()) {
+      return true;
+    }
+    const auto* info = ScannedIndex().FindColumnInfo(column);
+    return info && info->IsStored();
+  }
+  bool StoresExpression(ColumnId field) const noexcept {
+    return inverted_config && inverted_config->StoresExpression(field);
   }
   catalog::IndexTokenizers ResolveTokenizers(
     duckdb::ClientContext& context) const {

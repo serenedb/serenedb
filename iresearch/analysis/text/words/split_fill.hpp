@@ -27,6 +27,7 @@
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/text/words/masks.hpp"
 #include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
+#include "iresearch/analysis/token_poll.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 
@@ -84,8 +85,10 @@ class CaseRuns {
   casing::AsciiFoldRing<C == Case::Lower> _ring;
 };
 
-template<TokenLayout Layout, Case C, bool KeepNonAscii>
-IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, Case C, bool KeepNonAscii,
+         typename Poll = classify::NoPoll>
+IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink,
+                                       Poll poll = {}) {
   const char* const base = raw.GetData();
   const size_t size = raw.GetSize();
   const char* const limit = base + size;
@@ -99,7 +102,8 @@ IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
         sink.EmitSlice<Layout>(
           base, limit,
           Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
-      });
+      },
+      BindPoll(poll, sink));
     return;
   }
   constexpr size_t kBlock = classify::kClassifyBlock;
@@ -123,11 +127,14 @@ IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink) {
       }
       return mask;
     },
-    [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
+    [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); },
+    BindPoll(poll, sink));
 }
 
-template<TokenLayout Layout, Case C, bool KnownAscii>
-void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, Case C, bool KnownAscii,
+         typename Poll = classify::NoPoll>
+void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink,
+                         Poll poll = {}) {
   const char* const base = raw.GetData();
   const auto* const bytes = reinterpret_cast<const byte_type*>(base);
   const size_t size = raw.GetSize();
@@ -139,21 +146,25 @@ void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink) {
         sink.EmitSlice<Layout>(
           base, limit,
           Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
-      });
+      },
+      BindPoll(poll, sink));
   } else {
     CaseRuns<Layout, C, !KnownAscii> runs{base, size, sink};
     ForEachNonSpaceRunBest<KnownAscii>(
       bytes, size,
       [&](size_t offset, classify::Block b)
         IRS_FORCE_INLINE { runs.Fold(offset, b); },
-      [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); });
+      [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); },
+      BindPoll(poll, sink));
   }
 }
 
-template<TokenLayout Layout, Case C, bool Letters, bool KnownAscii>
-void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink) {
+template<TokenLayout Layout, Case C, bool Letters, bool KnownAscii,
+         typename Poll = classify::NoPoll>
+void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink,
+                         Poll poll = {}) {
   if constexpr (KnownAscii && !Letters) {
-    SplitByNonAlphaFill<Layout, C, false>(raw, sink);
+    SplitByNonAlphaFill<Layout, C, false>(raw, sink, poll);
   } else {
     const char* const base = raw.GetData();
     const char* const limit = base + raw.GetSize();
@@ -171,10 +182,10 @@ void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink) {
       }
     };
     if constexpr (KnownAscii) {
-      SplitByNonLetter(raw, emit);
+      SplitByNonLetter(raw, emit, BindPoll(poll, sink));
     } else {
       ForEachAlnumRunBest<Letters>(reinterpret_cast<const byte_type*>(base),
-                                   raw.GetSize(), emit);
+                                   raw.GetSize(), emit, BindPoll(poll, sink));
     }
   }
 }

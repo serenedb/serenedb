@@ -737,6 +737,69 @@ CREATE INDEX bad_volatile ON bad USING inverted(id, (random()));
 db error: ERROR: Index keys cannot contain expressions with side effects.
 
 
+statement error
+CREATE INDEX bad_volatile_col ON bad USING inverted(id, (a + random()));
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
+CREATE INDEX bad_window ON bad USING inverted(id, (sum(a) OVER ()));
+----
+db error: ERROR: window functions are not allowed in index expressions
+
+
+# The same rules hold for a stored expression, alone or stacked on a tokenized one.
+statement error
+CREATE INDEX bad_inc_const ON bad USING inverted(id, ('x') included());
+----
+db error: ERROR: indexed expression must reference at least one base table column
+
+
+statement error
+CREATE INDEX bad_inc_volatile ON bad USING inverted(id, (a + random()) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
+CREATE INDEX bad_inc_now ON bad USING inverted(id, (now()) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
+CREATE INDEX bad_inc_setting ON bad USING inverted(
+    id, (a::VARCHAR || current_setting('application_name', true)) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
+CREATE INDEX bad_inc_agg ON bad USING inverted(id, (count(*)) included());
+----
+db error: ERROR: aggregate functions are not allowed in index expressions
+
+
+statement error
+CREATE INDEX bad_inc_window ON bad USING inverted(id, (row_number() OVER ()) included());
+----
+db error: ERROR: window functions are not allowed in index expressions
+
+
+statement error
+CREATE INDEX bad_inc_subq ON bad USING inverted(id, (a + (SELECT 1)) included());
+----
+db error: ERROR: cannot use subquery in index expressions
+
+
+statement error
+CREATE INDEX bad_inc_stacked ON bad USING inverted(
+    id, (a::VARCHAR || random()::VARCHAR) verbatim_dict, (a::VARCHAR || random()::VARCHAR) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
 # --- Unsupported return types are rejected gracefully --------------------
 
 statement ok
@@ -1311,6 +1374,567 @@ CREATE INDEX inc_e_dict_with_opts ON inc_e_num USING inverted(
     id, (a + b) verbatim_dict (compression='zstd'));
 ----
 db error: ERROR: Unknown built-in opclass 'verbatim_dict' on '(a + b)' (known: included, ivf, hnsw)
+
+
+# --- A stored expression is read back by scans: projections and filters use the stored value, not its columns.
+
+statement ok
+CREATE TABLE inc_e_read(id INT PRIMARY KEY, title VARCHAR, n INT);
+
+statement ok
+CREATE INDEX inc_e_read_idx ON inc_e_read USING inverted(
+    id, (lower(title)) verbatim_dict, (lower(title)) included(), (n + 1) included());
+
+statement ok
+INSERT INTO inc_e_read VALUES (1, 'New York', 10), (2, 'Boston', 20), (3, 'NEWARK', 30), (4, 'abc', 40);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+SELECT id, lower(title) AS l, upper(lower(title)) AS u, n + 1 AS m FROM inc_e_read_idx ORDER BY id;
+----
+id	l	u	m
+1	new york	NEW YORK	11
+2	boston	BOSTON	21
+3	newark	NEWARK	31
+4	abc	ABC	41
+
+query
+EXPLAIN SELECT id, lower(title), n + 1 FROM inc_e_read_idx;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: inc_e_read_idx          │
+│ Lookup: table                  │
+│ Projections: id (l),           │
+│              lower(title) (i), │
+│              (n + 1) (i)       │
+│ ~4 rows                        │
+╰────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: inc_e_read_idx           │
+│ Lookup: table                   │
+│ Index Filter:                   │
+│ ╭─ Term ──────────────────────╮ │
+│ │ Field: lower(title)(string) │ │
+│ │ Value: boston               │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id                 │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) LIKE 'new%' ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) @@ 'boston' AND n + 1 > 15;
+----
+id
+2
+
+statement ok
+UPDATE inc_e_read SET title = 'Berlin' WHERE id = 2;
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+SELECT id, lower(title) AS l FROM inc_e_read_idx WHERE id = 2;
+----
+id	l
+2	berlin
+
+query
+SELECT id FROM inc_e_read_idx WHERE lower(title) = 'boston';
+----
+id
+
+
+statement ok
+CREATE INDEX inc_e_read_plain ON inc_e_read USING inverted(id, (lower(title)) verbatim_dict) INCLUDE (title);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+EXPLAIN SELECT id, lower(title) FROM inc_e_read_plain;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────╮
+│ Projections: id,           │
+│              lower(title)  │
+│ ~4 rows                    │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: inc_e_read_plain    │
+│ Lookup: table              │
+│ Projections: id (l),       │
+│              title (i)     │
+│ ~4 rows                    │
+╰────────────────────────────╯
+
+
+statement ok
+INSERT INTO inc_e_read VALUES (5, 'new york', 50);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_read;
+
+query
+SELECT lower(title) AS l, count(*) AS c, sum(n + 1) AS s FROM inc_e_read_idx GROUP BY lower(title) ORDER BY l;
+----
+l	c	s
+abc	1	41
+berlin	1	21
+new york	2	62
+newark	1	31
+
+query
+EXPLAIN SELECT lower(title), count(*), sum(n + 1) FROM inc_e_read_idx GROUP BY lower(title);
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────╮
+│ Projections:                             │
+│ __internal_decompress_string(#0), #1, #2 │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ HASH_GROUP_BY ─────┴────────────────────╮
+│ Groups: #0                               │
+│ Aggregates: count_star(),                │
+│             sum_no_overflow(#1)          │
+│ ~3 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ PROJECTION ────────┴────────────────────╮
+│ Projections:                             │
+│ __internal_compress_string_uhugeint(#0), │
+│ #1                                       │
+│ ~5 rows                                  │
+╰─────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ────┴────────────────────╮
+│ Index: inc_e_read_idx                    │
+│ Projections: lower(title), n + 1         │
+│ ~5 rows                                  │
+╰──────────────────────────────────────────╯
+
+query
+SELECT max(lower(title)) AS m, min(n + 1) AS lo FROM inc_e_read_idx;
+----
+m	lo
+newark	11
+
+query
+EXPLAIN SELECT max(lower(title)), min(n + 1) FROM inc_e_read_idx;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────╮
+│ Aggregates: max(#0),       │
+│             min(#1)        │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: inc_e_read_idx      │
+│ Projections: lower(title), │
+│              n + 1         │
+│ ~5 rows                    │
+╰────────────────────────────╯
+
+query
+SELECT id, row_number() OVER (PARTITION BY lower(title) ORDER BY n + 1) AS r FROM inc_e_read_idx ORDER BY id;
+----
+id	r
+1	1
+2	1
+3	1
+4	1
+5	2
+
+query
+EXPLAIN SELECT id, row_number() OVER (PARTITION BY lower(title) ORDER BY n + 1) FROM inc_e_read_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────────────────────────────────────╮
+│ Projections: id, #3                                            │
+│ ~5 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ PROJECTION ───────────────────┴───────────────────────────────╮
+│ Projections: #0, #1, #2, #3                                    │
+│ ~5 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ WINDOW ───────────────────────┴───────────────────────────────╮
+│ Projections:                                                   │
+│ row_number() OVER (PARTITION BY #1 ORDER BY #2 ASC NULLS LAST) │
+│ ~5 rows                                                        │
+╰────────────────────────────────┬───────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────┴───────────────────────────────╮
+│ Index: inc_e_read_idx                                          │
+│ Lookup: table                                                  │
+│ Projections: id (l), lower(title) (i), (n + 1) (i)             │
+│ ~5 rows                                                        │
+╰────────────────────────────────────────────────────────────────╯
+
+query
+SELECT id, lower('ABC') AS k, 'x-' || lower(title) AS p FROM inc_e_read_idx WHERE id IN (1, 4) ORDER BY id;
+----
+id	k	p
+1	abc	x-new york
+4	abc	x-abc
+
+query
+EXPLAIN SELECT id, lower('ABC'), 'x-' || lower(title) FROM inc_e_read_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ───────────────────╮
+│ Projections: id, 'abc',        │
+│              'x-' || #1        │
+│ ~5 rows                        │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: inc_e_read_idx          │
+│ Lookup: table                  │
+│ Projections: id (l),           │
+│              lower(title) (i)  │
+│ ~5 rows                        │
+╰────────────────────────────────╯
+
+query
+SELECT id, n + 1 + (random() * 0)::INT AS v FROM inc_e_read_idx WHERE random() < 2 AND lower(title) = 'abc';
+----
+id	v
+4	41
+
+query
+EXPLAIN SELECT id, n + 1 + (random() * 0)::INT FROM inc_e_read_idx WHERE random() < 2 AND lower(title) = 'abc';
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────╮
+│ Projections:                          │
+│ id,                                   │
+│ #1 + CAST((random() * 0) AS INTEGER)  │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ FILTER ──────────┴───────────────────╮
+│ Expression: random() < 2              │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: inc_e_read_idx                 │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Term ──────────────────────╮       │
+│ │ Field: lower(title)(string) │       │
+│ │ Value: abc                  │       │
+│ ╰─────────────────────────────╯       │
+│ Projections: id (l), (n + 1) (i)      │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+query
+SELECT count(*) AS c FROM inc_e_read_idx WHERE lower(title) = lower('NEW YORK');
+----
+c
+2
+
+
+statement error
+CREATE INDEX inc_e_read_dup ON inc_e_read USING inverted(
+    id, (lower(title)) verbatim_dict, (LOWER(title)) verbatim_dict);
+----
+db error: ERROR: Expression 'lower(title)' is listed more than once with a tokenizer opclass; the catalog stores a single tokenizer per indexed expression. Stack `included(...)` on the same expression instead, or remove the duplicate.
+
+
+statement ok
+CREATE TABLE inc_e_search(id INT, title VARCHAR) WITH (storage = 'search');
+
+statement ok
+INSERT INTO inc_e_search VALUES (1, 'New York');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_search;
+
+statement ok
+CREATE INDEX inc_e_search_idx ON inc_e_search USING inverted(
+    id, (lower(title)) verbatim_dict, (lower(title)) included());
+
+statement ok
+INSERT INTO inc_e_search VALUES (2, 'Boston'), (3, 'NEWARK');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_search;
+
+query
+SELECT id, lower(title) AS l FROM inc_e_search_idx ORDER BY id;
+----
+id	l
+1	new york
+2	boston
+3	newark
+
+query
+SELECT id FROM inc_e_search_idx WHERE lower(title) @@ 'boston';
+----
+id
+2
+
+query
+SELECT id FROM inc_e_search_idx WHERE lower(title) LIKE 'new%' ORDER BY id;
+----
+id
+1
+3
+
+query
+EXPLAIN SELECT id, lower(title) FROM inc_e_search_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Index: inc_e_search_idx         │
+│ Lookup: search                  │
+│ Index Filter:                   │
+│ ╭─ Term ──────────────────────╮ │
+│ │ Field: lower(title)(string) │ │
+│ │ Value: boston               │ │
+│ ╰─────────────────────────────╯ │
+│ Projections: id, lower(title)   │
+│ ~1 row                          │
+╰─────────────────────────────────╯
+
+
+# --- A stored value that depends on the session, not only on its row, is computed from the row instead.
+
+statement ok
+SET TimeZone = 'UTC';
+
+statement ok
+CREATE TABLE inc_e_tz(id INT PRIMARY KEY, ts TIMESTAMPTZ, plain TIMESTAMP, v VARIANT);
+
+statement ok
+CREATE INDEX inc_e_tz_idx ON inc_e_tz USING inverted(
+    id, (ts::VARCHAR) included(), (ts::DATE) included(), (date_part('hour', ts)) included(),
+    (v::VARCHAR) included(), (epoch(plain)) included());
+
+statement ok
+INSERT INTO inc_e_tz VALUES (1, '2026-01-01 23:30:00+00', '2026-01-01 23:30:00', '2026-01-01 23:30:00+00'::TIMESTAMPTZ::VARIANT);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_tz;
+
+statement ok
+SET TimeZone = 'Asia/Tokyo';
+
+query
+SELECT ts::VARCHAR AS s, ts::DATE AS d, date_part('hour', ts) AS h, v::VARCHAR AS vs, epoch(plain) AS e FROM inc_e_tz_idx;
+----
+s	d	h	vs	e
+2026-01-02 08:30:00+09	2026-01-02	8	2026-01-02 08:30:00+09	1767310200
+
+query
+SELECT ts::DATE AS d, count(*) AS c FROM inc_e_tz_idx GROUP BY ts::DATE;
+----
+d	c
+2026-01-02	1
+
+query
+SELECT id FROM inc_e_tz_idx WHERE ts::DATE = DATE '2026-01-02';
+----
+id
+1
+
+query
+EXPLAIN SELECT ts::VARCHAR, v::VARCHAR, epoch(plain) FROM inc_e_tz_idx;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────╮
+│ Projections: CAST(ts AS VARCHAR), │
+│              CAST(v AS VARCHAR),  │
+│              #2                   │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: inc_e_tz_idx               │
+│ Lookup: table                     │
+│ Projections: ts (l), v (l),       │
+│              epoch(plain) (i)     │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+statement ok
+RESET TimeZone;
+
+# --- A cast of a bytea value to text follows bytea_output, so it is computed from the row too.
+
+statement ok
+CREATE TABLE inc_e_bytea(id INT PRIMARY KEY, b BYTEA);
+
+statement ok
+CREATE INDEX inc_e_bytea_idx ON inc_e_bytea USING inverted(id, (b::VARCHAR) included());
+
+statement ok
+INSERT INTO inc_e_bytea VALUES (1, 'abc'::BYTEA);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_bytea;
+
+query
+SELECT b::VARCHAR AS s FROM inc_e_bytea_idx;
+----
+s
+\\x616263
+
+statement ok
+SET bytea_output = 'escape';
+
+query
+SELECT b::VARCHAR AS s FROM inc_e_bytea_idx;
+----
+s
+abc
+
+query
+SELECT id FROM inc_e_bytea_idx WHERE b::VARCHAR = 'abc';
+----
+id
+1
+
+statement ok
+RESET bytea_output;
+
+# --- Geo predicates on an indexed expression.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY inc_e_geo_dict AS encode_geojson();
+
+statement ok
+CREATE TABLE inc_e_geo(id INT PRIMARY KEY, raw VARCHAR);
+
+statement ok
+INSERT INTO inc_e_geo VALUES (1, '{"type":"Point","coordinates":[37.615,55.705]}'), (2, '{"type":"Point","coordinates":[10,10]}');
+
+statement ok
+CREATE INDEX inc_e_geo_idx ON inc_e_geo USING inverted(id, (raw::JSON) inc_e_geo_dict);
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_geo;
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Intersects(raw::JSON, '{"type":"Polygon","coordinates":[[[37.61,55.70],[37.62,55.70],[37.62,55.71],[37.61,55.71],[37.61,55.70]]]}');
+----
+id
+1
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.61,55.70],[37.62,55.70],[37.62,55.71],[37.61,55.71],[37.61,55.70]]]}', raw::JSON);
+----
+id
+1
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Distance_Between(raw::JSON, '{"type":"Point","coordinates":[37.615,55.705]}', 0, 1000, true, true);
+----
+id
+1
+
+query
+SELECT id FROM inc_e_geo_idx WHERE ST_Distance_Centroid(raw::JSON, '{"type":"Point","coordinates":[37.615,55.705]}') < 1000;
+----
+id
+1
+
+query
+SELECT id, raw::JSON AS g FROM inc_e_geo_idx ORDER BY id;
+----
+id	g
+1	{"type":"Point","coordinates":[37.615,55.705]}
+2	{"type":"Point","coordinates":[10,10]}
+
+# --- A search argument, and an indexed key in a filter, keep their whole expression even when a part of it is stored.
+
+statement ok
+CREATE TABLE inc_e_nest(id INT PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_nest_idx ON inc_e_nest USING inverted(
+    id, (upper(lower(title))) verbatim_dict, (lower(title)) included());
+
+statement ok
+INSERT INTO inc_e_nest VALUES (1, 'New York'), (2, 'Boston');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_nest;
+
+query
+SELECT id, lower(title) AS l FROM inc_e_nest_idx WHERE upper(lower(title)) @@ 'BOSTON';
+----
+id	l
+2	boston
+
+query
+SELECT id FROM inc_e_nest_idx WHERE lower(title) = 'boston';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM inc_e_nest_idx WHERE lower(title) = 'boston';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: inc_e_nest_idx                  │
+│ Lookup: table                          │
+│ Projections: id                        │
+│ Column Filter: lower(title) = 'boston' │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM inc_e_nest_idx WHERE upper(lower(title)) = 'BOSTON';
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM inc_e_nest_idx WHERE upper(lower(title)) = 'BOSTON';
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: inc_e_nest_idx                  │
+│ Lookup: table                          │
+│ Index Filter:                          │
+│ ╭─ Term ─────────────────────────────╮ │
+│ │ Field: upper(lower(title))(string) │ │
+│ │ Value: BOSTON                      │ │
+│ ╰────────────────────────────────────╯ │
+│ Projections: id                        │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT upper(lower(title)) AS u FROM inc_e_nest_idx ORDER BY id;
+----
+u
+NEW YORK
+BOSTON
+
+statement error
+SELECT id FROM inc_e_nest_idx WHERE lower(title) @@ 'boston';
+----
+db error: ERROR: @@ requires an inverted-indexed column on one side
+HINT: Use: <indexed_col> @@ <tsquery_expr>, or query through the index relation (FROM <index_name>). CREATE INDEX ... USING inverted(<col>) if none exists.
 
 
 # --- IVF on an indexed expression: `(expr) ivf(metric='l2')` builds an ANN graph over the expression's value.

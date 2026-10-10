@@ -500,6 +500,9 @@ void ColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
                                  const duckdb::SelectionVector& sel,
                                  duckdb::idx_t hits, duckdb::Vector& out,
                                  duckdb::idx_t at) const {
+  if (at == 0) {
+    NewOutputVector(s);
+  }
   column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
 }
 
@@ -518,15 +521,15 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     ColumnReader::Scan(s, out, span);
     return;
   }
+  const auto& block = _segments[Locate(anchor, s.window).block];
+  const auto bands = column_internal::BandsFor(block.codec->type, _type);
+  const auto permille = hits * 1000;
+  if (column_internal::ScatterWins(bands, block, _type, sel, hits, span)) {
+    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
+    return;
+  }
   BeginScanVector(s);
   if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
-    const auto codec = _segments[s.window.block].codec->type;
-    const auto bands = column_internal::BandsFor(codec, _type);
-    const auto permille = hits * 1000;
-    if (permille <= bands.flat * span) {
-      column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
-      return;
-    }
     if (permille <= bands.native * span &&
         _segments[s.window.block].codec->select != nullptr) {
       const bool self_valid = _segments[s.window.block].codec->validity ==

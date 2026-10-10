@@ -212,15 +212,21 @@ TEST(WildcardNGramFilterOptionsTest, one_null_matcher) {
   EXPECT_FALSE(with_matcher == no_matcher);
 }
 
-TEST(WildcardNGramFilterOptionsTest, equality_deferred_verify) {
+TEST(WildcardNGramFilterOptionsTest, copy_keeps_the_check) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  irs::ByWildcardNGramOptions inline_check{"foo%bar", analyzer, false};
-  irs::ByWildcardNGramOptions deferred{"foo%bar", analyzer, false};
-  EXPECT_FALSE(deferred.deferred_verify);
-  EXPECT_TRUE(inline_check == deferred);
-  deferred.deferred_verify = true;
-  EXPECT_FALSE(inline_check == deferred);
+  irs::ByWildcardNGramOptions options{"foo%bar", analyzer, false};
+  options.store_field_id = 7;
+  ASSERT_NE(nullptr, options.matcher);
+  const auto copy = options;
+  EXPECT_TRUE(copy == options);
+  EXPECT_EQ(options.matcher, copy.matcher);
+  EXPECT_EQ(options.grams, copy.grams);
+
+  auto index = copy;
+  index.matcher = nullptr;
+  EXPECT_TRUE(index == options);
+  EXPECT_NE(nullptr, options.matcher);
 }
 
 TEST(WildcardNGramFilterOptionsTest, pattern_past_default_budget_is_verified) {
@@ -410,7 +416,7 @@ TEST(WildcardNGramFilterTest, query) {
   }
 }
 
-TEST(WildcardNGramFilterTest, deferred_verify_returns_candidates) {
+TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   static constexpr std::string_view kValues[]{"foobaz", "bazfoo", "hello"};
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
@@ -455,15 +461,17 @@ TEST(WildcardNGramFilterTest, deferred_verify_returns_candidates) {
   auto like = MakeFilter(kTextId, "%baz%foo%", analyzer, false);
   ASSERT_NE(nullptr, like.options().matcher);
   EXPECT_EQ(Docs{1}, execute(like));
-  like.mutable_options()->deferred_verify = true;
-  EXPECT_EQ((Docs{0, 1}), execute(like));
   like.mutable_options()->store_field_id = kOtherId;
   EXPECT_EQ(Docs{}, execute(like));
+  like.mutable_options()->matcher = nullptr;
+  EXPECT_EQ((Docs{0, 1}), execute(like));
+  like.mutable_options()->store_field_id = kStoreId;
+  EXPECT_EQ((Docs{0, 1}), execute(like));
 
   auto regexp = MakeRegexpFilter(kTextId, ".*baz.*foo.*", analyzer, false);
   ASSERT_NE(nullptr, regexp.options().matcher);
   EXPECT_EQ(Docs{1}, execute(regexp));
-  regexp.mutable_options()->deferred_verify = true;
+  regexp.mutable_options()->matcher = nullptr;
   EXPECT_EQ((Docs{0, 1}), execute(regexp));
 }
 
@@ -558,10 +566,6 @@ TEST(WildcardNGramFilterOptionsTest, regexp_equality_is_by_pattern) {
     MakeRegexpOptions("abc", analyzer, true, irs::RegexpSyntax::PosixEre));
   EXPECT_FALSE(MakeRegexpOptions("abc", analyzer, true) ==
                MakeRegexpOptions("abc", analyzer, false));
-
-  auto deferred = MakeRegexpOptions("abc", analyzer);
-  deferred.deferred_verify = true;
-  EXPECT_FALSE(MakeRegexpOptions("abc", analyzer) == deferred);
 }
 
 TEST(WildcardNGramFilterTest, equal_regexp) {

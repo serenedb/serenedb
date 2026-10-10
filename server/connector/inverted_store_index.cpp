@@ -169,6 +169,18 @@ TokenizerProvider BoundTokenizers(catalog::IndexTokenizers::Bound tokenizers) {
   };
 }
 
+duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> FieldExpressions(
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& expressions,
+  const InvertedIndexConfig& config) {
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> fields;
+  for (size_t i = 0; i < expressions.size(); ++i) {
+    if (i >= config.keys.size() || config.FirstKeyOf(i)) {
+      fields.emplace_back(expressions[i]->Copy());
+    }
+  }
+  return fields;
+}
+
 constexpr duckdb::idx_t kMinSlotRows = 8 * STANDARD_VECTOR_SIZE;
 constexpr size_t kLiveFeedDepth = 2;
 
@@ -403,7 +415,8 @@ InvertedStoreIndex::InvertedStoreIndex(
   std::shared_ptr<const InvertedIndexConfig> config,
   catalog::IndexTokenizers tokenizers, bool has_predicate)
   : BoundIndex(input.name, kTypeName, input.constraint_type, input.column_ids,
-               input.table_io_manager, input.unbound_expressions, input.db),
+               input.table_io_manager,
+               FieldExpressions(input.unbound_expressions, *config), input.db),
     _index_id{index_id},
     _table_oid{table_oid},
     _storage{std::move(storage)},
@@ -447,11 +460,15 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
   } else {
     ExecuteExpressions(chunk, results);
   }
-  for (size_t i = 0; i < keys.size(); ++i) {
+  for (size_t i = 0, column = 0; i < keys.size(); ++i) {
+    if (!_config->FirstKeyOf(i)) {
+      continue;
+    }
     const auto* entry = _config->FindEntry(keys[i].field_id);
     if (!entry || entry->IsTokenized()) {
-      RejectJsonObjectArrayLeaves(results.data[i], total);
+      RejectJsonObjectArrayLeaves(results.data[column], total);
     }
+    ++column;
   }
   if (!_has_predicate) {
     return total;
@@ -484,12 +501,8 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
     std::vector<ExpressionValue> values;
     values.reserve(keys.size());
     for (size_t i = 0; i < keys.size(); ++i) {
-      const auto first = absl::c_none_of(
-        keys.first(i), [&](const catalog::InvertedIndexKey& earlier) {
-          return earlier.field_id == keys[i].field_id;
-        });
-      if (first) {
-        values.emplace_back(keys[i].field_id, &results.data[i]);
+      if (_config->FirstKeyOf(i)) {
+        values.emplace_back(keys[i].field_id, &results.data[values.size()]);
       }
     }
     FeedChunk(writer, count, PkChunk{.key_terms = key_views, .column = &rows},

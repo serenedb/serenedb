@@ -70,20 +70,21 @@ A value whose base stream holds fewer than `MIN_GRAM` tokens produces no shingle
 
 ## Phrase search
 
-[`ts_phrase`](../full-text.md#ts_phrase), [`phraseto_tsquery`](../full-text.md#phraseto_tsquery), the quoted phrases of [`to_tsquery`](../full-text.md#to_tsquery) and `##` work on a shingle column, and a phrase the column indexes as one shingle is a single term lookup. That is any phrase of `MIN_GRAM` to `MAX_GRAM` words, except that with `FREQUENT_WORDS` a phrase wider than `MIN_GRAM` has to contain a listed word. Every other phrase needs `position`:
+[`ts_phrase`](../full-text.md#ts_phrase), [`phraseto_tsquery`](../full-text.md#phraseto_tsquery), the quoted phrases of [`to_tsquery`](../full-text.md#to_tsquery) and `##` work on a shingle column, and a phrase the column indexes as one shingle is a single term lookup. That is any phrase of `MIN_GRAM` to `MAX_GRAM` words, except that with `FREQUENT_WORDS` a phrase wider than `MIN_GRAM` has to contain a listed word. Every other phrase needs `position`, or the column's text in the index ([phrases without positions](../../../indexes/inverted/full-text-search.md#phrases-without-positions)):
 
 | Dictionary | One-shingle phrases | Longer phrases, exact gaps | Slop, `[min, max]` gaps, pattern parts |
 |---|---|---|---|
 | `WITH (frequency, position)` | yes | yes | yes, with `OUTPUT_UNIGRAMS` on |
+| no `position`, the column's text in the index | yes | yes | yes, with `OUTPUT_UNIGRAMS` on |
 | no `position` | yes | no | no |
 
-A phrase the dictionary cannot answer fails with `ts_phrase on this shingle column needs positions: its shingles do not cover the phrase`. Leaving `position` out keeps the index smaller. A row ranks by how often the phrase occurs in it.
+Without `position` the shingles of a phrase pick the rows that can match, and the words of each row's text decide. A phrase the dictionary cannot answer fails with `ts_phrase on a column without positions needs the column's text in the index`. Leaving `position` out keeps the index smaller. A row ranks by how often the phrase occurs in it.
 
 A phrase of one word looks up that word, so it needs `OUTPUT_UNIGRAMS`. Without it the phrase fails with `ts_phrase on a shingle column without unigrams can't match a single word`. `FALLBACK_UNIGRAMS` doesn't help here: it indexes words only for values too short to form a shingle.
 
-With `position`, every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word. In `EXPLAIN` a shingle is a term like any other: a phrase that is one shingle is a single `Term`, a covered phrase lists its shingles as `Term:` parts, and every phrase on a shingle column shows the column's `Separator`.
+Every run of two or more adjacent words in a phrase is looked up as shingles, also in a phrase with pattern parts, alternatives or `[min, max]` gaps. A phrase with slop matches word by word. In `EXPLAIN` a shingle is a term like any other: a phrase that is one shingle is a single `Term`, a covered phrase lists its shingles as `Term:` parts, and every phrase on a shingle column shows the column's `Separator`. A phrase checked against the column's text also shows where it's checked in `Verify` (see [Phrases without positions](../../../indexes/inverted/full-text-search.md#phrases-without-positions)), and `Words` lists the words a covered phrase checks.
 
-A shingle joins tokens at consecutive positions. If the base dictionary puts several tokens at one position, like the synonyms of [`expand_solr_synonyms`](./expand_solr_synonyms.md) or [`expand_wordnet_synonyms`](./expand_wordnet_synonyms.md), a shingle continues from just one of them. On such a column every phrase of two or more words matches word by word, so it needs `position` and `OUTPUT_UNIGRAMS`.
+A shingle joins tokens at consecutive positions. If the base dictionary puts several tokens at one position, like the synonyms of [`expand_solr_synonyms`](./expand_solr_synonyms.md) or [`expand_wordnet_synonyms`](./expand_wordnet_synonyms.md), a shingle continues from just one of them. On such a column every phrase of two or more words matches word by word, so it needs `OUTPUT_UNIGRAMS`, and `position` or the column's text in the index.
 
 A pattern part of `##` (`ts_like`, `ts_starts_with`, `ts_regexp`, `ts_levenshtein` or `ts_between`) matches single words, never a shingle: it skips every term that contains `TOKEN_SEPARATOR`, a base token that contains it included. With `TOKEN_SEPARATOR = ''` a shingle can't be told apart from a word, so a phrase with a pattern part fails with `## pattern parts on a shingle column need a token separator`.
 

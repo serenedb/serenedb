@@ -26,6 +26,7 @@
 
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
+#include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -208,6 +209,10 @@ struct PhrasePartVisitor : util::Noncopyable {
   std::string* out;
 };
 
+std::string_view GeoVerify(const GeoFilterOptionsBase& options) {
+  return field_limits::valid(options.store_field_id) ? "inline" : "false";
+}
+
 std::string_view GeoFilterTypeName(GeoFilterType type) {
   switch (type) {
     case GeoFilterType::Intersects:
@@ -264,9 +269,9 @@ struct FilterPrinter {
     return kind_of(sdb::connector::ColumnId{fid});
   }
 
-  std::string PhraseParts(const ByPhrase& filter) const {
+  std::string PhraseParts(const ByPhraseOptions& options) const {
     std::string s;
-    for (const auto& part : filter.options()) {
+    for (const auto& part : options) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
       absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
@@ -513,9 +518,7 @@ struct FilterPrinter {
         options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
       node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
       node.attributes["Query"] = irs::ToString(options.query);
-      node.attributes["Verify"] = !options.matcher          ? "false"
-                                  : options.deferred_verify ? "table filter"
-                                                            : "inline";
+      node.attributes["Verify"] = options.matcher ? "inline" : "false";
       return node;
     }
     if (type == Type<Empty>::id()) {
@@ -525,7 +528,7 @@ struct FilterPrinter {
       const auto& f = downCast<const ByPhrase>(filter);
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Parts"] = PhraseParts(f);
+      node.attributes["Parts"] = PhraseParts(f.options());
       if (const auto separator = f.options().word_separator();
           !separator.empty()) {
         node.attributes["Separator"] =
@@ -533,6 +536,12 @@ struct FilterPrinter {
       }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
+      }
+      if (const auto& tokens = f.options().tokens()) {
+        node.attributes["Verify"] = "inline";
+        if (tokens->spec) {
+          node.attributes["Words"] = PhraseParts(*tokens->spec);
+        }
       }
       return node;
     }
@@ -543,6 +552,7 @@ struct FilterPrinter {
       node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
       node.attributes["Shape"].assign(
         GeoShapeTypeName(f.options().shape.type()));
+      node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -550,6 +560,7 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Range"] = GeoDistanceRange(f);
+      node.attributes["Verify"].assign(GeoVerify(f.options()));
       return node;
     }
     if (type == Type<ByRadius>::id()) {

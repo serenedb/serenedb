@@ -41,6 +41,7 @@ Node::ptr Make(const VariadicPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const NGramSimilarityQuery& query, uint64_t interrogations);
 Node::ptr Make(const AllQuery& query, uint64_t interrogations);
 Node::ptr Make(const WildcardNGramQuery& query, uint64_t interrogations);
+Node::ptr Make(const TokenPhraseQuery& query, uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, uint64_t interrogations);
 inline Node::ptr Make(const HnswQuery&, uint64_t) { return {}; }
 inline Node::ptr Make(const KnnVectorQuery&, uint64_t) { return {}; }
@@ -64,6 +65,8 @@ Node::ptr Make(const NGramSimilarityQuery& query, const detail::ScoredCtx& ctx,
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations);
+Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);
 Node::ptr Make(const ByNestedQuery& query, const detail::ScoredCtx& ctx,
                uint64_t interrogations);

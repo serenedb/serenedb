@@ -25,7 +25,6 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/queries/phrase_query.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
@@ -147,11 +146,9 @@ void ParseWebsearchQuery(std::string_view text,
   }
 
   const auto type = column_info.logical_type.id();
-  const bool word_phrases =
-    (type == duckdb::LogicalTypeId::VARCHAR ||
-     type == duckdb::LogicalTypeId::BLOB) &&
-    (column_info.tokenizer.features & irs::PhraseQuery::kRequiredFeatures) ==
-      irs::PhraseQuery::kRequiredFeatures;
+  const bool word_phrases = (type == duckdb::LogicalTypeId::VARCHAR ||
+                             type == duckdb::LogicalTypeId::BLOB) &&
+                            MatchesPhrases(column_info);
 
   auto emit_atom = [&](const WsToken& tok, BoolTarget into,
                        const FilterContext& c) {
@@ -297,11 +294,12 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
       ERR_MSG("to_tsquery parse error: ", parser_ctx.error_message),
       ERR_HINT(kSyntaxHint));
   }
-  PlanShinglePhrases(root, [&](irs::field_id field) -> const SearchColumnInfo* {
+  PlanPhrases(root, ctx.client_context, [&](irs::field_id field) {
     if (field == parser_ctx.default_field_id) {
-      return QueryShingle(ctx, column_info) ? &column_info : nullptr;
+      return PhraseField{&column_info, QueryShingle(ctx, column_info)};
     }
-    return provider ? provider->Find(field) : nullptr;
+    const auto* info = provider ? provider->Find(field) : nullptr;
+    return PhraseField{info, info ? ShingleOf(*info) : nullptr};
   });
 }
 

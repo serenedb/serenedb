@@ -224,6 +224,23 @@ class ValueAnalyzer {
     return true;
   }
 
+  template<typename Consumer>
+  IRS_FORCE_INLINE bool Scan(analysis::Tokenizer& tokenizer,
+                             duckdb::string_t value, Consumer& out,
+                             BlockTraits traits = {}) {
+    static_assert(Consumer::kLayout == TokenLayout::TermsPos);
+    _writer.Bind(out, nullptr);
+    out.Prepare(value);
+    TokenPoll poll{_writer, out};
+    if (!tokenizer.Scan(value, _writer, poll, traits)) [[unlikely]] {
+      _writer.Discard();
+      out.Discard();
+      return false;
+    }
+    _writer.Finish();
+    return true;
+  }
+
   size_t MemoryUsage() const noexcept { return sizeof(TokenSink); }
 
  private:

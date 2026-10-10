@@ -78,6 +78,10 @@ void VariantColumnReader::NewOutputVector(ScanState& s) const {
   }
   for (size_t i = 0; i < s.variant->rgs.size(); ++i) {
     auto& vs = s.variant->rgs[i];
+    if (_variant_offsets[i + 1] <= s.variant->cursor) {
+      vs = {};
+      continue;
+    }
     if (vs.unshredded) {
       ResetOutput(*_variant_rgs[i].unshredded, *vs.unshredded);
     }
@@ -284,6 +288,9 @@ void VariantColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
                                         const duckdb::SelectionVector& sel,
                                         duckdb::idx_t hits, duckdb::Vector& out,
                                         duckdb::idx_t at) const {
+  if (at == 0) {
+    NewOutputVector(s);
+  }
   column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
 }
 
@@ -291,6 +298,7 @@ void VariantColumnReader::GatherDense(ScanState& s, uint64_t anchor,
                                       const duckdb::SelectionVector& sel,
                                       duckdb::idx_t hits, duckdb::idx_t span,
                                       duckdb::Vector& out) const {
+  NewOutputVector(s);
   column_internal::DenseRuns(*this, s, anchor, sel, hits, span, out);
 }
 

@@ -25,7 +25,7 @@ All examples on this page use a `sentences` table whose `b` column is indexed wi
 
 ## Term and phrase search {#phrase-search}
 
-[`ts_phrase`](../../functions/search/full-text.md#ts_phrase) matches a run of tokens in order. It requires `position` to be enabled on the column ([feature flags](./text-analysis.md#token-positions-and-feature-flags)):
+[`ts_phrase`](../../functions/search/full-text.md#ts_phrase) matches a run of tokens in order. It is fastest with `position` enabled on the column ([feature flags](./text-analysis.md#token-positions-and-feature-flags)); a column without it still answers phrases when the index keeps its text, see [Phrases without positions](#phrases-without-positions):
 
 <SqlLogicTest id="sql/indexes/inverted/full-text-search/example_002" />
 
@@ -69,6 +69,25 @@ The boolean operators `&&`, `||` and `!!` are **not** phrase parts — they comb
 | AND / OR / NOT *around* a phrase | `('quick' ## 'brown') && 'dog'` | `'quick' ## ('brown' && 'dog')` |
 
 In short: build the phrase with `##` and the allowed parts, then combine the finished phrase with other queries using `&&` / `||` / `!!` on the **outside**.
+
+### Phrases without positions {#phrases-without-positions}
+
+A column indexed without `position` answers every phrase query when the index also keeps the column's text. A table created `WITH (storage = 'search')` keeps every column. In an inverted index, list the column in `INCLUDE` as well as in `USING inverted`:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions" />
+
+An [indexed expression](../../statements/create_index/inverted.md) such as `(lower(body))` needs its own value in the index: list it a second time with `included()`, for example `USING inverted (id, (lower(body)) words, (lower(body)) included())`. The check then reads the stored value like a column's text, also for an expression over several columns. Keeping only the columns the expression reads in `INCLUDE` is not enough.
+
+The index finds the rows that contain every word of the phrase. Then it reads the text of each of those rows, analyzes it with the column's dictionary and keeps the rows where the words line up. Matches are the same as with `position` for every phrase form: gaps, `[min, max]` intervals and `slop` in `ts_phrase`, `##` chains with pattern parts, `phraseto_tsquery` and the quoted phrases of `to_tsquery` and `websearch_to_tsquery`. So are scores, except for a ranked phrase with a `ts_levenshtein` part: it scores each fuzzy word like an exact match, where `position` weights it by how close it is to the query word. `EXPLAIN` shows where the text is checked:
+
+<SqlLogicTest id="sql/indexes/inverted/full-text-search/phrase_without_positions_plan" />
+
+- `Verify: table filter`: the text is checked last, only for the rows that pass every other condition of the query. The phrase is listed under `Table Filter`, and the `Index Filter` only looks up its words. A phrase gets this when every row has to match it and its score doesn't depend on how often it occurs: the query doesn't rank by score, ranks by a constant score or scores the phrase with [`::score('constant(1)')` or `::score(NULL)`](../../functions/search/scoring.md#score-modifier).
+- `Verify: inline`: the phrase stays in the `Index Filter` and its text is checked as the index finds the rows. A query that ranks the phrase with any other score gets this, because the score counts the phrase's occurrences. So do a query ranked by vector distance, a phrase under `OR` or `NOT`, a query that calls [`ts_offsets`](../../functions/search/highlighting.md), a phrase in `ts_dict_agg` and a phrase with a `ts_levenshtein` part while [`sdb_levenshtein_max_terms`](./maintenance.md#session-settings) isn't `0`. A phrase with both `slop` and a pattern part also stays inline when its dictionary puts several words at one position, as synonym and n-gram dictionaries do.
+
+The index stays smaller without `position`, but a phrase reads more data: the fewer rows contain all of its words, the cheaper it is. A phrase of common words over long texts is where `position` pays off. Compressing the kept text, for example with `INCLUDE (body included (compression = 'zstd'))`, shrinks the index further, but every row a phrase checks is decompressed first, so phrases run several times slower.
+
+Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`.
 
 ## Prefix, wildcard and regex
 

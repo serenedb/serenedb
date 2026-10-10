@@ -110,20 +110,28 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
   }
 }
 
-template<typename Impl, typename Fill>
-IRS_FORCE_INLINE constexpr decltype(auto) DispatchFill(Impl& impl,
-                                                       TokenLayout layout,
+template<typename Impl, typename Fill, typename... Lead>
+IRS_FORCE_INLINE constexpr decltype(auto) DispatchTags(Impl& impl,
                                                        BlockTraits traits,
-                                                       Fill&& fill) {
+                                                       Fill&& fill,
+                                                       Lead... lead) {
   constexpr auto kNumTags =
     std::tuple_size_v<decltype(std::declval<Impl&>().PrepareBatch(
       std::declval<BlockTraits>()))>;
   return [&]<size_t... I>(std::index_sequence<I...>)
            IRS_FORCE_INLINE -> decltype(auto) {
              [[maybe_unused]] const auto tags = impl.PrepareBatch(traits);
-             return ResolveValues(std::forward<Fill>(fill), layout,
+             return ResolveValues(std::forward<Fill>(fill), lead...,
                                   std::get<I>(tags)...);
            }(std::make_index_sequence<kNumTags>{});
+}
+
+template<typename Impl, typename Fill>
+IRS_FORCE_INLINE constexpr decltype(auto) DispatchFill(Impl& impl,
+                                                       TokenLayout layout,
+                                                       BlockTraits traits,
+                                                       Fill&& fill) {
+  return DispatchTags(impl, traits, std::forward<Fill>(fill), layout);
 }
 
 struct Offs {
@@ -209,6 +217,8 @@ class ArenaTerm final : util::Noncopyable {
 };
 
 class TokenSink final : util::Noncopyable {
+  friend class TokenPoll;
+
  public:
   explicit TokenSink(
     duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())

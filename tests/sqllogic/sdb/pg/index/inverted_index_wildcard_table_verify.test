@@ -1936,6 +1936,15 @@ QUERY PLAN
 │ │ Syntax: perl                   │ │
 │ │ Has Pos: false                 │ │
 │ │ Query: "timed out"             │ │
+│ │ Verify: false                  │ │
+│ ╰────────────────────────────────╯ │
+│ Table Filter:                      │
+│ ╭─ Wildcard NGram ───────────────╮ │
+│ │ Field: msg(string)             │ │
+│ │ Pattern: (?s)\\A.*timed out.*\\z │ │
+│ │ Syntax: perl                   │ │
+│ │ Has Pos: false                 │ │
+│ │ Query: "timed out"             │ │
 │ │ Verify: table filter           │ │
 │ ╰────────────────────────────────╯ │
 │ Output: row-count only             │
@@ -1956,9 +1965,18 @@ QUERY PLAN
 │ │ Syntax: perl                         │ │
 │ │ Has Pos: false                       │ │
 │ │ Query: Or("db-10", "db-11", "db-12") │ │
-│ │ Verify: table filter                 │ │
+│ │ Verify: false                        │ │
 │ ╰──────────────────────────────────────╯ │
 │ Column Filter: x > 49                    │
+│ Table Filter:                            │
+│ ╭─ Wildcard NGram ─────────────────────╮ │
+│ │ Field: msg(string)                   │ │
+│ │ Pattern: .*db-1[0-2].*               │ │
+│ │ Syntax: perl                         │ │
+│ │ Has Pos: false                       │ │
+│ │ Query: Or("db-10", "db-11", "db-12") │ │
+│ │ Verify: table filter                 │ │
+│ ╰──────────────────────────────────────╯ │
 │ Projections: id                          │
 │ ~756 rows                                │
 ╰──────────────────────────────────────────╯
@@ -1971,6 +1989,18 @@ QUERY PLAN
 │ Index: tv_idx                                                         │
 │ Lookup: table                                                         │
 │ Index Filter:                                                         │
+│ ╭─ And ──────────────────────────╮                                    │
+│ ╰────────────────┬───────────────╯                                    │
+│                  ├──────────────────────────────────╮                 │
+│ ╭─ Wildcard NGram ───────────────╮  ╭─ Wildcard NGram ──────────────╮ │
+│ │ Field: msg(string)             │  │ Field: msg(string)            │ │
+│ │ Pattern: (?s)\\A.*timed out.*\\z │  │ Pattern: (?s)\\Aconnection.*\\z │ │
+│ │ Syntax: perl                   │  │ Syntax: perl                  │ │
+│ │ Has Pos: false                 │  │ Has Pos: false                │ │
+│ │ Query: "timed out"             │  │ Query: "\\x1fconnection"       │ │
+│ │ Verify: false                  │  │ Verify: false                 │ │
+│ ╰────────────────────────────────╯  ╰───────────────────────────────╯ │
+│ Table Filter:                                                         │
 │ ╭─ And ──────────────────────────╮                                    │
 │ ╰────────────────┬───────────────╯                                    │
 │                  ├──────────────────────────────────╮                 │
@@ -2086,6 +2116,16 @@ QUERY PLAN
 │ Index: tv_pos_idx                            │
 │ Lookup: table                                │
 │ Index Filter:                                │
+│ ╭─ Wildcard NGram ─────────────────────────╮ │
+│ │ Field: msg(string)                       │ │
+│ │ Pattern: (?s)\\Adisk usage 9. pct on .*\\z │ │
+│ │ Syntax: perl                             │ │
+│ │ Has Pos: true                            │ │
+│ │ Query:                                   │ │
+│ │ And("\\x1fdisk usage 9", " pct on ")      │ │
+│ │ Verify: false                            │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Table Filter:                                │
 │ ╭─ Wildcard NGram ─────────────────────────╮ │
 │ │ Field: msg(string)                       │ │
 │ │ Pattern: (?s)\\Adisk usage 9. pct on .*\\z │ │

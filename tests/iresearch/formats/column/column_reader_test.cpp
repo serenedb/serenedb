@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <array>
 #include <duckdb.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -37,6 +38,7 @@
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <random>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -448,6 +450,247 @@ TEST_F(ColumnReaderTest, GatherSparseAndDenseAcrossRowGroups) {
       EXPECT_EQ(rd[i], val(g)) << "gathered row " << g;
     }
   }
+}
+
+using ValueOf = std::function<duckdb::Value(uint64_t)>;
+
+void WriteColumn(duckdb::DatabaseInstance& db, irs::Directory& dir,
+                 irs::field_id id, const duckdb::LogicalType& type,
+                 uint64_t rows, uint32_t rg_size, const ValueOf& value_of) {
+  irs::ColWriter w{dir, "seg", db};
+  auto& cw = w.OpenColumn(id, type, /*skip_validity=*/false, rg_size);
+  for (uint64_t pos = 0; pos < rows;) {
+    const auto take = std::min<duckdb::idx_t>(rows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector v{type, STANDARD_VECTOR_SIZE};
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      v.SetValue(k, value_of(pos + k));
+    }
+    duckdb::FlatVector::SetSize(v, take);
+    cw.Append(v, take);
+    pos += take;
+  }
+  w.Commit(0);
+}
+
+bool CrossesBlock(const irs::ColumnReader& col, uint64_t anchor,
+                  uint64_t span) {
+  for (size_t b = 1; b < col.DataBlocks().size(); ++b) {
+    const auto first = col.DataBlockFirstRow(b);
+    if (first > anchor && first < anchor + span) {
+      return true;
+    }
+  }
+  return false;
+}
+
+enum class GatherMode : uint8_t {
+  Dense,
+  Scatter,
+  ScatterAppend,
+  Mixed,
+};
+
+struct GatherStats {
+  size_t windows = 0;
+  size_t crossing = 0;
+};
+
+void CheckGathers(const irs::ColumnReader& col, irs::ReadContext& ctx,
+                  const ValueOf& value_of, GatherMode mode, uint32_t per_mille,
+                  GatherStats& stats) {
+  const auto rows = col.RowCount();
+  std::mt19937_64 rng{per_mille * 7 + static_cast<uint32_t>(mode)};
+  constexpr std::array<uint64_t, 3> kSpans{STANDARD_VECTOR_SIZE, 1000, 37};
+  auto state = col.InitScan(ctx);
+  auto out = std::make_unique<duckdb::Vector>(col.Type(), STANDARD_VECTOR_SIZE);
+  std::vector<uint64_t> expected;
+  auto verify = [&] {
+    for (size_t i = 0; i < expected.size(); ++i) {
+      const auto got = out->GetValue(i);
+      const auto want = value_of(expected[i]);
+      ASSERT_TRUE(duckdb::Value::NotDistinctFrom(got, want))
+        << "row " << expected[i] << " got " << got.ToString() << " want "
+        << want.ToString();
+    }
+    expected.clear();
+  };
+  for (uint64_t anchor = rng() % 64; anchor < rows;) {
+    const auto span = std::min(rows - anchor, kSpans[rng() % kSpans.size()]);
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    duckdb::idx_t hits = 0;
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      if (rng() % 1000 < per_mille) {
+        sel.set_index(hits++, i);
+      }
+    }
+    if (hits == 0) {
+      sel.set_index(hits++, span - 1);
+    }
+    ++stats.windows;
+    stats.crossing += CrossesBlock(col, anchor, span);
+    auto dense = mode == GatherMode::Dense;
+    if (mode == GatherMode::Mixed) {
+      dense = rng() % 2 == 0;
+    }
+    if (mode == GatherMode::ScatterAppend) {
+      if (expected.size() + hits > STANDARD_VECTOR_SIZE) {
+        verify();
+        out =
+          std::make_unique<duckdb::Vector>(col.Type(), STANDARD_VECTOR_SIZE);
+      }
+      col.GatherScatter(state, anchor, sel, hits, *out, expected.size());
+    } else {
+      expected.clear();
+      out = std::make_unique<duckdb::Vector>(col.Type(), STANDARD_VECTOR_SIZE);
+      if (dense) {
+        col.GatherDense(state, anchor, sel, hits, span, *out);
+      } else {
+        col.GatherScatter(state, anchor, sel, hits, *out, 0);
+      }
+    }
+    for (duckdb::idx_t i = 0; i < hits; ++i) {
+      expected.push_back(anchor + sel.get_index(i));
+    }
+    if (mode != GatherMode::ScatterAppend) {
+      verify();
+    }
+    anchor += span + rng() % 3000;
+  }
+  verify();
+}
+
+std::string RandomText(uint64_t seed, size_t len) {
+  std::mt19937_64 rng{seed};
+  std::string s(len, ' ');
+  for (auto& c : s) {
+    c = static_cast<char>('a' + rng() % 26);
+  }
+  return s;
+}
+
+struct GatherCase {
+  std::string name;
+  duckdb::LogicalType type;
+  uint64_t rows;
+  ValueOf value_of;
+  std::vector<std::string> codecs;
+};
+
+TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
+  const std::vector<GatherCase> cases{
+    {"bigint_random",
+     duckdb::LogicalType::BIGINT,
+     30000,
+     [](uint64_t g) {
+       return g % 10 == 0 ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                          : duckdb::Value::BIGINT(
+                              static_cast<int64_t>(std::mt19937_64{g}()));
+     },
+     {"uncompressed"}},
+    {"bigint_narrow",
+     duckdb::LogicalType::BIGINT,
+     30000,
+     [](uint64_t g) {
+       return duckdb::Value::BIGINT(static_cast<int64_t>(g % 1000));
+     },
+     {"bitpacking"}},
+    {"bigint_runs",
+     duckdb::LogicalType::BIGINT,
+     30000,
+     [](uint64_t g) {
+       return g / 500 % 7 == 3
+                ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                : duckdb::Value::BIGINT(static_cast<int64_t>(g / 500));
+     },
+     {"rle", "bitpacking"}},
+    {"double",
+     duckdb::LogicalType::DOUBLE,
+     30000,
+     [](uint64_t g) { return duckdb::Value::DOUBLE(g * 0.37); },
+     {"uncompressed", "alprd"}},
+    {"varchar_dict",
+     duckdb::LogicalType::VARCHAR,
+     30000,
+     [](uint64_t g) {
+       static const char* const kWords[] = {"cat", "dog", "bird", "fish",
+                                            "owl"};
+       return g % 9 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                         : duckdb::Value{kWords[g % 5]};
+     },
+     {"zstd", "uncompressed"}},
+    {"varchar_unique",
+     duckdb::LogicalType::VARCHAR,
+     30000,
+     [](uint64_t g) {
+       return duckdb::Value{"value_" + std::to_string(g) + "_" +
+                            RandomText(g, 24)};
+     },
+     {"zstd", "uncompressed"}},
+    {"varchar_long",
+     duckdb::LogicalType::VARCHAR,
+     6000,
+     [](uint64_t g) {
+       return g % 11 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                          : duckdb::Value{RandomText(g, 500 + g % 2000)};
+     },
+     {"zstd", "uncompressed"}},
+  };
+  constexpr irs::field_id kId = 1;
+  duckdb::Connection con{Db()};
+  for (const auto& c : cases) {
+    std::vector<std::string> codecs{"auto"};
+    codecs.insert(codecs.end(), c.codecs.begin(), c.codecs.end());
+    for (const auto& codec : codecs) {
+      SCOPED_TRACE(c.name + " " + codec);
+      auto set = con.Query("SET force_compression = '" + codec + "'");
+      ASSERT_FALSE(set->HasError()) << set->GetError();
+      irs::MemoryDirectory dir{};
+      WriteColumn(Db(), dir, kId, c.type, c.rows, 4096, c.value_of);
+      irs::ColReader r{dir, "seg", Db()};
+      const auto* col = r.Column(kId);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->RowCount(), c.rows);
+      if (codec != "auto") {
+        const auto forced =
+          duckdb::EnumUtil::FromString<duckdb::CompressionType>(
+            duckdb::StringUtil::Upper(codec));
+        EXPECT_TRUE(absl::c_any_of(col->DataBlocks(), [&](const auto& b) {
+          return b.codec->type == forced;
+        }));
+      }
+      GatherStats stats;
+      for (const auto mode : {GatherMode::Dense, GatherMode::Scatter,
+                              GatherMode::ScatterAppend, GatherMode::Mixed}) {
+        for (const uint32_t per_mille : {1u, 10u, 50u, 200u, 600u, 1000u}) {
+          SCOPED_TRACE(testing::Message() << "mode " << static_cast<int>(mode)
+                                          << " per_mille " << per_mille);
+          CheckGathers(*col, r.Ctx(), c.value_of, mode, per_mille, stats);
+          if (HasFatalFailure()) {
+            con.Query("SET force_compression = 'auto'");
+            return;
+          }
+        }
+      }
+      EXPECT_GT(stats.crossing, 0u) << "of " << stats.windows << " windows";
+    }
+  }
+  con.Query("SET force_compression = 'auto'");
+}
+
+TEST(GatherArmsTest, FewerRunsCountsEveryRun) {
+  using irs::column_internal::FewerRuns;
+  duckdb::SelectionVector sel(4);
+  sel.set_index(0, 5);
+  sel.set_index(1, 6);
+  sel.set_index(2, 7);
+  sel.set_index(3, 9);
+  EXPECT_FALSE(FewerRuns(sel, 1, 1));
+  EXPECT_TRUE(FewerRuns(sel, 1, 2));
+  EXPECT_FALSE(FewerRuns(sel, 3, 1));
+  EXPECT_TRUE(FewerRuns(sel, 3, 2));
+  EXPECT_FALSE(FewerRuns(sel, 4, 2));
+  EXPECT_TRUE(FewerRuns(sel, 4, 3));
+  EXPECT_TRUE(FewerRuns(sel, 2, 3));
 }
 
 // Point fetches (FetchRow) of scattered single rows on BIGINT and VARCHAR
@@ -1413,6 +1656,58 @@ TEST_F(ColumnReaderTest, VariantGatherSparse) {
     EXPECT_EQ(got.IsNull(), expected[g].IsNull()) << "gathered row " << g;
     if (!expected[g].IsNull()) {
       EXPECT_EQ(got.ToString(), expected[g].ToString()) << "gathered row " << g;
+    }
+  }
+}
+
+size_t PinnedSegments(const irs::ColumnReader::ScanState& s) {
+  auto n = s.segments.size();
+  for (const auto& child : s.child_states) {
+    n += PinnedSegments(child);
+  }
+  if (s.variant) {
+    for (const auto& rg : s.variant->rgs) {
+      for (const auto* state :
+           {rg.unshredded.get(), rg.shredded.get(), rg.leaf.get()}) {
+        if (state) {
+          n += PinnedSegments(*state);
+        }
+      }
+    }
+  }
+  return n;
+}
+
+TEST_F(ColumnReaderTest, VariantGathersReleaseBlocks) {
+  SetShreddingSize(Db(), -1);
+  irs::MemoryDirectory dir{};
+  std::vector<duckdb::Value> expected;
+  WriteVariantViaSql(Db(), dir, "vseg", /*id=*/35,
+                     "SELECT (SELECT string_agg(md5((i * 8 + j)::VARCHAR), '') "
+                     "FROM range(8) u(j))::VARIANT FROM range(20000) t(i)",
+                     /*rg_size=*/8192, expected);
+  ASSERT_EQ(expected.size(), 20000u);
+
+  irs::ColReader r{dir, "vseg", Db()};
+  const auto* col = r.Column(35);
+  ASSERT_NE(col, nullptr);
+
+  auto state = col->InitScan(r.Ctx());
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  sel.set_index(0, 0);
+  constexpr uint64_t kRowGroup = 8192;
+  size_t first = 0;
+  for (uint64_t row = 0; row < expected.size(); row += 97) {
+    duckdb::Vector out{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
+    col->GatherScatter(state, row, sel, 1, out, 0);
+    ASSERT_EQ(out.GetValue(0).ToString(), expected[row].ToString())
+      << "row=" << row;
+    const auto pinned = PinnedSegments(state);
+    if (row == 0) {
+      first = pinned;
+    }
+    if (row % kRowGroup >= 97) {
+      EXPECT_LE(pinned, first + 1) << "row=" << row;
     }
   }
 }

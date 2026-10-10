@@ -42,7 +42,7 @@ ninja
 Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
-- `bench` -- Release build (`build_bench/`), static linking, production-like performance; no frame pointers
+- `bench` -- Release build (`build_bench/`), static linking, configured like the release packages; no frame pointers
 - `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
 
 `lldb` and `clangd` build with dev asserts, fault injection and the gtest binaries; `bench` and `perf` build none of them, so recovery tests and anything that sets `sdb_faults` can't run there.
@@ -91,7 +91,7 @@ Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 The test tree is split by what runs the test and what it covers:
 
-- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both. `any/pg` runs through the symlinks `sdb/pg/any` and `pg/any`, never directly. Validate new SQL behaviour on real PostgreSQL before pinning it (`./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>`, or docker `postgres:18`): outcomes must match, error text may differ.
+- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both. `any/pg` runs through the symlinks `sdb/pg/any` and `pg/any`, never directly. Validate new SQL behaviour on real PostgreSQL before pinning it (`./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>`; CI's `validate pg` uses the `serenedb-test-postgres:18-3.6` image from `tests/sqllogic/docker-compose.validate-pg-tests.yml`): outcomes must match, error text may differ.
 - `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
 - `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
 - `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir. `SET sdb_faults` is allowed only here (pre-commit `check-fault-points`).
@@ -134,11 +134,11 @@ Races are testable in sqllogic, so a concurrency bug still gets a test:
 BUILD_DIR=build_clangd ./tests/sqllogic/run_recovery_tests.sh recovery/<file>.test
 ```
 
-- `run.sh` connects to a serened that is already running (see [Launch](#launch)). Scope it with repeatable `--test '<glob>'`; it takes no positional arguments. `--fast` drops `.test_slow` files, and both wire engines (`pg-wire-simple,pg-wire-extended`) run by default.
+- `run.sh` connects to a serened that is already running (see [Launch](#launch)). Scope it with repeatable `--test '<glob>'`; it takes no positional arguments. `--fast` strips the trailing `*` from each `--test` glob, so `*.test*` stops matching `.test_slow` files. Both wire engines (`pg-wire-simple,pg-wire-extended`) run by default.
 - The exit code says nothing when no file matched: count one `[OK]`/`[FAILED]` line per file you asked for.
-- `run_recovery_tests.sh` starts an auto-restarting serened per file. Its test paths are relative to `tests/sqllogic`; a path that matches nothing still prints PASS. Arguments it doesn't know go to `run.sh`, so `--help` starts the full suite. Server logs stay in `/tmp/serened-logs-XXXXXX/` (`worker-N-test-M.log` per test, `failures-wN.txt` for the failures).
+- `run_recovery_tests.sh` starts an auto-restarting serened per file. Its test paths are relative to `tests/sqllogic`; a path that matches nothing still prints PASS. It has no `--help`: arguments it doesn't know go to `run.sh`. Server logs stay in `/tmp/serened-logs-XXXXXX/` (`worker-N-test-M.log` per test, `failures-wN.txt` for the failures).
 - One recovery run per account at a time: at start and at exit the script `kill -9`s every `recovery-worker-*` and `run_serened_loop.sh` process the account owns and deletes `/tmp/recovery-worker-*`.
-- The runners default to `nproc` jobs; on a busy machine use `nproc / 2`. Never lower parallelism to make a flaky test pass: a test that fails under load is a bug.
+- `run.sh` and the driver and DuckDB runners default to `nproc` jobs, the recovery runner to one worker per file up to `nproc`; on a busy machine use `nproc / 2`. Never lower parallelism to make a flaky test pass: a test that fails under load is a bug.
 
 C++ unit tests:
 
@@ -168,7 +168,7 @@ C++ unit tests:
 Read a sibling `.test` in the same directory first and match its style.
 
 - Write bare `query`, without type letters. Expected results start with the column-name header line.
-- Separate records with two blank lines; with one, an expected block swallows the next record.
+- A multiline `statement error` block ends only at two empty lines: with one, it swallows the next record. Query results end at the first empty line.
 - Errors use the block form, matched as exact text:
 
   ```
@@ -317,7 +317,7 @@ Dependencies are git submodules under `third_party/`, usually forks under `githu
 - **CI must pass** and one maintainer must approve before merge.
 - **PR title:** name the exact thing (`fix: jobs and text search dictionaries in nested schemas`, `perf: n-gram prefilter for case-insensitive ASCII letters in ts_regexp`), not `fix: bugs` and not a sentence about the PR.
 - **PR description:** why, not what -- the diff shows what. The problem and who hits it (for a fix, the failing behaviour and the root cause); the approach, and the alternative it beat when that's not obvious; the tests that cover it, and for `perf:` the end-to-end numbers against main with the build and machine load; the `docs/` page added or updated; fork changes by commit SHA. One line per paragraph, no hard wraps.
-- **Other repositories:** refer to another repository's issue or PR as plain text (`serenedb/duckdb PR 89`) or inside backticks, never as `#N`, `owner/repo#N` or its URL: GitHub links all three back from the target. This holds for commit messages, PR descriptions and comments. Link code by commit SHA, not by branch.
+- **Other repositories:** refer to another repository's issue or PR as plain text (`serenedb/duckdb PR 89`) or link it through `redirect.github.com` instead of `github.com`, never as `#N`, `owner/repo#N` or a `github.com` URL: GitHub links all three back from the target. This holds for commit messages, PR descriptions and comments. Link code by commit SHA, not by branch.
 
 ## When you change ...
 
@@ -648,6 +648,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Use C++20 concepts when `static_assert` would be awkward (e.g. constrained overload sets)
 - Avoid SFINAE / `enable_if` in new code
 - `template <typename T>`, never `template <class T>` (pre-commit `fix-template-typename` rewrites it)
+- An `auto` parameter instead of a template parameter when the code doesn't need the type's name
 
 ### Library Preferences
 
@@ -699,13 +700,13 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
   `set.contains(std::string{sv})`).
 - Don't add includes speculatively -- only when clangd or the compiler
   asks for them.
-- Containers with heterogeneous lookup (absl, `irs::containers`): look up with the borrowed key (`map.find(sv)`, `map.try_emplace(sv)`), never a temporary `std::string` key, and never `find` followed by an insert of the same key. DuckDB's maps have no such lookup and need the `std::string`.
+- Look up `std::string` keys with the `std::string_view` you have, never a temporary `std::string`, and never `find` followed by an insert of the same key. Every map and set here takes it in `find` and `contains`: absl and `irs::containers`, DuckDB's `unordered_map`, `unordered_set` and `case_insensitive_*` (absl node containers with transparent hash and equality in our fork), and `std::map`/`std::set` (our libc++ defaults them to the transparent `std::less<>`). absl's `try_emplace` takes it too; `std::map`'s does not.
 - `emplace_back`, with aggregate members passed positionally.
 - A const/non-const accessor pair is one deducing-`this` template.
-- No virtual, hook, field or setting without a named consumer outside its own file; delete settings that stopped doing anything.
+- Add a virtual function, hook, field or setting only together with code outside its own file that uses it; delete a setting once nothing reads it.
 - Caps and limits are `sdb_` SET variables read through `SettingRef`, not constants.
 - Production headers carry no test-only accessors or helpers.
-- SQL is handled by the parser: never detect or rewrite SQL with text or regex matching; patch the parser or transformer instead.
+- SQL the server issues itself is built with DuckDB's C++ API (statements and expressions), not as text for the parser, at least on hot paths. SQL from clients is handled by the parser: never detect or rewrite it with text or regex matching; patch the parser or transformer instead.
 - No time-based heuristics: never gate engine behaviour on measured durations or wall-clock freshness; use exact, structural signals.
 - Never hand-edit generated files; change the source of truth and rerun the generator (see [When you change ...](#when-you-change-)).
 
@@ -728,7 +729,8 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Measure on a quiet machine: check `uptime` and `ps -eo user,pcpu,comm --sort=-pcpu | head` first, never time while a build or test runs on the box, and discard numbers that overlapped one
 - Binary size matters: excessive inlining/templates hurt icache and build times
 - Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `build/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
-- Use the `bench` cmake preset for production-like numbers and `perf` to profile: `bench` omits frame pointers, so `perf record -g` call graphs break there.
+- Measure and profile with the `perf` preset (`-O3` with frame pointers). `bench` is configured like the release packages and omits frame pointers, so `perf record -g` call graphs break there.
+- When optimizing for a benchmark, don't tune for its workload at the expense of the use cases it doesn't measure.
 - A microbench fits when the change is a few well-scoped functions. When the
   change is broader (a whole query path, an end-to-end pipeline, anything that
   doesn't sit neatly inside one fixture), drive a small standalone repro script

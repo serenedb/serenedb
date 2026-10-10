@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -69,15 +68,15 @@ struct CommitMessage {
 
 struct RelationColumn {
   bool is_key = false;
-  std::string name;
+  std::string_view name;
   uint32_t type_oid = 0;
   int32_t type_modifier = -1;
 };
 
 struct RelationMessage {
   uint32_t relation_id = 0;
-  std::string namespace_name;
-  std::string relation_name;
+  std::string_view namespace_name;
+  std::string_view relation_name;
   char replica_identity = 'd';
   std::vector<RelationColumn> columns;
 };
@@ -109,13 +108,13 @@ struct TruncateMessage {
 
 struct TypeMessage {
   uint32_t type_oid = 0;
-  std::string namespace_name;
-  std::string type_name;
+  std::string_view namespace_name;
+  std::string_view type_name;
 };
 
 struct OriginMessage {
   uint64_t origin_lsn = 0;
-  std::string origin_name;
+  std::string_view origin_name;
 };
 
 struct LogicalMessage {

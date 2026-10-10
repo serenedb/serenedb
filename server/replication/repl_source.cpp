@@ -62,14 +62,18 @@
 namespace sdb::replication {
 namespace {
 
-std::vector<PgColumn> ReadTuple(std::string_view tuple) {
+bool ReadTuple(std::string_view tuple, size_t columns,
+               std::vector<PgColumn>& cells) {
   PgTupleReader reader{tuple};
-  std::vector<PgColumn> cols;
-  cols.reserve(reader.Count());
-  while (reader.HasNext()) {
-    cols.push_back(reader.Next());
+  if (reader.Count() != columns) {
+    return false;
   }
-  return cols;
+  cells.clear();
+  cells.reserve(columns);
+  while (reader.HasNext()) {
+    cells.push_back(reader.Next());
+  }
+  return true;
 }
 
 struct ColDeser {
@@ -265,15 +269,24 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildUpdate(
   return stmt;
 }
 
-void AppendKey(std::string& key, const ReplBatch& batch,
-               const std::vector<PgColumn>& cells) {
-  for (const auto i : batch.keys) {
+void BuildKey(std::string& key, const std::vector<size_t>& keys,
+              const std::vector<PgColumn>& cells) {
+  key.clear();
+  for (const auto i : keys) {
     const auto& cell = cells[i];
     key.push_back(static_cast<char>(cell.kind));
     const auto size = static_cast<uint32_t>(cell.data.size());
     key.append(reinterpret_cast<const char*>(&size), sizeof(size));
     key.append(cell.data);
   }
+}
+
+void Touch(ReplBatch& batch, std::string_view key) {
+  message::Writer writer{batch.touched_keys};
+  auto* data = writer.Alloc(key.size());
+  std::memcpy(data, key.data(), key.size());
+  writer.Commit(false);
+  batch.touched.emplace(reinterpret_cast<const char*>(data), key.size());
 }
 
 bool DecodeRow(ReplBatch& batch, const PgOutputMessage& msg,
@@ -284,63 +297,52 @@ bool DecodeRow(ReplBatch& batch, const PgOutputMessage& msg,
   if (!relid || *relid != batch.relid) {
     return false;
   }
-  char op = 0;
-  std::vector<size_t> keys;
-  std::vector<size_t> cols;
-  std::vector<PgColumn> cells;
-  bool full = false;
-  if (!RowShape(msg, *batch.rel, op, keys, cols, cells, full)) {
+  auto& shape = batch.row;
+  if (!ShapeRow(msg, *batch.rel, shape) || !shape.SameAs(batch.shape)) {
     return false;
   }
-  if (op != batch.op || keys != batch.keys || cols != batch.cols ||
-      full != batch.full) {
+  const auto& keys = shape.keys;
+  const auto& cols = shape.cols;
+  if (shape.op == 'I') {
+    for (size_t j = 0; j < cols.size(); ++j) {
+      DecodeCell(dctx, output.data[j], row, shape.cells[cols[j]], deser[j],
+                 cols[j]);
+    }
+    return true;
+  }
+  if (shape.op == 'D') {
+    BuildKey(batch.old_key, keys, shape.cells);
+    if (batch.touched.contains(batch.old_key)) {
+      return false;
+    }
+    Touch(batch, batch.old_key);
+    for (size_t j = 0; j < keys.size(); ++j) {
+      DecodeCell(dctx, output.data[j], row, shape.cells[keys[j]], deser[j],
+                 keys[j]);
+    }
+    return true;
+  }
+  const auto& key_cells =
+    shape.old_cells.empty() ? shape.cells : shape.old_cells;
+  BuildKey(batch.old_key, keys, key_cells);
+  BuildKey(batch.new_key, keys, shape.cells);
+  const bool same_key = batch.old_key == batch.new_key;
+  if (batch.touched.contains(batch.old_key) ||
+      (!same_key && batch.touched.contains(batch.new_key))) {
     return false;
   }
-  if (op == 'D') {
-    std::string key;
-    AppendKey(key, batch, cells);
-    if (!batch.touched.insert(std::move(key)).second) {
-      return false;
-    }
+  Touch(batch, batch.old_key);
+  if (!same_key) {
+    Touch(batch, batch.new_key);
   }
-  if (op == 'I') {
-    for (size_t j = 0; j < batch.cols.size(); ++j) {
-      DecodeCell(dctx, output.data[j], row, cells[batch.cols[j]], deser[j],
-                 batch.cols[j]);
-    }
-  } else if (op == 'D') {
-    for (size_t j = 0; j < batch.keys.size(); ++j) {
-      DecodeCell(dctx, output.data[j], row, cells[batch.keys[j]], deser[j],
-                 batch.keys[j]);
-    }
-  } else {
-    const auto& upd = std::get<UpdateMessage>(msg);
-    std::vector<PgColumn> old_cells;
-    if (upd.has_old) {
-      old_cells = ReadTuple(upd.old_tuple);
-      if (old_cells.size() != cells.size()) {
-        return false;
-      }
-    }
-    const auto& key_cells = upd.has_old ? old_cells : cells;
-    std::string old_key;
-    AppendKey(old_key, batch, key_cells);
-    std::string new_key;
-    AppendKey(new_key, batch, cells);
-    if (batch.touched.contains(old_key) || batch.touched.contains(new_key)) {
-      return false;
-    }
-    batch.touched.insert(std::move(old_key));
-    batch.touched.insert(std::move(new_key));
-    const size_t nkeys = batch.keys.size();
-    for (size_t j = 0; j < nkeys; ++j) {
-      DecodeCell(dctx, output.data[j], row, key_cells[batch.keys[j]], deser[j],
-                 batch.keys[j]);
-    }
-    for (size_t k = 0; k < batch.cols.size(); ++k) {
-      DecodeCell(dctx, output.data[nkeys + k], row, cells[batch.cols[k]],
-                 deser[nkeys + k], batch.cols[k]);
-    }
+  const size_t nkeys = keys.size();
+  for (size_t j = 0; j < nkeys; ++j) {
+    DecodeCell(dctx, output.data[j], row, key_cells[keys[j]], deser[j],
+               keys[j]);
+  }
+  for (size_t k = 0; k < cols.size(); ++k) {
+    DecodeCell(dctx, output.data[nkeys + k], row, shape.cells[cols[k]],
+               deser[nkeys + k], cols[k]);
   }
   return true;
 }
@@ -383,14 +385,17 @@ duckdb::unique_ptr<duckdb::FunctionData> BindReplSource(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("repl_src: no active replication batch"));
   }
+  const auto& shape = batch->shape;
+  return_types.reserve(shape.keys.size() + shape.cols.size());
+  names.reserve(shape.keys.size() + shape.cols.size());
   const auto emit = [&](size_t idx) {
     return_types.push_back(batch->rel->columns[idx].type);
     names.emplace_back(batch->rel->columns[idx].name);
   };
-  for (size_t idx : batch->keys) {
+  for (size_t idx : shape.keys) {
     emit(idx);
   }
-  for (size_t idx : batch->cols) {
+  for (size_t idx : shape.cols) {
     emit(idx);
   }
   auto result = duckdb::make_uniq<ReplSourceBindData>();
@@ -483,77 +488,66 @@ void PresentColumns(const std::vector<PgColumn>& cells,
   }
 }
 
+void KeyColumns(const RelInfo& rel, std::vector<size_t>& out) {
+  for (size_t i = 0; i < rel.columns.size(); ++i) {
+    if (rel.columns[i].is_key) {
+      out.push_back(i);
+    }
+  }
+}
+
 }  // namespace
 
-bool RowShape(const PgOutputMessage& msg, const RelInfo& rel, char& op,
-              std::vector<size_t>& keys, std::vector<size_t>& cols,
-              std::vector<PgColumn>& cells, bool& full) {
-  keys.clear();
-  cols.clear();
-  full = false;
+bool ShapeRow(const PgOutputMessage& msg, const RelInfo& rel, RowShape& shape) {
+  const size_t columns = rel.columns.size();
+  shape.keys.clear();
+  shape.cols.clear();
+  shape.old_cells.clear();
+  shape.full = false;
   if (const auto* m = std::get_if<InsertMessage>(&msg)) {
-    cells = ReadTuple(m->new_tuple);
-    if (cells.size() != rel.columns.size()) {
+    if (!ReadTuple(m->new_tuple, columns, shape.cells)) {
       return false;
     }
-    op = 'I';
-    cols.reserve(rel.columns.size());
-    for (size_t i = 0; i < rel.columns.size(); ++i) {
-      cols.push_back(i);
+    shape.op = 'I';
+    shape.cols.reserve(columns);
+    for (size_t i = 0; i < columns; ++i) {
+      shape.cols.push_back(i);
     }
     return true;
   }
   if (const auto* m = std::get_if<DeleteMessage>(&msg)) {
-    cells = ReadTuple(m->old_tuple);
-    if (cells.size() != rel.columns.size()) {
+    if (!ReadTuple(m->old_tuple, columns, shape.cells)) {
       return false;
     }
-    op = 'D';
+    shape.op = 'D';
     if (m->old_is_key) {
-      for (size_t i = 0; i < rel.columns.size(); ++i) {
-        if (rel.columns[i].is_key) {
-          keys.push_back(i);
-        }
-      }
+      KeyColumns(rel, shape.keys);
     } else {
-      full = true;
-      PresentColumns(cells, keys);
+      shape.full = true;
+      PresentColumns(shape.cells, shape.keys);
     }
-    return !keys.empty();
+    return !shape.keys.empty();
   }
   if (const auto* m = std::get_if<UpdateMessage>(&msg)) {
-    cells = ReadTuple(m->new_tuple);
-    if (cells.size() != rel.columns.size()) {
+    if (!ReadTuple(m->new_tuple, columns, shape.cells) ||
+        (m->has_old && !ReadTuple(m->old_tuple, columns, shape.old_cells))) {
       return false;
     }
-    op = 'U';
-    for (size_t i = 0; i < rel.columns.size(); ++i) {
-      if (cells[i].kind != TupleColKind::Unchanged) {
-        cols.push_back(i);
-      }
-    }
+    shape.op = 'U';
+    PresentColumns(shape.cells, shape.cols);
     if (m->has_old && !m->old_is_key) {
-      full = true;
-      const auto old_cells = ReadTuple(m->old_tuple);
-      if (old_cells.size() != rel.columns.size()) {
-        return false;
-      }
-      PresentColumns(old_cells, keys);
+      shape.full = true;
+      PresentColumns(shape.old_cells, shape.keys);
     } else {
-      for (size_t i = 0; i < rel.columns.size(); ++i) {
-        if (rel.columns[i].is_key) {
-          keys.push_back(i);
-        }
-      }
-      if (!m->has_old) {
-        const auto changed = std::ranges::count_if(
-          cols, [&](size_t i) { return !rel.columns[i].is_key; });
-        if (changed != 0) {
-          std::erase_if(cols, [&](size_t i) { return rel.columns[i].is_key; });
-        }
+      KeyColumns(rel, shape.keys);
+      if (!m->has_old && std::ranges::any_of(shape.cols, [&](size_t i) {
+            return !rel.columns[i].is_key;
+          })) {
+        std::erase_if(shape.cols,
+                      [&](size_t i) { return rel.columns[i].is_key; });
       }
     }
-    return !keys.empty() && !cols.empty();
+    return !shape.keys.empty() && !shape.cols.empty();
   }
   return false;
 }
@@ -574,16 +568,18 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildReplStatement(
 duckdb::unique_ptr<duckdb::SQLStatement> BuildUniqueConflictProbe(
   const ReplBatch& batch, duckdb::ColumnDataCollection& rows) {
   const auto& relation = *batch.rel;
-  const size_t nkeys = batch.keys.size();
+  const auto& shape = batch.shape;
+  const size_t nkeys = shape.keys.size();
   const auto source = [&](size_t column) -> std::optional<std::string> {
-    const auto it = std::ranges::find(batch.cols, column);
-    if (it == batch.cols.end()) {
+    const auto it = std::ranges::find(shape.cols, column);
+    if (it == shape.cols.end()) {
       return std::nullopt;
     }
-    return absl::StrCat("c", nkeys + (it - batch.cols.begin()));
+    return absl::StrCat("c", nkeys + (it - shape.cols.begin()));
   };
   duckdb::vector<duckdb::Identifier> names;
-  for (size_t i = 0; i < nkeys + batch.cols.size(); ++i) {
+  names.reserve(nkeys + shape.cols.size());
+  for (size_t i = 0; i < nkeys + shape.cols.size(); ++i) {
     names.emplace_back(absl::StrCat("c", i));
   }
 
@@ -603,12 +599,12 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildUniqueConflictProbe(
     if (terms.empty()) {
       continue;
     }
-    if (batch.op == 'U') {
+    if (shape.op == 'U') {
       duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> self;
       for (size_t i = 0; i < nkeys; ++i) {
         self.push_back(duckdb::make_uniq<duckdb::ComparisonExpression>(
           duckdb::ExpressionType::COMPARE_DISTINCT_FROM,
-          Column(relation.columns[batch.keys[i]].name, "tgt"),
+          Column(relation.columns[shape.keys[i]].name, "tgt"),
           Column(absl::StrCat("c", i), "src")));
       }
       terms.push_back(duckdb::make_uniq<duckdb::ConjunctionExpression>(

@@ -18,11 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-// Round-trips the client SCRAM state machine (ScramClientSession) against
-// SereneDB's own server-side SCRAM crypto (BuildScramVerifier /
-// VerifyClientProof / ScramServerSignature). If the client half agrees with the
-// server half, a real publisher (postgres, same algorithm) will accept it too.
-
 #include <absl/strings/escaping.h>
 #include <gtest/gtest.h>
 
@@ -36,8 +31,6 @@
 namespace sdb::network::pg {
 namespace {
 
-// Minimal server side: given the client-first-bare and a verifier, produce the
-// server-first + server-final a real server would send, and check the proof.
 struct FakeServer {
   ScramVerifier verifier;
   std::string server_nonce = "serverPART9999";
@@ -51,7 +44,6 @@ struct FakeServer {
            ",i=" + std::to_string(verifier.iterations);
   }
 
-  // Returns the server-final ("v=...") if the proof is valid, else empty.
   std::string VerifyAndFinal(std::string_view client_first_bare,
                              std::string_view server_first,
                              std::string_view client_final) const {
@@ -80,7 +72,7 @@ TEST(ScramClient, RoundTripSucceeds) {
   FakeServer server{*verifier};
 
   ScramClientSession client{"s3cr3t-pw"};
-  const std::string client_first = client.ClientFirst();
+  const std::string client_first = *client.ClientFirst();
   ASSERT_TRUE(client_first.starts_with("n,,n=,r="));
   std::string_view client_first_bare = std::string_view{client_first}.substr(3);
 
@@ -101,13 +93,12 @@ TEST(ScramClient, WrongPasswordRejected) {
   FakeServer server{*verifier};
 
   ScramClientSession client{"wrong-pw"};
-  const std::string client_first = client.ClientFirst();
+  const std::string client_first = *client.ClientFirst();
   std::string_view client_first_bare = std::string_view{client_first}.substr(3);
   const std::string server_first = server.BuildServerFirst(client_first_bare);
   auto client_final = client.ServerFirst(server_first);
   ASSERT_TRUE(client_final.has_value());
 
-  // A wrong password yields a wrong proof, so the server rejects it.
   EXPECT_TRUE(
     server.VerifyAndFinal(client_first_bare, server_first, *client_final)
       .empty());

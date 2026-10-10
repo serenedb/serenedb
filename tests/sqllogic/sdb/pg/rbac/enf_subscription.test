@@ -111,6 +111,46 @@ db error: ERROR: permission denied for database subenf_vault
 
 
 connection default
+statement ok
+GRANT subenf_clickclack TO subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_sub1 OWNER TO subenf_clickclack;
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
+connection c_vault_admin database=subenf_vault
+statement ok
+CREATE SUBSCRIPTION subenf_nopw CONNECTION 'host=localhost dbname=mydb' PUBLICATION subenf_pub WITH (connect = false, slot_name = NONE, password_required = false);
+
+
+connection c_vault_admin database=subenf_vault
+statement ok
+ALTER SUBSCRIPTION subenf_nopw OWNER TO subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_nopw SET (binary = true);
+----
+db error: ERROR: password_required=false is superuser-only
+HINT: Subscriptions with the password_required option set to false may only be created or modified by the superuser.
+
+
+connection c_vault_admin database=subenf_vault
+statement ok
+DROP SUBSCRIPTION subenf_nopw;
+
+
+connection default
+statement ok
+REVOKE subenf_clickclack FROM subenf_vedernikoff;
+
+
+connection default
 statement error
 DROP ROLE subenf_vedernikoff;
 ----

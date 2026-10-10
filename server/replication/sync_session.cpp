@@ -30,6 +30,7 @@
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -39,6 +40,8 @@
 #include <utility>
 
 #include "auth/role_closure.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/pg/wire_frames.h"
 #include "pg/commands/create_subscription.h"
@@ -213,6 +216,12 @@ bool SyncSession::SetupApplyConnection() {
       : std::string_view{_target.owner_name};
   const duckdb::idx_t role =
     _target.owner_name.empty() ? pg::kRootUser : _target.owner_id;
+  _database =
+    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+      .GetDatabase(duckdb::Identifier{_target.database_name});
+  if (!_database) {
+    return false;
+  }
   this->_conn = irs::DuckDBEngine::Instance().CreateConnection();
   duckdb::PhysicalSet::SetVariable(
     *this->_conn->context, duckdb::Identifier{"session_replication_role"},
@@ -278,17 +287,12 @@ bool SyncSession::BeginSync() {
   }
   std::vector<std::string> missing;
   std::vector<std::string> generated;
+  const auto& columns = local->GetColumns();
   for (const auto& name : table.columns) {
-    const duckdb::ColumnDefinition* found = nullptr;
-    for (const auto& column : local->GetColumns().Logical()) {
-      if (column.Name().GetIdentifierName() == name) {
-        found = &column;
-        break;
-      }
-    }
-    if (found == nullptr) {
+    const duckdb::Identifier column{name};
+    if (!columns.ColumnExists(column)) {
       missing.push_back(name);
-    } else if (found->Generated()) {
+    } else if (columns.GetColumn(column).Generated()) {
       generated.push_back(name);
     }
   }
@@ -319,35 +323,42 @@ yaclib::Task<bool> SyncSession::RunLocalCopy() {
 }
 
 bool SyncSession::CommitSync() {
-  auto& context = *this->_conn->context;
-  auto& catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::Identifier{_target.database_name});
-  const auto transaction = catalog.GetCatalogTransaction(context);
-  auto entry = catalog.Cast<duckdb::DuckCatalog>().GetOidIndex().GetVisible(
-    _target.subscription_oid, transaction.view);
-  if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("subscription \"", _target.subscription_name,
-                            "\" does not exist"));
-  }
-  duckdb::DuckTransaction::Get(context, catalog)
-    .PushRelationSync(entry->Cast<duckdb::ReplicationLsnEntry>(),
-                      _sync_table->sync_id, _sync_lsn);
+  duckdb::DuckTransaction::Get(*this->_conn->context, *_database)
+    .PushRelationSync(RequireSubscription(), _sync_table->sync_id, _sync_lsn);
   _in_txn = false;
   if (auto error = this->_txn_state->Commit()) {
     ApplyFailed(std::move(*error));
     return false;
   }
-  for (auto& relation : _target.relations) {
-    if (relation.sync_id == _sync_table->sync_id) {
-      relation.state = 'r';
-      relation.lsn = _sync_lsn;
-    }
-  }
   SDB_INFO(REPLICATION, "subscription '", _target.subscription_name,
            "' synchronized table \"", _sync_table->schema, ".",
            _sync_table->table, "\" at ", pg::FormatLsn(_sync_lsn));
   return true;
+}
+
+catalog::SereneDBCatalog& SyncSession::Catalog() const {
+  return _database->GetCatalog().Cast<catalog::SereneDBCatalog>();
+}
+
+catalog::SubscriptionCatalogEntry* SyncSession::VisibleSubscription() const {
+  auto& catalog = Catalog();
+  auto entry = catalog.GetOidIndex().GetVisible(
+    _target.subscription_oid,
+    catalog.GetCatalogTransaction(*this->_conn->context).view);
+  if (!entry || entry->type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
+    return nullptr;
+  }
+  return &entry->Cast<catalog::SubscriptionCatalogEntry>();
+}
+
+catalog::SubscriptionCatalogEntry& SyncSession::RequireSubscription() const {
+  auto* subscription = VisibleSubscription();
+  if (!subscription) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                    ERR_MSG("subscription \"", _target.subscription_name,
+                            "\" does not exist"));
+  }
+  return *subscription;
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> SyncSession::LookupTable(
@@ -384,8 +395,8 @@ void SyncSession::UseRole(duckdb::idx_t table_owner) {
   if (!_target.run_as_owner && table_owner != role &&
       table_owner != pg::kInvalidOid) {
     auto& context = *this->_conn->context;
-    if (!auth::ClosureFor(&context, role)->is_superuser &&
-        !auth::ClosureFor(&context, role)->CanSet(table_owner)) {
+    const auto closure = auth::ClosureFor(&context, role);
+    if (!closure->is_superuser && !closure->CanSet(table_owner)) {
       const auto roles = auth::RolesOf(&context);
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),

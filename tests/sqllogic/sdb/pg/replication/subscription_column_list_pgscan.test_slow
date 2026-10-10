@@ -1,0 +1,62 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rcol_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rcol_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rcol\_%''');
+
+
+statement ok
+CALL postgres_execute('rcol_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rcol_pub_ab; DROP PUBLICATION IF EXISTS rcol_pub_ab2; DROP PUBLICATION IF EXISTS rcol_pub_all; DROP TABLE IF EXISTS rcol_t; END $$');
+
+
+statement ok
+CALL postgres_execute('rcol_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rcol_t (id int PRIMARY KEY, a int, b int); INSERT INTO rcol_t SELECT g, g * 10, g * 100 FROM generate_series(1, 3) g; CREATE PUBLICATION rcol_pub_ab FOR TABLE rcol_t (id, a); CREATE PUBLICATION rcol_pub_ab2 FOR TABLE rcol_t (a, id); CREATE PUBLICATION rcol_pub_all FOR TABLE rcol_t; END $$');
+
+
+statement ok
+CREATE TABLE rcol_t (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+
+
+statement error
+CREATE SUBSCRIPTION rcol_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rcol_pub_ab, rcol_pub_all WITH (slot_name = 'rcol_bad');
+----
+db error: ERROR: cannot use different column lists for table "public.rcol_t" in different publications
+
+
+statement ok
+CREATE SUBSCRIPTION rcol_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rcol_pub_ab, rcol_pub_ab2 WITH (slot_name = 'rcol_sub');
+
+
+query ok retry 240 backoff 250ms
+SELECT id, a, b FROM rcol_t ORDER BY id;
+----
+id	a	b
+1	10	NULL
+2	20	NULL
+3	30	NULL
+
+
+statement ok
+CALL postgres_execute('rcol_${__DATABASE__}', 'INSERT INTO rcol_t VALUES (4, 40, 400)');
+
+
+query ok retry 240 backoff 250ms
+SELECT id, a, b FROM rcol_t WHERE id = 4;
+----
+id	a	b
+4	40	NULL
+
+
+statement ok
+DROP SUBSCRIPTION rcol_sub;
+
+
+statement ok
+CALL postgres_execute('rcol_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rcol_pub_ab; DROP PUBLICATION rcol_pub_ab2; DROP PUBLICATION rcol_pub_all; DROP TABLE rcol_t; END $$');
+
+
+statement ok
+DETACH rcol_${__DATABASE__};

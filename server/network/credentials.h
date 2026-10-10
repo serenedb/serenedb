@@ -103,10 +103,6 @@ bool RandomBytes(std::span<uint8_t> out);
 
 std::optional<std::string> Base64Decode(std::string_view text);
 
-// The client half of the SCRAM-SHA-256 exchange: derived from the cleartext
-// password plus the server-supplied salt/iterations and the AuthMessage.
-// `client_proof` is the p= sent in client-final; `server_signature` is the v=
-// expected back in server-final (constant-time compared).
 struct ScramClientProof {
   std::array<uint8_t, kScramKeyLen> client_proof{};
   std::array<uint8_t, kScramKeyLen> server_signature{};

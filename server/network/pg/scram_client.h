@@ -28,37 +28,21 @@
 
 namespace sdb::network::pg {
 
-// The client half of the SCRAM-SHA-256 SASL exchange, the mirror of the
-// server-side verifier in credentials.cpp. Drives the three client steps a
-// pg-wire client runs to authenticate to a publisher: emit client-first, turn
-// server-first into client-final (deriving the proof from the password + the
-// server's salt/iterations), and verify server-final. Pure state -- no IO.
 class ScramClientSession {
  public:
   static constexpr std::string_view kMechanism = "SCRAM-SHA-256";
 
   explicit ScramClientSession(std::string password);
 
-  // client-first-message: "n,,n=,r=<client-nonce>". The username is left empty
-  // (as libpq does): the publisher takes it from the StartupMessage. Called
-  // once; the nonce is generated here.
-  std::string ClientFirst();
-
-  // Consume server-first-message "r=<nonce>,s=<b64 salt>,i=<iters>" and produce
-  // client-final-message "c=biws,r=<nonce>,p=<b64 proof>". nullopt on a
-  // malformed message, a nonce that does not extend ours, or a crypto failure.
+  std::optional<std::string> ClientFirst();
   std::optional<std::string> ServerFirst(std::string_view server_first);
-
-  // Verify server-final-message "v=<b64 server-signature>" against the value we
-  // derived in ServerFirst. Must be called after a successful ServerFirst.
   bool ServerFinal(std::string_view server_final);
 
  private:
   std::string _password;
   std::string _client_nonce;
-  std::string _client_first_bare;  // "n=,r=<nonce>"
-  std::array<uint8_t, 32> _expected_server_sig{};
-  bool _have_server_sig = false;
+  std::string _client_first_bare;
+  std::optional<std::array<uint8_t, 32>> _expected_server_sig;
 };
 
 }  // namespace sdb::network::pg

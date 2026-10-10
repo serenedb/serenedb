@@ -52,7 +52,7 @@ The publisher may require `trust`, `password`, `md5` or `scram-sha-256` authenti
 | `enabled` | `true` | Start replicating as soon as the subscription is committed. |
 | `create_slot` | `true` | Create the replication slot on the publisher. With `false`, the slot must already exist. |
 | `slot_name` | the subscription name | Name of the publisher's replication slot. `NONE` means no slot, and requires `enabled = false` and `create_slot = false`. |
-| `copy_data` | `true` | Copy the rows that already exist in the published tables before streaming changes. Row filters and column lists of the publications are honored. |
+| `copy_data` | `true` | Copy the rows that already exist in the published tables before streaming changes. Row filters and column lists of the publications are honored; a table that two publications send with different column lists fails to copy, as in PostgreSQL. |
 | `binary` | `false` | Ask the publisher to send values in binary format. |
 | `origin` | `any` | `none` asks the publisher to send only changes that did not themselves arrive through replication. |
 | `disable_on_error` | `false` | Disable the subscription when applying a change fails, instead of reconnecting and retrying. |
@@ -81,13 +81,13 @@ ALTER SUBSCRIPTION name RENAME TO new_name
 ALTER SUBSCRIPTION name OWNER TO new_owner
 ```
 
-Only the owner of a subscription may alter it. Every change takes effect when the transaction commits: a running subscription reconnects with the new settings, a disabled one stays disconnected until `ENABLE`.
+Only the owner of a subscription may alter it, and only a superuser may alter one with `password_required = false`. Every change takes effect when the transaction commits: a running subscription reconnects with the new settings, a disabled one stays disconnected until `ENABLE`.
 
 - `SET (...)` accepts `slot_name`, `binary`, `streaming`, `origin`, `disable_on_error`, `password_required`, `run_as_owner`, `failover` and `synchronous_commit`. `slot_name = NONE` is only allowed on a disabled subscription. `failover` is only allowed on a disabled subscription with a slot, and changes the slot on the publisher.
 - `SET`, `ADD` and `DROP PUBLICATION` change the publications the subscription asks for. With the default `refresh = true` the subscription must be enabled, the statement cannot run inside a transaction block, and the tables are refreshed as by `REFRESH PUBLICATION`; `refresh = false` only records the change. A subscription keeps at least one publication.
 - `REFRESH PUBLICATION [ WITH ( copy_data = bool ) ]` reads the tables of the publications again. Tables that are new to the subscription are copied (unless `copy_data = false`) and then replicated; tables no longer published stop being replicated.
 - `SKIP (lsn = 'X/Y')` makes the subscription skip the remote transaction that finishes at that LSN, for example one that fails to apply because of a constraint violation. The LSN must be past the subscription's current position, and only a superuser may set it. `NONE` clears it.
-- `OWNER TO` requires being able to `SET ROLE` to the new owner.
+- `OWNER TO` requires being able to `SET ROLE` to the new owner and `CREATE` on the current database.
 
 ## `DROP SUBSCRIPTION`
 

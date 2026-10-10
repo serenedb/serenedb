@@ -42,12 +42,12 @@ class Cursor {
   uint32_t Int32() { return absl::big_endian::Load32(Take(4)); }
   uint64_t Int64() { return absl::big_endian::Load64(Take(8)); }
 
-  std::string String() {
+  std::string_view String() {
     const auto end = _buf.find('\0', _pos);
     if (end == std::string_view::npos) {
       Malformed("unterminated string");
     }
-    std::string result{_buf.substr(_pos, end - _pos)};
+    const auto result = _buf.substr(_pos, end - _pos);
     _pos = end + 1;
     return result;
   }
@@ -267,7 +267,8 @@ PgOutputMessage DecodePgOutput(std::string_view payload, bool in_stream) {
       return m;
     }
     default:
-      Malformed(std::string{"unsupported message type \""} + tag + "\"");
+      Malformed(absl::StrCat("unsupported message type \"",
+                             std::string_view{&tag, 1}, "\""));
   }
 }
 

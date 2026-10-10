@@ -31,7 +31,9 @@ namespace sdb::pg {
 
 template<>
 MaterializedData SystemTableSnapshot<PgStatSubscriptionStats>::GetTableData() {
-  std::vector<replication::SubscriptionEngine::SubStats> stats;
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               replication::SubscriptionEngine::SubStats>
+    stats;
   if (auto* engine = replication::SubscriptionEngine::gInstance) {
     stats = engine->Stats(GetDatabase().GetName().GetIdentifierName());
   }
@@ -41,11 +43,8 @@ MaterializedData SystemTableSnapshot<PgStatSubscriptionStats>::GetTableData() {
     .Scan(database.GetCatalogTransaction(_context),
           [&](duckdb::CatalogEntry& entry) {
             replication::SubscriptionEngine::SubStats stat;
-            for (const auto& candidate : stats) {
-              if (candidate.subscription == entry.oid) {
-                stat = candidate;
-                break;
-              }
+            if (const auto it = stats.find(entry.oid); it != stats.end()) {
+              stat = it->second;
             }
             const auto count = [](uint64_t value) {
               return static_cast<int64_t>(value);

@@ -34,6 +34,8 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -155,7 +157,7 @@ constexpr Allowed kSetOptions =
 
 constexpr Allowed kPublicationOptions = Allowed::Refresh | Allowed::CopyData;
 
-SubscriptionOptions ParseOptions(const duckdb::named_parameter_map_t& options,
+SubscriptionOptions ParseOptions(const duckdb::named_argument_map_t& options,
                                  Allowed allowed) {
   SubscriptionOptions result;
   for (const auto& [key, value] : options) {
@@ -256,6 +258,30 @@ SubscriptionOptions ParseOptions(const duckdb::named_parameter_map_t& options,
   return result;
 }
 
+[[noreturn]] void ThrowPasswordNotRequired() {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+    ERR_MSG("password_required=false is superuser-only"),
+    ERR_HINT("Subscriptions with the password_required option set to "
+             "false may only be created or modified by the superuser."));
+}
+
+void RequireCreateOnDatabase(ConnectionContext& conn_ctx) {
+  auto& context = conn_ctx.GetClientContext();
+  auto& cluster = catalog::ClusterOf(context);
+  auto database =
+    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+      .GetEntry(cluster.GetCatalogTransaction(context),
+                duckdb::DatabaseManager::GetDefaultDatabase(context));
+  if (database && !auth::ClosureFor(&context, conn_ctx.GetRoleId())
+                     ->Can(duckdb::CatalogType::DATABASE_ENTRY,
+                           database->permissions, duckdb::AclMode::Create)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for database ",
+                            database->name.GetIdentifierName()));
+  }
+}
+
 void RequireExclusive(bool conflict, std::string_view a, std::string_view b) {
   if (conflict) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
@@ -280,11 +306,7 @@ void ApplySetOptions(ConnectionContext& conn_ctx,
   }
   if (options.password_required) {
     if (!*options.password_required && !IsSuperuser(conn_ctx)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-        ERR_MSG("password_required=false is superuser-only"),
-        ERR_HINT("Subscriptions with the password_required option set to "
-                 "false may only be created or modified by the superuser."));
+      ThrowPasswordNotRequired();
     }
     info.password_required = *options.password_required;
   }
@@ -389,11 +411,24 @@ std::vector<duckdb::SubscriptionRelation> FetchRelations(
           !co_await call.Query(OtherOriginQuery(info), &other_origins)) {
         co_return false;
       }
+      const auto list = PublicationList(info.publications);
+      if (call.ServerVersion() >= 16) {
+        co_return co_await call.Query(
+          absl::StrCat("SELECT DISTINCT n.nspname, c.relname, gpt.attrs\n"
+                       "  FROM pg_class c\n"
+                       "  JOIN pg_namespace n ON n.oid = c.relnamespace\n"
+                       "  JOIN (SELECT (pg_get_publication_tables(VARIADIC "
+                       "array_agg(pubname::text))).*\n"
+                       "          FROM pg_publication WHERE pubname IN (",
+                       list, ")) AS gpt ON gpt.relid = c.oid"),
+          &tables);
+      }
       co_return co_await call.Query(
-        absl::StrCat("SELECT DISTINCT t.schemaname, t.tablename\n"
-                     "  FROM pg_catalog.pg_publication_tables t\n"
+        absl::StrCat("SELECT DISTINCT t.schemaname, t.tablename",
+                     call.ServerVersion() >= 15 ? ", t.attnames" : "",
+                     "\n  FROM pg_catalog.pg_publication_tables t\n"
                      " WHERE t.pubname IN (",
-                     PublicationList(info.publications), ")"),
+                     list, ")"),
         &tables);
     });
   const auto name = info.GetQualifiedName().Name().GetIdentifierName();
@@ -454,9 +489,18 @@ std::vector<duckdb::SubscriptionRelation> FetchRelations(
   const auto database = duckdb::DatabaseManager::GetDefaultDatabase(context);
   std::vector<duckdb::SubscriptionRelation> relations;
   relations.reserve(tables.size());
+  irs::containers::FlatHashSet<std::pair<std::string_view, std::string_view>>
+    seen;
+  seen.reserve(tables.size());
   for (const auto& row : tables) {
     if (row.size() < 2 || !row[0] || !row[1]) {
       continue;
+    }
+    if (!seen.emplace(*row[0], *row[1]).second) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("cannot use different column lists for table \"", *row[0], ".",
+                *row[1], "\" in different publications"));
     }
     auto table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
       context,
@@ -559,14 +603,20 @@ void AlterSlotFailover(ConnectionContext& conn_ctx,
 void RefreshRelations(ConnectionContext& conn_ctx,
                       duckdb::CreateSubscriptionInfo& info, bool copy_data) {
   auto fetched = FetchRelations(conn_ctx, info, copy_data);
+  irs::containers::FlatHashMap<std::pair<std::string_view, std::string_view>,
+                               size_t>
+    current;
+  current.reserve(info.relations.size());
+  for (size_t i = 0; i < info.relations.size(); ++i) {
+    current.try_emplace(std::pair{std::string_view{info.relations[i].schema},
+                                  std::string_view{info.relations[i].table}},
+                        i);
+  }
   for (auto& relation : fetched) {
-    const auto it = std::ranges::find_if(
-      info.relations, [&](const duckdb::SubscriptionRelation& current) {
-        return current.schema == relation.schema &&
-               current.table == relation.table;
-      });
-    if (it != info.relations.end()) {
-      relation = *it;
+    const auto it = current.find(std::pair{std::string_view{relation.schema},
+                                           std::string_view{relation.table}});
+    if (it != current.end()) {
+      relation = info.relations[it->second];
     } else {
       relation.state = copy_data ? 'i' : 'r';
     }
@@ -623,13 +673,13 @@ duckdb::unique_ptr<duckdb::CreateSubscriptionInfo> DefinitionOf(
 }
 
 void CheckPublicationNames(const std::vector<std::string>& publications) {
-  for (size_t i = 0; i < publications.size(); ++i) {
-    for (size_t j = 0; j < i; ++j) {
-      if (publications[i] == publications[j]) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
-                        ERR_MSG("publication name \"", publications[i],
-                                "\" used more than once"));
-      }
+  irs::containers::FlatHashSet<std::string_view> seen;
+  seen.reserve(publications.size());
+  for (const auto& publication : publications) {
+    if (!seen.emplace(publication).second) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DUPLICATE_OBJECT),
+        ERR_MSG("publication name \"", publication, "\" used more than once"));
     }
   }
 }
@@ -659,7 +709,7 @@ std::string FormatLsn(uint64_t lsn) {
 void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
                         std::string_view conninfo,
                         std::vector<std::string> publications,
-                        const duckdb::named_parameter_map_t& options_map) {
+                        const duckdb::named_argument_map_t& options_map) {
   auto options = ParseOptions(options_map, kCreateOptions);
   CheckPublicationNames(publications);
 
@@ -694,18 +744,7 @@ void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
 
   auto& context = conn_ctx.GetClientContext();
   const auto role = conn_ctx.GetRoleId();
-  auto& cluster = catalog::ClusterOf(context);
-  auto database =
-    cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-      .GetEntry(cluster.GetCatalogTransaction(context),
-                duckdb::DatabaseManager::GetDefaultDatabase(context));
-  if (database && !auth::ClosureFor(&context, role)
-                     ->Can(duckdb::CatalogType::DATABASE_ENTRY,
-                           database->permissions, duckdb::AclMode::Create)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for database ",
-                            database->name.GetIdentifierName()));
-  }
+  RequireCreateOnDatabase(conn_ctx);
 
   duckdb::CreateSubscriptionInfo info;
   info.SetName(duckdb::Identifier{name});
@@ -810,12 +849,15 @@ void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
 void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
                        std::string_view action, std::string_view argument,
                        std::vector<std::string> publications,
-                       const duckdb::named_parameter_map_t& options_map) {
+                       const duckdb::named_argument_map_t& options_map) {
   auto& context = conn_ctx.GetClientContext();
   auto& catalog = CatalogOf(conn_ctx);
   auto& subscription =
     RequireSubscription(catalog, catalog.GetCatalogTransaction(context), name);
   RequireOwner(conn_ctx, subscription);
+  if (!subscription.Config().password_required && !IsSuperuser(conn_ctx)) {
+    ThrowPasswordNotRequired();
+  }
   const auto oid = subscription.oid;
   auto definition = DefinitionOf(subscription);
 
@@ -931,12 +973,16 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("role \"", argument, "\" does not exist"));
     }
+    if (*owner == subscription.permissions.owner) {
+      return;
+    }
     auto closure = auth::ClosureFor(&context, conn_ctx.GetRoleId());
     if (*owner != conn_ctx.GetRoleId() && !closure->is_superuser &&
         !closure->CanSet(*owner)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("must be able to SET ROLE \"", argument, "\""));
     }
+    RequireCreateOnDatabase(conn_ctx);
     duckdb::AlterPermissionsInfo alter{
       duckdb::CatalogType::SUBSCRIPTION_ENTRY,
       duckdb::QualifiedName(subscription.name)};

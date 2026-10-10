@@ -1,0 +1,129 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rdis_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rsub_dis''');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'DROP PUBLICATION IF EXISTS rsub_dis_pub');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'DROP TABLE IF EXISTS rsub_dis_rows');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'CREATE TABLE rsub_dis_rows (id integer PRIMARY KEY)');
+
+onlyif serenedb
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'CREATE PUBLICATION rsub_dis_pub FOR TABLE rsub_dis_rows');
+
+onlyif serenedb
+statement ok
+CREATE TABLE rsub_dis_rows (id INTEGER PRIMARY KEY);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION rsub_dis CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsub_dis_pub WITH (copy_data = false);
+
+onlyif serenedb
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rdis_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_dis'' AND active');
+----
+n
+1
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION rsub_dis DISABLE;
+
+onlyif serenedb
+query ok retry 120 backoff 250ms
+SELECT count(*) AS n FROM postgres_query('rdis_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_dis'' AND NOT active');
+----
+n
+1
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname, subenabled FROM pg_subscription;
+----
+subname	subenabled
+rsub_dis	f
+
+onlyif serenedb
+connection after_crash
+statement ok
+ATTACH IF NOT EXISTS 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rdis_${__DATABASE__} (TYPE postgres);
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'INSERT INTO rsub_dis_rows SELECT g FROM generate_series(1, 100) g');
+
+sleep 2s
+
+onlyif serenedb
+connection after_crash
+query
+SELECT count(*) AS n FROM postgres_query('rdis_${__DATABASE__}', 'SELECT 1 FROM pg_replication_slots WHERE slot_name = ''rsub_dis'' AND active');
+----
+n
+0
+
+onlyif serenedb
+connection after_crash
+query
+SELECT count(*) AS n FROM rsub_dis_rows;
+----
+n
+0
+
+onlyif serenedb
+connection after_crash
+statement ok
+ALTER SUBSCRIPTION rsub_dis ENABLE;
+
+onlyif serenedb
+connection after_crash
+query ok retry 240 backoff 250ms
+SELECT count(*) AS n FROM rsub_dis_rows;
+----
+n
+100
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP SUBSCRIPTION rsub_dis;
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'DROP PUBLICATION rsub_dis_pub');
+
+onlyif serenedb
+connection after_crash
+statement ok
+CALL postgres_execute('rdis_${__DATABASE__}', 'DROP TABLE rsub_dis_rows');
+
+onlyif serenedb
+connection after_crash
+statement ok
+DETACH rdis_${__DATABASE__};

@@ -37,7 +37,7 @@ std::string FormatLsn(uint64_t lsn);
 void CreateSubscription(ConnectionContext& conn_ctx, std::string_view name,
                         std::string_view conninfo,
                         std::vector<std::string> publications,
-                        const duckdb::named_parameter_map_t& options);
+                        const duckdb::named_argument_map_t& options);
 
 void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
                       bool missing_ok, bool cascade);
@@ -45,6 +45,6 @@ void DropSubscription(ConnectionContext& conn_ctx, std::string_view name,
 void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
                        std::string_view action, std::string_view argument,
                        std::vector<std::string> publications,
-                       const duckdb::named_parameter_map_t& options);
+                       const duckdb::named_argument_map_t& options);
 
 }  // namespace sdb::pg

@@ -6,6 +6,6 @@ argument-hint: "[PR-number | branch]"
 
 # PR title and description
 
-Write them by CONTRIBUTING.md "Branching, commits, PRs" (prefixes, title, description, references to other repositories); the template is `.github/PULL_REQUEST_TEMPLATE.md`.
+Write them by `.claude/rules/pull-requests.md` (prefixes, title, description, references to other repositories); the template is `.github/PULL_REQUEST_TEMPLATE.md`.
 
 Show the title and body to the user before creating or editing the PR.

@@ -264,7 +264,7 @@ The suite runs with every other suite when duckdb or a dependency they share cha
 
 ### Changing the DuckDB on-disk format
 
-A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [CONTRIBUTING.md](../../CONTRIBUTING.md#duckdb-database-files), then:
+A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored generated columns, the dict_fsst plus modes, owners and privileges, ...) never goes into one. Follow the rules in [Storage compatibility](../../.claude/rules/storage.md#duckdb-database-files), then:
 
 - if DuckDB can store the change, add its DDL/DML to `base.sql` or `changes.sql` and a query to `check_base.sql` or `check_changes.sql`;
 - if it cannot, add the refusal to `third_party/duckdb/test/sql/storage/serenedb_state_in_duckdb_file.test`;
@@ -306,7 +306,7 @@ The suite then runs in three `unittest` calls: the extension's tests without the
   it. Syncing with upstream follows the update recipe above, not cherry-picks.
 - **No comments** in fork code, and no provenance markers ("SereneDB fork:").
 - Regeneration, commits, the fork PR and the gitlink bump:
-  [CONTRIBUTING.md "When you change ..."](../../CONTRIBUTING.md#when-you-change-).
+  ["When you change ..."](../../.claude/rules/when-you-change.md).
 
 ## Traps
 

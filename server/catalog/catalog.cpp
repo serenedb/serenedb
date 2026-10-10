@@ -30,11 +30,13 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
+#include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/function/table/table_scan.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
+#include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
@@ -44,6 +46,7 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression_binder/index_binder.hpp>
 #include <duckdb/planner/operator/logical_create_index.hpp>
 #include <duckdb/planner/operator/logical_create_table.hpp>
@@ -310,9 +313,22 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     }
     duckdb::IndexBinder where_binder(*where_bind, binder.context);
     auto where_copy = info.where_clause->Copy();
-    const auto type = where_binder.Bind(where_copy)->GetReturnType();
-    if (type != duckdb::LogicalType::BOOLEAN &&
-        type.id() != duckdb::LogicalTypeId::SQLNULL) {
+    auto where = where_binder.Bind(where_copy);
+    if (where->IsFoldable() && where->IsConsistent()) {
+      const auto value = duckdb::ExpressionExecutor::EvaluateScalar(
+        binder.context,
+        *duckdb::BoundCastExpression::AddCastToType(
+          binder.context, std::move(where), duckdb::LogicalType::BOOLEAN));
+      if (value.IsNull()) {
+        info.where_clause = duckdb::ConstantExpression::Null();
+      } else if (value.GetValue<bool>()) {
+        info.where_clause = nullptr;
+      } else {
+        info.where_clause = duckdb::ConstantExpression::Boolean(false);
+      }
+    } else if (const auto& type = where->GetReturnType();
+               type != duckdb::LogicalType::BOOLEAN &&
+               type.id() != duckdb::LogicalTypeId::SQLNULL) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
         ERR_MSG("argument of WHERE must be type boolean, not type ",

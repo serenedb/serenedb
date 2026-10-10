@@ -63,6 +63,8 @@ CREATE INDEX recent_errors ON logs USING inverted(message log_dict)
 
 The predicate is a boolean expression over the table's columns; a row whose predicate evaluates to `NULL` is treated as non-matching, following PostgreSQL semantics. DML keeps membership current — rows enter and leave the index as updates move them across the predicate boundary — and queries against the index only ever see matching rows.
 
+A constant predicate, one that reads no column and calls no function whose result can change (such as `now()`), is evaluated once by `CREATE INDEX`, the way a query's `WHERE` evaluates it. `WHERE 'true'` or `WHERE 1 + 1 = 2` builds an ordinary index, which `pg_indexes` shows without a `WHERE`; `WHERE 'f'` is stored as `WHERE false` and the index stays empty. A string that is not a boolean fails as in a query: `WHERE 'abc'` raises `Could not convert string 'abc' to BOOL`. This holds for plain indexes too.
+
 Partial indexes are an inverted-index feature. A plain (ART) `CREATE INDEX … WHERE …` is accepted, but the predicate filters only the rows present when the index is built; see [PostgreSQL compatibility](../../../compatibility/core-sql-compatibility.md#indexes).
 
 ## Indexing tables and views

@@ -496,6 +496,50 @@ CREATE INDEX pe_null ON pe_t USING inverted(label) WHERE NULL;
 
 
 statement ok
+CREATE INDEX pe_true_text ON pe_t USING inverted(label) WHERE 'true';
+
+
+statement ok
+CREATE INDEX pe_false_text ON pe_t USING inverted(label) WHERE 'f';
+
+
+statement ok
+CREATE INDEX pe_typed_text ON pe_t USING inverted(label) WHERE 'true'::text AND 1 + 1 = 2;
+
+
+statement ok
+CREATE INDEX pe_art_text ON pe_t (label) WHERE 'yes';
+
+
+statement ok
+CREATE INDEX pe_art_false_text ON pe_t (x) WHERE NOT 'true';
+
+
+statement error
+CREATE INDEX pe_bad_text ON pe_t USING inverted(label) WHERE 'abc';
+----
+db error: ERROR: Could not convert string 'abc' to BOOL
+
+
+statement error
+CREATE INDEX pe_bad_art_text ON pe_t (label) WHERE 'abc';
+----
+db error: ERROR: Could not convert string 'abc' to BOOL
+
+
+query
+SELECT indexname, regexp_extract(indexdef, 'WHERE .*$') AS predicate FROM pg_indexes WHERE indexname IN ('pe_null', 'pe_true_text', 'pe_false_text', 'pe_typed_text', 'pe_art_text', 'pe_art_false_text') ORDER BY indexname;
+----
+indexname	predicate
+pe_art_false_text	WHERE false
+pe_art_text	(empty)
+pe_false_text	WHERE false
+pe_null	WHERE NULL
+pe_true_text	(empty)
+pe_typed_text	(empty)
+
+
+statement ok
 INSERT INTO pe_t VALUES (10, 'ten');
 
 
@@ -508,6 +552,13 @@ SELECT (SELECT count(*) FROM pe_empty_table) AS empty_table, (SELECT count(*) FR
 ----
 empty_table	below_range	never	null_predicate
 1	1	0	0
+
+
+query
+SELECT (SELECT count(*) FROM pe_true_text) AS true_text, (SELECT count(*) FROM pe_false_text) AS false_text, (SELECT count(*) FROM pe_typed_text) AS typed_text;
+----
+true_text	false_text	typed_text
+3	0	3
 
 
 statement ok

@@ -36,7 +36,7 @@ else
 fi
 drivers=(psycopg3 psycopg2 asyncpg)
 parallel=(test_psql_mode)
-extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_missing_database test_prepared_alter_rebind test_progress test_drop_database_sessions)
+extras=(test_copy test_shell_copy test_pgwire_raw test_search_params test_search_range_params test_dictionary_chains test_es_api test_mcp_api test_otel_api test_otel_startup test_docs_build test_sqlalchemy test_http_session test_http_concurrent_ingest test_http_raw test_absl_internal_flags test_commit_aborted_tag test_ddl_command_tags test_failed_checkpoint_marker test_missing_database test_prepared_alter_rebind test_progress test_drop_database_sessions)
 
 if [[ "${SDB_DRV_EXCLUSIVE:-false}" == "true" ]]; then
 	for name in "${drivers[@]/#/test_}" "${parallel[@]}" "${extras[@]}"; do

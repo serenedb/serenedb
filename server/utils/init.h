@@ -23,6 +23,5 @@
 namespace sdb::app {
 
 void InitProcess(const char* argv0);
-void ShutdownGlobals();
 
 }  // namespace sdb::app

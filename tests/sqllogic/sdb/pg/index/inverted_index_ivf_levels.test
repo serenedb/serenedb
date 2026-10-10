@@ -1,18 +1,5 @@
 control substitution on
 
-# ============================================================================
-# Multi-level IVF centroid trees via sdb_ivf_posting_size.
-#
-# sdb_ivf_posting_size is the leaf cap t (target posting-list size, in vectors),
-# captured at CREATE INDEX. A tiny t drives the leaf count L = N/t above the
-# build-time per-node fan-out cap (1024); the top-down build then square-roots L
-# down to the cap over multiple layers, so the tree becomes multi-level and the
-# deep-descent read path is exercised. Points lie on a line so every query has a
-# unique exact-match nearest; a large nprobe also lifts the search width
-# (sdb_ivf_max_search_fanout is floored at nprobe), making the descent
-# exhaustive over leaves, so the asserted neighbor is exact.
-# ============================================================================
-
 statement ok
 SET sdb_ivf_search_nprobe = 100000;
 

@@ -288,6 +288,22 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 
 }  // namespace
 
+bool IsSearchStub(const duckdb::BoundFunctionExpression& call) {
+  using Callback =
+    void (*)(duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector&);
+  const auto callback = call.Function().GetFunctionCallback();
+  if (const auto* target = callback.target<Callback>();
+      target != nullptr &&
+      (*target == &SearchStubFn || *target == &ScorerStubFn)) {
+    return true;
+  }
+  const auto tsquery = MakeTSQueryType();
+  return call.GetReturnType() == tsquery ||
+         absl::c_any_of(call.GetChildren(), [&](const auto& child) {
+           return child->GetReturnType() == tsquery;
+         });
+}
+
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(

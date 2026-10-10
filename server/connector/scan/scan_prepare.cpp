@@ -83,7 +83,7 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
       return true;
     }
   }
-  if (g.stats_barrier.Park(input)) {
+  if (g.stats_barrier.Park(input, *g.client_context)) {
     l.parked_on = &g.stats_barrier;
     return false;
   }

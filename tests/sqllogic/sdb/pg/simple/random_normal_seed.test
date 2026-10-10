@@ -1,0 +1,66 @@
+statement ok
+CREATE TABLE random_normal_seed (v DOUBLE);
+
+statement ok
+SELECT setseed(0.42);
+
+statement ok
+INSERT INTO random_normal_seed SELECT random_normal(0.0, 1.0);
+
+statement ok
+SELECT setseed(0.42);
+
+query
+SELECT random_normal(0.0, 1.0) = (SELECT v FROM random_normal_seed) AS same;
+----
+same
+t
+
+statement ok
+SELECT setseed(0.42);
+
+query
+SELECT random_normal() = (SELECT v FROM random_normal_seed) AS same;
+----
+same
+t
+
+statement ok
+SELECT setseed(0.42);
+
+query
+SELECT random_normal(3.0) = (SELECT v + 3.0 FROM random_normal_seed) AS same;
+----
+same
+t
+
+statement ok
+SELECT setseed(-0.42);
+
+query
+SELECT random_normal(0.0, 1.0) = (SELECT v FROM random_normal_seed) AS same;
+----
+same
+f
+
+query
+SELECT count(DISTINCT random_normal(0.0, 1.0)) FROM range(1000);
+----
+count
+1000
+
+query
+SELECT random_normal(NULL, 1.0) IS NULL AND random_normal(0.0, NULL) IS NULL
+  AND random_normal(NULL) IS NULL AS strict;
+----
+strict
+t
+
+query
+SELECT random_normal(5.0, 0.0) AS mean;
+----
+mean
+5
+
+statement ok
+DROP TABLE random_normal_seed;

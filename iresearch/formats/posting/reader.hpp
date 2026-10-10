@@ -163,7 +163,7 @@ IRS_FORCE_INLINE inline size_t PostingsReader::decode(
       follows ? next % PosGroup::kPositions : vread<uint32_t>(p));
   } else if (IndexFeatures::None != (features & IndexFeatures::Vec)) {
     posting_meta.pay_start += vread<uint64_t>(p);
-    posting_meta.pos_offset = *p++;
+    posting_meta.pos_offset = static_cast<uint16_t>(vread<uint32_t>(p));
   }
 
   if (doc_limits::kBlockSize < posting_meta.docs_count) {

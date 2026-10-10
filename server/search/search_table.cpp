@@ -21,10 +21,13 @@
 #include "search/search_table.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -394,6 +397,14 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
+  auto& engine = GetSearchEngine();
+  const bool slot = engine.TryAcquireCompaction();
+  absl::Cleanup release_slot = [&engine, slot] {
+    if (slot) {
+      engine.ReleaseCompaction();
+    }
+  };
+  const irs::AnnBuildEnv* env = slot ? &AnnBuildEnv() : nullptr;
   for (size_t pass = 0; pass < 8; ++pass) {
     std::vector<std::vector<std::string>> buckets(target);
     {
@@ -405,11 +416,14 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
         buckets[i % target].emplace_back(snapshot[i].Meta().name);
       }
     }
-    bool merged = false;
-    for (auto& names : buckets) {
+    std::vector<yaclib::Future<ResultWithTime>> rounds;
+    std::deque<bool> empties(target, false);
+    rounds.reserve(target);
+    for (uint32_t b = 0; b < target; ++b) {
       const irs::CompactionPolicy bucket =
-        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
-                 const irs::CompactingSegments& busy) {
+        [names = std::move(buckets[b])](irs::Compaction& candidates,
+                                        const irs::IndexReader& reader,
+                                        const irs::CompactingSegments& busy) {
           for (size_t i = 0; i < reader.size(); ++i) {
             const auto& segment = reader[i];
             const auto& name = segment.Meta().name;
@@ -418,12 +432,14 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
             }
           }
         };
-      bool empty = false;
-      CompactUnsafe(bucket, kProgress, empty, field_options.get());
-      merged |= !empty;
+      rounds.push_back(CompactUnsafeAsync(bucket, kProgress, empties[b],
+                                          field_options.get(), env));
+    }
+    for (auto& round : rounds) {
+      irs::GetBlocking(std::move(round));
     }
     RefreshUnsafe(/*wait=*/true, nullptr, code);
-    if (!merged) {
+    if (absl::c_all_of(empties, [](bool empty) { return empty; })) {
       break;
     }
   }

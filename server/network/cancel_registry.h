@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/random/random.h>
 #include <absl/synchronization/mutex.h>
 
 #include <cstdint>
@@ -29,8 +30,6 @@
 #include <memory>
 #include <utility>
 #include <vector>
-
-#include "server/utils/random_generator.h"
 
 namespace sdb::network {
 
@@ -102,7 +101,7 @@ class CancelRegistry {
         // The high 32 bits are the "pid" reported by pg_backend_pid() and sent
         // in BackendKeyData; PG pids are positive int32, so keep that half in
         // [1, INT32_MAX]. The low 32 bits stay the full-entropy secret.
-        const uint64_t entropy = sdb::random::RandU64();
+        const uint64_t entropy = absl::Uniform<uint64_t>(_gen);
         uint32_t pid = static_cast<uint32_t>(entropy >> 32) & 0x7fffffffu;
         if (pid == 0) {
           pid = 1;
@@ -200,6 +199,7 @@ class CancelRegistry {
  private:
   absl::Mutex _mu;
   irs::containers::FlatHashMap<uint64_t, std::shared_ptr<CancelToken>> _tokens;
+  absl::BitGen _gen;
   bool _terminating = false;
 };
 

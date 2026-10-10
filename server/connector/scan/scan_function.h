@@ -58,8 +58,9 @@ void IResearchSetScanOrder(
   duckdb::optional_ptr<duckdb::FunctionData> bind_data);
 
 bool IResearchConsumeTopN(duckdb::ClientContext& context,
-                          duckdb::FunctionData& bind_data, duckdb::idx_t limit,
-                          duckdb::idx_t offset);
+                          duckdb::FunctionData& bind_data,
+                          const duckdb::BoundLimitNode& limit,
+                          const duckdb::BoundLimitNode& offset);
 
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
   duckdb::TableFunctionToStringInput& input);

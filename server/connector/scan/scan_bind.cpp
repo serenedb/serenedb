@@ -23,20 +23,37 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <cmath>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/planner/expression/bound_between_expression.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/boolean_rules.hpp>
+#include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <magic_enum/magic_enum.hpp>
+#include <ranges>
 
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
+#include "connector/optimizer/iresearch_plan.h"
 #include "connector/scan/scan_function.h"
+#include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
+#include "query/config.h"
 #include "search/search_table.h"
 #include "search/search_table_transaction.h"
 
@@ -94,14 +111,28 @@ const duckdb::ColumnDefinition* FindColumnById(
 }
 
 irs::DirectoryReader PinnedSearchReader(
-  duckdb::ClientContext& context, const catalog::SearchTableEntry& table) {
-  const auto& store = table.Storage();
+  duckdb::ClientContext& context, duckdb::idx_t oid,
+  const std::shared_ptr<search::SearchTable>& store) {
   auto* conn_ctx = GetSereneDBContextPtr(context);
   if (!conn_ctx) {
     return store->GetDirectoryReader();
   }
   return irs::DirectoryReader{*conn_ctx->SearchTxn().EnsureSearchTableReader(
-    table.oid, [&] { return store->GetDirectoryReader(); })};
+    oid, [&] { return store->GetDirectoryReader(); })};
+}
+
+irs::DirectoryReader PinnedSearchReader(
+  duckdb::ClientContext& context, const catalog::SearchTableEntry& table) {
+  return PinnedSearchReader(context, table.oid, table.Storage());
+}
+
+decltype(PlanCacheSpec::reacquire_snapshot) SearchTableReacquire(
+  const catalog::SearchTableEntry& table) {
+  return [oid = table.oid, store = table.Storage()](
+           duckdb::ClientContext& context) -> search::InvertedIndexSnapshotPtr {
+    return std::make_shared<search::InvertedIndexSnapshot>(
+      PinnedSearchReader(context, oid, store), nullptr);
+  };
 }
 
 duckdb::unique_ptr<ScanBindData> MakeTableScanBindData(
@@ -148,7 +179,103 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
   return data;
 }
 
+// Auto is 0 or 1 and never more: a default decides *whether* to re-score, not
+// how much to spend on it. 1 gives every segment its own pool, re-scored
+// exactly, with only real scores crossing a segment boundary -- Qdrant's
+// property. 0 lets quantized scores merge across segments directly.
+//
+// Which side a quantizer falls on is measured rather than read off its bit
+// count. On 120k x 64, eight segments, k=10, moving from 0 to 1 gains:
+//
+//     sq8   +0.018 hnsw  +0.021 ivf     sq4     +0.298  +0.318
+//     usq8  +0.020       +0.025         usq4    +0.347  +0.363
+//                                       pq          --  +0.442
+//                                       rabitq3 +0.265  +0.281
+//                                       tq3     +0.360  +0.418
+//
+// Eight-bit codes rank well enough alone that re-scoring buys two points of
+// recall for the reads it costs, which is not a trade to make for everyone by
+// default. Every narrower code is unusable without it.
+double AutoOversample(const VectorScorerOptions& vs) noexcept {
+  switch (vs.quant) {
+    case irs::VectorQuantization::None:
+      return 0.0;
+    case irs::VectorQuantization::SQ8:
+    case irs::VectorQuantization::USQ8:
+    case irs::VectorQuantization::SQ4:
+    case irs::VectorQuantization::USQ4:
+    case irs::VectorQuantization::PQ:
+    case irs::VectorQuantization::RaBitQ:
+    case irs::VectorQuantization::TQ:
+      return 1.0;
+  }
+  return 0.0;
+}
+
 }  // namespace
+
+double SegmentBeamShare(double k, size_t segments) noexcept {
+  if (segments <= 1) {
+    return k;
+  }
+  const double n = static_cast<double>(segments);
+  const double mean = k / n;
+  const double sd = std::sqrt(mean * (1.0 - 1.0 / n));
+  return std::min(k, std::max(16.0, std::ceil(mean + 3.0 * sd)));
+}
+
+double AnnOversample(duckdb::ClientContext& context,
+                     const VectorScorerOptions& vs, bool& chosen_here) {
+  static constinit SettingRef gOversample{"sdb_ann_oversample"};
+  auto factor = gOversample.Double(context);
+  chosen_here = factor < 0.0;
+  return chosen_here ? AutoOversample(vs) : factor;
+}
+
+void RefreshVectorKnobs(VectorScorerOptions& vs,
+                        duckdb::ClientContext& context) {
+  static constinit SettingRef gNprobe{"sdb_ivf_search_nprobe"};
+  static constinit SettingRef gMinFanout{"sdb_ivf_min_search_fanout"};
+  static constinit SettingRef gMaxFanout{"sdb_ivf_max_search_fanout"};
+  static constinit SettingRef gEfSearch{"sdb_hnsw_ef_search"};
+  const auto nprobe = gNprobe.SignedInt(context);
+  vs.nprobe = nprobe < 0 ? 0 : static_cast<uint32_t>(nprobe);
+  const auto min_fanout = gMinFanout.SignedInt(context);
+  vs.min_search_fanout = min_fanout < 0 ? 0 : static_cast<uint32_t>(min_fanout);
+  const auto max_fanout = gMaxFanout.SignedInt(context);
+  vs.max_search_fanout = max_fanout < 0 ? 0 : static_cast<uint32_t>(max_fanout);
+  const auto ef = gEfSearch.SignedInt(context);
+  vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
+  vs.hnsw_filter_mode = ReadHnswFilterMode(context);
+  vs.hnsw_column_filter = ReadHnswColumnFilter(context);
+  vs.exact = ReadAnnExact(context);
+}
+
+irs::HnswFilterMode ReadHnswFilterMode(duckdb::ClientContext& context) {
+  static constexpr auto kModes = magic_enum::enum_names<irs::HnswFilterMode>();
+  static constinit SettingRef gFilterMode{"sdb_hnsw_filter_mode"};
+  const auto mode = gFilterMode.Enum(context, kModes);
+  if (mode >= kModes.size()) {
+    return irs::HnswFilterMode::Auto;
+  }
+  return static_cast<irs::HnswFilterMode>(mode);
+}
+
+irs::HnswColumnFilter ReadHnswColumnFilter(duckdb::ClientContext& context) {
+  static constexpr auto kModes =
+    magic_enum::enum_names<irs::HnswColumnFilter>();
+  static constinit SettingRef gColumnFilter{"sdb_hnsw_column_filter"};
+  const auto mode = gColumnFilter.Enum(context, kModes);
+  if (mode >= kModes.size()) {
+    return irs::HnswColumnFilter::Auto;
+  }
+  return static_cast<irs::HnswColumnFilter>(mode);
+}
+
+bool ReadAnnExact(duckdb::ClientContext& context) {
+  static constinit SettingRef gExact{"sdb_ann_force_exact"};
+  return gExact.Bool(context);
+}
 
 TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
   const auto it = absl::c_find_if(
@@ -264,6 +391,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   if (ts_dict.Active()) {
     return TsDictEstimation(*this);
   }
+  if (!search.snapshot) {
+    return nullptr;
+  }
   const auto live = search.snapshot->reader.live_docs_count();
   const auto* filter = search.filter.get();
   const auto estimate = filter ? EstimateFilterMatchCount(*filter, live) : live;
@@ -314,6 +444,15 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
                               search_table ? "search" : "table",
                               std::move(snapshot));
   data->relation.inverted_index = &entry;
+  if (search_table) {
+    data->plan_cache.reacquire_snapshot = SearchTableReacquire(*search_table);
+  } else {
+    data->plan_cache.reacquire_snapshot =
+      [oid = entry.oid, storage = entry.Storage()](
+        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
+      return GetSereneDBContext(ctx).EnsureSearchSnapshot(oid, storage);
+    };
+  }
   data->relation.inverted_config = entry.Config();
   data->relation.row_group_size =
     search_table ? search_table->Storage()->Config()->row_group_size
@@ -335,6 +474,7 @@ duckdb::TableFunction BindSearchTableScan(
     MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search",
                           std::make_shared<search::InvertedIndexSnapshot>(
                             PinnedSearchReader(context, entry), nullptr));
+  data->plan_cache.reacquire_snapshot = SearchTableReacquire(entry);
   data->score.prune = store->TopKScorer();
   data->relation.inverted_config = store->Config();
   data->relation.row_group_size =
@@ -360,9 +500,197 @@ std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
+DeferredBuild BuildDeferredFilter(
+  duckdb::ClientContext& context, const ScanBindData& scan,
+  const search::InvertedIndexSnapshot& snapshot) {
+  SDB_ASSERT(scan.plan_cache.deferred);
+  const auto& claim = *scan.plan_cache.deferred;
+  const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {
+    return optimizer::NormalizeClaimShape(
+      context,
+      optimizer::SubstituteParameters(e->Copy(), /*with_values=*/true));
+  };
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> conjuncts;
+  conjuncts.reserve(claim.conjuncts.size() + claim.ranges.size());
+  for (const auto& e : claim.conjuncts) {
+    conjuncts.push_back(bound(e));
+  }
+  const ColumnGetter getter = [&](const duckdb::BoundColumnRefExpression& ref)
+    -> std::optional<SearchColumnInfo> {
+    const auto it = claim.columns->find(
+      {ref.Binding().table_index.index, ref.Binding().column_index.GetIndex()});
+    if (it == claim.columns->end()) {
+      return std::nullopt;
+    }
+    auto info = optimizer::ResolveSearchColumnById(
+      context, scan, it->second.column, it->second.column_stored);
+    if (info && info->column_stored) {
+      info->stats = snapshot.reader.GetColumnStats(it->second.column);
+    }
+    return info;
+  };
+  const ExpressionGetter expr_getter =
+    [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
+    return std::nullopt;
+  };
+  DeferredBuild out;
+  std::map<ColumnId,
+           std::pair<duckdb::LogicalType,
+                     duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>>>
+    wide;
+  const auto to_column = [&](duckdb::unique_ptr<duckdb::Expression> range) {
+    const duckdb::BoundColumnRefExpression* ref = nullptr;
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundColumnRefExpression>(
+      *range, [&](const duckdb::BoundColumnRefExpression& r) { ref = &r; });
+    SDB_ENSURE(ref != nullptr, "a deferred range reads one column");
+    const auto it =
+      claim.columns->find({ref->Binding().table_index.index,
+                           ref->Binding().column_index.GetIndex()});
+    SDB_ENSURE(it != claim.columns->end(),
+               "a deferred range's column was resolved at plan time");
+    auto& [type, parts] = wide[it->second.column];
+    type = ref->GetReturnType();
+    if (range->GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
+      using duckdb::BoundBetweenExpression;
+      using duckdb::ExpressionType;
+      const auto& between = range->Cast<duckdb::BoundFunctionExpression>();
+      parts.push_back(duckdb::BoundComparisonExpression::Create(
+        BoundBetweenExpression::LowerInclusive(between)
+          ? ExpressionType::COMPARE_GREATERTHANOREQUALTO
+          : ExpressionType::COMPARE_GREATERTHAN,
+        BoundBetweenExpression::Input(between).Copy(),
+        BoundBetweenExpression::LowerBound(between).Copy()));
+      parts.push_back(duckdb::BoundComparisonExpression::Create(
+        BoundBetweenExpression::UpperInclusive(between)
+          ? ExpressionType::COMPARE_LESSTHANOREQUALTO
+          : ExpressionType::COMPARE_LESSTHAN,
+        BoundBetweenExpression::Input(between).Copy(),
+        BoundBetweenExpression::UpperBound(between).Copy()));
+    } else {
+      parts.push_back(std::move(range));
+    }
+  };
+  const auto probe_wide =
+    [&](const duckdb::unique_ptr<duckdb::Expression>& range) {
+      auto probe = std::make_unique<irs::BooleanFilter>();
+      std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&range, 1};
+      FilterScorers probe_scorers;
+      return !MakeSearchFilter(*probe, single, getter, context, expr_getter,
+                               &probe_scorers, WideRanges::DeclineWide)
+                .ok();
+    };
+  struct Interval {
+    std::optional<SearchColumnInfo> info;
+    double lo = 0;
+    double hi = 0;
+    duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> ranges;
+  };
+  std::map<std::pair<duckdb::idx_t, duckdb::idx_t>, Interval> intervals;
+  for (const auto& e : claim.ranges) {
+    auto range = bound(e);
+    const auto bounds = ColumnRangeOf(*range);
+    if (!bounds) {
+      if (probe_wide(range)) {
+        to_column(std::move(range));
+      } else {
+        conjuncts.push_back(std::move(range));
+      }
+      continue;
+    }
+    const auto& binding = bounds->column->Binding();
+    auto [it, inserted] = intervals.try_emplace(
+      {binding.table_index.index, binding.column_index.GetIndex()});
+    auto& interval = it->second;
+    if (inserted) {
+      interval.info = getter(*bounds->column);
+      interval.lo = bounds->lo;
+      interval.hi = bounds->hi;
+    } else {
+      interval.lo = std::max(interval.lo, bounds->lo);
+      interval.hi = std::min(interval.hi, bounds->hi);
+    }
+    interval.ranges.push_back(std::move(range));
+  }
+  for (auto& [key, interval] : intervals) {
+    const auto fits =
+      interval.info ? RangeFitsIndex(*interval.info, interval.lo, interval.hi)
+                    : std::nullopt;
+    for (auto& range : interval.ranges) {
+      if (fits ? !*fits : probe_wide(range)) {
+        to_column(std::move(range));
+      } else {
+        conjuncts.push_back(std::move(range));
+      }
+    }
+  }
+  for (auto& [column, typed] : wide) {
+    auto& [type, parts] = typed;
+    for (auto& part : parts) {
+      duckdb::ExpressionIterator::VisitExpressionMutable<
+        duckdb::BoundColumnRefExpression>(
+        part, [](duckdb::BoundColumnRefExpression& r,
+                 duckdb::unique_ptr<duckdb::Expression>& child) {
+          child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            r.GetAlias(), r.GetReturnType(), 0ULL);
+        });
+    }
+    duckdb::unique_ptr<duckdb::Expression> expr;
+    if (parts.size() == 1) {
+      expr = std::move(parts[0]);
+    } else {
+      auto conjunction = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+        duckdb::ExpressionType::CONJUNCTION_AND);
+      for (auto& part : parts) {
+        conjunction->GetChildrenMutable().push_back(std::move(part));
+      }
+      expr = std::move(conjunction);
+    }
+    out.column_filters.push_back(
+      {.column = column,
+       .type = std::move(type),
+       .filter = duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(expr))});
+  }
+  if (conjuncts.empty()) {
+    return out;
+  }
+  auto root = std::make_unique<irs::BooleanFilter>();
+  FilterScorers scorers;
+  const auto status =
+    MakeSearchFilter(*root, conjuncts, getter, context, expr_getter, &scorers);
+  if (!status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("cannot build the search filter from the "
+                            "statement's parameters: ",
+                            status.message()));
+  }
+  irs::Filter::ptr filter = std::move(root);
+  EnsureIncludeSides(*filter);
+  irs::OptimizeContext ctx;
+  ctx.analyzed_fields.insert(claim.analyzed_fields.begin(),
+                             claim.analyzed_fields.end());
+  irs::containers::FlatHashMap<irs::field_id, irs::field_id> null_markers;
+  for (const auto& [marker, field] : claim.null_markers) {
+    null_markers[marker] = field;
+  }
+  ctx.null_markers = &null_markers;
+  irs::Optimize(filter, ctx);
+  out.filter = std::shared_ptr<const irs::Filter>{std::move(filter)};
+  return out;
+}
+
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
+  if (vs.exact && vs.radius == std::numeric_limits<float>::max()) {
+    auto f = std::make_unique<irs::ByVectorExact>();
+    *f->mutable_field_id() = vs.field_id;
+    auto* o = f->mutable_options();
+    o->query = vs.query_vector;
+    o->metric = vs.metric;
+    o->inner = std::move(inner);
+    return f;
+  }
   if (vs.radius != std::numeric_limits<float>::max()) {
     auto f = std::make_unique<irs::ByRadius>();
     *f->mutable_field_id() = vs.field_id;
@@ -386,9 +714,14 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->metric = vs.metric;
   o->quant = vs.quant;
   o->nprobe = vs.nprobe;
+  o->min_search_fanout = vs.min_search_fanout;
   o->max_search_fanout = vs.max_search_fanout;
   o->ef_search = vs.ef_search;
   o->min_ef = vs.min_ef;
+  o->top_k = vs.top_k;
+  o->posting_size = vs.posting_size;
+  o->hnsw_filter_mode = vs.hnsw_filter_mode;
+  o->hnsw_column_filter = vs.hnsw_column_filter;
   o->inner = std::move(inner);
   return f;
 }

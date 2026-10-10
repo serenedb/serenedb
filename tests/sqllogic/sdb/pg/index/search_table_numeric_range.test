@@ -1,0 +1,219 @@
+statement ok
+CREATE TABLE snr (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX snr_idx ON snr
+  USING inverted(pk, num, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO snr SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
+  [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) snr;
+
+query
+SELECT count(*) FROM snr WHERE num BETWEEN 1200 AND 1500;
+----
+count
+301
+
+query
+SELECT pk FROM snr WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1500
+1499
+1498
+
+query
+SELECT pk FROM snr WHERE (num BETWEEN 1200 AND 1500)::boost(2)
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1500
+1499
+1498
+
+query
+SELECT count(*) FROM snr WHERE (num <= 1500)::boost(2);
+----
+count
+1501
+
+query
+SELECT count(*) FROM snr WHERE (num <= 1500 OR tag = 'odd')::merge('max');
+----
+count
+1751
+
+query
+SELECT count(*) FROM snr WHERE (num BETWEEN 1200 AND 1500)::score('constant(1)');
+----
+count
+301
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num <= 1500
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr                        │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ Column Filter: num <= 1500        │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num <= 1000
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1000
+999
+998
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num <= 1000
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr                        │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ Column Filter: num <= 1000        │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+40
+39
+38
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num <= 40
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr                        │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Granular Range ─╮              │
+│ │ Field: num       │              │
+│ │ Range: <=40      │              │
+│ ╰──────────────────╯              │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num BETWEEN 1200 AND 1240
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1240
+1239
+1238
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num >= 1200 AND num <= 1240
+  ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: snr                        │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Granular Range ──────╮         │
+│ │ Field: num            │         │
+│ │ Range: >=1200, <=1240 │         │
+│ ╰───────────────────────╯         │
+│ Score: l2_distance(emb, FLOAT[2]) │
+│ Top: 3                            │
+│ Projections: pk                   │
+│ ~400 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE tag = 'even' OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1400
+1402
+1398
+
+query
+EXPLAIN SELECT pk FROM snr WHERE tag = 'even' OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────╮
+│ Index: snr                               │
+│ Lookup: search                           │
+│ Index Filter:                            │
+│ ╭─ Or ───────────╮                       │
+│ ╰────────┬───────╯                       │
+│          ├────────────────────╮          │
+│ ╭─ Terms ┴───────╮  ╭─ Granular Range ─╮ │
+│ │ Field: tag     │  │ Field: num       │ │
+│ │ Values: 'even' │  │ Range: >1500     │ │
+│ ╰────────────────╯  ╰──────────────────╯ │
+│ Score: l2_distance(emb, FLOAT[2])        │
+│ Top: 3                                   │
+│ Projections: pk                          │
+│ ~400 rows                                │
+╰──────────────────────────────────────────╯
+
+query
+SELECT pk FROM snr WHERE num < 10 OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1501
+1502
+1503
+
+query
+EXPLAIN SELECT pk FROM snr WHERE num < 10 OR num > 1500
+  ORDER BY emb <-> [1400.4, 0]::FLOAT[2] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: snr                                 │
+│ Lookup: search                             │
+│ Index Filter:                              │
+│ ╭─ Or ─────────────╮                       │
+│ ╰─────────┬────────╯                       │
+│           ├─────────────────────╮          │
+│ ╭─ Granular Range ─╮  ╭─ Granular Range ─╮ │
+│ │ Field: num       │  │ Field: num       │ │
+│ │ Range: <10       │  │ Range: >1500     │ │
+│ ╰──────────────────╯  ╰──────────────────╯ │
+│ Score: l2_distance(emb, FLOAT[2])          │
+│ Top: 3                                     │
+│ Projections: pk                            │
+│ ~400 rows                                  │
+╰────────────────────────────────────────────╯
+
+query
+SELECT count(*) FROM snr WHERE tag = 'even' OR num > 1500;
+----
+count
+1250

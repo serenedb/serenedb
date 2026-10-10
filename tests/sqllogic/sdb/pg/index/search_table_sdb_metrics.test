@@ -1,6 +1,12 @@
 # sdb_metrics for a search table's own store, through the store's lifecycle:
 # buffered rows before a refresh, one segment per refresh, and compaction
 # folding the segments back into one.
+#
+# The two avg_*_time_ms the store actually runs are wall clock, so every
+# block leaves them to <slt:ignore>: a busy machine takes milliseconds where
+# an idle one takes none, and this block read 5 under a loaded suite.
+# avg_consolidation_time_ms stays pinned at 0 while compaction is off,
+# because then it is a count of work not done, not a duration.
 
 statement ok
 CREATE TABLE st (id BIGINT PRIMARY KEY, r TEXT)

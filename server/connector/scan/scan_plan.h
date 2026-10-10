@@ -26,6 +26,7 @@
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -46,6 +47,9 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
                    const ScanBindData& bind_data,
                    duckdb::TableFunctionInitInput& input);
+
+void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
+                        const ScanBindData& bind_data);
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
                                     const ScanBindData& bind_data);

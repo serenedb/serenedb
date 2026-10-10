@@ -38,7 +38,7 @@ static int Main(int argc, const char* argv[]) {
     absl::FPrintF(stderr, "usage: %s [indexer threads] < corpus\n", argv[0]);
     return 1;
   }
-  irs::RemapExecutable();
+  irs::RemapExecutable(true);
   // DuckDBEngine owns the process-wide DuckDB the cs codec / writer use.
   // Bring it up before the first iresearch construction and tear it down
   // before main returns -- duckdb's BlockAllocator dtor reads a

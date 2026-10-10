@@ -48,6 +48,7 @@ class WildcardNGramQuery;
 class ByNestedQuery;
 class HnswQuery;
 class KnnVectorQuery;
+class ExactVectorQuery;
 class RangeVectorQuery;
 class BooleanQuery;
 struct EmptyQueryBuilder;

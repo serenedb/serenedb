@@ -40,8 +40,15 @@ class HnswCount : public Root {
 }  // namespace
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
-  HnswRefuseFilter(ctx.table);
-  return memory::make_managed<HnswCount>(query.RunSearch().size());
+  auto hits = query.RunSearch(ctx.table);
+  if (ctx.table == nullptr || ctx.table->Foldable()) {
+    return MakeConstant(hits.size());
+  }
+  uint64_t live = 0;
+  for (const auto& hit : hits) {
+    live += ctx.table->Live(hit.doc) == hit.doc;
+  }
+  return MakeConstant(live);
 }
 
 }  // namespace irs::count

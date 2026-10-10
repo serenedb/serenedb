@@ -109,7 +109,7 @@ DROP TABLE ivf_f
 # ===========================================================================
 # Approximate lookup-filter shortfall (documents the contract). A lookup
 # (non-INCLUDE'd) filter is not enforced in-scan: the collector over-fetches
-# the sdb_rerank_factor * k nearest by distance, then the filter drops
+# the sdb_ann_oversample * k nearest by distance, then the filter drops
 # non-matches during materialization. A filter whose matches lie beyond that
 # pool legitimately returns FEWER than k rows -- larger rerank_factor widens
 # the pool and recovers more, and the exact (streaming) path returns full k.
@@ -145,7 +145,7 @@ count
 
 # pool = 2 * 3 = 6 (nearest pk 1..6): only pk 5 matches -> one row, not three.
 statement ok
-SET sdb_rerank_factor = 2
+SET sdb_ann_oversample = 2
 
 query
 SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
@@ -156,7 +156,7 @@ pk
 # pool = 4 * 3 = 12 (nearest pk 1..12): pk 5 and 12 match -> recall improves to
 # two rows, still short of three.
 statement ok
-SET sdb_rerank_factor = 4
+SET sdb_ann_oversample = 4
 
 query
 SELECT pk FROM shortf_idx WHERE ext = 1 ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 3;
@@ -181,7 +181,7 @@ statement ok
 RESET sdb_disable_top_k_optimization
 
 statement ok
-RESET sdb_rerank_factor
+RESET sdb_ann_oversample
 
 statement ok
 DROP TABLE shortf
@@ -259,3 +259,49 @@ RESET sdb_disable_top_k_optimization
 
 statement ok
 DROP TABLE neg_f
+
+statement ok
+SET sdb_ivf_posting_size = 16
+
+statement ok
+CREATE TABLE ivf_order (pk INTEGER PRIMARY KEY, emb FLOAT[8], val INTEGER)
+
+statement ok
+CREATE INDEX ivf_order_idx ON ivf_order
+  USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'))
+  INCLUDE (val)
+
+statement ok
+INSERT INTO ivf_order SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i
+  FROM range(2000) t(i)
+
+statement ok
+VACUUM (REFRESH_TABLE) ivf_order
+
+statement ok
+SET sdb_ivf_search_nprobe = 1000
+
+query
+SELECT pk FROM ivf_order_idx WHERE val BETWEEN 1400 AND 1500
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 10;
+----
+pk
+1500
+1499
+1498
+1497
+1496
+1495
+1494
+1493
+1492
+1491
+
+statement ok
+RESET sdb_ivf_search_nprobe
+
+statement ok
+RESET sdb_ivf_posting_size
+
+statement ok
+DROP TABLE ivf_order

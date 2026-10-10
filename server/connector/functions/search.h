@@ -25,6 +25,11 @@
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "catalog/entry/tokenizer.h"
+namespace duckdb {
+
+class BoundFunctionExpression;
+
+}  // namespace duckdb
 namespace sdb::connector {
 
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";
@@ -133,6 +138,8 @@ duckdb::LogicalType MakeTSQueryType();
 [[noreturn]] void SearchStubFn(duckdb::DataChunk& args,
                                duckdb::ExpressionState& state,
                                duckdb::Vector& result);
+
+bool IsSearchStub(const duckdb::BoundFunctionExpression& call);
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name);

@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
@@ -37,6 +39,25 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+
+uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size, uint32_t top_k,
+                       uint64_t leaves) noexcept {
+  const uint64_t posting = std::max<uint32_t>(posting_size, 1);
+  const uint64_t lists =
+    leaves != 0 ? leaves
+                : std::max<uint64_t>((rows + posting - 1) / posting, 1);
+  const double k = std::max<uint32_t>(top_k, 10);
+  const double n =
+    std::ceil(1.3 * std::log10(k) * std::sqrt(static_cast<double>(lists)));
+  return static_cast<uint32_t>(
+    std::clamp(n, 1.0, static_cast<double>(lists)));
+}
+
+uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
+                       uint32_t max_fanout) noexcept {
+  const auto beam = std::max(nprobe, min_fanout);
+  return max_fanout != 0 ? std::min(beam, max_fanout) : beam;
+}
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
   VectorDistanceFn fn = nullptr;
@@ -89,8 +110,15 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                        uint32_t effort) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
-  if (!PrepareVectorState(_tree, segment, ctx, opts, effort, state, inner,
-                          opts.max_search_fanout)) {
+  const auto nprobe =
+    effort != 0 ? effort
+                : IvfAutoNprobe(segment.docs_count(), opts.posting_size,
+                                opts.top_k,
+                                _tree.Levels() == 1 ? _tree.RootSize() : 0);
+  if (!PrepareVectorState(
+        _tree, segment, ctx, opts, nprobe, state, inner,
+        IvfSearchBeam(nprobe, opts.min_search_fanout,
+                      opts.max_search_fanout))) {
     return QueryBuilder::Empty();
   }
 

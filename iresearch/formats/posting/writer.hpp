@@ -413,8 +413,7 @@ inline void PostingsWriter::Encode(BufferedOutput& out,
     }
   } else if (_features.HasVector()) {
     out.WriteV64(meta.pay_start - _last_state.pay_start);
-    SDB_ASSERT(meta.pos_offset <= std::numeric_limits<uint8_t>::max());
-    out.WriteByte(static_cast<byte_type>(meta.pos_offset));
+    out.WriteV32(meta.pos_offset);
   }
 
   if (meta.docs_count > doc_limits::kBlockSize) {

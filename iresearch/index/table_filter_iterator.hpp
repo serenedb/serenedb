@@ -21,6 +21,7 @@
 #pragma once
 
 #include <array>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
@@ -37,6 +38,8 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace duckdb {
@@ -45,6 +48,25 @@ class ClientContext;
 
 }  // namespace duckdb
 namespace irs {
+namespace detail {
+
+class LazyBitset;
+
+}  // namespace detail
+
+class ColFilterLeaf {
+ public:
+  ColFilterLeaf(const Filter& filter, const SubReader& segment);
+  ColFilterLeaf(ColFilterLeaf&&) noexcept;
+  ColFilterLeaf& operator=(ColFilterLeaf&&) noexcept;
+  ~ColFilterLeaf();
+
+  bool Contains(doc_id_t doc);
+
+ private:
+  QueryBuilder::ptr _query;
+  std::unique_ptr<detail::LazyBitset> _set;
+};
 
 struct ColFilterSpec {
   irs::field_id field;
@@ -74,6 +96,9 @@ struct ColFilterSpec {
   const duckdb::TableFilter* not_null = nullptr;
   std::span<const std::string_view> extract_path;
   const duckdb::LogicalType* extract_type = nullptr;
+  std::span<const irs::field_id> row_fields;
+  std::span<const duckdb::LogicalType> row_types;
+  std::span<ColFilterLeaf> row_leaves;
 };
 
 // Per-worker cache of duckdb filter-evaluation state, keyed by the pushed
@@ -89,12 +114,20 @@ class ColFilterStateCache {
                                   const duckdb::TableFilter& filter);
   irs::ColumnReader::VectorScratch& Scratch(const duckdb::TableFilter& filter,
                                             const duckdb::LogicalType& type);
+  duckdb::DataChunk& Chunk(duckdb::ClientContext& context,
+                           const duckdb::TableFilter& filter,
+                           std::span<const duckdb::LogicalType> types);
+  std::span<ColFilterLeaf> Leaves(
+    const duckdb::TableFilter& filter, const SubReader& segment,
+    std::span<const std::shared_ptr<const Filter>> leaves);
 
  private:
   struct Entry {
     const duckdb::TableFilter* filter = nullptr;
     duckdb::unique_ptr<duckdb::TableFilterState> state;
     std::unique_ptr<irs::ColumnReader::VectorScratch> scratch;
+    std::unique_ptr<duckdb::DataChunk> chunk;
+    std::vector<ColFilterLeaf> leaves;
   };
 
   Entry& Find(const duckdb::TableFilter& filter);
@@ -147,14 +180,22 @@ class ColFilterChain {
     // DICTIONARY view over codec-owned buffers), so every use goes through
     // VectorScratch::Reset() -- never reuse it dirty. Cache-owned.
     irs::ColumnReader::VectorScratch* scratch = nullptr;
+    std::unique_ptr<irs::ColumnReader::PointReader> point;
+    std::unique_ptr<irs::ColumnReader::VectorScratch> point_scratch;
+    duckdb::ExpressionFilterExecutor* point_filter = nullptr;
+    uint32_t point_heap_fetches = 0;
+    bool point_heap = false;
     std::span<const std::string_view> extract_path;
     const duckdb::LogicalType* extract_type = nullptr;
     std::unique_ptr<irs::ExtractBinding> extract;
   };
 
-  bool Empty() const noexcept { return _cols.empty(); }
+  bool Empty() const noexcept { return _cols.empty() && _rows.empty(); }
   std::span<Col> Cols() noexcept { return {_cols.data(), _cols.size()}; }
-  void Clear() noexcept { _cols.clear(); }
+  void Clear() noexcept {
+    _cols.clear();
+    _rows.clear();
+  }
   // The column whose blocks bound a window; null when only row-gather
   // columns are bound, which hold no rows past their last value.
   const irs::ColumnReader* WindowColumn() const noexcept;
@@ -215,6 +256,10 @@ class ColFilterChain {
   duckdb::idx_t FilterDocs(irs::doc_id_t* docs, irs::score_t* scores,
                            duckdb::idx_t n);
 
+  detail::PointRead PointReads() const noexcept;
+
+  bool AdmitRow(uint64_t row);
+
   // The same over a set whose bit zero stands for document `base`: clears the
   // bits that do not pass, block by block, and returns how many survived. The
   // selection is built from the set bits instead of from a run of documents,
@@ -258,13 +303,30 @@ class ColFilterChain {
  private:
   duckdb::ClientContext* _context = nullptr;
   ColFilterStateCache* _states = nullptr;
+  const irs::ColReader* _col_reader = nullptr;
   // The one walk behind `FilterMask` and `CountMask`: `Keep` writes the
   // survivors back, otherwise the words are left zeroed.
   template<bool Keep>
   duckdb::idx_t WalkMask(irs::doc_id_t base, uint64_t* mask,
                          duckdb::idx_t words);
 
+  struct Row {
+    duckdb::TableFilterState* state = nullptr;
+    duckdb::DataChunk* chunk = nullptr;
+    std::vector<const irs::ColumnReader*> readers;
+    std::vector<irs::ColumnReader::ScanState> scans;
+    std::vector<std::unique_ptr<irs::ColumnReader::PointReader>> points;
+    std::span<ColFilterLeaf> leaves;
+  };
+
+  duckdb::idx_t FilterRows(uint64_t anchor, duckdb::idx_t span,
+                           duckdb::SelectionVector& sel,
+                           duckdb::idx_t survivors);
+  bool AdmitRows(uint64_t row);
+
   std::vector<Col> _cols;
+  std::vector<Row> _rows;
+  duckdb::SelectionVector _row_sel{STANDARD_VECTOR_SIZE};
   // FilterDocs' block-run selection. FilterSelection repoints `_sel` to a
   // buffer sized to the entering survivor count, so every block rebinds it to
   // the full-capacity `_sel_data` store before refilling.

@@ -1,0 +1,502 @@
+statement ok
+CREATE TABLE hnsw_r (pk INTEGER PRIMARY KEY, emb FLOAT[8], label VARCHAR,
+  grp INTEGER, other INTEGER);
+
+statement ok
+CREATE INDEX hnsw_r_idx ON hnsw_r
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (label, grp);
+
+statement ok
+INSERT INTO hnsw_r SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
+  CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 7, i FROM range(300) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_r;
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+100
+101
+102
+98
+
+query
+SELECT pk FROM hnsw_r
+  WHERE label = 'even' OR grp = 3
+  ORDER BY abs(pk - 100.4) LIMIT 4;
+----
+pk
+100
+101
+102
+98
+
+query
+EXPLAIN SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: hnsw_r_idx                 │
+│ Lookup: table                     │
+│ Row Filter:                       │
+│ (label = 'even') OR (grp = 3)     │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 4                            │
+│ Projections: pk                   │
+│ ~300 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even') = (grp = 3)
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+99
+103
+97
+105
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' OR grp = 3) AND pk >= 250
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+250
+252
+254
+
+query
+SELECT pk FROM hnsw_r
+  WHERE (label = 'even' OR grp = 3) AND pk >= 250
+  ORDER BY abs(pk - 100.4) LIMIT 3;
+----
+pk
+250
+252
+254
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' OR grp = 3)
+    AND emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 2.0
+  ORDER BY pk;
+----
+pk
+100
+101
+102
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+query
+SELECT pk FROM hnsw_r
+  WHERE label = 'even' OR pk < 10
+  ORDER BY abs(pk - 5.4) LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+query
+EXPLAIN SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────╮
+│ Index: hnsw_r_idx                 │
+│ Lookup: table                     │
+│ Row Filter:                       │
+│ (label = 'even') OR (pk < 10)     │
+│ Score: l2_distance(emb, FLOAT[8]) │
+│ Top: 4                            │
+│ Projections: pk                   │
+│ ~300 rows                         │
+╰───────────────────────────────────╯
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+query
+SELECT pk FROM hnsw_r
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY abs(pk - 150.4) LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE NOT (pk < 290) OR grp = 3
+  ORDER BY emb <-> [290.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+290
+291
+292
+293
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'odd' OR pk < 10)
+    AND emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 5.0
+  ORDER BY pk;
+----
+pk
+1
+2
+3
+4
+5
+6
+7
+8
+9
+
+statement error
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR other < 10
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+db error: ERROR: an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges, not a distance for every row
+DETAIL: The WHERE reads column "other" from the table, which a graph walk cannot filter on.
+HINT: Add it to the index's INCLUDE list.
+
+
+statement ok
+CREATE TABLE hnsw_rs (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR,
+  extra INTEGER, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX hnsw_rs_idx ON hnsw_rs
+  USING inverted(pk, num, tag, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO hnsw_rs SELECT i, i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END,
+  i % 13, [i::FLOAT, 0]::FLOAT[2] FROM range(2000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_rs;
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'even' OR extra = 0
+  ORDER BY emb <-> [1599.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+1599
+1600
+1598
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'even' OR extra = 0
+  ORDER BY abs(pk - 1599.4) LIMIT 3;
+----
+pk
+1599
+1600
+1598
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'odd' OR num < 10
+  ORDER BY emb <-> [3.4, 0]::FLOAT[2] LIMIT 3;
+----
+pk
+3
+4
+2
+
+query
+SELECT pk FROM hnsw_rs WHERE tag @@ 'even' OR extra = 0
+  ORDER BY emb <-> [1599.4, 0]::FLOAT[2] LIMIT 4;
+----
+pk
+1599
+1600
+1598
+1602
+
+query
+SELECT pk FROM hnsw_rs WHERE tag = 'even' OR extra = 0
+  ORDER BY abs(pk - 1599.4) LIMIT 4;
+----
+pk
+1599
+1600
+1598
+1602
+
+query
+SELECT pk FROM hnsw_rs WHERE (tag @@ 'odd' AND extra < 3) OR num BETWEEN 10 AND 12
+  ORDER BY emb <-> [20.4, 0]::FLOAT[2] LIMIT 5;
+----
+pk
+15
+27
+13
+12
+11
+
+query
+SELECT pk FROM hnsw_rs WHERE (tag = 'odd' AND extra < 3) OR num BETWEEN 10 AND 12
+  ORDER BY abs(pk - 20.4) LIMIT 5;
+----
+pk
+15
+27
+13
+12
+11
+
+query
+SELECT count(*) FROM (SELECT pk FROM hnsw_rs WHERE tag @@ 'even' OR extra = 0
+  ORDER BY emb <-> [1000.4, 0]::FLOAT[2] LIMIT 500);
+----
+count
+500
+
+statement ok
+SET sdb_hnsw_filter_mode = 'prune';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+statement ok
+SET sdb_hnsw_filter_mode = 'twohop';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+statement ok
+SET sdb_hnsw_filter_mode = 'scan';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+statement ok
+SET sdb_hnsw_filter_mode = 'bridge';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+statement ok
+RESET sdb_hnsw_filter_mode;
+
+statement ok
+SET sdb_hnsw_column_filter = 'read';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+statement ok
+SET sdb_hnsw_column_filter = 'fold';
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+statement ok
+RESET sdb_hnsw_column_filter;
+
+statement ok
+PREPARE rf_mixed AS SELECT pk FROM hnsw_r_idx
+  WHERE label = $2 OR pk < $3
+  ORDER BY emb <-> $1::FLOAT[8] LIMIT 4;
+
+query
+EXECUTE rf_mixed([5.4, 0, 0, 0, 0, 0, 0, 0], 'even', 10);
+----
+pk
+5
+6
+4
+7
+
+query
+EXECUTE rf_mixed([150.4, 0, 0, 0, 0, 0, 0, 0], 'odd', 0);
+----
+pk
+151
+149
+153
+147
+
+statement ok
+DEALLOCATE rf_mixed;
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label IN ('even', 'none') AND grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+94
+108
+80
+
+query
+SELECT pk FROM hnsw_r
+  WHERE label IN ('even', 'none') AND grp = 3
+  ORDER BY abs(pk - 100.4) LIMIT 3;
+----
+pk
+94
+108
+80
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' OR label = 'none') AND grp = 3 AND pk > 90
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+94
+108
+122
+
+query
+EXPLAIN SELECT pk FROM hnsw_r_idx
+  WHERE label IN ('even', 'none') AND grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────╮
+│ Index: hnsw_r_idx                     │
+│ Lookup: table                         │
+│ Row Filter: label IN ('even', 'none') │
+│ Score: l2_distance(emb, FLOAT[8])     │
+│ Top: 3                                │
+│ Projections: pk                       │
+│ Column Filter: grp = 3                │
+│ ~43 rows                              │
+╰───────────────────────────────────────╯
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label IN ('even', 'none') AND grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+94
+108
+80
+
+statement ok
+RESET sdb_ann_force_exact;

@@ -16,6 +16,12 @@ hash-threshold 100
 # `quant` defaults to sq8 here, which is what engages the fetch-back path; a
 # `quant = 'none'` index never reranks and never exercised it.
 
+# `auto` no longer re-scores eight-bit codes, so the distance it reports is
+# the estimate. This file is about the re-score, so it asks for one.
+
+statement ok
+SET sdb_ann_oversample = 4
+
 statement ok
 CREATE TABLE jv (id INT, emb FLOAT[8])
 

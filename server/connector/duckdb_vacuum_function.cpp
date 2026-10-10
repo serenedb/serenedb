@@ -52,6 +52,7 @@
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {

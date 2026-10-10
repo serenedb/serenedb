@@ -38,7 +38,6 @@
 #include <yaclib/log.hpp>
 
 #include "server/utils/files.h"
-#include "server/utils/random_generator.h"
 #define ZLIB_COMPAT
 #include <functable.h>
 
@@ -95,13 +94,11 @@ void CheckMaxMapCount() {
 void InitProcess(const char* argv0) {
   // Order matters:
   //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
-  //   * random::Reset             seeds the PRNGs the utils layer holds
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
   RaiseFdLimit();
   CheckMaxMapCount();
-  random::Reset();
   auto status = [] {
     FUNCTABLE_INIT;
     return 0;
@@ -116,7 +113,5 @@ void InitProcess(const char* argv0) {
                                         message.data());
   });
 }
-
-void ShutdownGlobals() { random::Reset(); }
 
 }  // namespace sdb::app

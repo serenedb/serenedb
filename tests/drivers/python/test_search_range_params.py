@@ -69,3 +69,25 @@ def test_between_params(conn, schema):
         for _ in range(2):
             cur.execute(sql, (1200, 1500), prepare=True)
             assert [r[0] for r in cur.fetchall()] == [1500, 1499, 1498]
+
+
+def test_limit_offset_params(conn, schema):
+    sql = (
+        f"SELECT pk FROM {schema}.srp ORDER BY emb <-> [1600.4, 0]::FLOAT[2]"
+        " LIMIT %s OFFSET %s"
+    )
+    with conn.cursor() as cur:
+        for _ in range(2):
+            cur.execute(sql, (3, 1), prepare=True)
+            assert [r[0] for r in cur.fetchall()] == [1601, 1599, 1602]
+
+
+def test_filter_and_limit_params(conn, schema):
+    sql = (
+        f"SELECT pk FROM {schema}.srp WHERE tag = %s"
+        " ORDER BY emb <-> [1600.4, 0]::FLOAT[2] LIMIT %s"
+    )
+    with conn.cursor() as cur:
+        for _ in range(2):
+            cur.execute(sql, ("odd", 2), prepare=True)
+            assert [r[0] for r in cur.fetchall()] == [1601, 1599]

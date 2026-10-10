@@ -465,7 +465,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     AddDeferredVerifyFilters(state, *bind_data.search.filter);
   }
   if (bind_data.IsHnswScored()) {
-    if (!bind_data.score.top_k &&
+    if (!bind_data.score.top_k && !bind_data.score.top_k_expr &&
         bind_data.score.vector->radius == std::numeric_limits<float>::max()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

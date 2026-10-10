@@ -91,7 +91,6 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
     }
     _break.SetText(data, n);
 
-    [[maybe_unused]] const auto report = BindProgress(progress, sink);
     [[maybe_unused]] uint32_t reported = 0;
     uint32_t begin = 0;
     for (auto end = _break.Next(); end != duckdb::text::BreakIterator::DONE;
@@ -113,7 +112,7 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
       if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
         if (stop - reported >= classify::kBytesPerProgress) {
           reported = stop;
-          if (!report()) {
+          if (!progress()) {
             return true;
           }
         }

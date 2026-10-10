@@ -23,7 +23,6 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <string_view>
 
-#include "iresearch/analysis/scan_sink.hpp"
 #include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/text/words/masks.hpp"
@@ -103,7 +102,7 @@ IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink,
           base, limit,
           Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
       },
-      BindProgress(progress, sink));
+      progress);
     return;
   }
   constexpr size_t kBlock = classify::kClassifyBlock;
@@ -128,7 +127,7 @@ IRS_NO_INLINE void SplitByNonAlphaFill(duckdb::string_t raw, TokenSink& sink,
       return mask;
     },
     [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); },
-    BindProgress(progress, sink));
+    progress);
 }
 
 template<TokenLayout Layout, Case C, bool KnownAscii,
@@ -147,7 +146,7 @@ void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink,
           base, limit,
           Offs{static_cast<uint32_t>(begin), static_cast<uint32_t>(end)});
       },
-      BindProgress(progress, sink));
+      progress);
   } else {
     CaseRuns<Layout, C, !KnownAscii> runs{base, size, sink};
     ForEachNonSpaceRunBest<KnownAscii>(
@@ -155,7 +154,7 @@ void SplitByNonSpaceFill(duckdb::string_t raw, TokenSink& sink,
       [&](size_t offset, classify::Block b)
         IRS_FORCE_INLINE { runs.Fold(offset, b); },
       [&](size_t begin, size_t end) IRS_FORCE_INLINE { runs(begin, end); },
-      BindProgress(progress, sink));
+      progress);
   }
 }
 
@@ -182,11 +181,10 @@ void SplitByNonAlnumFill(duckdb::string_t raw, TokenSink& sink,
       }
     };
     if constexpr (KnownAscii) {
-      SplitByNonLetter(raw, emit, BindProgress(progress, sink));
+      SplitByNonLetter(raw, emit, progress);
     } else {
       ForEachAlnumRunBest<Letters>(reinterpret_cast<const byte_type*>(base),
-                                   raw.GetSize(), emit,
-                                   BindProgress(progress, sink));
+                                   raw.GetSize(), emit, progress);
     }
   }
 }

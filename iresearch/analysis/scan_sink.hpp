@@ -22,7 +22,6 @@
 
 #include <algorithm>
 
-#include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 
 namespace irs {
@@ -67,15 +66,5 @@ class ScanSink final : public TokenSink {
   uint32_t _mark = 0;
   uint32_t _stride = kFirstStride;
 };
-
-IRS_FORCE_INLINE inline analysis::classify::NoProgress BindProgress(
-  analysis::classify::NoProgress progress, const TokenSink&) noexcept {
-  return progress;
-}
-
-IRS_FORCE_INLINE inline auto BindProgress(ScanSink* sink,
-                                          const TokenSink&) noexcept {
-  return sink->Progress();
-}
 
 }  // namespace irs

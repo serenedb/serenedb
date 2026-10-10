@@ -27,7 +27,6 @@
 #include <string_view>
 #include <type_traits>
 
-#include "iresearch/analysis/scan_sink.hpp"
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"
@@ -196,11 +195,11 @@ IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value,
     }
   };
   if constexpr (!Ascii) {
-    words::ScanUnicode(value, emit, BindProgress(progress, sink));
+    words::ScanUnicode(value, emit, progress);
   } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-    words::ScanAsciiRuns(value, emit, BindProgress(progress, sink));
+    words::ScanAsciiRuns(value, emit, progress);
   } else {
-    words::ScanAscii(value, emit, BindProgress(progress, sink));
+    words::ScanAscii(value, emit, progress);
   }
 }
 
@@ -221,13 +220,12 @@ IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   if constexpr (Ascii) {
-    [[maybe_unused]] const auto report = BindProgress(progress, sink);
     [[maybe_unused]] uint32_t reported = 0;
     for (uint32_t i = 0; i != n; ++i) {
       if constexpr (!std::is_same_v<Progress, classify::NoProgress>) {
         if (i - reported >= classify::kBytesPerProgress) {
           reported = i;
-          if (!report()) {
+          if (!progress()) {
             return;
           }
         }
@@ -244,7 +242,7 @@ IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
                                                 static_cast<uint32_t>(begin),
                                                 static_cast<uint32_t>(end));
       },
-      BindProgress(progress, sink));
+      progress);
   }
 }
 

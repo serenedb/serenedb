@@ -319,8 +319,8 @@ bool ScanWithProgress(Impl& impl, const duckdb::string_t& value, ScanSink& sink,
   const auto traits =
     ComputeValueTraits(value, impl.Impl::WantedBlockTraits(), known);
   return DispatchTags(impl, traits, [&](auto... tags) IRS_FORCE_INLINE {
-    return impl.template DoFill<TokenLayout::TermsPos, tags()...>(value, sink,
-                                                                  &sink);
+    return impl.template DoFill<TokenLayout::TermsPos, tags()...>(
+      value, sink, sink.Progress());
   });
 }
 

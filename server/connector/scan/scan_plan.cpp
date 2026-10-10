@@ -21,6 +21,7 @@
 #include "connector/scan/scan_plan.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_join.h>
 
 #include <algorithm>
 #include <cmath>
@@ -538,6 +539,19 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   if (bind_data.IsHnswScored()) {
     if (!bind_data.score.top_k && !bind_data.score.top_k_expr &&
         bind_data.score.vector->radius == std::numeric_limits<float>::max()) {
+      const auto& columns = bind_data.lookup.filter_columns;
+      if (!columns.empty()) {
+        const bool one = columns.size() == 1;
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("an hnsw vector index answers ORDER BY <distance> LIMIT k "
+                  "and distance ranges, not a distance for every row"),
+          ERR_DETAIL("The WHERE reads ", one ? "column \"" : "columns \"",
+                     absl::StrJoin(columns, "\", \""),
+                     "\" from the table, which a graph walk cannot filter on."),
+          ERR_HINT("Add ", one ? "it" : "them",
+                   " to the index's INCLUDE list."));
+      }
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("an hnsw vector index answers ORDER BY <distance> LIMIT k and "

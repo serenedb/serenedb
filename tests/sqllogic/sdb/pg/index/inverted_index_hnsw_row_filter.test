@@ -184,10 +184,15 @@ pk
 8
 9
 
-query error an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges
+statement error
 SELECT pk FROM hnsw_r_idx
   WHERE label = 'even' OR other < 10
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+db error: ERROR: an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges, not a distance for every row
+DETAIL: The WHERE reads column "other" from the table, which a graph walk cannot filter on.
+HINT: Add it to the index's INCLUDE list.
+
 
 statement ok
 CREATE TABLE hnsw_rs (pk INTEGER PRIMARY KEY, num INTEGER, tag VARCHAR,
@@ -457,3 +462,41 @@ QUERY PLAN
 │ Column Filter: grp = 3                │
 │ ~43 rows                              │
 ╰───────────────────────────────────────╯
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label = 'even' OR pk < 10
+  ORDER BY emb <-> [5.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+5
+6
+4
+7
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE (label = 'even' AND pk < 150) OR grp = 3
+  ORDER BY emb <-> [150.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
+----
+pk
+150
+148
+146
+144
+
+query
+SELECT pk FROM hnsw_r_idx
+  WHERE label IN ('even', 'none') AND grp = 3
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+94
+108
+80
+
+statement ok
+RESET sdb_ann_force_exact;

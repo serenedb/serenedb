@@ -1707,6 +1707,32 @@ void TakeColumnConjuncts(
   }
 }
 
+std::vector<std::string> BaseTableColumns(
+  const duckdb::LogicalGet& get, const connector::ScanBindData& bind_data,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
+  std::vector<std::string> names;
+  if (!bind_data.relation.IsInvertedIndex() ||
+      bind_data.relation.IsSearchTable()) {
+    return names;
+  }
+  const auto& config = bind_data.relation.ScannedIndex();
+  for (const auto& filter : filters) {
+    for (const auto& binding : DistinctColumns(*filter)) {
+      const auto col_id = ResolveColumnId(binding, bind_data, get);
+      if (col_id == connector::kInvalidColumnId ||
+          col_id > connector::kMaxRealColumnIdValue ||
+          config.FindColumnInfo(col_id) != nullptr) {
+        continue;
+      }
+      auto name = bind_data.DisplayColumnName(col_id);
+      if (absl::c_find(names, name) == names.end()) {
+        names.push_back(std::move(name));
+      }
+    }
+  }
+  return names;
+}
+
 }  // namespace
 
 // A vector-scored scan reads its knobs and its query vector at execution
@@ -1749,6 +1775,7 @@ void IResearchPushdownComplexFilter(
   }
   if (bind_data.score.vector) {
     TakeColumnConjuncts(get, bind_data, filters, context);
+    bind_data.lookup.filter_columns = BaseTableColumns(get, bind_data, filters);
   }
   DecidePlanCache(bind_data, filters);
 }

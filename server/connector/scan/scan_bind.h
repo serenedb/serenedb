@@ -181,6 +181,7 @@ struct PlanCacheSpec {
 struct LookupSpec {
   std::string label;
   bool supports_filters = true;
+  std::vector<std::string> filter_columns;
 };
 
 struct ViewSpec {

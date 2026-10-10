@@ -431,9 +431,9 @@ WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
 GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
-body	ZSTD
-host	ZSTD
-url	DICT_ZSTD
+body	FSST
+host	ZXC
+url	DICT_FSST
 
 query
 SELECT count(*) AS hits FROM obj_auto WHERE url = 'https://example.org/section/42/page?id=0';
@@ -487,3 +487,50 @@ count	count
 
 statement ok
 DROP TABLE bg_merge;
+
+statement ok
+CREATE TABLE search_nested_codecs (a INTEGER PRIMARY KEY, attrs MAP(TEXT, TEXT) USING COMPRESSION dict_zstd, tags TEXT[] USING COMPRESSION dict_lz4, plain MAP(TEXT, TEXT))
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_nested_codecs SELECT a, MAP {'service': 'svc-' || (a % 13), 'host': 'host-' || (a % 97) || '.example.org'}, ['t' || (a % 5), 'u' || (a % 11)], MAP {'service': 'svc-' || (a % 13)} FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_nested_codecs;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_nested_codecs') WHERE column_name IN ('attrs', 'tags') AND segment_type = 'VARCHAR' GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression
+attrs	DICT_ZSTD
+tags	DICT_LZ4
+
+statement ok
+ALTER TABLE search_nested_codecs ALTER COLUMN plain SET COMPRESSION dict_lz4;
+
+statement ok
+INSERT INTO search_nested_codecs SELECT a, MAP {'service': 'svc-' || (a % 13), 'host': 'host-' || (a % 97) || '.example.org'}, ['t' || (a % 5), 'u' || (a % 11)], MAP {'service': 'svc-' || (a % 13)} FROM range(5000, 10000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_nested_codecs;
+
+query
+SELECT bool_or(compression = 'DICT_LZ4') AS altered FROM pragma_storage_info('search_nested_codecs') WHERE column_name = 'plain' AND segment_type = 'VARCHAR';
+----
+altered
+t
+
+query
+SELECT count(*) FROM search_nested_codecs WHERE attrs['service'] IS DISTINCT FROM 'svc-' || (a % 13) OR attrs['host'] IS DISTINCT FROM 'host-' || (a % 97) || '.example.org' OR tags[2] IS DISTINCT FROM 'u' || (a % 11) OR plain['service'] IS DISTINCT FROM 'svc-' || (a % 13);
+----
+count
+0
+
+statement error
+CREATE TABLE search_mixed_map_codec (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_zstd) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+----
+db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: STRUCT) using compression type 'DICT_ZSTD'
+
+
+statement ok
+DROP TABLE search_nested_codecs;

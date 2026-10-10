@@ -43,25 +43,18 @@ using duckdb::idx_t;
 constexpr size_t kSampleFrames = 4;
 constexpr double kLz4Penalty = 0.05;
 constexpr double kZstdPenalty = 0.15;
-constexpr double kZstdRefreshRowBits = 1;
 
 struct LeafOption {
   NumericLeaf leaf;
   uint8_t level;
   double penalty;
-  double row_bits = 0;
 
-  double Price(uint64_t bytes, double rows) const noexcept {
-    return static_cast<double>(bytes) * (1.0 + penalty) + rows * row_bits / 8;
+  double Price(uint64_t bytes) const noexcept {
+    return static_cast<double>(bytes) * (1.0 + penalty);
   }
 };
 
 constexpr LeafOption kLeaflessPlan[] = {{NumericLeaf::None, 0, 0}};
-constexpr LeafOption kRefreshPlan[] = {
-  {NumericLeaf::None, 0, 0},
-  {NumericLeaf::Lz4, 1, kLz4Penalty},
-  {NumericLeaf::Zstd, 1, kZstdPenalty, kZstdRefreshRowBits},
-};
 constexpr LeafOption kCompactionPlan[] = {
   {NumericLeaf::None, 0, 0},
   {NumericLeaf::Lz4, 1, kLz4Penalty},
@@ -160,11 +153,8 @@ class TypedSealer final : public NumericSealer {
   std::optional<NumericSegment> Seal(const ColCodecParams& params,
                                      uint64_t rival_bytes,
                                      NumericTuning& tuning, bool due) final {
-    if (std::is_floating_point_v<T>) {
+    if (std::is_floating_point_v<T> || params.tier == WriteTier::Flush) {
       return SealWith(kLeaflessPlan, rival_bytes, tuning, due);
-    }
-    if (params.tier == WriteTier::Flush) {
-      return SealWith(kRefreshPlan, rival_bytes, tuning, due);
     }
     return SealWith(kCompactionPlan, rival_bytes, tuning, due);
   }
@@ -191,7 +181,7 @@ class TypedSealer final : public NumericSealer {
         out = Emit(*c, *option);
         const auto bytes = out->bytes.size();
         drift = static_cast<double>(bytes) > tuning.bytes_per_row * rows * 1.25;
-        if (option->Price(bytes, rows) >= static_cast<double>(rival_bytes)) {
+        if (option->Price(bytes) >= static_cast<double>(rival_bytes)) {
           out.reset();
         }
       }
@@ -220,7 +210,7 @@ class TypedSealer final : public NumericSealer {
           continue;
         }
         const auto bytes = Estimate(c, option);
-        const auto price = option.Price(bytes, rows);
+        const auto price = option.Price(bytes);
         if (price < best_price) {
           best_price = price;
           best_bytes = bytes;
@@ -233,7 +223,7 @@ class TypedSealer final : public NumericSealer {
     if (best) {
       out = Emit(*best, best_leaf);
       const auto bytes = out->bytes.size();
-      if (best_leaf.Price(bytes, rows) >= static_cast<double>(rival_bytes)) {
+      if (best_leaf.Price(bytes) >= static_cast<double>(rival_bytes)) {
         out.reset();
         best = nullptr;
         best_bytes = rival_bytes;

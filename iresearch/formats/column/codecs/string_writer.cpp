@@ -69,7 +69,6 @@ constexpr size_t kPriceFrames = 8;
 
 constexpr uint8_t kLz4Fast[] = {1};
 constexpr uint8_t kLz4Levels[] = {1, 4, 6};
-constexpr uint8_t kZstdLevels[] = {9};
 constexpr uint8_t kZxcLevels[] = {1, 3};
 constexpr uint8_t kNoLevel[] = {0};
 
@@ -82,7 +81,6 @@ constexpr LeafPlan kRefreshPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                      {ByteCodec::Lz4, kLz4Fast}};
 constexpr LeafPlan kCompactionPlan[] = {{ByteCodec::Fsst, kNoLevel},
                                         {ByteCodec::Lz4, kLz4Levels},
-                                        {ByteCodec::Zstd, kZstdLevels},
                                         {ByteCodec::Zxc, kZxcLevels}};
 
 struct FrameShape {
@@ -972,7 +970,8 @@ class SegmentWriter {
     const auto& write = _smallest.bytes < chosen.bytes ? _smallest : chosen;
     Trial({shape, write.leaf}, write.level, begin, end, write.layout);
     auto* best = Smallest(shape, shape == Shape::Dedup ? dedup : plain);
-    if (best->choice.leaf != ByteCodec::Fsst) {
+    if (_params.tier == WriteTier::Flush &&
+        best->choice.leaf != ByteCodec::Fsst) {
       if (auto* fsst = Cached({shape, ByteCodec::Fsst}, 0, begin, end,
                               FrameLayout::Dictionary);
           fsst &&

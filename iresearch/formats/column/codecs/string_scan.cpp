@@ -1432,10 +1432,13 @@ struct FetchCache final : duckdb::SegmentScanState {
 
 FetchCache& CacheFor(duckdb::ColumnFetchState& state,
                      duckdb::ColumnSegment& segment, data_ptr_t base) {
-  if (!state.codec_state) {
-    state.codec_state = duckdb::make_uniq<FetchCache>();
+  auto* cached = dynamic_cast<FetchCache*>(state.codec_state.get());
+  if (!cached) {
+    auto fresh = duckdb::make_uniq<FetchCache>();
+    cached = fresh.get();
+    state.codec_state = std::move(fresh);
   }
-  auto& cache = state.codec_state->Cast<FetchCache>();
+  auto& cache = *cached;
   if (const auto block = segment.GetBlockHandle()->BlockId();
       cache.block != block) {
     cache.header = Header::Parse(base, segment.SegmentSize());

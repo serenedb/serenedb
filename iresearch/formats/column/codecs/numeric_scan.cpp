@@ -169,10 +169,13 @@ template<typename T>
 void FetchRow(duckdb::ColumnSegment& segment, duckdb::ColumnFetchState& state,
               duckdb::row_t row_id, duckdb::Vector& result, idx_t result_idx) {
   auto& handle = state.GetOrInsertHandle(segment);
-  if (!state.codec_state) {
-    state.codec_state = duckdb::make_uniq<FetchCache<T>>();
+  auto* cached = dynamic_cast<FetchCache<T>*>(state.codec_state.get());
+  if (!cached) {
+    auto fresh = duckdb::make_uniq<FetchCache<T>>();
+    cached = fresh.get();
+    state.codec_state = std::move(fresh);
   }
-  auto& cache = state.codec_state->Cast<FetchCache<T>>();
+  auto& cache = *cached;
   if (const auto block = segment.GetBlockHandle()->BlockId();
       cache.block != block) {
     const auto* base = handle.Ptr() + segment.GetBlockOffset();

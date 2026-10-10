@@ -226,6 +226,22 @@ duckdb::PhysicalType LeafPhysicalType(const duckdb::LogicalType& type) {
       return LeafPhysicalType(duckdb::ArrayType::GetChildType(type));
     case duckdb::LogicalTypeId::LIST:
       return LeafPhysicalType(duckdb::ListType::GetChildType(type));
+    case duckdb::LogicalTypeId::MAP:
+    case duckdb::LogicalTypeId::STRUCT: {
+      const auto& fields = duckdb::StructType::GetChildTypes(
+        type.id() == duckdb::LogicalTypeId::MAP
+          ? duckdb::ListType::GetChildType(type)
+          : type);
+      std::optional<duckdb::PhysicalType> leaf;
+      for (const auto& field : fields) {
+        const auto field_leaf = LeafPhysicalType(field.second);
+        if (leaf && *leaf != field_leaf) {
+          return duckdb::PhysicalType::STRUCT;
+        }
+        leaf = field_leaf;
+      }
+      return leaf.value_or(duckdb::PhysicalType::STRUCT);
+    }
     default:
       return type.InternalType();
   }

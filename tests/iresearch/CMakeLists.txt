@@ -232,6 +232,7 @@ target_include_directories(
         ${Boost_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
 )
 
 # Standalone iresearch-load binary -- split out so CI doesn't have to compile and

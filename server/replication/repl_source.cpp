@@ -20,9 +20,9 @@
 
 #include "replication/repl_source.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -545,7 +545,7 @@ bool ShapeRow(const PgOutputMessage& msg, const RelInfo& rel, RowShape& shape) {
       PresentColumns(shape.old_cells, shape.keys);
     } else {
       KeyColumns(rel, shape.keys);
-      if (!m->has_old && std::ranges::any_of(shape.cols, [&](size_t i) {
+      if (!m->has_old && absl::c_any_of(shape.cols, [&](size_t i) {
             return !rel.columns[i].is_key;
           })) {
         std::erase_if(shape.cols,
@@ -576,7 +576,7 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildUniqueConflictProbe(
   const auto& shape = batch.shape;
   const size_t nkeys = shape.keys.size();
   const auto source = [&](size_t column) -> std::optional<std::string> {
-    const auto it = std::ranges::find(shape.cols, column);
+    const auto it = absl::c_find(shape.cols, column);
     if (it == shape.cols.end()) {
       return std::nullopt;
     }

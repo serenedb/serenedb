@@ -20,6 +20,7 @@
 
 #include "pg/commands/create_subscription.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -446,7 +447,7 @@ std::vector<duckdb::SubscriptionRelation> FetchRelations(
   }
   std::vector<std::string> missing;
   for (const auto& publication : info.publications) {
-    if (std::ranges::none_of(publications, [&](const auto& row) {
+    if (absl::c_none_of(publications, [&](const auto& row) {
           return !row.empty() && row[0] == publication;
         })) {
       missing.push_back(absl::StrCat("\"", publication, "\""));

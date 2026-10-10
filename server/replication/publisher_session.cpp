@@ -20,6 +20,7 @@
 
 #include "replication/publisher_session.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/random/random.h>
 #include <absl/strings/numbers.h>
@@ -127,7 +128,7 @@ bool IsIpAddress(std::string_view host) {
 }  // namespace
 
 PublisherTls::PublisherTls(const ConnInfo& conninfo, size_t host_index) {
-  if (!std::ranges::contains(
+  if (!absl::c_contains(
         EncryptionOrder(conninfo, conninfo.hosts.at(host_index)),
         Encryption::Tls)) {
     return;

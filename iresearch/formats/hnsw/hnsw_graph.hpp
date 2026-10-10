@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <faiss/utils/distances.h>
 
 #include <algorithm>
@@ -65,7 +66,7 @@ class HnswVisited {
 
   void Next() noexcept {
     if (++_generation == 0) {
-      std::ranges::fill(_marks, 0);
+      absl::c_fill(_marks, 0);
       _generation = 1;
     }
   }
@@ -506,10 +507,9 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   }
   items.push_back(
     {.score = dist.Pair(peer, node), .node = node, .processed = false});
-  std::ranges::sort(items,
-                    [](const HnswReverseItem& l, const HnswReverseItem& r) {
-                      return l.score > r.score;
-                    });
+  absl::c_sort(items, [](const HnswReverseItem& l, const HnswReverseItem& r) {
+    return l.score > r.score;
+  });
 
   auto& kept = s.rev_kept;
   auto& kept_processed = s.rev_kept_processed;
@@ -567,10 +567,9 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
     HnswSearchLevel(graph.Graph(), dist, level, ef_construction, s.search);
 
     auto& found = s.search.nearest;
-    std::ranges::sort(found,
-                      [](const HnswCandidate& l, const HnswCandidate& r) {
-                        return l.score > r.score;
-                      });
+    absl::c_sort(found, [](const HnswCandidate& l, const HnswCandidate& r) {
+      return l.score > r.score;
+    });
 
     const uint32_t width = level == 0 ? graph.M0() : graph.M();
     HnswSelectNeighbors(dist, found, width, s);

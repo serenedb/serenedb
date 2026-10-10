@@ -1,0 +1,55 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rfmt_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rfmt_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rfmt\_%''');
+
+
+statement ok
+CALL postgres_execute('rfmt_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rfmt_pub; DROP TABLE IF EXISTS rfmt_values; DROP ROLE IF EXISTS rfmt_user; END $$');
+
+
+statement ok
+CALL postgres_execute('rfmt_${__DATABASE__}', 'DO $$ BEGIN CREATE ROLE rfmt_user LOGIN REPLICATION; ALTER ROLE rfmt_user SET DateStyle = ''SQL, DMY''; ALTER ROLE rfmt_user SET IntervalStyle = ''sql_standard''; ALTER ROLE rfmt_user SET extra_float_digits = 0; CREATE TABLE rfmt_values (id int PRIMARY KEY, d date, ts timestamp, tz timestamptz, iv interval, f float8); GRANT SELECT ON rfmt_values TO rfmt_user; INSERT INTO rfmt_values VALUES (1, ''2026-03-04'', ''2026-03-04 05:06:07.891'', ''2026-03-04 05:06:07.891+00'', ''1 year 2 mons 3 days 04:05:06'', 0.1::float8 + 0.2::float8); CREATE PUBLICATION rfmt_pub FOR TABLE rfmt_values; END $$');
+
+
+statement ok
+CREATE TABLE rfmt_values (id INTEGER PRIMARY KEY, d DATE, ts TIMESTAMP, tz TIMESTAMPTZ, iv INTERVAL, f DOUBLE);
+
+
+statement ok
+CREATE SUBSCRIPTION rfmt_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=rfmt_user' PUBLICATION rfmt_pub WITH (slot_name = 'rfmt_sub');
+
+
+query ok retry 240 backoff 250ms
+SELECT id, d::VARCHAR AS d, ts::VARCHAR AS ts, tz::VARCHAR AS tz, iv::VARCHAR AS iv, f::VARCHAR AS f FROM rfmt_values ORDER BY id;
+----
+id	d	ts	tz	iv	f
+1	2026-03-04	2026-03-04 05:06:07.891	2026-03-04 05:06:07.891+00	1 year 2 mons 3 days 04:05:06	0.30000000000000004
+
+
+statement ok
+CALL postgres_execute('rfmt_${__DATABASE__}', 'INSERT INTO rfmt_values VALUES (2, ''2026-11-12'', ''2026-11-12 13:14:15.5'', ''2026-11-12 13:14:15.5+00'', ''-1 days +02:03:04'', 1::float8 / 3)');
+
+
+query ok retry 240 backoff 250ms
+SELECT id, d::VARCHAR AS d, ts::VARCHAR AS ts, tz::VARCHAR AS tz, iv::VARCHAR AS iv, f::VARCHAR AS f FROM rfmt_values ORDER BY id;
+----
+id	d	ts	tz	iv	f
+1	2026-03-04	2026-03-04 05:06:07.891	2026-03-04 05:06:07.891+00	1 year 2 mons 3 days 04:05:06	0.30000000000000004
+2	2026-11-12	2026-11-12 13:14:15.5	2026-11-12 13:14:15.5+00	-1 days +02:03:04	0.3333333333333333
+
+
+statement ok
+DROP SUBSCRIPTION rfmt_sub;
+
+
+statement ok
+CALL postgres_execute('rfmt_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rfmt_pub; DROP TABLE rfmt_values; DROP ROLE rfmt_user; END $$');
+
+
+statement ok
+DETACH rfmt_${__DATABASE__};

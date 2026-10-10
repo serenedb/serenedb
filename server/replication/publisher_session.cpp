@@ -208,11 +208,17 @@ yaclib::Task<bool> PublisherSession::Connect() {
   }
   const std::string& dbname =
     _conninfo.dbname.empty() ? _conninfo.user : _conninfo.dbname;
-  const std::array<std::pair<std::string_view, std::string_view>, 4> params{{
+  const auto options =
+    absl::StrCat(_conninfo.options,
+                 " -c datestyle=ISO -c intervalstyle=postgres "
+                 "-c extra_float_digits=3");
+  const std::array<std::pair<std::string_view, std::string_view>, 6> params{{
     {"user", _conninfo.user},
     {"database", dbname},
     {"replication", "database"},
     {"application_name", _application_name},
+    {"client_encoding", "UTF8"},
+    {"options", options},
   }};
   network::pg::WriteStartupMessage(this->_send, params);
   this->KickSend();

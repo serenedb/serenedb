@@ -6,7 +6,31 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fix_enum_trailing_comma import blanked  # noqa: E402
 
+RANGES_WITH_ABSL = (
+    "adjacent_find", "all_of", "any_of", "binary_search", "contains",
+    "contains_subrange", "copy", "copy_backward", "copy_if", "copy_n", "count",
+    "count_if", "distance", "equal", "equal_range", "fill", "fill_n", "find",
+    "find_end", "find_first_of", "find_if", "find_if_not", "for_each",
+    "generate", "generate_n", "includes", "inplace_merge", "is_heap",
+    "is_heap_until", "is_partitioned", "is_permutation", "is_sorted",
+    "is_sorted_until", "lexicographical_compare", "lower_bound", "make_heap",
+    "max_element", "merge", "min_element", "minmax_element", "mismatch", "move",
+    "move_backward", "next_permutation", "none_of", "nth_element",
+    "partial_sort", "partial_sort_copy", "partition", "partition_copy",
+    "partition_point", "pop_heap", "prev_permutation", "push_heap",
+    "remove_copy", "remove_copy_if", "replace", "replace_copy",
+    "replace_copy_if", "replace_if", "reverse", "reverse_copy", "rotate",
+    "rotate_copy", "sample", "search", "search_n", "set_difference",
+    "set_intersection", "set_symmetric_difference", "set_union", "shuffle",
+    "sort", "sort_heap", "stable_partition", "stable_sort", "swap_ranges",
+    "transform", "unique_copy", "upper_bound",
+)
+
 BANNED = [
+    (
+        re.compile(r"\bstd::ranges::(" + "|".join(RANGES_WITH_ABSL) + r")\s*\("),
+        "absl::c_{name} (a projection becomes a lambda)",
+    ),
     (
         re.compile(r"\bstd::(unordered_(?:map|set|multimap|multiset))\b"),
         "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
@@ -48,7 +72,10 @@ def check_file(path: str) -> list[str]:
             if m.group(1) in allowed:
                 continue
             line = sh.count("\n", 0, m.start()) + 1
-            errors.append(f"line {line}: use {instead} instead of {m.group(1)}")
+            errors.append(
+                f"line {line}: use {instead.format(name=m.group(1))} "
+                f"instead of {m.group(1)}"
+            )
     return errors
 
 

@@ -1107,6 +1107,24 @@ id
 7
 8
 
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS h FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id	h
+1	the <b>quick brown</b> fox jumps over the lazy dog
+2	<b>quick brown</b> dog
+5	<b>quick brown</b> cat brown fox
+7	<b>quick brown quick brown quick brown</b>
+8	quick <b>quick brown</b> brown
+
+query
+SELECT id, ts_highlight(body, ts_offsets(body)) AS h FROM pwp_text_idx WHERE body @@ ts_phrase('brown fox') ORDER BY id
+----
+id	h
+1	the quick <b>brown fox</b> jumps over the lazy dog
+3	<b>brown fox</b> quick
+5	quick brown cat <b>brown fox</b>
+
 statement ok
 CREATE TABLE pwp_search (id BIGINT PRIMARY KEY, body TEXT, tags TEXT[])
   WITH (storage='search', compaction_interval=0)

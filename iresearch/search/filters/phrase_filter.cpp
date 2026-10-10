@@ -547,10 +547,10 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   PhraseState state{ctx.memory};
   const auto* reader = segment.field(field);
   state.reader = reader;
-  const auto& tokens = options.tokens();
   const ColumnReader* column = nullptr;
-  if (tokens) {
-    if (!reader || !detail::DocOf(*reader)) {
+  if (!detail::ResolvePhrase(reader, state.handles)) {
+    const auto& tokens = options.tokens();
+    if (!tokens || !reader || !detail::DocOf(*reader)) {
       return QueryBuilder::Empty();
     }
     const auto* col_reader = segment.GetColReader();
@@ -558,8 +558,6 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     if (!column) {
       return QueryBuilder::Empty();
     }
-  } else if (!detail::ResolvePhrase(reader, state.handles)) {
-    return QueryBuilder::Empty();
   }
   if (collector) {
     collector->Field(ctx.thread).Collect(*reader);
@@ -598,13 +596,13 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
       }
     }
 
-    if (options.slop() != 0 || tokens) {
+    if (options.slop() != 0 || column) {
       part_terms.resize(phrase_size);
     }
   }
 
   state.metas.reserve(counts.terms);
-  const bool boosted = counts.boosted && !is_ord_empty && !tokens;
+  const bool boosted = counts.boosted && !is_ord_empty && !column;
   if (boosted) {
     state.boosts.reserve(counts.terms);
   }
@@ -676,7 +674,7 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
     state.boosts.clear();
   }
 
-  if (tokens) {
+  if (column) {
     return MakeTokenPhraseQuery(segment, ctx, *reader, state, options, *column,
                                 part_terms);
   }

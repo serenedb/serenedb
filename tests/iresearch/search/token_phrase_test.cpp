@@ -1273,6 +1273,18 @@ TEST(TokenPhraseIndexTest, without_stored_column_matches_nothing) {
   EXPECT_TRUE(index.Docs(PhraseOn(kPlainId, Phrase("quick brown"))).empty());
 }
 
+TEST(TokenPhraseIndexTest, positions_win_over_tokens) {
+  const std::vector<std::string> docs{"quick brown fox", "brown quick",
+                                      "quick x brown", "quick brown"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  const auto phrase = Phrase("quick brown");
+  const auto expected = index.Run(PhraseOn(kPositionalId, phrase));
+  EXPECT_EQ((std::vector<irs::doc_id_t>{0, 3}), expected.docs);
+  ExpectFamilies(expected,
+                 index.Run(PhraseOn(kPositionalId, phrase,
+                                    Tokens<DenseWords>(irs::field_id{42}))));
+}
+
 TEST(TokenPhraseFilterTest, equality_covers_tokens) {
   const auto base = Phrase("quick brown");
   const auto tokens = Tokens<DenseWords>();

@@ -4200,14 +4200,14 @@ statement error
 CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t2 FOR EACH STATEMENT
   INSERT INTO coro_audit VALUES ('t2_other', 0);
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Table\0public\0coro_audit\0Trigger\0public\0coro_trg\0coro_trg_t2"
+db error: ERROR: Catalog write-write conflict on alter with "coro_trg"
 
 
 connection s2
 statement error
 DROP TRIGGER coro_trg ON coro_trg_t2;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "Table\0public\0coro_audit\0Trigger\0public\0coro_trg\0coro_trg_t2"
+db error: ERROR: Catalog write-write conflict on alter with "coro_trg"
 
 
 connection s1

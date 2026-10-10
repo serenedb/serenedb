@@ -100,6 +100,12 @@ add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
 add_bench(select_thresholds)
 add_bench(clustering)
+add_bench(curve_ranges)
+add_bench(cartesian_ranges)
+target_include_directories(
+    serenedb-bench-micro
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb_spatial/src
+)
 add_bench(simd_base64)
 add_bench(simd_json_validate)
 add_bench(simd_utf8_validate)

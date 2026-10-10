@@ -33,6 +33,7 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
+#include "connector/curve_index.h"
 #include "connector/primary_key.h"
 #include "connector/term_dict.h"
 #include "search_remove_filter.hpp"
@@ -684,6 +685,18 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     AppendToColumn(field_id, type, vec, count);
     return;
   }
+  if (entry && entry->curve && !entry->curve->cartesian) {
+    duckdb::Vector encoded{duckdb::LogicalType::BLOB, count};
+    PackCurvePoints(vec, count, entry->curve->dimensions, encoded);
+    if (is_stored) {
+      AppendToColumn(field_id, type, vec, count);
+    }
+    encoded.ToUnifiedFormat(count, _vec_fmt.unified);
+    _null_field.PrepareForBlockValue(entry->null_field_id);
+    _field.PrepareForStringValue(field_id, ResolveTokenizer(field_id));
+    WriteAnalyzedColumn(_field, _null_field, encoded, count);
+    return;
+  }
   if (type.IsJSONType() && entry && entry->HasJsonLeafFields()) {
     _json_fields.InitForExpression(field_id, entry, ResolveTokenizer(field_id));
     if (irs::field_limits::valid(_json_fields.string_field.store_column)) {
@@ -753,7 +766,8 @@ void SearchSinkInsertBaseImpl::SwitchFieldImpl(irs::field_id field_id,
     case duckdb::LogicalTypeId::GEOMETRY: {
       auto& tokenizer = ResolveTokenizer(field_id);
       _field.PrepareForStringValue(field_id, tokenizer);
-      if (kind == duckdb::LogicalTypeId::GEOMETRY) {
+      if (kind == duckdb::LogicalTypeId::GEOMETRY &&
+          irs::analysis::GeoTokenizer::IsGeoTokenizer(*tokenizer.analyzer)) {
         irs::analysis::GeoTokenizer::Cast(*tokenizer.analyzer)
           .SetWkbInput(true);
       }

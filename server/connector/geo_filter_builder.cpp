@@ -35,6 +35,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
+#include "connector/curve_index.h"
 #include "connector/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
@@ -379,7 +380,9 @@ bool FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
       column_info->logical_type.id() != duckdb::LogicalTypeId::GEOMETRY) {
     return false;
   }
-  if (!column_info->tokenizer.analyzer) {
+  if (!column_info->tokenizer.analyzer ||
+      column_info->tokenizer.analyzer->type() ==
+        irs::Type<CurveTokenizer>::id()) {
     return false;
   }
 

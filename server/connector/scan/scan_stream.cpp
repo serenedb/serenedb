@@ -107,6 +107,7 @@ void PushHits(StreamLocalState& l) {
                    ->Run(min, max, batcher.WindowHead(), batcher.ScoreHead())
                : irs::utils::downCast<irs::docs::Root>(l.root.get())
                    ->Run(min, max, batcher.WindowHead());
+    l.candidate_rows += n;
     batcher.CommitWindow(n);
     l.next_row = row + width;
   }

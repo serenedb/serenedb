@@ -33,6 +33,11 @@ In the following example, we create a `GEOMETRY` column with the 7 different typ
 
 ## Multi-Dimensional Geometries
 
+For a local planar coordinate system, declare `GEOMETRY('SDB:CARTESIAN')` and
+index it with the [`cartesian(...)` opclass](../indexes/inverted/curve-search.md).
+Its covering and scalar rechecks operate on XY with straight edges. Geographic
+indexes continue to require CRS84 and use S2.
+
 The `GEOMETRY` type is primarily used to model shapes in two dimensions (e.g. `X`/`Y` or `longitude`/`latitude`), but it also supports shapes with additional vertex dimensions such as `Z` for elevation or `M` for "measure", or both.
 
 The vertex dimensions of a `GEOMETRY` value must be consistent across all vertices. For example, if one vertex has `X`, `Y`, and `Z` coordinates, then all other vertices in that geometry must also have `X`, `Y`, and `Z` coordinates. This means that you cannot have a mix of 2D and 3D vertices within the same geometry. This also applies for collections of geometries, such as `MULTIPOINT` or `GEOMETRYCOLLECTION`, where all geometries within the collection must have the same vertex dimensions.

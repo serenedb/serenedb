@@ -47,6 +47,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/tokenizer.h"
+#include "connector/functions/curve.h"
 #include "connector/functions/minhash.h"
 #include "connector/functions/tokenizer_functions.h"
 #include "connector/functions/ts_common.hpp"
@@ -304,6 +305,7 @@ void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {
   RegisterScorerFunctions(loader);
   RegisterPositionFunctions(loader);
   RegisterGeoFunctions(loader);
+  RegisterCurveFunctions(loader);
   RegisterTsLexize(loader);
   RegisterMinHash(loader);
   RegisterTsHighlight(loader);

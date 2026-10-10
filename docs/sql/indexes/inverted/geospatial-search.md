@@ -11,6 +11,9 @@ The [inverted index](./index.md) indexes geographic shapes for fast spatial pred
 
 ## Creating a geospatial index
 
+For floor plans, CAD coordinates or other local planar data, see
+[Cartesian search](./curve-search.md#cartesian-geometry).
+
 Use the `encode_geojson` dictionary template on a `JSON` column holding GeoJSON. The column type must be `JSON` or `GEOMETRY` — a plain `VARCHAR` is rejected for geo analyzers:
 
 <SqlLogicTest id="sql/indexes/inverted/geospatial-search/example_001" />

@@ -1,0 +1,236 @@
+statement ok
+CREATE TABLE cartesian_shapes(id INTEGER PRIMARY KEY, g GEOMETRY('SDB:CARTESIAN'));
+
+statement ok
+INSERT INTO cartesian_shapes VALUES
+ (1, 'POINT(0 0)'),
+ (2, 'LINESTRING(-1000 0,1000 0)'),
+ (3, 'POLYGON((-2 -2,-2 2,2 2,2 -2,-2 -2))'),
+ (4, 'POINT(500 500)'),
+ (5, 'POLYGON((0 0,1000 1000,1000 1000.000001,0 0.000001,0 0))'),
+ (6, 'LINESTRING(1 1,1 1)'),
+ (7, 'POLYGON((0 0,2 2,0 2,2 0,0 0))'),
+ (8, 'POINT EMPTY'),
+ (9, NULL),
+ (10, 'POLYGON((-1000000000 -1000000000,-1000000000 1000000000,1000000000 1000000000,1000000000 -1000000000,-1000000000 -1000000000))'),
+ (11, 'POLYGON((-10 -10,-10 10,10 10,10 -10,-10 -10),(-1 -1,1 -1,1 1,-1 1,-1 -1))');
+
+statement ok
+CREATE INDEX cartesian_morton ON cartesian_shapes USING inverted(id, g cartesian(max_cells=32));
+
+statement ok
+CREATE INDEX cartesian_hilbert ON cartesian_shapes USING inverted(id, g cartesian(curve='hilbert', max_cells=1));
+
+statement ok
+VACUUM (REFRESH_TABLE) cartesian_shapes;
+
+query
+SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'POINT(500 500)'::GEOMETRY('SDB:CARTESIAN')) ORDER BY id;
+----
+id
+4
+5
+10
+
+query
+SELECT id FROM cartesian_hilbert WHERE ST_Intersects(g, 'POINT(500 500)'::GEOMETRY('SDB:CARTESIAN')) ORDER BY id;
+----
+id
+4
+5
+10
+
+query
+SELECT id FROM cartesian_morton WHERE ST_Contains(g, 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN')) AND id IN (3,10,11) ORDER BY id;
+----
+id
+3
+10
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'LINESTRING(-1 0,1 0)'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Intersects(g, 'LINESTRING(-1 0,1 0)'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Intersects(g, 'LINESTRING(-1 0,1 0)'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'LINESTRING(-1 0,1 0)'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT id FROM cartesian_morton WHERE ST_Intersects('POINT(1000000000 1000000000)'::GEOMETRY('SDB:CARTESIAN'), g);
+----
+id
+10
+
+query
+SELECT id FROM cartesian_morton WHERE g IS NULL;
+----
+id
+9
+
+query
+SELECT id FROM cartesian_morton WHERE g = 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN');
+----
+id
+1
+
+query
+SELECT count(*) AS n FROM cartesian_morton WHERE ST_Intersects(g, 'POINT EMPTY'::GEOMETRY('SDB:CARTESIAN'));
+----
+n
+0
+
+query
+SELECT id FROM cartesian_morton WHERE NOT ST_Intersects(g, 'POINT(500 500)'::GEOMETRY('SDB:CARTESIAN')) AND id IN (1,4,9) ORDER BY id;
+----
+id
+1
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Intersects(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Intersects(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Contains(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Contains(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Contains(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Contains(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Within(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Within(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Within(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Within(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Covers(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Covers(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Covers(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Covers(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_CoveredBy(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_CoveredBy(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_CoveredBy(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_CoveredBy(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Touches(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Touches(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Touches(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Touches(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Crosses(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Crosses(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Crosses(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Crosses(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Overlaps(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Overlaps(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Overlaps(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Overlaps(g, 'POLYGON((-3 -3,-3 3,3 3,3 -3,-3 -3))'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+statement ok
+INSERT INTO cartesian_shapes VALUES (12, ST_MakeLine(ST_Point(0, 0), ST_Point(1, 'Infinity'::DOUBLE))::GEOMETRY('SDB:CARTESIAN'));
+
+statement ok
+VACUUM (REFRESH_TABLE) cartesian_shapes;
+
+query
+SELECT count(*) AS n FROM (
+ (SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_shapes WHERE ST_Intersects(g, 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN')))
+ UNION ALL
+ (SELECT id FROM cartesian_shapes WHERE ST_Intersects(g, 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN'))
+  EXCEPT SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN'))));
+----
+n
+0
+
+query
+SELECT id FROM cartesian_morton WHERE ST_Intersects(g, 'POINT(0 0)'::GEOMETRY('SDB:CARTESIAN')) AND id = 12;
+----
+id
+12
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY geographic_only AS encode_geojson();
+
+statement error
+CREATE INDEX wrong_crs ON cartesian_shapes USING inverted(g geographic_only);
+----
+db error: ERROR: Column 'g': GEOMETRY type has invalid CRS 'SDB:CARTESIAN'; only CRS84 is supported (EPSG:4326, OGC:CRS84, 4326)
+
+
+statement ok
+CREATE TABLE geographic_shape(id INTEGER PRIMARY KEY, g GEOMETRY('OGC:CRS84'));
+
+statement error
+CREATE INDEX wrong_cartesian ON geographic_shape USING inverted(g cartesian());
+----
+db error: ERROR: Column 'g': Cartesian geometry requires GEOMETRY('SDB:CARTESIAN')
+
+
+statement error
+CREATE INDEX wrong_cartesian ON cartesian_shapes USING inverted(id cartesian());
+----
+db error: ERROR: Column 'id': cartesian opclass requires GEOMETRY('SDB:CARTESIAN'), got INTEGER
+
+
+statement ok
+CREATE INDEX still_geographic ON geographic_shape USING inverted(g geographic_only);
+
+statement ok
+DROP TABLE geographic_shape;
+
+statement ok
+DROP TABLE cartesian_shapes;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY geographic_only;

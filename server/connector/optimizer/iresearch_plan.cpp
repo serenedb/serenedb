@@ -54,6 +54,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "connector/curve_filter_builder.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_offsets.h"
@@ -1158,6 +1159,12 @@ bool ClaimSearchConjuncts(
   bool any_claimed = false;
   connector::FilterScorers filter_scorers;
   for (size_t i = 0; i < filters.size();) {
+    if (connector::AddCurveCandidates(*root_and, *filters[i], getter,
+                                      expr_getter, context)) {
+      any_claimed = true;
+      ++i;
+      continue;
+    }
     if (TryClaimIResearchConjunct(*root_and, filters[i], getter, expr_getter,
                                   context, &filter_scorers)) {
       any_claimed = true;

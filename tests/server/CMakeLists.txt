@@ -39,6 +39,7 @@ add_executable(
     storage_version_test.cpp
     catalog/entry/tokenizer_test.cpp
     connector/ai_functions_test.cpp
+    connector/cartesian_covering_test.cpp
     connector/copy_in_bridge_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
@@ -55,6 +56,11 @@ target_link_libraries(
     PUBLIC sereneserver gtest serene_docs_corpus
 )
 sdb_link_duckdb_extensions(serenedb-tests PUBLIC)
+
+target_include_directories(
+    serenedb-tests
+    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb_spatial/src
+)
 
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb-tests PUBLIC serene_docs_index)

@@ -1,0 +1,57 @@
+control substitution on
+
+# DOCS_TEST: points
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE measurements(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE);
+
+statement ok
+INSERT INTO measurements VALUES (1, 5, 10), (2, 50, 100);
+
+statement ok
+CREATE INDEX measurements_xy ON measurements USING inverted(
+  id, (ROW(x,y)) curve(max_cells=64)) INCLUDE (x,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) measurements;
+
+query
+SELECT id FROM measurements_xy
+WHERE sdb_box_contains(ROW(x,y), ROW(0,0::DOUBLE), ROW(10,20::DOUBLE));
+----
+id
+1
+
+# DOCS_TEST: shapes
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE floorplan(id INTEGER PRIMARY KEY, shape GEOMETRY('SDB:CARTESIAN'));
+
+statement ok
+INSERT INTO floorplan VALUES (1, 'POLYGON((0 0,0 10,10 10,10 0,0 0))');
+
+statement ok
+CREATE INDEX floorplan_xy ON floorplan USING inverted(
+  id, shape cartesian(max_cells=64, max_level=64));
+
+statement ok
+VACUUM (REFRESH_TABLE) floorplan;
+
+query
+SELECT id FROM floorplan_xy
+WHERE ST_Intersects(shape, 'POINT(5 5)'::GEOMETRY('SDB:CARTESIAN'));
+----
+id
+1
+
+# DOCS_TEST_END
+
+statement ok
+DROP TABLE measurements;
+
+statement ok
+DROP TABLE floorplan;

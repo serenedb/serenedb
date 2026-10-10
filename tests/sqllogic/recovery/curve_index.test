@@ -1,0 +1,47 @@
+control substitution on
+
+statement ok
+CREATE TABLE curve_recovery(id INTEGER PRIMARY KEY, x BIGINT, y BIGINT, g GEOMETRY('SDB:CARTESIAN'));
+
+statement ok
+CREATE INDEX recovered_points ON curve_recovery USING inverted(id, (ROW(x,y)) curve(curve='hilbert', max_cells=1)) INCLUDE (x,y);
+
+statement ok
+CREATE INDEX recovered_shapes ON curve_recovery USING inverted(id, g cartesian(max_cells=4));
+
+statement ok
+INSERT INTO curve_recovery VALUES (1, 2, 3, 'POINT(2 3)');
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_recovery;
+
+statement ok
+SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
+
+statement ok
+INSERT INTO curve_recovery VALUES (2, 4, 5, 'LINESTRING(4 4,4 6)');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection recovered_curve
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+VACUUM (REFRESH_TABLE) curve_recovery;
+
+connection recovered_curve
+query
+SELECT id FROM recovered_points WHERE sdb_box_contains(ROW(x,y), ROW(0,0), ROW(5,5)) ORDER BY id;
+----
+id
+1
+2
+
+connection recovered_curve
+query
+SELECT id FROM recovered_shapes WHERE ST_Intersects(g, 'POINT(4 5)'::GEOMETRY('SDB:CARTESIAN'));
+----
+id
+2

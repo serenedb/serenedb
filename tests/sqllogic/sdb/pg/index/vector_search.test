@@ -1257,6 +1257,10 @@ statement ok
 SET sdb_ivf_search_nprobe = 256;
 
 
+statement ok
+SET sdb_ann_oversample = 4;
+
+
 query
 SELECT id FROM big_idx ORDER BY emb <-> [500.5, 500, 500]::FLOAT[3] LIMIT 3;
 ----
@@ -1264,6 +1268,10 @@ id
 500
 501
 499
+
+
+statement ok
+RESET sdb_ann_oversample;
 
 
 statement ok

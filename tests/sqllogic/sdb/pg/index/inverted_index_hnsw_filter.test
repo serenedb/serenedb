@@ -99,14 +99,10 @@ pk
 2
 
 
-query
+query error an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges
 SELECT pk FROM hnsw_f_idx
   WHERE label = 'even' OR pk < 10
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
-----
-pk
-100
-102
 
 
 # Both kinds at once: the indexed range and the stored column.

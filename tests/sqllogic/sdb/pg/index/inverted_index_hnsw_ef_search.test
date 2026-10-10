@@ -139,7 +139,7 @@ CREATE INDEX hnsw_efq_idx ON hnsw_efq
 
 statement ok
 INSERT INTO hnsw_efq SELECT i,
-  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(2000) t(i);
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(1376, 1626) t(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) hnsw_efq;

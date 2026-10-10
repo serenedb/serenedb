@@ -289,7 +289,7 @@ RESET sdb_ivf_posting_size
 
 query
 SELECT count(*) AS mismatched FROM (
-  SELECT i.pk, round(i.d::DOUBLE, 3) AS di, round(t.d::DOUBLE, 3) AS dt FROM
+  SELECT i.pk, i.d::DOUBLE AS di, t.d::DOUBLE AS dt FROM
     (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_lanes_idx
        WHERE emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] < 1e9) i
@@ -297,7 +297,7 @@ SELECT count(*) AS mismatched FROM (
     (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_lanes) t
     USING (pk)
-) q WHERE di <> dt;
+) q WHERE abs(di - dt) > 1e-4;
 ----
 mismatched
 0

@@ -194,10 +194,10 @@ name:
 | routines | 🟢 |  |
 | schemata | 🟢 |  |
 | sequences | 🟢 |  |
-| sql_features | 🟢 | PostgreSQL's list of SQL standard features. |
-| sql_implementation_info | 🟢 |  |
-| sql_parts | 🟢 |  |
-| sql_sizing | 🟢 |  |
+| sql_features | 🟡 | SereneDB makes no claims about individual SQL standard features, so the table is empty. |
+| sql_implementation_info | 🟢 | SereneDB's own values: `DBMS NAME` and `DBMS VERSION` name SereneDB, the default isolation level is `REPEATABLE READ`, and nulls sort at the end. |
+| sql_parts | 🟢 | Every part of the SQL standard is listed as not supported in full. |
+| sql_sizing | 🟢 | Names longer than the 63 characters listed are kept in full. |
 | table_constraints | 🟢 |  |
 | table_privileges | 🟢 |  |
 | tables | 🟢 |  |

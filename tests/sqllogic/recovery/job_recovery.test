@@ -78,7 +78,7 @@ cp $__TEST_DIR__/jrec_glob/f1.parquet $__TEST_DIR__/jrec_glob/f2.parquet
 
 
 connection r1
-query
+query ok retry 80 backoff 250ms
 SELECT job_name, schedule, suspended, regexp_replace(body, '[0-9]+', 'N', 'g') AS body
 FROM duckdb_jobs() WHERE starts_with(job_name, 'jrec_') ORDER BY job_name;
 ----

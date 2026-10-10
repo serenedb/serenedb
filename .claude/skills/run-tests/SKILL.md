@@ -5,7 +5,7 @@ description: Run SereneDB tests locally and read a red CI run - pick the suites 
 
 # Running SereneDB tests
 
-Read CONTRIBUTING.md "Test" (every suite's local command and its traps) and "What CI runs" (which suites CI picks for a change, and how to read a failed run) before running anything.
+Read `.claude/rules/testing.md` (every suite's local command and its traps, which suites CI picks for a change, and how to read a failed run) before running anything.
 
 - Build the targets you run first. Never pipe `ninja` into `tail` or `grep`: the pipe hides its exit code.
 - A server you start for `run.sh` follows CLAUDE.md "Local smoke server".

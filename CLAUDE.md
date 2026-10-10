@@ -8,20 +8,13 @@ or your change makes it outdated, remove it unless asked to keep it.
 - Don't use python/sed for normal code editing or reading, only for real
 scripting changes.
 
-- Read `CONTRIBUTING.md` -- it covers build, tests, branches, commits, PRs, and
-C++ style. This file only flags traps that aren't in there.
+- Read `CONTRIBUTING.md` -- it covers the build and links the topic pages in
+`.claude/rules/`, which load by themselves when you open a file they cover.
+This file only flags traps that aren't in there.
 
 - A user-visible feature is not finished until `docs/` describes it. Write the
-page in the same change, following the **Documentation** section of
-`CONTRIBUTING.md`, and say in your summary which page you added or updated.
-
-- After a change, do its follow-up steps from `CONTRIBUTING.md` "When you
-change ..." (regeneration, fork PRs and gitlinks, fixtures, docs tables):
-nothing runs them for you.
-
-- Before writing a commit message, PR description or GitHub comment, follow
-`CONTRIBUTING.md` "Branching, commits, PRs"; it says how to refer to another
-repository's issues and PRs without GitHub linking back.
+page in the same change, following `.claude/rules/docs.md`, and say in your
+summary which page you added or updated.
 
 - Code is the evidence: PR descriptions, comments, docstrings, review notes and
 memory are claims. Read the implementation and its callers before relying on
@@ -47,16 +40,12 @@ missing, or ask the user to. clangd reads `compile_commands.json` from the
 checkout root or `build/`; with another build dir, run
 `ln -s <build dir>/compile_commands.json .` once.
 
-- Before writing C++, read `CONTRIBUTING.md` "C++ Code Style". Before writing a
-helper, container, algorithm or utility, search abseil, `server/utils/`,
-`iresearch/utils/` and DuckDB for it: never implement what already exists.
-
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team. What every contributor needs goes into
-`CONTRIBUTING.md`; instructions only for Claude go into this file,
-`.claude/rules/*.md` or a skill in `.claude/skills/`. Never copy a
-`CONTRIBUTING.md` rule into them: point to its section. Propose the change in
-the same PR.
+its topic page in `.claude/rules/` (a new topic gets a page with `paths:` for
+the files it covers, and a link from `CONTRIBUTING.md`); instructions only for
+Claude go into this file or a skill in `.claude/skills/`. Never copy a rule
+into a second place: point to it. Propose the change in the same PR.
 
 ## Parallel work
 
@@ -73,8 +62,8 @@ created.
   never a fixed `/tmp/<name>`.
 - Kill only pids you started, never by name or pattern: `pkill serened` also
   stops the servers of the user's other sessions.
-- Before timing anything, follow `CONTRIBUTING.md` "Performance" (quiet
-  machine, discard overlapped numbers).
+- Before timing anything, follow "Performance" in `.claude/rules/cpp.md`
+  (quiet machine, discard overlapped numbers).
 
 ## Formatting
 
@@ -83,7 +72,7 @@ tools below and commit what they produce. Other submodules have no formatter
 set up; there, match the surrounding code by hand, and never run a formatter
 over their files.
 
-- serenedb's own code: `.clang-format` through pre-commit (see `CONTRIBUTING.md`).
+- serenedb's own code: `.clang-format` through pre-commit (see `.claude/rules/cpp.md`).
   Before saying done, run `pre-commit run --files <changed files>`: it also
   rewrites typographic Unicode (arrows, the multiplication sign, em/en dashes,
   ellipsis, curly quotes) to ASCII, rejects `/tmp` in sqllogic tests and checks
@@ -103,8 +92,6 @@ over their files.
 
 ## Before writing tests
 
-- Read `CONTRIBUTING.md` "Test": where a test goes, when a change needs one,
-  and "Writing sqllogic tests".
 - Sqllogic: read a sibling `.test` first and match its style.
 - gtest / microbench: mirror an existing one in the same `tests/<area>/` subtree.
 

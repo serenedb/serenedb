@@ -416,6 +416,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
         duckdb::LogicalType type, std::optional<connector::ColumnId> column) {
       auto column_info = MakeSearchColumnInfo(field_id, info, std::move(type),
                                               dicts.Acquire(field_id));
+      column_info.column_stored = bind_data.relation.IsSearchTable();
       if (column && table_backed && column_not_null(*column)) {
         column_info.null_field_id = irs::field_limits::invalid();
       }

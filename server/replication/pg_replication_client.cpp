@@ -42,6 +42,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -50,6 +51,7 @@
 #include <duckdb/parser/statement/alter_statement.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/data_table.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -86,7 +88,7 @@ using network::pg::FrameStatus;
 
 constexpr auto kFeedbackTick = std::chrono::seconds{1};
 constexpr int64_t kPgEpochMicros = 946684800LL * 1000000;
-constexpr size_t kGroupTxns = 1000;
+constexpr size_t kGroupTxns = 10000;
 constexpr size_t kOutboxBytes = 1 << 20;
 constexpr size_t kOutboxMessages = 4096;
 constexpr size_t kMaxStatements = 1024;
@@ -615,9 +617,18 @@ yaclib::Task<bool> PgReplicationClient::ReplayStream(
                                            .commit_time = commit.commit_time});
 }
 
+yaclib::Task<bool> PgReplicationClient::CancelEager() {
+  const auto xid = *std::exchange(_eager_xid, std::nullopt);
+  _txn_open = false;
+  co_return co_await Enqueue(StreamAbortMessage{.xid = xid, .subxid = xid});
+}
+
 yaclib::Task<> PgReplicationClient::Feeder() {
   auto& buffers = duckdb::BufferManager::GetBufferManager(
     irs::DuckDBEngine::Instance().instance());
+  for (const auto& relation : _target.relations) {
+    _max_sync_lsn = std::max(_max_sync_lsn, relation.lsn);
+  }
   this->_recv.RetainConsumed(&_outboxes[_staging].recv);
   for (;;) {
     if (this->SendBroken() || _stream.Aborted()) {
@@ -626,14 +637,19 @@ yaclib::Task<> PgReplicationClient::Feeder() {
     auto frame =
       this->_frames.TryAssemble(FrameKind::Typed, this->_max_message);
     if (frame.status == FrameStatus::NeedMore) {
-      if (_published || !_outboxes[_staging].messages.empty()) {
-        _outboxes[_staging].messages.emplace_back(StreamStopMessage{});
-      }
-      if (!co_await Flush()) {
+      if (!_txn_open && !this->_socket.HasPendingInput()) {
+        if (_published || !_outboxes[_staging].messages.empty()) {
+          _outboxes[_staging].messages.emplace_back(StreamStopMessage{});
+        }
+        if (!co_await Flush()) {
+          break;
+        }
+        _published = false;
+        SendFeedback(false, false);
+      } else if (!_txn_open && (!_in_flight || _stream.IsDrained()) &&
+                 !co_await Flush()) {
         break;
       }
-      _published = false;
-      SendFeedback(false, false);
       frame = co_await NextFrame(FrameKind::Typed, this->_max_message);
     }
     if (frame.status != FrameStatus::Ok) {
@@ -689,7 +705,17 @@ yaclib::Task<> PgReplicationClient::Feeder() {
           const auto start =
             std::get<StreamStartMessage>(DecodePgOutput(message));
           _streamed_xid = start.xid;
-          _spools.try_emplace(start.xid, buffers);
+          const bool fresh = _spools.try_emplace(start.xid, buffers).second;
+          const auto received = _received_lsn.load(std::memory_order_relaxed);
+          if (fresh && start.first_segment && !_eager_xid &&
+              _spools.size() == 1 && _target.skip_lsn == 0 &&
+              received >= _max_sync_lsn) {
+            _eager_xid = start.xid;
+            _txn_open = true;
+            ok = co_await Enqueue(StreamStopMessage{}) &&
+                 co_await Enqueue(
+                   BeginMessage{.final_lsn = received, .xid = start.xid});
+          }
           break;
         }
         case 'E':
@@ -698,12 +724,28 @@ yaclib::Task<> PgReplicationClient::Feeder() {
         case 'c': {
           const auto commit =
             std::get<StreamCommitMessage>(DecodePgOutput(message));
-          ok = co_await ReplayStream(commit.xid, commit);
+          if (_eager_xid == commit.xid) {
+            _eager_xid.reset();
+            _txn_open = false;
+            _spools.erase(commit.xid);
+            _subxacts.erase(commit.xid);
+            ok = co_await Enqueue(
+              CommitMessage{.commit_lsn = commit.commit_lsn,
+                            .end_lsn = commit.end_lsn,
+                            .commit_time = commit.commit_time});
+            break;
+          }
+          ok = (!_eager_xid || co_await CancelEager()) &&
+               co_await ReplayStream(commit.xid, commit);
           break;
         }
         case 'A': {
           const auto abort =
             std::get<StreamAbortMessage>(DecodePgOutput(message));
+          if (_eager_xid == abort.xid && !co_await CancelEager()) {
+            ok = false;
+            break;
+          }
           if (abort.xid == abort.subxid) {
             _spools.erase(abort.xid);
             _subxacts.erase(abort.xid);
@@ -732,8 +774,16 @@ yaclib::Task<> PgReplicationClient::Feeder() {
               }
             }
             spool.Append(message);
+            if (_eager_xid == _streamed_xid) {
+              ok = co_await Enqueue(message, true, frame.recv_consume != 0);
+            }
           } else {
-            ok = co_await Enqueue(message, false, frame.recv_consume != 0);
+            ok = (message.front() != 'B' || !_eager_xid ||
+                  co_await CancelEager()) &&
+                 co_await Enqueue(message, false, frame.recv_consume != 0);
+            if (message.front() == 'B' || message.front() == 'C') {
+              _txn_open = message.front() == 'B';
+            }
           }
           break;
       }
@@ -940,7 +990,9 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       return;
     }
     info.mapped = true;
-    info.table_oid = table->oid;
+    if (table->IsDuckTable()) {
+      info.storage = table->GetStorage().weak_from_this();
+    }
     info.owner = table->permissions.owner;
     table->ScanTriggers(
       table->ParentCatalog().GetCatalogTransaction(*this->_conn->context),
@@ -1055,6 +1107,11 @@ yaclib::Task<bool> PgReplicationClient::ApplyMessage(
     _stream.Advance();
     co_return true;
   }
+  if (std::holds_alternative<StreamAbortMessage>(message)) {
+    RollbackTxn();
+    _stream.Advance();
+    co_return true;
+  }
   if (_skipping) {
     _stream.Advance();
     co_return true;
@@ -1107,6 +1164,15 @@ void PgReplicationClient::BeginTxn(const BeginMessage& message) {
   if (!_in_txn) {
     this->_txn_state->Arm();
     _in_txn = true;
+  }
+}
+
+void PgReplicationClient::RollbackTxn() {
+  SDB_ASSERT(_pending_txns == 0);
+  _remote_txn = false;
+  if (_in_txn) {
+    _in_txn = false;
+    this->_txn_state->Rollback();
   }
 }
 
@@ -1384,6 +1450,34 @@ yaclib::Task<bool> PgReplicationClient::MultipleUniqueConflicts(
   co_return conflicting.value_or(0) > 0;
 }
 
+void PgReplicationClient::LimitKeyFilter(const RelInfo& relation,
+                                         const RowShape& shape) {
+  auto& context = *this->_conn->context;
+  auto limit = duckdb::Settings::Get<duckdb::DynamicOrFilterThresholdSetting>(
+    duckdb::DBConfig::GetConfig(context));
+  const auto indexed = [&](const std::vector<size_t>& unique) {
+    return unique.size() == 1 && unique.front() == shape.keys.front();
+  };
+  if (shape.keys.size() == 1 &&
+      std::ranges::any_of(relation.unique_keys, indexed)) {
+    if (const auto storage = relation.storage.lock()) {
+      const auto rows =
+        static_cast<double>(storage->GetTotalRows()) *
+        duckdb::Settings::Get<duckdb::IndexScanPercentageSetting>(context);
+      limit = std::max(
+        {limit,
+         duckdb::Settings::Get<duckdb::IndexScanMaxCountSetting>(context),
+         static_cast<duckdb::idx_t>(rows)});
+    }
+  }
+  if (limit !=
+      duckdb::Settings::Get<duckdb::DynamicOrFilterThresholdSetting>(context)) {
+    duckdb::PhysicalSet::SetVariable(
+      context, duckdb::Identifier{"dynamic_or_filter_threshold"},
+      duckdb::SetScope::SESSION, duckdb::Value::UBIGINT(limit));
+  }
+}
+
 yaclib::Task<bool> PgReplicationClient::RunBatch() {
   const auto& relation = *_batch.rel;
   const auto& shape = _batch.shape;
@@ -1430,6 +1524,9 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
     _batch.retained = &*retained;
   }
   absl::Cleanup release = [this] { _batch.retained = nullptr; };
+  if (shape.op != 'I' && !shape.full) {
+    LimitKeyFilter(relation, shape);
+  }
   _stream.ScanActive(true);
   absl::Cleanup scan = [this] { _stream.ScanActive(false); };
   std::optional<int64_t> affected;

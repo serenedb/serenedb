@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types.hpp>
 #include <functional>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
@@ -38,6 +39,7 @@
 namespace duckdb {
 
 class ColumnDataCollection;
+class DataTable;
 class DatabaseInstance;
 class SQLStatement;
 
@@ -55,7 +57,7 @@ struct RelInfo {
   bool mapped = false;
   bool ready = false;
   uint64_t sync_lsn = 0;
-  duckdb::idx_t table_oid = 0;
+  duckdb::weak_ptr<duckdb::DataTable> storage;
   duckdb::idx_t owner = 0;
   bool triggers = false;
   std::string schema;

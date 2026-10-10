@@ -141,6 +141,17 @@ class Socket final {
     });
   }
 
+  [[nodiscard]] bool HasPendingInput() {
+    asio_ns::error_code ec;
+    if (Lowest().available(ec) != 0 && !ec) {
+      return true;
+    }
+    if constexpr (kSslBacked) {
+      return IsTls() && SSL_pending(_stream.native_handle()) > 0;
+    }
+    return false;
+  }
+
   [[nodiscard]] auto Write(message::SequenceView data) {
     return Async<std::size_t>([this, data](auto&& handler) {
       if constexpr (kUpgradeable) {

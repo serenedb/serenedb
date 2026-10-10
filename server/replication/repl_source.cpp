@@ -63,6 +63,7 @@ namespace sdb::replication {
 namespace {
 
 constexpr uint64_t kBatchRows = 1 << 17;
+constexpr std::chrono::microseconds kNextSpanWait{1000};
 
 bool ReadTuple(std::string_view tuple, size_t columns,
                std::vector<PgColumn>& cells) {
@@ -368,6 +369,7 @@ struct ReplSourceGlobalState final : public duckdb::GlobalTableFunctionState {
   ReplBatch* batch = nullptr;
   sdb::pg::DeserializeContext dctx;
   std::vector<ColDeser> deser;
+  bool finished = false;
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> BindReplSource(
@@ -423,7 +425,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalReplSource(
 void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                     duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<ReplSourceGlobalState>();
-  if (g.batch == nullptr || g.batch->stream == nullptr) {
+  if (g.finished || g.batch == nullptr || g.batch->stream == nullptr) {
     output.SetCardinality(0);
     return;
   }
@@ -439,8 +441,9 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
   }
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
-    const PgOutputMessage* m = g.batch->stream->PeekBlocking();
+    const PgOutputMessage* m = g.batch->stream->PeekFor(kNextSpanWait);
     if (m == nullptr || ReplStream::IsIdle(m) || g.batch->rows >= kBatchRows) {
+      g.finished = true;
       break;
     }
     if (std::holds_alternative<BeginMessage>(*m) ||

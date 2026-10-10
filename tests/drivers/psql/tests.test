@@ -828,12 +828,15 @@ skipif postgres
 
 \dew
 ----
->     List of foreign-data wrappers
-> +------+-------+---------+-----------+
-> | Name | Owner | Handler | Validator |
-> +------+-------+---------+-----------+
-> +------+-------+---------+-----------+
-> (0 rows)
+>            List of foreign-data wrappers
+> +----------------+----------+---------+-----------+
+> |      Name      |  Owner   | Handler | Validator |
+> +----------------+----------+---------+-----------+
+> | clickhouse_fdw | postgres | -       | -         |
+> | iceberg_fdw    | postgres | -       | -         |
+> | postgres_fdw   | postgres | -       | -         |
+> +----------------+----------+---------+-----------+
+> (3 rows)
 
 \dy
 ----

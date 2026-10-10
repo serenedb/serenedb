@@ -56,7 +56,7 @@ default_transaction_isolation	NULL	Client Connection Defaults / Statement Behavi
 extra_float_digits	NULL	Client Connection Defaults / Locale and Formatting	Sets the number of digits displayed for floating-point values.	user	integer	-15	3	NULL
 IntervalStyle	NULL	Client Connection Defaults / Locale and Formatting	Sets the display format for interval values.	user	enum	NULL	NULL	{postgres,postgres_verbose,sql_standard,iso_8601}
 max_identifier_length	NULL	Preset Options	Shows the maximum identifier length.	internal	integer	63	63	NULL
-server_version_num	NULL	Preset Options	Shows the PostgreSQL version SereneDB is compatible with, as an integer.	internal	integer	180003	180003	NULL
+server_version_num	NULL	Preset Options	Shows the server version as an integer.	internal	integer	180003	180003	NULL
 standard_conforming_strings	NULL	Version and Platform Compatibility / Previous PostgreSQL Versions	Causes '...' strings to treat backslashes literally.	user	bool	NULL	NULL	NULL
 statement_timeout	ms	Client Connection Defaults / Statement Behavior	Sets the maximum allowed duration of any statement.	user	integer	0	2147483647	NULL
 work_mem	kB	Resource Usage / Memory	Sets the maximum memory to be used for query workspaces.	user	integer	64	2147483647	NULL

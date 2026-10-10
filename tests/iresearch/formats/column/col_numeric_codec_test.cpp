@@ -128,6 +128,24 @@ const std::vector<Shape>& Shapes() {
        return static_cast<int64_t>(1'000'000'000'000LL +
                                    (m % 100 < 95 ? m % 256 : m % 65536));
      }},
+    {"drifting_runs",
+     [](uint64_t g) {
+       static const auto kRuns = [] {
+         std::vector<int64_t> values;
+         for (uint64_t r = 0; values.size() < 200'000; ++r) {
+           const auto length = 4 + Mix(r) % 2;
+           const auto v =
+             static_cast<int64_t>(r / 4096 * 50'000 + Mix(r ^ 0x5bd1e995) % 16);
+           values.insert(values.end(), length, v);
+         }
+         return values;
+       }();
+       return kRuns[g % kRuns.size()];
+     }},
+    {"sparse_values",
+     [](uint64_t g) {
+       return static_cast<int64_t>(Mix(g) % 120) * 104'729 - 50'000;
+     }},
   };
   return kShapes;
 }
@@ -401,9 +419,98 @@ TEST_F(ColNumericCodecTest, EveryTransformIsReachable) {
       }
     }
   }
-  for (const auto* transform : {"for", "delta", "rle", "dict"}) {
+  for (const auto* transform : {"for", "delta", "rle", "dict_ffor"}) {
     EXPECT_TRUE(seen.contains(transform)) << transform;
   }
+}
+
+TEST_F(ColNumericCodecTest, PacksRunsAndCodesBelowByteWidths) {
+  constexpr uint64_t kRows = 120000;
+  struct Case {
+    std::string_view shape;
+    std::string_view expected;
+    std::vector<irs::WriteTier> tiers;
+  };
+  const Case cases[] = {
+    {"drifting_runs", "rle_ffor/none", {irs::WriteTier::Flush}},
+    {"sparse_values",
+     "dict_ffor/none",
+     {irs::WriteTier::Flush, irs::WriteTier::Merge}},
+  };
+  for (const auto& [name, expected, tiers] : cases) {
+    const auto& shape = *std::ranges::find_if(
+      Shapes(), [&](const auto& s) { return s.name == name; });
+    const duckdb::LogicalType types[] = {duckdb::LogicalType::INTEGER,
+                                         duckdb::LogicalType::BIGINT};
+    for (const auto tier : tiers) {
+      for (const auto& type : types) {
+        SCOPED_TRACE(std::string{name} + " " + type.ToString() + " " +
+                     std::to_string(static_cast<int>(tier)));
+        irs::MemoryDirectory dir{};
+        Write(dir, type, {.tier = tier}, kRows, 65536, shape.gen);
+        Verify(dir, type, kRows, shape.gen);
+        const auto transforms = Transforms(dir);
+        ASSERT_FALSE(transforms.empty());
+        for (const auto& t : transforms) {
+          EXPECT_EQ(t, expected);
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
+  const auto path = test_dir() / "col_numeric_corrupt_runs";
+  std::filesystem::create_directories(path);
+  const auto& shape = *std::ranges::find_if(Shapes(), [](const auto& s) {
+    return s.name == std::string_view{"drifting_runs"};
+  });
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  {
+    irs::MMapDirectory dir{path};
+    Write(dir, duckdb::LogicalType::BIGINT, {.tier = irs::WriteTier::Flush},
+          60000, 60000, shape.gen);
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    const auto& block = col->DataBlocks().front();
+    ASSERT_EQ(block.codec->type,
+              duckdb::CompressionType::COMPRESSION_COL_NUMERIC);
+    offset = block.file_offset;
+    size = block.byte_size;
+  }
+  const auto file = path / irs::FileName(kSeg);
+  std::string bytes;
+  {
+    std::ifstream in{file, std::ios::binary};
+    bytes.assign(std::istreambuf_iterator<char>{in}, {});
+  }
+  ASSERT_LE(offset + size, bytes.size());
+  auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+  const auto h = irs::codecs::NumericHeader::Parse(block, size);
+  ASSERT_EQ(h.transform, irs::codecs::NumericTransform::RleFfor);
+  auto meta = irs::codecs::NumericFrameMeta::Load(block + h.off_frames);
+  meta.base += 1;
+  meta.Store(block + h.off_frames);
+  {
+    std::ofstream out{file, std::ios::binary | std::ios::trunc};
+    out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  }
+  irs::MMapDirectory dir{path};
+  const auto scan = [&] {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, STANDARD_VECTOR_SIZE);
+  };
+#ifdef SDB_DEV
+  GTEST_FLAG_SET(death_test_style, "threadsafe");
+  EXPECT_DEATH(scan(), "numeric codec: corrupted");
+#else
+  EXPECT_ANY_THROW(scan());
+#endif
 }
 
 TEST_F(ColNumericCodecTest, FforPacksEveryWidth) {

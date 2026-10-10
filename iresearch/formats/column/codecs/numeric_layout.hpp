@@ -38,7 +38,22 @@ enum class NumericTransform : uint8_t {
   Rle = 3,
   Dict = 4,
   Ffor = 5,
+  RleFfor = 6,
+  DictFfor = 7,
 };
+
+constexpr bool BitPacked(NumericTransform t) noexcept {
+  return t == NumericTransform::Ffor || t == NumericTransform::RleFfor ||
+         t == NumericTransform::DictFfor;
+}
+
+constexpr bool Runs(NumericTransform t) noexcept {
+  return t == NumericTransform::Rle || t == NumericTransform::RleFfor;
+}
+
+constexpr bool Coded(NumericTransform t) noexcept {
+  return t == NumericTransform::Dict || t == NumericTransform::DictFfor;
+}
 
 enum class NumericLeaf : uint8_t {
   None = 0,
@@ -56,6 +71,7 @@ inline constexpr uint8_t kNumericShuffled = 1;
 inline constexpr uint32_t kFforFrameRows = 16384;
 inline constexpr uint8_t kFforFrameLog2 = 18;
 inline constexpr size_t kFforBlockMetaBytes = 16;
+inline constexpr uint32_t kRleFforFrameRuns = 1024;
 
 constexpr bool NumericWidth(uint64_t w) noexcept {
   return w == 1 || w == 2 || w == 4 || w == 8;
@@ -80,8 +96,8 @@ static_assert(offsetof(NumericFrameMeta, min) == 24);
 static_assert(offsetof(NumericFrameMeta, max) == 32);
 
 constexpr std::string_view NumericTransformName(NumericTransform t) noexcept {
-  constexpr std::string_view kNames[] = {"raw", "for",  "delta",
-                                         "rle", "dict", "ffor"};
+  constexpr std::string_view kNames[] = {
+    "raw", "for", "delta", "rle", "dict", "ffor", "rle_ffor", "dict_ffor"};
   return kNames[static_cast<uint8_t>(t)];
 }
 
@@ -121,14 +137,14 @@ struct NumericHeader {
       NumericWidth(h.width) && NumericWidth(h.stored) && h.stored <= h.width &&
         (h.transform != NumericTransform::Raw || h.stored == h.width) &&
         static_cast<uint8_t>(h.transform) <=
-          static_cast<uint8_t>(NumericTransform::Ffor) &&
-        (h.transform != NumericTransform::Ffor ||
+          static_cast<uint8_t>(NumericTransform::DictFfor) &&
+        (!BitPacked(h.transform) ||
          (h.leaf == NumericLeaf::None && !h.Shuffled() && h.stored == h.width &&
-          h.frame_log2 == kFforFrameLog2)) &&
+          h.frame_log2 == kFforFrameLog2 && h.base == 0)) &&
         static_cast<uint8_t>(h.leaf) <=
           static_cast<uint8_t>(NumericLeaf::Zstd) &&
         (h.transform != NumericTransform::Rle || NumericWidth(h.run_width)) &&
-        (h.transform == NumericTransform::Dict) == (h.dict_count != 0) &&
+        Coded(h.transform) == (h.dict_count != 0) &&
         h.dict_count <= kNumericDictMax && h.off_frames >= kNumericHeaderSize &&
         h.off_frames +
             static_cast<uint64_t>(h.frame_count) * kNumericFrameMetaSize <=

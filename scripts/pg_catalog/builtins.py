@@ -1,5 +1,8 @@
+import os
+import re
+
 from . import config
-from .common import camel, cpp_bool, cpp_char, cpp_str
+from .common import REPO_ROOT, camel, cpp_bool, cpp_char, cpp_str
 
 TYPES_SQL = """
 SELECT t.oid::int4, typname, n.nspname, typlen, typbyval, typtype,
@@ -21,12 +24,9 @@ SELECT p.oid::int4, proname, pronargs, prorettype::int4,
        prolang::int4, prosrc
 FROM pg_proc p
 WHERE p.oid = ANY(%s)
-   OR p.oid IN (SELECT amhandler FROM pg_am)
+   OR p.oid IN (SELECT amhandler FROM pg_am WHERE amname = ANY(%s))
    OR p.oid IN (SELECT unnest(ARRAY[lanplcallfoid, laninline, lanvalidator])
-                FROM pg_language)
-   OR p.oid IN (SELECT unnest(ARRAY[typinput, typoutput, typreceive,
-                                    typsend]::oid[])
-                FROM pg_type WHERE typname = ANY(%s))
+                FROM pg_language WHERE lanname = ANY(%s))
    OR (p.pronamespace = 'pg_catalog'::regnamespace AND p.proname = ANY(%s))
 ORDER BY p.oid
 """
@@ -39,48 +39,97 @@ ORDER BY oid
 """
 
 PROC_COLUMNS = (9, 12, 13, 14, 15, 16, 17, 18)
+REFERENCE_COLUMNS = (10, 11, 22)
+
+TYPE_MAPPINGS = os.path.join(REPO_ROOT, 'server', 'pg', 'types.cpp')
+MAPPINGS_TABLE = re.compile(r'kMappings\[\] = \{\n(.*?)\n\};', re.S)
+MAPPED_TYPE = re.compile(r'^\s*\{k(\w+),', re.M)
 
 
-def type_rows(gen):
+def mapped_types():
+    with open(TYPE_MAPPINGS) as source:
+        table = MAPPINGS_TABLE.search(source.read()).group(1)
+    return set(MAPPED_TYPE.findall(table))
+
+
+def array_element(row, by_oid):
+    element = by_oid.get(row[10])
+    if element and element[11] == row[0] and row[1].startswith('_'):
+        return element
+    return None
+
+
+def procedures(gen, types):
+    oids = sorted({row[i] for row in types for i in PROC_COLUMNS if row[i]})
+    return gen.query(PROCS_SQL, (oids, list(config.ACCESS_METHODS),
+                                 list(config.LANGUAGES),
+                                 list(config.ENUM_PROCS)))
+
+
+def supported_types(gen):
     types = gen.query(TYPES_SQL, (list(config.SDB_OWNED_TYPES),))
     by_oid = {row[0]: row for row in types}
-    constants, rows = {}, []
-    for (oid, name, namespace, length, byval, typtype, category, preferred,
-         delim, subscript, elem, array, inp, outp, recv, send, modin, modout,
-         analyze, align, storage, collation, basetype, relid, typmod, notnull,
-         default) in types:
-        rows.append(
-            f'{{{oid}, {cpp_str(name)}, {config.SCHEMAS[namespace]}, {length}, '
-            f'{cpp_bool(byval)}, {cpp_char(typtype)}, {cpp_char(category)}, '
-            f'{cpp_bool(preferred)}, {cpp_char(delim)}, {subscript}, {elem}, '
-            f'{array}, {inp}, {outp}, {recv}, {send}, {modin}, {modout}, '
-            f'{analyze}, {cpp_char(align)}, {cpp_char(storage)}, {collation}, '
-            f'{basetype}, {relid}, {typmod}, {cpp_bool(notnull)}, '
-            f'{cpp_str(default)}}},')
-        element = by_oid.get(elem)
-        is_array = element and element[11] == oid and name.startswith('_')
-        row_type = element if is_array else by_oid[oid]
+    mapped = mapped_types()
+    keep = {row[0] for row in types
+            if row[23] or row[1] in config.PSEUDO_TYPES or
+            (camel(row[1]) in mapped and not array_element(row, by_oid))}
+    while True:
+        procs = procedures(gen, [by_oid[oid] for oid in keep])
+        signatures = {oid for proc in procs for oid in (proc[3], *proc[4])}
+        if missing := signatures - by_oid.keys():
+            raise SystemExit(f'procedures refer to types SereneDB owns: '
+                             f'{sorted(missing)}')
+        wanted = (keep | signatures |
+                  {by_oid[oid][11] for oid in keep if by_oid[oid][11]})
+        if wanted == keep:
+            break
+        keep = wanted
+    kept = [row for row in types if row[0] in keep]
+    for row in kept:
+        for column in REFERENCE_COLUMNS:
+            if row[column] and row[column] not in keep:
+                raise SystemExit(f'type {row[1]} refers to type '
+                                 f'{by_oid[row[column]][1]}, which SereneDB '
+                                 f'does not list')
+    return kept, by_oid, procs
+
+
+def type_constants(types, by_oid):
+    constants = {}
+    for row in types:
+        element = array_element(row, by_oid)
+        row_type = element or row
         if row_type[23] and row_type[0] >= config.FIRST_INITDB_OID:
             continue
-        base = camel(element[1] if is_array else name)
+        base = camel(row_type[1])
         suffix = 'Rowtype' if row_type[23] else ''
-        constants[oid] = f'k{base}{suffix}{"Array" if is_array else ""}'
-    return types, constants, rows
+        constants[row[0]] = f'k{base}{suffix}{"Array" if element else ""}'
+    return constants
 
 
-def type_constants(gen):
-    return type_rows(gen)[1]
+def builtin_type_constants(gen):
+    types, by_oid, _ = supported_types(gen)
+    return type_constants(types, by_oid)
 
 
 def generate(gen):
-    types, constants, rows = type_rows(gen)
-    proc_oids = sorted({row[i] for row in types for i in PROC_COLUMNS if row[i]})
-    procs = gen.query(PROCS_SQL, (proc_oids, list(config.SDB_OWNED_TYPES),
-                                  list(config.ENUM_PROCS)))
+    types, by_oid, procs = supported_types(gen)
+    constants = type_constants(types, by_oid)
     collations = gen.query(COLLATIONS_SQL, (list(config.COLLATIONS),))
     gen.write('builtin_type_oids.gen.inc',
               [f'{name} = {oid},' for oid, name in constants.items()])
-    gen.write('builtin_types.gen.inc', rows)
+    gen.write('builtin_types.gen.inc', [
+        f'{{{oid}, {cpp_str(name)}, {config.SCHEMAS[namespace]}, {length}, '
+        f'{cpp_bool(byval)}, {cpp_char(typtype)}, {cpp_char(category)}, '
+        f'{cpp_bool(preferred)}, {cpp_char(delim)}, {subscript}, {elem}, '
+        f'{array}, {inp}, {outp}, {recv}, {send}, {modin}, {modout}, '
+        f'{analyze}, {cpp_char(align)}, {cpp_char(storage)}, {collation}, '
+        f'{basetype}, {relid}, {typmod}, {cpp_bool(notnull)}, '
+        f'{cpp_str(default)}}},'
+        for (oid, name, namespace, length, byval, typtype, category,
+             preferred, delim, subscript, elem, array, inp, outp, recv, send,
+             modin, modout, analyze, align, storage, collation, basetype,
+             relid, typmod, notnull, default) in types])
     gen.write('builtin_procs.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {nargs}, {rettype}, '
         f'{{{", ".join(map(str, argtypes))}}}, {cpp_char(kind)}, '

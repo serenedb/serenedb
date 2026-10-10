@@ -1,0 +1,109 @@
+statement ok
+DROP TABLE IF EXISTS btc_every_type
+
+statement ok
+DROP TYPE IF EXISTS btc_mood
+
+query
+SELECT string_agg(typname, ' ' ORDER BY typname) AS types
+FROM pg_type
+WHERE oid < 16384 AND typrelid = 0 AND typtype IN ('b', 'd')
+  AND typcategory <> 'A'
+----
+types
+aclitem bit bool bpchar bytea cardinal_number char character_data cid date float4 float8 inet int2 int4 int8 interval json jsonb name numeric oid pg_dependencies pg_lsn pg_mcv_list pg_ndistinct pg_node_tree regclass regcollation regconfig regdictionary regnamespace regoper regoperator regproc regprocedure regrole regtype sql_identifier text tid time time_stamp timestamp timestamptz timetz uuid varbit varchar xid xid8 yes_or_no
+
+
+statement ok
+CREATE TABLE btc_every_type (
+  c_aclitem aclitem, c_bit bit, c_bool bool, c_bpchar bpchar, c_bytea bytea,
+  c_cardinal_number cardinal_number, c_char "char",
+  c_character_data character_data, c_cid cid, c_date date, c_float4 float4,
+  c_float8 float8, c_inet inet, c_int2 int2, c_int4 int4, c_int8 int8,
+  c_interval interval, c_json json, c_name name, c_numeric numeric,
+  c_oid oid, c_pg_node_tree pg_node_tree, c_regclass regclass,
+  c_regcollation regcollation, c_regconfig regconfig,
+  c_regdictionary regdictionary, c_regnamespace regnamespace,
+  c_regoper regoper, c_regoperator regoperator, c_regproc regproc,
+  c_regprocedure regprocedure, c_regrole regrole, c_regtype regtype,
+  c_sql_identifier sql_identifier, c_text text, c_tid tid, c_time time,
+  c_time_stamp time_stamp, c_timestamp timestamp, c_timestamptz timestamptz,
+  c_timetz timetz, c_uuid uuid, c_varbit varbit, c_varchar varchar,
+  c_xid xid, c_xid8 xid8, c_yes_or_no yes_or_no)
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'btc_every_type'::regclass AND attnum > 0
+  AND format_type(atttypid, atttypmod) <> substr(attname, 3)
+ORDER BY attnum
+----
+attname	type
+c_bit	bit varying
+c_bool	boolean
+c_bpchar	text
+c_cardinal_number	information_schema.cardinal_number
+c_char	"char"
+c_character_data	information_schema.character_data
+c_float4	real
+c_float8	double precision
+c_int2	smallint
+c_int4	integer
+c_int8	bigint
+c_numeric	numeric(18,3)
+c_sql_identifier	information_schema.sql_identifier
+c_time	time without time zone
+c_time_stamp	information_schema.time_stamp
+c_timestamp	timestamp without time zone
+c_timestamptz	timestamp with time zone
+c_timetz	time with time zone
+c_varbit	bit varying
+c_varchar	text
+c_yes_or_no	information_schema.yes_or_no
+
+
+query
+SELECT (SELECT count(*) FROM pg_type WHERE typtype IN ('r', 'm')) AS range_types,
+       (SELECT count(*) FROM pg_range) AS ranges
+----
+range_types	ranges
+0	0
+
+
+query
+SELECT string_agg(typname, ' ' ORDER BY typname) AS pseudo_types
+FROM pg_type
+WHERE oid < 16384 AND typtype = 'p'
+----
+pseudo_types
+_record any anyarray anyenum cstring internal record table_am_handler unknown void
+
+
+statement ok
+CREATE TYPE btc_mood AS ENUM ('ok')
+
+
+query
+SELECT count(*) AS unreferenced
+FROM pg_proc p
+WHERE p.oid < 16384
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_type t
+    WHERE p.oid IN (t.typinput::oid, t.typoutput::oid, t.typreceive::oid,
+                    t.typsend::oid, t.typmodin::oid, t.typmodout::oid,
+                    t.typanalyze::oid, t.typsubscript::oid))
+  AND NOT EXISTS (SELECT 1 FROM pg_am a WHERE a.amhandler::oid = p.oid)
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_language l
+    WHERE p.oid IN (l.lanplcallfoid, l.laninline, l.lanvalidator))
+----
+unreferenced
+0
+
+
+statement ok
+DROP TYPE btc_mood
+
+statement ok
+DROP TABLE btc_every_type

@@ -171,7 +171,7 @@ SELECT
        AND p.prorettype NOT IN (SELECT oid FROM pg_type)) AS dangling_returns
 ----
 dangling_args	dangling_returns
-2	2
+0	0
 
 query
 SELECT typtype, typcategory FROM pg_type WHERE typname = 'union'

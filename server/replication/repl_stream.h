@@ -21,6 +21,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <span>
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
@@ -93,9 +94,11 @@ class ReplStream {
     _end = messages.data() + messages.size();
     _msg.store(messages.data(), std::memory_order_relaxed);
   }
-  const PgOutputMessage* PeekBlocking() noexcept {
+  const PgOutputMessage* PeekFor(std::chrono::microseconds timeout) noexcept {
     if (_armed) {
-      _ready.Wait();
+      if (!_ready.WaitFor(timeout)) {
+        return nullptr;
+      }
       _ready.Reset();
       _armed = false;
     }

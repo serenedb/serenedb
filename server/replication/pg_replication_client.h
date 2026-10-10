@@ -119,6 +119,7 @@ class PgReplicationClient final : public SyncSession {
   yaclib::Task<bool> Enqueue(PgOutputMessage message);
   yaclib::Task<bool> ReplayStream(uint32_t xid,
                                   const StreamCommitMessage& commit);
+  yaclib::Task<bool> CancelEager();
   void SendFeedback(bool reply, bool force);
 
   yaclib::Future<> ReplicationMain();
@@ -133,6 +134,7 @@ class PgReplicationClient final : public SyncSession {
   bool ApplyChanges(const RelInfo& relation) const;
   yaclib::Task<bool> ApplyMessage(const PgOutputMessage& message);
   void BeginTxn(const BeginMessage& message);
+  void RollbackTxn();
   void PushRemoteLsn(uint64_t end_lsn);
   bool CommitTxn(const CommitMessage& message);
   bool FlushCommit();
@@ -141,6 +143,7 @@ class PgReplicationClient final : public SyncSession {
   bool PassThrough(const PgOutputMessage& message);
   yaclib::Task<> ApplyTruncate(const TruncateMessage& message);
   std::string ApplyContext() const;
+  void LimitKeyFilter(const RelInfo& relation, const RowShape& shape);
   yaclib::Task<bool> RunBatch();
 
   ReplStream _stream;
@@ -179,6 +182,9 @@ class PgReplicationClient final : public SyncSession {
                                std::vector<std::pair<uint32_t, size_t>>>
     _subxacts;
   std::optional<uint32_t> _streamed_xid;
+  std::optional<uint32_t> _eager_xid;
+  bool _txn_open = false;
+  uint64_t _max_sync_lsn = 0;
 
   irs::containers::NodeHashMap<uint32_t, RelInfo> _relations;
   bool _skipping = false;

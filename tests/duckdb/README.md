@@ -294,10 +294,6 @@ Three things about the postgres fixture are non-obvious:
   (`git log -S <symbol> upstream/main -- <file>`). If so, `git cherry-pick -x`
   it. Syncing with upstream follows the update recipe above, not cherry-picks.
 - **No comments** in fork code, and no provenance markers ("SereneDB fork:").
-- **Format only with clang-format 11.0.1:** `./scripts/format_duckdb.sh` from
-  the serenedb root, or the fork's `scripts/format.py` with the format venv's
-  clang-format first on PATH. The system clang-format 21 produces different
-  output.
 - Regeneration, commits, the fork PR and the gitlink bump:
   [CONTRIBUTING.md "When you change ..."](../../CONTRIBUTING.md#when-you-change-).
 

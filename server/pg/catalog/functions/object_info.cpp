@@ -525,6 +525,12 @@ duckdb::Permissions TablespacePermissions() {
   return duckdb::Permissions{.owner = pg::kRootUser};
 }
 
+duckdb::Permissions ForeignDataWrapperPermissions() {
+  return duckdb::Permissions{.owner = pg::kRootUser,
+                             .acl = {pg::kForeignDataWrapperAcl.begin(),
+                                     pg::kForeignDataWrapperAcl.end()}};
+}
+
 std::optional<duckdb::Permissions> PrivilegeTargetByName(
   duckdb::ClientContext& context, PrivilegeObject object,
   std::string_view name) {
@@ -547,6 +553,9 @@ std::optional<duckdb::Permissions> PrivilegeTargetByName(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                     ERR_MSG("tablespace \"", name, "\" does not exist"));
   }
+  if (pg::FindForeignDataWrapper(name)) {
+    return ForeignDataWrapperPermissions();
+  }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
     ERR_MSG("foreign-data wrapper \"", name, "\" does not exist"));
@@ -564,6 +573,12 @@ std::optional<duckdb::Permissions> PrivilegeTargetByOid(
   if (object == PrivilegeObject::Tablespace &&
       (oid == kPgDefaultTablespace || oid == kPgGlobalTablespace)) {
     return TablespacePermissions();
+  }
+  if (object == PrivilegeObject::ForeignDataWrapper &&
+      absl::c_any_of(pg::kForeignDataWrappers, [&](const auto& wrapper) {
+        return static_cast<int64_t>(wrapper.oid) == oid;
+      })) {
+    return ForeignDataWrapperPermissions();
   }
   return std::nullopt;
 }
@@ -586,7 +601,8 @@ duckdb::optional<bool> HasPrivilege(
     const bool held =
       object == PrivilegeObject::ForeignServer
         ? closure->CanAny(CatalogType::FOREIGN_SERVER_ENTRY, *target, mode)
-        : closure->Owns(target->owner);
+        : closure->Owns(target->owner) || (closure->HeldModes(target->acl) &
+                                           mode) != duckdb::AclMode::NoRights;
     if (held) {
       return true;
     }

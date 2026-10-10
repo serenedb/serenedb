@@ -60,6 +60,7 @@
 #include <string_view>
 #include <utility>
 #include <yaclib/async/contract.hpp>
+#include <yaclib/coro/await_on.hpp>
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
@@ -444,6 +445,7 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
     sessions.push_back(std::move(worker));
     results.push_back(std::move(future));
   }
+  co_await yaclib::AwaitOn(*this->_ioexec, results.begin(), results.size());
   bool ok = true;
   for (size_t i = 0; i < workers; ++i) {
     if (!co_await std::move(results[i])) {

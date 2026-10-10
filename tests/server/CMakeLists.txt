@@ -7,6 +7,7 @@ add_executable(
     background_scheduler_test.cpp
     database_directory_test.cpp
     docs_search_test.cpp
+    duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
     json_serde_test.cpp

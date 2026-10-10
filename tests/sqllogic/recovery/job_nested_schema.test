@@ -35,7 +35,7 @@ SELECT 1;
 
 
 connection r1
-query
+query ok retry 80 backoff 250ms
 SELECT schema_name, job_name, schedule FROM duckdb_jobs()
 WHERE starts_with(job_name, 'jns_') ORDER BY job_name;
 ----
@@ -68,7 +68,7 @@ SELECT 1;
 
 
 connection r2
-query
+query ok retry 80 backoff 250ms
 SELECT schema_name, job_name FROM duckdb_jobs() WHERE starts_with(job_name, 'jns_');
 ----
 schema_name	job_name

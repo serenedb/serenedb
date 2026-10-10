@@ -36,6 +36,26 @@ inline constexpr SystemMacro kExternalMacros[] = {
   {"pg_catalog", "pg_show_all_settings",
    R"(() AS TABLE SELECT * FROM pg_catalog.pg_settings)"},
 
+  {"pg_catalog", "pg_get_keywords",
+   R"(() AS TABLE
+      SELECT keyword_name AS word,
+             CASE keyword_category
+               WHEN 'reserved' THEN 'R'
+               WHEN 'type_function' THEN 'T'
+               WHEN 'column_name' THEN 'C'
+               WHEN 'unreserved' THEN 'U'
+             END::"char" AS catcode,
+             NULL::BOOLEAN AS barelabel,
+             CASE keyword_category
+               WHEN 'reserved' THEN 'reserved'
+               WHEN 'type_function' THEN 'reserved (can be function or type name)'
+               WHEN 'column_name' THEN 'unreserved (cannot be function or type name)'
+               WHEN 'unreserved' THEN 'unreserved'
+             END AS catdesc,
+             NULL::TEXT AS baredesc
+      FROM duckdb_keywords()
+      ORDER BY keyword_name)"},
+
   // Expand any 1-D array into a set with integers 1..N
 
   // TODO(mbkkt): rewrite once parser supports PG-style OUT params

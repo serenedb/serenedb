@@ -842,6 +842,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | format_type                        | Yes           | Prints type modifiers, for example `numeric(10,2)`, `character varying(50)` and `timestamp(3) without time zone` |
 | to_regclass                        | Yes           | Also `to_regtype`, `to_regtypemod`, `to_regproc`, `to_regprocedure`, `to_regnamespace`, `to_regrole`, `to_regcollation`, `to_regoper` and `to_regoperator`; they return `NULL` where the cast would fail |
 | pg_get_userbyid                    | Yes           |  |
+| pg_get_keywords                    | Yes           | Lists the keywords of SereneDB's parser, among them `pivot` and `qualify`, which PostgreSQL does not reserve. `barelabel` and `baredesc` are `NULL`: the parser does not say which keywords can be a bare column label |
 | pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |
 | obj_description                    | Yes           | Also `col_description`. Built-in types, functions and schemas have no description, so they return `NULL` |
 | shobj_description                  | Partial       | Always `NULL`: comments on databases and roles are not stored |

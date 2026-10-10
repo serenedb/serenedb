@@ -93,7 +93,8 @@ uint64_t ColFilterVerify::CountAndClear(irs::doc_id_t base, uint64_t* mask,
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,
-                               irs::ColFilterClassification& out) {
+                               irs::ColFilterClassification& out,
+                               bool prepare_leaves) {
   out.segment_dead = false;
   out.active.clear();
   if (g.col_filters.empty()) {
@@ -115,6 +116,9 @@ void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
       .row_fields = cf.row_fields,
       .row_types = cf.row_types,
     };
+    if (prepare_leaves && !cf.row_leaves.empty()) {
+      spec.row_leaves = states.Leaves(*cf.filter, seg, cf.row_leaves);
+    }
     if (spec.is_score || !spec.row_fields.empty()) {
       out.active.push_back(spec);
       continue;
@@ -185,7 +189,7 @@ void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {
   if (classified_seg == seg) {
     return;
   }
-  ClassifySegmentColFilters((*g.reader)[seg], g, filter_states, seg_cls);
+  ClassifySegmentColFilters((*g.reader)[seg], g, filter_states, seg_cls, true);
   classified_seg = seg;
 }
 

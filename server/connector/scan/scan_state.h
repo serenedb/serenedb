@@ -206,6 +206,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     std::vector<std::string_view> extract_path;
     std::vector<irs::field_id> row_fields;
     std::vector<duckdb::LogicalType> row_types;
+    std::span<const std::shared_ptr<const irs::Filter>> row_leaves;
   };
   std::vector<ColFilter> col_filters;
   std::vector<duckdb::unique_ptr<duckdb::TableFilter>> emit_score_filters;
@@ -420,7 +421,8 @@ bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
 
 void ClassifySegmentColFilters(const irs::SubReader& seg, ScanGlobalState& g,
                                irs::ColFilterStateCache& states,
-                               irs::ColFilterClassification& out);
+                               irs::ColFilterClassification& out,
+                               bool prepare_leaves);
 
 irs::detail::TableFilter* BeginVerify(ColFilterVerify& verify,
                                       const irs::SubReader& seg,

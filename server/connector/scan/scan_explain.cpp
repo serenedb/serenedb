@@ -22,6 +22,7 @@
 #include <absl/strings/str_join.h>
 
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <ranges>
 
 #include "connector/column_id.h"
@@ -324,6 +325,17 @@ void ScanBindData::AppendSummary(
   } else if (search.filter) {
     out.insert("Index Filter", duckdb::ExplainValue(irs::ToExplainNode(
                                  *search.filter, name_of, kind_of)));
+  }
+  if (!search.row_filters.empty()) {
+    out.insert(
+      "Row Filter",
+      absl::StrJoin(
+        search.row_filters | std::views::transform([](const RowFilter& row) {
+          return duckdb::ExpressionFilter::GetExpressionFilter(*row.filter,
+                                                               "AppendSummary")
+            .expr->ToString();
+        }),
+        "\n"));
   }
   for (const auto& req : ts_dict.requests) {
     if (!req.having_filter) {

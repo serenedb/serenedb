@@ -77,7 +77,7 @@ void ClassifySegments(ScanGlobalState& g) {
   irs::ColFilterStateCache init_states;
   irs::ColFilterClassification cls;
   for (uint32_t si = 0; si < g.total_segments; ++si) {
-    ClassifySegmentColFilters((*g.reader)[si], g, init_states, cls);
+    ClassifySegmentColFilters((*g.reader)[si], g, init_states, cls, false);
     if (!cls.segment_dead) {
       g.segment_order.push_back(si);
     }

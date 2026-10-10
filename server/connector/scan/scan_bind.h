@@ -59,9 +59,17 @@ enum class ScanEntryKind : uint8_t {
   SearchTableIndex,
 };
 
+struct RowFilter {
+  std::vector<ColumnId> columns;
+  std::vector<duckdb::LogicalType> types;
+  std::vector<std::shared_ptr<const irs::Filter>> leaves;
+  std::shared_ptr<const duckdb::TableFilter> filter;
+};
+
 struct SearchSpec {
   std::shared_ptr<irs::Filter> filter;
   std::vector<std::shared_ptr<irs::Scorer>> filter_scorers;
+  std::vector<RowFilter> row_filters;
   mutable search::InvertedIndexSnapshotPtr snapshot;
 
   bool MatchAll() const noexcept { return !filter; }

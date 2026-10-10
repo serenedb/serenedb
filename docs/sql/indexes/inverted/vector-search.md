@@ -145,6 +145,17 @@ Every walk is capped at what the scan would have cost and falls back to it, forc
 
 A predicate on an `INCLUDE`d column — one the index stores but does not index — is answered from the columnstore, in one of two ways. The predicate is either folded over the whole segment before the walk starts, a vectorised compare per row, or the walk reads the columns of each row it reaches, one positioned read per row at the cost of a few dozen rows of the fold. The walk reads while it is expected to reach few enough rows for that to be the cheaper — a narrow beam over a large segment — and folds otherwise. A column compressed with `zstd`, whose read decompresses its block up to the row, is priced at a few hundred rows of the fold. [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either for measurement.
 
+The predicate need not be a single comparison. An `IN` list or an `OR` on one `INCLUDE`d column, an expression over several of them, and `AND`s and `OR`s that mix them with predicates on indexed fields are all answered inside the walk too:
+
+```sql
+SELECT id FROM idx
+WHERE lang = 'ja' OR id < 1000
+ORDER BY emb <-> $query_vector
+LIMIT 10;
+```
+
+Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields — a comparison, a range, a full-text `@@` match — is answered from the index once per segment, and the rest is read from the columnstore for each row the walk reaches. `EXPLAIN` shows such a predicate as the scan's `Row Filter`. A predicate on a column that is neither indexed nor `INCLUDE`d needs the base table, which the walk cannot read, and is refused; add the column to `INCLUDE` to filter on it.
+
 ## Column types
 
 A vector column must be a fixed-size `FLOAT[N]` array — all rows share dimension `N` (an unsized `FLOAT[]` is rejected). Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec — use `quant` instead to control its on-disk size.

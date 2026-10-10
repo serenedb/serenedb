@@ -95,12 +95,12 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: hnsw_f_idx                   │
 │ Lookup: table                       │
+│ Row Filter:                         │
+│ (label = 'even') OR (label = 'odd') │
 │ Score: l2_distance(emb, FLOAT[8])   │
 │ Top: 3                              │
 │ Projections: pk                     │
-│ Column Filter:                      │
-│ (label = 'even') OR (label = 'odd') │
-│ ~60 rows                            │
+│ ~300 rows                           │
 ╰─────────────────────────────────────╯
 
 
@@ -139,10 +139,14 @@ pk
 2
 
 
-query error an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges
+query
 SELECT pk FROM hnsw_f_idx
   WHERE label = 'even' OR pk < 10
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
+----
+pk
+100
+102
 
 
 # Both kinds at once: the indexed range and the stored column.

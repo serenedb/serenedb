@@ -266,20 +266,25 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
   }
 }
 
-void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data,
-                     const duckdb::TableFilterSet& filters) {
-  for (const auto& filter : filters.GetMultiColumnFilters()) {
-    const auto& expr =
-      duckdb::ExpressionFilter::GetExpressionFilter(*filter, "BuildRowFilters");
+void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data) {
+  for (const auto& row : bind_data.search.row_filters) {
     auto& cf = state.col_filters.emplace_back();
-    cf.filter = filter.get();
-    for (const auto& column_index : expr.column_indexes) {
-      const auto bind_index = state.projected_columns[column_index.GetIndex()];
-      SDB_ENSURE(bind_index != duckdb::DConstants::INVALID_INDEX,
-                 "a row filter reads columns of the scanned relation");
-      cf.row_fields.push_back(bind_data.columns.ids[bind_index]);
-      cf.row_types.push_back(bind_data.columns.types[bind_index]);
+    cf.filter = row.filter.get();
+    if (row.columns.size() == 1 && row.leaves.empty()) {
+      cf.field = row.columns.front();
+      cf.type = row.types.front();
+      cf.null_check =
+        DetectNullCheck(*duckdb::ExpressionFilter::GetExpressionFilter(
+                           *row.filter, "BuildRowFilters")
+                           .expr);
+      cf.not_null = MakeNotNullReplacement(*row.filter, cf.type);
+      continue;
     }
+    cf.row_fields.assign(row.columns.begin(), row.columns.end());
+    cf.row_types = row.types;
+    cf.row_types.resize(row.types.size() + row.leaves.size(),
+                        duckdb::LogicalType::BOOLEAN);
+    cf.row_leaves = row.leaves;
     cf.field = cf.row_fields.front();
     cf.type = cf.row_types.front();
   }
@@ -526,9 +531,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
   if (input.filters && input.filters->HasFilters()) {
     BuildTableFilter(state, bind_data, *input.filters);
   }
-  if (input.filters && input.filters->HasMultiColumnFilters()) {
-    BuildRowFilters(state, bind_data, *input.filters);
-  }
+  BuildRowFilters(state, bind_data);
   if (bind_data.search.filter) {
     AddDeferredVerifyFilters(state, *bind_data.search.filter);
   }

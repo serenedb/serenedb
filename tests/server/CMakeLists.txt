@@ -4,6 +4,7 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
+    background_scheduler_test.cpp
     database_directory_test.cpp
     docs_search_test.cpp
     duckdb_roundtrip_test.cpp

@@ -71,9 +71,7 @@ class SearchEngine final {
     return _stopping.load(std::memory_order_acquire);
   }
 
-  // Signal the loops to stop without joining. Called before network.stop()
-  // tears down the IoPool: once the pool is gone Delay() completes instantly,
-  // so the loops must already see the stop flag to break instead of spinning.
+  // Signal the loops to stop without joining.
   void RequestStop() noexcept {
     _stopping.store(true, std::memory_order_release);
   }

@@ -1,0 +1,296 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE cwi (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cwd (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cwt (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cwb (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+CREATE TABLE cw1 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cw2 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO cwi VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cwd VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cwt VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cwb VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cw1 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cw2 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) cwi;
+
+statement ok
+VACUUM (REFRESH_TABLE) cwd;
+
+statement ok
+VACUUM (REFRESH_TABLE) cwt;
+
+statement ok
+VACUUM (REFRESH_TABLE) cwb;
+
+statement ok
+VACUUM (REFRESH_TABLE) cw1;
+
+statement ok
+VACUUM (REFRESH_TABLE) cw2;
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection writer
+statement async ok
+INSERT INTO cwi VALUES (3, 'c');
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+sleep 1s
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
+----
+n
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection writer
+statement async ok
+DELETE FROM cwd WHERE id = 1;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+sleep 1s
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
+----
+n
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection writer
+statement ok
+BEGIN;
+
+connection writer
+statement ok
+INSERT INTO cwt VALUES (3, 'c');
+
+connection writer
+statement ok
+TRUNCATE cwt;
+
+connection writer
+statement ok
+INSERT INTO cwt VALUES (4, 'd');
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection writer
+statement async ok
+COMMIT;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+sleep 1s
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
+----
+n
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection writer
+statement ok
+SET threads = 1;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection writer
+statement async ok
+INSERT INTO cwb SELECT 100 + i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+sleep 1s
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
+----
+n
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection writer
+statement async ok
+TRUNCATE cw1, cw2;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+sleep 1s
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
+----
+n
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) cwi;
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) cwd;
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) cwt;
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) cwb;
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) cw1;
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) cw2;
+
+connection default
+query
+SELECT
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cwi) AS cwi,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cwd) AS cwd,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cwt) AS cwt,
+  (SELECT count(*) FROM cwb) AS cwb,
+  (SELECT count(*) FROM cw1) AS cw1,
+  (SELECT count(*) FROM cw2) AS cw2;
+----
+cwi	cwd	cwt	cwb	cw1	cw2
+1,2,3	2	4	5002	0	0
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cwi) AS cwi,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cwd) AS cwd,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cwt) AS cwt,
+  (SELECT count(*) FROM cwb) AS cwb,
+  (SELECT count(*) FROM cw1) AS cw1,
+  (SELECT count(*) FROM cw2) AS cw2;
+----
+cwi	cwd	cwt	cwb	cw1	cw2
+1,2,3	2	4	5002	0	0

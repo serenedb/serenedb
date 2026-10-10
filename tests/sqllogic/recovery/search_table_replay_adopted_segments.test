@@ -1,0 +1,195 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE ras1 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+CREATE TABLE ras2 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+CREATE TABLE ras3 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+CREATE TABLE ras4 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO ras1 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO ras2 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO ras3 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO ras4 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) ras1;
+
+statement ok
+VACUUM (REFRESH_TABLE) ras2;
+
+statement ok
+VACUUM (REFRESH_TABLE) ras3;
+
+statement ok
+VACUUM (REFRESH_TABLE) ras4;
+
+connection serial
+statement ok
+SET threads = 1;
+
+connection serial
+statement ok
+INSERT INTO ras1 SELECT 100 + i, repeat('x', 200) FROM range(5000) t(i);
+
+connection serial
+statement ok
+DELETE FROM ras1 WHERE id = 1;
+
+connection serial
+statement ok
+BEGIN;
+
+connection serial
+statement ok
+TRUNCATE ras1;
+
+connection serial
+statement ok
+COMMIT;
+
+connection serial
+statement ok
+INSERT INTO ras1 SELECT 10000 + i, repeat('y', 200) FROM range(5000) t(i);
+
+connection serial
+statement ok
+INSERT INTO ras1 VALUES (7, 'z');
+
+connection serial
+statement ok
+INSERT INTO ras2 SELECT 100 + i, repeat('x', 200) FROM range(5000) t(i);
+
+connection serial
+statement ok
+DELETE FROM ras2 WHERE id = 1;
+
+connection serial
+statement ok
+INSERT INTO ras2 SELECT 10000 + i, repeat('y', 200) FROM range(5000) t(i);
+
+connection serial
+statement ok
+BEGIN;
+
+connection serial
+statement ok
+INSERT INTO ras3 SELECT 100 + i, repeat('x', 200) FROM range(5000) t(i);
+
+connection serial
+statement ok
+TRUNCATE ras3;
+
+connection serial
+statement ok
+INSERT INTO ras3 SELECT 10000 + i, repeat('y', 200) FROM range(5000) t(i);
+
+connection serial
+statement ok
+INSERT INTO ras3 VALUES (3, 'c');
+
+connection serial
+statement ok
+COMMIT;
+
+connection default
+statement ok
+INSERT INTO ras4 SELECT 100 + i, 'p' || i FROM range(100000) t(i);
+
+connection default
+statement ok
+DELETE FROM ras4 WHERE id = 2;
+
+connection default
+statement ok
+BEGIN;
+
+connection default
+statement ok
+TRUNCATE ras4;
+
+connection default
+statement ok
+INSERT INTO ras4 SELECT 200000 + i, 'q' || i FROM range(100000) t(i);
+
+connection default
+statement ok
+COMMIT;
+
+connection default
+statement ok
+INSERT INTO ras4 SELECT 400000 + i, 'r' || i FROM range(50000) t(i);
+
+connection default
+query
+SELECT
+  (SELECT count(*) FROM ras1) AS ras1,
+  (SELECT count(*) FROM ras2) AS ras2,
+  (SELECT count(*) FROM ras3) AS ras3,
+  (SELECT count(*) FROM ras4) AS ras4;
+----
+ras1	ras2	ras3	ras4
+2	2	2	2
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 'ras1' AS t, count(*) AS n, count(DISTINCT id) AS d, min(id) AS lo, max(id) AS hi FROM ras1
+UNION ALL
+SELECT 'ras2', count(*), count(DISTINCT id), min(id), max(id) FROM ras2
+UNION ALL
+SELECT 'ras3', count(*), count(DISTINCT id), min(id), max(id) FROM ras3
+UNION ALL
+SELECT 'ras4', count(*), count(DISTINCT id), min(id), max(id) FROM ras4
+ORDER BY t;
+----
+t	n	d	lo	hi
+ras1	5001	5001	7	14999
+ras2	10001	10001	2	14999
+ras3	5001	5001	3	14999
+ras4	150000	150000	200000	449999
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) ras1;
+
+connection after_crash
+statement ok
+VACUUM (COMPACT_TABLE) ras2;
+
+connection after_crash
+query
+SELECT 'ras1' AS t, count(*) AS n, min(id) AS lo, max(id) AS hi FROM ras1
+UNION ALL
+SELECT 'ras2', count(*), min(id), max(id) FROM ras2
+ORDER BY t;
+----
+t	n	lo	hi
+ras1	5001	7	14999
+ras2	10001	2	14999

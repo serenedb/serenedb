@@ -1,0 +1,249 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE cpb (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 2097152);
+
+statement ok
+CREATE TABLE cpd (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cpt (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cpa (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE cpx (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO cpb VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cpd VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cpt VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cpa VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO cpx VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) cpb;
+
+statement ok
+VACUUM (REFRESH_TABLE) cpd;
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt;
+
+statement ok
+VACUUM (REFRESH_TABLE) cpa;
+
+statement ok
+VACUUM (REFRESH_TABLE) cpx;
+
+statement ok
+INSERT INTO cpt VALUES (3, 'c');
+
+connection writer
+statement ok
+SET threads = 1;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection writer
+statement async error connection closed
+INSERT INTO cpb SELECT 100 + i, 'v' || i || repeat('x', 200) FROM range(5000) t(i);
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_bulk
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM cpb;
+----
+n	lo	hi
+5002	1	5099
+
+connection after_bulk
+statement ok
+INSERT INTO cpb VALUES (3, 'c');
+
+connection after_bulk
+statement ok
+VACUUM (REFRESH_TABLE) cpb;
+
+connection after_bulk
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM cpb;
+----
+n	d
+5003	5003
+
+connection after_bulk
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection deleter
+statement async error connection closed
+DELETE FROM cpd WHERE id = 2;
+
+connection after_bulk
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection after_bulk
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_bulk
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_delete
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM cpd ORDER BY id;
+----
+id	body
+1	a
+
+connection after_delete
+statement ok
+SET sdb_faults = 'pause_search_commit_before_delete_log';
+
+connection truncator
+statement async error connection closed
+TRUNCATE cpt;
+
+connection after_delete
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+
+connection after_delete
+query
+SELECT count(*) AS n FROM cpt;
+----
+n
+0
+
+connection after_delete
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_delete
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_clear
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM cpt;
+----
+n
+0
+
+connection after_clear
+statement ok
+INSERT INTO cpt VALUES (5, 'e');
+
+connection after_clear
+statement ok
+VACUUM (REFRESH_TABLE) cpt;
+
+connection after_clear
+query
+SELECT id, body FROM cpt ORDER BY id;
+----
+id	body
+5	e
+
+connection mixed
+statement ok
+BEGIN;
+
+connection mixed
+statement ok
+INSERT INTO cpa VALUES (3, 'c');
+
+connection mixed
+statement ok
+TRUNCATE cpx;
+
+connection mixed
+statement ok
+INSERT INTO cpx VALUES (9, 'z');
+
+connection after_clear
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection mixed
+statement async error connection closed
+COMMIT;
+
+connection after_clear
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection after_clear
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_clear
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_mixed
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cpa) AS cpa,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cpx) AS cpx;
+----
+cpa	cpx
+1,2,3	9
+
+connection after_mixed
+statement ok
+VACUUM (REFRESH_TABLE) cpa;
+
+connection after_mixed
+statement ok
+VACUUM (REFRESH_TABLE) cpx;
+
+connection after_mixed
+query
+SELECT
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cpa) AS cpa,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM cpx) AS cpx;
+----
+cpa	cpx
+1,2,3	9

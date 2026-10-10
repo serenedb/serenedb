@@ -25,8 +25,11 @@ statement ok retry 40 backoff 250ms
 SET sdb_faults = '-pause_search_commit_before_irs:parked';
 
 connection writer
-statement error Attempting to write to table tco but another transaction is truncating it
+statement error
 INSERT INTO tco VALUES (3, 'new');
+----
+db error: ERROR: Attempting to write to table tco but another transaction is truncating it
+
 
 connection default
 statement ok

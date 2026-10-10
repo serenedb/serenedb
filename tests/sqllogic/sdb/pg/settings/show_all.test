@@ -21,7 +21,6 @@ allowed_directories	[]	List of directories, and directory prefixes, that are ALW
 allowed_paths	[]	List of files that are ALWAYS allowed to be queried, even when enable_external_access is false.
 application_name	(empty)	Sets the application name to be reported in statistics and logs.
 approximate_join_order_threshold	12	The minimum number of tables in a join to determine the optimal join order approximately instead of exactly.
-array_nulls	on	Enables input of NULL elements in arrays.
 arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, UUIDs and bits should be exported using large buffers.
 arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
@@ -45,10 +44,8 @@ azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
-backslash_quote	safe_encoding	Sets whether "\\'" is allowed in string literals.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
-block_size	8192	Shows the size of a disk block.
 bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
 cache_local_files	off	Whether the external file cache also caches local files. Remote files are always cached.
@@ -88,8 +85,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_table_access_method	heap	Sets the default table access method for new tables.
 default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in.
-default_text_search_config	pg_catalog.simple	Sets default text search configuration.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -104,7 +101,6 @@ disabled_log_types	(empty)	Sets the list of disabled log types.
 disabled_optimizers	(empty)	Disable a specific, comma-separated set of optimizers.
 duckdb_api	cpp	Specifies which client API/binding opened the database connection, e.g. cpp, capi, cli. The value gets folded into the HTTP User-Agent string DuckDB sends on any HTTP request.
 dynamic_or_filter_threshold	50	The maximum amount of OR filters that are generated dynamically from a hash join.
-effective_cache_size	524288	Sets the planner's assumption about the total size of the data caches.
 enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
 enable_external_access	on	Allow the database to access external state, e.g. through loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc.
 enable_external_file_cache	on	Allow the database to cache external files like Parquet in memory.
@@ -124,7 +120,6 @@ enable_view_dependencies	on	Enable created VIEWs to create dependencies on the r
 enabled_log_types	(empty)	Sets the list of enabled log types.
 error_on_division_by_zero	on	Throw an error instead of returning NULL when dividing by zero.
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
-escape_string_warning	on	Warn about backslash escapes in ordinary string literals.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
 explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
@@ -170,7 +165,6 @@ iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification 
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
 idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction.
-idle_session_timeout	0	Sets the maximum allowed idle time between queries, when not in a transaction.
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -196,15 +190,12 @@ logging_mode	<slt:ignore>	Determines which types of log messages are logged.
 logging_storage	<slt:ignore>	Set the logging storage, options are 'memory', 'stdout', 'file', '<custom>'.
 maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations.
 match_recognize_max_states	1000000	The maximum number of pattern states MATCH_RECOGNIZE explores for a single match, before it refuses the pattern (0 = no limit). A match is never refused below what matching the pattern without backtracking would take.
-max_connections	100	Sets the maximum number of concurrent connections.
+max_connections	0	Sets the maximum number of concurrent client connections.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
-max_function_args	100	Shows the maximum number of function arguments.
 max_identifier_length	63	Shows the maximum identifier length.
-max_index_keys	32	Shows the maximum number of index keys.
-max_locks_per_transaction	64	Sets the maximum number of locks per transaction.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
-max_prepared_transactions	0	Sets the maximum number of simultaneously prepared transactions.
+max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
@@ -260,7 +251,6 @@ profiling_coverage	SELECT	The profiling coverage, either SELECT (only SELECT que
 profiling_output	(empty)	The file to which profiler output is written. When empty, the output is printed to the terminal.
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output, e.g. {'max_extra_lines': 100}. Settings not recognized by the active renderer are ignored.
 progress_bar_time	2000	Configures how long (in milliseconds) a query needs to take before we start printing a progress bar.
-random_page_cost	4	Sets the planner's estimate of the cost of a nonsequentially fetched disk page.
 read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
@@ -323,44 +313,39 @@ search_path	<slt:ignore>	Sets the schema search order for names that are not sch
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
 segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
-segment_size	131072	Shows the number of pages per disk file.
 server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.3	Shows the server version.
-server_version_num	180003	Shows the server version as an integer.
-shared_buffers	16384	Sets the number of shared memory buffers used by the server.
+server_version	18.3	Shows the PostgreSQL version SereneDB is compatible with.
+server_version_num	180003	Shows the PostgreSQL version SereneDB is compatible with, as an integer.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
-ssl	off	Enables SSL connections.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
+statement_timeout	0	Sets the maximum allowed duration of any statement.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 synchronous_commit	on	Sets the current transaction's synchronization level.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
-temp_buffers	1024	Sets the maximum number of temporary buffers used by each session.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
 threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
-timezone_abbreviations	Default	Selects a file of time zone abbreviations.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
 transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
 transaction_read_only	off	Sets the current transaction's read-only status.
+transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
-wal_block_size	8192	Shows the block size in the write ahead log.
-wal_level	replica	Sets the level of information written to the WAL.
 warnings_as_errors	off	Escalate all warnings to errors.
 work_mem	4096	Sets the maximum memory to be used for query workspaces.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.
 
 
@@ -391,7 +376,6 @@ allowed_directories	[]	List of directories, and directory prefixes, that are ALW
 allowed_paths	[]	List of files that are ALWAYS allowed to be queried, even when enable_external_access is false.
 application_name	(empty)	Sets the application name to be reported in statistics and logs.
 approximate_join_order_threshold	12	The minimum number of tables in a join to determine the optimal join order approximately instead of exactly.
-array_nulls	on	Enables input of NULL elements in arrays.
 arrow_large_buffer_size	off	Whether Arrow buffers for strings, blobs, UUIDs and bits should be exported using large buffers.
 arrow_lossless_conversion	off	Whenever a DuckDB type does not have a clear native or canonical extension match in Arrow, export the types with a duckdb.type_name extension name.
 arrow_output_list_view	off	Whether the export to the Arrow format should use ListView as the physical layout for LIST columns.
@@ -415,10 +399,8 @@ azure_read_buffer_size	8388608	Size of the read buffer.
 azure_storage_connection_string	NULL	Azure connection string, used for authenticating and configuring azure requests
 azure_write_block_size	8388608	Size in bytes of each block for Blob/DFS writes. 0 restores the default (8 MiB). Max 4000 MiB (Azure per-request limit). Azure hard-limits a blob to 50,000 blocks; increase this to write files larger than 50,000 × azure_write_block_size bytes.
 azure_write_staged_blocks_per_commit	0	Number of blocks staged before an intermediate CommitBlockList. 0 (default) disables intermediate commits; the full block list is committed on close. Non-zero values make partial writes visible sooner at the cost of extra commit RPCs. Does not affect the 50,000-block blob limit; increase azure_write_block_size for that.
-backslash_quote	safe_encoding	Sets whether "\\'" is allowed in string literals.
 binary_as_string	off	In Parquet files, interpret binary data as a string.
 block_allocator_memory	0 bytes	Physical memory that the block allocator is allowed to use. This memory is allocated once, never freed, and cannot be reduced.
-block_size	8192	Shows the size of a disk block.
 bytea_output	hex	Sets the output format for bytea.
 ca_cert_file	(empty)	Path to a custom certificate file for self-signed certificates.
 cache_local_files	off	Whether the external file cache also caches local files. Remote files are always cached.
@@ -458,8 +440,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
+default_table_access_method	heap	Sets the default table access method for new tables.
 default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in.
-default_text_search_config	pg_catalog.simple	Sets default text search configuration.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -474,7 +456,6 @@ disabled_log_types	(empty)	Sets the list of disabled log types.
 disabled_optimizers	(empty)	Disable a specific, comma-separated set of optimizers.
 duckdb_api	cpp	Specifies which client API/binding opened the database connection, e.g. cpp, capi, cli. The value gets folded into the HTTP User-Agent string DuckDB sends on any HTTP request.
 dynamic_or_filter_threshold	50	The maximum amount of OR filters that are generated dynamically from a hash join.
-effective_cache_size	524288	Sets the planner's assumption about the total size of the data caches.
 enable_curl_server_cert_verification	on	Enable server side certificate verification for CURL backend.
 enable_external_access	on	Allow the database to access external state, e.g. through loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc.
 enable_external_file_cache	on	Allow the database to cache external files like Parquet in memory.
@@ -494,7 +475,6 @@ enable_view_dependencies	on	Enable created VIEWs to create dependencies on the r
 enabled_log_types	(empty)	Sets the list of enabled log types.
 error_on_division_by_zero	on	Throw an error instead of returning NULL when dividing by zero.
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
-escape_string_warning	on	Warn about backslash escapes in ordinary string literals.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
 explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
@@ -540,7 +520,6 @@ iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification 
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
 idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction.
-idle_session_timeout	0	Sets the maximum allowed idle time between queries, when not in a transaction.
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -566,15 +545,12 @@ logging_mode	<slt:ignore>	Determines which types of log messages are logged.
 logging_storage	<slt:ignore>	Set the logging storage, options are 'memory', 'stdout', 'file', '<custom>'.
 maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations.
 match_recognize_max_states	1000000	The maximum number of pattern states MATCH_RECOGNIZE explores for a single match, before it refuses the pattern (0 = no limit). A match is never refused below what matching the pattern without backtracking would take.
-max_connections	100	Sets the maximum number of concurrent connections.
+max_connections	0	Sets the maximum number of concurrent client connections.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
-max_function_args	100	Shows the maximum number of function arguments.
 max_identifier_length	63	Shows the maximum identifier length.
-max_index_keys	32	Shows the maximum number of index keys.
-max_locks_per_transaction	64	Sets the maximum number of locks per transaction.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
-max_prepared_transactions	0	Sets the maximum number of simultaneously prepared transactions.
+max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
@@ -630,7 +606,6 @@ profiling_coverage	SELECT	The profiling coverage, either SELECT (only SELECT que
 profiling_output	(empty)	The file to which profiler output is written. When empty, the output is printed to the terminal.
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output, e.g. {'max_extra_lines': 100}. Settings not recognized by the active renderer are ignored.
 progress_bar_time	2000	Configures how long (in milliseconds) a query needs to take before we start printing a progress bar.
-random_page_cost	4	Sets the planner's estimate of the cost of a nonsequentially fetched disk page.
 read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = automatic, with the backlog being bound by a memory budget, 0 = disabled.
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
@@ -693,42 +668,37 @@ search_path	<slt:ignore>	Sets the schema search order for names that are not sch
 secret_directory	<slt:ignore>	Set the directory in which persistent secrets are stored.
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
 segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
-segment_size	131072	Shows the number of pages per disk file.
 server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.3	Shows the server version.
-server_version_num	180003	Shows the server version as an integer.
-shared_buffers	16384	Sets the number of shared memory buffers used by the server.
+server_version	18.3	Shows the PostgreSQL version SereneDB is compatible with.
+server_version_num	180003	Shows the PostgreSQL version SereneDB is compatible with, as an integer.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
-ssl	off	Enables SSL connections.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
+statement_timeout	0	Sets the maximum allowed duration of any statement.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 synchronous_commit	on	Sets the current transaction's synchronization level.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
-temp_buffers	1024	Sets the maximum number of temporary buffers used by each session.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
 threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
-timezone_abbreviations	Default	Selects a file of time zone abbreviations.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
 transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.
 transaction_isolation	read committed	Sets the current transaction's isolation level.
 transaction_read_only	off	Sets the current transaction's read-only status.
+transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
-wal_block_size	8192	Shows the block size in the write ahead log.
-wal_level	replica	Sets the level of information written to the WAL.
 warnings_as_errors	off	Escalate all warnings to errors.
 work_mem	4096	Sets the maximum memory to be used for query workspaces.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.

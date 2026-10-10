@@ -117,7 +117,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_rules | 🟡 | Shows information about rules. |
 | pg_seclabels | 🟡 | Displays security labels. |
 | pg_sequences | 🟢 | Lists sequences. |
-| pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the PostgreSQL settings clients read, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
+| pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the [PostgreSQL settings SereneDB accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
 | pg_stats | 🟡 | Provides planner statistics. |

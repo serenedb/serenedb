@@ -265,36 +265,4 @@ def generate(gen):
             raise SystemExit(f'{path} names no catalog table')
     gen.write('keywords.gen.inc',
               [cpp_str(word) + ',' for word in sorted(reserved)])
-    generate_settings(gen)
 
-
-SETTINGS_SQL = """
-SELECT name, setting, coalesce(unit, ''), category, short_desc,
-       coalesce(extra_desc, ''), context,
-       vartype, coalesce(min_val, ''), coalesce(max_val, ''), enumvals
-FROM pg_settings WHERE name = ANY(%s)
-"""
-
-
-def generate_settings(gen):
-    rows = {row[0]: row for row in gen.query(SETTINGS_SQL,
-                                             (list(config.SETTINGS),))}
-    missing = [name for name in config.SETTINGS if name not in rows]
-    if missing:
-        raise SystemExit(f'settings unknown to PostgreSQL: {missing}')
-    out, gucs = [], []
-    for i, name in enumerate(config.SETTINGS):
-        (_, boot, unit, category, desc, extra, context, vartype, min_val,
-         max_val, enumvals) = rows[name]
-        enum = '{}'
-        if enumvals:
-            enum = f'kGucEnum{i}'
-            out.append(f'inline constexpr std::string_view {enum}[] = {{' +
-                       ', '.join(map(cpp_str, enumvals)) + '};')
-        setting = config.SETTING_VALUES.get(name, boot or '')
-        desc = config.SETTING_DESCRIPTIONS.get(name, desc)
-        gucs.append('  {' + ', '.join(map(cpp_str, (
-            name, setting, unit, category, desc, extra, context, vartype, min_val,
-            max_val))) + f', {enum}}},')
-    gen.write('settings.gen.inc',
-              out + ['inline constexpr Guc kGucs[] = {'] + gucs + ['};'])

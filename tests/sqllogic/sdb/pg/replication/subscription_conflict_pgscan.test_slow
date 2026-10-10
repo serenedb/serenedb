@@ -140,6 +140,13 @@ n
 0
 
 
+query
+SELECT confl_multiple_unique_conflicts >= 2 AS conflicted, confl_insert_exists >= 1 AS single, apply_error_count >= 1 AS failed FROM pg_stat_subscription_stats WHERE subname = 'rcon_sub';
+----
+conflicted	single	failed
+t	t	t
+
+
 statement ok
 CALL postgres_execute('rcon_${__DATABASE__}', 'INSERT INTO rcon_multi VALUES (70, ''skipped'', 70)');
 

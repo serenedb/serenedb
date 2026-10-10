@@ -35,7 +35,7 @@ MaterializedData SystemTableSnapshot<PgStatSubscriptionStats>::GetTableData() {
                                replication::SubscriptionEngine::SubStats>
     stats;
   if (auto* engine = replication::SubscriptionEngine::gInstance) {
-    stats = engine->Stats(GetDatabase().GetName().GetIdentifierName());
+    stats = engine->Stats();
   }
   std::vector<PgStatSubscriptionStats> values;
   auto& database = GetDatabase().Cast<catalog::SereneDBCatalog>();

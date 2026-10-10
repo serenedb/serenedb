@@ -34,9 +34,8 @@ namespace sdb::replication {
 class ReplStream {
  public:
   static bool IsIdle(const PgOutputMessage* message) noexcept {
-    return message == &kIdle;
+    return std::holds_alternative<StreamStopMessage>(*message);
   }
-  static const PgOutputMessage* Idle() noexcept { return &kIdle; }
 
   bool Publish(std::span<const PgOutputMessage> messages) noexcept {
     if (_aborted.load(std::memory_order_acquire)) {
@@ -49,6 +48,7 @@ class ReplStream {
     return true;
   }
   auto Drained(yaclib::IExecutor& io) noexcept { return _consumed.AwaitOn(io); }
+  bool IsDrained() noexcept { return _consumed.Ready(); }
   void ResetDrained() noexcept {
     _consumed.Reset();
     std::atomic_thread_fence(std::memory_order_seq_cst);
@@ -132,8 +132,6 @@ class ReplStream {
   }
 
  private:
-  inline static const PgOutputMessage kIdle{StreamStopMessage{}};
-
   void Wake() noexcept {
     if (_scan_active.load(std::memory_order_acquire)) {
       _ready.Set();

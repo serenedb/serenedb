@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -197,6 +198,44 @@ template<typename U>
 void AddBase(U* v, size_t n, U base) noexcept {
   for (size_t i = 0; i < n; ++i) {
     v[i] = static_cast<U>(v[i] + base);
+  }
+}
+
+template<typename U>
+using WideWord = std::conditional_t<(sizeof(U) < 4), uint32_t, U>;
+
+template<typename U>
+U OddInverse(U odd) noexcept {
+  using W = WideWord<U>;
+  W inverse = odd;
+  for (int i = 0; i < 5; ++i) {
+    inverse = static_cast<W>(inverse * static_cast<W>(2 - odd * inverse));
+  }
+  return static_cast<U>(inverse);
+}
+
+template<bool kSigned, typename U>
+void DivideExact(U* v, size_t n, U divisor) noexcept {
+  using S = std::make_signed_t<U>;
+  using W = WideWord<U>;
+  const auto shift = std::countr_zero(divisor);
+  const W inverse = OddInverse(static_cast<U>(divisor >> shift));
+  for (size_t i = 0; i < n; ++i) {
+    U x;
+    if constexpr (kSigned) {
+      x = static_cast<U>(static_cast<S>(v[i]) >> shift);
+    } else {
+      x = static_cast<U>(v[i] >> shift);
+    }
+    v[i] = static_cast<U>(static_cast<W>(x) * inverse);
+  }
+}
+
+template<typename U>
+void MultiplyBy(U* v, size_t n, U factor) noexcept {
+  using W = WideWord<U>;
+  for (size_t i = 0; i < n; ++i) {
+    v[i] = static_cast<U>(static_cast<W>(v[i]) * static_cast<W>(factor));
   }
 }
 

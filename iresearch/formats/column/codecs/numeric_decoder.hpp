@@ -73,6 +73,9 @@ class FrameDecoder {
     } else if (_h.leaf == NumericLeaf::Zstd) {
       _zstd.emplace();
     }
+    if constexpr (std::is_integral_v<T>) {
+      _scale = static_cast<U>(_h.scale);
+    }
   }
 
   uint32_t FrameOf(uint64_t row) const noexcept {
@@ -95,10 +98,10 @@ class FrameDecoder {
   uint64_t End() const noexcept { return _end; }
 
   T FrameMin(uint32_t f) const noexcept {
-    return std::bit_cast<T>(static_cast<U>(MetaAt(f).min));
+    return Scaled(static_cast<U>(MetaAt(f).min));
   }
   T FrameMax(uint32_t f) const noexcept {
-    return std::bit_cast<T>(static_cast<U>(MetaAt(f).max));
+    return Scaled(static_cast<U>(MetaAt(f).max));
   }
 
   void Seek(uint64_t row) {
@@ -118,6 +121,7 @@ class FrameDecoder {
       if constexpr (std::is_integral_v<T>) {
         if (const auto n = DecodeDirect(row + done, count - done,
                                         reinterpret_cast<U*>(out + done))) {
+          Rescale(out + done, n);
           done += n;
           continue;
         }
@@ -125,6 +129,7 @@ class FrameDecoder {
       Seek(row + done);
       const auto take = std::min<uint64_t>(count - done, _end - (row + done));
       Copy(row + done, take, out + done);
+      Rescale(out + done, take);
       done += take;
     }
   }
@@ -159,18 +164,34 @@ class FrameDecoder {
   }
 
   T At(uint64_t row) noexcept {
-    T v;
+    U v;
     if (_h.transform != NumericTransform::Rle) {
       std::memcpy(&v, _view + (row - _begin) * sizeof(T), sizeof(T));
-      return v;
+      return Scaled(v);
     }
     const auto r = RunOf(static_cast<uint32_t>(row - _begin));
     _hint = r;
-    std::memcpy(&v, &_run_values[r], sizeof(T));
-    return v;
+    return Scaled(_run_values[r]);
   }
 
  private:
+  T Scaled(U v) const noexcept {
+    if constexpr (std::is_integral_v<T>) {
+      if (_scale > 1) {
+        numeric::MultiplyBy(&v, 1, _scale);
+      }
+    }
+    return std::bit_cast<T>(v);
+  }
+
+  void Rescale(T* out, uint64_t count) const noexcept {
+    if constexpr (std::is_integral_v<T>) {
+      if (_scale > 1) {
+        numeric::MultiplyBy(reinterpret_cast<U*>(out), count, _scale);
+      }
+    }
+  }
+
   uint64_t FirstRow(uint32_t f) const noexcept {
     return duckdb::Load<uint32_t>(_base + _h.off_frames +
                                   f * kNumericFrameMetaSize);
@@ -453,6 +474,7 @@ class FrameDecoder {
   duckdb::shared_ptr<DecodedFrame> _held;
   int8_t _admit = -1;
   uint32_t _per_frame = 0;
+  U _scale = 0;
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint64_t _next = 0;

@@ -26,6 +26,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
+#include <numeric>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -170,6 +171,7 @@ class TypedSealer final : public NumericSealer {
     if (!_any_valid || _values.size() > std::numeric_limits<uint32_t>::max()) {
       return std::nullopt;
     }
+    DivideByGcd();
     const auto rows = static_cast<double>(_values.size());
     if (!due) {
       if (!tuning.pick) {
@@ -278,6 +280,32 @@ class TypedSealer final : public NumericSealer {
     _stats.Merge(out.stats);
     Write(c, leaf, out.bytes);
     return out;
+  }
+
+  void DivideByGcd() noexcept {
+    if constexpr (std::is_integral_v<T>) {
+      if (_codes_only || _scale != 0) {
+        return;
+      }
+      U gcd = 0;
+      for (const U bits : _values) {
+        U magnitude = bits;
+        if constexpr (std::is_signed_v<T>) {
+          if (static_cast<T>(bits) < 0) {
+            magnitude = static_cast<U>(U{0} - bits);
+          }
+        }
+        gcd = std::gcd(gcd, magnitude);
+        if (gcd == 1) {
+          break;
+        }
+      }
+      _scale = gcd > 1 ? gcd : 1;
+      if (_scale > 1) {
+        numeric::DivideExact<std::is_signed_v<T>>(_values.data(),
+                                                  _values.size(), _scale);
+      }
+    }
   }
 
   static bool Less(U a, U b) noexcept {
@@ -626,6 +654,7 @@ class TypedSealer final : public NumericSealer {
     h.off_data = h.off_dict + static_cast<uint32_t>(c.dict.size());
     h.base = c.base;
     h.raw_bytes = uint64_t{c.items} * c.ItemBytes();
+    h.scale = _scale > 1 ? _scale : 0;
 
     out.clear();
     out.resize(h.off_data);
@@ -689,6 +718,7 @@ class TypedSealer final : public NumericSealer {
   duckdb::StatsWriter<T> _stats;
   std::vector<U> _values;
   U _last = 0;
+  U _scale = 0;
   bool _any_valid = false;
   bool _codes_only = false;
   std::vector<Candidate> _candidates;

@@ -105,7 +105,7 @@ struct NumericHeader {
   uint8_t reserved0[3] = {};
   uint64_t base = 0;
   uint64_t raw_bytes = 0;
-  uint64_t reserved1 = 0;
+  uint64_t scale = 0;
 
   bool Shuffled() const noexcept { return flags & kNumericShuffled; }
   uint32_t FrameBytes() const noexcept { return uint32_t{1} << frame_log2; }
@@ -165,6 +165,6 @@ static_assert(offsetof(NumericHeader, frame_log2) == 36);
 static_assert(offsetof(NumericHeader, reserved0) == 37);
 static_assert(offsetof(NumericHeader, base) == 40);
 static_assert(offsetof(NumericHeader, raw_bytes) == 48);
-static_assert(offsetof(NumericHeader, reserved1) == 56);
+static_assert(offsetof(NumericHeader, scale) == 56);
 
 }  // namespace irs::codecs

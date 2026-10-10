@@ -110,6 +110,18 @@ const std::vector<Shape>& Shapes() {
     {"hashes_with_repeats",
      [](uint64_t g) { return static_cast<int64_t>(Mix(Mix(g) % 5000)); }},
     {"negative", [](uint64_t g) { return -static_cast<int64_t>(g * 977); }},
+    {"second_timestamps",
+     [](uint64_t g) -> std::optional<int64_t> {
+       if (g % 13 == 5) {
+         return std::nullopt;
+       }
+       return static_cast<int64_t>(1'700'000'000 + g / 3 + Mix(g) % 7) *
+              1'000'000;
+     }},
+    {"negative_multiples",
+     [](uint64_t g) {
+       return (static_cast<int64_t>(Mix(g) % 101) - 50) * 86'400;
+     }},
     {"skewed_offsets",
      [](uint64_t g) {
        const auto m = Mix(g);
@@ -303,6 +315,39 @@ class ColNumericCodecTest : public TestBase {
     }
   }
 
+  std::vector<std::string> SegmentInfo(irs::Directory& dir,
+                                       const std::string& key) {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    std::vector<std::string> out;
+    irs::ReadContext ctx{r};
+    irs::BlockWindow window{};
+    uint64_t row = 0;
+    for (const auto& block : col->DataBlocks()) {
+      if (block.codec->type ==
+          duckdb::CompressionType::COMPRESSION_COL_NUMERIC) {
+        window = col->Locate(row, window);
+        auto seg = col->OpenSegment(window.block, ctx);
+        out.emplace_back(seg->GetCompressionFunction().get_segment_info(
+          duckdb::QueryContext{}, *seg)[key]);
+      }
+      row += block.tuple_count;
+    }
+    return out;
+  }
+
+  uint64_t NumericBytes(irs::Directory& dir) {
+    irs::ColReader r{dir, std::string{kSeg}, Db()};
+    const auto* col = r.Column(kField);
+    EXPECT_NE(col, nullptr);
+    uint64_t bytes = 0;
+    for (const auto& block : col->DataBlocks()) {
+      bytes += block.byte_size;
+    }
+    return bytes;
+  }
+
   std::vector<std::string> Transforms(irs::Directory& dir) {
     irs::ColReader r{dir, std::string{kSeg}, Db()};
     const auto* col = r.Column(kField);
@@ -443,6 +488,42 @@ TEST_F(ColNumericCodecTest, CompactsClusteredTimestamps) {
     bytes += block.byte_size;
   }
   EXPECT_LT(bytes, kRows * 2);
+}
+
+TEST_F(ColNumericCodecTest, DividesOutACommonFactor) {
+  constexpr uint64_t kRows = 60000;
+  const Gen seconds = [](uint64_t g) -> std::optional<int64_t> {
+    if (g % 13 == 5) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(1'700'000'000 + g / 3 + Mix(g) % 7);
+  };
+  const Gen micros = [&](uint64_t g) -> std::optional<int64_t> {
+    const auto v = seconds(g);
+    if (!v) {
+      return std::nullopt;
+    }
+    return *v * 1'000'000;
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(static_cast<int>(tier));
+    irs::MemoryDirectory plain_dir{};
+    Write(plain_dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, 16384,
+          seconds);
+    irs::MemoryDirectory scaled_dir{};
+    Write(scaled_dir, duckdb::LogicalType::BIGINT, {.tier = tier}, kRows, 16384,
+          micros);
+    Verify(scaled_dir, duckdb::LogicalType::BIGINT, kRows, micros);
+    const auto scales = SegmentInfo(scaled_dir, "scale");
+    ASSERT_FALSE(scales.empty());
+    for (const auto& scale : scales) {
+      EXPECT_EQ(scale, "1000000");
+    }
+    for (const auto& scale : SegmentInfo(plain_dir, "scale")) {
+      EXPECT_EQ(scale, "1");
+    }
+    EXPECT_LE(NumericBytes(scaled_dir), NumericBytes(plain_dir) + 64 * 8);
+  }
 }
 
 TEST_F(ColNumericCodecTest, SparseReadsCacheDecodedFrames) {

@@ -208,6 +208,7 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["entries"] = absl::StrCat(h.dict_count);
   info["raw_bytes"] = absl::StrCat(h.raw_bytes);
   info["data_bytes"] = absl::StrCat(h.data_size);
+  info["scale"] = absl::StrCat(h.scale > 1 ? h.scale : 1);
   return info;
 }
 

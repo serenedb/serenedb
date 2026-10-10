@@ -20,10 +20,10 @@
 
 #include "pg/commands/rbac.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/pragma_function.hpp>
@@ -373,8 +373,10 @@ void DropRolePragma(duckdb::ClientContext& client,
       .GetCatalogSet(CatalogType::ROLE_ENTRY)
       .Scan(s.ClusterTransaction(), [&](duckdb::CatalogEntry& other) {
         const auto& candidate = other.Cast<catalog::RoleCatalogEntry>();
-        if (std::ranges::contains(candidate.MemberOf(), role.oid,
-                                  &duckdb::Membership::role)) {
+        if (absl::c_any_of(candidate.MemberOf(),
+                           [&](const duckdb::Membership& member) {
+                             return member.role == role.oid;
+                           })) {
           members.emplace_back(candidate.name);
         }
       });

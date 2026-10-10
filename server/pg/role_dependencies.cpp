@@ -20,7 +20,8 @@
 
 #include "pg/role_dependencies.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -72,7 +73,7 @@ class Emitter {
     std::vector<duckdb::idx_t> roles;
     for (const auto& item : acl) {
       for (const auto role : {item.grantee, item.grantor}) {
-        if (!std::ranges::contains(roles, role)) {
+        if (!absl::c_contains(roles, role)) {
           roles.emplace_back(role);
         }
       }
@@ -149,7 +150,7 @@ void VisitDatabase(duckdb::ClientContext& context,
     return;
   }
   for (const auto& row : entry->permissions.defaults) {
-    if (row.scope == kInvalidOid || std::ranges::contains(schemas, row.scope)) {
+    if (row.scope == kInvalidOid || absl::c_contains(schemas, row.scope)) {
       emitter.Defaults(row);
     }
   }

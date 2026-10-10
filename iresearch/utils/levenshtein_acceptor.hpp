@@ -18,6 +18,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -113,7 +115,7 @@ class LevenshteinAcceptor {
         }
       }
     }
-    std::ranges::sort(_partials);
+    absl::c_sort(_partials);
     _partials.erase(std::ranges::unique(_partials).begin(), _partials.end());
     _slots = _chi.size() / _words;
     const size_t offsets = _target.size() + _chi_size + 1;
@@ -205,8 +207,7 @@ class LevenshteinAcceptor {
 
   size_t MaxStates() const noexcept {
     const size_t partials =
-      static_cast<size_t>(std::ranges::count(_leads, true)) + _partials.size() +
-      3;
+      static_cast<size_t>(absl::c_count(_leads, true)) + _partials.size() + 3;
     const size_t offsets =
       _target.size() + _chi_size * (_description->max_distance() + 1) + 1;
     return _description->size() * offsets * (partials + 1) + _prefix.size();
@@ -363,8 +364,7 @@ class LevenshteinAcceptor {
   }
 
   uint32_t Partial(uint32_t acc, uint32_t phase) const noexcept {
-    return std::ranges::contains(_partials, PartialKey(acc, phase)) ? acc
-                                                                    : kForeign;
+    return absl::c_contains(_partials, PartialKey(acc, phase)) ? acc : kForeign;
   }
 
   size_t Window(uint32_t offset) const noexcept {

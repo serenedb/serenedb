@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <optional>
 #include <ranges>
@@ -317,7 +319,7 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
     terms | std::views::transform([](const Term& term) -> const PostingMeta& {
       return CookieOf(term);
     });
-  if (std::ranges::any_of(
+  if (absl::c_any_of(
         metas, [](const PostingMeta& meta) { return DocExtent(meta) != 0; })) {
     PrefetchDocExtents(r.In(), metas);
   }

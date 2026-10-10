@@ -20,7 +20,8 @@
 
 #include "auth/role_closure.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -42,7 +43,7 @@ using duckdb::AclMode;
 using RoleIdSpan = std::span<const duckdb::idx_t>;
 
 bool RolesContain(RoleIdSpan roles, duckdb::idx_t id) {
-  return std::ranges::binary_search(roles, id);
+  return absl::c_binary_search(roles, id);
 }
 
 bool Reaches(const AclItem& item, RoleIdSpan roles) {
@@ -63,7 +64,7 @@ AclMode Held(std::span<const duckdb::AclItem> acl, RoleIdSpan roles,
 
 bool Allows(std::span<const duckdb::AclItem> stored, duckdb::CatalogType type,
             duckdb::idx_t owner, RoleIdSpan roles, AclMode need, bool any) {
-  SDB_ASSERT(std::ranges::is_sorted(roles),
+  SDB_ASSERT(absl::c_is_sorted(roles),
              "Allows requires an ascending-sorted roles span");
   if (need == AclMode::NoRights) {
     return false;
@@ -118,7 +119,7 @@ std::vector<duckdb::idx_t> Reachable(const RoleGraph& graph, duckdb::idx_t role,
     }
   }
   std::vector<duckdb::idx_t> out(seen.begin(), seen.end());
-  std::ranges::sort(out);
+  absl::c_sort(out);
   return out;
 }
 
@@ -181,7 +182,7 @@ RoleClosure ComputeRoleClosure(const RoleGraph& graph, duckdb::idx_t role) {
       }
     }
   }
-  std::ranges::sort(out.admin);
+  absl::c_sort(out.admin);
   if (const auto* node = graph.Find(role)) {
     out.options = node->options;
     out.is_superuser = node->is_superuser;
@@ -252,7 +253,7 @@ bool RoleClosure::CanColumns(
     return true;
   }
   return !acls.empty() &&
-         std::ranges::all_of(acls, [&](std::span<const duckdb::AclItem> acl) {
+         absl::c_all_of(acls, [&](std::span<const duckdb::AclItem> acl) {
            return ColumnGrants(acl, perm.owner, closure, need);
          });
 }
@@ -263,7 +264,7 @@ bool RoleClosure::CanAnyColumn(
   if (Can(duckdb::CatalogType::TABLE_ENTRY, perm, need)) {
     return true;
   }
-  return std::ranges::any_of(acls, [&](std::span<const duckdb::AclItem> acl) {
+  return absl::c_any_of(acls, [&](std::span<const duckdb::AclItem> acl) {
     return ColumnGrants(acl, perm.owner, closure, need);
   });
 }

@@ -20,7 +20,8 @@
 
 #include "union_tokenizer.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <functional>
 
@@ -32,7 +33,7 @@ namespace irs::analysis {
 
 UnionTokenizer::UnionTokenizer(std::vector<Tokenizer::ptr> options)
   : _subs{std::move(options)} {
-  SDB_ASSERT(std::ranges::none_of(_subs, std::logical_not{}));
+  SDB_ASSERT(absl::c_none_of(_subs, std::logical_not{}));
 }
 
 Tokenizer::ptr UnionTokenizer::Make(Options opts,

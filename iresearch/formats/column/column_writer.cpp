@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/column/column_writer.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
@@ -153,7 +155,7 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
       ? forced
       : duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config);
   if (forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
-    const bool available = std::ranges::any_of(
+    const bool available = absl::c_any_of(
       candidates, [&](const auto& f) { return f.get().type == forced_method; });
     if (available) {
       std::erase_if(candidates, [&](const auto& f) {
@@ -176,7 +178,7 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
     }
   }
   auto index_of = [&](duckdb::CompressionType t) {
-    const auto it = std::ranges::find_if(
+    const auto it = absl::c_find_if(
       candidates, [&](const auto& f) { return f.get().type == t; });
     return it == candidates.end()
              ? candidates.size()

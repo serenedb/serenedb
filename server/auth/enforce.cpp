@@ -20,11 +20,11 @@
 
 #include "auth/enforce.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/time.h>
 
-#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -175,7 +175,7 @@ CatalogType DefaultObjType(LogicalOperatorType type) {
 
 void MergeGrant(duckdb::vector<duckdb::AclItem>& acl,
                 const duckdb::AclItem& item) {
-  auto it = std::ranges::find_if(acl, [&](const duckdb::AclItem& existing) {
+  auto it = absl::c_find_if(acl, [&](const duckdb::AclItem& existing) {
     return existing.grantee == item.grantee && existing.grantor == item.grantor;
   });
   if (it == acl.end()) {
@@ -323,8 +323,10 @@ class Enforcer {
             expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
           if (auto it = _dml_tables.find(binding.table_index.index);
               it != _dml_tables.end()) {
-            auto entry = std::ranges::find(_returning, it->second,
-                                           &ReturningColumns::first);
+            auto entry =
+              absl::c_find_if(_returning, [&](const ReturningColumns& columns) {
+                return columns.first == it->second;
+              });
             if (entry == _returning.end()) {
               entry = _returning.emplace(_returning.end(), it->second,
                                          ReturningColumns::second_type{});
@@ -764,7 +766,7 @@ class Enforcer {
 
   void CheckViews() {
     auto scopes = _props.view_scopes;
-    std::ranges::sort(scopes, [](const auto& lhs, const auto& rhs) {
+    absl::c_sort(scopes, [](const auto& lhs, const auto& rhs) {
       return lhs.begin != rhs.begin ? lhs.begin < rhs.begin : lhs.end > rhs.end;
     });
     for (const auto& scope : scopes) {

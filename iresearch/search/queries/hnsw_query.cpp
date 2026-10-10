@@ -20,7 +20,8 @@
 
 #include "iresearch/search/queries/hnsw_query.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <span>
 
 #include "iresearch/search/detail/table_filter.hpp"
@@ -121,7 +122,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     }
     hits.push_back({.score = c.score, .doc = doc});
   }
-  std::ranges::sort(
+  absl::c_sort(
     hits, [](const ScoreDoc& l, const ScoreDoc& r) { return l.doc < r.doc; });
   return hits;
 }

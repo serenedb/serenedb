@@ -20,7 +20,8 @@
 
 #include "catalog/entry/role.h"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <string_view>
 #include <utility>
@@ -102,7 +103,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   }
   for (const auto& entry : alter.set_config) {
     const auto key = ConfigKey(entry);
-    auto it = std::ranges::find_if(
+    auto it = absl::c_find_if(
       next.config, [&](std::string_view e) { return ConfigKey(e) == key; });
     if (it == next.config.end()) {
       next.config.emplace_back(entry);
@@ -111,8 +112,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     }
   }
   if (alter.grant_role_id != 0) {
-    auto it = std::ranges::find(next.member_of, alter.grant_role_id,
-                                &duckdb::Membership::role);
+    auto it =
+      absl::c_find_if(next.member_of, [&](const duckdb::Membership& member) {
+        return member.role == alter.grant_role_id;
+      });
     if (alter.revoke && !alter.option_only) {
       if (it != next.member_of.end()) {
         next.member_of.erase(it);

@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
@@ -27,7 +28,6 @@
 #include <absl/strings/str_split.h>
 #include <fast_float/fast_float.h>
 
-#include <algorithm>
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -180,8 +180,10 @@ int64_t ParseStatementTimeout(std::string_view text) {
     trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
   double scale = 1;
   if (!unit.empty()) {
-    const auto it = std::ranges::find(
-      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
+    const auto it = absl::c_find_if(
+      kTimeUnits, [&](const std::pair<std::string_view, double>& time_unit) {
+        return time_unit.first == unit;
+      });
     if (it == std::end(kTimeUnits)) {
       invalid();
     }
@@ -322,10 +324,9 @@ void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
     const auto token = absl::AsciiStrToUpper(absl::StripAsciiWhitespace(field));
     static constexpr std::string_view kKnown[] = {
       "ISO", "SQL", "POSTGRES", "GERMAN", "YMD", "DMY", "MDY", "US", "DEFAULT"};
-    const bool ok = absl::StartsWith(token, "EURO") ||
-                    absl::StartsWith(token, "NONEURO") ||
-                    std::ranges::any_of(
-                      kKnown, [&](std::string_view k) { return k == token; });
+    const bool ok =
+      absl::StartsWith(token, "EURO") || absl::StartsWith(token, "NONEURO") ||
+      absl::c_any_of(kKnown, [&](std::string_view k) { return k == token; });
     if (!ok) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

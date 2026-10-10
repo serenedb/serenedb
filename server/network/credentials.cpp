@@ -20,6 +20,7 @@
 
 #include "network/credentials.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
 #include <absl/strings/str_cat.h>
@@ -29,10 +30,8 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
-#include <algorithm>
 #include <charconv>
 #include <cstring>
-#include <ranges>
 
 // SCRAM-SHA-256 crypto (RFC 5802) over OpenSSL -- the same primitives libpq's
 // scram-common wraps. SASLprep (RFC 4013) is not applied: ASCII passwords are
@@ -222,7 +221,7 @@ std::array<uint8_t, kScramKeyLen> ScramServerSignature(
 
 bool IsMd5Verifier(std::string_view s) {
   return s.size() == 35 && s.starts_with("md5") &&
-         std::ranges::all_of(s.substr(3), [](unsigned char c) {
+         absl::c_all_of(s.substr(3), [](unsigned char c) {
            return absl::ascii_isxdigit(c);
          });
 }

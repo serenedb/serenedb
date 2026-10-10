@@ -21,6 +21,7 @@
 #pragma once
 
 #include <algorithm>
+#include <memory>
 #include <optional>
 #include <span>
 #include <tuple>
@@ -34,10 +35,47 @@
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/token_phrase.hpp"
+#include "iresearch/search/probe/posting_scored.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
 #include "iresearch/utils/memory.hpp"
 
 namespace irs::detail {
+
+class AnchorFreqs {
+ public:
+  virtual ~AnchorFreqs() = default;
+
+  virtual uint32_t At(doc_id_t doc) = 0;
+};
+
+template<typename Input>
+class AnchorFreqsOf final : public AnchorFreqs {
+ public:
+  AnchorFreqsOf(const PostingMeta& meta, const SubReader& segment,
+                const TermReader& field)
+    : _posting{meta, *DocOf(field), segment, field, ScoreArgs{}} {}
+
+  uint32_t At(doc_id_t doc) final {
+    return _posting.Probe(doc) == doc ? _posting.Freq() : 0;
+  }
+
+ private:
+  PostingProbeScored<Input> _posting;
+};
+
+inline std::unique_ptr<AnchorFreqs> MakeAnchorFreqs(
+  const TokenPhraseQuery& query) {
+  const auto* meta = query.Anchor();
+  if (!meta) {
+    return nullptr;
+  }
+  const auto& field = query.Reader();
+  return ResolveInput(*DocOf(field),
+                      [&]<typename Input> -> std::unique_ptr<AnchorFreqs> {
+                        return std::make_unique<AnchorFreqsOf<Input>>(
+                          *meta, query.Segment(), field);
+                      });
+}
 
 template<typename Approx, bool Sloppy>
 class TokenPhraseSlots {
@@ -58,7 +96,8 @@ class TokenPhraseSlots {
       _state{_column->InitScan(_ctx)},
       _out{_column->Type()},
       _sel{STANDARD_VECTOR_SIZE},
-      _check{query.Compiled(), query.Tokens(), count} {}
+      _check{query.Compiled(), query.Tokens(), count},
+      _anchors{MakeAnchorFreqs(query)} {}
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
   TokenPhraseSlots& operator=(TokenPhraseSlots&&) = delete;
@@ -103,7 +142,7 @@ class TokenPhraseSlots {
     const Hit hit{.doc = doc};
     _verdict = {};
     if (Gather({&hit, 1}) != 0) {
-      _check.Check(0, _verdict);
+      _check.Check(0, _verdict, AnchorsAt(doc));
     }
     return _verdict.freq != 0;
   }
@@ -142,11 +181,13 @@ class TokenPhraseSlots {
     if (!verdict) {
       verdict.emplace();
       if (i < _rows) {
-        _check.Check(i, *verdict);
+        _check.Check(i, *verdict, AnchorsAt(_hits[i].doc));
       }
     }
     return *verdict;
   }
+
+  uint32_t AnchorsAt(doc_id_t doc) { return _anchors ? _anchors->At(doc) : 0; }
 
   size_t Gather(std::span<const Hit> hits) {
     SDB_ASSERT(hits.size() <= STANDARD_VECTOR_SIZE);
@@ -175,6 +216,7 @@ class TokenPhraseSlots {
   ColumnReader::VectorScratch _out;
   duckdb::SelectionVector _sel;
   PhraseCheck _check;
+  std::unique_ptr<AnchorFreqs> _anchors;
   PhraseVerdict _verdict;
   std::vector<Hit> _hits;
   size_t _pos = 0;

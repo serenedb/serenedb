@@ -197,11 +197,12 @@ class PhraseCheck final : public TokenConsumer {
               bool count);
 
   void Bind(duckdb::Vector& values, duckdb::idx_t count);
-  bool Check(duckdb::idx_t row, PhraseVerdict& out);
+  bool Check(duckdb::idx_t row, PhraseVerdict& out, uint32_t anchors = 0);
 
   void Prepare(duckdb::string_t) noexcept { _value_base = _last_pos; }
-  void Discard() noexcept {}
+  void Discard() noexcept { _peeked = 0; }
   void Consume(TokenBatch& batch, DocRuns runs) final;
+  bool Peek(TokenBatch& batch);
 
  private:
   static constexpr uint64_t kStepsPerToken = 4;
@@ -281,25 +282,26 @@ class PhraseCheck final : public TokenConsumer {
 
   std::span<const duckdb::string_t> Values(duckdb::idx_t row);
   void Analyze(std::span<const duckdb::string_t> values);
+  void Take(TokenBatch& batch);
 
   void Start(bool anchored);
   bool Restart();
   bool End(PhraseVerdict& out);
   bool Counted(PhraseVerdict& out) const noexcept;
 
-  void Feed(Anchor& anchor, const TokenBatch& batch);
+  void Feed(Anchor& anchor, const TokenBatch& batch, uint32_t from);
   bool Finish(Anchor& anchor, PhraseVerdict& out);
   bool Hit(Anchor& anchor, size_t at);
   template<bool Right>
   uint64_t Ways(Anchor& anchor, uint32_t slot, size_t at);
   bool Over(Anchor& anchor) noexcept;
 
-  void Feed(Automaton& automaton, const TokenBatch& batch);
+  void Feed(Automaton& automaton, const TokenBatch& batch, uint32_t from);
   bool Finish(Automaton& automaton, PhraseVerdict& out);
   void Step(Automaton& automaton, uint64_t mask);
   void Flush(Automaton& automaton);
 
-  void Feed(Positions& positions, const TokenBatch& batch);
+  void Feed(Positions& positions, const TokenBatch& batch, uint32_t from);
   bool Finish(Positions& positions, PhraseVerdict& out);
 
   const CompiledPhrase* _phrase;
@@ -313,6 +315,8 @@ class PhraseCheck final : public TokenConsumer {
   bool _restart = false;
   uint32_t _last_pos = 0;
   uint32_t _value_base = 0;
+  uint32_t _anchors = 0;
+  uint32_t _peeked = 0;
   uint64_t _freq = 0;
 };
 

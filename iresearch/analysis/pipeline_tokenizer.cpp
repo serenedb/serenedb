@@ -560,4 +560,32 @@ bool PipelineTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
   return true;
 }
 
+bool PipelineTokenizer::Scan(const duckdb::string_t& value, TokenSink& sink,
+                             TokenPoll& poll, BlockTraits known) {
+  if (_links.size() != 1 || !_interpose) {
+    return Tokenizer::Scan(value, sink, poll, known);
+  }
+  if (&sink != _bound_sink || _bound_layout != TokenLayout::TermsPos ||
+      _bound_column) [[unlikely]] {
+    BindLinks(sink, TokenLayout::TermsPos, false);
+  }
+  const auto traits = ComputeValueTraits(value, _wanted_traits, known);
+  _head->BindValue(value);
+  _head->SetAscii(traits.ascii);
+  auto& head = _head->writer;
+  TokenPoll head_poll{head, poll};
+  head.BeginValue(doc_limits::min(), value.GetSize());
+  const bool ok = _front->Scan(value, head, head_poll, traits);
+  if (!ok) [[unlikely]] {
+    head.RejectValue();
+  }
+  head.EndValue();
+  if (!ok) [[unlikely]] {
+    head.Discard();
+    return false;
+  }
+  head.Finish();
+  return true;
+}
+
 }  // namespace irs::analysis

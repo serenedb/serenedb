@@ -25,6 +25,7 @@
 #include <bit>
 #include <cstdint>
 #include <duckdb/common/types/string_type.hpp>
+#include <type_traits>
 
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/text/words/masks.hpp"
@@ -169,9 +170,11 @@ class RunSteps {
   bool _open = false;
 };
 
-template<bool KnownAscii, typename OnBlock, typename OnRun>
+template<bool KnownAscii, typename OnBlock, typename OnRun,
+         typename Poll = classify::NoPoll>
 IRS_FORCE_INLINE void ForEachNonSpaceRun(const byte_type* data, size_t size,
-                                         OnBlock&& on_block, OnRun&& on_run) {
+                                         OnBlock&& on_block, OnRun&& on_run,
+                                         Poll poll = {}) {
   constexpr size_t kBlock = classify::kClassifyBlock;
   constexpr size_t kAhead = KnownAscii ? 0 : 2;
   RunSteps runs{on_run};
@@ -206,6 +209,11 @@ IRS_FORCE_INLINE void ForEachNonSpaceRun(const byte_type* data, size_t size,
     const uint32_t lo = full(base);
     const uint32_t hi = full(base + kBlock);
     runs.Step(uint64_t{lo} | (uint64_t{hi} << kBlock), base);
+    if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+      if (!poll()) {
+        return;
+      }
+    }
   }
   for (; base < size; base += kBlock) {
     const size_t left = size - base;
@@ -270,9 +278,11 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE inline unsigned __int128 WideSpaceBits64(
 
 }  // namespace detail
 
-template<bool KnownAscii, typename OnBlock, typename OnRun>
+template<bool KnownAscii, typename OnBlock, typename OnRun,
+         typename Poll = classify::NoPoll>
 IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachNonSpaceRun512(
-  const byte_type* data, size_t size, OnBlock&& on_block, OnRun&& on_run) {
+  const byte_type* data, size_t size, OnBlock&& on_block, OnRun&& on_run,
+  Poll poll = {}) {
   constexpr size_t kBlock = 64;
   RunSteps runs{on_run};
   uint64_t carry = 0;
@@ -303,6 +313,11 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachNonSpaceRun512(
     const uint64_t hi = full(data + base + kBlock);
     runs.Step(lo, base);
     runs.Step(hi, base + kBlock);
+    if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+      if (!poll()) {
+        return;
+      }
+    }
   }
   for (; base < size; base += kBlock) {
     const size_t left = size - base;
@@ -339,24 +354,27 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachNonSpaceRun512(
   runs.Finish(size);
 }
 
-template<bool KnownAscii, typename OnBlock, typename OnRun>
+template<bool KnownAscii, typename OnBlock, typename OnRun,
+         typename Poll = classify::NoPoll>
 IRS_TARGET_AVX512 IRS_NO_INLINE void ForEachNonSpaceRunWide(
-  const byte_type* data, size_t size, OnBlock& on_block, OnRun& on_run) {
-  ForEachNonSpaceRun512<KnownAscii>(data, size, on_block, on_run);
+  const byte_type* data, size_t size, OnBlock& on_block, OnRun& on_run,
+  Poll poll = {}) {
+  ForEachNonSpaceRun512<KnownAscii>(data, size, on_block, on_run, poll);
 }
 #endif
 
-template<bool KnownAscii, typename OnBlock, typename OnRun>
+template<bool KnownAscii, typename OnBlock, typename OnRun,
+         typename Poll = classify::NoPoll>
 IRS_FORCE_INLINE void ForEachNonSpaceRunBest(const byte_type* data, size_t size,
-                                             OnBlock&& on_block,
-                                             OnRun&& on_run) {
+                                             OnBlock&& on_block, OnRun&& on_run,
+                                             Poll poll = {}) {
 #if defined(__x86_64__)
   if (classify::HasAvx512Bw()) {
-    ForEachNonSpaceRunWide<KnownAscii>(data, size, on_block, on_run);
+    ForEachNonSpaceRunWide<KnownAscii>(data, size, on_block, on_run, poll);
     return;
   }
 #endif
-  ForEachNonSpaceRun<KnownAscii>(data, size, on_block, on_run);
+  ForEachNonSpaceRun<KnownAscii>(data, size, on_block, on_run, poll);
 }
 
 template<bool KeepNonAscii = false, typename EmitFn>
@@ -368,13 +386,14 @@ IRS_FORCE_INLINE void SplitByNonAlpha(duckdb::string_t data, EmitFn&& emit) {
     emit);
 }
 
-template<typename EmitFn>
-IRS_FORCE_INLINE void SplitByNonLetter(duckdb::string_t data, EmitFn&& emit) {
+template<typename EmitFn, typename Poll = classify::NoPoll>
+IRS_FORCE_INLINE void SplitByNonLetter(duckdb::string_t data, EmitFn&& emit,
+                                       Poll poll = {}) {
   classify::ForEachRun(
     reinterpret_cast<const byte_type*>(data.GetData()), data.GetSize(),
     [](const byte_type* block)
       IRS_FORCE_INLINE { return ClassifyAlphaBlock(block); },
-    emit);
+    emit, poll);
 }
 
 namespace detail {
@@ -431,9 +450,9 @@ IRS_FORCE_INLINE inline uint32_t WordLength(const WordCodePoints& table,
 
 }  // namespace detail
 
-template<bool Letters, typename OnRun>
+template<bool Letters, typename OnRun, typename Poll = classify::NoPoll>
 IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
-                                      OnRun&& on_run) {
+                                      OnRun&& on_run, Poll poll = {}) {
   constexpr size_t kBlock = classify::kClassifyBlock;
   constexpr size_t kAhead = 3;
   const auto& table = detail::WordCodePointTable();
@@ -482,6 +501,11 @@ IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
       [&] { return classify::Load(p + kBlock + 1); }, ~uint32_t{0},
       ~uint32_t{0});
     runs.Step(uint64_t{lo} | (uint64_t{hi} << kBlock), base);
+    if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+      if (!poll()) {
+        return;
+      }
+    }
   }
   for (; base < size; base += kBlock) {
     const size_t left = size - base;
@@ -537,9 +561,9 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE inline SureWordLeads64 SureWordLeadsOf64(
 
 }  // namespace detail
 
-template<bool Letters, typename OnRun>
+template<bool Letters, typename OnRun, typename Poll = classify::NoPoll>
 IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachAlnumRun512(
-  const byte_type* data, size_t size, OnRun&& on_run) {
+  const byte_type* data, size_t size, OnRun&& on_run, Poll poll = {}) {
   constexpr size_t kBlock = 64;
   constexpr size_t kAhead = 3;
   const auto& table = detail::WordCodePointTable();
@@ -602,6 +626,11 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachAlnumRun512(
       ~uint64_t{0});
     runs.Step(lo, base);
     runs.Step(hi, base + kBlock);
+    if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+      if (!poll()) {
+        return;
+      }
+    }
   }
   for (; base < size; base += kBlock) {
     const size_t left = size - base;
@@ -619,24 +648,25 @@ IRS_TARGET_AVX512 IRS_FORCE_INLINE void ForEachAlnumRun512(
   runs.Finish(size);
 }
 
-template<bool Letters, typename OnRun>
+template<bool Letters, typename OnRun, typename Poll = classify::NoPoll>
 IRS_TARGET_AVX512 IRS_NO_INLINE void ForEachAlnumRunWide(const byte_type* data,
                                                          size_t size,
-                                                         OnRun& on_run) {
-  ForEachAlnumRun512<Letters>(data, size, on_run);
+                                                         OnRun& on_run,
+                                                         Poll poll = {}) {
+  ForEachAlnumRun512<Letters>(data, size, on_run, poll);
 }
 #endif
 
-template<bool Letters, typename OnRun>
+template<bool Letters, typename OnRun, typename Poll = classify::NoPoll>
 IRS_FORCE_INLINE void ForEachAlnumRunBest(const byte_type* data, size_t size,
-                                          OnRun&& on_run) {
+                                          OnRun&& on_run, Poll poll = {}) {
 #if defined(__x86_64__)
   if (classify::HasAvx512Bw()) {
-    ForEachAlnumRunWide<Letters>(data, size, on_run);
+    ForEachAlnumRunWide<Letters>(data, size, on_run, poll);
     return;
   }
 #endif
-  ForEachAlnumRun<Letters>(data, size, on_run);
+  ForEachAlnumRun<Letters>(data, size, on_run, poll);
 }
 
 }  // namespace irs::analysis::words

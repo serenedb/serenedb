@@ -71,6 +71,9 @@ class PipelineTokenizer final : public Tokenizer, private util::Noncopyable {
   void Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
             doc_id_t first_doc, TokenSink& sink, FillCtx ctx) final;
 
+  bool Scan(const duckdb::string_t& value, TokenSink& sink, TokenPoll& poll,
+            BlockTraits known) final;
+
   void Bind(duckdb::ClientContext& ctx) final {
     for (auto& sub : _pipeline) {
       sub->Bind(ctx);

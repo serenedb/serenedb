@@ -21,9 +21,11 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/token_phrase.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
@@ -49,9 +51,22 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
     _estimate_matches = _approx->EstimateMatches();
     _postings = _approx->Postings();
     _leaves = _approx->Leaves();
+    if (const auto& anchor = _compiled.anchor;
+        anchor && !_tokens->spec &&
+        FeaturesHaveFreq(reader.meta().index_features)) {
+      const auto meta =
+        reader.Lookup(AsBytesView(*_compiled.slots[anchor->slot].word));
+      if (meta.docs_count != 0) {
+        _anchor = meta;
+      }
+    }
   }
 
   const QueryBuilder& Approx() const noexcept { return *_approx; }
+
+  const PostingMeta* Anchor() const noexcept {
+    return _anchor ? &*_anchor : nullptr;
+  }
 
   const TermReader& Reader() const noexcept { return *_reader; }
 
@@ -73,6 +88,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
   std::shared_ptr<const PhraseTokens> _tokens;
   const ColumnReader* _column;
   CompiledPhrase _compiled;
+  std::optional<PostingMeta> _anchor;
   score_t _boost;
 };
 

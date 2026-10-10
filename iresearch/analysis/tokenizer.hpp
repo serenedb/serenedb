@@ -28,6 +28,7 @@
 #include <tuple>
 
 #include "iresearch/analysis/text/classify/block_masks.hpp"
+#include "iresearch/analysis/token_poll.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
@@ -168,6 +169,12 @@ class Tokenizer {
     return false;
   }
 
+  virtual bool Scan(const duckdb::string_t& value, TokenSink& sink, TokenPoll&,
+                    BlockTraits known) {
+    return Fill(value, sink,
+                {.layout = TokenLayout::TermsPos, .traits = known});
+  }
+
   bool FillTokens(std::span<const duckdb::string_t> tokens, doc_id_t doc,
                   TokenSink& sink, FillCtx ctx) {
     uint32_t size = 0;
@@ -305,5 +312,16 @@ class TypedTokenizer : public Tokenizer {
     return filled;
   }
 };
+
+template<typename Impl>
+bool ScanPolled(Impl& impl, const duckdb::string_t& value, TokenSink& sink,
+                TokenPoll& poll, BlockTraits known) {
+  const auto traits =
+    ComputeValueTraits(value, impl.Impl::WantedBlockTraits(), known);
+  return DispatchTags(impl, traits, [&](auto... tags) IRS_FORCE_INLINE {
+    return impl.template DoFill<TokenLayout::TermsPos, tags()...>(value, sink,
+                                                                  &poll);
+  });
+}
 
 }  // namespace irs::analysis

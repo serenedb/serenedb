@@ -25,12 +25,14 @@
 
 #include <limits>
 #include <string_view>
+#include <type_traits>
 
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"
 #include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
 #include "iresearch/analysis/text/words/unicode.hpp"
+#include "iresearch/analysis/token_poll.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/utils/utf8_character_utils.hpp"
@@ -106,9 +108,9 @@ IRS_FORCE_INLINE bool AcceptSegment(const char* data,
   }
 }
 
-template<typename Finder, typename OnMatch>
+template<typename Finder, typename OnMatch, typename Poll = classify::NoPoll>
 void ForEachSzMatch(Finder finder, const char* data, size_t n,
-                    OnMatch&& on_match) {
+                    OnMatch&& on_match, Poll poll = {}) {
   constexpr size_t kBatch = 64;
   size_t starts[kBatch];
   size_t lengths[kBatch];
@@ -125,6 +127,11 @@ void ForEachSzMatch(Finder finder, const char* data, size_t n,
       break;
     }
     offset += consumed;
+    if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+      if (!poll()) {
+        return;
+      }
+    }
   }
 }
 
@@ -171,8 +178,10 @@ IRS_FORCE_INLINE void EmitTrimmedSegment(TokenSink& sink, const char* data,
   EmitAccepted<Layout, C, A, Ascii>(sink, data, value_size, begin, end);
 }
 
-template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value) {
+template<TokenLayout Layout, Case C, Accept A, bool Ascii,
+         typename Poll = classify::NoPoll>
+IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value,
+                                 Poll poll = {}) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   const auto emit = [&](const words::Segment& seg) IRS_FORCE_INLINE {
@@ -188,11 +197,11 @@ IRS_NO_INLINE void WordFillValue(TokenSink& sink, duckdb::string_t value) {
     }
   };
   if constexpr (!Ascii) {
-    words::ScanUnicode(value, emit);
+    words::ScanUnicode(value, emit, BindPoll(poll, sink));
   } else if constexpr (A == Accept::AlphaNumeric || A == Accept::Alpha) {
-    words::ScanAsciiRuns(value, emit);
+    words::ScanAsciiRuns(value, emit, BindPoll(poll, sink));
   } else {
-    words::ScanAscii(value, emit);
+    words::ScanAscii(value, emit, BindPoll(poll, sink));
   }
 }
 
@@ -206,23 +215,37 @@ IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
   });
 }
 
-template<TokenLayout Layout, Case C, Accept A, bool Ascii>
-IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value) {
+template<TokenLayout Layout, Case C, Accept A, bool Ascii,
+         typename Poll = classify::NoPoll>
+IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value,
+                                     Poll poll = {}) {
   const char* data = value.GetData();
   const uint32_t n = value.GetSize();
   if constexpr (Ascii) {
+    [[maybe_unused]] const auto due = BindPoll(poll, sink);
+    [[maybe_unused]] uint32_t polled = 0;
     for (uint32_t i = 0; i != n; ++i) {
+      if constexpr (!std::is_same_v<Poll, classify::NoPoll>) {
+        if (i - polled >= classify::kPollBytes) {
+          polled = i;
+          if (!due()) {
+            return;
+          }
+        }
+      }
       if (static_cast<uint8_t>(data[i]) > ' ') {
         EmitAccepted<Layout, C, A, true>(sink, data, n, i, i + 1);
       }
     }
   } else {
     ForEachSzMatch(
-      sz::GraphemesFor(data, n), data, n, [&](size_t begin, size_t end) {
+      sz::GraphemesFor(data, n), data, n,
+      [&](size_t begin, size_t end) {
         EmitTrimmedSegment<Layout, C, A, false>(sink, data, n,
                                                 static_cast<uint32_t>(begin),
                                                 static_cast<uint32_t>(end));
-      });
+      },
+      BindPoll(poll, sink));
   }
 }
 

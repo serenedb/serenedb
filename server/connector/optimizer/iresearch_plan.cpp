@@ -38,7 +38,6 @@
 #include <duckdb/planner/operator/logical_join.hpp>
 #include <duckdb/planner/operator/logical_order.hpp>
 #include <duckdb/planner/operator/logical_projection.hpp>
-#include <duckdb/planner/operator/logical_top_n.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
@@ -916,15 +915,14 @@ duckdb::unique_ptr<duckdb::Expression> PushdownOffsetsCall(
 }
 
 bool TakesIndexedExpression(std::string_view name) {
-  return connector::IsTsDictFunctionName(name) ||
-         absl::c_linear_search(
-           std::array{connector::kTSQueryMatch, connector::kPhraseMatches,
-                      connector::kNGramMatches, connector::kLevenshteinMatches,
-                      connector::kHasAllTokens, connector::kHasAnyTokens,
-                      connector::kTsHighlight, connector::kOffsets,
-                      connector::kGeoInRange, connector::kGeoDistance,
-                      connector::kGeoIntersects, connector::kGeoContains},
-           name);
+  return absl::c_linear_search(
+    std::array{connector::kTSQueryMatch, connector::kPhraseMatches,
+               connector::kNGramMatches, connector::kLevenshteinMatches,
+               connector::kHasAllTokens, connector::kHasAnyTokens,
+               connector::kTsHighlight, connector::kOffsets,
+               connector::kGeoInRange, connector::kGeoDistance,
+               connector::kGeoIntersects, connector::kGeoContains},
+    name);
 }
 
 bool DependsOnSession(const duckdb::LogicalType& type) {
@@ -1175,14 +1173,6 @@ void RewriteIResearchExpressions(
       break;
     case duckdb::LogicalOperatorType::LOGICAL_ORDER_BY:
       for (auto& o : plan->Cast<duckdb::LogicalOrder>().orders) {
-        RewriteCallInExpr(o.expression, *root, context, scope);
-        if (scope.search_scan) {
-          ReuseExistingScoreColumn(*o.expression, *root);
-        }
-      }
-      break;
-    case duckdb::LogicalOperatorType::LOGICAL_TOP_N:
-      for (auto& o : plan->Cast<duckdb::LogicalTopN>().orders) {
         RewriteCallInExpr(o.expression, *root, context, scope);
         if (scope.search_scan) {
           ReuseExistingScoreColumn(*o.expression, *root);

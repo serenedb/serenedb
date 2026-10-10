@@ -231,9 +231,7 @@ bool ProjectionIsFromIndex(const ScanBindData& bind,
       col_id >= bind.columns.ids.size()) {
     return false;
   }
-  const auto catalog_col_id = bind.columns.ids[col_id];
-  return catalog_col_id == kGeneratedPKId ||
-         bind.relation.Stores(catalog_col_id);
+  return bind.relation.Stores(bind.columns.ids[col_id]);
 }
 
 bool ProjectionIsVirtual(const ScanBindData& bind,

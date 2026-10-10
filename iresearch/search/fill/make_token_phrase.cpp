@@ -39,9 +39,7 @@ Node::ptr Make(const TokenPhraseQuery& query, const detail::ScoredCtx& ctx,
                                .stats = record.stats,
                                .fetcher = ctx.fetcher,
                                .boost = query.Boost()};
-  if (!args.stats) {
-    return Make(query);
-  }
+  SDB_ASSERT(args.stats != nullptr);
   if (const auto value =
         detail::ConstantOf(query.Segment(), query.Reader(), args)) {
     return detail::MakeTokenPhrase<WalkConstantScored, Node::ptr>(

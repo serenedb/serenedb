@@ -132,17 +132,15 @@ class TokenPhraseSlots {
   }
 
   bool Match(doc_id_t doc) {
-    if (_pos < _hits.size() && _hits[_pos].doc == doc) {
+    if constexpr (requires(Approx& approx) { approx.Next(); }) {
+      SDB_ASSERT(_pos < _hits.size() && _hits[_pos].doc == doc);
       _verdict = VerdictAt(_pos);
-      return _verdict.freq != 0;
-    }
-    for (auto i = _pos; i < _hits.size(); ++i) {
-      VerdictAt(i);
-    }
-    const Hit hit{.doc = doc};
-    _verdict = {};
-    if (Gather({&hit, 1}) != 0) {
-      _check.Check(0, _verdict, AnchorsAt(doc));
+    } else {
+      const Hit hit{.doc = doc};
+      _verdict = {};
+      if (Gather({&hit, 1}) != 0) {
+        _check.Check(0, _verdict, AnchorsAt(doc));
+      }
     }
     return _verdict.freq != 0;
   }

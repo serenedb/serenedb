@@ -517,9 +517,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
     builder.Add(MultiTermQuery::Finish(std::move(terms), sub), Occur::Must);
   }
   auto approx = builder.Finish();
-  if (!approx || QueryBuilder::IsEmpty(*approx)) {
-    return QueryBuilder::Empty();
-  }
+  SDB_ASSERT(approx && !QueryBuilder::IsEmpty(*approx));
   std::vector<std::vector<bstring>> spec_terms;
   if (tokens->spec) {
     spec_terms = SpecTerms(options, *tokens->spec, part_terms);

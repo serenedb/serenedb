@@ -218,9 +218,7 @@ class ArenaTerm final : util::Noncopyable {
   byte_type* _data;
 };
 
-class TokenSink final : util::Noncopyable {
-  friend class ScanProgress;
-
+class TokenSink : util::Noncopyable {
  public:
   explicit TokenSink(
     duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
@@ -570,6 +568,22 @@ class TokenSink final : util::Noncopyable {
     }
   }
 
+ protected:
+  uint32_t Buffered() const noexcept { return _batch.count; }
+
+  bool ReportProgress() { return _consumer->OnProgress(_batch); }
+
+  void Flush() {
+    bool tail_open = false;
+    if (_run_start != kOutsideValue && _batch.count > _run_start) {
+      SDB_ASSERT(_nruns < kMaxRuns);
+      _runs[_nruns++] = {_doc, _batch.count - _run_start};
+      tail_open = true;
+    }
+    _consumer->Consume(_batch, {{_runs, _nruns}, tail_open});
+    Reset();
+  }
+
  private:
   IRS_FORCE_INLINE byte_type* AllocateTerm(size_t size) {
     return _arena.Allocate(std::max(size, kTermViewSlack));
@@ -675,17 +689,6 @@ class TokenSink final : util::Noncopyable {
     if constexpr (L == TokenLayout::TermsPosOffs && kNumOffs == 0) {
       apply(Offs{0, _value_size});
     }
-  }
-
-  void Flush() {
-    bool tail_open = false;
-    if (_run_start != kOutsideValue && _batch.count > _run_start) {
-      SDB_ASSERT(_nruns < kMaxRuns);
-      _runs[_nruns++] = {_doc, _batch.count - _run_start};
-      tail_open = true;
-    }
-    _consumer->Consume(_batch, {{_runs, _nruns}, tail_open});
-    Reset();
   }
 
   void Reset() {

@@ -27,7 +27,7 @@
 #include <string_view>
 #include <type_traits>
 
-#include "iresearch/analysis/scan_progress.hpp"
+#include "iresearch/analysis/scan_sink.hpp"
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"

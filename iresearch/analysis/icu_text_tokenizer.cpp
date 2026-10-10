@@ -63,9 +63,9 @@ class IcuTextAnalyzerImpl final : public TypedTokenizer<IcuTextAnalyzerImpl<S>>,
 
   size_t MemoryUsage() const noexcept final { return 0; }
 
-  bool Scan(const duckdb::string_t& value, TokenSink& sink,
-            ScanProgress& progress, BlockTraits known) final {
-    return ScanWithProgress(*this, value, sink, progress, known);
+  bool Scan(const duckdb::string_t& value, ScanSink& sink,
+            BlockTraits known) final {
+    return ScanWithProgress(*this, value, sink, known);
   }
 
   template<TokenLayout Layout, Accept A, bool KnownAscii,

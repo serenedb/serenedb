@@ -27,48 +27,43 @@
 
 namespace irs {
 
-class ScanProgress final : util::Noncopyable {
+class ScanSink final : public TokenSink {
  public:
-  template<typename Consumer>
-  ScanProgress(TokenSink& sink, Consumer& consumer) noexcept
-    : _sink{sink}, _target{&consumer}, _peek{&PeekConsumer<Consumer>} {}
+  using TokenSink::TokenSink;
 
-  ScanProgress(TokenSink& sink, ScanProgress& outer) noexcept
-    : _sink{sink}, _target{&outer}, _peek{&PeekOuter} {}
+  void BeginScan(ScanSink* outer = nullptr) noexcept {
+    _outer = outer;
+    _mark = 0;
+    _stride = kFirstStride;
+  }
 
-  IRS_FORCE_INLINE bool operator()(const TokenSink& sink) {
-    SDB_ASSERT(&sink == &_sink);
-    if (sink._batch.count - _mark < _stride) [[likely]] {
-      return true;
-    }
-    return Peek();
+  IRS_FORCE_INLINE auto Progress() noexcept {
+    return [this] IRS_FORCE_INLINE {
+      if (Buffered() - _mark < _stride) [[likely]] {
+        return true;
+      }
+      return Report();
+    };
   }
 
  private:
   static constexpr uint32_t kFirstStride = 32;
   static constexpr uint32_t kMaxStride = 128;
 
-  template<typename Consumer>
-  static bool PeekConsumer(void* consumer, TokenSink& sink) {
-    return static_cast<Consumer*>(consumer)->Peek(sink._batch);
-  }
-
-  static bool PeekOuter(void* outer, TokenSink& sink) {
-    sink.Flush();
-    auto& progress = *static_cast<ScanProgress*>(outer);
-    return progress(progress._sink);
-  }
-
-  IRS_NO_INLINE bool Peek() {
+  IRS_NO_INLINE bool Report() {
     _stride = std::min(2 * _stride, kMaxStride);
-    const bool go = _peek(_target, _sink);
-    _mark = _sink._batch.count;
+    bool go;
+    if (_outer == nullptr) {
+      go = ReportProgress();
+    } else {
+      Flush();
+      go = _outer->Progress()();
+    }
+    _mark = Buffered();
     return go;
   }
 
-  TokenSink& _sink;
-  void* _target;
-  bool (*_peek)(void*, TokenSink&);
+  ScanSink* _outer = nullptr;
   uint32_t _mark = 0;
   uint32_t _stride = kFirstStride;
 };
@@ -78,9 +73,9 @@ IRS_FORCE_INLINE inline analysis::classify::NoProgress BindProgress(
   return progress;
 }
 
-IRS_FORCE_INLINE inline auto BindProgress(ScanProgress* progress,
-                                          const TokenSink& sink) noexcept {
-  return [progress, &sink] IRS_FORCE_INLINE { return (*progress)(sink); };
+IRS_FORCE_INLINE inline auto BindProgress(ScanSink* sink,
+                                          const TokenSink&) noexcept {
+  return sink->Progress();
 }
 
 }  // namespace irs

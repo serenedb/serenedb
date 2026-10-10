@@ -200,9 +200,9 @@ class PhraseCheck final : public TokenConsumer {
   bool Check(duckdb::idx_t row, PhraseVerdict& out, uint32_t anchors = 0);
 
   void Prepare(duckdb::string_t) noexcept { _value_base = _last_pos; }
-  void Discard() noexcept { _peeked = 0; }
+  void Discard() noexcept { _fed = 0; }
   void Consume(TokenBatch& batch, DocRuns runs) final;
-  bool Peek(TokenBatch& batch);
+  bool OnProgress(TokenBatch& batch) final;
 
  private:
   static constexpr uint64_t kStepsPerToken = 4;
@@ -316,7 +316,7 @@ class PhraseCheck final : public TokenConsumer {
   uint32_t _last_pos = 0;
   uint32_t _value_base = 0;
   uint32_t _anchors = 0;
-  uint32_t _peeked = 0;
+  uint32_t _fed = 0;
   uint64_t _freq = 0;
 };
 

@@ -29,9 +29,8 @@ Tokenizer::ptr SplitByNonAlphaTokenizer::Make(Options opts) {
 }
 
 bool SplitByNonAlphaTokenizer::Scan(const duckdb::string_t& value,
-                                    TokenSink& sink, ScanProgress& progress,
-                                    BlockTraits known) {
-  return ScanWithProgress(*this, value, sink, progress, known);
+                                    ScanSink& sink, BlockTraits known) {
+  return ScanWithProgress(*this, value, sink, known);
 }
 
 template<TokenLayout Layout, Case C, SplitByNonAlphaTokenizer::Options::Chars W,

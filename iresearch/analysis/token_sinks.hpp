@@ -231,8 +231,8 @@ class ValueAnalyzer {
     static_assert(Consumer::kLayout == TokenLayout::TermsPos);
     _writer.Bind(out, nullptr);
     out.Prepare(value);
-    ScanProgress progress{_writer, out};
-    if (!tokenizer.Scan(value, _writer, progress, traits)) [[unlikely]] {
+    _writer.BeginScan();
+    if (!tokenizer.Scan(value, _writer, traits)) [[unlikely]] {
       _writer.Discard();
       out.Discard();
       return false;
@@ -241,10 +241,10 @@ class ValueAnalyzer {
     return true;
   }
 
-  size_t MemoryUsage() const noexcept { return sizeof(TokenSink); }
+  size_t MemoryUsage() const noexcept { return sizeof(ScanSink); }
 
  private:
-  TokenSink _writer;
+  ScanSink _writer;
 };
 
 }  // namespace irs

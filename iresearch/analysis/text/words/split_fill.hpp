@@ -23,7 +23,7 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <string_view>
 
-#include "iresearch/analysis/scan_progress.hpp"
+#include "iresearch/analysis/scan_sink.hpp"
 #include "iresearch/analysis/text/case/case.hpp"
 #include "iresearch/analysis/text/classify/block_masks.hpp"
 #include "iresearch/analysis/text/words/masks.hpp"

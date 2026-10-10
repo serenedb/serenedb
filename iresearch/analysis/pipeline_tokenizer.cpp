@@ -560,10 +560,10 @@ bool PipelineTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
   return true;
 }
 
-bool PipelineTokenizer::Scan(const duckdb::string_t& value, TokenSink& sink,
-                             ScanProgress& progress, BlockTraits known) {
+bool PipelineTokenizer::Scan(const duckdb::string_t& value, ScanSink& sink,
+                             BlockTraits known) {
   if (_links.size() != 1 || !_interpose) {
-    return Tokenizer::Scan(value, sink, progress, known);
+    return Tokenizer::Scan(value, sink, known);
   }
   if (&sink != _bound_sink || _bound_layout != TokenLayout::TermsPos ||
       _bound_column) [[unlikely]] {
@@ -573,9 +573,9 @@ bool PipelineTokenizer::Scan(const duckdb::string_t& value, TokenSink& sink,
   _head->BindValue(value);
   _head->SetAscii(traits.ascii);
   auto& head = _head->writer;
-  ScanProgress head_progress{head, progress};
+  head.BeginScan(&sink);
   head.BeginValue(doc_limits::min(), value.GetSize());
-  const bool ok = _front->Scan(value, head, head_progress, traits);
+  const bool ok = _front->Scan(value, head, traits);
   if (!ok) [[unlikely]] {
     head.RejectValue();
   }

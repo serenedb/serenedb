@@ -79,14 +79,14 @@ class Collect final : public irs::TokenConsumer {
     _taken = 0;
   }
 
-  bool Peek(irs::TokenBatch& batch) {
+  bool OnProgress(irs::TokenBatch& batch) final {
     Take(batch);
-    ++peeks;
+    ++progress_calls;
     return tokens.size() < _limit;
   }
 
   std::vector<Token> tokens;
-  size_t peeks = 0;
+  size_t progress_calls = 0;
 
  private:
   void Take(const irs::TokenBatch& batch) {
@@ -119,7 +119,7 @@ class FailOnMarker final : public irs::analysis::TypedTokenizer<FailOnMarker> {
 
 struct Run {
   std::optional<std::vector<Token>> tokens;
-  size_t peeks = 0;
+  size_t progress_calls = 0;
 };
 
 Run Fill(Tokenizer& tokenizer, std::string_view value) {
@@ -129,7 +129,7 @@ Run Fill(Tokenizer& tokenizer, std::string_view value) {
   if (!analyzer.Analyze(tokenizer, tests::ToStringT(value), out)) {
     return {};
   }
-  return {std::move(out.tokens), out.peeks};
+  return {std::move(out.tokens), out.progress_calls};
 }
 
 Run Scan(Tokenizer& tokenizer, std::string_view value, size_t limit) {
@@ -138,7 +138,7 @@ Run Scan(Tokenizer& tokenizer, std::string_view value, size_t limit) {
   if (!analyzer.Scan(tokenizer, tests::ToStringT(value), out)) {
     return {};
   }
-  return {std::move(out.tokens), out.peeks};
+  return {std::move(out.tokens), out.progress_calls};
 }
 
 struct Fixture {
@@ -403,7 +403,7 @@ std::string Repeat(std::string_view piece, size_t times) {
   return out;
 }
 
-TEST(scan_progress_test, scan_matches_fill) {
+TEST(scan_sink_test, scan_matches_fill) {
   const auto corpus = Corpus();
   for (const auto& fixture : Fixtures()) {
     SCOPED_TRACE(fixture.name);
@@ -417,7 +417,7 @@ TEST(scan_progress_test, scan_matches_fill) {
   }
 }
 
-TEST(scan_progress_test, stopped_scan_is_prefix) {
+TEST(scan_sink_test, stopped_scan_is_prefix) {
   const auto corpus = Corpus();
   for (const auto& fixture : Fixtures()) {
     SCOPED_TRACE(fixture.name);
@@ -437,14 +437,14 @@ TEST(scan_progress_test, stopped_scan_is_prefix) {
         }
         if (!fixture.reports) {
           EXPECT_EQ(part.size(), all.size()) << value;
-          EXPECT_EQ(got.peeks, 0U) << value;
+          EXPECT_EQ(got.progress_calls, 0U) << value;
         }
       }
     }
   }
 }
 
-TEST(scan_progress_test, scan_stops_early) {
+TEST(scan_sink_test, scan_stops_early) {
   const std::string values[] = {Repeat("Word. ", 5000),
                                 Repeat("W\xC3\xB6rd \xC3\xBC"
                                        "ber. ",
@@ -456,17 +456,17 @@ TEST(scan_progress_test, scan_stops_early) {
       const auto got = Scan(*tokenizer, value, 10);
       ASSERT_TRUE(got.tokens);
       if (fixture.reports) {
-        EXPECT_EQ(got.peeks, 1U) << value.substr(0, 16);
+        EXPECT_EQ(got.progress_calls, 1U) << value.substr(0, 16);
         EXPECT_GE(got.tokens->size(), 10U) << value.substr(0, 16);
         EXPECT_LT(got.tokens->size(), 200U) << value.substr(0, 16);
       } else {
-        EXPECT_EQ(got.peeks, 0U) << value.substr(0, 16);
+        EXPECT_EQ(got.progress_calls, 0U) << value.substr(0, 16);
       }
     }
   }
 }
 
-TEST(scan_progress_test, cjk_scan_stops_early) {
+TEST(scan_sink_test, cjk_scan_stops_early) {
   using Separate = TextTokenizer::Options::Separate;
   using IcuSeparate = IcuTextTokenizer::Options::Separate;
   const auto value = Repeat("日本語のテキストです。", 2000);
@@ -495,7 +495,7 @@ TEST(scan_progress_test, cjk_scan_stops_early) {
     ASSERT_GE(expected.tokens->size(), 200U);
     const auto got = Scan(*tokenizer, value, 10);
     ASSERT_TRUE(got.tokens);
-    EXPECT_EQ(got.peeks, 1U);
+    EXPECT_EQ(got.progress_calls, 1U);
     EXPECT_GE(got.tokens->size(), 10U);
     EXPECT_LT(got.tokens->size(), 200U);
     EXPECT_TRUE(std::equal(got.tokens->begin(), got.tokens->end(),
@@ -503,7 +503,7 @@ TEST(scan_progress_test, cjk_scan_stops_early) {
   }
 }
 
-TEST(scan_progress_test, failed_scan_rejects_the_value) {
+TEST(scan_sink_test, failed_scan_rejects_the_value) {
   std::vector<Tokenizer::ptr> stages;
   stages.emplace_back(std::make_unique<FailOnMarker>());
   stages.emplace_back(CreateTokenizer(
@@ -522,7 +522,7 @@ TEST(scan_progress_test, failed_scan_rejects_the_value) {
   }
 }
 
-TEST(scan_progress_test, scan_rebinds_a_sink_bound_for_another_fill) {
+TEST(scan_sink_test, scan_rebinds_a_sink_bound_for_another_fill) {
   auto stages = Filters(1);
   stages.insert(
     stages.begin(),
@@ -544,27 +544,25 @@ TEST(scan_progress_test, scan_rebinds_a_sink_bound_for_another_fill) {
         terms.emplace_back(batch.terms[i].GetData(), batch.terms[i].GetSize());
       }
     }};
-  struct Continue {
-    bool Peek(irs::TokenBatch&) { return true; }
-  } consumer;
+  irs::ScanSink writer;
+  writer.Bind(sink, nullptr);
   const auto scan = [&] {
     terms.clear();
-    irs::ScanProgress progress{sink.writer, consumer};
-    EXPECT_TRUE(
-      pipeline->Scan(tests::ToStringT(value), sink.writer, progress, {}));
-    sink.writer.Finish();
+    writer.BeginScan();
+    EXPECT_TRUE(pipeline->Scan(tests::ToStringT(value), writer, {}));
+    writer.Finish();
     return terms;
   };
 
-  ASSERT_TRUE(pipeline->Fill(tests::ToStringT(value), sink.writer,
+  ASSERT_TRUE(pipeline->Fill(tests::ToStringT(value), writer,
                              {.layout = irs::TokenLayout::Terms}));
-  sink.writer.Finish();
+  writer.Finish();
   EXPECT_EQ(scan(), expected);
 
   const duckdb::string_t column[] = {tests::ToStringT(value)};
-  tests::FillColumn(*pipeline, column, irs::doc_limits::min(), sink.writer,
+  tests::FillColumn(*pipeline, column, irs::doc_limits::min(), writer,
                     irs::TokenLayout::TermsPos);
-  sink.writer.Finish();
+  writer.Finish();
   EXPECT_EQ(scan(), expected);
 
   EXPECT_EQ(scan(), expected);

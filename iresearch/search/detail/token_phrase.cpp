@@ -500,20 +500,20 @@ void PhraseCheck::Start(bool anchored) {
 
 void PhraseCheck::Consume(TokenBatch& batch, DocRuns) {
   Take(batch);
-  _peeked = 0;
+  _fed = 0;
   auto* anchor = std::get_if<Anchor>(&_state);
   if (anchor && !_done && batch.count != 0) {
     anchor->Carry(_phrase->anchor->left + _phrase->anchor->right);
   }
 }
 
-bool PhraseCheck::Peek(TokenBatch& batch) {
+bool PhraseCheck::OnProgress(TokenBatch& batch) {
   Take(batch);
   return !_done;
 }
 
 void PhraseCheck::Take(TokenBatch& batch) {
-  const auto from = std::exchange(_peeked, batch.count);
+  const auto from = std::exchange(_fed, batch.count);
   const auto count = batch.count;
   if (_done || from == count) {
     return;

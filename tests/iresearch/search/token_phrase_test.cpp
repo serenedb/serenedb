@@ -137,12 +137,13 @@ class ProgressWords final
     return "test_progress_words";
   }
 
-  bool Scan(const duckdb::string_t& value, irs::TokenSink& sink,
-            irs::ScanProgress& progress, irs::BlockTraits) final {
+  bool Scan(const duckdb::string_t& value, irs::ScanSink& sink,
+            irs::BlockTraits) final {
     const std::string_view data{value.GetData(), value.GetSize()};
+    const auto report = sink.Progress();
     for (const auto word : absl::StrSplit(data, ' ', absl::SkipEmpty())) {
       sink.Emit<irs::TokenLayout::TermsPos>(irs::MakeTermView(word));
-      if (!progress(sink)) {
+      if (!report()) {
         break;
       }
     }
@@ -709,7 +710,7 @@ TEST(PhraseCheckTest, array_rows_skip_null_rows_and_elements) {
   EXPECT_FALSE(check.Check(3, verdict));
 }
 
-TEST(PhraseCheckTest, peeked_tokens_are_fed_once) {
+TEST(PhraseCheckTest, progress_tokens_are_fed_once) {
   const auto text = absl::StrCat(Repeat("a b", 15), " x x");
   EXPECT_EQ(15U, Verify<ProgressWords>(Phrase("a b"), text).freq);
 }

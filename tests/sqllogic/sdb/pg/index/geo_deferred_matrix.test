@@ -5513,41 +5513,59 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(g
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_shape_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -9421,41 +9439,77 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contain
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -13329,41 +13383,77 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(g
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_point_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -17237,41 +17327,59 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_s2point_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -21145,41 +21253,59 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_f64_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_f64_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -25053,41 +25179,59 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_u32_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -28961,41 +29105,77 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Cont
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}'))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.595,55.705],[37.630,55.705],[37.630,55.735],[37.595,55.735],[37.595,55.705]]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_centroid_s2_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_centroid_s2_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -32635,29 +32815,41 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contain
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -35239,29 +35431,41 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contain
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84')) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_source_idx WHERE ((ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))) OR id < 0) EXCEPT SELECT id FROM gdm_g_source_idx WHERE ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))))) AS mismatches
@@ -37845,29 +38049,41 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contai
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -40449,29 +40665,41 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contai
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains('MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'), geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))))) AS mismatches
+----
+matches	mismatches
+1	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84'))) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Contains(geo, 'MULTIPOINT((37.61 55.72), (37.62 55.73))'::GEOMETRY('OGC:CRS84')) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84')) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))) OR id < 0)) UNION ALL (SELECT id FROM gdm_g_s2point_idx WHERE ((ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))) OR id < 0) EXCEPT SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'POLYGON((37.583780000000004 55.723135000000006, 37.58418 55.723135000000006, 37.58418 55.723535000000005, 37.583780000000004 55.723535000000005, 37.583780000000004 55.723135000000006))'::GEOMETRY('OGC:CRS84'))))) AS mismatches
@@ -43055,29 +43283,53 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, 
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0)) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) AND id % 3 = 0 EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') AND id % 3 = 0))) AS mismatches
+----
+matches	mismatches
+0	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_p_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_p_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_p_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches
@@ -45427,17 +45679,23 @@ SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s_idx WHERE ((ST_Contains(geo, 
 matches	mismatches
 0	0
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_s_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_s_idx WHERE ((ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_s_idx WHERE ST_Intersects(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
 
-query error db error: ERROR: not implemented
+query error db error: ERROR: The case GEO_INTERSECTS\(<some points>, <some polylines>\) is numerically unstable and thus not supported\.
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_s_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_s_idx WHERE ((ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_s_idx WHERE ST_Intersects('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo) EXCEPT SELECT id FROM gdm_s_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0)) UNION ALL (SELECT id FROM gdm_s_idx WHERE ((ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)) OR id < 0) EXCEPT SELECT id FROM gdm_s_idx WHERE ST_Contains('{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}', geo)))) AS mismatches
+----
+matches	mismatches
+0	0
 
-query error db error: ERROR: not implemented
+query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}') EXCEPT SELECT id FROM gdm_s_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_s_idx WHERE ((ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_s_idx WHERE ST_Contains(geo, '{"type":"MultiPoint","coordinates":[[37.61,55.72],[37.62,55.73]]}')))) AS mismatches
+----
+matches	mismatches
+1	0
 
 query
 SELECT (SELECT count(*) FROM (SELECT id FROM gdm_s_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0))) AS matches, (SELECT count(*) FROM ((SELECT id FROM gdm_s_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}') EXCEPT SELECT id FROM gdm_s_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0)) UNION ALL (SELECT id FROM gdm_s_idx WHERE ((ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')) OR id < 0) EXCEPT SELECT id FROM gdm_s_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.583780000000004,55.723135000000006],[37.58418,55.723135000000006],[37.58418,55.723535000000005],[37.583780000000004,55.723535000000005],[37.583780000000004,55.723135000000006]]]}')))) AS mismatches

@@ -75,6 +75,46 @@ count
 150
 
 
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label = 'even' OR label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+100
+101
+99
+
+
+query
+EXPLAIN SELECT pk FROM hnsw_f_idx
+  WHERE label = 'even' OR label = 'odd'
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────╮
+│ Index: hnsw_f_idx                   │
+│ Lookup: table                       │
+│ Score: l2_distance(emb, FLOAT[8])   │
+│ Top: 3                              │
+│ Projections: pk                     │
+│ Column Filter:                      │
+│ (label = 'even') OR (label = 'odd') │
+│ ~60 rows                            │
+╰─────────────────────────────────────╯
+
+
+query
+SELECT pk FROM hnsw_f_idx
+  WHERE label IN ('odd', 'none')
+  ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+101
+99
+103
+
+
 # `pk` is indexed: the range is claimed into the scan and becomes the walk's
 # predicate. The qualifying rows lie far from the query, where an unfiltered
 # beam would never look; the predicate-aware walk (or the scan of its docs,

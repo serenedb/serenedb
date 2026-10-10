@@ -24,6 +24,7 @@
 #include <absl/strings/match.h>
 
 #include <duckdb/execution/expression_executor.hpp>
+#include <duckdb/optimizer/column_lifetime_analyzer.hpp>
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -33,8 +34,10 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_parameter_expression.hpp>
+#include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression/bound_window_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/planner/operator/logical_join.hpp>
 #include <duckdb/planner/operator/logical_order.hpp>
@@ -70,6 +73,7 @@
 #include "connector/optimizer/ts_dict_plan.hpp"
 #include "connector/scan/deferred_verify.h"
 #include "connector/scan/scan_bind.h"
+#include "connector/scan/scan_function.h"
 #include "connector/search_filter_builder.hpp"
 #include "pg/connection_context.h"
 #include "query/config.h"
@@ -1401,6 +1405,63 @@ void LimitTsDictScans(duckdb::OptimizerExtensionInput&,
   LimitTsDictEnumerations(*plan);
 }
 
+std::optional<duckdb::ColumnBinding> ReadColumnOf(
+  duckdb::ClientContext& context, duckdb::LogicalGet& get,
+  const connector::ScanBindData& bind_data, duckdb::Expression& expr) {
+  if (expr.IsVolatile() || expr.CanThrow() || expr.HasParameter() ||
+      expr.HasSubquery()) {
+    return std::nullopt;
+  }
+  const auto type = expr.GetExpressionType();
+  if (type != duckdb::ExpressionType::CONJUNCTION_OR &&
+      type != duckdb::ExpressionType::COMPARE_IN) {
+    return std::nullopt;
+  }
+  duckdb::vector<duckdb::ColumnBinding> bindings;
+  duckdb::ColumnLifetimeAnalyzer::ExtractColumnBindings(expr, bindings);
+  if (bindings.empty() || bindings[0].table_index != get.table_index ||
+      absl::c_any_of(bindings,
+                     [&](const auto& b) { return b != bindings[0]; })) {
+    return std::nullopt;
+  }
+  const auto& column_ids = get.GetColumnIds();
+  if (bindings[0].column_index >= column_ids.size()) {
+    return std::nullopt;
+  }
+  const auto col_idx = column_ids[bindings[0].column_index].GetPrimaryIndex();
+  if (col_idx >= bind_data.columns.ids.size() ||
+      bind_data.columns.ids[col_idx] == connector::kInvertedIndexScoreId ||
+      !connector::IResearchPushdownExpression(context, get, expr)) {
+    return std::nullopt;
+  }
+  return bindings[0];
+}
+
+void TakeColumnConjuncts(
+  duckdb::ClientContext& context, duckdb::LogicalGet& get,
+  const connector::ScanBindData& bind_data,
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters) {
+  for (size_t i = 0; i < filters.size();) {
+    const auto column = ReadColumnOf(context, get, bind_data, *filters[i]);
+    if (!column) {
+      ++i;
+      continue;
+    }
+    auto filter_expr = std::move(filters[i]);
+    duckdb::ExpressionIterator::VisitExpressionMutable<
+      duckdb::BoundColumnRefExpression>(
+      filter_expr, [](duckdb::BoundColumnRefExpression& ref,
+                      duckdb::unique_ptr<duckdb::Expression>& child) {
+        child = duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+          ref.GetAlias(), ref.GetReturnType(), 0ULL);
+      });
+    get.table_filters.PushFilter(
+      column->column_index,
+      duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(filter_expr)));
+    filters.erase(filters.begin() + i);
+  }
+}
+
 }  // namespace
 
 // A vector-scored scan reads its knobs and its query vector at execution
@@ -1440,6 +1501,9 @@ void IResearchPushdownComplexFilter(
   TryClaimAnnRange(filters, get, bind_data, context);
   if (!filters.empty()) {
     TryClaimSearchFilter(filters, get, bind_data, context);
+  }
+  if (bind_data.score.vector) {
+    TakeColumnConjuncts(context, get, bind_data, filters);
   }
   DecidePlanCache(bind_data, filters);
 }

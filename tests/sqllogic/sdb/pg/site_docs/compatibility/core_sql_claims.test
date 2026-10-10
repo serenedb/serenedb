@@ -466,6 +466,10 @@ SELECT format_type(1700, 655366);
 statement ok
 SELECT to_regclass('pg_class')::text, to_regtype('int4')::text, to_regproc('array_in')::text, to_regnamespace('public')::text;
 
+# sysinfo: pg_get_keywords
+statement ok
+SELECT word, catcode, catdesc FROM pg_get_keywords();
+
 # types: pg_snapshot
 statement error
 SELECT NULL::pg_snapshot;

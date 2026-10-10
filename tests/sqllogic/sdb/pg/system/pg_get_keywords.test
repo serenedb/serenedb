@@ -1,0 +1,47 @@
+query
+SELECT (SELECT count(*) FROM pg_get_keywords()) = (SELECT count(*) FROM duckdb_keywords()) AS every_keyword
+----
+every_keyword
+t
+
+
+query
+SELECT catcode, catdesc, count(*) > 0 AS present
+FROM pg_get_keywords()
+GROUP BY catcode, catdesc
+ORDER BY catcode
+----
+catcode	catdesc	present
+C	unreserved (cannot be function or type name)	t
+R	reserved	t
+T	reserved (can be function or type name)	t
+U	unreserved	t
+
+
+query
+SELECT word, catcode, barelabel, baredesc
+FROM pg_get_keywords()
+WHERE word IN ('select', 'pivot', 'qualify', 'abort')
+ORDER BY word
+----
+word	catcode	barelabel	baredesc
+abort	U	NULL	NULL
+pivot	R	NULL	NULL
+qualify	R	NULL	NULL
+select	R	NULL	NULL
+
+
+query
+SELECT quote_ident('pivot') AS reserved_here, quote_ident('abort') AS unreserved
+----
+reserved_here	unreserved
+"pivot"	abort
+
+
+query
+SELECT count(*) AS functions
+FROM pg_proc
+WHERE proname = 'pg_get_keywords' AND pronamespace = 'pg_catalog'::regnamespace AND proretset
+----
+functions
+1

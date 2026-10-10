@@ -1,0 +1,229 @@
+query
+SELECT string_agg(name, ' ' ORDER BY lower(name)) AS settings
+FROM pg_settings
+WHERE category <> 'Customized Options'
+----
+settings
+application_name bytea_output check_function_bodies client_encoding client_min_messages DateStyle default_table_access_method default_tablespace default_transaction_isolation default_transaction_read_only extra_float_digits idle_in_transaction_session_timeout in_hot_standby integer_datetimes IntervalStyle lc_messages lc_monetary lc_numeric lc_time lock_timeout maintenance_work_mem max_connections max_identifier_length max_prepared_transactions password_encryption row_security scram_iterations search_path server_encoding server_version server_version_num standard_conforming_strings statement_timeout synchronous_commit TimeZone transaction_deferrable transaction_isolation transaction_read_only transaction_timeout work_mem xmloption
+
+
+statement error
+SHOW shared_buffers
+----
+db error: ERROR: unrecognized configuration parameter "shared_buffers"<slt:ignore>
+
+
+query
+SELECT name, setting, context, min_val, max_val
+FROM pg_settings
+WHERE name = 'max_connections'
+----
+name	setting	context	min_val	max_val
+max_connections	0	postmaster	0	4294967295
+
+
+query
+SELECT name, enumvals
+FROM pg_settings
+WHERE name IN ('transaction_isolation', 'default_transaction_isolation')
+ORDER BY name
+----
+name	enumvals
+default_transaction_isolation	{"repeatable read","read committed"}
+transaction_isolation	{"repeatable read","read committed"}
+
+
+query
+SELECT short_desc FROM pg_settings WHERE name = 'statement_timeout'
+----
+short_desc
+Sets the maximum allowed duration of any statement.
+
+
+query
+SHOW work_mem
+----
+work_mem
+4MB
+
+
+query
+SELECT setting, unit, boot_val, reset_val FROM pg_settings WHERE name = 'work_mem'
+----
+setting	unit	boot_val	reset_val
+4096	kB	4096	4096
+
+
+statement ok
+SET work_mem = 262144
+
+
+query
+SHOW work_mem
+----
+work_mem
+256MB
+
+
+query
+SELECT setting, source FROM pg_settings WHERE name = 'work_mem'
+----
+setting	source
+262144	session
+
+
+statement ok
+RESET work_mem
+
+
+statement error
+SET work_mem = 'banana'
+----
+db error: ERROR: invalid value for parameter "work_mem": "banana"
+HINT: Valid units for this parameter are "B", "kB", "MB", "GB", and "TB".
+
+
+statement error
+SET work_mem = '1kB'
+----
+db error: ERROR: 1 kB is outside the valid range for parameter "work_mem" (64 kB .. 2147483647 kB)
+
+
+statement error
+SET synchronous_commit = 'banana'
+----
+db error: ERROR: invalid value for parameter "synchronous_commit": "banana"
+HINT: Available values: local, remote_write, remote_apply, on, off.
+
+
+statement error
+SET row_security = 'banana'
+----
+db error: ERROR: parameter "row_security" requires a Boolean value
+
+
+statement ok
+SET row_security = false
+
+
+query
+SHOW row_security
+----
+row_security
+off
+
+
+statement ok
+RESET row_security
+
+
+statement ok
+SET lock_timeout = 5000
+
+
+query
+SHOW lock_timeout
+----
+lock_timeout
+5s
+
+
+statement ok
+RESET lock_timeout
+
+
+statement ok
+SET statement_timeout = 0
+
+
+statement ok
+SET lock_timeout = 0
+
+
+statement ok
+SET idle_in_transaction_session_timeout = 0
+
+
+statement ok
+SET transaction_timeout = 0
+
+
+statement ok
+SET client_encoding = 'UTF8'
+
+
+statement ok
+SET standard_conforming_strings = on
+
+
+statement ok
+SELECT pg_catalog.set_config('search_path', '', false)
+
+
+statement ok
+SET check_function_bodies = false
+
+
+statement ok
+SET xmloption = content
+
+
+statement ok
+SET client_min_messages = warning
+
+
+statement ok
+SET row_security = off
+
+
+statement ok
+SET default_tablespace = ''
+
+
+statement ok
+SET default_table_access_method = heap
+
+
+statement ok
+RESET ALL
+
+
+statement ok
+SET DateStyle = ISO
+
+
+query
+SHOW DateStyle
+----
+DateStyle
+ISO, MDY
+
+
+statement ok
+SET DateStyle = 'sql, dmy'
+
+
+query
+SHOW DateStyle
+----
+DateStyle
+SQL, DMY
+
+
+statement ok
+RESET DateStyle
+
+
+statement ok
+SET IntervalStyle = 'ISO_8601'
+
+
+query
+SHOW IntervalStyle
+----
+IntervalStyle
+iso_8601
+
+
+statement ok
+RESET IntervalStyle

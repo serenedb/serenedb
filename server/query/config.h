@@ -91,11 +91,6 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
 
 bool IsUnchangeableSetting(std::string_view name);
 
-bool IsCompatSetting(std::string_view name);
-
-void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
-                     const duckdb::Value& value);
-
 class Config {
  public:
   // Per-key tracking for a currently-open transaction. Populated only when

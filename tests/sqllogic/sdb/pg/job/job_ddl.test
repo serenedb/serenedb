@@ -63,6 +63,10 @@ DROP SCHEMA IF EXISTS jd_outer CASCADE;
 
 
 statement ok
+DROP TABLE IF EXISTS jd_nested_runs;
+
+
+statement ok
 DROP TABLE IF EXISTS jd_skuf;
 
 
@@ -802,7 +806,11 @@ CREATE SCHEMA jd_outer.jd_inner;
 
 
 statement ok
-CREATE JOB jd_outer.jd_inner.jd_nested EVERY 1 HOUR AS SELECT 1;
+CREATE TABLE jd_nested_runs (n int);
+
+
+statement ok
+CREATE JOB jd_outer.jd_inner.jd_nested EVERY 1 HOUR AS INSERT INTO public.jd_nested_runs VALUES (1);
 
 
 query
@@ -810,6 +818,21 @@ SELECT schema_name, job_name, schedule FROM duckdb_jobs() WHERE job_name = 'jd_n
 ----
 schema_name	job_name	schedule
 jd_inner	jd_nested	EVERY INTERVAL '01:00:00'
+
+
+statement ok
+EXECUTE JOB jd_outer.jd_inner.jd_nested;
+
+
+query
+SELECT count(*) AS n FROM jd_nested_runs;
+----
+n
+1
+
+
+statement ok
+DROP TABLE jd_nested_runs;
 
 
 statement ok

@@ -245,9 +245,8 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
                     ERR_MSG("Job name cannot be NULL"));
   }
-  auto name =
-    duckdb::QualifiedName::Parse(duckdb::StringValue::Get(input.inputs[0]));
-  duckdb::Binder::BindSchemaOrCatalog(context, name);
+  const auto name = input.binder->BindTableName(
+    duckdb::QualifiedName::Parse(duckdb::StringValue::Get(input.inputs[0])));
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);

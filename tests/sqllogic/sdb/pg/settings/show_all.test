@@ -130,6 +130,7 @@ external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
 file_search_path	(empty)	A comma separated list of directories to search for input files.
+filter_reorder	fast	How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	Forces the usage of a specific compression method.
 force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'
@@ -465,6 +466,7 @@ external_threads	0	The number of external threads that work on DuckDB tasks.
 extra_float_digits	1	Sets the number of digits displayed for floating-point values.
 extra_http_headers	{}	Extra HTTP headers added to every request
 file_search_path	(empty)	A comma separated list of directories to search for input files.
+filter_reorder	fast	How far filter reordering may move conjuncts that can throw: 'never' does not reorder filters at all; 'safe' reorders only between them; 'fast' may move other conjuncts ahead of them, which can skip an error; 'always' orders by cost alone
 force_column_metadata_reuse	off	Force re-use of row group metadata on a column-level when checkpointing on older storage versions 6 and 7. This breaks storage backward-compatibility with older DuckDB versions.
 force_compression	auto	Forces the usage of a specific compression method.
 force_dict_fsst_mode	DEFAULT	DEBUG SETTING: pins the dict_fsst string compression mode (case-insensitive). 'DEFAULT' follows storage ownership (serenedb-owned -> auto across all modes; native duckdb -> native modes only); 'AUTO' forces auto across all modes; 'AUTO_NATIVE' forces auto across the native modes only (DICTIONARY, DICT_FSST, FSST_ONLY); or pin one mode: 'DICTIONARY', 'DICT_FSST', 'FSST_ONLY', 'DICT_FSST_PLUS', 'FSST_PLUS'

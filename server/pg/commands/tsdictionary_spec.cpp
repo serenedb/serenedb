@@ -51,7 +51,8 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/tokenizer.h"
 #include "pg/commands/create_tsdictionary.h"
 #include "pg/option_help.h"
 #include "pg/tokenizer_options.h"
@@ -79,7 +80,6 @@ struct Stage {
   enum class Kind : uint8_t {
     Template,
     Sql,
-    Dictionary,
     Identity,
   };
 
@@ -258,7 +258,7 @@ bool IsStructuralAnalyzer(const duckdb::ParsedExpression& expr) {
 // A stage is a template call, an SQL function call, a lambda, a union list or
 // a stored dictionary name; only the first two are plain calls.
 bool IsStageExpression(const duckdb::ParsedExpression& expr) {
-  return IsStructuralAnalyzer(expr) || AsCall(expr) != nullptr;
+  return IsStructuralAnalyzer(expr) || AsCall(expr);
 }
 
 std::string SuggestionHint(std::span<const std::string_view> known,
@@ -301,8 +301,6 @@ void RejectNestedAnalyzers(const duckdb::ParsedExpression& expr) {
 
 struct BuildContext {
   duckdb::ClientContext& context;
-  ObjectId db_id;
-  std::string_view current_schema;
 };
 
 irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
@@ -312,17 +310,13 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
                                                 const BuildContext& ctx) {
   Options options;
   const auto put = [&](std::string_view name, duckdb::Value value) {
-    options.try_emplace(std::string{name},
+    options.try_emplace(name,
                         std::make_unique<duckdb::Value>(std::move(value)));
   };
   std::string_view type;
   switch (stage.kind) {
     case Stage::Kind::Identity:
       type = kKeywordName;
-      break;
-    case Stage::Kind::Dictionary:
-      type = tokenizer_options::kDictionaryTemplate;
-      put(tokenizer_options::kFrom.name, duckdb::Value{stage.name});
       break;
     case Stage::Kind::Sql:
       type = kSqlName;
@@ -341,8 +335,8 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
                       BuildChainConfig(child, ctx));
                   }) |
                   std::ranges::to<TokenizerConfigs>();
-  return BuildStage(ctx.context, ctx.db_id, ctx.current_schema, type,
-                    std::move(options), std::move(children), kOperation);
+  return BuildStage(ctx.context, type, std::move(options), std::move(children),
+                    kOperation);
 }
 
 irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
@@ -355,20 +349,73 @@ irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
                       BuildStageConfig(stage, ctx));
                   }) |
                   std::ranges::to<TokenizerConfigs>();
-  return BuildStage(ctx.context, ctx.db_id, ctx.current_schema, kPipelineName,
-                    {}, std::move(children), kOperation);
+  return BuildStage(ctx.context, kPipelineName, {}, std::move(children),
+                    kOperation);
+}
+
+std::string RenderOption(const OptionGroup& group, std::string_view name,
+                         const duckdb::Value& value) {
+  const auto flat = group.FlatOptions();
+  const auto info = absl::c_find_if(
+    flat, [&](const OptionInfo& option) { return option.name == name; });
+  if (info != flat.end() && info->type == OptionInfo::Type::Lambda) {
+    return absl::StrCat(name, " := lambda ", kInput, ": ",
+                        value.GetValue<std::string>());
+  }
+  return absl::StrCat(name, " := ", value.ToSQLString());
+}
+
+std::string RenderChain(const Chain& chain) {
+  std::vector<std::string> stages;
+  stages.reserve(chain.size());
+  for (const auto& stage : chain) {
+    switch (stage.kind) {
+      case Stage::Kind::Identity:
+        stages.push_back(absl::StrCat(kKeywordName, "()"));
+        continue;
+      case Stage::Kind::Sql:
+        stages.push_back(
+          absl::StrCat("(lambda ", kInput, ": ", stage.name, ")"));
+        continue;
+      case Stage::Kind::Template:
+        break;
+    }
+    std::vector<std::string> args;
+    args.reserve(stage.children.size() + stage.options.size());
+    for (const auto& child : stage.children) {
+      args.push_back(RenderChain(child));
+    }
+    if (stage.name == kUnionName) {
+      stages.push_back(absl::StrCat("[", absl::StrJoin(args, ", "), "]"));
+      continue;
+    }
+    const auto* group = FindTemplate(stage.name);
+    SDB_ASSERT(group);
+    for (const auto& [name, value] : stage.options) {
+      args.push_back(RenderOption(*group, name, value));
+    }
+    stages.push_back(
+      absl::StrCat(stage.name, "(", absl::StrJoin(args, ", "), ")"));
+  }
+  return absl::StrJoin(stages, " | ");
 }
 
 class SpecCompiler {
  public:
-  SpecCompiler(duckdb::ClientContext& context, ObjectId db_id,
-               std::string_view current_schema)
-    : _context{context}, _db_id{db_id}, _current_schema{current_schema} {}
+  explicit SpecCompiler(duckdb::ClientContext& context) : _context{context} {}
 
-  irs::analysis::TokenizerConfig Compile(std::string_view spec) {
+  CompiledTSDictionary Compile(std::string_view spec) {
+    const auto chain = CompileChain(*Parse(spec));
+    return {.config = BuildChainConfig(chain, {_context}),
+            .definition = RenderChain(chain)};
+  }
+
+ private:
+  static duckdb::unique_ptr<duckdb::ParsedExpression> Parse(
+    std::string_view spec) {
     duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> exprs;
     try {
-      exprs = duckdb::Parser::ParseExpressionList(spec);
+      exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(spec);
     } catch (const std::exception& e) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                       ERR_MSG(kOperation, ": ", e.what()));
@@ -378,12 +425,13 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG(kOperation, ": expected one analyzer expression"));
     }
-    return BuildChainConfig(CompileChain(*exprs[0]),
-                            {_context, _db_id, _current_schema});
+    return std::move(exprs[0]);
   }
 
- private:
   Chain CompileChain(const duckdb::ParsedExpression& expr) {
+    if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
+      return CompileDictionary(expr.Cast<duckdb::ColumnRefExpression>());
+    }
     if (!IsPipe(expr)) {
       Chain chain;
       chain.push_back(CompileStage(expr));
@@ -403,9 +451,6 @@ class SpecCompiler {
     }
     if (const auto elements = AsListLiteral(expr)) {
       return CompileUnion(*elements);
-    }
-    if (expr.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF) {
-      return CompileDictionary(expr.Cast<duckdb::ColumnRefExpression>());
     }
     if (const auto* fn = AsCall(expr)) {
       if (AsPlainCall(expr)) {
@@ -456,10 +501,12 @@ class SpecCompiler {
   }
 
   bool DictionaryExists(std::string_view name) {
-    const auto schema_id =
-      catalog::FindSchemaId(&_context, _db_id, _current_schema);
-    return schema_id.isSet() &&
-           catalog::FindTokenizer(&_context, schema_id, name);
+    return static_cast<bool>(
+      duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+        _context,
+        duckdb::QualifiedName{duckdb::Identifier{}, duckdb::Identifier{},
+                              duckdb::Identifier{name}},
+        duckdb::OnEntryNotFound::RETURN_NULL));
   }
 
   [[noreturn]] void ThrowUnknownStage(const duckdb::FunctionExpression& fn) {
@@ -480,7 +527,7 @@ class SpecCompiler {
                     ERR_HINT("did you mean \"", closest, "\"?"));
   }
 
-  Stage CompileDictionary(const duckdb::ColumnRefExpression& ref) {
+  Chain CompileDictionary(const duckdb::ColumnRefExpression& ref) {
     const auto& names = ref.ColumnNames();
     const auto spelled = absl::StrJoin(
       names, ".", [](std::string* out, const duckdb::Identifier& id) {
@@ -491,21 +538,19 @@ class SpecCompiler {
         ERR_CODE(ERRCODE_SYNTAX_ERROR),
         ERR_MSG("invalid text search dictionary reference \"", spelled, "\""));
     }
-    const std::string_view schema =
-      names.size() == 2 ? std::string_view{names[0].GetIdentifierName()}
-                        : _current_schema;
-    const auto schema_id = catalog::FindSchemaId(&_context, _db_id, schema);
     const auto tokenizer =
-      schema_id.isSet()
-        ? catalog::FindTokenizer(&_context, schema_id,
-                                 names.back().GetIdentifierName())
-        : nullptr;
+      duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+        _context,
+        duckdb::QualifiedName{
+          duckdb::Identifier{},
+          names.size() == 2 ? names[0] : duckdb::Identifier{}, names.back()},
+        duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("text search dictionary \"", spelled, "\" does not exist"));
     }
-    return {.kind = Stage::Kind::Dictionary, .name = spelled};
+    return CompileChain(*Parse(tokenizer->Definition()));
   }
 
   Stage CompileLambda(const duckdb::LambdaExpression& lambda) {
@@ -557,11 +602,43 @@ class SpecCompiler {
       expr, [&](duckdb::unique_ptr<duckdb::ParsedExpression>& child) {
         if (IsParameterRef(*child, param)) {
           child = duckdb::make_uniq<duckdb::ColumnRefExpression>(
-            duckdb::Identifier{std::string{kInput}});
+            duckdb::Identifier{kInput});
           return;
         }
         SubstituteParameter(*child, param);
       });
+  }
+
+  std::string CompilePredicate(const OptionGroup& group,
+                               const duckdb::LambdaExpression& lambda) {
+    std::string error;
+    const auto params = lambda.ExtractColumnRefExpressions(error);
+    if (!error.empty() || params.size() != 1) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(group.name, "(): the lambda takes exactly one parameter"),
+        ERR_HINT(group.name, "(lambda x: length(x) > 2)"));
+    }
+    const auto& param =
+      params.front().get().Cast<duckdb::ColumnRefExpression>().GetColumnName();
+    auto body = lambda.Right().Copy();
+    const bool param_is_input =
+      absl::EqualsIgnoreCase(param.GetIdentifierName(), kInput);
+    RejectPlaceholders(*body, /*reject_input=*/!param_is_input);
+    if (IsParameterRef(*body, param)) {
+      return std::string{kInput};
+    }
+    SubstituteParameter(*body, param);
+    if (!ReferencesInput(*body)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(group.name, "(): the lambda \"", lambda.ToString(),
+                "\" does not use its parameter"),
+        ERR_HINT("the parameter is the token being tested, as in "
+                 "lambda x: length(x) > 2"));
+    }
+    RejectNestedAnalyzers(*body);
+    return body->ToString();
   }
 
   // The value the stage analyzes is passed as the call's first argument.
@@ -577,7 +654,7 @@ class SpecCompiler {
     auto& args = copy->Cast<duckdb::FunctionExpression>().GetArgumentsMutable();
     args.insert(args.begin(), duckdb::FunctionArgument{
                                 duckdb::make_uniq<duckdb::ColumnRefExpression>(
-                                  duckdb::Identifier{std::string{kInput}})});
+                                  duckdb::Identifier{kInput})});
     return {.kind = Stage::Kind::Sql, .name = copy->ToString()};
   }
 
@@ -612,6 +689,11 @@ class SpecCompiler {
         stage.children.emplace_back(CompileChain(value));
         continue;
       }
+      if (positional < flat.size() &&
+          flat[positional].type == OptionInfo::Type::Lambda &&
+          value.GetExpressionClass() != duckdb::ExpressionClass::LAMBDA) {
+        ++positional;
+      }
       if (positional == flat.size()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG(group.name, "() takes at most ", flat.size(),
@@ -641,6 +723,21 @@ class SpecCompiler {
         ERR_MSG(group.name, "(): option \"", name, "\" given more than once"));
     }
     given.emplace_back(name);
+    const auto flat = group.FlatOptions();
+    const auto info = absl::c_find_if(
+      flat, [&](const OptionInfo& option) { return option.name == name; });
+    if (info != flat.end() && info->type == OptionInfo::Type::Lambda) {
+      if (value.GetExpressionClass() != duckdb::ExpressionClass::LAMBDA) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_SYNTAX_ERROR),
+          ERR_MSG(group.name, "(): option \"", name, "\" must be a lambda"),
+          ERR_HINT(group.name, "(lambda x: length(x) > 2)"));
+      }
+      stage.options.emplace_back(
+        name, duckdb::Value{CompilePredicate(
+                group, value.Cast<duckdb::LambdaExpression>())});
+      return;
+    }
     if (value.GetExpressionClass() == duckdb::ExpressionClass::COLUMN_REF ||
         value.GetExpressionClass() == duckdb::ExpressionClass::PARAMETER) {
       THROW_SQL_ERROR(
@@ -659,7 +756,7 @@ class SpecCompiler {
     if (folded.IsNull()) {
       return;
     }
-    stage.options.emplace_back(std::string{name}, std::move(folded));
+    stage.options.emplace_back(name, std::move(folded));
   }
 
   duckdb::Value Fold(const OptionGroup& group, std::string_view name,
@@ -680,16 +777,13 @@ class SpecCompiler {
   }
 
   duckdb::ClientContext& _context;
-  ObjectId _db_id;
-  std::string_view _current_schema;
 };
 
 }  // namespace
 
-irs::analysis::TokenizerConfig CompileTSDictionarySpec(
-  duckdb::ClientContext& context, ObjectId db_id,
-  std::string_view current_schema, std::string_view spec) {
-  return SpecCompiler{context, db_id, current_schema}.Compile(spec);
+CompiledTSDictionary CompileTSDictionarySpec(duckdb::ClientContext& context,
+                                             std::string_view spec) {
+  return SpecCompiler{context}.Compile(spec);
 }
 
 namespace {
@@ -719,6 +813,10 @@ std::string RenderDefault(const OptionInfo& info) {
 std::vector<std::string> Parameters(const OptionGroup& group) {
   std::vector<std::string> params;
   for (const auto& info : group.FlatOptions()) {
+    if (info.type == OptionInfo::Type::Lambda) {
+      params.emplace_back("lambda x: <predicate>");
+      continue;
+    }
     if (info.IsRequired()) {
       params.emplace_back(info.name);
       continue;
@@ -738,8 +836,15 @@ std::string Signature(const OptionGroup& group) {
 
 std::string FunctionSignature(const OptionGroup& group) {
   auto params = Parameters(group);
+  const auto lambda = absl::c_find(params, "lambda x: <predicate>");
+  if (lambda == params.end()) {
+    params.insert(params.begin(), "value");
+    return absl::StrCat(group.function, "(", absl::StrJoin(params, ", "), ")");
+  }
+  params.erase(lambda);
   params.insert(params.begin(), "value");
-  return absl::StrCat(group.function, "(", absl::StrJoin(params, ", "), ")");
+  return absl::StrCat(group.function, "(", absl::StrJoin(params, ", "), ") or ",
+                      group.function, "(value, lambda x: <predicate>)");
 }
 
 void AppendDescriptions(std::string& out, std::span<const OptionInfo> options) {

@@ -1,0 +1,319 @@
+# Catalog walks that run side by side must never hold one catalog set while
+# they lock another. has_table_privilege(oid) walks every schema's sets for the
+# oid; pg_index and pg_class resolve each index's table; ALTER TABLE ... RENAME
+# rewrites the table's indexes while it holds the table set. The oid walk used
+# to hold the schema set across each schema's sets and the index walks looked
+# the table up from inside the index set, so any two of them could lock the
+# same pair of sets in opposite orders; once they met, every later statement
+# naming a relation hung. Nothing forces the overlap, so the two long oid
+# loops keep the schema set busy while the other statements cycle.
+
+
+statement ok
+CREATE TABLE cci_t1(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i1 ON cci_t1(a)
+
+
+statement ok
+CREATE TABLE cci_t2(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i2 ON cci_t2(a)
+
+
+statement ok
+CREATE TABLE cci_t3(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i3 ON cci_t3(a)
+
+
+statement ok
+CREATE TABLE cci_t4(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i4 ON cci_t4(a)
+
+
+statement ok
+CREATE TABLE cci_t5(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i5 ON cci_t5(a)
+
+
+statement ok
+CREATE TABLE cci_t6(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i6 ON cci_t6(a)
+
+
+statement ok
+CREATE TABLE cci_t7(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i7 ON cci_t7(a)
+
+
+statement ok
+CREATE TABLE cci_t8(a INTEGER)
+
+
+statement ok
+CREATE INDEX cci_i8 ON cci_t8(a)
+
+
+# The oid walk against the pg_index and pg_class walks.
+
+connection p1
+statement async ok
+SELECT count(*) FROM range(500000) r(i) WHERE has_table_privilege((i + 1000000000)::oid, 'SELECT') IS NULL
+
+
+connection p2
+statement async ok
+SELECT count(*) FROM range(500000) r(i) WHERE has_table_privilege((i + 1000000000)::oid, 'SELECT') IS NULL
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w3
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w4
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w3
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w4
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w3
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w4
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection w3
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w4
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+wait
+
+
+connection check
+query
+SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname LIKE 'cci_i%'
+----
+count
+8
+
+
+# The same walks against table and column renames.
+
+connection p1
+statement async ok
+SELECT count(*) FROM range(500000) r(i) WHERE has_table_privilege((i + 1000000000)::oid, 'SELECT') IS NULL
+
+
+connection p2
+statement async ok
+SELECT count(*) FROM range(500000) r(i) WHERE has_table_privilege((i + 1000000000)::oid, 'SELECT') IS NULL
+
+
+connection r1
+statement async ok
+ALTER TABLE cci_t1 RENAME TO cci_r1
+
+
+connection r2
+statement async ok
+ALTER TABLE cci_t2 RENAME COLUMN a TO b
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection r1
+statement async ok
+ALTER TABLE cci_r1 RENAME TO cci_t1
+
+
+connection r2
+statement async ok
+ALTER TABLE cci_t2 RENAME COLUMN b TO a
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection r1
+statement async ok
+ALTER TABLE cci_t1 RENAME TO cci_r1
+
+
+connection r2
+statement async ok
+ALTER TABLE cci_t2 RENAME COLUMN a TO b
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+connection r1
+statement async ok
+ALTER TABLE cci_r1 RENAME TO cci_t1
+
+
+connection r2
+statement async ok
+ALTER TABLE cci_t2 RENAME COLUMN b TO a
+
+
+connection w1
+statement async ok
+SELECT count(*) FROM pg_index
+
+
+connection w2
+statement async ok
+SELECT count(*) FROM pg_class
+
+
+wait
+
+
+connection check
+query
+SELECT c.relname, t.relname AS host FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid WHERE c.relname IN ('cci_i1', 'cci_i2') ORDER BY 1
+----
+relname	host
+cci_i1	cci_t1
+cci_i2	cci_t2
+
+
+query
+SELECT count(*) FROM cci_t2 WHERE a IS NULL
+----
+count
+0
+
+
+statement ok
+DROP TABLE cci_t1
+
+
+statement ok
+DROP TABLE cci_t2
+
+
+statement ok
+DROP TABLE cci_t3
+
+
+statement ok
+DROP TABLE cci_t4
+
+
+statement ok
+DROP TABLE cci_t5
+
+
+statement ok
+DROP TABLE cci_t6
+
+
+statement ok
+DROP TABLE cci_t7
+
+
+statement ok
+DROP TABLE cci_t8

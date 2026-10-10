@@ -38,7 +38,7 @@ The same flags can be set on the dictionary itself, in which case every column u
 
 ## `INCLUDE` columns
 
-Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec — one of `uncompressed`, `bitpacking`, `alp`, `rle` or `fsst` — for example `INCLUDE (payload included (compression = 'alp'))`.
+Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be searched, but a query that selects from the index can return them without a separate base-table lookup. Each may set a storage `compression` codec: `auto`, the default, or one of `uncompressed`, `rle`, `bitpacking`, `zstd`, `alp`, `alprd`, `roaring` or `dict_fsst`, for example `INCLUDE (payload included (compression = 'alp'))`.
 
 ## Index options
 
@@ -51,7 +51,6 @@ The trailing `WITH (...)` clause sets index-level options.
 | `cleanup_interval_step` | `1` | Commit ticks between cleanup passes; `0` disables it |
 | `row_group_size` | `122880` | Row-group size for stored (`INCLUDE`d) columns and for norm columns; there is no separate norm setting. Must be a multiple of the vector size (2048). A scan claims one row group per worker, so a smaller value spreads one segment over more threads at the cost of more per-unit setup |
 | `optimize_top_k` | — | Scorer expression enabling top-K (WAND) pruning, e.g. `'bm25(1.2, 0.75)'` |
-| `pk` | auto | Primary-key column to use as row identity when indexing a [view](../../indexes/inverted/index.md#indexing-a-table-or-a-view) |
 
 ## Partial indexes
 
@@ -64,11 +63,13 @@ CREATE INDEX recent_errors ON logs USING inverted(message log_dict)
 
 The predicate is a boolean expression over the table's columns; a row whose predicate evaluates to `NULL` is treated as non-matching, following PostgreSQL semantics. DML keeps membership current — rows enter and leave the index as updates move them across the predicate boundary — and queries against the index only ever see matching rows.
 
-Partial indexes are an inverted-index feature: a plain (ART) `CREATE INDEX … WHERE …` is rejected.
+A constant predicate, one that reads no column and calls no function whose result can change (such as `now()`), is evaluated once by `CREATE INDEX`, the way a query's `WHERE` evaluates it. `WHERE 'true'` or `WHERE 1 + 1 = 2` builds an ordinary index, which `pg_indexes` shows without a `WHERE`; `WHERE 'f'` is stored as `WHERE false` and the index stays empty. A string that is not a boolean fails as in a query: `WHERE 'abc'` raises `Could not convert string 'abc' to BOOL`. This holds for plain indexes too.
+
+Partial indexes are an inverted-index feature. A plain (ART) `CREATE INDEX … WHERE …` is accepted, but the predicate filters only the rows present when the index is built; see [PostgreSQL compatibility](../../../compatibility/core-sql-compatibility.md#indexes).
 
 ## Indexing tables and views
 
-An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). A view has no primary key, so the index materializes its columns at build time and resolves a row identity — automatically for base-table and fast-path-reader views, or via `WITH (pk = '...')` for generic views. See [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
+An inverted index can be built over a base table or a view (including a view over `read_parquet`/`read_csv` on local disk or S3). The index derives each row's identity automatically from the view's source; there is no `pk` option, and only attached external databases accept an explicit key through `key_columns` (see [Row identity](../../indexes/inverted/views.md#row-identity)). The postings are a snapshot of the source, refreshed by `REINDEX INDEX` or the `reindex_interval` option (see [Refreshing the index](../../indexes/inverted/views.md#refreshing-the-index)). See also [Indexing a table vs. a view](../../indexes/inverted/index.md#indexing-a-table-or-a-view).
 
 ## Examples
 

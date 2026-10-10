@@ -1,0 +1,476 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstdint>
+#include <limits>
+#include <span>
+#include <utility>
+#include <vector>
+
+#include "iresearch/utils/levenshtein_utils.hpp"
+#include "iresearch/utils/string.hpp"
+#include "iresearch/utils/utf8_utils.hpp"
+
+namespace irs {
+
+// A state is a parametric state plus the offset into the target's code points,
+// plus whatever of a multi-byte code point has already been consumed, so the
+// language stays code-point-based exactly as the compiled automaton's is while
+// the term iterator driving it walks bytes.
+//
+// The description is referenced, not copied: every producer takes it from a
+// `pdp_f` provider whose descriptions outlive the query (`DefaultPDP` returns
+// statics).
+class LevenshteinAcceptor {
+ public:
+  // The edit distance of the accepted key, which similarity scoring ranks by,
+  // so a walk publishes it.
+  using PayloadType = byte_type;
+  static constexpr bool kHasPayload = true;
+
+  static constexpr uint32_t kDeadState = 0;
+
+  struct State {
+    uint32_t pstate;  // parametric state, `kDeadState` is the sink
+    uint32_t offset;  // code points of the target already consumed
+    uint32_t acc;
+    // 0 -- ready for a lead byte, which is the whole hot path; 1..3 --
+    // continuation bytes still expected; `kPrefixPhase + n` -- n bytes of the
+    // literal prefix matched. One field so a step tests one register.
+    uint32_t phase;
+  };
+
+  LevenshteinAcceptor(const ParametricDescription& description,
+                      bytes_view prefix, bytes_view target)
+    : _description{&description},
+      _transitions{description.transitions()},
+      _prefix{prefix},
+      _chi_size{static_cast<uint32_t>(description.chi_size())},
+      _mask{description.chi_max() - 1},
+      _no_distance{static_cast<byte_type>(description.max_distance() + 1)} {
+    // A code point takes at least one byte, so this is an upper bound and the
+    // decode never grows the vector.
+    _target.reserve(target.size());
+    utf8_utils::ToUTF32<false>(target, std::back_inserter(_target));
+    // The trailing word is what lets an unaligned read take `word + 1`
+    // unconditionally.
+    _words = _target.size() / kWordBits + 2;
+    _narrow.fill(kZeroSlot);
+    _chi.reserve((_target.size() + 1) * _words);
+    _chars.reserve(_target.size());
+    const auto new_slot = [this] {
+      const auto slot = static_cast<int32_t>(_chi.size() / _words);
+      _chi.resize(_chi.size() + _words, 0);
+      return slot;
+    };
+    new_slot();
+    for (size_t i = 0; i != _target.size(); ++i) {
+      const auto c = _target[i];
+      int32_t slot = kZeroSlot;
+      if (c < kNarrowMax) {
+        slot = _narrow[c];
+        if (slot == kZeroSlot) {
+          slot = new_slot();
+          _narrow[c] = slot;
+        }
+      } else {
+        slot = WideSlotOf(c);
+        if (slot == kZeroSlot) {
+          slot = new_slot();
+          _wide.push_back(WideSlot{c, slot});
+        }
+      }
+      _chars.push_back({LeadByte(c), slot});
+      _chi[static_cast<size_t>(slot) * _words + i / kWordBits] |=
+        uint64_t{1} << (i % kWordBits);
+      if (c >= 0x80) {
+        _leads[LeadByte(c)] = true;
+        if (c >= 0x10000) {
+          _partials.push_back(PartialKey(c >> 12, 2));
+        }
+        if (c >= 0x800) {
+          _partials.push_back(PartialKey(c >> 6, 1));
+        }
+      }
+    }
+    std::ranges::sort(_partials);
+    _partials.erase(std::ranges::unique(_partials).begin(), _partials.end());
+    _slots = _chi.size() / _words;
+    const size_t offsets = _target.size() + _chi_size + 1;
+    if (description.size() < kUnknownState &&
+        offsets + _chi_size <= kOffsetMask &&
+        description.size() * offsets * _slots <= kMaxSteps) {
+      _offsets = offsets;
+      _stride = offsets * _slots;
+      _steps.assign(description.size() * _stride, kUnknownStep);
+    }
+  }
+
+  State Start() const noexcept {
+    return {1, 0, 0, _prefix.empty() ? 0U : kPrefixPhase};
+  }
+
+  // The literal prefix every match starts with; empty when unbounded. What
+  // lets a dictionary scan restrict itself to `[prefix, UpperBoundOf(prefix))`
+  // instead of walking the whole field.
+  bytes_view LowerBound() const noexcept { return _prefix; }
+
+  uint32_t MaxDistance() const noexcept { return _no_distance - 1U; }
+
+  static bool Alive(const State& state) noexcept {
+    return state.pstate != kDeadState;
+  }
+
+  State Step(const State& state, byte_type label) const noexcept {
+    if (state.phase == 0) {
+      if (label < 0x80) [[likely]] {
+        return StepChar(state, label);
+      }
+      if (label >= 0xC2 && label < 0xE0) {
+        return {state.pstate, state.offset, Lead(label, 0x1FU), 1};
+      }
+    } else if (state.phase == 1 && (label & 0xC0) == 0x80) {
+      return StepChar({state.pstate, state.offset, 0, 0},
+                      (state.acc << 6) | (label & 0x3FU));
+    }
+    return StepSlow(state, label);
+  }
+
+  // A fuzzy state carries how much of the target it has consumed, so there is
+  // no test for "this byte leaves the state where it is" short of taking the
+  // step: a run of bytes costs exactly what stepping it costs. A caller that
+  // would spend a run test to avoid a walk has nothing to gain here.
+  static constexpr bool kCheapRuns = false;
+  static constexpr bool kMayBeUnknown = false;
+
+  static bool Unknown(const State&) noexcept { return false; }
+
+  // The edit distance the state reports, or a value above `max_distance` when
+  // it does not accept. A key ending inside a multi-byte code point accepts
+  // with the distance of the boundary before it (the trailing bytes are a
+  // symbol that does not exist); an unfinished literal prefix never accepts.
+  PayloadType Distance(const State& state) const noexcept {
+    if (state.phase >= kPrefixPhase || state.offset > _target.size()) {
+      return _no_distance;
+    }
+    return _description->distance(state.pstate, _target.size() - state.offset);
+  }
+
+  bool Accept(const State& state, PayloadType& payload) const noexcept {
+    const auto distance = Distance(state);
+    if (distance >= _no_distance) {
+      return false;
+    }
+    payload = distance;
+    return true;
+  }
+
+  // Whole-term acceptance, for callers that test one key at a time instead of
+  // walking a dictionary.
+  bool Matches(bytes_view term) const noexcept {
+    PayloadType payload{};
+    return Matches(term, payload);
+  }
+
+  bool Matches(bytes_view term, PayloadType& payload) const noexcept {
+    auto state = Start();
+    for (const auto label : term) {
+      state = Step(state, label);
+      if (!Alive(state)) {
+        return false;
+      }
+    }
+    return Accept(state, payload);
+  }
+
+  size_t MaxStates() const noexcept {
+    const size_t partials =
+      static_cast<size_t>(std::ranges::count(_leads, true)) + _partials.size() +
+      3;
+    const size_t offsets =
+      _target.size() + _chi_size * (_description->max_distance() + 1) + 1;
+    return _description->size() * offsets * (partials + 1) + _prefix.size();
+  }
+
+  std::array<uint8_t, 256> Bytemap() const {
+    std::array<bool, 256> own{};
+    for (const auto label : _prefix) {
+      own[label] = true;
+    }
+    for (const auto c : _target) {
+      if (c < 0x80) {
+        continue;
+      }
+      own[LeadByte(c)] = true;
+      const uint32_t continuations = c < 0x800 ? 1 : c < 0x10000 ? 2 : 3;
+      for (uint32_t i = 0; i != continuations; ++i) {
+        own[0x80 | ((c >> (6 * i)) & 0x3FU)] = true;
+      }
+    }
+    std::array<uint8_t, 256> bytemap{};
+    std::vector<int32_t> classes_of(_slots, -1);
+    std::array<int32_t, kKinds> kinds;
+    kinds.fill(-1);
+    uint32_t classes = 0;
+    for (uint32_t label = 0; label != bytemap.size(); ++label) {
+      if (own[label]) {
+        bytemap[label] = static_cast<uint8_t>(classes++);
+        continue;
+      }
+      auto& c = label < 0x80 ? classes_of[static_cast<size_t>(_narrow[label])]
+                             : kinds[kHighKinds[label - 0x80]];
+      if (c < 0) {
+        c = static_cast<int32_t>(classes++);
+      }
+      bytemap[label] = static_cast<uint8_t>(c);
+    }
+    return bytemap;
+  }
+
+  // Smallest and largest label that leaves `state` alive; the range is empty
+  // (`lo > hi`, which is also what the `false` return says) when none does.
+  // Evaluated once per dictionary block, which is what makes the window scan
+  // below worth taking over stepping the block's every entry.
+  bool LiveRange(const State& state, uint32_t& lo,
+                 uint32_t& hi) const noexcept {
+    if (state.phase >= kPrefixPhase) {
+      lo = hi = _prefix[state.phase - kPrefixPhase];
+      return true;
+    }
+    if (state.phase != 0) {
+      lo = 0x80;
+      hi = 0xBF;
+      return true;
+    }
+    // A code point matching nothing in the window has an all-zero
+    // characteristic vector; when that keeps the state alive so does every
+    // byte, and there is no bound to give.
+    if (Transition(state.pstate, 0).first != kDeadState) {
+      lo = 0;
+      hi = std::numeric_limits<byte_type>::max();
+      return true;
+    }
+    // Otherwise only the window's own code points survive -- at most
+    // `chi_size` of them -- so their leading bytes are the whole live
+    // alphabet, which is the bound a generic arc list cannot give.
+    uint32_t best_lo = std::numeric_limits<uint32_t>::max();
+    uint32_t best_hi = 0;
+    const size_t end = Window(state.offset);
+    for (size_t i = state.offset; i != end; ++i) {
+      const auto& target = _chars[i];
+      if (Transition(state.pstate, ChiAt(target.slot, state.offset)).first ==
+          kDeadState) {
+        continue;
+      }
+      best_lo = std::min<uint32_t>(best_lo, target.lead);
+      best_hi = std::max<uint32_t>(best_hi, target.lead);
+    }
+    lo = best_lo;
+    hi = best_hi;
+    return best_lo <= best_hi;
+  }
+
+ private:
+  static constexpr uint32_t kNarrowMax = 0x800;
+  static constexpr uint32_t kPrefixPhase = 4;
+  static constexpr int32_t kZeroSlot = 0;
+  static constexpr size_t kWordBits = 64;
+  static constexpr size_t kUnknownState = 0xFFFF;
+  static constexpr uint32_t kOffsetMask = 0xFFFF;
+  static constexpr uint32_t kUnknownStep = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kMaxSteps = size_t{1} << 16;
+  static constexpr uint32_t kForeign = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kKinds = 5;
+  static constexpr std::array<uint8_t, 128> kHighKinds = [] {
+    std::array<uint8_t, 128> kinds{};
+    for (uint32_t label = 0x80; label != 0x100; ++label) {
+      kinds[label - 0x80] = label < 0xC0   ? 0
+                            : label < 0xC2 ? 4
+                            : label < 0xE0 ? 1
+                            : label < 0xF0 ? 2
+                            : label < 0xF5 ? 3
+                                           : 4;
+    }
+    return kinds;
+  }();
+
+  static constexpr State Dead() noexcept { return {kDeadState, 0, 0, 0}; }
+
+  State StepSlow(State state, byte_type label) const noexcept {
+    if (state.phase >= kPrefixPhase) {
+      const size_t pos = state.phase - kPrefixPhase;
+      if (label != _prefix[pos]) {
+        return Dead();
+      }
+      state.phase = pos + 1 == _prefix.size()
+                      ? 0
+                      : static_cast<uint32_t>(kPrefixPhase + pos + 1);
+      return state;
+    }
+    if (state.phase != 0) {
+      if ((label & 0xC0) != 0x80) {
+        return Dead();
+      }
+      const uint32_t acc = (state.acc << 6) | (label & 0x3FU);
+      if (--state.phase == 0) {
+        return StepChar(state, acc);
+      }
+      state.acc = state.acc == kForeign ? kForeign : Partial(acc, state.phase);
+      return state;
+    }
+    if (label < 0xC2 || label > 0xF4) {
+      return Dead();
+    }
+    if (label < 0xE0) {
+      state.acc = Lead(label, 0x1FU);
+      state.phase = 1;
+    } else if (label < 0xF0) {
+      state.acc = Lead(label, 0x0FU);
+      state.phase = 2;
+    } else {
+      state.acc = Lead(label, 0x07U);
+      state.phase = 3;
+    }
+    return state;
+  }
+
+  static constexpr uint64_t PartialKey(uint32_t acc, uint32_t phase) noexcept {
+    return (uint64_t{phase} << 32) | acc;
+  }
+
+  uint32_t Lead(byte_type label, uint32_t mask) const noexcept {
+    return _leads[label] ? label & mask : kForeign;
+  }
+
+  uint32_t Partial(uint32_t acc, uint32_t phase) const noexcept {
+    return std::ranges::contains(_partials, PartialKey(acc, phase)) ? acc
+                                                                    : kForeign;
+  }
+
+  size_t Window(uint32_t offset) const noexcept {
+    return std::min<size_t>(size_t{offset} + _chi_size, _target.size());
+  }
+
+  int32_t WideSlotOf(uint32_t c) const noexcept {
+    int32_t slot = kZeroSlot;
+    for (const auto& wide : _wide) {
+      slot = wide.first == c ? wide.second : slot;
+    }
+    return slot;
+  }
+
+  int32_t Slot(uint32_t c) const noexcept {
+    if (c < kNarrowMax) [[likely]] {
+      return _narrow[c];
+    }
+    return WideSlotOf(c);
+  }
+
+  // `chi_max` is `1 << chi_size`, so the row offset is a shift here where
+  // `ParametricDescription::transition` has to multiply by a runtime value.
+  const ParametricDescription::transition_t& Transition(
+    uint32_t pstate, uint64_t chi) const noexcept {
+    SDB_ASSERT(chi <= _mask);
+    return _transitions[(size_t{pstate} << _chi_size) | chi];
+  }
+
+  // The first byte of `c`'s UTF-8 form, without encoding the rest of it.
+  static constexpr byte_type LeadByte(uint32_t c) noexcept {
+    if (c < 0x80) {
+      return static_cast<byte_type>(c);
+    }
+    if (c < 0x800) {
+      return static_cast<byte_type>(((c >> 6) & 0x1FU) | 0xC0U);
+    }
+    if (c < 0x10000) {
+      return static_cast<byte_type>(((c >> 12) & 0x0FU) | 0xE0U);
+    }
+    return static_cast<byte_type>(((c >> 18) & 0x07U) | 0xF0U);
+  }
+
+  uint64_t ChiAt(int32_t slot, uint32_t offset) const noexcept {
+    const uint64_t* bits = _chi.data() + static_cast<size_t>(slot) * _words;
+    const size_t word = offset / kWordBits;
+    const size_t align = offset % kWordBits;
+    return ((bits[word] >> align) |
+            ((bits[word + 1] << 1) << (kWordBits - 1 - align))) &
+           _mask;
+  }
+
+  State StepChar(State state, uint32_t c) const noexcept {
+    const auto slot = Slot(c);
+    if (state.offset < _offsets) [[likely]] {
+      std::atomic_ref<uint32_t> step{
+        _steps[size_t{state.pstate} * _stride + size_t{state.offset} * _slots +
+               static_cast<size_t>(slot)]};
+      auto packed = step.load(std::memory_order_relaxed);
+      if (packed == kUnknownStep) [[unlikely]] {
+        const auto& transition =
+          Transition(state.pstate, ChiAt(slot, state.offset));
+        packed = (transition.first << 16) | (state.offset + transition.second);
+        step.store(packed, std::memory_order_relaxed);
+      }
+      state.pstate = packed >> 16;
+      state.offset = packed & kOffsetMask;
+      state.acc = 0;
+      return state;
+    }
+    const auto& transition =
+      Transition(state.pstate, ChiAt(slot, state.offset));
+    state.pstate = transition.first;
+    state.offset += transition.second;
+    state.acc = 0;
+    return state;
+  }
+
+  using WideSlot = std::pair<uint32_t, int32_t>;
+
+  // Per code point of the target: the first byte of its UTF-8 form, which is
+  // what bounds the live alphabet, and the characteristic-vector slot it
+  // shares with its repeats.
+  struct TargetChar {
+    byte_type lead;
+    int32_t slot;
+  };
+
+  const ParametricDescription* _description;
+  std::span<const ParametricDescription::transition_t> _transitions;
+  bstring _prefix;
+  std::vector<uint32_t> _target;
+  std::vector<TargetChar> _chars;
+  std::vector<uint64_t> _chi;
+  std::vector<WideSlot> _wide;
+  std::vector<uint64_t> _partials;
+  std::array<int32_t, kNarrowMax> _narrow;
+  std::array<bool, 256> _leads{};
+  mutable std::vector<uint32_t> _steps;
+  size_t _slots{0};
+  size_t _offsets{0};
+  size_t _stride{0};
+  size_t _words{0};
+  uint32_t _chi_size;
+  uint64_t _mask;
+  byte_type _no_distance;
+};
+
+}  // namespace irs

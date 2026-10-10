@@ -1,0 +1,89 @@
+control substitution on
+
+# A TRUNCATE that lands mid-build, on the far side of the window where the
+# rebuilt group is read and flushed but not yet swapped in.
+#
+# ReplaceSegments tolerates a source segment that has gone missing because all
+# its rows were deleted, and adopts the replacement anyway -- on the grounds
+# that whatever removed those rows reaches the replacement too, "by tick if the
+# removal is still pending and through the host's own reissue if it was already
+# applied". The host's reissue is the delete log, and a TRUNCATE puts nothing
+# in it. This pins down whether the rows stay gone.
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE bft (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 50, compaction_interval = 0);
+
+statement ok
+INSERT INTO bft VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) bft;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+connection builder
+statement async ok
+CREATE INDEX bft_idx ON bft USING inverted (tag);
+
+# tuples_done == 3 means every pre-existing row is already copied into the
+# rebuilt segment, so the truncate below lands strictly after the read.
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bft'::regclass;
+----
+tuples_done
+3
+
+# In a transaction, so this is a Remove(All) against the live index rather than
+# the shard-wide Clear an autocommit TRUNCATE takes.
+connection truncater
+statement ok
+BEGIN;
+
+connection truncater
+statement ok
+TRUNCATE bft;
+
+connection truncater
+statement ok
+COMMIT;
+
+# The refresh loop applies it while the build is still parked, so it cannot ride
+# the adopt tick into the rebuilt segment.
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM bft;
+----
+n
+0
+
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+# The index entry commits with the statement, so its arrival means the build
+# finished its drain-and-swap.
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_class WHERE relname = 'bft_idx';
+----
+n
+1
+
+wait
+
+statement ok
+VACUUM (REFRESH_TABLE) bft;
+
+query
+SELECT count(*) AS n FROM bft;
+----
+n
+0
+
+statement ok
+DROP TABLE bft;

@@ -476,13 +476,11 @@ QUERY PLAN
 ╰───────────────────────╯
 
 
-# ---- A negated group mixing an index-only predicate with a shape that
-# must stay a row filter throws instead of failing later in the stub.
-statement error
+query
 SELECT id FROM ns_idx WHERE NOT (body @@ 'red' AND scope = 'a')
 ----
-db error: ERROR: negated group over nullable columns mixes index-only search predicates with a shape that must stay a row filter
-HINT: Rewrite the negation as a strict disjunction, or add `IS NOT NULL` conjuncts on the nullable columns.
+id
+3
 
 
 # ---- Degenerate negated matches across the constructor family: each

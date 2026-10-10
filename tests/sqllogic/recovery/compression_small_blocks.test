@@ -16,11 +16,11 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/csb16.db' AS c16 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', BLOCK_SIZE 16384, ROW_GROUP_SIZE 1048576);
+CREATE DATABASE c16 WITH (BLOCK_SIZE = 16384, ROW_GROUP_SIZE = 1048576);
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/csb256.db' AS c256 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1', ROW_GROUP_SIZE 1048576);
+CREATE DATABASE c256 WITH (ROW_GROUP_SIZE = 1048576);
 
 
 statement ok
@@ -212,8 +212,8 @@ hugeint_bitpacks_256k	t
 
 
 statement ok
-DETACH c16;
+DROP DATABASE c16;
 
 
 statement ok
-DETACH c256;
+DROP DATABASE c256;

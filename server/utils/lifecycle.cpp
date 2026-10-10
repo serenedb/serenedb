@@ -127,7 +127,7 @@ std::string_view DataDirArg() noexcept { return gDataDirArg; }
 std::string ResolveDataDir(std::string flag_value) {
   std::string dir = std::move(flag_value);
   if (auto p = DataDirArg(); !p.empty()) {
-    dir = std::string{p};
+    dir.assign(p);
   }
   dir.erase(dir.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
   std::error_code ec;

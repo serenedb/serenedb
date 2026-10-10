@@ -40,6 +40,7 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -52,6 +53,7 @@
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -69,8 +71,9 @@ class ProgressTracker {
     SDB_ASSERT(progress);
   }
 
-  bool operator()() {
-    if (_hits++ >= _count) {
+  bool operator()(size_t hits = 1) {
+    _hits += hits;
+    if (_hits > _count) {
       _hits = 0;
       _valid = (*_progress)();
     }
@@ -91,6 +94,7 @@ class CompoundPostings : public TermPostings {
   struct PostingsT {
     TermPostings::ptr it;
     const DocRemap* remap;
+    size_t source;
   };
   using IteratorsT = std::vector<PostingsT>;
 
@@ -100,72 +104,98 @@ class CompoundPostings : public TermPostings {
     : _progress(progress, kProgressStepDocs) {}
 
   template<typename Func>
-  void Reset(Func&& func) {
+  void Reset(Func&& func, IndexFeatures features) {
     func(_iterators);
-    _doc = doc_limits::invalid();
     _current_itr = 0;
-    _refresh.reset();
+    _at = 0;
+    _size = 0;
+    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
+    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
   }
+
+  void Clear() noexcept { _iterators.clear(); }
 
   size_t Size() const noexcept { return _iterators.size(); }
 
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
-  // Each source answers with its own positions, so every switch owes the
-  // consumer a fresh read of them.
-  void Subscribe(AttrRefresh refresh) final { _refresh = refresh; }
+  uint32_t NextDocs(doc_id_t* docs, uint32_t* freqs) final;
 
-  doc_id_t Next() final;
-
-  uint32_t GetFreq() const final {
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final {
     SDB_ASSERT(_current_itr < _iterators.size());
-    SDB_ASSERT(_iterators[_current_itr].it);
-    return _iterators[_current_itr].it->GetFreq();
+    _iterators[_current_itr].it->NextPositions(pos, offs_start, offs_len, n);
   }
 
  private:
-  std::optional<AttrRefresh> _refresh;
+  uint32_t NextLive(TermPostings& it, const DocRemap& remap, doc_id_t* docs,
+                    uint32_t* freqs);
+
   std::vector<PostingsT> _iterators;
   size_t _current_itr{0};
   ProgressTracker _progress;
+  doc_id_t _docs[doc_limits::kBlockSize];
+  uint32_t _freqs[doc_limits::kBlockSize];
+  uint32_t _at{0};
+  uint32_t _size{0};
+  bool _has_freq{false};
+  bool _has_pos{false};
 };
 
-doc_id_t CompoundPostings::Next() {
-  _progress();
-
-  if (Aborted()) {
-    _iterators.clear();
-    return _doc = doc_limits::eof();
-  }
-
-  for (bool notify = !doc_limits::valid(_doc); _current_itr < _iterators.size();
-       notify = true, ++_current_itr) {
-    auto& it_entry = _iterators[_current_itr];
-    auto& it = it_entry.it;
-    const auto& remap = *it_entry.remap;
-
-    if (!it) {
-      continue;
-    }
-
-    if (notify && _refresh) {
-      (*_refresh)(*it);
-    }
-
-    while (true) {
-      auto it_value = it->Next();
-      if (doc_limits::eof(it_value)) {
-        break;
+uint32_t CompoundPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
+  for (; _current_itr < _iterators.size(); ++_current_itr) {
+    auto& [it, remap, source] = _iterators[_current_itr];
+    uint32_t n = 0;
+    if (remap->id_map.empty()) {
+      n = it->NextDocs(docs, freqs);
+      const auto shift = remap->base_id - doc_limits::min();
+      for (uint32_t i = 0; i != n; ++i) {
+        docs[i] += shift;
       }
-      if (remap.IsMasked(it_value)) {
-        continue;
-      }
-      return _doc = remap.Remap(it_value);
+    } else {
+      n = NextLive(*it, *remap, docs, freqs);
     }
-    it.reset();
+    if (n != 0) {
+      if (!_progress(n)) {
+        _iterators.clear();
+        return 0;
+      }
+      return n;
+    }
   }
+  return 0;
+}
 
-  return _doc = doc_limits::eof();
+uint32_t CompoundPostings::NextLive(TermPostings& it, const DocRemap& remap,
+                                    doc_id_t* docs, uint32_t* freqs) {
+  while (true) {
+    if (_at == _size) {
+      _size = it.NextDocs(_docs, _freqs);
+      _at = 0;
+      if (_size == 0) {
+        return 0;
+      }
+    }
+    uint64_t skip = 0;
+    for (; _at != _size && remap.IsMasked(_docs[_at]); ++_at) {
+      if (_has_pos) {
+        skip += _freqs[_at];
+      }
+    }
+    if (skip != 0) {
+      it.SkipPositions(skip);
+    }
+    uint32_t n = 0;
+    for (; _at != _size && !remap.IsMasked(_docs[_at]); ++_at, ++n) {
+      docs[n] = remap.Remap(_docs[_at]);
+      if (_has_freq) {
+        freqs[n] = _freqs[_at];
+      }
+    }
+    if (n != 0) {
+      return n;
+    }
+  }
 }
 
 class CompoundTermIterator : public TermOnlyIterator {
@@ -185,6 +215,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   void Reset(const FieldMeta& meta) noexcept {
     _current_term = {};
     _meta = &meta;
+    _doc_itr.Clear();
     _term_iterator_mask.clear();
     _term_iterators.clear();
     _min_term.clear();
@@ -222,6 +253,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   struct TermIteratorImpl {
     SeekTermIterator::ptr it;
     const DocRemap* remap;
+    mutable TermPostings::ptr postings;
   };
 
   bytes_view _current_term;
@@ -292,20 +324,27 @@ bool CompoundTermIterator::next() {
 TermPostings::ptr CompoundTermIterator::postings(
   IndexFeatures /*features*/) const {
   auto add_iterators = [this](CompoundPostings::IteratorsT& itrs) {
+    const auto* const empty = TermPostings::empty().get();
+    for (auto& entry : itrs) {
+      if (entry.it.get() != empty) {
+        _term_iterators[entry.source].postings = std::move(entry.it);
+      }
+    }
     itrs.clear();
     itrs.reserve(_term_iterator_mask.size());
     for (auto& itr_id : _term_iterator_mask) {
       auto& term_itr = _term_iterators[itr_id];
       SDB_ASSERT(term_itr.it);
-      auto it = term_itr.it->postings(Meta().index_features);
+      auto it = term_itr.it->ReusePostings(Meta().index_features,
+                                           std::move(term_itr.postings));
       SDB_ASSERT(it);
       if (it) [[likely]] {
-        itrs.emplace_back(std::move(it), term_itr.remap);
+        itrs.emplace_back(std::move(it), term_itr.remap, itr_id);
       }
     }
   };
 
-  _doc_itr.Reset(add_iterators);
+  _doc_itr.Reset(add_iterators, Meta().index_features);
   return memory::to_managed<TermPostings>(_doc_itr);
 }
 
@@ -471,90 +510,101 @@ doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
 
 const MergeWriter::FlushProgress kProgressNoop = [] { return true; };
 
+struct NormPiece {
+  const MergeSource* source;
+  const NormColumnReader* reader;
+  size_t region;
+  NormStats planned;
+};
+
+constexpr size_t kNormMergeChunk = 64 * 1024;
+
+void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
+                    std::vector<uint32_t>& values) {
+  if (piece.reader == nullptr) {
+    for (auto left = piece.planned.rows; left != 0;) {
+      const auto n = std::min<uint64_t>(left, kNormMergeChunk);
+      values.assign(n, 0);
+      writer.Write(values);
+      left -= n;
+    }
+    return;
+  }
+  const auto& src = *piece.source;
+  const auto& region = piece.reader->Region(piece.region);
+  const bool has_mask = HasRemovals(src.reader->Meta());
+  auto mask = src.reader->MaskedDocs();
+  for (auto doc = region.first_doc; doc != region.end_doc;) {
+    const auto n = std::min<size_t>(region.end_doc - doc, kNormMergeChunk);
+    values.resize(n);
+    piece.reader->Decode(doc, n, values.data());
+    if (has_mask) {
+      size_t live = 0;
+      for (size_t i = 0; i != n; ++i) {
+        values[live] = values[i];
+        live += !mask.Contains(static_cast<doc_id_t>(doc + i));
+      }
+      values.resize(live);
+    }
+    writer.Write(values);
+    doc += static_cast<doc_id_t>(n);
+  }
+}
+
 field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
                                     std::span<const MergeSource> sources,
                                     const IndexFieldOptions* field_options) {
+  std::vector<NormPiece> pieces;
   bool any_source_has_norm = false;
   for (const auto& src : sources) {
-    if (!src.col_reader) {
-      continue;
-    }
-    const auto* source_terms = src.reader->field(id);
-    if (source_terms && field_limits::valid(source_terms->meta().norm) &&
-        src.col_reader->NormColumn(source_terms->meta().norm) != nullptr) {
-      any_source_has_norm = true;
-      break;
-    }
-  }
-  field_id norm_id = field_limits::invalid();
-  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  if (any_source_has_norm && field_options) {
-    norm_id = field_options->GetNormColumnId(id);
-    row_group_size = field_options->row_group_size;
-  }
-  field_id out_id = field_limits::invalid();
-  NormColumnWriter* norm_writer = nullptr;
-  uint64_t merged_row = 0;
-  for (const auto& src : sources) {
-    const NormColumnReader* norm_reader = nullptr;
+    const NormColumnReader* reader = nullptr;
     if (src.col_reader) {
       if (const auto* source_terms = src.reader->field(id);
           source_terms && field_limits::valid(source_terms->meta().norm)) {
-        norm_reader = src.col_reader->NormColumn(source_terms->meta().norm);
+        reader = src.col_reader->NormColumn(source_terms->meta().norm);
       }
     }
-
-    if (!norm_reader) {
-      merged_row += src.alive_count;
-      if (norm_writer) {
-        norm_writer->PadTo(merged_row);
+    if (!reader) {
+      if (src.alive_count != 0) {
+        pieces.push_back(
+          {&src, nullptr, 0, NormStats{.rows = src.alive_count, .min = 0}});
       }
       continue;
     }
-
-    if (!norm_writer) {
-      SDB_ENSURE(field_limits::valid(norm_id),
-                 "MergeNormColumnFromSources: GetNormColumnId did not "
-                 "mint a valid id for field ",
-                 id);
-      out_id = norm_id;
-      norm_writer = &col_writer.OpenNormColumn(out_id, row_group_size);
-      norm_writer->PadTo(merged_row);
-    }
-
-    SDB_ASSERT(norm_reader->RowCount() == src.reader->docs_count());
-    const bool has_mask = src.mask && !src.mask->empty();
-    for (size_t rg = 0, rg_count = norm_reader->RowGroupCount(); rg < rg_count;
-         ++rg) {
-      const auto bytes = norm_reader->RowGroupBytes(rg);
-      const auto byte_size = norm_reader->ByteSize(rg);
-      const auto rg_first_row = norm_reader->RowGroupFirstRow(rg);
-      const auto n = norm_reader->RowGroupRowCount(rg);
-      if (!has_mask) {
-        norm_writer->AppendBytes(merged_row, bytes.data(), n, byte_size);
-        merged_row += n;
-        continue;
-      }
-      size_t run_start = 0;
-      auto flush_run = [&](size_t run_end) {
-        if (run_end > run_start) {
-          const auto run = run_end - run_start;
-          norm_writer->AppendBytes(
-            merged_row, bytes.data() + run_start * byte_size, run, byte_size);
-          merged_row += run;
-        }
-      };
-      for (size_t i = 0; i < n; ++i) {
-        const auto src_doc =
-          static_cast<doc_id_t>(rg_first_row + i + doc_limits::min());
-        if (src.mask->contains(src_doc)) {
-          flush_run(i);
-          run_start = i + 1;
-        }
-      }
-      flush_run(n);
+    SDB_ASSERT(reader->RowCount() == src.reader->docs_count());
+    any_source_has_norm = true;
+    for (size_t r = 0; r != reader->RegionCount(); ++r) {
+      pieces.push_back({&src, reader, r, reader->Stats(r)});
     }
   }
+  if (!any_source_has_norm || !field_options) {
+    return field_limits::invalid();
+  }
+  const auto out_id = field_options->GetNormColumnId(id);
+  SDB_ENSURE(field_limits::valid(out_id),
+             "MergeNormColumnFromSources: GetNormColumnId did not "
+             "mint a valid id for field ",
+             id);
+  auto& writer = col_writer.StreamNormColumn(out_id);
+  std::vector<uint32_t> values;
+  for (size_t i = 0; i != pieces.size();) {
+    auto planned = pieces[i].planned;
+    const auto layout = PickNormLayout(planned);
+    size_t j = i + 1;
+    for (; j != pieces.size(); ++j) {
+      const auto next = PickNormLayout(pieces[j].planned);
+      if (next.bits != layout.bits || next.value != layout.value) {
+        break;
+      }
+      planned.Merge(pieces[j].planned);
+    }
+    writer.OpenRegion(planned);
+    for (; i != j; ++i) {
+      MergeNormPiece(pieces[i], writer, values);
+    }
+    writer.CloseRegion();
+  }
+  writer.Finalize();
   return out_id;
 }
 
@@ -599,9 +649,8 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
                  const MergeWriter::FlushProgress& progress,
                  IResourceManager& rm, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
-  auto field_writer = std::make_unique<burst_trie::FieldWriter>(
-    meta.codec->get_postings_writer(/*compaction=*/true, rm),
-    /*compaction=*/true, rm);
+  auto field_writer =
+    std::make_unique<burst_trie::FieldWriter>(/*compaction=*/true, rm);
   field_writer->SetIdxWriter(idx);
   field_writer->prepare(flush_state);
 
@@ -666,7 +715,7 @@ bool ComputeDocMappingsAndFieldMeta(
       reader_ctx.remap.base_id = base_id;
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
-      reader_ctx.remap.mask = reader.docs_mask();
+      reader_ctx.remap.mask = reader.MaskedDocs();
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -693,7 +742,6 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
     sources.push_back(MergeSource{
       .reader = ctx.reader,
       .col_reader = ctx.reader->GetColReader(),
-      .mask = ctx.reader->docs_mask(),
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
@@ -713,8 +761,6 @@ auto MergeWriter::Flush(SegmentMeta& segment,
                         const FlushProgress& progress /*= {}*/,
                         const AnnBuildEnv* env /*= nullptr*/)
   -> yaclib::Future<bool> {
-  SDB_ASSERT(segment.codec);
-
   bool result = false;
   Finally segment_invalidator = [&result, &segment]() noexcept {
     if (!result) [[unlikely]] {
@@ -762,7 +808,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  IdxWriter idx{track_dir, segment.name, _db};
+  IdxWriter idx{track_dir, segment.name};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {

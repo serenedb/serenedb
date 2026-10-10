@@ -29,8 +29,8 @@
 
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -110,7 +110,10 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
 }
 
 std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
-                                  const DocumentMask* mask, doc_id_t end) {
+                                  const SubReader& segment) {
+  const auto it_mask = segment.MaskedDocs();
+  const auto end =
+    doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   std::vector<ScoreDoc> hits;
   hits.reserve(found.size());
   for (const auto& c : found) {
@@ -119,7 +122,7 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
     // the segment is a torn read rather than an answer.
     SDB_ENSURE(doc >= doc_limits::min() && doc < end,
                "an hnsw hit is outside its segment");
-    if (mask != nullptr && mask->contains(doc)) {
+    if (it_mask.Contains(doc)) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});
@@ -130,7 +133,6 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
 }
 
 }  // namespace
-
 namespace {
 
 // The set the segment's predicates fold into for the graph walk: the inner
@@ -142,14 +144,16 @@ namespace {
 detail::LazyBitset MakeSet(const QueryBuilder* inner,
                            detail::TableFilter* table, doc_id_t docs_count) {
   if (inner == nullptr) {
-    return detail::LazyBitset{docs_count, nullptr, table};
+    return detail::LazyBitset{docs_count, fill::DocsMask{nullptr}, table};
   }
   auto node = inner->PlanFill({}, ScoreMergeType::Noop);
   SDB_ASSERT(node);
   if (auto* folded = node->Folded(); folded != nullptr) {
-    return detail::LazyBitset{std::move(*folded), nullptr, table};
+    return detail::LazyBitset{std::move(*folded), fill::DocsMask{nullptr},
+                              table};
   }
-  return detail::LazyBitset{std::move(node), docs_count, nullptr, table};
+  return detail::LazyBitset{std::move(node), docs_count,
+                            fill::DocsMask{nullptr}, table};
 }
 
 // A predicate only the columnstore answers, asked one hop at a time.
@@ -217,7 +221,8 @@ class WalkFilter {
     }
     if (!Bit(_s.known, node)) {
       // Reached without a hop of its own: the seed of the walk, or a node a
-      // mode admits outside the batch. One question, still ascending on its own.
+      // mode admits outside the batch. One question, still ascending on its
+      // own.
       Mark(node);
       if (_table->Admits(node + doc_limits::min())) {
         Set(_s.pass, node);
@@ -249,14 +254,17 @@ class WalkFilter {
   bool _points;
 };
 
-// A predicate the term index answers, conjoined with one only the columnstore answers.
+// A predicate the term index answers, conjoined with one only the columnstore
+// answers.
 //
-// Building the set with both applies the column predicate to every doc the postings admit, in the
-// set's own constructor, before anything has decided how the query will be answered: on sift at a
-// million rows the conjunction row costs 1.53 ms more than the equality row of the same final
-// selectivity, which is a hundred thousand scattered column reads for a walk that reaches a few
-// hundred nodes. The set is built from the postings alone here, and the column predicate is asked
-// only about the nodes the walk reaches that the postings already admit.
+// Building the set with both applies the column predicate to every doc the
+// postings admit, in the set's own constructor, before anything has decided how
+// the query will be answered: on sift at a million rows the conjunction row
+// costs 1.53 ms more than the equality row of the same final selectivity, which
+// is a hundred thousand scattered column reads for a walk that reaches a few
+// hundred nodes. The set is built from the postings alone here, and the column
+// predicate is asked only about the nodes the walk reaches that the postings
+// already admit.
 class InnerAndTableFilter {
  public:
   InnerAndTableFilter(detail::LazyBitset& inner, const WalkFilter& table,
@@ -287,12 +295,13 @@ class InnerAndTableFilter {
 // The hop hook is found by shape, so a signature that drifts apart would leave
 // the walk asking one question per node with nothing to say it had stopped
 // batching. This is what that would cost: a positioned column read per node.
-static_assert(requires(const WalkFilter& f) {
-  f.Prepare(std::span<const uint32_t>{});
-}, "WalkFilter::Prepare must match the hop hook HnswExpandLevel looks for");
-static_assert(requires(const InnerAndTableFilter& f) {
-  f.Prepare(std::span<const uint32_t>{});
-}, "InnerAndTableFilter::Prepare must match it too");
+static_assert(
+  requires(const WalkFilter& f) { f.Prepare(std::span<const uint32_t>{}); },
+  "WalkFilter::Prepare must match the hop hook HnswExpandLevel looks for");
+static_assert(
+  requires(const InnerAndTableFilter& f) {
+    f.Prepare(std::span<const uint32_t>{});
+  }, "InnerAndTableFilter::Prepare must match it too");
 
 // The walk computes on the order of `ef * m0` distances unfiltered; with a
 // predicate admitting a share `p` of the graph it needs about `1 / p` times
@@ -380,8 +389,8 @@ long double HnswTwoHopShare(uint64_t matches, uint64_t nodes, uint32_t m0,
                             uint32_t record_size) noexcept {
   const auto p = std::min<long double>(
     1, static_cast<long double>(matches) / static_cast<long double>(nodes));
-  const auto crossed = static_cast<long double>(m0) * sizeof(uint32_t) +
-                       kWalkCandidateOverhead;
+  const auto crossed =
+    static_cast<long double>(m0) * sizeof(uint32_t) + kWalkCandidateOverhead;
   const auto scored =
     static_cast<long double>(record_size) + kWalkCandidateOverhead;
   return p + (1 - p) * crossed / scored;
@@ -459,9 +468,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   SDB_ASSERT(_inner != nullptr || table != nullptr);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  // Which plan answers this decides how the set is built, so the count comes first and costs
-  // nothing: a bounded sample of the set stands in, and folding to decide costs more than either
-  // plan does.
+  // Which plan answers this decides how the set is built, so the count comes
+  // first and costs nothing: a bounded sample of the set stands in, and folding
+  // to decide costs more than either plan does.
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
   bool bounded = true;
@@ -481,18 +490,17 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
              ? HnswFilterMode::Scan
              : HnswFilterMode::Walk;
   }
-  // A walk asks the columnstore about the nodes it reaches; only a scan needs the predicate applied
-  // to the whole segment up front, which is what building the set with the table does.
-  // Where the walk is wide enough that probing costs more than the fold it
-  // saves, the walk still runs -- against the folded set, one bit test a node.
-  const auto point_read = table == nullptr || two_hop
-                            ? detail::PointRead::None
-                            : table->PointReads();
-  const auto probe_ratio = point_read == detail::PointRead::Row
-                             ? kPointReadFoldRatio
-                           : point_read == detail::PointRead::Vector
-                             ? kVectorPointReadFoldRatio
-                             : kProbeFoldRatio;
+  // A walk asks the columnstore about the nodes it reaches; only a scan needs
+  // the predicate applied to the whole segment up front, which is what building
+  // the set with the table does. Where the walk is wide enough that probing
+  // costs more than the fold it saves, the walk still runs -- against the
+  // folded set, one bit test a node.
+  const auto point_read =
+    table == nullptr || two_hop ? detail::PointRead::None : table->PointReads();
+  const auto probe_ratio =
+    point_read == detail::PointRead::Row      ? kPointReadFoldRatio
+    : point_read == detail::PointRead::Vector ? kVectorPointReadFoldRatio
+                                              : kProbeFoldRatio;
   const bool ask_per_hop =
     table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk &&
     (_column_filter == HnswColumnFilter::Read ||
@@ -504,9 +512,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     // predicate folded into it -- is not the set it walks against.
     probe.reset();
   }
-  auto set = probe ? std::move(*probe)
-                   : MakeSet(_inner.get(), ask_per_hop ? nullptr : table,
-                             docs_count);
+  auto set =
+    probe ? std::move(*probe)
+          : MakeSet(_inner.get(), ask_per_hop ? nullptr : table, docs_count);
   const auto admit = [&](uint32_t node) {
     return set.Contains(static_cast<doc_id_t>(node) + doc_limits::min());
   };
@@ -568,8 +576,9 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     if (done) {
       return;
     }
-    // The walk gave up, so the scan answers exactly. It needs the predicate over the whole set,
-    // which this set was built without, and the scans are wherever the last hop left them.
+    // The walk gave up, so the scan answers exactly. It needs the predicate
+    // over the whole set, which this set was built without, and the scans are
+    // wherever the last hop left them.
     table->Rewind();
     set = MakeSet(_inner.get(), table, docs_count);
   } else if (run(admit)) {
@@ -598,9 +607,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
                                                _max_results, scratch);
                  });
                });
-  return CollectHits(
-    scratch.nearest, _segment.docs_mask(),
-    doc_limits::min() + static_cast<doc_id_t>(_segment.docs_count()));
+  return CollectHits(scratch.nearest, _segment);
 }
 
 }  // namespace irs

@@ -28,8 +28,8 @@
 #include <faiss/impl/RaBitQUtils.h>
 #include <faiss/impl/RaBitQuantizerMultiBit.h>
 #include <faiss/impl/ScalarQuantizer.h>
-#include <faiss/impl/scalar_quantizer/sq8_batch.h>
 #include <faiss/impl/fast_scan/fast_scan.h>
+#include <faiss/impl/scalar_quantizer/sq8_batch.h>
 #include <faiss/utils/AlignedTable.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/ordered_key_value.h>
@@ -40,6 +40,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <core_functions/array_kernels.hpp>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -53,8 +54,8 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 
@@ -271,12 +272,9 @@ struct PanoramaStatsHeader {
 
 void RotateQuery(const byte_type* rotation, const float* q, float* out,
                  uint32_t d) {
-  const auto* qb = reinterpret_cast<const byte_type*>(q);
-  const auto width = static_cast<uint16_t>(d);
-  const size_t stride = size_t{d} * sizeof(float);
+  const auto* rows = reinterpret_cast<const float*>(rotation);
   for (uint32_t i = 0; i < d; ++i) {
-    out[i] = vector::DotProductImpl<float, float>::Compute(
-      rotation + i * stride, qb, width);
+    out[i] = duckdb::InnerProductOp::Operation(rows + size_t{i} * d, q, d);
   }
 }
 constexpr uint32_t PanoramaLevels(uint32_t d) noexcept {
@@ -664,8 +662,7 @@ class ScalarQuantizerStats final : public QuantizerStats {
   ScalarQuantizerStats(uint32_t d, VectorQuantization quant,
                        std::span<const byte_type> stats)
     : _sq{d, FaissScalarType(quant)}, _quant{quant} {
-    _sq.trained.assign(
-      ScalarQuantizerWriter::TrainedSize(quant, d), 0.f);
+    _sq.trained.assign(ScalarQuantizerWriter::TrainedSize(quant, d), 0.f);
     const size_t want = _sq.trained.size() * sizeof(float);
     SDB_ASSERT(stats.size() >= want);
     std::memcpy(_sq.trained.data(), stats.data(), want);
@@ -852,10 +849,8 @@ std::shared_ptr<const QuantizerCodebook> ScalarQuantizerStats<M>::MakeCodebook(
 }
 
 float TurboQuantNorm(const float* v, uint32_t d) {
-  return std::max(
-    std::sqrt(vector::L2Space<float, float, float>::Norm(
-      reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d))),
-    std::numeric_limits<float>::epsilon());
+  return std::max(duckdb::L2NormOp::Operation(v, d),
+                  std::numeric_limits<float>::epsilon());
 }
 
 struct TurboQuantLayout {
@@ -1290,8 +1285,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     const float norm = TurboQuantNorm(_res.data(), _lay.rd);
     _norms[lane] = norm;
     if constexpr (M == VectorMetric::L2Sqr) {
-      _xnorm2[lane] = vector::L2Space<float, float, float>::Norm(
-        reinterpret_cast<const byte_type*>(vec), static_cast<uint16_t>(_lay.d));
+      _xnorm2[lane] = duckdb::NormSquaredOp::Operation(vec, _lay.d);
     }
     const float scale = _sqrt_rd / norm;
     for (uint32_t j = 0; j < _lay.rd; ++j) {
@@ -1334,11 +1328,8 @@ class TurboQuantizerWriter final : public QuantizerWriter {
       return;
     }
 
-    _gammas[lane] = std::sqrt(vector::L2Space<float, float, float>::Norm(
-      reinterpret_cast<const byte_type*>(_res.data()),
-      static_cast<uint16_t>(_lay.rd)));
-    TurboQuantProject(_fwht_signs, _res.data(), _proj.data(),
-                      _lay.rd);
+    _gammas[lane] = duckdb::L2NormOp::Operation(_res.data(), _lay.rd);
+    TurboQuantProject(_fwht_signs, _res.data(), _proj.data(), _lay.rd);
     uint8_t* qjl = _code2.data() + lane * size_t{_lay.code2_bytes};
     for (uint32_t mi = 0; mi < _lay.m2; ++mi) {
       uint8_t nib = 0;
@@ -1486,9 +1477,7 @@ class TurboQuantizerStats final : public QuantizerStats {
   const TurboQuantLayout& Layout() const noexcept { return _lay; }
   const float* Centroids() const noexcept { return _sq->trained.data(); }
   const std::vector<float>& Signs() const noexcept { return _signs; }
-  const std::vector<float>& FwhtSigns() const noexcept {
-    return _fwht_signs;
-  }
+  const std::vector<float>& FwhtSigns() const noexcept { return _fwht_signs; }
   const std::vector<float>& EcScale() const noexcept { return _ec_scale; }
   const std::vector<float>& EcShift() const noexcept { return _ec_shift; }
 
@@ -1539,9 +1528,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
       }
     }
     if constexpr (M == VectorMetric::L2Sqr) {
-      _query_norm2 = vector::L2Space<float, float, float>::Norm(
-        reinterpret_cast<const byte_type*>(_query.data()),
-        static_cast<uint16_t>(lay.d));
+      _query_norm2 = duckdb::NormSquaredOp::Operation(_query.data(), lay.d);
     }
     BuildMseLut();
     if (lay.full) {
@@ -2150,9 +2137,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
         for (uint32_t j = 0; j < _d; ++j) {
           _dec[j] += _centroid[j];
         }
-        _norms[_coded + i] = vector::L2Space<float, float, float>::Norm(
-          reinterpret_cast<const byte_type*>(_dec.data()),
-          static_cast<uint16_t>(_d));
+        _norms[_coded + i] = duckdb::NormSquaredOp::Operation(_dec.data(), _d);
       }
     }
     _coded = _lane;
@@ -2236,9 +2221,8 @@ class ProductQuantizerCodebook final : public QuantizerCodebook {
     pq.compute_inner_prod_table(_query.data(), ip_table.data());
     _lut.Build(ip_table.data(), pq.M, ksub);
     if constexpr (M == VectorMetric::L2Sqr) {
-      _query_norm2 = vector::L2Space<float, float, float>::Norm(
-        reinterpret_cast<const byte_type*>(_query.data()),
-        static_cast<uint16_t>(_query.size()));
+      _query_norm2 =
+        duckdb::NormSquaredOp::Operation(_query.data(), _query.size());
     }
   }
 
@@ -2399,8 +2383,7 @@ RaBitQLayout MakeRaBitQLayout(uint32_t d, uint32_t nb_bits,
   l.ex_code_size = (l.rd * l.ex_bits + 7) / 8;
   l.row_major = row_major;
   l.record_size = (row_major ? l.row_code_bytes : l.nsq / 2) + l.storage +
-                  static_cast<uint32_t>(sizeof(float)) *
-                    (row_major ? 2U : 1U);
+                  static_cast<uint32_t>(sizeof(float)) * (row_major ? 2U : 1U);
   return l;
 }
 
@@ -2558,13 +2541,12 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
   }
 
   void EncodeGrouped(const float* vec, size_t lane) {
-    _cs[lane] = EncodeVector(vec, _aux.data() + lane * size_t{_lay.storage},
-                             nullptr,
-                             [this, lane](uint32_t sq, uint8_t nib) {
-                               faiss::pq4_set_packed_element(
-                                 _packed.data(), nib, kFastScanBbs, _lay.nsq,
-                                 lane, sq);
-                             });
+    _cs[lane] =
+      EncodeVector(vec, _aux.data() + lane * size_t{_lay.storage}, nullptr,
+                   [this, lane](uint32_t sq, uint8_t nib) {
+                     faiss::pq4_set_packed_element(
+                       _packed.data(), nib, kFastScanBbs, _lay.nsq, lane, sq);
+                   });
   }
 
   /// One self-contained record: sign bytes in dimension order, then the aux
@@ -2940,8 +2922,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
         reinterpret_cast<const faiss::rabitq_utils::ExtraBitsFactors*>(
           ex_code + _lay.ex_code_size);
       out[i] = faiss::rabitq_utils::compute_full_multibit_distance(
-        signs(i), ex_code, *ex_fac, _q_res.data(), qr_base, _rd,
-        _lay.ex_bits,
+        signs(i), ex_code, *ex_fac, _q_res.data(), qr_base, _rd, _lay.ex_bits,
         M == VectorMetric::L2Sqr ? faiss::MetricType::METRIC_L2
                                  : faiss::MetricType::METRIC_INNER_PRODUCT);
     }

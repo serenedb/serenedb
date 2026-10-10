@@ -24,6 +24,7 @@
 #include <cctype>
 #include <duckdb.hpp>
 #include <format>
+#include <iresearch/analysis/text/case/case.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <unordered_map>
 
@@ -89,18 +90,17 @@ SqlVerdict SqlOracle::Evaluate(const std::string& expression,
   try {
     duckdb::vector<duckdb::Value> params;
     params.emplace_back(std::string{value});
-    auto result = stmt->Execute(params, false);
+    auto result = stmt->Execute(params);
     if (result->HasError()) {
       out.error = result->GetError();
       return out;
     }
-    auto& rows = result->Cast<duckdb::MaterializedQueryResult>();
-    if (rows.RowCount() != 1 || rows.ColumnCount() != 1) {
+    if (result->RowCount() != 1 || result->ColumnCount() != 1) {
       out.error = std::format("oracle query returned {} rows x {} columns",
-                              rows.RowCount(), rows.ColumnCount());
+                              result->RowCount(), result->ColumnCount());
       return out;
     }
-    const auto cell = rows.GetValue(0, 0);
+    const auto cell = result->Collection().GetValue(0, 0);
     if (cell.IsNull()) {
       out.kind = SqlVerdict::Kind::Rejected;
       return out;
@@ -141,9 +141,18 @@ bool AllAscii(std::string_view value) noexcept {
     value, [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
 }
 
-std::string Convert(std::string_view in, irs::Case convert) {
+std::string Convert(std::string_view in, irs::Case convert,
+                    bool unicode_case = false) {
   std::string out{in};
   if (convert == irs::Case::None) {
+    return out;
+  }
+  if (unicode_case && !AllAscii(in)) {
+    out.resize(irs::analysis::casing::CaseConvertUtf8Bound(in.size()));
+    auto* dst = reinterpret_cast<irs::byte_type*>(out.data());
+    out.resize(convert == irs::Case::Lower
+                 ? irs::analysis::casing::CaseConvertUtf8<true>(in, dst)
+                 : irs::analysis::casing::CaseConvertUtf8<false>(in, dst));
     return out;
   }
   for (auto& c : out) {
@@ -252,8 +261,9 @@ std::optional<std::vector<ModelToken>> ModelTokens(
           ++i;
         }
         if (i != begin) {
-          out.push_back(ModelToken{
-            Convert(value.substr(begin, i - begin), params.convert), pos++});
+          out.push_back(ModelToken{Convert(value.substr(begin, i - begin),
+                                           params.convert, params.unicode_case),
+                                   pos++});
         }
       }
       return out;

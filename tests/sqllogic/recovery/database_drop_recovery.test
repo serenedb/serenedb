@@ -16,8 +16,6 @@ statement ok
 CREATE SCHEMA vedernikoff_iceberg_lake;
 
 
-# SERIAL table -- its owned sequence triggers the crash fault when the
-# cascade drop walks TableDrop::Finalize.
 statement ok
 CREATE TABLE vedernikoff_iceberg_lake.anchor (
   id SERIAL PRIMARY KEY,

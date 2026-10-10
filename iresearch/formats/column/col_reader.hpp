@@ -47,12 +47,10 @@ namespace irs {
 class ColumnReader;
 class NormColumnReader;
 
-inline constexpr std::string_view kFormatName = "iresearch_col";
-inline constexpr int32_t kFormatVersion = 0;
 inline constexpr std::string_view kFormatExt = "col";
 
-inline constexpr duckdb::field_id_t kFooterSlotColumns = 100;
-inline constexpr duckdb::field_id_t kFooterSlotNormColumns = 101;
+inline constexpr duckdb::field_id_t kColFieldColumns = 0;
+inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
 
 inline std::string FileName(std::string_view segment_name) {
   return absl::StrCat(segment_name, ".", kFormatExt);
@@ -74,7 +72,6 @@ class ColReader final {
     return _columns;
   }
 
-  bool HasNormColumn(field_id id) const noexcept;
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
@@ -88,7 +85,7 @@ class ColReader final {
   ReadContext _ctx;
   std::vector<std::unique_ptr<ColumnReader>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnReader*> _by_id;
-  std::vector<std::unique_ptr<NormColumnReader>> _norm_readers;
+  std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;
   irs::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
 };
 

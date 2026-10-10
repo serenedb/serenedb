@@ -24,8 +24,11 @@
 
 namespace sdb::search {
 
-unsigned WriterGenerations::Register() {
+std::optional<unsigned> WriterGenerations::Register() {
   absl::MutexLock lock{&_mutex};
+  if (_truncating) {
+    return std::nullopt;
+  }
   const auto slot = _generation & 1U;
   ++_writers[slot];
   return slot;
@@ -38,6 +41,22 @@ void WriterGenerations::Deregister(unsigned slot) noexcept {
   if (--_writers[slot] == 0) {
     _cv.SignalAll();
   }
+}
+
+bool WriterGenerations::ClaimTruncate() {
+  absl::MutexLock lock{&_mutex};
+  SDB_ASSERT(_writers[0] + _writers[1] > 0,
+             "a truncating transaction registers as a writer first");
+  if (_truncating || _writers[0] + _writers[1] != 1) {
+    return false;
+  }
+  _truncating = true;
+  return true;
+}
+
+void WriterGenerations::ReleaseTruncate() noexcept {
+  absl::MutexLock lock{&_mutex};
+  _truncating = false;
 }
 
 bool WriterGenerations::Drain(absl::FunctionRef<bool()> cancelled,

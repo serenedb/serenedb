@@ -154,7 +154,7 @@ class Tokenizer {
     sink.BeginValue(doc, value.GetSize());
     const bool ok = Fill(value, sink, ctx);
     if (!ok) [[unlikely]] {
-      sink.RewindValue();
+      sink.RejectValue();
     }
     sink.EndValue();
     return ok;
@@ -162,6 +162,37 @@ class Tokenizer {
 
   virtual void Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
                     doc_id_t first_doc, TokenSink& sink, FillCtx ctx) = 0;
+
+  virtual bool FillTokens(std::span<const duckdb::string_t> /*tokens*/,
+                          TokenSink& /*sink*/, FillCtx /*ctx*/) {
+    return false;
+  }
+
+  bool FillTokens(std::span<const duckdb::string_t> tokens, doc_id_t doc,
+                  TokenSink& sink, FillCtx ctx) {
+    uint32_t size = 0;
+    for (const auto& token : tokens) {
+      size += token.GetSize();
+    }
+    sink.BeginValue(doc, size);
+    const bool ok = FillTokens(tokens, sink, ctx);
+    if (!ok) [[unlikely]] {
+      sink.RejectValue();
+    }
+    sink.EndValue();
+    return ok;
+  }
+
+  virtual void FillRow(const duckdb::UnifiedVectorFormat& values,
+                       duckdb::idx_t offset, uint32_t count, doc_id_t doc,
+                       TokenSink& sink, FillCtx ctx) {
+    const auto* data =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(values);
+    ForEachValidRow(values, offset, count, [&](uint32_t, uint32_t idx) {
+      Fill(data[idx], doc, sink, ctx);
+      return true;
+    });
+  }
 };
 
 // The generic per-block preparation step: derive only the facts some
@@ -191,12 +222,23 @@ template<typename Impl>
 class TypedTokenizer : public Tokenizer {
  public:
   using Tokenizer::Fill;
+  using Tokenizer::FillTokens;
 
   TypeInfo::type_id type() const noexcept final {
     return irs::Type<Impl>::id();
   }
 
   constexpr std::tuple<> PrepareBatch(BlockTraits) { return {}; }
+
+  IRS_NO_INLINE void FillRow(const duckdb::UnifiedVectorFormat& values,
+                             duckdb::idx_t offset, uint32_t count, doc_id_t doc,
+                             TokenSink& sink, FillCtx ctx) override {
+    auto* impl = static_cast<Impl*>(this);
+    FillValues(*impl, values, offset, count, doc, sink, ctx,
+               [&]<TokenLayout Layout, auto... Tags>(duckdb::string_t value) {
+                 return impl->template DoFill<Layout, Tags...>(value, sink);
+               });
+  }
 
   IRS_NO_INLINE bool Fill(const duckdb::string_t& value, TokenSink& sink,
                           FillCtx ctx) final {
@@ -227,12 +269,40 @@ class TypedTokenizer : public Tokenizer {
                        sink.BeginValue(first_doc + i, data[idx].GetSize());
                        if (!impl->template DoFill<layout_tag(), tags()...>(
                              data[idx], sink)) [[unlikely]] {
-                         sink.RewindValue();
+                         sink.RejectValue();
                        }
                        sink.EndValue();
                        return true;
                      });
                  });
+  }
+
+ protected:
+  template<typename AppendValue>
+  static bool FillValues(Impl& self, const duckdb::UnifiedVectorFormat& values,
+                         duckdb::idx_t offset, uint32_t count, doc_id_t doc,
+                         TokenSink& sink, FillCtx ctx, AppendValue&& append) {
+    const auto* data =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(values);
+    bool filled = false;
+    ForEachValidRow(values, offset, count, [&](uint32_t, uint32_t idx) {
+      const auto& value = data[idx];
+      const auto traits =
+        ComputeValueTraits(value, self.Impl::WantedBlockTraits(), ctx.traits);
+      sink.BeginValue(doc, value.GetSize());
+      const bool ok = DispatchFill(
+        self, ctx.layout, traits,
+        [&](auto layout_tag, auto... tags) IRS_FORCE_INLINE {
+          return append.template operator()<layout_tag(), tags()...>(value);
+        });
+      if (!ok) [[unlikely]] {
+        sink.RejectValue();
+      }
+      filled |= ok;
+      sink.EndValue();
+      return true;
+    });
+    return filled;
   }
 };
 

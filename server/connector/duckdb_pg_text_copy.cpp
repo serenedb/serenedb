@@ -79,7 +79,7 @@ void ApplyTextCopyOption(TextCopyOptions& out, std::string_view key,
     }
     out.delim = value.front();
   } else if (key == "null" || key == "nullstr") {
-    out.null_str = std::string{value};
+    out.null_str.assign(value);
   } else if (key == "header") {
     out.header = ParseCopyBool(value);
   } else if (key == "quote" || key == "escape" || key == "force_quote" ||
@@ -100,10 +100,10 @@ struct PgTextCopyBindData final : public duckdb::FunctionData {
       delim{delim},
       null_str{std::move(null_str)} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const override {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<PgTextCopyBindData>(sql_types, delim, null_str);
   }
-  bool Equals(const duckdb::FunctionData& other) const override {
+  bool Equals(const duckdb::FunctionData& other) const final {
     const auto& o = other.Cast<PgTextCopyBindData>();
     return sql_types == o.sql_types && delim == o.delim &&
            null_str == o.null_str;
@@ -128,19 +128,6 @@ struct PgTextCopyGlobalState final : public duckdb::GlobalFunctionData {
   // Committed-but-undrained bytes; drained to the handle once past a block.
   size_t pending = 0;
 };
-
-// Drain everything committed to `buffer` into `handle` as raw bytes, leaving
-// the buffer empty for the next chunk.
-void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
-  auto chain = buffer.ReleaseChain();
-  for (auto* chunk = chain.head; chunk != nullptr; chunk = chunk->Next()) {
-    const auto data = chunk->Data(chunk->GetEnd());
-    if (!data.empty()) {
-      handle.Write(const_cast<uint8_t*>(data.data()),
-                   static_cast<duckdb::idx_t>(data.size()));
-    }
-  }
-}
 
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
@@ -287,7 +274,7 @@ struct PgTextCopyFromGlobalState final
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::ClientContext&, duckdb::CopyFromFunctionBindInput& input,
-  duckdb::vector<std::string>&,
+  duckdb::vector<duckdb::Identifier>&,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   // HEADER lands in parsed_options (still populated here -- the binder folds it
   // into options only after this bind); delimiter/null arrive via options.
@@ -320,7 +307,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
     // FileHandle entirely. Text COPY opens stdin once (single-pass), so nothing
     // else reads the handle, and the session has already sent CopyInResponse.
-    auto* bridge = conn.GetCopyInBridge();
+    auto* bridge = conn.GetSideChannel<pg::CopyInBridge>();
     if (!bridge) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -554,7 +541,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     // PG accepts a missing trailing newline: a non-empty leftover partial is
     // the final row. Then keep the bridge in lock-step until the feeder's
     // CopyDone.
-    if (!g.partial.empty() && row < STANDARD_VECTOR_SIZE) {
+    if (!g.partial.empty()) {
       if (g.header_pending) {
         g.header_pending = false;  // header-only input with no trailing newline
       } else {
@@ -564,10 +551,8 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
       }
       g.partial.clear();
     }
-    if (g.partial.empty()) {
-      source.DrainToEof();
-      g.finished = true;
-    }
+    source.DrainToEof();
+    g.finished = true;
   }
 
   // SetChildCardinality (not SetCardinality): fork vectors carry their own
@@ -579,40 +564,43 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
 }  // namespace
 
 void ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<duckdb::vector<duckdb::Value>>& options,
+  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options,
   TextCopyOptions& out) {
   for (const auto& [key, values] : options) {
     if (values.empty()) {
-      ApplyTextCopyOption(out, key, {});
+      ApplyTextCopyOption(out, key.GetIdentifierName(), {});
     } else {
-      ApplyTextCopyOption(out, key, values[0].GetValue<std::string>());
+      ApplyTextCopyOption(out, key.GetIdentifierName(),
+                          values[0].GetValue<std::string>());
     }
   }
 }
 
 TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<duckdb::vector<duckdb::Value>>&
-    options) {
+  const duckdb::identifier_map_t<duckdb::vector<duckdb::Value>>& options) {
   TextCopyOptions result;
   ResolveTextCopyOptions(options, result);
   return result;
 }
 
 TextCopyOptions ResolveTextCopyOptions(
-  const duckdb::case_insensitive_map_t<
-    duckdb::unique_ptr<duckdb::ParsedExpression>>& parsed_options) {
+  const duckdb::identifier_map_t<duckdb::unique_ptr<duckdb::ParsedExpression>>&
+    parsed_options) {
   TextCopyOptions result;
   for (const auto& [key, expr] : parsed_options) {
     if (!expr) {
       // A bare boolean flag (e.g. HEADER with no value) means true.
-      ApplyTextCopyOption(result, key, {});
+      ApplyTextCopyOption(result, key.GetIdentifierName(), {});
       continue;
     }
     if (expr->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
       continue;
     }
-    const auto& value = expr->Cast<duckdb::ConstantExpression>().GetValue();
-    ApplyTextCopyOption(result, key, value.GetValue<std::string>());
+    ApplyTextCopyOption(result, key.GetIdentifierName(),
+                        expr->Cast<duckdb::ConstantExpression>()
+                          .GetLiteral()
+                          .ToValue()
+                          .GetValue<std::string>());
   }
   return result;
 }

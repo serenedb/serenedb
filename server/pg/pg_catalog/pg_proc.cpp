@@ -20,22 +20,24 @@
 
 #include "pg/pg_catalog/pg_proc.h"
 
+#include <algorithm>
 #include <deque>
+#include <duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp>
 #include <duckdb/function/macro_function.hpp>
+#include <duckdb/function/scalar_macro_function.hpp>
+#include <duckdb/function/table_macro_function.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <span>
 #include <string>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
-#include "catalog/schema.h"
+#include "catalog/entry/role.h"
 #include "pg/pg_catalog/builtin_functions.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
+#include "pg/sql_utils.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::pg {
@@ -54,29 +56,8 @@ constexpr uint64_t kNullMask = MaskFromNulls({
 constexpr Oid kLangSql = 14;
 constexpr Oid kLangInternal = 12;
 
-bool TypeIsComplete(const duckdb::LogicalType& type) {
-  switch (type.id()) {
-    using enum duckdb::LogicalTypeId;
-    case DECIMAL:
-    case STRUCT:
-    case MAP:
-    case UNION:
-    case ENUM:
-      return static_cast<bool>(type.AuxInfo());
-    case LIST:
-      return type.AuxInfo() &&
-             TypeIsComplete(duckdb::ListType::GetChildType(type));
-    case ARRAY:
-      return type.AuxInfo() &&
-             TypeIsComplete(duckdb::ArrayType::GetChildType(type));
-    default:
-      return true;
-  }
-}
-
 Oid BuiltinArgOid(const duckdb::LogicalType& type) {
-  return TypeIsComplete(type) ? static_cast<Oid>(Type2Oid(type))
-                              : static_cast<Oid>(PgTypeOID::kUnknown);
+  return static_cast<Oid>(BuiltinTypeOid(type));
 }
 
 PgProc::Prokind KindOf(duckdb::CatalogType type) {
@@ -90,12 +71,19 @@ PgProc::Prokind KindOf(duckdb::CatalogType type) {
   }
 }
 
+constexpr uint64_t kNamedArgsNullMask =
+  kNullMask & ~(uint64_t{1} << GetIndex(&PgProc::proargnames));
+
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
   std::vector<PgProc> values;
+  std::vector<uint64_t> null_masks;
   std::vector<std::vector<Oid>> argtypes_storage;
+  std::deque<std::vector<std::string>> argnames_storage;
+  std::deque<std::vector<Text>> argnames_views;
+  auto& context = _context;
 
   const auto emit = [&](const duckdb::MacroCatalogEntry& func) {
     const auto& perm = func.permissions;
@@ -119,16 +107,25 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         if (param_type.id() == duckdb::LogicalTypeId::UNKNOWN) {
           argtypes.push_back(0);
         } else {
-          argtypes.push_back(Type2Oid(param_type));
+          argtypes.emplace_back(Type2Oid(param_type));
         }
       }
 
       auto pronargs = static_cast<int16_t>(argtypes.size());
       argtypes_storage.push_back(std::move(argtypes));
+      auto& argnames = argnames_storage.emplace_back();
+      for (duckdb::idx_t i = 0; i < macro->parameters.size(); ++i) {
+        argnames.push_back(MacroParameterName(*macro, i));
+      }
+      const bool named = std::ranges::any_of(
+        argnames, [](const std::string& name) { return !name.empty(); });
+      auto& argname_views =
+        argnames_views.emplace_back(argnames.begin(), argnames.end());
+      null_masks.push_back(named ? kNamedArgsNullMask : kNullMask);
       values.push_back(PgProc{
         .oid = func.oid,
         .proname = func.name.GetIdentifierName(),
-        .pronamespace = func.ParentSchema().oid,
+        .pronamespace = func.ParentSchemaOid(),
         .proowner = perm.owner,
         .prolang = kLangSql,
         .procost = 0.0f,
@@ -146,61 +143,63 @@ catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData() {
         .pronargdefaults = 0,
         .prorettype = rettype,
         .proargtypes = argtypes_storage.back(),
-        .prosrc = func.name.GetIdentifierName(),
-        .proacl = {catalog::AclView{perm.acl}},
+        .proargnames = argname_views,
+        .prosrc = MacroBody(*macro),
+        .proacl = {std::span<const duckdb::AclItem>{perm.acl}},
       });
     }
   };
   // A scalar macro and a table macro are one SereneDB kind and two duckdb
-  // namespaces; VisitFunctions reads both sets.
-  catalog::VisitFunctions(&_config.GetClientContext(), GetDatabaseId(), emit);
+  // sets, so both are walked.
+  VisitEntries<duckdb::ScalarMacroCatalogEntry>(context, GetDatabase(), emit);
+  VisitEntries<duckdb::TableMacroCatalogEntry>(context, GetDatabase(), emit);
 
   std::deque<std::string> name_storage;
-  VisitBuiltinFunctions(
-    _config.GetClientContext(), [&](const BuiltinFunction& builtin) {
-      std::vector<Oid> argtypes;
-      argtypes.reserve(builtin.parameter_types.size());
-      for (const auto& param_type : builtin.parameter_types) {
-        argtypes.push_back(BuiltinArgOid(param_type));
-      }
-      auto pronargs = static_cast<int16_t>(argtypes.size());
-      argtypes_storage.push_back(std::move(argtypes));
-      const auto& name = name_storage.emplace_back(builtin.name);
+  VisitBuiltinFunctions(_context, [&](const BuiltinFunction& builtin) {
+    std::vector<Oid> argtypes;
+    argtypes.reserve(builtin.parameter_types.size());
+    for (const auto& param_type : builtin.parameter_types) {
+      argtypes.emplace_back(BuiltinArgOid(param_type));
+    }
+    auto pronargs = static_cast<int16_t>(argtypes.size());
+    argtypes_storage.emplace_back(std::move(argtypes));
+    const auto& name = name_storage.emplace_back(builtin.name);
 
-      const Oid rettype = builtin.returns_set
-                            ? static_cast<Oid>(PgTypeOID::kRecord)
-                            : BuiltinArgOid(builtin.return_type);
+    const Oid rettype = builtin.returns_set
+                          ? static_cast<Oid>(PgTypeOID::kRecord)
+                          : BuiltinArgOid(builtin.return_type);
 
-      values.push_back(PgProc{
-        .oid = builtin.oid.id(),
-        .proname = name,
-        .pronamespace = id::kPgCatalogSchema.id(),
-        .proowner = id::kRootUser.id(),
-        .prolang = kLangInternal,
-        .procost = 1.0f,
-        .prorows = builtin.returns_set ? 1000.0f : 0.0f,
-        .provariadic = 0,
-        .prosupport = 0,
-        .prokind = KindOf(builtin.kind),
-        .prosecdef = false,
-        .proleakproof = false,
-        .proisstrict = false,
-        .proretset = builtin.returns_set,
-        .provolatile = PgProc::Provolatile::Immutable,
-        .proparallel = PgProc::Proparallel::Safe,
-        .pronargs = pronargs,
-        .pronargdefaults = 0,
-        .prorettype = rettype,
-        .proargtypes = argtypes_storage.back(),
-        .prosrc = name,
-        .proacl = {},
-      });
+    values.push_back(PgProc{
+      .oid = builtin.oid,
+      .proname = name,
+      .pronamespace = kPgCatalogSchema,
+      .proowner = kRootUser,
+      .prolang = kLangInternal,
+      .procost = 1.0f,
+      .prorows = builtin.returns_set ? 1000.0f : 0.0f,
+      .provariadic = 0,
+      .prosupport = 0,
+      .prokind = KindOf(builtin.kind),
+      .prosecdef = false,
+      .proleakproof = false,
+      .proisstrict = false,
+      .proretset = builtin.returns_set,
+      .provolatile = PgProc::Provolatile::Immutable,
+      .proparallel = PgProc::Proparallel::Safe,
+      .pronargs = pronargs,
+      .pronargdefaults = 0,
+      .prorettype = rettype,
+      .proargtypes = argtypes_storage.back(),
+      .prosrc = name,
+      .proacl = {},
     });
+    null_masks.push_back(kNullMask);
+  });
 
   auto result = CreateColumns<PgProc>(values.size());
 
   for (size_t row = 0; row < values.size(); ++row) {
-    WriteData(result, values[row], kNullMask, row, Roles());
+    WriteData(result, values[row], null_masks[row], row, Roles());
   }
 
   return {std::move(result), values.size()};

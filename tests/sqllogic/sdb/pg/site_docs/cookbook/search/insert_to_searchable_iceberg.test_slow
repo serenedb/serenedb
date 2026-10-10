@@ -47,7 +47,7 @@ SET s3_use_ssl=false;
 statement ok
 CREATE SERVER its_srv_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (
   warehouse '${ICEBERG_WAREHOUSE}',
-  endpoint '${ICEBERG_REST_URL}',
+  uri '${ICEBERG_REST_URL}',
   authorization_type 'none',
   max_table_staleness '10 minutes'
 );

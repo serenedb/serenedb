@@ -24,6 +24,7 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
@@ -51,7 +52,7 @@ namespace {
 
 using duckdb::ExplainNode;
 using irs::utils::downCast;
-using sdb::catalog::term_dict::Kind;
+using sdb::connector::term_dict::Kind;
 
 const Scorer* Explicit(const Scorer* scorer) noexcept {
   return IsConstScoreSingleton(scorer) ? nullptr : scorer;
@@ -113,7 +114,7 @@ std::string TermValue(bytes_view term, Kind kind) {
   if (kind == Kind::Bool) {
     return !term.empty() && term[0] ? "true" : "false";
   }
-  if (sdb::catalog::term_dict::IsNumeric(kind)) {
+  if (sdb::connector::term_dict::IsNumeric(kind)) {
     return DecodeNumericTerm(term);
   }
   return TermToString(term);
@@ -149,8 +150,7 @@ std::string RangeValue(const SearchRange<T>& range, Kind kind) {
   return s;
 }
 
-// Renders one phrase-part option variant. Shared between Phrase and
-// WildcardNGram filters which both hold ByPhraseOptions parts.
+// Renders one phrase-part option variant.
 struct PhrasePartVisitor : util::Noncopyable {
   auto operator()(const ByTermOptions& opts) const {
     absl::StrAppend(out, "Term:", TermToString(opts.term));
@@ -172,6 +172,11 @@ struct PhrasePartVisitor : util::Noncopyable {
       ERR_MSG("Wildcard phrase part must be lowered by the optimizer before "
               "printing"));
   }
+  auto operator()(const ByRegexpOptions&) const {
+    THROW_SQL_ERROR(
+      ERR_MSG("Regexp phrase part must be lowered by the optimizer before "
+              "printing"));
+  }
   auto operator()(const ByEditDistanceOptions&) const {
     THROW_SQL_ERROR(
       ERR_MSG("Levenshtein phrase part must be lowered by the optimizer before "
@@ -188,20 +193,16 @@ struct PhrasePartVisitor : util::Noncopyable {
     if (opts.range.min_type == BoundType::Unbounded) {
       absl::StrAppend(out, "*");
     } else {
-      absl::StrAppend(
-        out, opts.range.min_type == BoundType::Inclusive ? "[" : "(",
-        std::string(reinterpret_cast<const char*>(opts.range.min.data()),
-                    opts.range.min.size()));
+      absl::StrAppend(out,
+                      opts.range.min_type == BoundType::Inclusive ? "[" : "(",
+                      ViewCast<char>(bytes_view{opts.range.min}));
     }
     absl::StrAppend(out, "..");
     if (opts.range.max_type == BoundType::Unbounded) {
       absl::StrAppend(out, "*");
     } else {
-      absl::StrAppend(
-        out,
-        std::string(reinterpret_cast<const char*>(opts.range.max.data()),
-                    opts.range.max.size()),
-        opts.range.max_type == BoundType::Inclusive ? "]" : ")");
+      absl::StrAppend(out, ViewCast<char>(bytes_view{opts.range.max}),
+                      opts.range.max_type == BoundType::Inclusive ? "]" : ")");
     }
   }
   std::string* out;
@@ -257,10 +258,10 @@ struct FilterPrinter {
   const FieldKindResolver& kind_of;
 
   std::string FieldName(field_id fid) const {
-    return name_of(sdb::catalog::ColumnId{fid});
+    return name_of(sdb::connector::ColumnId{fid});
   }
   Kind FieldKind(field_id fid) const {
-    return kind_of(sdb::catalog::ColumnId{fid});
+    return kind_of(sdb::connector::ColumnId{fid});
   }
 
   std::string PhraseParts(const ByPhrase& filter) const {
@@ -268,23 +269,8 @@ struct FilterPrinter {
     for (const auto& part : filter.options()) {
       std::string part_str;
       part.part.visit(PhrasePartVisitor{.out = &part_str});
-      absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
+      absl::StrAppend(&s, part_str, "(", part.offs_min, ", ", part.offs_max,
                       ")", "; ");
-    }
-    return s;
-  }
-
-  std::string WildcardNGramParts(const ByWildcardNGram& filter) const {
-    std::string s;
-    for (const auto& phrase : filter.options().parts) {
-      absl::StrAppend(&s, "<");
-      for (const auto& part : phrase) {
-        std::string part_str;
-        part.part.visit(PhrasePartVisitor{.out = &part_str});
-        absl::StrAppend(&s, part_str, "(", part.offs_max, ", ", part.offs_min,
-                        ")", "; ");
-      }
-      absl::StrAppend(&s, ">; ");
     }
     return s;
   }
@@ -350,7 +336,7 @@ struct FilterPrinter {
       const auto kind = FieldKind(run.front().field);
       SDB_ASSERT(kind != Kind::Null || run.size() == 1);
       if (kind != Kind::Null || run.front().boost != kNoBoost ||
-          Explicit(run.front().scorer) != nullptr) {
+          Explicit(run.front().scorer)) {
         const std::string_view quote = kind == Kind::String ? "'" : "";
         leaves.attributes["Values"] = absl::StrJoin(
           run, ", ", [&](std::string* o, const TermClause& clause) {
@@ -380,7 +366,7 @@ struct FilterPrinter {
     }
     const auto& child = *filters.front();
     return child.type() == Type<All>::id() && child.GetBoost() == kNoBoost &&
-           child.GetScorer() == nullptr;
+           !child.GetScorer();
   }
 
   ExplainNode BuildBool(const BooleanFilter& filter) const {
@@ -470,7 +456,9 @@ struct FilterPrinter {
       ExplainNode node{"Levenshtein"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Target"] = TermToString(o.target);
-      node.attributes["Max Terms"] = absl::StrCat(o.max_terms);
+      node.attributes["Max Terms"] = o.with_ties
+                                       ? absl::StrCat(o.max_terms, " with ties")
+                                       : absl::StrCat(o.max_terms);
       return node;
     }
     if (type == Type<ByPrefix>::id()) {
@@ -484,9 +472,9 @@ struct FilterPrinter {
       const auto& f = downCast<const ByNestedFilter>(filter);
       auto& [parent, child, match, _] = f.options();
       ExplainNode node{"Nested"};
-      if (auto* range = std::get_if<Match>(&match); range != nullptr) {
+      if (auto* range = std::get_if<Match>(&match)) {
         node.attributes["Match"] = absl::StrCat(range->min, ", ", range->max);
-      } else if (std::get_if<irs::MatchProvider>(&match) != nullptr) {
+      } else if (std::get_if<irs::MatchProvider>(&match)) {
         node.attributes["Match"] = "<Predicate>";
       }
       node.children.push_back(Build(*child));
@@ -508,16 +496,26 @@ struct FilterPrinter {
       const auto& f = downCast<const AutomatonFilter>(filter);
       ExplainNode node{"Automaton"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Pattern"] = TermToString(f.options().pattern);
+      const auto& options = f.options();
+      node.attributes["Pattern"] =
+        options.kind == PatternKind::Union
+          ? TermToString(irs::DescribeUnion(options.pattern))
+          : TermToString(options.pattern);
       return node;
     }
     if (type == Type<ByWildcardNGram>::id()) {
       const auto& f = downCast<const ByWildcardNGram>(filter);
+      const auto& options = f.options();
       ExplainNode node{"Wildcard NGram"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Token"] = TermToString(f.options().token);
-      node.attributes["Has Pos"] = f.options().has_pos ? "true" : "false";
-      node.attributes["Parts"] = WildcardNGramParts(f);
+      node.attributes["Pattern"] = TermToString(options.pattern);
+      node.attributes["Syntax"] =
+        options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
+      node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
+      node.attributes["Query"] = irs::ToString(options.query);
+      node.attributes["Verify"] = !options.matcher          ? "false"
+                                  : options.deferred_verify ? "table filter"
+                                                            : "inline";
       return node;
     }
     if (type == Type<Empty>::id()) {
@@ -528,6 +526,11 @@ struct FilterPrinter {
       ExplainNode node{"Phrase"};
       node.attributes["Field"] = FieldName(f.field_id());
       node.attributes["Parts"] = PhraseParts(f);
+      if (const auto separator = f.options().word_separator();
+          !separator.empty()) {
+        node.attributes["Separator"] =
+          absl::StrCat("'", TermToString(separator), "'");
+      }
       if (const auto slop = f.options().slop(); slop > 0) {
         node.attributes["Slop"] = absl::StrCat(slop);
       }
@@ -537,9 +540,9 @@ struct FilterPrinter {
       const auto& f = downCast<const GeoFilter>(filter);
       ExplainNode node{"Geo"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Op"] = std::string{GeoFilterTypeName(f.options().type)};
-      node.attributes["Shape"] =
-        std::string{GeoShapeTypeName(f.options().shape.type())};
+      node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
+      node.attributes["Shape"].assign(
+        GeoShapeTypeName(f.options().shape.type()));
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -554,7 +557,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
+      node.attributes["Metric"].assign(VectorMetricName(o.metric));
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       if (o.inner) {
@@ -563,16 +566,16 @@ struct FilterPrinter {
       return node;
     }
     ExplainNode node{"Unknown"};
-    node.attributes["Type"] = std::string{type().name()};
+    node.attributes["Type"].assign(type().name());
     return node;
   }
 };
 
-std::string IdentityField(sdb::catalog::ColumnId id) {
-  return absl::StrCat(static_cast<irs::field_id>(id));
+std::string IdentityField(sdb::connector::ColumnId id) {
+  return absl::StrCat(id);
 }
 
-Kind UnknownKind(sdb::catalog::ColumnId) { return Kind::Unsupported; }
+Kind UnknownKind(sdb::connector::ColumnId) { return Kind::Unsupported; }
 
 }  // namespace
 

@@ -19,6 +19,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -117,6 +118,25 @@ void WaitWhileFailurePointDebugging(std::string_view value) {
     +[](std::string_view* v) noexcept { return !gFailurePoints.contains(*v); };
   absl::MutexLock lock{&gFailurePointsLock};
   gFailurePointsLock.Await(absl::Condition{cleared, &value});
+}
+
+void ParkOnceOnFailurePointDebugging(std::string_view value) {
+  if (!ShouldFailDebugging(value)) {
+    return;
+  }
+  auto release = absl::StrCat(value, ":release");
+  const auto released =
+    +[](std::string* v) noexcept { return gFailurePoints.contains(*v); };
+  absl::MutexLock lock{&gFailurePointsLock};
+  if (gFailurePoints.erase(value) == 0) {
+    return;
+  }
+  gFailurePoints.emplace(absl::StrCat(value, ":parked"));
+  gFailurePointsLock.Await(absl::Condition{released, &release});
+  gFailurePoints.erase(release);
+  if (gFailurePoints.empty()) {
+    gHasFailurePoints.store(false, std::memory_order_relaxed);
+  }
 }
 
 }  // namespace irs

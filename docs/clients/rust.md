@@ -26,7 +26,7 @@ use tokio_postgres::NoTls;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (client, connection) = tokio_postgres::connect(
-        "host=localhost port=7890", NoTls
+        "host=localhost port=7890 dbname=postgres user=postgres", NoTls
     ).await?;
 
     tokio::spawn(async move {

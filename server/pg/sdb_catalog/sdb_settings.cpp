@@ -64,7 +64,7 @@ bool IsSecret(std::string_view name) {
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<SdbSettings>::GetTableData() {
+MaterializedData SystemTableSnapshot<SdbSettings>::GetTableData() {
   std::vector<absl::CommandLineFlag*> flags;
   for (auto [_, flag] : absl::GetAllFlags()) {
     flags.push_back(flag);

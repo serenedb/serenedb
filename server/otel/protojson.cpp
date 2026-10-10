@@ -138,7 +138,7 @@ template<ProtoJsonContext Context, typename T>
 void SerdeRead(Context ctx, T& out) {
   auto& src = ctx.io();
   if (src.Type() == JsonType::string) {
-    if (!absl::SimpleAtoi(src.ReadString(), &out)) {
+    if (!absl::SimpleAtoi(src.ReadStringView(), &out)) {
       Throw("an integer");
     }
     return;
@@ -160,13 +160,18 @@ void SerdeRead(Context ctx, T& out) {
 }
 
 template<ProtoJsonContext Context>
+void SerdeRead(Context ctx, std::string_view& out) {
+  out = ctx.io().ReadStringView();
+}
+
+template<ProtoJsonContext Context>
 void SerdeRead(Context ctx, bool& out) {
   auto& src = ctx.io();
   if (src.Type() != JsonType::string) {
     out = src.ReadBool();
     return;
   }
-  const auto text = src.ReadString();
+  const auto text = src.ReadStringView();
   if (text != "true" && text != "false") {
     Throw("a boolean");
   }
@@ -180,7 +185,7 @@ void SerdeRead(Context ctx, double& out) {
     out = src.ReadDouble();
     return;
   }
-  const auto text = src.ReadString();
+  const auto text = src.ReadStringView();
   if (text == "NaN") {
     out = std::numeric_limits<double>::quiet_NaN();
   } else if (text == "Infinity") {
@@ -200,7 +205,7 @@ void SerdeRead(Context ctx, E& out) {
     out = static_cast<E>(src.ReadSignedInt64());
     return;
   }
-  const auto text = src.ReadString();
+  const auto text = src.ReadStringView();
   int32_t number = 0;
   if (absl::SimpleAtoi(text, &number)) {
     out = static_cast<E>(number);
@@ -246,7 +251,7 @@ void SerdeRead(Context ctx, AnyValue*& out) {
       out->value = std::move(value);
     };
     if (key == "string_value") {
-      read(std::string{});
+      read(std::string_view{});
     } else if (key == "bool_value") {
       read(bool{});
     } else if (key == "int_value") {
@@ -333,12 +338,19 @@ void SerdeRead(Context ctx, ResourceRecords<Record>& out) {
 }
 
 template<typename Record>
-void ParseRequest(std::string_view json, ExportRequest<Record>& out) {
-  simdjson::ondemand::parser parser;
-  simdjson::padded_string padded{json};
+void ParseRequest(std::string_view json, simdjson::ondemand::parser& parser,
+                  bool padded, ExportRequest<Record>& out) {
+  simdjson::padded_string copy;
+  simdjson::padded_string_view input;
+  if (padded) {
+    input = simdjson::padded_string_view{json.data(), json.size(),
+                                         json.size() + kJsonPadding};
+  } else {
+    copy = simdjson::padded_string{json};
+    input = copy;
+  }
   simdjson::ondemand::document doc;
-  if (const auto ec = parser.iterate(padded).get(doc);
-      ec != simdjson::SUCCESS) {
+  if (const auto ec = parser.iterate(input).get(doc); ec != simdjson::SUCCESS) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                     ERR_MSG("OTLP/JSON: ", simdjson::error_message(ec)));
   }
@@ -364,16 +376,23 @@ void ParseRequest(std::string_view json, ExportRequest<Record>& out) {
 
 }  // namespace
 
-void ParseLogsRequest(std::string_view json, ExportLogsRequest& out) {
-  ParseRequest(json, out);
+static_assert(kJsonPadding >= simdjson::SIMDJSON_PADDING);
+
+void ParseLogsRequest(std::string_view json, simdjson::ondemand::parser& parser,
+                      ExportLogsRequest& out, bool padded) {
+  ParseRequest(json, parser, padded, out);
 }
 
-void ParseTracesRequest(std::string_view json, ExportTracesRequest& out) {
-  ParseRequest(json, out);
+void ParseTracesRequest(std::string_view json,
+                        simdjson::ondemand::parser& parser,
+                        ExportTracesRequest& out, bool padded) {
+  ParseRequest(json, parser, padded, out);
 }
 
-void ParseMetricsRequest(std::string_view json, ExportMetricsRequest& out) {
-  ParseRequest(json, out);
+void ParseMetricsRequest(std::string_view json,
+                         simdjson::ondemand::parser& parser,
+                         ExportMetricsRequest& out, bool padded) {
+  ParseRequest(json, parser, padded, out);
 }
 
 }  // namespace sdb::otel

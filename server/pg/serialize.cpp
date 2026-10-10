@@ -51,6 +51,7 @@
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
+#include <icu-helpers.hpp>
 #include <icu-zone-lut.hpp>
 #include <limits>
 #include <string_view>
@@ -85,7 +86,7 @@ enum class ArrayKind {
   MultiDimensions,
 };
 
-inline constexpr int32_t kDynamicOid = -2;
+inline constexpr uint64_t kDynamicOid = std::numeric_limits<uint64_t>::max();
 
 enum class WrapContext : uint8_t {
   None,
@@ -723,12 +724,13 @@ struct IntTextCore {
 struct OidBinCore {
   using Value = int64_t;
   static constexpr uint32_t kMaxBytes = 4;
-  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value oid) {
-    if (oid != static_cast<int32_t>(oid)) {
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value value) {
+    const auto oid = OidFromSql(value);
+    if (oid != WireOid(oid)) {
       SDB_WARN(HTTP, "reg* OID ", oid,
                " truncated to 32-bit for binary wire protocol");
     }
-    absl::big_endian::Store32(dst, static_cast<int32_t>(oid));
+    absl::big_endian::Store32(dst, WireOid(oid));
     return 4;
   }
 };
@@ -952,14 +954,10 @@ void WriteTzOffsetSuffix(SerializationContext& ctx, int32_t offset_secs) {
   });
 }
 
-int32_t SessionTzOffsetSeconds(const icu::TimeZone& tz, int64_t utc_ms) {
+int32_t SessionTzOffsetSeconds(const duckdb::TimeZone& tz, int64_t utc_ms) {
   int32_t raw_ms = 0;
   int32_t dst_ms = 0;
-  UErrorCode status = U_ZERO_ERROR;
-  tz.getOffset(static_cast<UDate>(utc_ms), false, raw_ms, dst_ms, status);
-  if (U_FAILURE(status)) {
-    return 0;
-  }
+  tz.GetOffset(utc_ms, raw_ms, dst_ms);
   return (raw_ms + dst_ms) / 1000;
 }
 
@@ -1054,7 +1052,7 @@ struct TimeBinCore {
   using Value = duckdb::dtime_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value time) {
-    absl::big_endian::Store64(dst, time.micros);
+    absl::big_endian::Store64(dst, time.value);
     return 8;
   }
 };
@@ -1072,7 +1070,8 @@ struct TimeNsBinCore {
   using Value = duckdb::dtime_ns_t;
   static constexpr uint32_t kMaxBytes = 8;
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value time) {
-    absl::big_endian::Store64(dst, time.time().micros);
+    absl::big_endian::Store64(dst, time.value / (duckdb::dtime_ns_t::PRECISION /
+                                                 duckdb::dtime_t::PRECISION));
     return 8;
   }
 };
@@ -1091,7 +1090,7 @@ struct TimeTzBinCore {
   IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value tz) {
     // PG binary: int64 time_micros + int32 zone (seconds WEST of UTC).
     // DuckDB offset() is seconds EAST, so negate.
-    absl::big_endian::Store64(dst, tz.time().micros);
+    absl::big_endian::Store64(dst, tz.time().value);
     absl::big_endian::Store32(dst + 8, -tz.offset());
     return 12;
   }
@@ -1184,21 +1183,21 @@ struct DateBinCore {
 struct RegtypeTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegtypeOut(oid));
+    EmitEscaped(ctx, RegtypeOut(ctx.client, OidFromSql(oid)));
   }
 };
 
 struct RegclassTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegclassOut(ctx.client, oid));
+    EmitEscaped(ctx, RegclassOut(ctx.client, OidFromSql(oid)));
   }
 };
 
 struct RegnamespaceTextCore {
   using Value = int64_t;
   IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value oid) {
-    EmitEscaped(ctx, RegnamespaceOut(ctx.client, oid));
+    EmitEscaped(ctx, RegnamespaceOut(ctx.client, OidFromSql(oid)));
   }
 };
 
@@ -1247,13 +1246,7 @@ struct UuidBinCore {
 };
 
 template<WrapContext InContainer>
-struct JsonTextCore {
-  using Value = duckdb::string_t;
-  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value raw) {
-    EmitTextItem<InContainer>(ctx,
-                              std::string_view{raw.GetData(), raw.GetSize()});
-  }
-};
+using JsonTextCore = VarcharTextCore<InContainer>;
 
 struct JsonBinCore {
   using Value = duckdb::string_t;
@@ -1315,6 +1308,7 @@ bool NeedsQuotingIn(const duckdb::LogicalType& type,
     case TIMESTAMP_TZ:
     case TIMESTAMP_TZ_NS:
     case BLOB:
+    case TUPLE:
     case STRUCT:
       return true;
     case INTERVAL: {
@@ -1412,7 +1406,7 @@ const RecordSerializers& GetSerializersCache(
   SerializationContext& context, const duckdb::LogicalType& struct_type) {
   // Lazy: only record-typed results pay for the cache; flat-typed queries
   // (the overwhelming majority) skip a per-query map allocation.
-  if (context.types_cache == nullptr) {
+  if (!context.types_cache) {
     context.types_cache = std::make_unique<TypesSerializationCache>();
   }
   auto [it, inserted] = context.types_cache->try_emplace(&struct_type);
@@ -1432,7 +1426,7 @@ const RecordSerializers& GetSerializersCache(
       for (const auto& [_, child_type] : children) {
         cached.functions.push_back(
           GetSerialization(child_type, VarFormat::Binary, context));
-        cached.oids.push_back(Type2Oid(child_type, false));
+        cached.oids.emplace_back(Type2Oid(child_type));
       }
     }
   }
@@ -1487,7 +1481,8 @@ struct RecordBinCore {
     absl::big_endian::Store32(nfields_data,
                               static_cast<int32_t>(cache.functions.size()));
     for (size_t i = 0; i < cache.functions.size(); ++i) {
-      absl::big_endian::Store32(context.writer->Alloc(4), cache.oids[i]);
+      absl::big_endian::Store32(context.writer->Alloc(4),
+                                WireOid(cache.oids[i]));
       cache.functions[i](context, vdata.children[i], row);
     }
   }
@@ -1541,28 +1536,24 @@ std::string RenderTsqueryRow(const duckdb::RecursiveUnifiedVectorFormat& vdata,
       duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(unified)[idx];
     return std::string{raw.GetData(), raw.GetSize()};
   };
+  const auto read_flat = [&]<typename T>(duckdb::idx_t child, T fallback) {
+    const auto& unified = vdata.children[child].unified;
+    const auto idx = unified.sel->get_index(row);
+    if (!unified.validity.RowIsValid(idx)) {
+      return fallback;
+    }
+    return duckdb::UnifiedVectorFormat::GetData<T>(unified)[idx];
+  };
   connector::TSQueryParts parts;
   parts.text = read_string(connector::kTSQueryTextChild);
   parts.tokenizer = read_string(connector::kTSQueryTokenizerChild);
   parts.scorer = read_string(connector::kTSQueryScorerChild);
-  const auto& boost_child =
-    vdata.children[connector::kTSQueryBoostChild].unified;
-  if (const auto idx = boost_child.sel->get_index(row);
-      boost_child.validity.RowIsValid(idx)) {
-    parts.boost = duckdb::UnifiedVectorFormat::GetData<float>(boost_child)[idx];
-  }
-  const auto& slop_child = vdata.children[connector::kTSQuerySlopChild].unified;
-  if (const auto idx = slop_child.sel->get_index(row);
-      slop_child.validity.RowIsValid(idx)) {
-    parts.slop = duckdb::UnifiedVectorFormat::GetData<int64_t>(slop_child)[idx];
-  }
-  const auto& merge_child =
-    vdata.children[connector::kTSQueryMergeChild].unified;
-  if (const auto idx = merge_child.sel->get_index(row);
-      merge_child.validity.RowIsValid(idx)) {
-    parts.merge = static_cast<connector::TSQueryMerge>(
-      duckdb::UnifiedVectorFormat::GetData<uint8_t>(merge_child)[idx]);
-  }
+  parts.boost = read_flat(connector::kTSQueryBoostChild, parts.boost);
+  parts.slop = read_flat(connector::kTSQuerySlopChild, parts.slop);
+  parts.merge = static_cast<connector::TSQueryMerge>(read_flat(
+    connector::kTSQueryMergeChild, static_cast<uint8_t>(parts.merge)));
+  parts.min_match =
+    read_flat(connector::kTSQueryMinMatchChild, parts.min_match);
   return connector::RenderTSQueryValueText(parts);
 }
 
@@ -1812,7 +1803,7 @@ IRS_FORCE_INLINE bool EmitArrayElems(SerializationContext& ctx, const RUVF& cv,
   return has_null;
 }
 
-template<typename Core, int32_t ElementOID, VarFormat Format,
+template<typename Core, uint64_t ElementOID, VarFormat Format,
          WrapContext InContainer>
 struct OneDimArrayCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
@@ -1853,9 +1844,9 @@ struct OneDimArrayCore {
         emit_inside();
       }
     } else {
-      int32_t element_oid;
+      uint64_t element_oid;
       if constexpr (ElementOID == kDynamicOid) {
-        element_oid = Type2Oid(child_vdata.logical_type, false);
+        element_oid = Type2Oid(child_vdata.logical_type);
       } else {
         element_oid = ElementOID;
       }
@@ -1863,12 +1854,12 @@ struct OneDimArrayCore {
         auto* prefix_data = context.writer->Alloc(12);
         absl::big_endian::Store32(prefix_data, /*dims*/ 0);
         absl::big_endian::Store32(prefix_data + 4, /*array_size*/ 0);
-        absl::big_endian::Store32(prefix_data + 8, element_oid);
+        absl::big_endian::Store32(prefix_data + 8, WireOid(element_oid));
         return;
       }
       auto* prefix_data = context.writer->Alloc(20);
       absl::big_endian::Store32(prefix_data, /*dims*/ 1);
-      absl::big_endian::Store32(prefix_data + 8, element_oid);
+      absl::big_endian::Store32(prefix_data + 8, WireOid(element_oid));
       absl::big_endian::Store32(prefix_data + 12, array_size);
       absl::big_endian::Store32(prefix_data + 16, 1);
       const bool has_null = EmitArrayElems<Core, VarFormat::Binary>(
@@ -1880,7 +1871,7 @@ struct OneDimArrayCore {
 
 template<typename Core>
 void FlattenArray(SerializationContext& context, const RUVF& vdata,
-                  duckdb::idx_t source_row, int32_t& leaf_oid, bool& has_null,
+                  duckdb::idx_t source_row, uint64_t& leaf_oid, bool& has_null,
                   uint8_t* dim_sizes_data, int32_t depth) {
   auto [array_size, array_offset] = GetSliceResolved(vdata, source_row);
   absl::big_endian::Store32(dim_sizes_data + depth * 8,
@@ -1900,14 +1891,14 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
                ? &duckdb::ArrayType::GetChildType(*leaf)
                : &duckdb::ListType::GetChildType(*leaf);
     }
-    leaf_oid = Type2Oid(*leaf, false);
+    leaf_oid = Type2Oid(*leaf);
     return;
   }
   const auto child_lid = child_vdata.logical_type.id();
   if (child_lid != duckdb::LogicalTypeId::ARRAY &&
       child_lid != duckdb::LogicalTypeId::LIST &&
       child_lid != duckdb::LogicalTypeId::MAP) {
-    leaf_oid = Type2Oid(child_vdata.logical_type, false);
+    leaf_oid = Type2Oid(child_vdata.logical_type);
     has_null |= EmitArrayElems<Core, VarFormat::Binary>(
       context, child_vdata, array_offset, array_size);
     return;
@@ -1938,7 +1929,7 @@ void FlattenArray(SerializationContext& context, const RUVF& vdata,
   }
 }
 
-template<typename Core, int32_t ElementOID, VarFormat Format,
+template<typename Core, uint64_t ElementOID, VarFormat Format,
          WrapContext InContainer>
 struct MultiDimArrayCore {
   IRS_FORCE_INLINE static void Render(SerializationContext& context,
@@ -2016,29 +2007,29 @@ struct MultiDimArrayCore {
       // `row` is already the resolved source row.
       if (GetSliceResolved(vdata, row).size == 0) {
         // PG sends an empty array as ndim=0 with no dimension descriptors.
-        int32_t leaf_oid;
+        uint64_t leaf_oid;
         if constexpr (ElementOID == kDynamicOid) {
-          leaf_oid = Type2Oid(*t, false);
+          leaf_oid = Type2Oid(*t);
         } else {
           leaf_oid = ElementOID;
         }
         auto* prefix_data = context.writer->Alloc(12);
         absl::big_endian::Store32(prefix_data, 0);
         absl::big_endian::Store32(prefix_data + 4, 0);
-        absl::big_endian::Store32(prefix_data + 8, leaf_oid);
+        absl::big_endian::Store32(prefix_data + 8, WireOid(leaf_oid));
         return;
       }
       // PG binary array: 12-byte top header (ndim, flags, elemtype) followed
       // by ndim*8 bytes of {dim_size, lbound} pairs, then element bytes.
       // FlattenArray fills each dim's size into its slot as it descends.
       auto* prefix_data = context.writer->Alloc(12 + ndim * 8);
-      int32_t leaf_oid = ElementOID;
+      uint64_t leaf_oid = ElementOID;
       bool has_null = false;
       FlattenArray<Core>(context, vdata, row, leaf_oid, has_null,
                          prefix_data + 12, 0);
       absl::big_endian::Store32(prefix_data, ndim);
       absl::big_endian::Store32(prefix_data + 4, has_null ? 1 : 0);
-      absl::big_endian::Store32(prefix_data + 8, leaf_oid);
+      absl::big_endian::Store32(prefix_data + 8, WireOid(leaf_oid));
     }
   }
 };
@@ -2062,7 +2053,7 @@ SerializationFunction SelectFieldSerializer(VarFormat format,
   return SerializeField<Framing::BinaryField, TextCore>;
 }
 
-template<typename TextCore, typename BinaryCore, int32_t Oid>
+template<typename TextCore, typename BinaryCore, uint64_t Oid>
 SerializationFunction MakeArraySerializer(VarFormat format,
                                           SerializationContext& context,
                                           ArrayKind kind) {
@@ -2305,6 +2296,7 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case BIT:
       return MakeArraySerializer<BitTextCore, BitBinCore, kVarbit>(
         format, context, kind);
+    case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
         return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
@@ -2377,14 +2369,14 @@ void ByteaOutEscape(char* buf, std::string_view value) {
 void FillContext(const Config& config, SerializationContext& context) {
   context.extra_float_digits = config.GetExtraFloatDigits();
   context.bytea_output = config.GetByteaOutput();
-  const auto tz_name = config.GetTimeZone();
-  if (IsUtcTimeZoneName(tz_name)) {
-    context.time_zone.reset();
-    context.zone_lut.reset();
-  } else {
-    context.time_zone.reset(
-      icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(tz_name)));
+  std::string tz_name{config.GetTimeZone()};
+  context.time_zone = IsUtcTimeZoneName(tz_name)
+                        ? nullptr
+                        : duckdb::ICUHelpers::TryGetTimeZone(tz_name);
+  if (context.time_zone) {
     context.zone_lut = duckdb::ZoneLUT::Get(*context.time_zone);
+  } else {
+    context.zone_lut.reset();
   }
   context.client = &config.GetClientContext();
   // types_cache stays lazy (GetSerializersCache); record results only.
@@ -2568,6 +2560,7 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<EnumTextCore<WrapContext::None>,
                                    EnumTextCore<WrapContext::Record>,
                                    EnumBinCore>(format, context);
+    case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
         return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(

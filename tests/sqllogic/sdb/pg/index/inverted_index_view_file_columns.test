@@ -1,0 +1,467 @@
+control substitution on
+
+# The columns a file reader adds on its own -- filename and file_row_number --
+# read back from view-backed inverted indexes. Neither is stored in the
+# files: the file name is the path of the file a row comes from, and the row
+# number is the row's position in it, which is the key the index already
+# holds. Filters on them reach the index scan and must keep only the rows
+# the view keeps.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivfc_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+system ok
+mkdir -p $__TEST_DIR__/ivfc
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (1, 'pudge goes mid'),
+        (2, 'anchin reads manga'),
+        (3, 'techies plants mines'),
+        (4, 'pudge plays again'),
+        (5, 'lina burns pudge')) t(id, body))
+TO '${__TEST_DIR__}/ivfc/a.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (6, 'kostya types all night'),
+        (7, 'pudge buys blink'),
+        (8, 'krivda closes tickets')) t(id, body))
+TO '${__TEST_DIR__}/ivfc/b.parquet' (FORMAT PARQUET);
+
+statement ok
+COPY (SELECT * FROM (VALUES
+        (9, 'pudge hooks techies'),
+        (10, 'babsky parses csv')) t(id, body))
+TO '${__TEST_DIR__}/ivfc/c.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW ivfc_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivfc/*.parquet', filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivfc_idx ON ivfc_v USING inverted(id, body ivfc_en);
+
+query
+SELECT id, file_row_number, replace(filename, '${__TEST_DIR__}/', '') AS file
+FROM ivfc_idx ORDER BY id;
+----
+id	file_row_number	file
+1	0	ivfc/a.parquet
+2	1	ivfc/a.parquet
+3	2	ivfc/a.parquet
+4	3	ivfc/a.parquet
+5	4	ivfc/a.parquet
+6	0	ivfc/b.parquet
+7	1	ivfc/b.parquet
+8	2	ivfc/b.parquet
+9	0	ivfc/c.parquet
+10	1	ivfc/c.parquet
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivfc_v EXCEPT SELECT * FROM ivfc_idx)
+                      UNION ALL (SELECT * FROM ivfc_idx EXCEPT SELECT * FROM ivfc_v));
+----
+count
+0
+
+# Only the added columns, without a data column next to them.
+query
+SELECT file_row_number FROM ivfc_idx WHERE body @@ ts_phrase('pudge') ORDER BY 1;
+----
+file_row_number
+0
+0
+1
+3
+4
+
+query
+SELECT DISTINCT replace(filename, '${__TEST_DIR__}/', '') AS file
+FROM ivfc_idx WHERE body @@ ts_phrase('techies') ORDER BY 1;
+----
+file
+ivfc/a.parquet
+ivfc/c.parquet
+
+query
+SELECT replace(filename, '${__TEST_DIR__}/', '') AS file, count(*) AS n
+FROM ivfc_idx GROUP BY filename ORDER BY 1;
+----
+file	n
+ivfc/a.parquet	5
+ivfc/b.parquet	3
+ivfc/c.parquet	2
+
+# ---- Filters on the file name.
+
+query
+SELECT id FROM ivfc_idx WHERE filename = '${__TEST_DIR__}/ivfc/b.parquet' ORDER BY id;
+----
+id
+6
+7
+8
+
+query
+SELECT id FROM ivfc_idx
+WHERE filename IN ('${__TEST_DIR__}/ivfc/a.parquet', '${__TEST_DIR__}/ivfc/c.parquet')
+  AND body @@ ts_phrase('pudge') ORDER BY id;
+----
+id
+1
+4
+5
+9
+
+query
+SELECT id FROM ivfc_idx WHERE filename LIKE '%c.parquet' ORDER BY id;
+----
+id
+9
+10
+
+query
+SELECT count(*) FROM ivfc_idx WHERE filename = '${__TEST_DIR__}/ivfc/missing.parquet';
+----
+count
+0
+
+# ---- Filters on the row number.
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx WHERE file_row_number = 0;
+----
+ids
+1,6,9
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx WHERE file_row_number < 2;
+----
+ids
+1,2,6,7,9,10
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx WHERE file_row_number >= 3;
+----
+ids
+4,5
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx WHERE file_row_number IN (1, 4);
+----
+ids
+2,5,7,10
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx WHERE file_row_number BETWEEN 1 AND 2;
+----
+ids
+2,3,7,8,10
+
+query
+SELECT id FROM ivfc_idx WHERE file_row_number = 1 AND body @@ ts_phrase('pudge');
+----
+id
+7
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx WHERE file_row_number > 0 AND id < 8;
+----
+ids
+2,3,4,5,7
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx
+WHERE file_row_number < 2 AND filename = '${__TEST_DIR__}/ivfc/b.parquet';
+----
+ids
+6,7
+
+query
+SELECT string_agg(id::text, ',' ORDER BY id) AS ids FROM ivfc_idx
+WHERE file_row_number < 3 AND body LIKE '%a%';
+----
+ids
+2,3,6,8,10
+
+query
+SELECT count(*) FROM ivfc_idx WHERE file_row_number > 100;
+----
+count
+0
+
+# Top-k by score: each row keeps its own file and position.
+query
+SELECT count(*) FROM (
+  SELECT id, file_row_number AS frn, filename FROM ivfc_idx
+  WHERE body @@ ts_phrase('pudge') ORDER BY bm25(ivfc_idx.tableoid) DESC LIMIT 3) t
+JOIN ivfc_v v ON v.id = t.id
+WHERE v.file_row_number <> t.frn OR v.filename <> t.filename;
+----
+count
+0
+
+# ---- A custom name for the file name column.
+
+statement ok
+CREATE VIEW ivfc_src_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivfc/*.parquet', filename='src');
+
+statement ok
+CREATE INDEX ivfc_src_idx ON ivfc_src_v USING inverted(id, body ivfc_en);
+
+query
+SELECT id, replace(src, '${__TEST_DIR__}/', '') AS src FROM ivfc_src_idx WHERE id IN (5, 6) ORDER BY id;
+----
+id	src
+5	ivfc/a.parquet
+6	ivfc/b.parquet
+
+query
+SELECT id FROM ivfc_src_idx WHERE src = '${__TEST_DIR__}/ivfc/c.parquet' ORDER BY id;
+----
+id
+9
+10
+
+# ---- A single file.
+
+statement ok
+CREATE VIEW ivfc_one_v AS
+  SELECT * FROM read_parquet('${__TEST_DIR__}/ivfc/b.parquet', filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivfc_one_idx ON ivfc_one_v USING inverted(id, body ivfc_en);
+
+query
+SELECT id, file_row_number, replace(filename, '${__TEST_DIR__}/', '') AS file FROM ivfc_one_idx ORDER BY id;
+----
+id	file_row_number	file
+6	0	ivfc/b.parquet
+7	1	ivfc/b.parquet
+8	2	ivfc/b.parquet
+
+query
+SELECT id FROM ivfc_one_idx WHERE file_row_number >= 1 ORDER BY id;
+----
+id
+7
+8
+
+query
+SELECT count(*) FROM ivfc_one_idx WHERE file_row_number = 5;
+----
+count
+0
+
+query
+SELECT count(*) FROM ivfc_one_idx WHERE filename = '${__TEST_DIR__}/ivfc/a.parquet';
+----
+count
+0
+
+# ---- A view naming the columns it keeps.
+
+statement ok
+CREATE VIEW ivfc_proj_v AS
+  SELECT filename, file_row_number, id, body
+  FROM read_parquet('${__TEST_DIR__}/ivfc/*.parquet', filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivfc_proj_idx ON ivfc_proj_v USING inverted(id, body ivfc_en);
+
+query
+SELECT replace(filename, '${__TEST_DIR__}/', '') AS file, file_row_number, id
+FROM ivfc_proj_idx WHERE id IN (4, 8) ORDER BY id;
+----
+file	file_row_number	id
+ivfc/a.parquet	3	4
+ivfc/b.parquet	2	8
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivfc_proj_v EXCEPT SELECT * FROM ivfc_proj_idx)
+                      UNION ALL (SELECT * FROM ivfc_proj_idx EXCEPT SELECT * FROM ivfc_proj_v));
+----
+count
+0
+
+# ---- The added columns indexed: filters run in the index, values come back
+# the same.
+
+statement ok
+CREATE INDEX ivfc_key_idx ON ivfc_v USING inverted(id, body ivfc_en, filename, file_row_number);
+
+query
+SELECT id FROM ivfc_key_idx WHERE file_row_number = 2 ORDER BY id;
+----
+id
+3
+8
+
+query
+SELECT id FROM ivfc_key_idx WHERE filename = '${__TEST_DIR__}/ivfc/c.parquet' ORDER BY id;
+----
+id
+9
+10
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivfc_key_idx EXCEPT SELECT * FROM ivfc_idx)
+                      UNION ALL (SELECT * FROM ivfc_idx EXCEPT SELECT * FROM ivfc_key_idx));
+----
+count
+0
+
+# ---- CSV and JSON globs with partitions, file names and row numbers
+# together. Their row number is the one the reader gives, so the checks
+# compare with the view.
+
+system ok
+mkdir -p $__TEST_DIR__/ivfc_csv/team=radiant $__TEST_DIR__/ivfc_csv/team=dire $__TEST_DIR__/ivfc_json/team=radiant $__TEST_DIR__/ivfc_json/team=dire
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'pudge goes mid'), (2, 'anchin, the reader'), (3, 'techies plants mines')) t(id, body))
+TO '${__TEST_DIR__}/ivfc_csv/team=radiant/a.csv' (FORMAT CSV, HEADER);
+
+statement ok
+COPY (SELECT * FROM (VALUES (4, 'lina burns pudge'), (5, 'kostya types all night')) t(id, body))
+TO '${__TEST_DIR__}/ivfc_csv/team=dire/b.csv' (FORMAT CSV, HEADER);
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'pudge goes mid'), (2, 'anchin, the reader'), (3, 'techies plants mines')) t(id, body))
+TO '${__TEST_DIR__}/ivfc_json/team=radiant/a.json' (FORMAT JSON);
+
+statement ok
+COPY (SELECT * FROM (VALUES (4, 'lina burns pudge'), (5, 'kostya types all night')) t(id, body))
+TO '${__TEST_DIR__}/ivfc_json/team=dire/b.json' (FORMAT JSON);
+
+statement ok
+CREATE VIEW ivfc_csv_v AS
+  SELECT * FROM read_csv('${__TEST_DIR__}/ivfc_csv/*/*.csv',
+                         hive_partitioning=true, filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivfc_csv_idx ON ivfc_csv_v USING inverted(id, body ivfc_en);
+
+query
+SELECT id, team, replace(filename, '${__TEST_DIR__}/', '') AS file FROM ivfc_csv_idx ORDER BY id;
+----
+id	team	file
+1	radiant	ivfc_csv/team=radiant/a.csv
+2	radiant	ivfc_csv/team=radiant/a.csv
+3	radiant	ivfc_csv/team=radiant/a.csv
+4	dire	ivfc_csv/team=dire/b.csv
+5	dire	ivfc_csv/team=dire/b.csv
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivfc_csv_v EXCEPT SELECT * FROM ivfc_csv_idx)
+                      UNION ALL (SELECT * FROM ivfc_csv_idx EXCEPT SELECT * FROM ivfc_csv_v));
+----
+count
+0
+
+query
+SELECT i.id FROM ivfc_csv_idx i
+JOIN ivfc_csv_v v ON v.filename = i.filename AND v.file_row_number = i.file_row_number
+WHERE v.id IN (2, 4) ORDER BY 1;
+----
+id
+2
+4
+
+query
+SELECT count(*) FROM ivfc_csv_idx i JOIN ivfc_csv_v v USING (id)
+WHERE i.body @@ ts_phrase('pudge')
+  AND (i.file_row_number <> v.file_row_number OR i.filename <> v.filename OR i.team <> v.team);
+----
+count
+0
+
+statement ok
+CREATE VIEW ivfc_json_v AS
+  SELECT * FROM read_json('${__TEST_DIR__}/ivfc_json/*/*.json',
+                          hive_partitioning=true, filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivfc_json_idx ON ivfc_json_v USING inverted(id, body ivfc_en);
+
+query
+SELECT id, team, replace(filename, '${__TEST_DIR__}/', '') AS file FROM ivfc_json_idx
+WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	team	file
+1	radiant	ivfc_json/team=radiant/a.json
+4	dire	ivfc_json/team=dire/b.json
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivfc_json_v EXCEPT SELECT * FROM ivfc_json_idx)
+                      UNION ALL (SELECT * FROM ivfc_json_idx EXCEPT SELECT * FROM ivfc_json_v));
+----
+count
+0
+
+statement ok
+CREATE VIEW ivfc_json_one_v AS
+  SELECT * FROM read_json('${__TEST_DIR__}/ivfc_json/team=radiant/a.json',
+                          hive_partitioning=true, filename=true, file_row_number=true);
+
+statement ok
+CREATE INDEX ivfc_json_one_idx ON ivfc_json_one_v USING inverted(id, body ivfc_en);
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivfc_json_one_v EXCEPT SELECT * FROM ivfc_json_one_idx)
+                      UNION ALL (SELECT * FROM ivfc_json_one_idx EXCEPT SELECT * FROM ivfc_json_one_v));
+----
+count
+0
+
+statement ok
+DROP INDEX ivfc_json_one_idx;
+
+statement ok
+DROP VIEW ivfc_json_one_v;
+
+statement ok
+DROP INDEX ivfc_json_idx;
+
+statement ok
+DROP VIEW ivfc_json_v;
+
+statement ok
+DROP INDEX ivfc_csv_idx;
+
+statement ok
+DROP VIEW ivfc_csv_v;
+
+statement ok
+DROP INDEX ivfc_key_idx;
+
+statement ok
+DROP INDEX ivfc_proj_idx;
+
+statement ok
+DROP VIEW ivfc_proj_v;
+
+statement ok
+DROP INDEX ivfc_one_idx;
+
+statement ok
+DROP VIEW ivfc_one_v;
+
+statement ok
+DROP INDEX ivfc_src_idx;
+
+statement ok
+DROP VIEW ivfc_src_v;
+
+statement ok
+DROP INDEX ivfc_idx;
+
+statement ok
+DROP VIEW ivfc_v;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ivfc_en;

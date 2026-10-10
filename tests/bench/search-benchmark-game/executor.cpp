@@ -40,6 +40,7 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/hits/root.hpp>
+#include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -125,16 +126,14 @@ Command ParseCommand(std::string_view name) {
   return cmd;
 }
 
-Executor::Executor(std::string_view path, const BenchConfig& config)
+Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _format{irs::formats::Get(config.format_name, false)},
     _dir{path},
     _reader{irs::DirectoryReader(
-      _dir, _format,
-      {.scorer = _scorer_ptr,
-       .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+      _dir, {.scorer = _scorer_ptr,
+             .db = &::irs::DuckDBEngine::Instance().instance()})} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);
@@ -171,7 +170,7 @@ size_t Executor::ExecuteCount(std::string_view query) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(filter->PrepareSegment(segment, {}));
+    queries.emplace_back(irs::PrepareMasked(*filter, segment, {}));
   }
 
   size_t count = 0;
@@ -199,7 +198,7 @@ EmitResult Executor::ExecuteEmitDocs(std::string_view query, Report report) {
   std::vector<irs::QueryBuilder::ptr> queries;
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
-    queries.emplace_back(filter->PrepareSegment(segment, {}));
+    queries.emplace_back(irs::PrepareMasked(*filter, segment, {}));
   }
 
   EmitResult result;
@@ -247,7 +246,7 @@ EmitResult Executor::ExecuteEmitHits(std::string_view query, Report report) {
   queries.reserve(_reader.size());
   for (auto& segment : _reader) {
     queries.emplace_back(
-      filter->PrepareSegment(segment, {.collector = collector.Get()}));
+      irs::PrepareMasked(*filter, segment, {.collector = collector.Get()}));
   }
   collector.Finish();
 

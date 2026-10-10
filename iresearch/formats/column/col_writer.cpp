@@ -37,28 +37,46 @@
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-#include "iresearch/utils/serialization.hpp"
 
 namespace irs {
+namespace {
 
-void SerializeNormColumn(duckdb::Serializer& s, const NormColumnWriter& nw) {
-  s.WriteProperty<uint64_t>(0, "id", static_cast<uint64_t>(nw.Id()));
-  s.WriteProperty<uint32_t>(1, "row_group_size", nw.RowGroupSize());
-  s.WriteProperty<uint64_t>(2, "row_count", nw.RowCount());
-  const auto& ptrs = nw.Pointers();
-  s.WriteList(3, "row_groups", ptrs.size(),
-              [&](duckdb::Serializer::List& rgl, duckdb::idx_t j) {
-                const auto& p = ptrs[j];
-                rgl.WriteObject([&](duckdb::Serializer& po) {
-                  po.WriteProperty<uint8_t>(0, "byte_size", p.byte_size);
-                  po.WriteProperty<uint32_t>(1, "max", p.max);
-                  po.WriteProperty<uint64_t>(2, "sum", p.sum);
-                  po.WriteProperty<uint64_t>(3, "non_zero_count",
-                                             p.non_zero_count);
-                  po.WriteProperty<uint64_t>(4, "file_offset", p.file_offset);
+void SerializeNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
+  s.WriteProperty(0, "rows", r.stats.rows);
+  s.WriteProperty(1, "sum", r.stats.sum);
+  s.WriteProperty(2, "non_zero", r.stats.non_zero);
+  s.WriteProperty(3, "wide8", r.stats.wide8);
+  s.WriteProperty(4, "wide16", r.stats.wide16);
+  s.WriteProperty(5, "min", r.stats.min);
+  s.WriteProperty(6, "max", r.stats.max);
+  s.WriteProperty(7, "bits", r.bits);
+  if (r.bits == 0) {
+    s.WriteProperty(8, "value", r.value);
+    return;
+  }
+  s.WriteProperty(9, "file_offset", r.file_offset);
+  s.WritePropertyWithDefault<uint32_t>(10, "exceptions", r.exceptions, 0);
+  if (r.exceptions != 0) {
+    s.WriteProperty(11, "overflow", r.overflow);
+    s.WriteProperty(12, "shift", r.shift);
+    s.WriteProperty(13, "exception_bytes", r.exception_bytes);
+    s.WriteProperty(14, "table_offset", r.table_offset);
+  }
+}
+
+void SerializeNormColumn(duckdb::BinarySerializer& s,
+                         const NormColumnWriter& nw) {
+  const auto& meta = nw.Meta();
+  s.WriteProperty(0, "id", static_cast<uint64_t>(nw.Id()));
+  s.WriteList(1, "regions", meta.regions.size(),
+              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                  SerializeNormRegion(obj, meta.regions[i]);
                 });
               });
 }
+
+}  // namespace
 
 ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
                      duckdb::DatabaseInstance& db)
@@ -82,12 +100,11 @@ void ColWriter::EnsureOut() {
     throw IoError{
       absl::StrCat("col writer: cannot create .col file: ", _filename)};
   }
-  format_utils::WriteHeader(*_out, kFormatName, kFormatVersion);
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _norm_writers.empty() && _ann_writers.empty();
+  return _columns.empty() && _ann_writers.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -146,17 +163,30 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                             compression, hyperloglog);
 }
 
+NormColumnWriter& ColWriter::AddNormColumn(field_id id,
+                                           uint32_t row_group_size) {
+  auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
+    id, row_group_size, [this]() -> IndexOutput& {
+      EnsureOut();
+      return *_out;
+    }));
+  _norm_by_id.emplace(id, &writer);
+  return writer;
+}
+
 NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
                                             uint32_t row_group_size) {
+  SDB_ASSERT(row_group_size != 0);
   if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {
     return *it->second;
   }
-  EnsureOut();
-  auto nw = std::make_unique<NormColumnWriter>(id, row_group_size, *_out);
-  auto* ptr = nw.get();
-  _norm_by_id.emplace(id, ptr);
-  _norm_writers.push_back(std::move(nw));
-  return *ptr;
+  return AddNormColumn(id, row_group_size);
+}
+
+NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
+  SDB_ASSERT(!_norm_by_id.contains(id), "ColWriter::StreamNormColumn: column ",
+             id, " already open");
+  return AddNormColumn(id, 0);
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
@@ -224,46 +254,50 @@ bool ColWriter::Commit(uint64_t target_row,
   if (_committed) {
     return true;
   }
-  if (Empty() && !_out) {
+  std::vector<const NormColumnWriter*> norms;
+  for (auto& writer : _norms) {
+    if (writer->RowCount() < target_row) {
+      writer->PadTo(target_row);
+    }
+    writer->Finalize();
+    SDB_ASSERT(writer->Meta().row_count == target_row,
+               "ColWriter::Commit: norm column ", writer->Id(), " holds ",
+               writer->Meta().row_count, " rows, segment ", target_row);
+    if (!writer->Meta().regions.empty()) {
+      norms.push_back(writer.get());
+    }
+  }
+  if (Empty() && !_out && norms.empty()) {
     _committed = true;
     return true;
   }
+  EnsureOut();
   for (auto& cw : _columns) {
     if (!progress()) {
       return false;
     }
     cw->SealRowGroup();
   }
-  for (auto& nw : _norm_writers) {
-    nw->PadTo(target_row);
-    nw->Finalize();
-  }
-  std::vector<const NormColumnWriter*> norm_columns;
-  norm_columns.reserve(_norm_writers.size());
-  for (const auto& nw : _norm_writers) {
-    if (!nw->Pointers().empty()) {
-      norm_columns.push_back(nw.get());
+  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
+    if (!_columns.empty()) {
+      footer.WriteList(
+        kColFieldColumns, "columns", _columns.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeColumnMeta(obj, _columns[i]->Meta());
+          });
+        });
     }
-  }
-  const uint64_t footer_offset = _out->Position();
-  duckdb::BinarySerializer serializer{*_out, duckdb::VersionStorageOptions()};
-  serializer.Begin();
-  serializer.WriteList(kFooterSlotColumns, "columns", _columns.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           SerializeColumnMeta(obj, _columns[i]->Meta());
-                         });
-                       });
-  serializer.WriteList(kFooterSlotNormColumns, "norm_columns",
-                       norm_columns.size(),
-                       [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
-                         list.WriteObject([&](duckdb::Serializer& obj) {
-                           SerializeNormColumn(obj, *norm_columns[i]);
-                         });
-                       });
-  serializer.End();
-  _out->WriteU64(footer_offset);
-  format_utils::WriteFooter(*_out);
+    if (!norms.empty()) {
+      footer.WriteList(
+        kColFieldNormColumns, "norm_columns", norms.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            SerializeNormColumn(obj, *norms[i]);
+          });
+        });
+    }
+  });
   _out.reset();
   _committed = true;
   return true;

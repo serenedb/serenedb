@@ -28,7 +28,6 @@ struct SystemView {
   std::string_view schema;
   std::string_view name;
   std::string_view sql;
-  bool superuser_only = false;
 };
 
 // TODO(mkornaukhov) write queries in separate sql file
@@ -80,8 +79,7 @@ inline constexpr SystemView kExternalViews[] = {
           setconfig AS useconfig
       FROM pg_authid LEFT JOIN pg_db_role_setting s
       ON (pg_authid.oid = setrole AND setdatabase = 0)
-      WHERE rolcanlogin)",
-   /*superuser_only=*/true},
+      WHERE rolcanlogin)"},
 
   {"pg_catalog", "pg_group",
    R"(SELECT
@@ -1302,7 +1300,7 @@ inline constexpr SystemView kExternalViews[] = {
           S.tuples_processed AS tuples_done,
           0::BIGINT AS partitions_total,
           0::BIGINT AS partitions_done
-      FROM sdb_progress S WHERE S.command = 'CREATE INDEX')"},
+      FROM sdb_progress S WHERE S.command IN ('CREATE INDEX', 'REINDEX'))"},
 
   {"pg_catalog", "pg_stat_progress_basebackup",
    R"(SELECT
@@ -3144,8 +3142,8 @@ inline constexpr SystemView kExternalViews[] = {
                  ELSE null END
                AS character_data) AS action_condition,
              CAST(
-               substring(pg_get_triggerdef(t.oid) from
-                         position('EXECUTE FUNCTION' in substring(pg_get_triggerdef(t.oid) from 48)) + 47)
+               regexp_extract(pg_get_triggerdef(t.oid),
+                              '(?s) FOR EACH (?:ROW|STATEMENT) (.*)$', 1)
                AS character_data) AS action_statement,
              CAST(
                -- hard-wired reference to TRIGGER_TYPE_ROW

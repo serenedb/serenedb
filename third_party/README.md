@@ -27,16 +27,16 @@ fork introduces, on our version branch.
 
 # Layout
 
-59 submodules, all serenedb forks except `yaclib`.
+61 submodules, all serenedb forks except `yaclib`.
 
 7 wrappers: `aws-cmake`, `azure-cmake`, `jemalloc-cmake`, `libstemmer_c-cmake`,
 `liburing-cmake`, `libxml2-cmake`, `openssl-cmake`. Three of them carry
 generated per-arch config headers: `jemalloc-cmake`, `libxml2-cmake`,
 `openssl-cmake`.
 
-8 directories in-tree rather than submodules -- mostly historical, to be fixed:
-`fastText`, `kaldi`, `llhttp`, `magic_enum`, `openfst`, `simdcomp`, `sse2neon`,
-plus our own `duckdb_clickhouse`.
+5 directories in-tree rather than submodules -- mostly historical, to be fixed:
+`fastText`, `llhttp`, `magic_enum`, `sse2neon`, plus our own
+`duckdb_clickhouse`.
 
 Anything non-obvious about a specific library is commented where it happens in
 `CMakeLists.txt` -- the OpenSSL pre-seeding and its drift guard, the header-only

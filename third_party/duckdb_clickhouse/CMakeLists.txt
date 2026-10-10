@@ -3,10 +3,7 @@ set(TARGET_NAME clickhouse_scanner)
 project(${TARGET_NAME})
 
 if(NOT MSVC)
-    add_compile_options(
-        -Wno-pedantic
-        -Wno-sign-compare
-        -Wno-unused-variable)
+  add_compile_options(-Wno-pedantic -Wno-sign-compare -Wno-unused-variable)
 endif()
 
 include_directories(include)
@@ -24,7 +21,7 @@ target_link_libraries(${EXTENSION_NAME} clickhouse_cpp)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} clickhouse_cpp)
 
 install(
-    TARGETS ${EXTENSION_NAME}
-    EXPORT "${DUCKDB_EXPORT_SET}"
-    LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
-    ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+  TARGETS ${EXTENSION_NAME}
+  EXPORT "${DUCKDB_EXPORT_SET}"
+  LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
+  ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")

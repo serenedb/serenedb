@@ -37,6 +37,7 @@
 #include <duckdb/common/types/time.hpp>
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uuid.hpp>
+#include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
 #include <duckdb/common/vector/map_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
@@ -60,31 +61,8 @@
 namespace sdb::pg {
 
 void VectorSink::Tsquery(std::string_view text) {
-  const auto parts = connector::TSQueryPartsForType(vec.GetType(), text);
-  auto& entries = duckdb::StructVector::GetEntries(vec);
-  auto& text_vec = entries[connector::kTSQueryTextChild];
-  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(text_vec)[row] =
-    duckdb::StringVector::AddString(text_vec, parts.text.data(),
-                                    parts.text.size());
-  auto& tok_vec = entries[connector::kTSQueryTokenizerChild];
-  duckdb::FlatVector::GetDataMutable<duckdb::string_t>(tok_vec)[row] =
-    duckdb::StringVector::AddString(tok_vec, parts.tokenizer.data(),
-                                    parts.tokenizer.size());
-  auto& boost_vec = entries[connector::kTSQueryBoostChild];
-  duckdb::FlatVector::GetDataMutable<float>(boost_vec)[row] = parts.boost;
-  auto& slop_vec = entries[connector::kTSQuerySlopChild];
-  duckdb::FlatVector::GetDataMutable<int64_t>(slop_vec)[row] = parts.slop;
-  auto& scorer_vec = entries[connector::kTSQueryScorerChild];
-  if (parts.scorer.empty()) {
-    duckdb::FlatVector::SetNull(scorer_vec, row, true);
-  } else {
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(scorer_vec)[row] =
-      duckdb::StringVector::AddString(scorer_vec, parts.scorer.data(),
-                                      parts.scorer.size());
-  }
-  auto& merge_vec = entries[connector::kTSQueryMergeChild];
-  duckdb::FlatVector::GetDataMutable<uint8_t>(merge_vec)[row] =
-    static_cast<uint8_t>(parts.merge);
+  connector::WriteTSQueryRow(
+    vec, row, connector::TSQueryPartsForType(vec.GetType(), text));
 }
 
 void ValueSink::Tsquery(std::string_view text) {
@@ -575,7 +553,7 @@ struct VarcharText {
 struct BlobText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    if (data.size() > 2 && data.starts_with("\\x")) {
+    if (data.starts_with("\\x")) {
       std::string bytes;
       if (!absl::HexStringToBytes(data.substr(2), &bytes)) {
         return false;
@@ -590,28 +568,22 @@ struct BlobText {
   }
 };
 
-std::unique_ptr<icu::Calendar> MakeCalendar(std::string tz_name) {
+duckdb::unique_ptr<duckdb::Calendar> MakeCalendar(std::string_view tz_name) {
   auto tz = duckdb::ICUHelpers::TryGetTimeZone(tz_name);
   if (!tz) {
     return nullptr;
   }
-  UErrorCode status = U_ZERO_ERROR;
-  std::unique_ptr<icu::Calendar> calendar{
-    icu::Calendar::createInstance(tz.release(), status)};
-  if (U_FAILURE(status)) {
-    return nullptr;
-  }
-  return calendar;
+  return duckdb::Calendar::TryCreate({}, std::move(tz));
 }
 
 }  // namespace
 
-icu::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
+duckdb::Calendar* DeserializeContext::CalendarFor(std::string_view tz_name) {
   auto it = named_calendars.try_emplace(tz_name, nullptr).first;
   if (it->second) {
     return it->second.get();
   }
-  it->second = MakeCalendar(std::string{tz_name});
+  it->second = MakeCalendar(tz_name);
   return it->second.get();
 }
 
@@ -629,9 +601,9 @@ void FillDeserializeContext(duckdb::ClientContext& client,
   } else {
     context.session_calendar = MakeCalendar(tz_name);
     if (context.session_calendar &&
-        std::strcmp(context.session_calendar->getType(), "gregorian") == 0) {
+        std::strcmp(context.session_calendar->GetType(), "gregorian") == 0) {
       context.session_lut =
-        duckdb::ZoneLUT::Get(context.session_calendar->getTimeZone());
+        duckdb::ZoneLUT::Get(context.session_calendar->GetTimeZone());
     }
   }
 }
@@ -652,7 +624,7 @@ inline bool ConvertTimestampTzText(DeserializeContext& ctx,
   if (has_offset || !result.IsFinite()) {
     return true;
   }
-  icu::Calendar* calendar = nullptr;
+  duckdb::Calendar* calendar = nullptr;
   if (tz_name.GetSize() != 0) {
     calendar = ctx.CalendarFor({tz_name.GetData(), tz_name.GetSize()});
     if (!calendar) {
@@ -887,13 +859,12 @@ struct BitBin {
 bool DeserializeTextDefaultInto(std::string_view data,
                                 const duckdb::LogicalType& type,
                                 duckdb::Value& out) {
-  duckdb::Value value{std::string{data}};
-  duckdb::Value casted;
-  std::string error;
-  if (!value.DefaultTryCastAs(type, casted, &error, /*strict=*/true)) {
+  auto casted = duckdb::Value{data}.DefaultTryCastAs(
+    type, /*error_message=*/nullptr, /*strict=*/true);
+  if (!casted) {
     return false;
   }
-  out = std::move(casted);
+  out = std::move(*casted);
   return true;
 }
 
@@ -1093,6 +1064,53 @@ bool DeserializeBinaryList(DeserializeContext& ctx, std::string_view data,
   size_t offset = 12 + static_cast<size_t>(ndim) * 8;
   return DecodeBinaryDim(ctx, data, offset, dims.data(), ndim, 0, vec, row,
                          leaf_fn);
+}
+
+bool DeserializeBinaryFixedArray(DeserializeContext& ctx, std::string_view data,
+                                 duckdb::Vector& vec, duckdb::idx_t row) {
+  if (data.size() < 20) {
+    return false;
+  }
+  const auto& type = vec.GetType();
+  const auto size = duckdb::ArrayType::GetSize(type);
+  const auto& child_type = duckdb::ArrayType::GetChildType(type);
+  if (child_type.IsNested() &&
+      child_type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  const auto ndim = absl::big_endian::Load<int32_t>(data.data());
+  const auto count = absl::big_endian::Load<int32_t>(data.data() + 12);
+  if (ndim != 1 || count < 0 || static_cast<duckdb::idx_t>(count) != size) {
+    return false;
+  }
+  const auto leaf_fn =
+    GetDeserialization<VectorSink>(child_type, VarFormat::Binary);
+  if (leaf_fn == nullptr) {
+    return false;
+  }
+  auto& child = duckdb::ArrayVector::GetEntry(vec);
+  size_t offset = 20;
+  for (duckdb::idx_t i = 0; i < size; ++i) {
+    if (offset + 4 > data.size()) {
+      return false;
+    }
+    const auto len = absl::big_endian::Load<int32_t>(data.data() + offset);
+    offset += 4;
+    const auto index = row * size + i;
+    if (len == -1) {
+      duckdb::FlatVector::SetNull(child, index, true);
+      continue;
+    }
+    if (len < 0 || static_cast<size_t>(len) > data.size() - offset) {
+      return false;
+    }
+    VectorSink sink{child, index};
+    if (!leaf_fn(ctx, data.substr(offset, len), sink)) {
+      return false;
+    }
+    offset += len;
+  }
+  return offset == data.size();
 }
 
 // PG composite binary: int32 nfields, then per field int32 type_oid,
@@ -1748,6 +1766,15 @@ struct ListText {
   }
 };
 
+struct FixedArrayBin {
+  template<typename Sink>
+  static bool Decode(DeserializeContext& ctx, std::string_view data,
+                     Sink& sink) {
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryFixedArray>(
+      ctx, data, sink);
+  }
+};
+
 struct StructBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
@@ -1894,6 +1921,9 @@ DeserializationFunction<Sink> GetDeserialization(
       return SelectDecoder<BitBin, BitText, Sink>(binary);
     case LIST:
       return SelectDecoder<ListBin, ListText, Sink>(binary);
+    case ARRAY:
+      return SelectDecoder<FixedArrayBin, DefaultText, Sink>(binary);
+    case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
         return SelectDecoder<InetBin, InetText, Sink>(binary);

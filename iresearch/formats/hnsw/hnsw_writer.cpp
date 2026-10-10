@@ -26,9 +26,11 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <core_functions/array_kernels.hpp>
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <optional>
 #include <yaclib/async/run.hpp>
 #include <yaclib/async/wait.hpp>
 #include <yaclib/coro/await.hpp>
@@ -49,7 +51,6 @@
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 namespace {
@@ -106,7 +107,6 @@ struct HnswRawDist {
 struct MergeDonor {
   const HnswIndex* index = nullptr;
   const SubReader* reader = nullptr;
-  const DocumentMask* mask = nullptr;
   uint64_t out_base = 0;
   uint64_t alive = 0;
 };
@@ -139,7 +139,6 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
     }
     best = MergeDonor{.index = &hnsw,
                       .reader = src.reader,
-                      .mask = src.mask,
                       .out_base = base,
                       .alive = src.alive_count};
   }
@@ -245,8 +244,7 @@ uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
     if (normalize) {
       for (duckdb::idx_t i = 0; i < take; ++i) {
         float* v = buf.data() + static_cast<size_t>(i) * d;
-        vector::L2Space<float, float, float>::Normalize(
-          reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d), v);
+        duckdb::L2NormalizeOp::Operation(v, v, d);
       }
     }
     fn(buf.data(), static_cast<size_t>(take), done, mask);
@@ -319,8 +317,7 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
       if (normalize) {
         for (size_t i = lo; i < hi; ++i) {
           float* v = owned.data() + i * size_t{d};
-          vector::L2Space<float, float, float>::Normalize(
-            reinterpret_cast<const byte_type*>(v), static_cast<uint16_t>(d), v);
+          duckdb::L2NormalizeOp::Operation(v, v, d);
         }
       }
       auto& writer = w == 0 ? qw : *spare[w - 1];
@@ -644,9 +641,10 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
   uint64_t rank = 0;
+  auto it_mask = donor.reader->MaskedDocs();
   for (size_t r = 0; r < src_rows; ++r) {
     const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (donor.mask != nullptr && donor.mask->contains(doc)) {
+    if (it_mask.Contains(doc)) {
       continue;
     }
     if (donor.out_base + rank >= rows) {
@@ -946,7 +944,8 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     // pass costs one sequential read of a column this build reads again to
     // encode, and the arithmetic is two comparisons per component. Trainers
     // that want a bounded sample (k-means and friends) still get one.
-    const uint64_t sample = train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
+    const uint64_t sample =
+      train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
     trained_rows = ScanVectors(
       col, ctx, sample, _d, normalize, batch_buf,
       [&](const float* rows, size_t n, uint64_t, const duckdb::ValidityMask&) {

@@ -54,9 +54,6 @@ class CopyInBridge {
       // re-checks _len, leaving a _data_ready Set unconsumed so the next
       // Publish/Finish double-Sets and corrupts the event -> SIGSEGV).
       if (_armed) {
-        if (_err) {
-          std::rethrow_exception(_err);
-        }
         _data_ready.Wait();
         _data_ready.Reset();
         _armed = false;
@@ -92,9 +89,6 @@ class CopyInBridge {
   // parser work runs between draining a frame and asking for the next.
   std::span<const char> Window() {
     if (_armed) {
-      if (_err) {
-        std::rethrow_exception(_err);
-      }
       _data_ready.Wait();
       _data_ready.Reset();
       _armed = false;
@@ -167,6 +161,7 @@ class CopyInBridge {
   bool Aborted() const noexcept {
     return _aborted.load(std::memory_order_acquire);
   }
+  bool Closed() const noexcept { return _eof || _err || Aborted(); }
 
  private:
   yaclib::OneShotEvent _data_ready;

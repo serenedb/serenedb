@@ -20,7 +20,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfel.db' AS dfel (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+CREATE DATABASE dfel;
 
 
 statement ok
@@ -82,4 +82,4 @@ DROP TABLE dfel.t;
 
 
 statement ok
-DETACH dfel;
+DROP DATABASE dfel;

@@ -22,10 +22,13 @@
 
 #include <absl/flags/declare.h>
 #include <absl/flags/flag.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_split.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
@@ -33,16 +36,12 @@
 #include <memory>
 #include <utility>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/role.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/role.h"
 #include "network/connection.h"
 #include "network/credentials.h"
-#include "network/http/es/handlers.h"
-#include "network/http/mcp/handlers.h"
-#include "network/http/otel/handlers.h"
 #include "network/http/otel/schema.h"
-#include "network/http/test/handlers.h"
+#include "network/http/routes.h"
 #include "network/pg/hba.h"
 #include "network/socket.h"
 #include "network/tls_context.h"
@@ -125,12 +124,11 @@ namespace {
 class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(
-    std::string_view username) const override {
-    auto role = catalog::FindRole(nullptr, username);
-    if (!role) {
-      return std::nullopt;
-    }
-    const auto stored = role->Password();
+    std::string_view username) const final {
+    std::string stored;
+    catalog::ReadRole(username, [&](const catalog::RoleCatalogEntry& role) {
+      stored = role.Password();
+    });
     if (stored.empty()) {
       return std::nullopt;
     }
@@ -138,7 +136,7 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
     if (auto verifier = network::ParseScramVerifier(stored)) {
       credential.scram = std::move(*verifier);
     } else if (network::IsMd5Verifier(stored)) {
-      credential.md5 = std::string{stored};
+      credential.md5.emplace(stored);
     } else {
       return std::nullopt;
     }
@@ -250,22 +248,7 @@ asio_ns::ssl::context* Server::BuildTls(const network::ListenSpec& spec) {
 
 network::HttpRouter& Server::BuildRouter(const network::ListenSpec& spec) {
   network::HttpRouter& router = _routers.emplace_back();
-  for (const auto api : spec.apis) {
-    switch (api) {
-      case network::HttpApi::Es:
-        network::http::es::Register(router);
-        break;
-      case network::HttpApi::Test:
-        network::http::test::Register(router);
-        break;
-      case network::HttpApi::Mcp:
-        network::http::mcp::Register(router);
-        break;
-      case network::HttpApi::Otel:
-        otel::RegisterHandlers(router);
-        break;
-    }
-  }
+  network::http::AddRoutes(router, spec.apis);
   return router;
 }
 
@@ -312,6 +295,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
+    deps.schema = spec.schema;
     deps.proxy = spec.proxy;
     acceptor = std::make_shared<
       network::Acceptor<network::HttpSession<network::SocketKind::Unix>>>(
@@ -348,7 +332,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.ssl = ssl;
     deps.credentials = _credentials.get();
     deps.allow_cleartext_without_tls = false;
-    deps.require_tls = spec.RequireTls() && ssl != nullptr;
+    deps.require_tls = spec.RequireTls() && ssl;
     deps.cancel = &_cancel;
     deps.max_message_bytes = _max_message;
     deps.active = &_active;
@@ -356,7 +340,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.auth_timeout = _auth_timeout;
     deps.proxy = spec.proxy;
-    if (ssl != nullptr) {
+    if (ssl) {
       acceptor = std::make_shared<network::Acceptor<
         network::pg::PgWireSession<network::SocketKind::MaybeTls>>>(
         *_pool, spec.endpoint, deps, opts);
@@ -379,6 +363,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
     deps.max_connections = spec.max_connections.value_or(_max_connections);
     deps.cors_origins = _cors_origins;
     deps.database = spec.database;
+    deps.schema = spec.schema;
     deps.proxy = spec.proxy;
     if (ssl != nullptr) {
       acceptor = std::make_shared<
@@ -394,7 +379,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
   _acceptors.push_back(std::move(acceptor));
   SDB_INFO(GENERAL, "network listening on ", spec.url, " (",
            spec.endpoint.address().to_string(), ":", spec.endpoint.port(),
-           ssl != nullptr ? ", tls" : "", ")");
+           ssl ? ", tls" : "", ")");
 }
 
 void Server::StartIoPool() {
@@ -430,9 +415,16 @@ void Server::StartListeners() {
                                         ? irs::StaticStrings::kDefaultDatabase
                                         : spec.database;
     if (absl::c_linear_search(spec.apis, network::HttpApi::Otel)) {
-      otel::EnsureSchema(database);
+      const std::string_view schema =
+        spec.schema.empty() ? std::string_view{"public"} : spec.schema;
+      if (const auto status = otel::EnsureSchema(database, schema);
+          !status.ok()) {
+        SDB_FATAL(GENERAL, "endpoint '", spec.url,
+                  "': OpenTelemetry schema: ", status.message());
+      }
     }
-    if (catalog::FindDatabase(nullptr, database) == nullptr) {
+    if (!catalog::ReadDatabase(database,
+                               [](const catalog::DatabaseCatalogEntry&) {})) {
       SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
                 "' does not exist");
     }

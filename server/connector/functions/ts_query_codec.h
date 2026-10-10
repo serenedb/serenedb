@@ -23,6 +23,7 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <span>
@@ -33,6 +34,7 @@ namespace duckdb {
 
 class ClientContext;
 class Expression;
+class Vector;
 
 }  // namespace duckdb
 namespace sdb::connector {
@@ -43,6 +45,13 @@ inline constexpr duckdb::idx_t kTSQueryBoostChild = 2;
 inline constexpr duckdb::idx_t kTSQuerySlopChild = 3;
 inline constexpr duckdb::idx_t kTSQueryScorerChild = 4;
 inline constexpr duckdb::idx_t kTSQueryMergeChild = 5;
+inline constexpr duckdb::idx_t kTSQueryMinMatchChild = 6;
+
+inline constexpr int64_t kMaxSlop = std::numeric_limits<uint16_t>::max();
+
+bool TryCastExactInt64(const duckdb::Value& v, duckdb::Value& out);
+
+uint16_t CheckedSlop(int64_t value);
 
 bool IsTSQueryStructType(const duckdb::LogicalType& type);
 
@@ -79,18 +88,29 @@ struct TSQueryFields {
   Str text;
   Str tokenizer;
   Str scorer;
-  int64_t slop = 0;
+  uint16_t slop = 0;
   float boost = 1.0f;
   TSQueryMerge merge = TSQueryMerge::Default;
+  uint32_t min_match = 0;
 };
 
 using TSQueryParts = TSQueryFields<std::string>;
 using TSQueryRowView = TSQueryFields<std::string_view>;
 
+template<typename Str>
+bool HasModifiers(const TSQueryFields<Str>& parts) {
+  return !parts.tokenizer.empty() || parts.boost != 1.0f || parts.slop != 0 ||
+         !parts.scorer.empty() || parts.merge != TSQueryMerge::Default ||
+         parts.min_match != 0;
+}
+
 std::optional<TSQueryParts> TryGetTSQueryParts(const duckdb::Value& value);
 
 TSQueryParts TSQueryPartsForType(const duckdb::LogicalType& type,
                                  std::string_view text);
+
+void WriteTSQueryRow(duckdb::Vector& result, duckdb::idx_t row,
+                     const TSQueryParts& parts);
 
 duckdb::Value MakeTSQueryValue(const duckdb::LogicalType& type,
                                std::string_view text);

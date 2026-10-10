@@ -29,7 +29,8 @@
 #include <string>
 #include <vector>
 
-#include "catalog/table_options.h"
+#include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "connector/index_source_view.h"
 #include "connector/view_fast_path.h"
 
@@ -41,7 +42,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
     duckdb::ClientContext& context, ViewFastPath fast_path,
     std::span<const duckdb::idx_t> projected_columns,
     std::span<const duckdb::LogicalType> projected_types,
-    std::span<const catalog::ColumnId> bind_column_ids);
+    std::span<const ColumnId> bind_column_ids);
 
   duckdb::idx_t Materialize(duckdb::ClientContext& context, duckdb::Vector& pk,
                             duckdb::idx_t count,
@@ -63,7 +64,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
                             const std::vector<std::string>& select_names);
   void PrepareLookup(duckdb::ClientContext& context, const std::string& catalog,
                      const std::string& inner,
-                     duckdb::named_parameter_map_t named);
+                     duckdb::named_argument_map_t named);
   void BorrowKeyColumns(duckdb::Vector& pk, duckdb::idx_t count);
 
   duckdb::idx_t _num_proj_cols = 0;
@@ -71,7 +72,7 @@ class ExternalLookupIndexSource final : public ViewIndexSourceBase {
   bool _postgres_ctid = false;
   Dialect _dialect = Dialect::Postgres;
 
-  duckdb::TableFunction _lookup_func;
+  duckdb::BoundTableFunction _lookup_func;
   duckdb::unique_ptr<duckdb::FunctionData> _bind_data;
   duckdb::unique_ptr<duckdb::GlobalTableFunctionState> _gstate;
   //! Key columns referencing the current batch's pk; refilled per batch.

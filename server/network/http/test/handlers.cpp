@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
+#include <duckdb/main/query_result.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -121,6 +123,21 @@ class FuzzHandler final : public HttpHandler {
   }
 };
 
+class SessionUserHandler final : public HttpHandler {
+ public:
+  yaclib::Task<> Handle(RequestContext& context, const HttpRequest&,
+                        http::HttpResponseWriter& writer) override {
+    auto result = co_await context.RunQuery("SELECT current_user", false);
+    if (result->HasError()) {
+      writer.Error(HttpStatus::InternalError, "query_failed");
+    } else {
+      writer.Text(HttpStatus::Ok,
+                  result->Collection().GetValue(0, 0).ToString());
+    }
+    co_return {};
+  }
+};
+
 // GET /_test/status?code=NNN -> respond with that status (clamped 100..599).
 class StatusHandler final : public HttpHandler {
  public:
@@ -139,13 +156,22 @@ class StatusHandler final : public HttpHandler {
 
 }  // namespace
 
-void Register(HttpRouter& router) {
-  router.Add(HttpMethod::Post, "/_test/echo", std::make_unique<EchoHandler>());
-  router.Add(HttpMethod::Get, "/_test/ping", std::make_unique<PingHandler>());
-  router.Add(HttpMethod::Get, "/_test/bytes", std::make_unique<BytesHandler>());
-  router.Add(HttpMethod::Post, "/_test/fuzz", std::make_unique<FuzzHandler>());
-  router.Add(HttpMethod::Get, "/_test/status",
-             std::make_unique<StatusHandler>());
+std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
+  switch (endpoint) {
+    case Endpoint::Echo:
+      return std::make_unique<EchoHandler>();
+    case Endpoint::Ping:
+      return std::make_unique<PingHandler>();
+    case Endpoint::Bytes:
+      return std::make_unique<BytesHandler>();
+    case Endpoint::Fuzz:
+      return std::make_unique<FuzzHandler>();
+    case Endpoint::Status:
+      return std::make_unique<StatusHandler>();
+    case Endpoint::SessionUser:
+      return std::make_unique<SessionUserHandler>();
+  }
+  SDB_UNREACHABLE();
 }
 
 }  // namespace sdb::network::http::test

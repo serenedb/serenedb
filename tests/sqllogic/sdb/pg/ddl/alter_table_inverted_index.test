@@ -115,10 +115,6 @@ id
 1
 
 
-# DROP a non-indexed column: the index is unaffected, and its INCLUDE column
-# stays bound to the right source. Dropping a column shifts the positions of
-# the ones after it, so a row inserted + refreshed post-drop must still project
-# extra2 -- not score, which moved into extra2's old slot -- through the index.
 statement ok
 ALTER TABLE ati_t2 DROP COLUMN tag;
 
@@ -154,10 +150,9 @@ ALTER TABLE ati_t2 ALTER COLUMN score TYPE BIGINT;
 statement error
 ALTER TABLE ati_t2 ALTER COLUMN body2 TYPE VARCHAR(100);
 ----
-db error: ERROR: cannot alter type of column "body2" because index "ati_idx2" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
-# DROP the indexed column: the inverted index covering it is cascade-dropped.
 statement ok
 ALTER TABLE ati_t2 DROP COLUMN body2;
 
@@ -191,7 +186,7 @@ DROP TEXT SEARCH DICTIONARY ati_dict;
 # records the base struct column as a referenced dependency, so the index
 # covers it even though the column never appears directly. ADD / DROP / RENAME
 # FIELD and a whole-column type change are all rejected until the index is
-# dropped; dropping the struct column itself cascade-drops the expression index.
+# dropped.
 
 
 statement ok
@@ -210,31 +205,30 @@ CREATE INDEX ati_struct_idx ON ati_struct USING inverted((s['id']::INTEGER));
 statement error
 ALTER TABLE ati_struct ADD COLUMN s.k INTEGER;
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # RENAME the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct RENAME COLUMN s.id TO ident;
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # DROP the indexed sub-field -- rejected.
 statement error
 ALTER TABLE ati_struct DROP COLUMN s.id;
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
 # A whole-column type change is rejected for the same reason.
 statement error
 ALTER TABLE ati_struct ALTER COLUMN s TYPE STRUCT(id BIGINT, name VARCHAR);
 ----
-db error: ERROR: cannot alter type of column "s" because index "ati_struct_idx" depends on it; drop the index first
+db error: ERROR: Cannot change the type of this column: an index depends on it!
 
 
-# Dropping the whole struct column cascade-drops the expression index.
 statement ok
 ALTER TABLE ati_struct DROP COLUMN s;
 
@@ -263,3 +257,104 @@ STRUCT(a INTEGER, b INTEGER)
 
 statement ok
 DROP TABLE ati_struct;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ati_tx_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE ati_tx(id INTEGER PRIMARY KEY, a TEXT, b TEXT, c INTEGER);
+
+
+statement ok
+CREATE INDEX ati_tx_a ON ati_tx USING inverted(a ati_tx_dict);
+
+
+statement ok
+CREATE INDEX ati_tx_b ON ati_tx USING inverted(b ati_tx_dict) INCLUDE (c);
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (1, 'alpha', 'bravo', 10);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE ati_tx DROP COLUMN a;
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (2, 'charlie', 20);
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (3, 'delta', 'echo', 30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_tx;
+
+
+query
+SELECT id FROM ati_tx_a WHERE a @@ ts_phrase('delta');
+----
+id
+3
+
+
+query
+SELECT id, c FROM ati_tx_b WHERE b @@ ts_phrase('echo');
+----
+id	c
+3	30
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE ati_tx DROP COLUMN a;
+
+
+statement count 1
+INSERT INTO ati_tx VALUES (4, 'foxtrot', 40);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ati_tx;
+
+
+query
+SELECT id, c FROM ati_tx_b WHERE b @@ ts_phrase('foxtrot');
+----
+id	c
+4	40
+
+
+statement error
+SELECT id FROM ati_tx_a;
+----
+db error: ERROR: Table with name ati_tx_a does not exist!<slt:ignore>
+
+
+statement ok
+DROP TABLE ati_tx;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ati_tx_dict;

@@ -121,6 +121,12 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   const std::string_view subtype =
     subtype_it != extra.end() ? subtype_it->second : std::string_view{};
   if (error.Type() == duckdb::ExceptionType::CATALOG) {
+    if (subtype == "WRONG_OBJECT_TYPE") {
+      return ERRCODE_WRONG_OBJECT_TYPE;
+    }
+    if (subtype == "UNSUPPORTED") {
+      return ERRCODE_FEATURE_NOT_SUPPORTED;
+    }
     const auto kind_it = extra.find("type");
     const std::string_view kind =
       kind_it != extra.end() ? kind_it->second : std::string_view{};
@@ -399,7 +405,7 @@ void WriteParameterStatus(message::Buffer& out, std::string_view name,
   w.Commit(false);
 }
 
-void WriteRowDescription(message::Buffer& out,
+void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
                          std::span<const duckdb::LogicalType> types,
                          std::span<const duckdb::Identifier> names,
                          std::span<const sdb::pg::VarFormat> formats) {
@@ -417,7 +423,7 @@ void WriteRowDescription(message::Buffer& out,
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);
     const auto type_info = sdb::pg::Logical2Pg(types[i]);
-    absl::big_endian::Store32(w.Alloc(kInt32), type_info.oid);
+    absl::big_endian::Store32(w.Alloc(kInt32), sdb::pg::WireOid(type_info.oid));
     absl::big_endian::Store16(w.Alloc(kInt16), type_info.typlen);
     absl::big_endian::Store32(w.Alloc(kInt32), type_info.typmod);
     const auto format = i < formats.size() ? formats[i] : default_format;
@@ -542,8 +548,10 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
   const bool interrupted = error.Type() == duckdb::ExceptionType::INTERRUPT;
   irs::pg::SqlErrorData data{
     .errcode = DuckExceptionToErrcode(error),
-    .errmsg = interrupted ? "canceling statement due to user request"
-                          : error.RawMessage(),
+    .errmsg = !interrupted ? error.RawMessage()
+              : error.RawMessage() == "Query exceeded maximum execution time"
+                ? "canceling statement due to statement timeout"
+                : "canceling statement due to user request",
   };
   // PG's error Position is a 1-based offset into the query; DuckDB records a
   // 0-based one in extra_info["position"]. This is a byte offset -- exact for
@@ -555,6 +563,13 @@ irs::pg::SqlErrorData DuckErrorToSqlData(const duckdb::ErrorData& error) {
     if (absl::SimpleAtoi(it->second, &pos)) {
       data.cursorpos = pos + 1;
     }
+  }
+  if (auto it = error.ExtraInfo().find("detail");
+      it != error.ExtraInfo().end()) {
+    data.errdetail = it->second;
+  }
+  if (auto it = error.ExtraInfo().find("hint"); it != error.ExtraInfo().end()) {
+    data.errhint = it->second;
   }
   return data;
 }
@@ -579,7 +594,7 @@ void WriteEmptyFrame(message::Buffer& out, char type) {
 }
 
 void WriteParameterDescription(message::Buffer& out,
-                               std::span<const int32_t> oids) {
+                               std::span<const uint64_t> oids) {
   message::Writer w{out};
   const auto count = static_cast<uint16_t>(oids.size());
   auto* prefix = w.Alloc(kFrameHeader + kInt16);
@@ -588,7 +603,7 @@ void WriteParameterDescription(message::Buffer& out,
     prefix + kFrameTag, static_cast<int32_t>(kInt32 + kInt16 + kInt32 * count));
   absl::big_endian::Store16(prefix + kFrameHeader, count);
   for (const auto oid : oids) {
-    absl::big_endian::Store32(w.Alloc(kInt32), oid);
+    absl::big_endian::Store32(w.Alloc(kInt32), sdb::pg::WireOid(oid));
   }
   w.Commit(false);
 }

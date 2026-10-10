@@ -1,0 +1,58 @@
+control substitution on
+
+statement ok
+DETACH IF EXISTS plain;
+
+statement ok
+ATTACH '${__TEST_DIR__}/plain_serenedb_state.db' AS plain;
+
+statement ok
+CREATE TABLE plain.main.t (a INTEGER);
+
+statement ok
+INSERT INTO plain.main.t VALUES (1);
+
+statement ok
+CREATE SCHEMA plain.s AUTHORIZATION postgres;
+
+statement ok
+CREATE VIEW plain.main.v AS SELECT a FROM plain.main.t;
+
+statement ok
+CREATE TABLE plain.main.ser (id SERIAL, v INTEGER);
+
+statement ok
+INSERT INTO plain.main.ser (v) VALUES (5);
+
+statement error Cannot write ALTER_PERMISSIONS to a database file with DuckDB storage version
+GRANT SELECT ON plain.main.t TO PUBLIC;
+
+statement error Cannot write ALTER_PERMISSIONS to a database file with DuckDB storage version
+ALTER TABLE plain.main.t OWNER TO postgres;
+
+statement error Cannot write GENERATED_STORED to a database file with DuckDB storage version
+CREATE TABLE plain.main.g (a INTEGER, b INTEGER GENERATED ALWAYS AS (a + 1) STORED);
+
+statement ok
+DETACH plain;
+
+statement ok
+ATTACH '${__TEST_DIR__}/plain_serenedb_state.db' AS plain;
+
+statement ok
+INSERT INTO plain.main.ser (v) VALUES (6);
+
+query
+SELECT string_agg(id || ':' || v, ',' ORDER BY id) AS serials FROM plain.main.ser;
+----
+serials
+1:5,2:6
+
+query
+SELECT sum(a) AS a FROM plain.main.v;
+----
+a
+1
+
+statement ok
+DETACH plain;

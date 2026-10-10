@@ -40,11 +40,12 @@ services:
     env_file:
       - "${WORKSPACE}/docker.env"
     environment:
-      - HOME=/tmp/home
+      - HOME=/tmp
       - LOG_DIR=/logs
       - SDB_DRV_LANG
       - SDB_DRV_HTTP_PORT=9200
       - SDB_DRV_HTTP_TOKEN=drivers-ci-token
+      - SDB_DRV_SERENED_BIN=/serenedb/${BUILD_DIR}/bin/serened
       - SDB_FUZZ_QUERIES
       - SDB_FUZZ_PARALLEL
     networks:

@@ -27,8 +27,9 @@
 #include <span>
 
 #include "iresearch/formats/column/norm_reader.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/term_reader.hpp"
+#include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/types.hpp"
@@ -148,6 +149,10 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const SegmentInfo& Meta() const = 0;
 
   virtual const DocumentMask* docs_mask() const = 0;
+
+  DocumentMask::Iterator MaskedDocs() const noexcept {
+    return DocumentMask::Iterator{docs_mask()};
+  }
 
   virtual lead::Node::ptr docs_iterator() const = 0;
 

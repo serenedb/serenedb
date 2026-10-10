@@ -1,0 +1,54 @@
+control substitution on
+
+# Scan of macaddr / tsvector columns from an attached postgres table: the scan
+# casts them to varchar on the remote -- the scan-side counterpart to
+# lookup_cast_to_varchar_pgscan.
+#
+# The remote table is created with postgres_execute because SereneDB's parser
+# has no macaddr / tsvector type.
+#
+# The attach alias and remote schema carry ${__DATABASE__}: the remote postgres
+# is shared and the runner replays this file once per wire engine.
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS pgcs_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('pgcs_${__DATABASE__}', 'DROP SCHEMA IF EXISTS s${__DATABASE__}_cs CASCADE');
+
+
+statement ok
+CALL postgres_execute('pgcs_${__DATABASE__}', 'CREATE SCHEMA s${__DATABASE__}_cs');
+
+
+statement ok
+CALL postgres_execute('pgcs_${__DATABASE__}',
+  'CREATE TABLE s${__DATABASE__}_cs.docs (id bigint, mac macaddr, ts tsvector)');
+
+
+statement ok
+CALL postgres_execute('pgcs_${__DATABASE__}',
+  'INSERT INTO s${__DATABASE__}_cs.docs
+     SELECT g,
+            (''08:00:2b:01:02:''||lpad(to_hex(g),2,''0''))::macaddr,
+            (''servis''||g||'':1'')::tsvector
+     FROM generate_series(1,5) g');
+
+
+query
+SELECT id, mac, ts FROM pgcs_${__DATABASE__}.s${__DATABASE__}_cs.docs ORDER BY id;
+----
+id	mac	ts
+1	08:00:2b:01:02:01	'servis1':1
+2	08:00:2b:01:02:02	'servis2':1
+3	08:00:2b:01:02:03	'servis3':1
+4	08:00:2b:01:02:04	'servis4':1
+5	08:00:2b:01:02:05	'servis5':1
+
+
+statement ok
+CALL postgres_execute('pgcs_${__DATABASE__}', 'DROP SCHEMA s${__DATABASE__}_cs CASCADE');
+
+statement ok
+DETACH pgcs_${__DATABASE__};

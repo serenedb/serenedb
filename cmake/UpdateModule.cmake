@@ -16,17 +16,33 @@ macro(sdb_update_module _GIT _SUBMODULE _CWD _SENTINEL)
             NOT EXISTS ${_CWD}/${_SUBMODULE}/${_SENTINEL}
             OR NOT _EXPECTED_SUBMODULE_HASH STREQUAL _ACTUAL_SUBMODULE_HASH
         )
-            execute_process(
-                COMMAND ${_GIT} submodule update --init --force -- ${_SUBMODULE}
-                RESULT_VARIABLE _INIT_RESULT
-                WORKING_DIRECTORY ${_CWD}
-            )
-
-            if(NOT _INIT_RESULT EQUAL 0)
+            set(_SUBMODULE_CHANGES "")
+            if(EXISTS ${_CWD}/${_SUBMODULE}/.git)
+                execute_process(
+                    COMMAND ${_GIT} status --porcelain
+                    WORKING_DIRECTORY ${_CWD}/${_SUBMODULE}
+                    OUTPUT_VARIABLE _SUBMODULE_CHANGES
+                )
+            endif()
+            if(_SUBMODULE_CHANGES)
                 message(
                     WARNING
-                    "FAILED: ${_GIT} submodule update --init -- ${_SUBMODULE}"
+                    "NOT UPDATED: ${_SUBMODULE} has uncommitted changes"
                 )
+            else()
+                execute_process(
+                    COMMAND
+                        ${_GIT} submodule update --init --force -- ${_SUBMODULE}
+                    RESULT_VARIABLE _INIT_RESULT
+                    WORKING_DIRECTORY ${_CWD}
+                )
+
+                if(NOT _INIT_RESULT EQUAL 0)
+                    message(
+                        WARNING
+                        "FAILED: ${_GIT} submodule update --init -- ${_SUBMODULE}"
+                    )
+                endif()
             endif()
         endif()
     endif()

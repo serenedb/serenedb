@@ -8,13 +8,14 @@ target_sources(
         es.cpp
         inout.cpp
         json.cpp
+        markdown_render.cpp
         math.cpp
         otel.cpp
         string.cpp
         system.cpp
         minhash.cpp
+        ruleutils.cpp
         search.cpp
-        sequence.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp
         ts_between.cpp
@@ -33,8 +34,16 @@ target_sources(
         ts_term.cpp
         ts_to_tsquery.cpp
         ts_tokenize.cpp
-        vector.cpp
-        embedding/embedding.cpp
-        embedding/provider.cpp
-        embedding/provider_openai.cpp
+        ai/aggregate_functions.cpp
+        ai/ai.cpp
+        ai/chat.cpp
+        ai/common.cpp
+        ai/embedding.cpp
+        ai/system_one.cpp
+        ai/text_functions.cpp
+)
+
+target_link_libraries(
+    sereneserver
+    PRIVATE libcmark-gfm-extensions_static libcmark-gfm_static
 )

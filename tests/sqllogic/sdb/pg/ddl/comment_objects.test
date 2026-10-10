@@ -32,7 +32,7 @@ statement ok
 COMMENT ON VIEW cob_v IS 'view note';
 
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v';
+SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v' AND database_name = current_database();
 ----
 comment
 view note
@@ -43,7 +43,7 @@ statement ok
 COMMENT ON TABLE cob_v IS 'view via table form';
 
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v';
+SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v' AND database_name = current_database();
 ----
 comment
 view via table form
@@ -54,7 +54,7 @@ statement ok
 COMMENT ON COLUMN cob_v.bv IS 'view col note';
 
 query
-SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'cob_v' ORDER BY 1;
+SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'cob_v' AND database_name = current_database() ORDER BY 1;
 ----
 column_name	comment
 av	NULL
@@ -71,7 +71,7 @@ db error: ERROR: View "cob_v" does not have a column with name "nope"
 statement error
 COMMENT ON VIEW cob_t IS 'x';
 ----
-db error: ERROR: "cob_t" is not a view
+db error: ERROR: Can only modify table with ALTER TABLE statement
 
 
 # --- sequences ---------------------------------------------------------------
@@ -80,7 +80,7 @@ statement ok
 COMMENT ON SEQUENCE cob_seq IS 'seq note';
 
 query
-SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'cob_seq';
+SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'cob_seq' AND database_name = current_database();
 ----
 comment
 seq note
@@ -100,7 +100,7 @@ statement ok
 COMMENT ON TYPE cob_mood IS 'type note';
 
 query
-SELECT comment FROM duckdb_types() WHERE type_name = 'cob_mood';
+SELECT comment FROM duckdb_types() WHERE type_name = 'cob_mood' AND database_name = current_database();
 ----
 comment
 type note
@@ -112,7 +112,7 @@ statement ok
 COMMENT ON MACRO cob_add1 IS 'macro note';
 
 query
-SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'cob_add1';
+SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'cob_add1' AND database_name = current_database();
 ----
 comment
 macro note
@@ -127,7 +127,7 @@ statement ok
 COMMENT ON INDEX cob_inv IS 'inverted note';
 
 query
-SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'cob_%' ORDER BY 1;
+SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'cob_%' AND database_name = current_database() ORDER BY 1;
 ----
 index_name	comment
 cob_inv	inverted note
@@ -149,28 +149,28 @@ statement ok
 COMMENT ON INDEX cob_inv IS NULL;
 
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v';
+SELECT comment FROM duckdb_views() WHERE view_name = 'cob_v' AND database_name = current_database();
 ----
 comment
 NULL
 
 
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'cob_v' AND column_name = 'bv';
+SELECT comment FROM duckdb_columns() WHERE table_name = 'cob_v' AND column_name = 'bv' AND database_name = current_database();
 ----
 comment
 NULL
 
 
 query
-SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'cob_seq';
+SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'cob_seq' AND database_name = current_database();
 ----
 comment
 NULL
 
 
 query
-SELECT comment FROM duckdb_indexes() WHERE index_name = 'cob_inv';
+SELECT comment FROM duckdb_indexes() WHERE index_name = 'cob_inv' AND database_name = current_database();
 ----
 comment
 NULL

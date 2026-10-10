@@ -1,0 +1,51 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE jsonb_src AS
+SELECT 10000 + i AS id,
+       rpad(CASE WHEN i IN (0, 16777) THEN 'needle' ELSE 'hay' END || ' ', 977, 'x') AS body
+FROM range(17000) t(i)
+
+
+statement ok
+COPY jsonb_src TO '${__TEST_DIR__}/jsonb.jsonl' (FORMAT json)
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY jsonb_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position)
+
+
+statement ok
+CREATE VIEW jsonb_v AS SELECT * FROM read_json('${__TEST_DIR__}/jsonb.jsonl',
+    columns={id: 'INTEGER', body: 'VARCHAR'})
+
+
+statement ok
+CREATE INDEX jsonb_idx ON jsonb_v USING inverted(body jsonb_en)
+
+
+query
+SELECT id, left(body, 6) AS head FROM jsonb_idx WHERE body @@ ts_phrase('needle') ORDER BY id
+----
+id	head
+10000	needle
+26777	needle
+
+
+statement ok
+DROP INDEX jsonb_idx
+
+
+statement ok
+DROP VIEW jsonb_v
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY jsonb_en
+
+
+statement ok
+DROP TABLE jsonb_src

@@ -28,8 +28,11 @@ set(iresearch-tests_sources
     ./analysis/shared_object_cache_tests.cpp
     ./analysis/text/sentence_tests.cpp
     ./analysis/text/words_tests.cpp
+    ./analysis/text/unicode_text_tests.cpp
     ./analysis/normalizing_tokenizer_tests.cpp
+    ./analysis/filter_tokens_tokenizer_tests.cpp
     ./analysis/geo_tokenizer_tests.cpp
+    ./analysis/html_strip_tokenizer_tests.cpp
     ./analysis/stemming_tokenizer_tests.cpp
     ./analysis/stopwords_tokenizer_tests.cpp
     ./analysis/solr_synonyms_tokenizer_tests.cpp
@@ -58,12 +61,12 @@ set(iresearch-tests_sources
     ./formats/column/test_cs_helpers.cpp
     ./formats/columnstore2_test.cpp
     ./formats/posting_alloc_test.cpp
+    ./formats/posting/block_codec_test.cpp
     ./formats/hnsw/hnsw_test.cpp
     ./formats/ivf/quantizer_test.cpp
     ./formats/ivf/centroids_test.cpp
     ./formats/sparse_bitmap_test.cpp
     ./formats/formats_test_case_base.cpp
-    ./formats/skip_list_test.cpp
     ./store/directory_test_case.cpp
     ./store/directory_cleaner_tests.cpp
     ./store/memory_index_output_tests.cpp
@@ -76,7 +79,7 @@ set(iresearch-tests_sources
     ./index/index_meta_tests.cpp
     ./index/index_profile_tests.cpp
     ./index/index_tests.cpp
-    ./index/index_levenshtein_tests.cpp
+    ./index/index_acceptor_walk_tests.cpp
     ./index/norm_test.cpp
     ./index/index_death_tests.cpp
     ./index/field_meta_test.cpp
@@ -117,11 +120,14 @@ set(iresearch-tests_sources
     ./search/term_filter_tests.cpp
     ./search/terms_filter_test.cpp
     ./search/term_predicate_test.cpp
+    ./search/pattern_cache_test.cpp
     ./search/prefix_filter_test.cpp
     ./search/range_filter_test.cpp
     ./search/phrase_filter_tests.cpp
     ./search/phrase_slop_matcher_tests.cpp
     ./search/phrase_slop_matcher_fuzz.cpp
+    ./search/phrase_positions_test.cpp
+    ./search/shingle_phrase_test.cpp
     ./search/ngram_similarity_filter_tests.cpp
     ./search/top_terms_selector_test.cpp
     ./search/geo_filter_test.cpp
@@ -135,9 +141,7 @@ set(iresearch-tests_sources
     ./search/score_prune_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
-    ./utils/automaton_test.cpp
     ./utils/bitvector_tests.cpp
-    ./utils/encryption_test.cpp
     ./utils/container_utils_tests.cpp
     ./utils/crc_test.cpp
     ./utils/file_utils_tests.cpp
@@ -151,7 +155,12 @@ set(iresearch-tests_sources
     ./duckdb/immutable_strings_tests.cpp
     ./utils/levenshtein_utils_test.cpp
     ./utils/wildcard_utils_test.cpp
+    ./utils/re2_literal_finder_test.cpp
+    ./utils/re2_owned_dfa_test.cpp
+    ./utils/re2_required_literal_test.cpp
+    ./utils/re2_segment_plan_test.cpp
     ./utils/regexp_utils_test.cpp
+    ./utils/regexp_ngram_test.cpp
     ./utils/ref_counter_tests.cpp
     ./utils/minhash_utils_test.cpp
     ./utils/string_tests.cpp
@@ -163,7 +172,6 @@ set(iresearch-tests_sources
     ./utils/utf8_utils_test.cpp
     ./utils/utf8_path_tests.cpp
     ./utils/fst_builder_test.cpp
-    ./utils/fst_utils_test.cpp
     ./utils/fst_string_weight_test.cpp
     ./utils/ngram_match_utils_tests.cpp
     ./utils/write_helpers.cpp
@@ -207,6 +215,7 @@ target_link_libraries(
     simdjson
     simdutf
 )
+sdb_link_duckdb_extensions(iresearch-tests)
 
 target_include_directories(
     iresearch-tests
@@ -217,7 +226,6 @@ target_include_directories(
     SYSTEM
     PRIVATE
         ${Boost_INCLUDE_DIRS}
-        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 
@@ -244,6 +252,7 @@ target_link_libraries(
     simdjson
     simdutf
 )
+sdb_link_duckdb_extensions(iresearch-load-tests)
 
 target_include_directories(
     iresearch-load-tests
@@ -254,7 +263,6 @@ target_include_directories(
     SYSTEM
     PRIVATE
         ${Boost_INCLUDE_DIRS}
-        $<TARGET_PROPERTY:iresearch-ofst,INTERFACE_INCLUDE_DIRECTORIES>
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
 )
 

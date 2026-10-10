@@ -110,6 +110,10 @@ To modify test parameters in Docker:
 command: /sqllogic/_execute_tests_in_docker.sh --your-parameters-here
 ```
 
+## Tests that run alone
+
+A test whose file has a `# exclusive` line runs after the parallel pool of its engine, by itself (`--jobs 1`). Use it for a test that leaves server-wide state other tests can observe, or that breaks on other tests' server-wide activity, such as `detach_held_drop_database_pgscan.test_slow`: it drops a remote PostgreSQL database that only its own session may hold, while a listing in any other test that is not scoped to one database opens a session on every attached PostgreSQL catalog.
+
 ## Iceberg tests: fixture or Google BigLake
 
 `*_iceberg.test_slow` files do not spell out the catalog. They begin with
@@ -203,7 +207,7 @@ Let's see typical usages.
 Tests under `any/pg/` also run against real PostgreSQL in the `validate-pg` job,
 so everything they use has to exist there too. `any/pg/geometry/` needs PostGIS,
 which the stock `postgres` images do not ship, so that job builds its own image
-from `fixtures/postgres/Dockerfile`: `postgres:18.3` plus the PostGIS package
+from `fixtures/postgres/Dockerfile`: `postgres:18.6` plus the PostGIS package
 from the PGDG apt repo the base image already configures.
 
 Installing the package does not enable it. A test that needs an extension asks

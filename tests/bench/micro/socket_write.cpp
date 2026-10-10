@@ -154,5 +154,3 @@ BENCHMARK_REGISTER_F(SocketFixture, BM_single_write)
 BENCHMARK_REGISTER_F(SocketFixture, BM_writev_16k)
   ->RangeMultiplier(2)
   ->Range(kChunk, kMaxWrite);
-
-BENCHMARK_MAIN();

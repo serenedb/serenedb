@@ -36,6 +36,8 @@ if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
 fi
 docker buildx create --name "$BUILDER_NAME" --use --driver-opt network=host >/dev/null
 
+CONTEXTS=(--build-context drivers=../../tests/drivers)
+
 # --- Build Loop ---
 for os in ubuntu; do
 	REPO="${REGISTRY}/serenedb-build-${os}"
@@ -46,7 +48,7 @@ for os in ubuntu; do
 
 	# 1. Build Probe (host arch, loaded locally for version extraction)
 	echo "    > Building local probe ($HOST_PLATFORM)..."
-	docker buildx build --load --platform "$HOST_PLATFORM" -t "${REPO}:probe" --file "${DOCKERFILE}" . >/dev/null
+	docker buildx build --load --platform "$HOST_PLATFORM" -t "${REPO}:probe" "${CONTEXTS[@]}" --file "${DOCKERFILE}" . >/dev/null
 
 	# 2. Extract Version Info
 	echo "    > Inspecting versions..."
@@ -72,6 +74,7 @@ for os in ubuntu; do
 				--platform "linux/${arch}" \
 				-t "${REPO}:${IMAGE_TAG}-${arch}" \
 				--output "type=docker,dest=/tmp/${os}-${arch}.tar" \
+				"${CONTEXTS[@]}" \
 				--file "${DOCKERFILE}" .
 		done
 
@@ -90,10 +93,16 @@ for os in ubuntu; do
 			docker push "${REPO}:${IMAGE_TAG}-${arch}"
 		done
 
-		echo "    > Creating manifests ${REPO}:{${IMAGE_TAG},latest}..."
+		TAGS=(--tag "${REPO}:${IMAGE_TAG}")
+		if [ "${TAG_LATEST:-false}" = "true" ]; then
+			TAGS+=(--tag "${REPO}:latest")
+		fi
+		if [ -n "${EXTRA_TAG:-}" ]; then
+			TAGS+=(--tag "${REPO}:${EXTRA_TAG//\//-}")
+		fi
+		echo "    > Creating manifests ${TAGS[*]}..."
 		docker buildx imagetools create \
-			--tag "${REPO}:${IMAGE_TAG}" \
-			--tag "${REPO}:latest" \
+			"${TAGS[@]}" \
 			"${REPO}:${IMAGE_TAG}-amd64" \
 			"${REPO}:${IMAGE_TAG}-arm64"
 
@@ -110,3 +119,37 @@ for os in ubuntu; do
 	docker rmi "${REPO}:probe" >/dev/null 2>&1 || true
 
 done
+
+# --- Test fixture images ---
+FIXTURES=../../tests/sqllogic/fixtures
+FIXTURE_IMAGES=()
+docker logout >/dev/null 2>&1 || true
+for fixture in ollama postgres; do
+	FIXTURE_IMAGE="${REGISTRY}/serenedb-test-${fixture}:$("${FIXTURES}/image_tag.sh" "${FIXTURES}/${fixture}")"
+	echo "[*] Building ${FIXTURE_IMAGE}..."
+	if [ "$PUSH_ENABLED" = "true" ]; then
+		for arch in amd64 arm64; do
+			docker buildx build --platform "linux/${arch}" -t "${FIXTURE_IMAGE}-${arch}" \
+				--output "type=docker,dest=/tmp/${fixture}-${arch}.tar" "${FIXTURES}/${fixture}"
+		done
+		FIXTURE_IMAGES+=("${FIXTURE_IMAGE}")
+	else
+		docker buildx build --platform "$HOST_PLATFORM" -t "${FIXTURE_IMAGE}" --load "${FIXTURES}/${fixture}"
+	fi
+done
+
+if [ ${#FIXTURE_IMAGES[@]} -ne 0 ]; then
+	echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+	trap 'docker logout' EXIT INT TERM
+	for fixture_image in "${FIXTURE_IMAGES[@]}"; do
+		fixture="${fixture_image#"${REGISTRY}"/serenedb-test-}"
+		fixture="${fixture%%:*}"
+		for arch in amd64 arm64; do
+			docker load <"/tmp/${fixture}-${arch}.tar"
+			rm -f "/tmp/${fixture}-${arch}.tar"
+			docker push "${fixture_image}-${arch}"
+		done
+		docker buildx imagetools create --tag "${fixture_image}" "${fixture_image}-amd64" "${fixture_image}-arm64"
+		echo "[+] SUCCESS: Pushed ${fixture_image}"
+	done
+fi

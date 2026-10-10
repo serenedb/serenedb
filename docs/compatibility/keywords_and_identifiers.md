@@ -48,23 +48,25 @@ For example, the following two queries are equivalent:
 
 ### Case-Sensitivity of Identifiers
 
-Identifiers in SereneDB are always case-insensitive, similarly to PostgreSQL.
-However, unlike PostgreSQL (and some other major SQL implementations), SereneDB also treats quoted identifiers as case-insensitive.
+A SereneDB server follows PostgreSQL's rules for the names of tables, columns and other catalog objects:
+
+- An unquoted identifier folds to lowercase: `CREATE TABLE MyTable` creates `mytable`, which `FROM MYTABLE` also finds.
+- A quoted identifier keeps its case and matches only that spelling: after `CREATE TABLE "MyTable"`, only `FROM "MyTable"` finds the table, and after `CREATE TABLE MyTable`, `FROM "MyTable"` fails.
+
+Aliases inside one query, such as the output columns of a subquery, match regardless of case.
 
 **Comparison of identifiers:**
-Case-insensitivity is implemented using an ASCII-based comparison:
+Case folding is ASCII-based:
 `col_A` and `col_a` are equal but `col_á` is not equal to them.
 
 <SqlLogicTest id="sql/dialect/keywords_and_identifiers/example_004" />
 
-**Preserving cases:**
-While SereneDB treats identifiers in a case-insensitive manner, it preserves the cases of these identifiers.
-That is, each character's case (uppercase/lowercase) is maintained as originally specified by the user even if a query uses different cases when referring to the identifier.
-For example:
+**Stored names:**
+Because unquoted names fold, the column below is stored as `cosineofpi`:
 
 <SqlLogicTest id="sql/dialect/keywords_and_identifiers/preserve_identifier_case/example_005" />
 
-To change this behavior, set the `preserve_identifier_case` [configuration option](../configuration/overview.md#configuration-reference) to `false`.
+`serened shell` keeps DuckDB's behavior instead: identifiers are case-insensitive even when quoted, and they keep the case they were created with. A server session gets the same by setting the `preserve_identifier_case` [configuration option](../configuration/overview.md#configuration-reference) to `true`.
 
 ### Case-Sensitivity of Keys in Nested Data Structures
 
@@ -86,6 +88,6 @@ When the same identifier is spelt with different cases within a nested structure
 
 #### Disabling Preserving Cases
 
-With the `preserve_identifier_case` [configuration option](../configuration/overview.md#configuration-reference) set to `false`, all identifiers are turned into lowercase:
+With the `preserve_identifier_case` [configuration option](../configuration/overview.md#configuration-reference) set to `false`, the server's default, unquoted identifiers are turned into lowercase:
 
 <SqlLogicTest id="sql/dialect/keywords_and_identifiers/lowercase_identifier_case/example_010" />

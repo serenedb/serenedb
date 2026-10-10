@@ -22,8 +22,6 @@
 // search-benchmark-game flagged. The minimal scenario passed; this file
 // adds the shapes the bench is likely actually hitting:
 //   * multi-row-group norm columns (small `row_group_size`),
-//   * RGs with mixed byte_size on the same column,
-//   * mismatched per-source byte widths during compaction,
 //   * removals before compaction (mask-filter on the norm merge),
 //   * multiple norm-bearing fields in one segment.
 //
@@ -33,6 +31,7 @@
 #include <gtest/gtest.h>
 
 #include <iresearch/analysis/token_batch.hpp>
+#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/norm.hpp>
@@ -222,9 +221,9 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
     ASSERT_NE(nullptr, column) << "norm column missing for " << field_id;
     ASSERT_EQ(norm_id, column->Id());
 
+    const auto reader = irs::MakePersistedNormReader(*column);
     for (const auto& [doc, value] : exp) {
-      const auto row = static_cast<uint64_t>(doc) - irs::doc_limits::min();
-      ASSERT_EQ(value, column->Get(row))
+      ASSERT_EQ(value, reader->Get(doc))
         << field_id << " norm mismatch doc=" << doc;
     }
   }
@@ -293,7 +292,7 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (auto c : kCountsA) {
     ASSERT_TRUE(InsertNormDoc(*writer, "a", c));
@@ -340,8 +339,7 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
 
 // -------------------------------------------------------------------------
 // Multi-RG norm column inside ONE segment. Forces several FlushRowGroup
-// calls in the norm writer; each RG may pick a different byte_size based
-// on its local max. Reader's Get must walk to the right RG.
+// calls in the norm writer. Reader's Get must walk to the right RG.
 // -------------------------------------------------------------------------
 TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   static constexpr size_t kRgSize = 4;
@@ -352,7 +350,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (size_t i = 0; i < std::size(kCounts); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("doc_", i), kCounts[i]));
@@ -376,11 +374,14 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   const auto norm_id = field->meta().norm;
   const auto* col = seg.GetColReader()->NormColumn(norm_id);
   ASSERT_NE(nullptr, col);
-  ASSERT_EQ(3u, col->RowGroupCount())
-    << "expected 4+4+2 layout, got " << col->RowGroupCount();
-  EXPECT_EQ(4u, col->RowGroupRowCount(0));
-  EXPECT_EQ(4u, col->RowGroupRowCount(1));
-  EXPECT_EQ(2u, col->RowGroupRowCount(2));
+  ASSERT_EQ(3u, col->RegionCount())
+    << "expected 4+4+2 layout, got " << col->RegionCount();
+  const auto rows = [&](size_t r) {
+    return col->Region(r).end_doc - col->Region(r).first_doc;
+  };
+  EXPECT_EQ(4u, rows(0));
+  EXPECT_EQ(4u, rows(1));
+  EXPECT_EQ(2u, rows(2));
 
   RunBM25(reader, *bm25, kBody, 10);
 }
@@ -398,7 +399,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -439,21 +440,14 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
     << "BM25 score set diverged across multi-RG compaction";
 }
 
-// -------------------------------------------------------------------------
-// Source segments use DIFFERENT byte widths per RG (one with values that
-// fit in uint8, the other with values requiring uint16). The merged
-// column should still read back each doc's original value.
-// -------------------------------------------------------------------------
-TEST_P(ScorePruneNormMergeCase, NormMixedByteWidthsMerge) {
-  // segment A: all <= 255 -> byte_size=1 per RG.
+TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
   static constexpr uint32_t kA[] = {10, 50, 100, 200};
-  // segment B: max > 255 -> byte_size=2.
   static constexpr uint32_t kB[] = {300, 1000, 65000};
 
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());  // default large RG
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -503,7 +497,7 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -563,7 +557,7 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kBodyA); ++i) {
     ASSERT_TRUE(
       InsertDualNormDoc(*writer, absl::StrCat("a_", i), kBodyA[i], kBody2A[i]));
@@ -614,9 +608,8 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
 // 16 source segments compacted in one shot. Mirrors the
 // search-benchmark-game ingest pattern: ~15-17 commit-per-batch segments,
 // then a single `CompactionCount` merges them all. If any cross-source
-// state in the norm merge (running merged_row, byte_size promotion,
-// per-source NormColumnReader cache) gets confused with more than 2
-// sources, this is where it surfaces.
+// state in the norm merge gets confused with more than 2 sources, this is
+// where it surfaces.
 // -------------------------------------------------------------------------
 TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   static constexpr size_t kSegments = 16;
@@ -625,7 +618,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   // Build N segments. Per-doc tf grows monotonically across the whole
@@ -698,11 +691,9 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
-  // Counts ramp into the uint16 range half-way through so some sources
-  // pick byte_size=1 and some byte_size=2 per RG.
   std::vector<uint32_t> expected_counts;
   expected_counts.reserve(kSegments * kDocsPerSeg);
   for (size_t s = 0; s < kSegments; ++s) {
@@ -767,7 +758,7 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, opts);
+  auto writer = open_writer(irs::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   // Record per-doc expected norm value (dl = tf + filler). Per-segment
@@ -834,8 +825,7 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
 
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 INSTANTIATE_TEST_SUITE_P(ScorePruneNormMergeTest, ScorePruneNormMergeCase,
                          kTestValues, ScorePruneNormMergeCase::to_string);
 

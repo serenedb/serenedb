@@ -20,16 +20,14 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-#include <unicode/normalizer2.h>
-#include <unicode/translit.h>
-
-#include <memory>
+#include <magic_enum/magic_enum.hpp>
 #include <string>
+#include <string_view>
+#include <text_transform.hpp>
 #include <tuple>
 
 #include "iresearch/analysis/process_tokens.hpp"
-#include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/locale_serde.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "tokenizer.hpp"
 
@@ -39,6 +37,9 @@ namespace analysis {
 enum class NormForm : uint8_t {
   Nfc,
   Nfkc,
+  Nfd,
+  Nfkd,
+  NfkcCf,
 };
 
 class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
@@ -47,10 +48,11 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
  public:
   struct Options {
     using Owner = NormalizingTokenizer;
-    icu::Locale locale = irs::MakeBogusLocale();
+    duckdb::text::Locale locale;
     Case case_convert{Case::None};
     bool accent{true};
     NormForm form{NormForm::Nfc};
+    bool fold{false};
   };
   static ptr Make(Options opts);
 
@@ -71,9 +73,10 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
   std::tuple<Case, bool, bool> PrepareBatch(BlockTraits traits);
 
   size_t MemoryUsage() const noexcept final {
-    return _norm_buf.capacity() + _strip_buf.capacity() +
-           static_cast<size_t>(_udata.getCapacity() + _token.getCapacity()) *
-             sizeof(char16_t);
+    return _norm_buf.capacity() + _decompose_buf.capacity() +
+           (_transform_buf.text.capacity() +
+            _transform_buf.scratch.capacity()) *
+             sizeof(uint32_t);
   }
 
   template<TokenLayout Layout, Case C, bool Accent, bool KnownAscii,
@@ -91,20 +94,46 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     Icu,
   };
 
-  template<TokenLayout Layout, Case C, bool Accent, typename Sink>
-  bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
-  template<TokenLayout Layout, Case C, bool Accent, NormForm F, typename Sink>
+  template<TokenLayout Layout, typename Sink>
+  IRS_NO_INLINE bool UnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+  template<TokenLayout Layout, Case C, NormForm F, typename Sink>
   bool FastUnicodeEmit(const duckdb::string_t& raw, Sink& sink);
+  template<TokenLayout Layout, Case C, NormForm F, typename Sink>
+  bool DecomposedEmit(const duckdb::string_t& raw, Sink& sink);
+  template<Case C>
+  size_t CaseBound(size_t size) const noexcept;
+  template<Case C>
+  size_t ConvertCase(std::string_view bytes, byte_type* out) const noexcept;
 
   Options _options;
-  icu::UnicodeString _udata;
-  icu::UnicodeString _token;
-  const icu::Normalizer2* _normalizer{};
-  std::unique_ptr<icu::Transliterator> _transliterator;
+  duckdb::text::Transform _transform;
+  duckdb::text::TransformBuffer _transform_buf;
   std::string _norm_buf;
-  std::string _strip_buf;
+  std::string _decompose_buf;
   CasePath _case_path = CasePath::Fast;
 };
 
 }  // namespace analysis
 }  // namespace irs
+namespace magic_enum {
+
+template<>
+constexpr customize::customize_t customize::enum_name<irs::analysis::NormForm>(
+  irs::analysis::NormForm value) noexcept {
+  using NormForm = irs::analysis::NormForm;
+  switch (value) {
+    case NormForm::Nfc:
+      return "nfc";
+    case NormForm::Nfkc:
+      return "nfkc";
+    case NormForm::Nfd:
+      return "nfd";
+    case NormForm::Nfkd:
+      return "nfkd";
+    case NormForm::NfkcCf:
+      return "nfkc_cf";
+  }
+  return invalid_tag;
+}
+
+}  // namespace magic_enum

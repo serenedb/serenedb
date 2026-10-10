@@ -37,7 +37,7 @@ A lambda parameter may appear any number of times. Nothing else is in scope, so 
 - `sql: expression must return VARCHAR, BLOB, or a list of them, got <type>` — `length()` reports `BIGINT`, `(lambda x: [length(x)])` reports `BIGINT[]`.
 - `sql: <DuckDB binder message>` — whatever else the binder refuses: an unknown column, a call whose argument types no overload of the function accepts, an aggregate, a window function, a lambda. The wording mentions check constraints, because the expression is bound the way a `CHECK` constraint is.
 
-The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags). `OFFSET` is rejected with `Unsupported index features are specified: <mask>`, because an expression result carries no offsets back into the source value; a [`pipeline`](./pipeline/index.md) that contains a `sql` step loses offsets for the same reason.
+The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags). `OFFSET` is rejected with `Unsupported index features are specified: offset`, because an expression result carries no offsets back into the source value; a [`pipeline`](./pipeline/index.md) that contains a `sql` step loses offsets for the same reason.
 
 ## Tokenization
 
@@ -58,7 +58,7 @@ Positions are dense: with `POSITION` enabled the tokens of a value are numbered 
 
 The expressions above are written as they read; inside the statement each single quote is doubled.
 
-A `NULL` result rejects the value, which then contributes no tokens at all; through `ts_lexize` this surfaces as `error while preparing tokenizer`. A `NULL` element inside a list is dropped on its own and the surrounding elements are still emitted. An empty list accepts the value and produces no tokens. `NULL` rows never reach the expression. Watch for `NULL` constants in null-propagating functions: `replace(input, NULL, 'x')` is `NULL` for every value, so every value is rejected.
+A `NULL` result rejects the value, which then contributes no tokens at all; `ts_lexize` and the tokenizer functions return `NULL` for a rejected value, while a value that is accepted but produces no tokens returns an empty array. A `NULL` element inside a list is dropped on its own and the surrounding elements are still emitted. An empty list accepts the value and produces no tokens. `NULL` rows never reach the expression. Watch for `NULL` constants in null-propagating functions: `replace(input, NULL, 'x')` is `NULL` for every value, so every value is rejected.
 
 A `BLOB`-returning expression types the tokens as `BLOB`, and their bytes are indexed as raw byte terms — the template performs no UTF-8 validation or conversion of its own. `ts_lexize` then returns `BLOB[]`, and the dictionary name has to be a constant: `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` tokens.
 
@@ -97,6 +97,7 @@ The same two dictionaries written as expressions, with the SQL inline:
 ## See also
 
 - [`split_by_pattern`](../../functions/search/tokenizers/split_by_pattern.md) — split or extract with a regular expression, without a SQL expression
+- [`filter_tokens`](../../functions/search/tokenizers/filter_tokens.md) — drop tokens with an SQL predicate while keeping their offsets
 - [keyword](./keyword.md) — keep the whole value as one verbatim token
 - [`normalize_tokens`](../../functions/search/tokenizers/normalize_tokens.md) — case and accent normalization as built-in options
 - [pipeline](./pipeline/index.md) — chain `sql` with other analyzers

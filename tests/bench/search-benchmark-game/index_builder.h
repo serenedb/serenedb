@@ -20,20 +20,44 @@
 
 #pragma once
 
-#include <simdjson.h>
-
 #include <array>
-#include <iosfwd>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <span>
 
 #include "executor.h"
+#include "line_source.h"
 
 namespace bench {
 
+struct BatchDoc {
+  std::string_view id;
+  std::string_view text;
+};
+
+class Batch {
+ public:
+  void Add(std::string_view id, std::string_view text);
+  void Seal();
+
+  size_t Size() const noexcept { return _spans.size(); }
+  std::span<const BatchDoc> Docs() const noexcept { return _docs; }
+
+ private:
+  struct Span {
+    size_t offset;
+    size_t id;
+    size_t text;
+  };
+
+  std::string _arena;
+  std::vector<Span> _spans;
+  std::vector<BatchDoc> _docs;
+};
+
 struct IBatchHandler {
   virtual ~IBatchHandler() = default;
-  virtual void operator()(std::vector<std::string>& buf,
+  virtual void operator()(const Batch& batch,
                           irs::IndexWriter::Transaction& ctx) = 0;
 };
 
@@ -54,9 +78,10 @@ class IndexBuilder {
   IndexBuilder(std::string_view path, const IndexBuilderOptions& opts,
                const BenchConfig& config);
 
-  void IndexFromStream(std::istream& input, BatchHandlerFactory factory);
+  void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
   irs::MMapDirectory& GetDirectory() { return _dir; }
+  irs::IndexWriter& GetWriter() { return *_writer; }
   auto GetReader() { return _writer->GetSnapshot(); }
 
  private:
@@ -66,7 +91,6 @@ class IndexBuilder {
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
   irs::MMapDirectory _dir;
-  irs::Format::ptr _format;
   irs::IndexWriter::ptr _writer;
 };
 
@@ -96,14 +120,15 @@ struct TextField {
 };
 
 struct Document {
-  simdjson::ondemand::parser parser;
-  simdjson::ondemand::document json_doc;
   std::array<TextField, 2> fields{
     TextField{.id = kIdFieldId},
     TextField{.id = kTextFieldId},
   };
 
-  void Fill(std::string_view line);
+  void Fill(const BatchDoc& doc) noexcept {
+    fields[0].text = doc.id;
+    fields[1].text = doc.text;
+  }
 };
 
 }  // namespace bench

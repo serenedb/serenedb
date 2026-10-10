@@ -17,7 +17,7 @@ control substitution on
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/dfm_forced.db' AS dfm (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+CREATE DATABASE dfm;
 
 
 statement ok
@@ -171,12 +171,12 @@ n	rows_match
 # each pin actually took effect, so the round-trips above are not all testing the same layout. The
 # modes a table can carry are listed per table; a pin that silently stopped applying changes this.
 query
-SELECT 'm_dictionary' AS tbl, string_agg(DISTINCT replace(segment_info,'mode: ',''), ',' ORDER BY replace(segment_info,'mode: ','')) AS modes FROM pragma_storage_info('dfm.m_dictionary', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
-UNION ALL SELECT 'm_dict_fsst', string_agg(DISTINCT replace(segment_info,'mode: ',''), ',' ORDER BY replace(segment_info,'mode: ','')) FROM pragma_storage_info('dfm.m_dict_fsst', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
-UNION ALL SELECT 'm_fsst_only', string_agg(DISTINCT replace(segment_info,'mode: ',''), ',' ORDER BY replace(segment_info,'mode: ','')) FROM pragma_storage_info('dfm.m_fsst_only', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
-UNION ALL SELECT 'm_dict_fsst_plus', string_agg(DISTINCT replace(segment_info,'mode: ',''), ',' ORDER BY replace(segment_info,'mode: ','')) FROM pragma_storage_info('dfm.m_dict_fsst_plus', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
-UNION ALL SELECT 'm_fsst_plus_unique', string_agg(DISTINCT replace(segment_info,'mode: ',''), ',' ORDER BY replace(segment_info,'mode: ','')) FROM pragma_storage_info('dfm.m_fsst_plus_unique', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
-UNION ALL SELECT 'm_auto_native', string_agg(DISTINCT replace(segment_info,'mode: ',''), ',' ORDER BY replace(segment_info,'mode: ','')) FROM pragma_storage_info('dfm.m_auto_native', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+SELECT 'm_dictionary' AS tbl, string_agg(DISTINCT split_part(segment_info, ':', 1), ',' ORDER BY split_part(segment_info, ':', 1)) AS modes FROM pragma_storage_info('dfm.m_dictionary', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'm_dict_fsst', string_agg(DISTINCT split_part(segment_info, ':', 1), ',' ORDER BY split_part(segment_info, ':', 1)) FROM pragma_storage_info('dfm.m_dict_fsst', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'm_fsst_only', string_agg(DISTINCT split_part(segment_info, ':', 1), ',' ORDER BY split_part(segment_info, ':', 1)) FROM pragma_storage_info('dfm.m_fsst_only', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'm_dict_fsst_plus', string_agg(DISTINCT split_part(segment_info, ':', 1), ',' ORDER BY split_part(segment_info, ':', 1)) FROM pragma_storage_info('dfm.m_dict_fsst_plus', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'm_fsst_plus_unique', string_agg(DISTINCT split_part(segment_info, ':', 1), ',' ORDER BY split_part(segment_info, ':', 1)) FROM pragma_storage_info('dfm.m_fsst_plus_unique', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
+UNION ALL SELECT 'm_auto_native', string_agg(DISTINCT split_part(segment_info, ':', 1), ',' ORDER BY split_part(segment_info, ':', 1)) FROM pragma_storage_info('dfm.m_auto_native', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR'
 ORDER BY tbl;
 ----
 tbl	modes
@@ -189,4 +189,4 @@ m_fsst_plus_unique	DICTIONARY,FSST_PLUS
 
 
 statement ok
-DETACH dfm;
+DROP DATABASE dfm;

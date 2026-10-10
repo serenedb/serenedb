@@ -9,7 +9,7 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 The `expand_wordnet_synonyms` template expands tokens using a [WordNet](https://wordnet.princeton.edu/) Prolog synonyms database supplied inline via the required `SYNONYMS` option. Where [`expand_solr_synonyms`](./expand_solr_synonyms.md) rewrites a word to its sibling words, this template rewrites each word to the **synset id(s)** it belongs to — the concept identifier shared by all words of the same sense, taken verbatim from the record's first field.
 
-Each record has the form `s(synset_id,w_num,'word',ss_type,sense_number,tag_count).` and assigns one word to one synset. Words that appear under the same `synset_id` are synonyms, so they all map to that id and meet in the index even though the surface words differ. A word that appears in several synsets maps to all of their ids, sorted lexicographically and deduplicated, one token per distinct id. A word in no record produces no tokens at all.
+Each record has the form `s(synset_id,w_num,'word',ss_type,sense_number,tag_count).` and assigns one word to one synset. Words that appear under the same `synset_id` are synonyms, so they all map to that id and meet in the index even though the surface words differ. A word that appears in several synsets maps to all of their ids, sorted lexicographically and deduplicated, one token per distinct id. A word in no record passes through unchanged, so words the database does not know stay searchable.
 
 Like `expand_solr_synonyms`, it is typically used inside a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) to broaden recall to related words.
 
@@ -27,15 +27,15 @@ Like `expand_solr_synonyms`, it is typically used inside a [`pipeline`](../../..
 
 ## Tokenization
 
-Given records that place `fast`, `quick` and `swift` under synset `100000001`, each of those words is rewritten to `{100000001}`. Because the indexed text and the query are analyzed the same way, a search for `quick` reduces to `100000001` and so matches a document that contained `fast`. Words placed under a different synset map to that synset's id, and a word the database never mentions yields an empty token set.
+Given records that place `fast`, `quick` and `swift` under synset `100000001`, each of those words is rewritten to `{100000001}`. Because the indexed text and the query are analyzed the same way, a search for `quick` reduces to `100000001` and so matches a document that contained `fast`. Words placed under a different synset map to that synset's id, and a word the database never mentions is kept as it is. A synset id is compared like any other term, so a document that contains the digits `100000001` as a word also matches a query for `fast`.
 
-Lookup is byte-exact on the whole input value — or, inside a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md), on each token the preceding stage hands over. No case folding, accent folding or Unicode normalization is applied, so `Fast` does not match a record written for `fast`. The ids of one value land on consecutive positions rather than on one shared position, so the expansion is not a stacked synonym set the way [`expand_solr_synonyms`](./expand_solr_synonyms.md) is. The offsets on every emitted id are those of the input that was looked up: for a bare dictionary the whole value, start `0` and end the value's length in bytes; inside a pipeline the offsets the preceding stage recorded for the token it handed over.
+Lookup is byte-exact on the whole input value — or, inside a [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md), on each token the preceding stage hands over. No case folding, accent folding or Unicode normalization is applied, so `Fast` does not match a record written for `fast`. All ids of one value share one position, the position of the word they replace, like the stacked synonyms of [`expand_solr_synonyms`](./expand_solr_synonyms.md), so phrase queries through a word that belongs to several synsets still line up. The offsets on every emitted id are those of the input that was looked up: for a bare dictionary the whole value, start `0` and end the value's length in bytes; inside a pipeline the offsets the preceding stage recorded for the token it handed over.
 
 | Input | Records | Tokens |
 |---|---|---|
 | `fast` | `s(100000001,1,'fast',v,1,0).` | `{100000001}` |
 | `quick` | `s(100000001,2,'quick',v,1,0).` | `{100000001}` |
-| `keyboard` | *(no record)* | `{}` |
+| `keyboard` | *(no record)* | `{keyboard}` |
 
 The database is split on newlines. Blank lines are skipped and a trailing carriage return is dropped, so a CRLF-formatted file parses. Every other line must be exactly one record: it starts with `s(`, ends with `).`, contains no further `)`, and holds four to six comma-separated fields. Fields are not whitespace-tolerant — `s(1, 1, 'x', n, 1, 0).` is rejected, because its third field is then ` 'x'` rather than `'x'`. Beyond the field count only the third field is checked, so a space in the first field is not rejected: it becomes part of the emitted id. The third field is the word and must be wrapped in single quotes around at least one character, so an empty pair of quotes is rejected. A doubled `''` inside the word stands for one apostrophe. A comma inside the quoted word is still read as a field separator, so a word containing a comma cannot be written. There is no comment syntax, so a `#` line is an error too. A line the parser rejects fails the statement with `expand_wordnet_synonyms: failed to parse synonyms: Failed parse line N`.
 
@@ -51,7 +51,7 @@ Words sharing a synset map to its id, so synonyms meet under the same token:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/expand_wordnet_synonyms/example_003" />
 
-A word the database never mentions produces no tokens:
+A word the database never mentions passes through unchanged:
 
 <SqlLogicTest id="sql/functions/search/tokenizers/expand_wordnet_synonyms/example_004" />
 

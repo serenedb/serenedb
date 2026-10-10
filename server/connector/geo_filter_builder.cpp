@@ -35,10 +35,9 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
-#include "catalog/geo_validate.h"
+#include "connector/geo_validate.h"
 #include "functions/search.h"
 #include "functions/ts_common.hpp"
-#include "functions/vector.h"
 #include "search_filter_builder.hpp"
 
 namespace sdb::connector {
@@ -52,17 +51,18 @@ namespace {
 // re-shapes (struct field projection) are NOT peeled -- they carry data
 // changes the filter builder must respect.
 const duckdb::Expression& PeelSameTypeIdCast(const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return expr;
   }
-  const auto& cast = expr.Cast<duckdb::BoundCastExpression>();
-  if (cast.GetReturnType().id() != cast.Child().GetReturnType().id()) {
+  const auto& cast = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto& child = duckdb::BoundCastExpression::Child(cast);
+  if (cast.GetReturnType().id() != child.GetReturnType().id()) {
     return expr;
   }
   if (cast.GetReturnType().IsNested()) {
     return expr;
   }
-  return cast.Child();
+  return child;
 }
 
 // Populate the iresearch geo filter base options from the column's geo
@@ -136,7 +136,7 @@ void ParseGeoConstant(const duckdb::Value& value,
     }
     case duckdb::LogicalTypeId::GEOMETRY: {
       if (duckdb::GeoType::HasCRS(value.type())) {
-        sdb::catalog::ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
+        ValidateGeometryCRS84(value.type(), "GEOMETRY constant");
       }
       const auto& wkb_str = duckdb::StringValue::Get(value);
       if (!irs::geo::ParseShapeWKB(wkb_str, shape)) {
@@ -395,10 +395,10 @@ bool FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
   ParseGeoConstant(*shape_val, options->coding, shape);
   options->shape = std::move(shape);
 
-  if (func.Function().GetName().GetIdentifierName() == kGeoIntersects) {
+  if (func.Function().GetName() == kGeoIntersects) {
     options->type = irs::GeoFilterType::Intersects;
   } else {
-    SDB_ASSERT(func.Function().GetName().GetIdentifierName() == kGeoContains);
+    SDB_ASSERT(func.Function().GetName() == kGeoContains);
     // ST_Contains(field, shape): indexed contains shape -> filter type
     //   IsContained ("the filter shape is contained within indexed data").
     // ST_Contains(shape, field): shape contains indexed -> filter type
@@ -412,49 +412,20 @@ bool FromGeoFilter(BoolTarget filter, const FilterContext& ctx,
 }  // namespace
 
 // Returns the inner expression as a ST_Distance_Centroid(field, centroid)
-// call -- or its `<->` operator-form synonym -- when it matches that
-// exact shape, or nullptr otherwise. Used to rewrite the pattern
-// `ST_Distance_Centroid(...) OP <const>` (and the equivalent `<->` form)
-// into an iresearch GeoDistanceFilter at filter-build time.
-//
-// `<->` shares its operator name with the vector L2 op registered in
-// vector.cpp. Disambiguate by resolving each operand against the
-// catalog: at least one side must be an indexed JSON column (catalog
-// type with the JSON logical alias preserved) or GEOMETRY column --
-// the same JSON / GEOMETRY pair the catalog enforces for geo analyzers
-// at CREATE INDEX time. The post-binding `return_type` on the bound
-// expression demotes JSON to plain VARCHAR through function-arg
-// coercion, so we read `column_info->logical_type` (catalog-stored,
-// JSON alias intact) and use `IsJSONType()` rather than an id-only
-// check. PrepareGeoDistanceFilter further validates the column's
-// analyzer before adding the iresearch GeoDistanceFilter.
+// call when it matches that exact shape, or nullptr otherwise. Used to
+// rewrite the pattern `ST_Distance_Centroid(...) OP <const>` into an
+// iresearch GeoDistanceFilter at filter-build time.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
-  const FilterContext& ctx, const duckdb::Expression& expr) {
+  const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return nullptr;
   }
   const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-  if (func.GetChildren().size() != 2) {
+  if (func.GetChildren().size() != 2 ||
+      func.Function().GetName() != kGeoDistance) {
     return nullptr;
   }
-  if (func.Function().GetName().GetIdentifierName() == kGeoDistance) {
-    return &func;
-  }
-  if (func.Function().GetName().GetIdentifierName() == kL2DistanceOp) {
-    auto is_geo_col = [&ctx](const duckdb::Expression& child) {
-      const auto* info = FindColumnInfoForExpr(ctx, PeelSameTypeIdCast(child));
-      if (!info) {
-        return false;
-      }
-      return info->logical_type.IsJSONType() ||
-             info->logical_type.id() == duckdb::LogicalTypeId::GEOMETRY;
-    };
-    if (is_geo_col(*func.GetChildren()[0]) ||
-        is_geo_col(*func.GetChildren()[1])) {
-      return &func;
-    }
-  }
-  return nullptr;
+  return &func;
 }
 
 // ST_Distance_Centroid(field, centroid) OP distance  --  range one-sided.
@@ -481,7 +452,7 @@ void FromGeoDistanceComparison(BoolTarget filter, const FilterContext& ctx,
       options->range.min = setup.second;
       options->range.min_type = irs::BoundType::Inclusive;
       break;
-    default:
+    case ComparisonOp::None:
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG("ST_Distance_Centroid: unsupported comparison op"));
@@ -502,7 +473,7 @@ void FromGeoDistanceBinaryEq(BoolTarget filter, const FilterContext& ctx,
 
 bool TryDispatchGeoFunction(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::BoundFunctionExpression& func) {
-  const auto& name = func.Function().GetName().GetIdentifierName();
+  const auto& name = func.Function().GetName();
   if (name == kGeoInRange) {
     FromGeoInRange(filter, ctx, func);
     return true;

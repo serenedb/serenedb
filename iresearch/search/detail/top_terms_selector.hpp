@@ -23,10 +23,11 @@
 #pragma once
 
 #include <algorithm>
+#include <functional>
 #include <vector>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/top_k_heap.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -116,6 +117,27 @@ struct TopTermState : TopTerm<T> {
   std::vector<PostingMeta> terms;
 };
 
+struct TermSelectorState {
+  void Bind(const SubReader* owner, const TermReader& term_reader,
+            TermIterator& iterator) noexcept {
+    segment = owner;
+    field = &term_reader;
+    terms = &iterator;
+    if (auto* attr = irs::get<TermAttr>(iterator)) [[likely]] {
+      term = &attr->value;
+    } else {
+      SDB_ASSERT(false);
+      static constexpr bytes_view kNoTerm;
+      term = &kNoTerm;
+    }
+  }
+
+  const SubReader* segment{};
+  const TermReader* field{};
+  TermIterator* terms{};
+  const bytes_view* term{};
+};
+
 template<typename State,
          typename Comparer = TopTermComparer<typename State::key_type>>
 class TopTermsSelector : private util::Noncopyable {
@@ -130,17 +152,11 @@ class TopTermsSelector : private util::Noncopyable {
 
   void Prepare(const SubReader& segment, const TermReader& field,
                TermIterator& terms) noexcept {
-    _state.segment = &segment;
-    _state.field = &field;
-    _state.terms = &terms;
+    _state.Bind(&segment, field, terms);
+  }
 
-    if (auto* term = irs::get<TermAttr>(terms)) [[likely]] {
-      _state.term = &term->value;
-    } else {
-      SDB_ASSERT(false);
-      static constexpr bytes_view kNoTerm;
-      _state.term = &kNoTerm;
-    }
+  void Prepare(const TermReader& field, TermIterator& terms) noexcept {
+    _state.Bind(nullptr, field, terms);
   }
 
   bool Visit(const key_type& key) {
@@ -164,16 +180,72 @@ class TopTermsSelector : private util::Noncopyable {
   }
 
  private:
-  struct SelectorState {
-    const SubReader* segment{};
-    const TermReader* field{};
-    TermIterator* terms{};
-    const bytes_view* term{};
-  };
-
   [[no_unique_address]] comparer_type _comparer;
-  SelectorState _state;
+  TermSelectorState _state;
   TopKHeap<state_type, comparer_type> _heap;
+};
+
+template<typename State>
+class TiedTermsSelector : private util::Noncopyable {
+ public:
+  using state_type = State;
+  using key_type = typename state_type::key_type;
+
+  explicit TiedTermsSelector(size_t size)
+    : _size{std::max(size_t{1}, size)}, _compact_at{2 * _size} {}
+
+  void Prepare(const SubReader& segment, const TermReader& field,
+               TermIterator& terms) noexcept {
+    _state.Bind(&segment, field, terms);
+  }
+
+  void Prepare(const TermReader& field, TermIterator& terms) noexcept {
+    _state.Bind(nullptr, field, terms);
+  }
+
+  bool Visit(const key_type& key) {
+    if (_keys.size() != _size) {
+      _keys.push_back(key);
+      std::push_heap(_keys.begin(), _keys.end(), std::greater<>{});
+    } else if (key < _keys.front()) {
+      return true;
+    } else if (_keys.front() < key) {
+      std::pop_heap(_keys.begin(), _keys.end(), std::greater<>{});
+      _keys.back() = key;
+      std::push_heap(_keys.begin(), _keys.end(), std::greater<>{});
+    }
+    state_type state{*_state.term, key};
+    state.emplace(_state);
+    _states.push_back(std::move(state));
+    if (_states.size() == _compact_at) {
+      Compact();
+    }
+    return true;
+  }
+
+  template<typename Visitor>
+  void Visit(const Visitor& visitor) {
+    Compact();
+    for (auto& entry : _states) {
+      visitor(entry);
+    }
+  }
+
+ private:
+  void Compact() {
+    if (_keys.size() == _size) {
+      const auto bound = _keys.front();
+      std::erase_if(_states,
+                    [&](const state_type& state) { return state.key < bound; });
+    }
+    _compact_at = std::max(2 * _states.size(), 2 * _size);
+  }
+
+  TermSelectorState _state;
+  std::vector<key_type> _keys;
+  std::vector<state_type> _states;
+  size_t _size;
+  size_t _compact_at;
 };
 
 }  // namespace irs

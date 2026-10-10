@@ -32,10 +32,10 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
-#include "iresearch/formats/formats.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/plan.hpp"
 #include "iresearch/search/count/walk.hpp"
@@ -176,8 +176,7 @@ class RawVectorReader {
   // miss overlap the one being scored instead of following it.
   void PrefetchRow(doc_id_t doc) noexcept {
     const auto* child = _column->Child();
-    const uint64_t elem =
-      (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
+    const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
     const auto w = child->Locate(elem, _win);
     const auto& blocks = child->DataBlocks();
     if (w.block >= blocks.size()) {
@@ -234,8 +233,8 @@ class RawVectorReader {
         const auto& m = blocks[next.block];
         if (m.codec->type !=
               duckdb::CompressionType::COMPRESSION_UNCOMPRESSED ||
-            m.file_offset != meta.file_offset +
-                               (next.begin - window.begin) * sizeof(float)) {
+            m.file_offset !=
+              meta.file_offset + (next.begin - window.begin) * sizeof(float)) {
           break;
         }
         end = next.end;
@@ -254,13 +253,13 @@ class RawVectorReader {
           return reinterpret_cast<const byte_type*>(p);
         }
         _buf.resize(bytes);
-        _read_ctx.Read(offset,
-                       reinterpret_cast<duckdb::data_ptr_t>(_buf.data()),
-                       bytes);
+        _read_ctx.Read(
+          offset, reinterpret_cast<duckdb::data_ptr_t>(_buf.data()), bytes);
         return _buf.data();
       }
       got = 1;
-      return reinterpret_cast<const byte_type*>(_vreader.ReadDocBatch(first, 1));
+      return reinterpret_cast<const byte_type*>(
+        _vreader.ReadDocBatch(first, 1));
     }
     got = count;
     return reinterpret_cast<const byte_type*>(

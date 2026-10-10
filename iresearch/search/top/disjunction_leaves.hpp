@@ -78,7 +78,7 @@ class DisjunctionLead {
       if (doc_limits::eof(doc)) {
         continue;
       }
-      const auto end = leaf.SeekToBlock(std::max(doc, _doc));
+      const auto end = leaf.AdvanceBlock(std::max(doc, _doc));
       if (!doc_limits::eof(end)) {
         last = std::min(last, end);
       }

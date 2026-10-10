@@ -37,7 +37,9 @@ namespace irs {
 namespace {
 
 bool SamePosting(const PostingMeta& l, const PostingMeta& r) noexcept {
-  return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1;
+  return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1 &&
+         l.pos_start == r.pos_start && l.pos_offset == r.pos_offset &&
+         l.Inline() == r.Inline();
 }
 
 bool SameStats(const detail::StatsRecord& lhs,
@@ -169,26 +171,8 @@ void BooleanBuilder::AddTerm(const TermReader* reader, const PostingMeta& meta,
   Push(bucket, reader, meta, boost, stats);
 }
 
-void BooleanBuilder::Drop(QueryBuilder::ptr query) {
-  if (_collector != nullptr && query != nullptr) {
-    _collector->Retain(std::move(query));
-  }
-}
-
-QueryBuilder::ptr BooleanBuilder::DropAll() {
-  if (_collector != nullptr) {
-    for (auto& bucket : _clauses) {
-      for (auto& filter : bucket.filters) {
-        _collector->Retain(std::move(filter));
-      }
-    }
-  }
-  return QueryBuilder::Empty();
-}
-
 void BooleanBuilder::Add(QueryBuilder::ptr query, Occur occur) {
   if (_empty) {
-    Drop(std::move(query));
     return;
   }
   auto& bucket = _clauses[OccurIndex(occur)];
@@ -390,7 +374,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
   auto& should = _clauses[OccurIndex(Occur::Should)];
   auto& must_not = _clauses[OccurIndex(Occur::MustNot)];
   if (_empty || should.size() < _msm) {
-    return DropAll();
+    return QueryBuilder::Empty();
   }
   auto msm = _msm;
   if (msm != 0 && msm == should.size()) {
@@ -400,7 +384,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     _msm = msm = 0;
     FlattenAll();
     if (_empty) {
-      return DropAll();
+      return QueryBuilder::Empty();
     }
   }
   Order(must, true);
@@ -408,7 +392,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
   Order(must_not, false);
 
   if (Dedup(msm) && _empty) {
-    return DropAll();
+    return QueryBuilder::Empty();
   }
 
   if (must_not.empty() && must.all_docs.empty() && should.all_docs.empty()) {
@@ -469,7 +453,7 @@ QueryBuilder::ptr BooleanBuilder::Finish() {
     estimate = threshold_estimate();
   } else if (!must_not.empty()) {
     if (must.all_docs.empty() && should.all_docs.empty()) {
-      return DropAll();
+      return QueryBuilder::Empty();
     }
     estimate = docs - std::min(docs, MaxEstimate(must_not));
   }

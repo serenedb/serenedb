@@ -3,7 +3,7 @@
  * Everything is scoped under .sds-root / .sds-* and themed via
  * [data-sds-theme="light" | "dark"] so nothing leaks into the host page.
  * Token values mirror the SereneDB design system (hairlines, ASCII
- * dotted shadow, Gilroy + terminal mono).
+ * dotted shadow, Urbanist + terminal mono).
  * ============================================================ */
 
 .sds-root {
@@ -35,7 +35,7 @@
     --sds-overlay: color-mix(in srgb, #11121d 32%, transparent);
     --sds-hairline: 0.5px;
     --sds-ascii-offset: 9px;
-    --sds-font-sans: "Gilroy", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --sds-font-sans: "Urbanist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     --sds-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     --sds-z: 9999;
 

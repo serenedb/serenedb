@@ -20,21 +20,27 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <functional>
+#include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
+#include <span>
+#include <vector>
 #include <yaclib/async/future.hpp>
 
-#include "catalog/ddl/catalog.h"
+#include "catalog/catalog.h"
+#include "connector/duckdb_sink_writer_base.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_transaction.h"
 
-namespace sdb::connector {
+namespace sdb::catalog {
 
-struct InvertedFeedSession;
+struct InvertedIndexConfig;
 
-}  // namespace sdb::connector
+}  // namespace sdb::catalog
 namespace sdb::query {
 
 class Transaction : public Config {
@@ -43,10 +49,7 @@ class Transaction : public Config {
 
 #ifdef SDB_DEV
   virtual ~Transaction() {
-    // Search transactions have implicit commit in destructor (historical
-    // reasons) So if we get here explicit Commit/Rollback should be already
-    // called. Otherwise we might have some unexpected data
-    SDB_ASSERT(_search_feeds.empty());
+    SDB_ASSERT(_search_transactions.empty());
     SDB_ASSERT(!_search_txn || _search_txn->Empty());
   }
 #endif
@@ -58,29 +61,31 @@ class Transaction : public Config {
 
   // Pre-commit work that needs an active transaction (revert SET LOCAL for
   // custom-impl settings). Runs before the engine commit.
-  void PreCommit() noexcept;
+  // May throw: a hook that refuses the commit rolls the transaction back the
+  // way a failed commit does (TransactionContext::Commit), which is what we
+  // want if the buffered rows cannot be fed -- nothing has reached the WAL
+  // yet, so the statement just fails.
+  void PreCommit();
   // Pre-rollback counterpart -- restores all SET values.
-  void PreRollback() noexcept;
+  void PreRollback() noexcept { RollbackVariables(); }
 
-  // Commit the search-index leg synchronously with the store table changes:
-  // called by the engine from its TransactionPreCheckpoint hook, on the
-  // committing thread while it still holds the transaction lock and the WAL
-  // append ordering, right after this commit's WAL flush marker is written --
-  // so across connections ticks are handed out strictly in WAL-append order
-  // over complete batches and recovery cursors stay monotonic with WAL offsets,
-  // even though the group fsyncs (and thus the durable acknowledgements)
-  // complete afterwards and out of order. Everything here is memory-only; the
-  // background refresh gates its durable cursor on the WAL becoming durable, so
-  // a batch is never persisted before its store bytes are. The cursor is this
-  // commit's exact store-WAL position; std::nullopt on the fallback path where
-  // the transaction did not commit the store database, in which case no
-  // recovery cursor is recorded. Idempotent -- a no-op once the staged
-  // transactions have been committed (or when there were none).
-  void CommitSearch(std::optional<search::WalCursor> cursor) noexcept;
+  void StageSearch(const irs::SourcePosition& position,
+                   duckdb::idx_t database) noexcept;
+  void PublishSearch(duckdb::idx_t database) noexcept;
 
   void Commit();
 
   void Rollback();
+
+  void DeferToCommit(absl::AnyInvocable<void()> action) {
+    _on_commit.push_back(std::move(action));
+  }
+
+  void AddCreatedIndex(duckdb::idx_t database,
+                       std::shared_ptr<search::InvertedIndexStorage> storage) {
+    _created_indexes.emplace_back(database, std::move(storage));
+  }
+  void RefreshCreatedIndexes(duckdb::idx_t database);
 
   // True once any statement that reads or writes the current database ran
   // inside the active explicit transaction; gates late SET TRANSACTION
@@ -102,7 +107,7 @@ class Transaction : public Config {
   // The storage is handed in rather than read off the definition: an open
   // directory is the object's, not something a version of it describes.
   search::InvertedIndexSnapshotPtr EnsureSearchSnapshot(
-    ObjectId index_id,
+    duckdb::idx_t index_id,
     const std::shared_ptr<search::InvertedIndexStorage>& storage);
 
   // Lazily-created search-table (TableEngine::Search) transaction state +
@@ -120,57 +125,85 @@ class Transaction : public Config {
   // references stop being held. Refuses while the transaction's view has to
   // stay frozen -- REPEATABLE READ, or any uncommitted DML, whose rows are
   // tied to the view they were written through. Returns whether it dropped.
-  bool TryDropSearchReader(ObjectId shard_id);
+  bool TryDropSearchReader(duckdb::idx_t shard_id);
 
   void Destroy() noexcept;
 
-  // Register the per-index feed the first time it engages this commit
-  // (idempotent). `feed` is the connector-side session, non-owning (it
-  // outlives the commit).
-  // The session this commit is already feeding for `index_id`, or null. What it
-  // answers is what the next chunk of the same commit has to go through: the
-  // segments staged so far belong to it, and a session built in its place would
-  // leave them to no commit at all.
-  std::shared_ptr<connector::InvertedFeedSession> InvertedFeed(
-    ObjectId index_id) const {
-    const auto it = _search_feeds.find(index_id);
-    return it == _search_feeds.end() ? nullptr : it->second;
+  struct SearchSlot {
+    std::unique_ptr<irs::IndexWriter::Transaction> transaction;
+    std::unique_ptr<connector::DuckDBSinkIndexWriter> writer;
+  };
+
+  SearchSlot& EnsureIndexSlot(
+    duckdb::idx_t index_id,
+    std::shared_ptr<search::InvertedIndexStorage> storage,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config,
+    size_t slot = 0);
+
+  irs::IndexWriter::Transaction& EnsureIndexTransaction(
+    duckdb::idx_t index_id,
+    std::shared_ptr<search::InvertedIndexStorage> storage,
+    std::shared_ptr<const catalog::InvertedIndexConfig> config) {
+    return *EnsureIndexSlot(index_id, std::move(storage), std::move(config))
+              .transaction;
   }
 
-  void EngageInvertedFeed(
-    ObjectId index_id, std::shared_ptr<connector::InvertedFeedSession> feed) {
-    auto& slot = _search_feeds[index_id];
-    // One session per index per commit. A second, different session for the
-    // same id would displace the first with its segments already registered
-    // for flush and never committed or aborted -- the index's flush context
-    // then never drains and every later refresh blocks on it.
-    SDB_ASSERT(!slot || slot == feed);
-    slot = std::move(feed);
+  std::span<SearchSlot> IndexSlots(duckdb::idx_t index_id) {
+    const auto it = _search_transactions.find(index_id);
+    if (it == _search_transactions.end()) {
+      return {};
+    }
+    return it->second.slots;
   }
+
+  void RegisterIndexFlush(duckdb::idx_t index_id) noexcept {
+    for (auto& slot : IndexSlots(index_id)) {
+      if (slot.transaction) {
+        slot.transaction->RegisterFlush();
+      }
+    }
+  }
+
+  const duckdb::Vector& FeedColumn(const void* database,
+                                   duckdb::idx_t table_oid,
+                                   duckdb::row_t first_row, duckdb::idx_t count,
+                                   duckdb::idx_t column,
+                                   const duckdb::Vector& source);
 
  private:
+  struct FeedColumns {
+    const void* database = nullptr;
+    duckdb::idx_t table_oid = 0;
+    duckdb::row_t first_row = 0;
+    duckdb::idx_t count = 0;
+    std::vector<std::pair<duckdb::idx_t, duckdb::Vector>> columns;
+  };
+
   // The cases a single snapshot serves a whole transaction: an explicit
   // REPEATABLE READ transaction, or any transaction that has performed
   // uncommitted DML. Everything else refreshes per statement.
   bool IsStableSnapshot() const;
 
-  // Out of line: the session is only forward-declared here.
-  void AbortInvertedFeeds() noexcept;
+  struct SearchTransaction {
+    std::vector<SearchSlot> slots;
+    std::shared_ptr<search::InvertedIndexStorage> storage;
+    uint64_t tick = 0;
+    irs::SourcePosition position;
+  };
 
-  // The inverted-index feeds this transaction wrote through. Every staged
-  // segment -- the workers' and the committing thread's -- lives in there, so
-  // the transaction only has to drive prepare/commit/abort. Shared with the
-  // bound index rather than borrowed: DROP INDEX destroys the index without
-  // waiting for a commit that has already engaged its feed.
-  irs::containers::FlatHashMap<ObjectId,
-                               std::shared_ptr<connector::InvertedFeedSession>>
-    _search_feeds;
-  irs::containers::FlatHashMap<ObjectId, search::InvertedIndexSnapshotPtr>
+  irs::containers::FlatHashMap<duckdb::idx_t, SearchTransaction>
+    _search_transactions;
+  irs::containers::FlatHashMap<duckdb::idx_t, search::InvertedIndexSnapshotPtr>
     _search_snapshots;
+  FeedColumns _feed_columns;
   // All search-table (TableEngine::Search) state + WAL commit logic. Engaged
-  // lazily via SearchTxn(); reset in Destroy. Separate from the feeds above:
-  // those commit on the store-table tick, not the engine WAL tick.
+  // lazily via SearchTxn(); reset in Destroy. The inverted-index trxs above
+  // commit on the store-table tick, not the engine WAL tick.
   std::optional<search::SearchTableTransaction> _search_txn;
+  std::vector<absl::AnyInvocable<void()>> _on_commit;
+  std::vector<
+    std::pair<duckdb::idx_t, std::shared_ptr<search::InvertedIndexStorage>>>
+    _created_indexes;
   uint64_t _num_log_data_markers = 0;
   bool _had_query_in_transaction = false;
   // Set once a statement has performed uncommitted DML; pins all three views

@@ -67,7 +67,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   duckdb::ClientContext& context, ViewFastPath fast_path,
   std::span<const duckdb::idx_t> projected_columns,
   std::span<const duckdb::LogicalType> projected_types,
-  std::span<const catalog::ColumnId> bind_column_ids)
+  std::span<const ColumnId> bind_column_ids)
   : ViewIndexSourceBase{std::move(fast_path)} {
   SDB_ASSERT(_fast_path.catalog_ref);
   const auto& ref = *_fast_path.catalog_ref;
@@ -90,7 +90,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
                    return types[source_col];
                  });
 
-  _postgres_ctid = _fast_path.pk_spec == catalog::PkSpec::ExternalPostgresCtid;
+  _postgres_ctid = _fast_path.pk_spec == PkSpec::ExternalPostgresCtid;
   _num_key_cols = _postgres_ctid ? 1 : _fast_path.key_columns.size();
   _num_proj_cols = select_names.size();
 
@@ -109,7 +109,7 @@ ExternalLookupIndexSource::ExternalLookupIndexSource(
   BuildQuery(context, ref, select_names);
 
   _sort_perm.resize(STANDARD_VECTOR_SIZE);
-  absl::c_iota(_sort_perm, duckdb::idx_t{0});
+  absl::c_iota(_sort_perm, 0);
 }
 
 void ExternalLookupIndexSource::BuildQuery(
@@ -124,7 +124,7 @@ void ExternalLookupIndexSource::BuildQuery(
 
 void ExternalLookupIndexSource::PrepareLookup(
   duckdb::ClientContext& context, const std::string& catalog,
-  const std::string& inner, duckdb::named_parameter_map_t named) {
+  const std::string& inner, duckdb::named_argument_map_t named) {
   const std::string_view func_name =
     _dialect == Dialect::Postgres ? "postgres_lookup" : "clickhouse_lookup";
   auto& sys = duckdb::Catalog::GetSystemCatalog(context);
@@ -134,20 +134,14 @@ void ExternalLookupIndexSource::PrepareLookup(
                                duckdb::Identifier{func_name});
   SDB_ASSERT(entry);
   auto& tf_entry = entry->Cast<duckdb::TableFunctionCatalogEntry>();
-  bool found = false;
-  for (duckdb::idx_t i = 0; i < tf_entry.functions.Size(); ++i) {
-    auto candidate = tf_entry.functions.GetFunctionByOffset(i);
-    if (candidate.arguments.size() == 2) {
-      _lookup_func = candidate;
-      found = true;
-      break;
-    }
-  }
-  SDB_ASSERT(found);
+  _lookup_func =
+    duckdb::BoundTableFunction{tf_entry.functions.GetFunctionByArguments(
+      context, {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR})};
 
   duckdb::vector<duckdb::Value> inputs;
   inputs.emplace_back(catalog);
   inputs.emplace_back(inner);
+  _lookup_func.SetCallArguments(inputs, named);
   duckdb::vector<duckdb::LogicalType> in_types;
   duckdb::vector<duckdb::Identifier> in_names;
   duckdb::TableFunctionRef dummy_ref;
@@ -155,7 +149,7 @@ void ExternalLookupIndexSource::PrepareLookup(
                                             _lookup_func.function_info.get(),
                                             nullptr, _lookup_func, dummy_ref);
   duckdb::vector<duckdb::LogicalType> types;
-  duckdb::vector<std::string> names;
+  duckdb::vector<duckdb::Identifier> names;
   duckdb::Connection bind_con(*context.db);
   bind_con.BeginTransaction();
   _bind_data = _lookup_func.bind(*bind_con.context, bind_input, types, names);
@@ -235,7 +229,10 @@ void ExternalLookupIndexSource::BuildPostgresQuery(
                                    : Quote(_fast_path.key_columns[k].name),
                     " = u.__sdb_a", k);
   }
-  PrepareLookup(context, ref.catalog, inner, {});
+  duckdb::named_argument_map_t named;
+  named.insert("schema", duckdb::Value(ref.schema));
+  named.insert("table", duckdb::Value(ref.table));
+  PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 
 void ExternalLookupIndexSource::BuildClickHouseQuery(
@@ -279,8 +276,8 @@ void ExternalLookupIndexSource::BuildClickHouseQuery(
 
   const std::string schema_inner = absl::StrCat(
     "SELECT toInt64(0) AS __sdb_ord", proj, " FROM ", table, " WHERE 0");
-  duckdb::named_parameter_map_t named;
-  named.emplace("schema_query", duckdb::Value(schema_inner));
+  duckdb::named_argument_map_t named;
+  named.insert("schema_query", duckdb::Value(schema_inner));
   PrepareLookup(context, ref.catalog, inner, std::move(named));
 }
 

@@ -6,6 +6,7 @@
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/planner/logical_operator.hpp"
 
 #include <clickhouse/client.h>
 #include <clickhouse/block.h>
@@ -63,11 +64,12 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 		// mid-stream either way, so never hand it back to the pool.
 		connection.Invalidate();
 		throw;
-		}
+	}
 	lock_guard<mutex> l(schema_lock);
 	auto entry = schemas.find(info.GetQualifiedName().Schema().GetIdentifierName());
 	if (entry == schemas.end()) {
-		auto schema_entry = make_uniq<ClickHouseSchemaEntry>(*this, info, info.GetQualifiedName().Schema().GetIdentifierName());
+		auto schema_entry =
+		    make_uniq<ClickHouseSchemaEntry>(*this, info, info.GetQualifiedName().Schema().GetIdentifierName());
 		entry = schemas.emplace(info.GetQualifiedName().Schema().GetIdentifierName(), std::move(schema_entry)).first;
 	}
 	return entry->second.get();
@@ -75,7 +77,8 @@ optional_ptr<CatalogEntry> ClickHouseCatalog::CreateSchema(CatalogTransaction tr
 
 void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	auto connection = connection_pool->GetConnection();
-	auto sql = "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
+	auto sql =
+	    "DROP DATABASE IF EXISTS " + ClickHouseQuoteIdentifier(info.GetQualifiedName().Name().GetIdentifierName());
 	try {
 		ClickHouseConnection::LogQuery(sql);
 		connection->GetClient().Execute(sql);
@@ -88,7 +91,7 @@ void ClickHouseCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 		// mid-stream either way, so never hand it back to the pool.
 		connection.Invalidate();
 		throw;
-		}
+	}
 	lock_guard<mutex> l(schema_lock);
 	auto it = schemas.find(info.GetQualifiedName().Name().GetIdentifierName());
 	if (it != schemas.end()) {
@@ -105,17 +108,14 @@ void ClickHouseCatalog::ClearCache() {
 		describe_cache.clear();
 	}
 	lock_guard<mutex> l(schema_lock);
-	// Retire every cached schema (and its cached table metadata) rather than
-	// freeing it, so bound statements keep working; the next lookup rebuilds a
-	// fresh entry from the server.
 	for (auto &entry : schemas) {
-		retired_schemas.push_back(std::move(entry.second));
+		entry.second->ClearCache();
 	}
-	schemas.clear();
 }
 
 unique_ptr<LogicalOperator> ClickHouseCatalog::BindCreateIndex(Binder &binder, CreateStatement &stmt,
-                                                               CatalogEntry &table, unique_ptr<LogicalOperator> plan) {
+                                                               TableCatalogEntry &table,
+                                                               unique_ptr<LogicalOperator> plan) {
 	throw NotImplementedException("ClickHouse databases are read-only: CREATE INDEX not supported");
 }
 
@@ -148,7 +148,7 @@ void ClickHouseCatalog::ScanSchemas(ClientContext &context, std::function<void(S
 		// mid-stream either way, so never hand it back to the pool.
 		connection.Invalidate();
 		throw;
-		}
+	}
 	for (auto &schema_name : schema_names) {
 		lock_guard<mutex> l(schema_lock);
 		auto entry = schemas.find(schema_name);
@@ -187,7 +187,7 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 		// mid-stream either way, so never hand it back to the pool.
 		connection.Invalidate();
 		throw;
-		}
+	}
 	if (!found) {
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			return nullptr;
@@ -208,8 +208,9 @@ optional_ptr<SchemaCatalogEntry> ClickHouseCatalog::LookupSchema(CatalogTransact
 DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 	auto connection = connection_pool->GetConnection();
 	auto &client = connection->GetClient();
-	auto sql = "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = " +
-	           ClickHouseStringLiteral(default_schema) + " AND active";
+	auto sql =
+	    "SELECT sum(bytes_on_disk) FROM system.parts WHERE database = " + ClickHouseStringLiteral(default_schema) +
+	    " AND active";
 	DatabaseSize size;
 	ClickHouseConnection::LogQuery(sql);
 	try {
@@ -232,7 +233,7 @@ DatabaseSize ClickHouseCatalog::GetDatabaseSize(ClientContext &context) {
 		// mid-stream either way, so never hand it back to the pool.
 		connection.Invalidate();
 		throw;
-		}
+	}
 	return size;
 }
 

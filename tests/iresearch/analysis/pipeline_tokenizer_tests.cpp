@@ -59,7 +59,7 @@ irs::analysis::Tokenizer::ptr MakeDelimiter(std::string_view delim) {
 irs::analysis::Tokenizer::ptr MakeCollation(std::string_view locale) {
   return irs::analysis::CollationTokenizer::Make(
     irs::analysis::CollationTokenizer::Options{
-      .locale = icu::Locale::createFromName(std::string(locale).c_str()),
+      .locale = duckdb::text::Locale::FromName(std::string(locale).c_str()),
     });
 }
 
@@ -77,7 +77,7 @@ irs::analysis::Tokenizer::ptr MakeNorm(std::string_view locale,
                                        irs::Case case_convert) {
   return irs::analysis::NormalizingTokenizer::Make(
     irs::analysis::NormalizingTokenizer::Options{
-      .locale = icu::Locale::createFromName(std::string(locale).c_str()),
+      .locale = duckdb::text::Locale::FromName(std::string(locale).c_str()),
       .case_convert = case_convert,
     });
 }
@@ -322,6 +322,22 @@ TEST(pipeline_token_stream_test, many_tokenizers) {
   AssertPipeline(&pipe, data, expected);
 }
 
+TEST(pipeline_token_stream_test, keeps_ascii_requires_every_stage) {
+  const auto keeps = [](std::vector<irs::analysis::Tokenizer::ptr> stages) {
+    return irs::analysis::PipelineTokenizer{std::move(stages)}
+      .Traits()
+      .keeps_ascii;
+  };
+  std::vector<irs::analysis::Tokenizer::ptr> kept;
+  kept.emplace_back(MakeDelimiter(","));
+  kept.emplace_back(MakeNorm("en", irs::Case::Lower));
+  EXPECT_TRUE(keeps(std::move(kept)));
+  std::vector<irs::analysis::Tokenizer::ptr> lost;
+  lost.emplace_back(MakeDelimiter(","));
+  lost.emplace_back(MakeCollation("en_US.UTF-8"));
+  EXPECT_FALSE(keeps(std::move(lost)));
+}
+
 TEST(pipeline_token_stream_test, overlapping_ngrams) {
   auto ngram = MakeNGram(6, 7, /*preserve_original=*/false);
   auto ngram2 = MakeNGram(2, 3, /*preserve_original=*/false);
@@ -439,7 +455,7 @@ TEST(pipeline_token_stream_test, signle_non_tokenizer) {
   irs::analysis::PipelineTokenizer::Options opts;
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{irs::analysis::NormalizingTokenizer::Options{
-      .locale = icu::Locale::createFromName("en"),
+      .locale = duckdb::text::Locale::FromName("en"),
       .case_convert = irs::Case::Lower,
     }}));
 
@@ -475,6 +491,34 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer) {
     irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
     AssertPipeline(&pipe, data, expected);
   }
+}
+
+TEST(pipeline_token_stream_test, filter_after_stacked_ngrams_keeps_positions) {
+  std::vector<irs::analysis::Tokenizer::ptr> pipeline_options;
+  pipeline_options.emplace_back(MakeDelimiter(" "));
+  pipeline_options.emplace_back(MakeNGram(2, 3, /*preserve_original=*/false));
+  pipeline_options.emplace_back(
+    irs::analysis::FilterTokensTokenizer::Make({.min_length = 3}));
+  irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
+  const AnalyzerTokens expected{
+    {"sea", 0, 3, 0},  {"ear", 1, 4, 1},  {"arc", 2, 5, 2},  {"rch", 3, 6, 3},
+    {"eng", 7, 10, 4}, {"ngi", 8, 11, 5}, {"gin", 9, 12, 6}, {"ine", 10, 13, 7},
+  };
+  AssertPipeline(&pipe, "search engine", expected);
+}
+
+TEST(pipeline_token_stream_test, stopword_after_synonyms_keeps_positions) {
+  std::vector<irs::analysis::Tokenizer::ptr> pipeline_options;
+  pipeline_options.emplace_back(MakeDelimiter(" "));
+  pipeline_options.emplace_back(irs::analysis::SolrSynonymsTokenizer::Make(
+    {.synonyms_text = "a, alpha\n"}, tests::Cache()));
+  irs::analysis::StopwordsTokenizer::Options stop;
+  stop.mask = {"a"};
+  pipeline_options.emplace_back(
+    irs::analysis::StopwordsTokenizer::Make(std::move(stop), tests::Cache()));
+  irs::analysis::PipelineTokenizer pipe(std::move(pipeline_options));
+  const AnalyzerTokens expected{{"vitamin", 0, 7, 0}, {"alpha", 8, 9, 1}};
+  AssertPipeline(&pipe, "vitamin a", expected);
 }
 
 TEST(pipeline_token_stream_test, hold_position_tokenizer2) {
@@ -515,7 +559,7 @@ TEST(pipeline_token_stream_test, hold_position_tokenizer2) {
       std::move(resets), std::move(terms)));
   }
 
-  const AnalyzerTokens expected{{data, 0, 5, 0}, {data, 2, 3, 0}};
+  const AnalyzerTokens expected{{data, 0, 5, 0}, {data, 2, 3, 1}};
   {
     std::vector<irs::analysis::Tokenizer::ptr> pipeline_options;
     pipeline_options.emplace_back(std::move(tokenizer1));
@@ -538,7 +582,7 @@ TEST(pipeline_token_stream_test, test_construct) {
 
   opts.children.push_back(std::make_unique<irs::analysis::TokenizerConfig>(
     irs::analysis::TokenizerConfig{irs::analysis::NormalizingTokenizer::Options{
-      .locale = icu::Locale::createFromName("en_US.UTF-8"),
+      .locale = duckdb::text::Locale::FromName("en_US.UTF-8"),
       .case_convert = irs::Case::Upper,
     }}));
 
@@ -1051,7 +1095,8 @@ TEST(pipeline_token_stream_test, wordnet_synonyms_semantics_pinned) {
   ASSERT_TRUE(tokens.has_value());
   const std::vector<tests::AnalyzerToken> expected = {
     {"100", 1, 0, 5},
-    {"300", 2, 0, 5},
+    {"300", 1, 0, 5},
+    {"zzz", 2, 6, 9},
     {"200", 3, 10, 15},
   };
   ASSERT_EQ(expected, *tokens);
@@ -1089,7 +1134,7 @@ irs::analysis::Tokenizer::ptr MakeCollationEn() {
 
 irs::analysis::Tokenizer::ptr MakeStemEn() {
   irs::analysis::StemmingTokenizer::Options opts;
-  opts.locale = icu::Locale::createFromName("en");
+  opts.locale = duckdb::text::Locale::FromName("en");
   return irs::analysis::StemmingTokenizer::Make(std::move(opts));
 }
 

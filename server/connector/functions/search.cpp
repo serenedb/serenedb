@@ -38,17 +38,15 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/logical_operator_visitor.hpp>
+#include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/scorer_options.h"
-#include "catalog/tokenizer.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/tokenizer.h"
 #include "connector/functions/minhash.h"
 #include "connector/functions/tokenizer_functions.h"
 #include "connector/functions/ts_common.hpp"
@@ -57,15 +55,12 @@
 #include "connector/functions/ts_offsets.h"
 #include "connector/functions/ts_query.h"
 #include "connector/functions/ts_query_codec.h"
-#include "connector/functions/vector.h"
-#include "pg/connection_context.h"
-#include "pg/sql_utils.h"
 
 namespace sdb::connector {
 
-void SearchStubFn(duckdb::DataChunk& /*args*/,
-                  duckdb::ExpressionState& /*state*/,
-                  duckdb::Vector& /*result*/) {
+[[noreturn]] void SearchStubFn(duckdb::DataChunk& /*args*/,
+                               duckdb::ExpressionState& /*state*/,
+                               duckdb::Vector& /*result*/) {
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
     ERR_MSG("Inverted index function called outside inverted index context. "
@@ -74,8 +69,9 @@ void SearchStubFn(duckdb::DataChunk& /*args*/,
 
 namespace {
 
-void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
-                  duckdb::Vector& /*result*/) {
+[[noreturn]] void ScorerStubFn(duckdb::DataChunk& /*args*/,
+                               duckdb::ExpressionState& state,
+                               duckdb::Vector& /*result*/) {
   const auto& fn_name =
     state.expr.Cast<duckdb::BoundFunctionExpression>().Function().GetName();
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -90,10 +86,9 @@ void ScorerStubFn(duckdb::DataChunk& /*args*/, duckdb::ExpressionState& state,
 // (e.g. ts_dict_min/ts_dict_max) into one before the optimizer can claim them.
 template<int Tag>
 struct TsDictStub {
-  static duckdb::idx_t StateSize(const duckdb::BoundAggregateFunction&) {
-    return 1;
-  }
-  static void Init(const duckdb::BoundAggregateFunction&, duckdb::data_ptr_t) {}
+  static duckdb::idx_t StateSize(duckdb::AggregateStateInput&) { return 1; }
+  static void Init(duckdb::AggregateStateInput&, duckdb::data_ptr_t*,
+                   duckdb::idx_t) {}
   static void Update(duckdb::Vector[], duckdb::AggregateInputData&,
                      duckdb::idx_t, duckdb::Vector&, duckdb::idx_t) {
     Throw();
@@ -120,7 +115,7 @@ template<int Tag>
 void RegisterTsDictStub(duckdb::ExtensionLoader& loader, std::string_view name,
                         const duckdb::LogicalType& ret) {
   duckdb::AggregateFunction fn(
-    duckdb::Identifier{std::string{name}}, {duckdb::LogicalType::ANY}, ret,
+    duckdb::Identifier{name}, {duckdb::LogicalType::ANY}, ret,
     TsDictStub<Tag>::StateSize, TsDictStub<Tag>::Init, TsDictStub<Tag>::Update,
     TsDictStub<Tag>::Combine, TsDictStub<Tag>::Finalize,
     duckdb::FunctionNullHandling::DEFAULT_NULL_HANDLING);
@@ -254,22 +249,14 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
   }
 
   // ST_Distance_Centroid(field, centroid) -> DOUBLE
-  //   and its operator-form synonym `field <-> centroid`.
   //
   // Returns the geodesic distance from the indexed value's centroid to the
   // centroid argument. Pseudo-function: outside an inverted-index scan it
   // throws via the stub. The filter builder recognizes
-  // `ST_Distance_Centroid(...) OP <const>` (and the `<->` form) and
-  // rewrites them into iresearch GeoDistanceFilter range bounds.
-  //
-  // The `<->` set extends the vector-distance set registered in
-  // RegisterVectorFunctions (vector.cpp); DuckDB merges overloads under
-  // the same name via OnCreateConflict::ALTER_ON_CONFLICT, so vector
-  // (ARRAY(FLOAT/DOUBLE)) and geo (VARCHAR / GEOMETRY) overloads coexist
-  // and bind by argument types. IsVectorDistanceFunction(...) in
-  // iresearch_plan.cpp keeps the geo overloads off the vector-ANN paths.
-  for (auto name : {kGeoDistance, kL2DistanceOp}) {
-    duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
+  // `ST_Distance_Centroid(...) OP <const>` and rewrites it into iresearch
+  // GeoDistanceFilter range bounds.
+  {
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kGeoDistance}};
     for (const auto& field_t : geo_arg_types) {
       for (const auto& centroid_t : geo_arg_types) {
         set.AddFunction(duckdb::ScalarFunction(
@@ -303,37 +290,13 @@ void RegisterGeoFunctions(duckdb::ExtensionLoader& loader) {
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
-  auto dict = ResolveCatalogTokenizer(context, name);
+  auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+    context, duckdb::QualifiedName::Parse(name),
+    duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return {};
   }
-  return dict->GetTokenizer(context);
-}
-
-catalog::TokenizerRef ResolveCatalogTokenizer(duckdb::ClientContext& context,
-                                              std::string_view name) {
-  auto state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey);
-  if (!state) [[unlikely]] {
-    return nullptr;
-  }
-  auto& conn_ctx = state->GetConnectionContext();
-  const auto current_schema = conn_ctx.GetCurrentSchema();
-  const auto qualified = pg::ParseObjectName(name, current_schema);
-  // Through the duckdb catalog, so the schema entry's TOKENIZER_ENTRY set
-  // answers -- including for a transaction reading its own uncommitted DDL,
-  // whose version is in the set under its transaction id.
-  const duckdb::EntryLookupInfo lookup{
-    duckdb::CatalogType::TOKENIZER_ENTRY,
-    duckdb::QualifiedName{duckdb::Identifier{conn_ctx.GetDatabase()},
-                          duckdb::Identifier{qualified.schema},
-                          duckdb::Identifier{qualified.relation}}};
-  auto entry = duckdb::Catalog::GetEntry(context, lookup,
-                                         duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!entry) {
-    return nullptr;
-  }
-  return entry->Cast<catalog::SereneDBTokenizerEntry>().GetTokenizer();
+  return dict->Acquire(context);
 }
 
 void RegisterSearchFunctions(duckdb::DatabaseInstance& db) {

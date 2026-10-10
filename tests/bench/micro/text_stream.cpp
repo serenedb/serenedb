@@ -170,25 +170,22 @@ void RunCorpus(benchmark::State& state, const std::string& data,
                           static_cast<int64_t>(data.size()));
 }
 
-class EnglishAscii : public benchmark::Fixture {
+template<std::string (*Make)()>
+class Corpus : public benchmark::Fixture {
  public:
-  std::string data = MakeEnglishAscii();
+  void SetUp(benchmark::State&) override {
+    if (data.empty()) {
+      data = Make();
+    }
+  }
+
+  std::string data;
 };
 
-class MixedAccent : public benchmark::Fixture {
- public:
-  std::string data = MakeMixedAccent();
-};
-
-class Multilingual : public benchmark::Fixture {
- public:
-  std::string data = MakeMultilingual();
-};
-
-class LongWordsAscii : public benchmark::Fixture {
- public:
-  std::string data = MakeLongWordsAscii();
-};
+using EnglishAscii = Corpus<MakeEnglishAscii>;
+using MixedAccent = Corpus<MakeMixedAccent>;
+using Multilingual = Corpus<MakeMultilingual>;
+using LongWordsAscii = Corpus<MakeLongWordsAscii>;
 
 BENCHMARK_DEFINE_F(EnglishAscii, BmText)(benchmark::State& state) {
   RunCorpus(state, data, DefaultOpts());
@@ -321,5 +318,3 @@ BENCHMARK_REGISTER_F(EnglishAscii, BmTextSweep)
   });
 
 BENCHMARK(BmTextShortValues)->Arg(8)->Arg(16)->Arg(24)->Arg(31)->Arg(64);
-
-BENCHMARK_MAIN();

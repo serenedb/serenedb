@@ -193,7 +193,7 @@ EXPLAIN SELECT unnest(ts_dict_agg(body)) AS term, unnest(ts_dict_score(body)) AS
 ----
 QUERY PLAN
 ╭─ ORDER_BY ──────────────────────────╮
-│ Order By: td_idx.body)) ASC         │
+│ Order By: score ASC                 │
 │ ~3 rows                             │
 ╰──────────────────┬──────────────────╯
 ╭─ HASH_GROUP_BY ──┴──────────────────╮

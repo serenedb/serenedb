@@ -79,7 +79,7 @@ struct PgProc {
   Array<Text> proargnames;
   PgNodeTree proargdefaults;
   Array<Oid> protrftypes;
-  Text prosrc;
+  std::string prosrc;
   Text probin;
   PgNodeTree prosqlbody;
   Array<Text> proconfig;
@@ -88,6 +88,6 @@ struct PgProc {
 // NOLINTEND
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgProc>::GetTableData();
+MaterializedData SystemTableSnapshot<PgProc>::GetTableData();
 
 }  // namespace sdb::pg

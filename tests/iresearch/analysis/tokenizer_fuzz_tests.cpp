@@ -18,6 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -385,83 +388,108 @@ TEST(TokenizerFuzz, MemoryUsageStaysBounded) {
   }
 }
 
-TEST(TokenizerFuzzLoad, ManyValues) {
+struct LoadPart {
+  const Spec* spec;
+  uint32_t part;
+};
+
+std::vector<LoadPart> LoadParts() {
+  std::vector<LoadPart> parts;
+  for (const auto* spec : SelectedFamilies()) {
+    for (uint32_t part = 0; part < spec->load_parts; ++part) {
+      parts.push_back({spec, part});
+    }
+  }
+  return parts;
+}
+
+class TokenizerFuzzLoad : public testing::TestWithParam<LoadPart> {};
+
+TEST_P(TokenizerFuzzLoad, ManyValues) {
+  const auto [spec, part] = GetParam();
   const auto budget = EnvU64("TOKENIZER_LOAD_BYTES", 64ull << 20);
   const auto seconds = static_cast<double>(EnvU64("TOKENIZER_LOAD_SECONDS", 0));
-  const auto seed = Seed() ^ 0x10AD10ADull;
+  const auto seed = Seed() ^ 0x10AD10ADull ^ part;
   const auto start = Clock::now();
 
-  for (const auto* spec : SelectedFamilies()) {
-    SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
-    auto tokenizer = Make(*spec);
-    ASSERT_NE(nullptr, tokenizer);
-    const auto traits = tokenizer->Traits();
-    const auto layout = DeclaredLayouts(traits).back();
+  SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
+  auto tokenizer = Make(*spec);
+  ASSERT_NE(nullptr, tokenizer);
+  const auto traits = tokenizer->Traits();
+  const auto layout = DeclaredLayouts(traits).back();
 
-    Mutator mutator{seed ^ NameSeed(spec->name), spec->dict, SizeCap(*spec)};
-    FeedbackCorpus corpus;
-    for (const auto& v : SpecCorpus(*spec, seed, 0)) {
-      corpus.Seed(v);
-    }
-
-    const auto spec_budget = budget / std::max<uint32_t>(1, spec->cost);
-    size_t produced = 0;
-    size_t rows = 0;
-    size_t tokens = 0;
-    const auto spec_start = Clock::now();
-    while (produced < spec_budget && !OutOfTime(start, seconds)) {
-      std::vector<std::string> chunk;
-      chunk.reserve(1024);
-      size_t chunk_bytes = 0;
-      while (chunk.size() < 1024 && chunk_bytes < (4u << 20) &&
-             produced + chunk_bytes < spec_budget) {
-        auto v = (chunk.size() % 32 == 0)
-                   ? mutator.Generate()
-                   : mutator.Mutate(corpus.Pick(mutator));
-        if (spec->utf8_only && !IsValidUtf8(v)) {
-          continue;
-        }
-        chunk_bytes += v.size() + 1;
-        chunk.push_back(std::move(v));
-      }
-      if (chunk.empty()) {
-        break;
-      }
-      std::vector<Row> block(chunk.size());
-      for (size_t i = 0; i < chunk.size(); ++i) {
-        block[i].value = &chunk[i];
-      }
-      std::string error;
-      const auto got =
-        FillBlock(*tokenizer, block, layout, BlockMode::Flat, &error);
-      ASSERT_TRUE(error.empty()) << spec->name << ": " << error;
-      ASSERT_EQ(chunk.size(), got.size());
-      for (size_t i = 0; i < got.size(); ++i) {
-        tokens += got[i].tokens.size();
-        if (i % 37 != 0) {
-          continue;
-        }
-        const auto err = ValueInvariants(traits, chunk[i], layout, got[i]);
-        ASSERT_FALSE(err.has_value())
-          << spec->name << ": " << *err << "\n  value: " << Describe(chunk[i]);
-      }
-      for (size_t i = 0; i < chunk.size(); i += 7) {
-        size_t term_bytes = 0;
-        size_t max_term = 0;
-        for (const auto& t : got[i].tokens) {
-          term_bytes += t.term.size();
-          max_term = std::max(max_term, t.term.size());
-        }
-        corpus.Offer(chunk[i], BehaviourClass(
-                                 got[i].tokens.empty(), got[i].tokens.size(),
-                                 term_bytes, max_term, got[i].store.size(), 0));
-      }
-      produced += chunk_bytes;
-      rows += chunk.size();
-    }
-    EXPECT_LE(tokenizer->MemoryUsage(), kMemoryCap) << spec->name;
-    std::printf(
-      "[   LOAD   ] %-42s %6zu MiB  %8zu rows  %10zu tokens  %6.1fs\n",
-      spec->name.c_str(), produced >> 20, rows, tokens, Seconds(spec_start));
+  Mutator mutator{seed ^ NameSeed(spec->name), spec->dict, SizeCap(*spec)};
+  FeedbackCorpus corpus;
+  for (const auto& v : SpecCorpus(*spec, seed, 0)) {
+    corpus.Seed(v);
   }
+
+  const auto spec_budget =
+    budget / std::max<uint32_t>(1, spec->cost) / spec->load_parts;
+  size_t produced = 0;
+  size_t rows = 0;
+  size_t tokens = 0;
+  while (produced < spec_budget && !OutOfTime(start, seconds)) {
+    std::vector<std::string> chunk;
+    chunk.reserve(1024);
+    size_t chunk_bytes = 0;
+    while (chunk.size() < 1024 && chunk_bytes < (4u << 20) &&
+           produced + chunk_bytes < spec_budget) {
+      auto v = (chunk.size() % 32 == 0) ? mutator.Generate()
+                                        : mutator.Mutate(corpus.Pick(mutator));
+      if (spec->utf8_only && !IsValidUtf8(v)) {
+        continue;
+      }
+      chunk_bytes += v.size() + 1;
+      chunk.push_back(std::move(v));
+    }
+    if (chunk.empty()) {
+      break;
+    }
+    std::vector<Row> block(chunk.size());
+    for (size_t i = 0; i < chunk.size(); ++i) {
+      block[i].value = &chunk[i];
+    }
+    std::string error;
+    const auto got =
+      FillBlock(*tokenizer, block, layout, BlockMode::Flat, &error);
+    ASSERT_TRUE(error.empty()) << spec->name << ": " << error;
+    ASSERT_EQ(chunk.size(), got.size());
+    for (size_t i = 0; i < got.size(); ++i) {
+      tokens += got[i].tokens.size();
+      if (i % 37 != 0) {
+        continue;
+      }
+      const auto err = ValueInvariants(traits, chunk[i], layout, got[i]);
+      ASSERT_FALSE(err.has_value())
+        << spec->name << ": " << *err << "\n  value: " << Describe(chunk[i]);
+    }
+    for (size_t i = 0; i < chunk.size(); i += 7) {
+      size_t term_bytes = 0;
+      size_t max_term = 0;
+      for (const auto& t : got[i].tokens) {
+        term_bytes += t.term.size();
+        max_term = std::max(max_term, t.term.size());
+      }
+      corpus.Offer(
+        chunk[i], BehaviourClass(got[i].tokens.empty(), got[i].tokens.size(),
+                                 term_bytes, max_term, got[i].store.size(), 0));
+    }
+    produced += chunk_bytes;
+    rows += chunk.size();
+  }
+  EXPECT_LE(tokenizer->MemoryUsage(), kMemoryCap) << spec->name;
+  absl::PrintF("[   LOAD   ] %-42s %6d MiB  %8d rows  %10d tokens  %6.1fs\n",
+               spec->name, produced >> 20, rows, tokens, Seconds(start));
 }
+
+INSTANTIATE_TEST_SUITE_P(Families, TokenizerFuzzLoad,
+                         testing::ValuesIn(LoadParts()),
+                         [](const testing::TestParamInfo<LoadPart>& info) {
+                           const auto& spec = *info.param.spec;
+                           if (spec.load_parts == 1) {
+                             return std::string{Family(spec)};
+                           }
+                           return absl::StrCat(Family(spec), "_",
+                                               info.param.part);
+                         });

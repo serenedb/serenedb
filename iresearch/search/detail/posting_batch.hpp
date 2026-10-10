@@ -26,15 +26,15 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/posting/block_index.hpp"
+#include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/formats/posting/format_block_128.hpp"
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/search/detail/posting_skip.hpp"
-#include "iresearch/search/detail/skip_walk.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -132,13 +132,24 @@ template<typename InputType, bool Scored>
 class PostingBatch {
  public:
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
+  static constexpr bool kDefaultInit = true;
 
   doc_id_t Last() const noexcept { return _last; }
 
   uint32_t Left() const noexcept { return _left_in_list; }
 
   bool Step(doc_id_t live) {
-    return StepToLive(_walk, In(), live, _left_in_list, _last);
+    if (live - _last <= kBlock || !_walk.Armed()) {
+      return true;
+    }
+    _left_in_list = _walk.Seek(live, In());
+    if (_left_in_list == 0) {
+      return false;
+    }
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    _last = landing.doc;
+    return true;
   }
 
   bool Start(doc_id_t min) {
@@ -160,14 +171,12 @@ class PostingBatch {
 
   void OpenInput(const PostingMeta& meta, const IndexInput& doc_in,
                  bool bounds) {
-    _in = doc_in.Reopen();
-    if (!_in) [[unlikely]] {
-      throw IoError{"failed to reopen document input"};
-    }
+    _in = OpenDocInput(meta, doc_in);
     auto& in = In();
-    in.Seek(meta.doc_start);
-    LimitDocReadahead(in, meta);
-    if (meta.docs_count < kBlock) {
+    if (const auto extent = DocExtent(meta); extent != 0) {
+      _hint.Arm(meta.doc_start, meta.doc_start + extent);
+    }
+    if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
     }
     _left_in_list = meta.docs_count;
@@ -175,7 +184,7 @@ class PostingBatch {
 
   void ArmWalk(const PostingMeta& meta, IndexFeatures layout, bool bounds) {
     if (meta.docs_count > kBlock) {
-      _walk.Arm(meta, SkipShapeOf(layout, bounds));
+      _walk.Arm(meta, BlockIndexShapeOf(layout, bounds));
     }
   }
 
@@ -204,19 +213,20 @@ class PostingBatch {
     static_assert(!Scored);
     SDB_ASSERT(len != 0);
     if (len == _freq_len.value) {
-      FormatTraits128::SkipBlock(In());
+      block_io::SkipBlock(In());
     }
   }
 
   IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
-    FormatTraits128::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
+    _hint.Advance(In(), In().Position());
+    block_io::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
     _last = dest[len - 1];
     _left_in_list -= len;
   }
 
   void ScoreBlock(const doc_id_t* docs, score_t* scores) {
     static_assert(Scored);
-    FormatTraits128::ReadBlock(In(), Enc(), _freqs.data);
+    block_io::ReadBlock<block_io::kFreqBias>(In(), Enc(), _freqs.data);
     _score.fetcher->FetchPostingBlock(
       std::span<const doc_id_t, kBlock>{docs, kBlock});
     _score.score.ScorePostingBlock(scores);
@@ -224,7 +234,7 @@ class PostingBatch {
 
   void ScoreTail(const doc_id_t* docs, score_t* scores, uint32_t len) {
     static_assert(Scored);
-    FormatTraits128::ReadTail(len, In(), Enc(), _freqs.data);
+    block_io::ReadTail<block_io::kFreqBias>(len, In(), Enc(), _freqs.data);
     _provider.freq.value = _freqs.data + (kBlock - len);
     _score.fetcher->Fetch(std::span<const doc_id_t>{docs, len});
     _score.score.Score(scores, static_cast<scores_size_t>(len));
@@ -239,7 +249,8 @@ class PostingBatch {
   [[no_unique_address]] utils::Need<!Scored, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Scored, LeafScore> _score;
   [[no_unique_address]] utils::Need<Scored, LeafProvider> _provider;
-  SkipWalk<InputType> _walk;
+  GrowingHint _hint;
+  BlockCursor _walk;
 };
 
 }  // namespace irs::detail

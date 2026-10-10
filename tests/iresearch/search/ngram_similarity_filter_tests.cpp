@@ -1253,7 +1253,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1275,7 +1275,7 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1315,7 +1315,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1337,7 +1337,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1359,7 +1359,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm15_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, opts);
+    add_segment(gen, irs::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1516,9 +1516,7 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(ngram_similarity_test, NGramSimilarityFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          NGramSimilarityFilterTestCase::to_string);
 
 }  // namespace tests

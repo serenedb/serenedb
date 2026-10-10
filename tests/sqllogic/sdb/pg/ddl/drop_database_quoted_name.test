@@ -1,0 +1,32 @@
+statement ok
+CREATE DATABASE "DdqMixed";
+
+
+statement ok
+CREATE TABLE "DdqMixed".public.t (a INT);
+
+
+statement ok
+INSERT INTO "DdqMixed".public.t VALUES (1);
+
+
+query
+SELECT count(*) AS n FROM "DdqMixed".public.t;
+----
+n
+1
+
+
+statement ok
+DROP DATABASE "DdqMixed";
+
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'DdqMixed';
+----
+n
+0
+
+
+statement ok
+DROP DATABASE IF EXISTS "DdqMixed";

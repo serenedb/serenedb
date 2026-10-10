@@ -715,8 +715,8 @@ id	body
 # Hive partitioning synthesises a `color` column from the path components
 # `.../color=red/...` and `.../color=blue/...`. The resolver glob-mode
 # fast path threads (file_index, file_row_number); the lookup TF reads
-# just the data columns, so partition columns work as long as we don't
-# index them.
+# the data columns and the partition column comes from each file's path
+# (inverted_index_view_hive.test).
 statement ok
 COPY (SELECT 1::int4 AS id, 'pudge hp alpha' AS body, 'red' AS color
       UNION ALL SELECT 2, 'manga hp beta', 'blue')
@@ -732,19 +732,19 @@ CREATE INDEX p_pq_hive_idx ON p_pq_hive_v
   USING inverted(id, body view_params_en);
 
 query
-SELECT id, body FROM p_pq_hive_idx ORDER BY id;
+SELECT id, body, color FROM p_pq_hive_idx ORDER BY id;
 ----
-id	body
-1	pudge hp alpha
-2	manga hp beta
+id	body	color
+1	pudge hp alpha	red
+2	manga hp beta	blue
 
 
 # ============================================================================
 # Parquet: file_row_number=true (already implicit virtual column)
 # ============================================================================
 
-# Promotes file_row_number to a real column. The lookup TF already projects
-# file_row_number as the PK virtual; explicit projection should still work.
+# Promotes file_row_number to a real column; it reads back as the row's key
+# in the file (inverted_index_view_file_columns.test).
 statement ok
 COPY (SELECT 1::int4 AS id, 'pudge frn alpha' AS body
       UNION ALL SELECT 2, 'manga frn beta')
@@ -760,11 +760,11 @@ CREATE INDEX p_pq_frn_idx ON p_pq_frn_v
   USING inverted(id, body view_params_en);
 
 query
-SELECT id, body FROM p_pq_frn_idx ORDER BY id;
+SELECT id, body, file_row_number FROM p_pq_frn_idx ORDER BY id;
 ----
-id	body
-1	pudge frn alpha
-2	manga frn beta
+id	body	file_row_number
+1	pudge frn alpha	0
+2	manga frn beta	1
 
 
 # ============================================================================

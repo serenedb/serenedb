@@ -1,0 +1,134 @@
+statement ok
+SET threads = 4;
+
+
+statement ok
+CREATE TABLE ifm_a (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ifm_a_idx ON ifm_a USING inverted (body);
+
+
+statement ok
+CREATE TABLE ifm_b (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ifm_b_idx ON ifm_b USING inverted (body);
+
+
+statement ok
+CREATE TABLE ifm_c (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ifm_c_idx ON ifm_c USING inverted (body);
+
+
+statement ok
+CREATE TABLE ifm_d (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX ifm_d_idx ON ifm_d USING inverted (body);
+
+
+statement ok
+INSERT INTO ifm_b SELECT i, 'word_b' FROM range(0, 30720) t(i);
+
+
+statement ok
+INSERT INTO ifm_d SELECT i, 'word_d' FROM range(0, 61440) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO ifm_a SELECT i, 'word_a' FROM range(0, 32768) t(i);
+
+
+statement ok
+INSERT INTO ifm_b SELECT i, 'word_b' FROM range(30720, 63488) t(i);
+
+
+statement ok
+INSERT INTO ifm_c SELECT i, 'word_c' FROM range(0, 40960) t(i);
+
+
+statement ok
+INSERT INTO ifm_d SELECT i, 'word_d' FROM range(61440, 94208) t(i);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ifm_a;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ifm_b;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ifm_c;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ifm_d;
+
+
+query
+SELECT (SELECT count(*) FROM ifm_a_idx WHERE body @@ 'word_a') AS a, (SELECT count(*) FROM ifm_b_idx WHERE body @@ 'word_b') AS b, (SELECT count(*) FROM ifm_c_idx WHERE body @@ 'word_c') AS c, (SELECT count(*) FROM ifm_d_idx WHERE body @@ 'word_d') AS d;
+----
+a	b	c	d
+32768	63488	40960	94208
+
+
+query
+SELECT (SELECT count(*) FROM ifm_a_idx) AS a, (SELECT count(*) FROM ifm_b_idx) AS b, (SELECT count(*) FROM ifm_c_idx) AS c, (SELECT count(*) FROM ifm_d_idx) AS d;
+----
+a	b	c	d
+32768	63488	40960	94208
+
+
+statement ok
+CREATE TABLE ifm_two (id INT PRIMARY KEY, x TEXT, y TEXT);
+
+
+statement ok
+CREATE INDEX ifm_two_x ON ifm_two USING inverted (x);
+
+
+statement ok
+CREATE INDEX ifm_two_y ON ifm_two USING inverted (y);
+
+
+statement ok
+CREATE INDEX ifm_two_xy ON ifm_two USING inverted (x, y);
+
+
+statement ok
+INSERT INTO ifm_two SELECT i, 'x' || (i % 3), 'y' || (i % 5) FROM range(0, 65536) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) ifm_two;
+
+
+query
+SELECT (SELECT count(*) FROM ifm_two_x WHERE x @@ 'x1') AS x1, (SELECT count(*) FROM ifm_two_y WHERE y @@ 'y4') AS y4, (SELECT count(*) FROM ifm_two_xy WHERE x @@ 'x2') AS xy2, (SELECT count(*) FROM ifm_two_xy WHERE y @@ 'y0') AS xy0;
+----
+x1	y4	xy2	xy0
+21845	13107	21845	13108
+
+
+query
+SELECT (SELECT count(*) FROM ifm_two_x WHERE x @@ 'y4') AS cross_x, (SELECT count(*) FROM ifm_two_y WHERE y @@ 'x1') AS cross_y;
+----
+cross_x	cross_y
+0	0

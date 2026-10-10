@@ -20,70 +20,38 @@
 
 #pragma once
 
+#include <cstdint>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/common/constants.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
+#include <duckdb/function/macro_function.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/constraints/unique_constraint.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <string>
 #include <string_view>
+#include <vector>
 
-#include "catalog/entry.h"
+namespace duckdb {
 
+class Constraint;
+class Identifier;
+class TableCatalogEntry;
+class UniqueConstraint;
+
+}  // namespace duckdb
 namespace sdb::pg {
-
-// Pair of (schema, name) parsed out of a qualified PG object name.
-struct ObjectName {
-  std::string_view schema;
-  std::string_view relation;
-};
-
-// "[schema.]name" -> ObjectName. Unqualified names take `default_schema`.
-ObjectName ParseObjectName(std::string_view name,
-                           std::string_view default_schema);
-
-// The noun an error message uses for a kind of catalog entry. "object" for the
-// kinds no statement names.
-std::string_view ToPgObjectTypeName(duckdb::CatalogType t) noexcept;
-
-// How postgres names an absent object of one kind, and the code it reports --
-// which is not always the kind the statement said: a sequence and an index
-// share the relation namespace, and an absent one is reported by that.
-[[noreturn]] void ThrowUndefinedObject(duckdb::CatalogType type,
-                                       std::string_view name);
-
-constexpr duckdb::CatalogType FromPgObjectTypeName(
-  std::string_view word) noexcept {
-  using enum duckdb::CatalogType;
-  if (word == "TABLE") {
-    return TABLE_ENTRY;
-  }
-  if (word == "VIEW") {
-    return VIEW_ENTRY;
-  }
-  if (word == "SEQUENCE") {
-    return SEQUENCE_ENTRY;
-  }
-  if (word == "FUNCTION") {
-    return MACRO_ENTRY;
-  }
-  if (word == "DATABASE") {
-    return DATABASE_ENTRY;
-  }
-  if (word == "SCHEMA") {
-    return SCHEMA_ENTRY;
-  }
-  if (word == "TYPE") {
-    return TYPE_ENTRY;
-  }
-  if (word == "FOREIGN SERVER") {
-    return FOREIGN_SERVER_ENTRY;
-  }
-  return INVALID;
-}
 
 static constexpr size_t kSqlStateSize = 5;
 
 // Unpack MAKE_SQLSTATE code.
 template<typename T>
 void UnpackSqlState(T& buf, int sql_state) {
-  if constexpr (requires(T c) { std::size(buf); }) {
+  if constexpr (requires { std::size(buf); }) {
     SDB_ASSERT(std::size(buf) >= kSqlStateSize);
   }
 
@@ -92,5 +60,34 @@ void UnpackSqlState(T& buf, int sql_state) {
     sql_state >>= 6;
   }
 }
+
+int16_t TableEntryAttnum(const duckdb::TableCatalogEntry& table,
+                         duckdb::idx_t column_id);
+
+std::vector<int16_t> KeyConstraintAttnums(
+  const duckdb::TableCatalogEntry& table,
+  const duckdb::UniqueConstraint& constraint);
+
+std::string ConstraintName(const duckdb::TableCatalogEntry& table,
+                           const duckdb::Constraint& constraint);
+
+std::string QuoteIdentifier(std::string_view ident);
+
+struct KeyIndex {
+  const duckdb::TableCatalogEntry* table = nullptr;
+  const duckdb::UniqueConstraint* constraint = nullptr;
+};
+
+KeyIndex FindKeyIndex(duckdb::ClientContext& context, duckdb::Catalog& database,
+                      duckdb::idx_t oid);
+
+KeyIndex FindKeyIndex(duckdb::ClientContext& context,
+                      duckdb::SchemaCatalogEntry& schema,
+                      std::string_view name);
+
+std::string MacroBody(const duckdb::MacroFunction& macro);
+
+std::string MacroParameterName(const duckdb::MacroFunction& macro,
+                               duckdb::idx_t index);
 
 }  // namespace sdb::pg

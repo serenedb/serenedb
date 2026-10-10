@@ -1,0 +1,101 @@
+control substitution on
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dcr_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE dcr_t (id INTEGER PRIMARY KEY, tag TEXT, body TEXT, extra INTEGER);
+
+
+statement ok
+CREATE INDEX dcr_idx ON dcr_t USING inverted(body dcr_dict) INCLUDE (extra);
+
+
+statement ok
+CREATE INDEX dcr_tag_idx ON dcr_t USING inverted(tag dcr_dict);
+
+
+statement count 2
+INSERT INTO dcr_t VALUES (1, 'x', 'alpha bravo', 10), (2, 'y', 'charlie delta', 20);
+
+
+statement ok
+ALTER TABLE dcr_t DROP COLUMN tag;
+
+
+statement count 1
+INSERT INTO dcr_t VALUES (3, 'echo foxtrot', 30);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) dcr_t;
+
+
+query
+SELECT id, extra FROM dcr_idx WHERE body @@ ts_phrase('echo');
+----
+id	extra
+3	30
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, extra FROM dcr_idx WHERE body @@ ts_phrase('alpha');
+----
+id	extra
+1	10
+
+
+connection after_crash
+query
+SELECT id, extra FROM dcr_idx WHERE body @@ ts_phrase('echo');
+----
+id	extra
+3	30
+
+
+connection after_crash
+statement error
+SELECT id FROM dcr_tag_idx;
+----
+db error: ERROR: Table with name dcr_tag_idx does not exist!<slt:ignore>
+
+
+connection after_crash
+statement count 1
+INSERT INTO dcr_t VALUES (4, 'golf hotel', 40);
+
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) dcr_t;
+
+
+connection after_crash
+query
+SELECT id, extra FROM dcr_idx WHERE body @@ ts_phrase('golf');
+----
+id	extra
+4	40
+
+
+connection after_crash
+statement ok
+DROP TABLE dcr_t;
+
+
+connection after_crash
+statement ok
+DROP TEXT SEARCH DICTIONARY dcr_dict;

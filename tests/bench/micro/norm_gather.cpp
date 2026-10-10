@@ -270,5 +270,3 @@ DEFINE_BENCH(Gather, GetPostingBlockGather)
 #endif
 
 }  // namespace
-
-BENCHMARK_MAIN();

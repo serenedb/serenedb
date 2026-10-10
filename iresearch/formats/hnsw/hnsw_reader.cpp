@@ -41,9 +41,7 @@ std::vector<float> NormalizedQuery(const VectorFilterOptions& opts,
   std::vector<float> q{opts.query.begin(), opts.query.end()};
   if (opts.metric == VectorMetric::Cosine) {
     std::vector<float> normalized(q.size());
-    vector::L2Space<float, float, float>::Normalize(
-      reinterpret_cast<const byte_type*>(q.data()), static_cast<uint16_t>(d),
-      normalized.data());
+    duckdb::L2NormalizeOp::Operation(q.data(), normalized.data(), d);
     q = std::move(normalized);
   }
   return q;

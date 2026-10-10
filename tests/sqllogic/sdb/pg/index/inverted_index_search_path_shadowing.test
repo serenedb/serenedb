@@ -1,0 +1,73 @@
+statement ok
+DROP SCHEMA IF EXISTS isps_a CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS isps_b CASCADE;
+
+
+statement ok
+CREATE SCHEMA isps_a;
+
+
+statement ok
+CREATE SCHEMA isps_b;
+
+
+statement ok
+CREATE TABLE isps_a.src (id BIGINT, val TEXT);
+
+
+statement ok
+INSERT INTO isps_a.src VALUES (1, 'from index');
+
+
+statement ok
+CREATE INDEX isps_rel ON isps_a.src USING inverted(id) INCLUDE(val)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) isps_a.src;
+
+
+statement ok
+CREATE TABLE isps_b.isps_rel (id BIGINT, val TEXT);
+
+
+statement ok
+INSERT INTO isps_b.isps_rel VALUES (2, 'from table');
+
+
+statement ok
+SET search_path TO isps_a, isps_b;
+
+
+query
+SELECT id, val FROM isps_rel;
+----
+id	val
+1	from index
+
+
+statement ok
+SET search_path TO isps_b, isps_a;
+
+
+query
+SELECT id, val FROM isps_rel;
+----
+id	val
+2	from table
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+DROP SCHEMA isps_a CASCADE;
+
+
+statement ok
+DROP SCHEMA isps_b CASCADE;

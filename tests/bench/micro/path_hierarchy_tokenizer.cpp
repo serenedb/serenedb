@@ -316,5 +316,3 @@ BENCHMARK(BmReverseWithSkip)->ArgsProduct({{64}, {0, 4, 8, 16}});
 
 BENCHMARK(BmForwardNoDelimiters)->Range(64, 4096);
 BENCHMARK(BmReverseNoDelimiters)->Range(64, 4096);
-
-BENCHMARK_MAIN();

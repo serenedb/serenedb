@@ -25,7 +25,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/collect_scored.hpp"
 #include "iresearch/search/detail/exclusion_of.hpp"
@@ -37,6 +36,7 @@
 #include "iresearch/search/top/pruned_disjunction.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/walk.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -132,9 +132,6 @@ Root::ptr MakeNGramAll(const NGramSimilarityQuery& query, const Context& ctx);
 Root::ptr MakeWildcardNGram(const WildcardNGramQuery& query,
                             const Context& ctx);
 
-Root::ptr MakeMasked(const QueryBuilder& query, const Context& ctx,
-                     const DocumentMask& mask);
-
 Root::ptr MakePrunedPosting(const irs::detail::PostingClause& posting,
                             const SubReader& segment, const Context& ctx);
 Root::ptr MakePrunedPosting(
@@ -154,6 +151,11 @@ Root::ptr MakePrunedConjunction(
   std::span<const irs::detail::PostingClause> excludes,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   const Context& ctx, ScoreMergeType merge);
+
+Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
+                           std::span<const irs::detail::PostingClause> optional,
+                           const SubReader& segment, const Context& ctx,
+                           ScoreMergeType merge);
 
 Root::ptr MakeNestedPrunedConjunction(
   std::span<const irs::detail::PostingClause> terms,

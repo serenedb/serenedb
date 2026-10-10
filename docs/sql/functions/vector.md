@@ -7,15 +7,14 @@ import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
 ## Vector-Distance Functions {#vector-distance-functions}
 
-These functions measure how close two equal-length `FLOAT` vectors are — the basis of [vector search](../indexes/inverted/vector-search.md), where a query embedding is compared against the embeddings stored in a column. They come in two flavours that compute the same metrics but serve different roles.
+These functions measure how close two equal-length vectors are — the basis of [vector search](../indexes/inverted/vector-search.md), where a query embedding is compared against the embeddings stored in a column.
 
-- **Named functions** (`l2_distance`, `cosine_distance`, …) are plain scalars: pass any two vectors and get the distance back. They work in any expression, with or without an index, and are the right tool for ad-hoc scoring, re-ranking a candidate set or comparing two specific rows.
-- **Operators** (`<->`, `<+>`, `<=>`, `<#>`) are the indexed form. When written as `ORDER BY embedding <-> :query LIMIT k`, the planner can route the query through the column's [IVF index](../indexes/inverted/vector-search.md) and return the approximate `k` nearest neighbours — far faster than scoring every row. Each operator computes one fixed metric and only accelerates a query when that metric **matches the index's configured `metric`** (`l2`, `l1`, `cosine` or `ip`).
+Every function and operator here is a plain scalar: pass any two vectors and get the distance back, in any expression, with or without an index. The operators (`<->`, `<+>`, `<=>`, `<#>`) are short forms of the named functions. When a query orders by — or filters on — the distance between an indexed column and a constant query vector, as in `ORDER BY embedding <-> :query LIMIT k`, the planner answers it from the column's [IVF index](../indexes/inverted/vector-search.md) and returns the approximate `k` nearest neighbours — far faster than scoring every row. Each function computes one fixed metric and only uses an index whose configured `metric` **matches** it (`l2`, `l1`, `cosine` or `ip`).
 
 Lower distance means more similar. `cosine_similarity` and `inner_product` are the exceptions — there, *higher* means more similar. `negative_inner_product` flips the sign so that lower is again more similar, which is what the `ip` index metric needs.
 
-:::info Fixed-size `FLOAT[N]` is required
-Every vector argument must be a fixed-size float array — `FLOAT[3]`, `FLOAT[768]`, etc. — and both operands of a distance must share the same dimension `N`. An unsized `FLOAT[]` is rejected, both as a function argument and as an indexed column. Write a literal as `[1, 0, 0]::FLOAT[3]`.
+:::info Vectors
+A vector is a list (`FLOAT[]`, `DOUBLE[]`) or a fixed-size array (`FLOAT[N]`, `DOUBLE[N]`), and both operands of a distance must have the same length — a mismatch is an error. A `NULL` vector gives `NULL`; a vector with a `NULL` element is an error. Empty lists are at distance `0` from each other and have norm `0`, except under cosine, which gives `NULL`. An indexed vector column must be a fixed-size `FLOAT[N]`; the query vector can be written as `'[1, 0, 0]'`, `[1, 0, 0]` or `[1, 0, 0]::FLOAT[3]`.
 :::
 
 | Function / operator | Metric | Direction | Description |
@@ -27,12 +26,16 @@ Every vector argument must be a fixed-size float array — `FLOAT[3]`, `FLOAT[76
 | [`cosine_similarity(a, b)`](#cosine_similarity) | cosine | **higher = closer** | Cosine of the angle between the vectors. |
 | [`inner_product(a, b)`](#inner_product) | dot | **higher = closer** | Dot product. |
 | [`negative_inner_product(a, b)`](#negative_inner_product) | ip | lower = closer | `−inner_product`; backs the `ip` index metric. |
-| [`a <-> b`](#distance-operators) | L2 | lower = closer | Indexed distance, equivalent to `l2_distance`. |
-| [`a <+> b`](#distance-operators) | L1 | lower = closer | Indexed distance, equivalent to `l1_distance`. |
-| [`a <=> b`](#distance-operators) | cosine | lower = closer | Indexed distance, equivalent to `cosine_distance`. |
-| [`a <#> b`](#distance-operators) | ip | lower = closer | Indexed distance, equivalent to `negative_inner_product`. |
-| [`l2_norm(a)`](#norms) · [`l1_norm(a)`](#norms) | — | — | Vector magnitude (L2 / L1). |
-| [`l2_normalize(a)`](#norms) · [`l1_normalize(a)`](#norms) | — | — | Scale to a unit vector (L2 / L1). |
+| [`a <-> b`](#distance-operators) | L2 | lower = closer | Same as `l2_distance`. |
+| [`a <+> b`](#distance-operators) | L1 | lower = closer | Same as `l1_distance`. |
+| [`a <=> b`](#distance-operators) | cosine | lower = closer | Same as `cosine_distance`. |
+| [`a <#> b`](#distance-operators) | ip | lower = closer | Same as `negative_inner_product`. |
+| [`l2_norm(a)`](#norms) | L2 | — | Vector magnitude. |
+| [`l1_norm(a)`](#norms) | L1 | — | Vector magnitude. |
+| [`l2_normalize(a)`](#norms) | L2 | — | Scale to a unit vector. |
+| [`l1_normalize(a)`](#norms) | L1 | — | Scale to a unit vector. |
+
+DuckDB's names for the same functions take lists and arrays alike, and use the index the same way: `list_distance` and `array_distance` are `l2_distance`; `list_cosine_distance` and `array_cosine_distance` are `cosine_distance`; `list_cosine_similarity` and `array_cosine_similarity` are `cosine_similarity`; `list_inner_product`, `array_inner_product`, `list_dot_product` and `array_dot_product` are `inner_product`; `list_negative_inner_product`, `array_negative_inner_product`, `list_negative_dot_product` and `array_negative_dot_product` are `negative_inner_product`; `vector_norm` is `l2_norm`.
 
 ## Choosing a metric {#choosing-a-metric}
 
@@ -41,7 +44,7 @@ The four metrics answer different questions about two vectors `x` and `y` of len
 - **Euclidean / L2** — `sqrt(Σ (xᵢ − yᵢ)²)`. Straight-line distance through space. It accounts for both *direction* and *magnitude*, so it is the natural default when the absolute size of the components is meaningful (e.g. raw feature vectors, coordinates).
 - **Squared Euclidean / L2²** — `Σ (xᵢ − yᵢ)²`. The same ordering as L2 with the square root dropped, so it is cheaper whenever you only rank or threshold and never need the true distance value.
 - **Manhattan / L1** — `Σ |xᵢ − yᵢ|`. Sums the per-axis differences instead of combining them with Pythagoras. Less sensitive to a single large-deviation dimension than L2, and a common choice for sparse or high-dimensional data.
-- **Cosine** — `1 − (x · y) / (‖x‖ · ‖y‖)`. Compares only the *direction* of the vectors and ignores their length. This is the usual choice for text and embedding models, where two documents about the same topic point the same way regardless of length. A zero vector has no direction, so cosine of a zero vector is undefined.
+- **Cosine** — `1 − (x · y) / (‖x‖ · ‖y‖)`. Compares only the *direction* of the vectors and ignores their length. This is the usual choice for text and embedding models, where two documents about the same topic point the same way regardless of length. A zero vector has no direction: its cosine similarity with any vector is `0` and its cosine distance `1`, the same values the index scores it with.
 - **Inner product (dot)** — `Σ xᵢ yᵢ`. Rewards vectors that are both aligned *and* large. For vectors that are already L2-normalized to unit length, inner product equals cosine similarity, so many embedding pipelines normalize once and then use the cheaper dot product. Because higher means more similar, the index uses **negative** inner product (`negative_inner_product`) so that, like every other metric, a *smaller* value sorts first.
 
 ### Operators, metrics and the IVF index {#operators-and-the-index}
@@ -67,11 +70,11 @@ lets the planner probe the [IVF index](../indexes/inverted/vector-search.md)'s c
 
 #### `l2_distance(a, b)` {#l2_distance}
 
-Euclidean (L2) distance between two equal-length `FLOAT` vectors — the straight-line distance in space.
+Euclidean (L2) distance between two equal-length vectors — the straight-line distance in space.
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/l2_distance" />
 
@@ -81,7 +84,7 @@ The squared L2 distance. It preserves the same ordering as `l2_distance` while s
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/l2_sqr_distance" />
 
@@ -91,7 +94,7 @@ Manhattan (L1) distance — the sum of the absolute per-component differences.
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/l1_distance" />
 
@@ -101,7 +104,7 @@ Cosine distance, defined as `1 − cosine_similarity`. It ignores vector magnitu
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`, non-zero) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/cosine_distance" />
 
@@ -111,7 +114,7 @@ The cosine of the angle between the vectors, in `[−1, 1]`. Unlike the distance
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`, non-zero) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/cosine_similarity" />
 
@@ -121,7 +124,7 @@ The dot product of the two vectors. **Higher** means more similar; for unit-leng
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/inner_product" />
 
@@ -131,13 +134,13 @@ The dot product of the two vectors. **Higher** means more similar; for unit-leng
 
 | Operand | Type |
 | :--- | :--- |
-| `a`, `b` | `FLOAT[N]` (same `N`) |
+| `a`, `b` | vectors of the same length |
 
 <SqlLogicTest id="sql/functions/full_text_search/negative_inner_product" />
 
 ## Distance operators: `<->`, `<+>`, `<=>`, `<#>` {#distance-operators}
 
-The operator forms are what drive an indexed nearest-neighbour search. Each maps to one metric and to a named function, and only accelerates a query when its metric matches the index (see [Operators, metrics and the IVF index](#operators-and-the-index)).
+Each operator maps to one metric and to a named function, and like it only accelerates a query when its metric matches the index (see [Operators, metrics and the IVF index](#operators-and-the-index)). On `GEOMETRY` operands `<->` is instead the planar distance, as in PostGIS — see [Geo Functions](./search/geo.md#distance-operator).
 
 | Operator | Metric | Equivalent function |
 | :--- | :--- | :--- |
@@ -182,8 +185,10 @@ Inner product (`<#>`, `ip` index) — the operator returns the *negative* dot pr
 
 | Function | Operand | Returns |
 | :--- | :--- | :--- |
-| `l2_norm(a)` · `l1_norm(a)` | `FLOAT[N]` | scalar magnitude |
-| `l2_normalize(a)` · `l1_normalize(a)` | `FLOAT[N]` | `FLOAT[N]` unit vector |
+| `l2_norm(a)` | vector | scalar magnitude under the L2 norm |
+| `l1_norm(a)` | vector | scalar magnitude under the L1 norm |
+| `l2_normalize(a)` | vector | unit vector of the same type under the L2 norm; a zero vector stays zero |
+| `l1_normalize(a)` | vector | unit vector of the same type under the L1 norm; a zero vector stays zero |
 
 <SqlLogicTest id="sql/functions/full_text_search/l2_norm" />
 
@@ -192,8 +197,6 @@ Inner product (`<#>`, `ip` index) — the operator returns the *negative* dot pr
 <SqlLogicTest id="sql/functions/full_text_search/l2_normalize" />
 
 <SqlLogicTest id="sql/functions/full_text_search/l1_normalize" />
-
-For array-typed distance helpers (`array_distance`, `array_cosine_distance`, …) see [Array Functions](./array.md).
 
 ## Coming from Elasticsearch
 

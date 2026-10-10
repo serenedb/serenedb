@@ -26,8 +26,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <functional>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -36,44 +41,68 @@
 #include <iresearch/utils/log.hpp>
 #include <limits>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
+#include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_db_wal.h"
 #include "search/search_table.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
+namespace {
 
-void RunSearchTableRecovery(bool skip_wal_recovery) {
-  if (skip_wal_recovery) {
-    return;
+// The attached serenedb databases. AttachedDatabase is itself a CatalogEntry,
+// so its oid is the per-database id without anything of ours to carry it.
+auto SereneDatabases() {
+  return duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
+           .GetDatabases() |
+         std::views::filter([](const auto& attached) {
+           return attached->GetCatalog().GetCatalogType() ==
+                  catalog::SereneDBCatalog::kStorageType;
+         });
+}
+
+// Recovery and the maintenance start-up both run before any transaction
+// exists, so these are duckdb's context-free scans: the committed state is
+// exactly what they want.
+void ForEachSearchTable(
+  duckdb::AttachedDatabase& database,
+  const std::function<void(catalog::SearchTableEntry&)>& callback) {
+  std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
+  database.GetCatalog().Cast<catalog::SereneDBCatalog>().ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) { schemas.emplace_back(schema); });
+  std::vector<duckdb::reference<catalog::SearchTableEntry>> tables;
+  for (auto& schema : schemas) {
+    schema.get().Scan(
+      duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+        if (auto* search = dynamic_cast<catalog::SearchTableEntry*>(&entry)) {
+          tables.emplace_back(*search);
+        }
+      });
   }
-  auto begin = std::chrono::steady_clock::now();
-  auto& engine = GetSearchEngine();
+  for (auto& table : tables) {
+    callback(table.get());
+  }
+}
 
-  // A dedicated connection whose ClientContext drives indexed-expression
-  // evaluation for replayed rows (the WAL stores raw columns; expressions must
-  // be recomputed). Rolled back at the end -- it never writes anything.
-  duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
-  expr_conn.BeginTransaction();
-  absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
-  auto& expr_context = *expr_conn.context;
+}  // namespace
+
+void RunSearchTableRecovery() {
+  auto begin = std::chrono::steady_clock::now();
 
   // Per-shard replay metadata, built once from the catalog table so the
   // recovered key matches the written one.
   struct ShardInfo {
     std::shared_ptr<SearchTable> shard;  // keeps the table store alive
     SearchTable* search = nullptr;
-    std::vector<catalog::ColumnId> column_ids;
+    duckdb::Catalog* catalog = nullptr;
+    std::vector<connector::ColumnId> column_ids;
   };
   // Per-shard replay context: one open iresearch trx accumulated across all of
   // the shard's records, with an insert sink and a delete sink that share it.
@@ -89,49 +118,49 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     // position; the adopt tick needs the final count (see the finalize loop).
     struct PendingAdopt {
       std::string meta_file;
-      std::string codec;
       uint64_t queries_before;
     };
     std::vector<PendingAdopt> adopts;
   };
 
+  duckdb::Connection expr_conn(irs::DuckDBEngine::Instance().instance());
+  expr_conn.BeginTransaction();
+  absl::Cleanup rollback_expr_conn = [&] { expr_conn.Rollback(); };
+  auto& expr_context = *expr_conn.context;
+
   size_t recovered_shards = 0;
-  std::vector<ObjectId> database_ids;
-  catalog::VisitDatabases(nullptr,
-                          [&](const catalog::SereneDBDatabaseEntry& db) {
-                            database_ids.push_back(catalog::IdOf(db));
-                          });
-  for (const ObjectId db_id : database_ids) {
-    irs::containers::NodeHashMap<ObjectId, ShardInfo> shards;
-    catalog::Visit<catalog::SereneDBTableEntry>(
-      nullptr, db_id, [&](const catalog::SereneDBTableEntry& entry) {
-        if (!entry.IsSearchTable()) {
-          return;  // Transactional table: no Search-engine store to recover.
-        }
-        auto search = entry.GetSearchData();  // the store is bound by now
-        ShardInfo info;
-        info.search = search.get();
-        info.shard = std::move(search);
-        for (const auto& col : entry.GetColumns().Logical()) {
-          info.column_ids.emplace_back(col.CatalogOid());
-        }
-        shards.emplace(ObjectId{entry.oid}, std::move(info));
-      });
+  for (const auto& database : SereneDatabases()) {
+    irs::containers::NodeHashMap<duckdb::idx_t, ShardInfo> shards;
+    ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& entry) {
+      auto search = entry.Storage();
+      ShardInfo info;
+      info.search = search.get();
+      info.shard = std::move(search);
+      info.catalog = &entry.catalog;
+      const auto& columns = entry.GetColumns();
+      for (const auto& col : columns.Logical()) {
+        info.column_ids.emplace_back(col.Oid());
+      }
+      shards.emplace(entry.oid, std::move(info));
+    });
     if (shards.empty()) {
       continue;
     }
 
-    auto& wal = engine.GetDbWal(db_id);
-    irs::containers::NodeHashMap<ObjectId, ReplayCtx> ctxs;
-    auto exists_of = [&](ObjectId table_id) {
+    auto& wal = database->GetCatalog()
+                  .Cast<catalog::SereneDBCatalog>()
+                  .Directory()
+                  ->Wal();
+    irs::containers::NodeHashMap<duckdb::idx_t, ReplayCtx> ctxs;
+    auto exists_of = [&](duckdb::idx_t table_id) {
       return shards.find(table_id) != shards.end();
     };
-    auto committed_of = [&](ObjectId table_id) -> uint64_t {
+    auto committed_of = [&](duckdb::idx_t table_id) -> uint64_t {
       auto it = shards.find(table_id);
       return it != shards.end() ? it->second.search->CommittedTick()
                                 : std::numeric_limits<uint64_t>::max();
     };
-    auto ensure_ctx = [&](ObjectId table_id) -> ReplayCtx& {
+    auto ensure_ctx = [&](duckdb::idx_t table_id) -> ReplayCtx& {
       auto [cit, inserted] = ctxs.try_emplace(table_id);
       auto& ctx = cit->second;
       auto& info = shards.at(table_id);
@@ -141,13 +170,13 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 
       if (!ctx.insert_sink) {
         ctx.insert_sink = connector::MakeSearchTableInsertSink(
-          ctx.trx, *info.shard, expr_context);
+          ctx.trx, *info.search, *info.catalog, expr_context);
         ctx.delete_sink =
           std::make_unique<connector::SearchSinkDeleteBaseImpl>(ctx.trx);
       }
       return ctx;
     };
-    auto replay = [&](uint64_t tick, ObjectId table_id, uint64_t pk_base,
+    auto replay = [&](uint64_t tick, duckdb::idx_t table_id, uint64_t pk_base,
                       duckdb::DataChunk& chunk) {
       auto& info = shards.at(table_id);
       auto& ctx = ensure_ctx(table_id);
@@ -156,22 +185,27 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
                                         expr_context);
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    // Each DELETE op replays as one removal batch on the shared trx; feeding it
-    // in manifest order keeps the `_queries` ordering vs surrounding inserts.
-    auto replay_delete = [&](uint64_t tick, ObjectId table_id,
-                             std::span<const std::string_view> pks) {
-      if (pks.empty()) {
+    // Each DELETE op replays as one removal batch on the shared trx; the record
+    // orders it against the surrounding rows, which is what reproduces the
+    // `_queries` stamping. Rowids are re-encoded here, the way they were when
+    // the rows were written.
+    auto replay_delete = [&](uint64_t tick, duckdb::idx_t table_id,
+                             std::span<const int64_t> rows) {
+      if (rows.empty()) {
         return;
       }
       auto& ctx = ensure_ctx(table_id);
-      ctx.delete_sink->InitImpl(pks.size());
-      for (auto pk : pks) {
+      ctx.delete_sink->InitImpl(rows.size());
+      std::string pk;
+      for (const auto row : rows) {
+        pk.clear();
+        connector::primary_key::AppendGenerated(pk, static_cast<uint64_t>(row));
         ctx.delete_sink->DeleteRowImpl(pk);
       }
       ctx.delete_sink->FinishImpl();
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
-    auto replay_truncate = [&](uint64_t tick, ObjectId table_id) {
+    auto replay_truncate = [&](uint64_t tick, duckdb::idx_t table_id) {
       auto& ctx = ensure_ctx(table_id);
       ctx.trx.Remove(std::make_shared<irs::All>());
       ctx.max_tick = std::max(ctx.max_tick, tick);
@@ -179,10 +213,10 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
     // Re-attach the files the crashed process already flushed instead of
     // re-indexing their rows. Only stashed here: the tick they adopt at needs
     // the final query count, so the manifest position is all we can capture.
-    auto replay_adopt = [&](uint64_t tick, ObjectId table_id,
+    auto replay_adopt = [&](uint64_t tick, duckdb::idx_t table_id,
                             const SearchDbWal::SegmentRef& ref) {
       auto& ctx = ensure_ctx(table_id);
-      ctx.adopts.push_back({ref.meta_file, ref.codec, ctx.trx.GetQueries()});
+      ctx.adopts.push_back({ref.meta_file, ctx.trx.GetQueries()});
       ctx.max_tick = std::max(ctx.max_tick, tick);
     };
     wal.Recover(exists_of, committed_of, replay, replay_delete, replay_truncate,
@@ -202,18 +236,16 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       const uint64_t queries = ctx.trx.GetQueries();
       SDB_FATAL_IF(SEARCH, ctx.max_tick <= queries,
                    "search-table WAL recovery: tick ", ctx.max_tick,
-                   " cannot cover ", queries, " removals for table ",
-                   table_id.id());
+                   " cannot cover ", queries, " removals for table ", table_id);
       const uint64_t first_tick = ctx.max_tick - queries;
       for (const auto& pending : ctx.adopts) {
         const uint64_t tick = first_tick + pending.queries_before;
         // A durable record claims these documents: failing to reopen them is
         // data loss, not something to skip.
-        const bool adopted =
-          info.search->AdoptSegment(pending.meta_file, pending.codec, tick);
+        const bool adopted = info.search->AdoptSegment(pending.meta_file, tick);
         SDB_FATAL_IF(SEARCH, !adopted,
                      "search-table WAL recovery: failed to adopt segment '",
-                     pending.meta_file, "' for table ", table_id.id(),
+                     pending.meta_file, "' for table ", table_id,
                      " tick=", tick);
       }
 
@@ -223,12 +255,12 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
       SDB_FATAL_IF(SEARCH, !committed,
                    "search-table WAL recovery: iresearch trx Commit failed for "
                    "table ",
-                   table_id.id(), " tick=", ctx.max_tick);
+                   table_id, " tick=", ctx.max_tick);
       info.search->Commit();
       ++recovered_shards;
     }
 
-    // Next every shard -- including ones with no replayed records -- to the
+    // Advance every shard -- including ones with no replayed records -- to the
     // recovered max tick, so an idle shard doesn't pin this database WAL's GC
     // floor after recovery. FinishRecovery is per-shard for the same reason:
     // one that adopted nothing still has to reclaim what the crash left behind.
@@ -248,19 +280,10 @@ void RunSearchTableRecovery(bool skip_wal_recovery) {
 }
 
 void StartSearchTableMaintenance() {
-  std::vector<ObjectId> walk_ids;
-  catalog::VisitDatabases(nullptr,
-                          [&](const catalog::SereneDBDatabaseEntry& db) {
-                            walk_ids.push_back(catalog::IdOf(db));
-                          });
-  for (const auto walk_id : walk_ids) {
-    catalog::Visit<catalog::SereneDBTableEntry>(
-      nullptr, walk_id, [&](const catalog::SereneDBTableEntry& table) {
-        if (!table.IsSearchTable()) {
-          return;
-        }
-        table.GetSearchData()->StartTasks();
-      });
+  for (const auto& database : SereneDatabases()) {
+    ForEachSearchTable(*database, [&](const catalog::SearchTableEntry& table) {
+      table.Storage()->StartTasks();
+    });
   }
 }
 

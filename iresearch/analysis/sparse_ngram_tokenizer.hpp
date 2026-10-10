@@ -38,6 +38,8 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
     using Owner = SparseNGramTokenizer;
     size_t max_ngram_length{16};
     bool covering{false};
+    size_t min_ngram_length{3};
+    size_t min_cutoff_length{0};
   };
   static ptr Make(Options opts);
 
@@ -45,18 +47,19 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
 
   TokenTraits Traits() const noexcept final { return {}; }
 
-  std::tuple<bool> PrepareBatch(BlockTraits traits) const noexcept {
-    return {traits.ascii};
+  std::tuple<bool, bool> PrepareBatch(BlockTraits traits) const noexcept {
+    return {traits.ascii, _generic};
   }
 
   size_t MemoryUsage() const noexcept final {
     return _stack.capacity() * sizeof(HashAndPos) +
            _pending.capacity() * sizeof(EmitKSlot) +
            _hashes.capacity() * sizeof(uint32_t) +
-           _bounds.capacity() * sizeof(uint32_t);
+           _bounds.capacity() * sizeof(uint32_t) +
+           _units.capacity() * sizeof(uint32_t);
   }
 
-  template<TokenLayout Layout, bool KnownAscii>
+  template<TokenLayout Layout, bool KnownAscii, bool Generic>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
  private:
@@ -77,30 +80,51 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
   };
 
   void EnsureScratch();
-  template<bool Symbols>
+  template<bool Symbols, bool Generic>
   bool Next(Cursor& ctx);
-  template<bool Symbols>
+  template<bool Symbols, bool Generic>
   uint64_t FillHashes(Cursor& ctx);
-  template<TokenLayout Layout, bool Detect>
+  template<TokenLayout Layout, bool Detect, bool Generic>
   bool FillBytes(duckdb::string_t value, TokenSink& sink);
-  template<TokenLayout Layout>
+  template<TokenLayout Layout, bool Generic>
   bool FillSymbols(duckdb::string_t value, TokenSink& sink);
+  template<bool Generic>
   IRS_FORCE_INLINE void StepAll(HashAndPos* base, HashAndPos* limit,
                                 HashAndPos*& top, EmitKSlot*& out, size_t i,
                                 uint32_t hash) const;
+  template<bool Generic>
   IRS_FORCE_INLINE void StepCovering(HashAndPos* base, HashAndPos*& top,
                                      size_t& head, EmitKSlot*& out, size_t i,
                                      uint32_t hash) const;
 
-  static void Emit(EmitKSlot*& out, size_t begin, size_t end) noexcept {
+  template<bool Generic>
+  IRS_FORCE_INLINE size_t Window() const noexcept {
+    if constexpr (Generic) {
+      return _window;
+    } else {
+      return 2;
+    }
+  }
+
+  template<bool Generic>
+  IRS_FORCE_INLINE void Emit(EmitKSlot*& out, size_t begin,
+                             size_t end) const noexcept {
+    if constexpr (Generic) {
+      if (end - begin < _options.min_cutoff_length) {
+        return;
+      }
+    }
     *out++ = {static_cast<uint32_t>(begin), static_cast<uint32_t>(end)};
   }
 
   Options _options;
+  size_t _window{2};
+  bool _generic{false};
   std::vector<HashAndPos> _stack;
   std::vector<EmitKSlot> _pending;
   std::vector<uint32_t> _hashes;
   std::vector<uint32_t> _bounds;
+  std::vector<uint32_t> _units;
 };
 
 }  // namespace irs::analysis

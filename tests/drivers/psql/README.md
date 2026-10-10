@@ -14,7 +14,7 @@ creates at startup: serened must run with `?api=otel`, as in
 ## Refresh goldens (after psql/PG version bumps or new commands)
 
     docker run --rm -d --name pg-oracle --network=host \
-      -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18.3
+      -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18.6
 
     SDB_DRV_HOST=127.0.0.1 SDB_DRV_PORT=5432 SDB_DRV_ENGINE=postgres \
       tests/drivers/psql/run.py --update

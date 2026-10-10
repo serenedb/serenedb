@@ -67,6 +67,9 @@ struct ColFilterSpec {
   // Bare IS [NOT] NULL: evaluated on the validity child alone where the block
   // codec keeps validity separate (see ColumnReader::GatherFilter).
   irs::NullCheckKind null_check = irs::NullCheckKind::None;
+  // Opaque per-row predicate: no statistics, evaluated on the gathered
+  // survivors only (the children-backed path of FilterWindow).
+  bool row_gather = false;
   // IS NOT NULL replacement used when the segment's statistics classify the
   // filter TRUE_OR_NULL; owned by the scan state.
   const duckdb::TableFilter* not_null = nullptr;
@@ -130,6 +133,9 @@ class ColFilterChain {
     irs::NullCheckKind null_check = irs::NullCheckKind::None;
     bool list_like = false;
     bool nested = false;
+    // A row-gather column may end before the segment does: a row past its
+    // end holds no value and fails the filter.
+    bool row_gather = false;
     // Per-block zonemap verdict, computed once per block: windows ascend, so
     // the cache is re-filled exactly when the anchor leaves `checked`.
     irs::BlockWindow checked{};
@@ -155,6 +161,9 @@ class ColFilterChain {
   bool Empty() const noexcept { return _cols.empty(); }
   std::span<Col> Cols() noexcept { return {_cols.data(), _cols.size()}; }
   void Clear() noexcept { _cols.clear(); }
+  // The column whose blocks bound a window; null when only row-gather
+  // columns are bound, which hold no rows past their last value.
+  const irs::ColumnReader* WindowColumn() const noexcept;
 
   // Binds the non-score specs against this segment's columnstore (score specs
   // are the caller's -- they filter the computed score vector, not `.col`).

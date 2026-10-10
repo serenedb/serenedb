@@ -35,11 +35,9 @@ namespace {
 
 // A term whose posting list holds nothing
 struct EmptyTermPostings : TermPostings {
-  EmptyTermPostings() { _doc = doc_limits::eof(); }
-
-  doc_id_t Next() noexcept final { return doc_limits::eof(); }
-
-  uint32_t GetFreq() const noexcept final { return 0; }
+  uint32_t NextDocs(doc_id_t* /*docs*/, uint32_t* /*freqs*/) noexcept final {
+    return 0;
+  }
 };
 
 EmptyTermPostings gEmptyTermPostings;

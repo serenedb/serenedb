@@ -9,6 +9,8 @@ import DocCallout from "@site/src/components/DocCallout";
 
 If you are coming from Elasticsearch or OpenSearch, most search features map onto SereneDB's [inverted index](./index.md) and plain SQL. This page maps the concepts side by side; each Elasticsearch feature links to its reference. The biggest shift is that **search and analytics are both just SQL** — you filter with `@@` and aggregate with `GROUP BY` in the same query, against the same database that holds your relational data.
 
+Existing Elasticsearch clients can also talk to SereneDB directly: the [Elasticsearch API](../../../clients/elasticsearch-api.md) serves index, document and search requests for a subset of the Query DSL.
+
 ## Key differences
 
 | Aspect | Elasticsearch | SereneDB |
@@ -52,6 +54,7 @@ The detailed mapping from each Elasticsearch query to the specific SereneDB func
 |---|---|
 | [`match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query.html) | a bare string, or [`ts_tokenize`](../../functions/search/full-text.md#ts_tokenize) |
 | [`match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query.html) (`operator: and`) | [`plainto_tsquery`](../../functions/search/full-text.md#plainto_tsquery) |
+| [`match`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query.html) (`minimum_should_match`) | [`query::min_match(K)`](../../functions/search/full-text.md#query-min_matchk), for example `body @@ 'quick red fox'::min_match(2)` |
 | [`match_phrase`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase.html) | [`ts_phrase`](../../functions/search/full-text.md#ts_phrase) / [`phraseto_tsquery`](../../functions/search/full-text.md#phraseto_tsquery) |
 | [`match_phrase`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-match-query-phrase.html) (`slop`) | [`ts_phrase`](../../functions/search/full-text.md#ts_phrase) with `slop := N` or `::slop(N)` |
 | [`prefix`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-prefix-query.html) | [`ts_starts_with`](../../functions/search/full-text.md#ts_starts_with) |
@@ -64,6 +67,7 @@ The detailed mapping from each Elasticsearch query to the specific SereneDB func
 | [`range`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-range-query.html) | [`ts_between`](../../functions/search/full-text.md#ts_between), [`ts_lt`](../../functions/search/full-text.md#ts_lt) / [`ts_le`](../../functions/search/full-text.md#ts_le) / [`ts_gt`](../../functions/search/full-text.md#ts_gt) / [`ts_ge`](../../functions/search/full-text.md#ts_ge) |
 | [`exists`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-exists-query.html) | Plain SQL [`IS NOT NULL` / `IS NULL`](../../functions/search/full-text.md#is-null) — the index claims both on indexed columns. |
 | [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) | [`ts_compound`](../../functions/search/full-text.md#ts_compound), or [`&&`](../../functions/search/full-text.md#a--b-and) / [`\|\|`](../../functions/search/full-text.md#a--b-or) / [`!!`](../../functions/search/full-text.md#-a-not) |
+| [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) `should` across fields with `minimum_should_match` | [`(p1 OR p2 OR ...)::min_match(K)`](../../functions/search/full-text.md#min-match) |
 | [`query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html) | [`to_tsquery`](../../functions/search/full-text.md#to_tsquery) |
 | [`simple_query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-simple-query-string-query.html) | [`websearch_to_tsquery`](../../functions/search/full-text.md#websearch_to_tsquery) |
 | [boost](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-boosting-query.html) (`^`) | [`^`](../../functions/search/full-text.md#a--factor-boost) operator |
@@ -79,7 +83,7 @@ The detailed mapping from each Elasticsearch query to the specific SereneDB func
 |---|:---:|---|
 | [Tokenizers](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenizers.html) | ✅ | [`split_text`](../../functions/search/tokenizers/split_text.md), [`generate_ngrams`](../../functions/search/tokenizers/generate_ngrams.md), [`split_text_csv`](../../functions/search/tokenizers/split_text_csv.md), [`split_text_icu`](../../functions/search/tokenizers/split_text_icu.md), … [templates](./text-analysis.md) |
 | [Token filters](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-tokenfilters.html) (lowercase / stemming / stopwords) | ✅ | [`split_text`](../../functions/search/tokenizers/split_text.md) template options + [`stem_words`](../../functions/search/tokenizers/stem_words.md) / [`remove_stopwords`](../../functions/search/tokenizers/remove_stopwords.md) templates |
-| [Accent folding](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-asciifolding-tokenfilter.html) | ✅ | [`accent = false`](../../functions/search/tokenizers/split_text.md) |
+| [Accent folding](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-asciifolding-tokenfilter.html) | ✅ | [`normalize_tokens(locale, accent := false)`](../../functions/search/tokenizers/normalize_tokens.md) |
 | [n-gram](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-ngram-tokenizer.html) / [edge n-gram](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-edgengram-tokenizer.html) | ✅ | [`generate_ngrams`](../../functions/search/tokenizers/generate_ngrams.md) (`mode = 'only_prefix'` for edge n-grams), [`generate_sparse_ngrams`](../../functions/search/tokenizers/generate_sparse_ngrams.md) |
 | [Shingles](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-shingle-tokenfilter.html) | ✅ | [`generate_shingles`](../../functions/search/tokenizers/generate_shingles.md) wraps another template and emits word n-grams |
 | [Synonyms](https://www.elastic.co/guide/en/elasticsearch/reference/current/analysis-synonym-tokenfilter.html) | ✅ | [`expand_solr_synonyms`](../../functions/search/tokenizers/expand_solr_synonyms.md), [`expand_wordnet_synonyms`](../../functions/search/tokenizers/expand_wordnet_synonyms.md) |
@@ -179,7 +183,7 @@ Aggregates run **over the inverted index itself** — `GROUP BY` and aggregate f
 | Elasticsearch | SereneDB | Notes |
 |---|:---:|---|
 | [Create / delete index](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html) | ✅ | [`CREATE INDEX … USING inverted`](../../statements/create_index/inverted.md) / [`DROP INDEX`](../../statements/drop/index.md) |
-| [Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html) | ✅ | [`DROP INDEX`](../../statements/drop/index.md) + [`CREATE INDEX`](../../statements/create_index/inverted.md) |
+| [Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html) | ✅ | [`REINDEX INDEX`](./views.md#refreshing-the-index) for indexes over views, files and lakes; an index on a table follows its writes |
 | [Refresh](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html) | ✅ | [`VACUUM (REFRESH_TABLE)`](../../statements/vacuum/index.md) ([Maintenance](./maintenance.md)) |
 | [Force merge](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-forcemerge.html) | ✅ | [`VACUUM (COMPACT_TABLE)`](../../statements/vacuum/index.md) |
 | [Aliases](https://www.elastic.co/guide/en/elasticsearch/reference/current/aliases.html) | ✅ | Use a [view](../../statements/create_view/index.md) |

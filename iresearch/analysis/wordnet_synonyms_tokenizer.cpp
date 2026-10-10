@@ -150,9 +150,10 @@ Tokenizer::ptr WordnetSynonymsTokenizer::Make(
   digest.Add(opts.synonyms_text);
   char hex[duckdb::MD5Context::MD5_HASH_LENGTH_TEXT];
   digest.FinishHex(hex);
-  auto state = cache.GetOrBuild<State>(std::string_view{hex, sizeof(hex)}, [&] {
-    return MakeState(std::move(opts.synonyms_text));
-  });
+  const auto key =
+    absl::StrCat(State::ObjectType(), ":", std::string_view{hex, sizeof(hex)});
+  auto state = cache.GetOrBuild<State>(
+    key, [&] { return MakeState(std::move(opts.synonyms_text)); });
   return std::make_unique<WordnetSynonymsTokenizer>(std::move(state));
 }
 
@@ -160,8 +161,10 @@ template<TokenLayout Layout, typename Sink>
 bool WordnetSynonymsTokenizer::DoFill(const duckdb::string_t& raw, Sink& sink) {
   if (const auto* groups = _state->mapping.Find(raw); groups) {
     for (const std::string_view group : *groups) {
-      sink.template Emit<Layout>(MakeTermView(group));
+      sink.template Emit<Layout>(MakeTermView(group), 1);
     }
+  } else {
+    sink.template Emit<Layout>(raw, 1);
   }
   return true;
 }

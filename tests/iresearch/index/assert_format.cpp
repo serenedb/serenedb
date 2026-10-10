@@ -30,7 +30,6 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/comparer.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/directory_reader_impl.hpp>
 #include <iresearch/index/field_meta.hpp>
@@ -44,15 +43,14 @@
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/store/data_output.hpp>
-#include <iresearch/utils/automaton_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/fstext/fst_table_matcher.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -105,18 +103,6 @@ bool Term::operator<(const Term& rhs) const {
                     rhs.value.size());
 }
 
-void Term::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
-  std::set<Posting> resorted_postings;
-
-  for (auto& posting : postings) {
-    resorted_postings.emplace(
-      docs.at(posting._id),
-      std::move(const_cast<tests::Posting&>(posting)._positions));
-  }
-
-  postings = std::move(resorted_postings);
-}
-
 Field::Field(irs::field_id id, irs::IndexFeatures index_features)
   : FieldMeta(id, index_features), stats{} {}
 
@@ -164,12 +150,6 @@ uint64_t Field::total_doc_freq() const {
   return value;
 }
 
-void Field::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
-  for (auto& term : terms) {
-    const_cast<tests::Term&>(term).sort(docs);
-  }
-}
-
 void ColumnValues::insert(irs::doc_id_t key, irs::bytes_view value) {
   ASSERT_TRUE(irs::doc_limits::valid(key));
   ASSERT_TRUE(!irs::doc_limits::eof(key));
@@ -179,16 +159,6 @@ void ColumnValues::insert(irs::doc_id_t key, irs::bytes_view value) {
   if (!res.second) {
     res.first->second.append(value.data(), value.size());
   }
-}
-
-void ColumnValues::sort(const std::map<irs::doc_id_t, irs::doc_id_t>& docs) {
-  std::map<irs::doc_id_t, irs::bstring> resorted_values;
-
-  for (auto& value : _values) {
-    resorted_values.emplace(docs.at(value.first), std::move(value.second));
-  }
-
-  _values = std::move(resorted_values);
 }
 
 void IndexSegment::compute_features() {}
@@ -339,124 +309,58 @@ void IndexSegment::insert_indexed(const Ifield& f) {
   }
 }
 
-void IndexSegment::sort(const irs::Comparer& comparator) {
-  if (_sort.empty()) {
-    return;
-  }
-
-  std::stable_sort(
-    _sort.begin(), _sort.end(), [&](const auto& lhs, const auto& rhs) {
-      return comparator.Compare(std::get<0>(lhs), std::get<0>(rhs)) < 0;
-    });
-
-  irs::doc_id_t new_doc_id = irs::doc_limits::min();
-  std::map<irs::doc_id_t, irs::doc_id_t> order;
-
-  for (auto& [_, doc, prev] : _sort) {
-    for (auto i = prev; i; --i) {
-      order[doc - i] = new_doc_id++;
-    }
-    order[doc] = new_doc_id++;
-  }
-  while (order.size() < this->doc_count()) {
-    order[static_cast<irs::doc_id_t>(order.size()) + 1] = new_doc_id++;
-    ASSERT_LE(order.size(), this->doc_count());
-  }
-  for (auto& field : _fields) {
-    field.second.sort(order);
-  }
-  for (auto& column : _columns) {
-    column.sort(order);
-  }
-  for (auto& [_, doc, __] : _sort) {
-    doc = order.at(doc);
-  }
-}
-
 class PostingsImpl : public irs::TermPostings {
  public:
-  PostingsImpl(irs::IndexFeatures features, const tests::Term& data);
-
-  irs::doc_id_t Next() final {
-    if (_next == _data.postings.end()) {
-      return _doc = irs::doc_limits::eof();
+  PostingsImpl(irs::IndexFeatures features, const tests::Term& data)
+    : _data{data},
+      _has_freq{irs::IsSubsetOf(irs::IndexFeatures::Freq, features)},
+      _docs{data.postings.begin()},
+      _pos_doc{data.postings.begin()} {
+    if (_pos_doc != _data.postings.end()) {
+      _pos = _pos_doc->positions().begin();
     }
-
-    _prev = _next, ++_next;
-    _doc = _prev->id();
-    _freq = static_cast<uint32_t>(_prev->positions().size());
-    _pos.Clear();
-
-    return _doc;
   }
 
-  uint32_t GetFreq() const final { return _freq; }
+  uint32_t NextDocs(irs::doc_id_t* docs, uint32_t* freqs) final {
+    uint32_t n = 0;
+    for (; n != irs::doc_limits::kBlockSize && _docs != _data.postings.end();
+         ++n, ++_docs) {
+      docs[n] = _docs->id();
+      if (_has_freq) {
+        freqs[n] = static_cast<uint32_t>(_docs->positions().size());
+      }
+    }
+    return n;
+  }
 
-  irs::PosAttr* Positions() noexcept final { return _positions; }
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final {
+    for (uint32_t i = 0; i != n; ++i, ++_pos) {
+      while (_pos == _pos_doc->positions().end()) {
+        ++_pos_doc;
+        _pos = _pos_doc->positions().begin();
+        _last_pos = 0;
+        _last_start = 0;
+      }
+      pos[i] = _pos->pos - _last_pos;
+      _last_pos = _pos->pos;
+      if (offs_start != nullptr) {
+        offs_start[i] = _pos->start - _last_start;
+        offs_len[i] = _pos->end - _pos->start;
+        _last_start = _pos->start;
+      }
+    }
+  }
 
  private:
-  class PosIterator final : public irs::PosAttr {
-   public:
-    PosIterator(const PostingsImpl& owner, irs::IndexFeatures features)
-      : _owner(owner) {
-      if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Offs)) {
-        _poffs = &_offs;
-      }
-    }
-
-    Attribute* GetMutable(irs::TypeInfo::type_id type) noexcept final {
-      if (irs::Type<irs::OffsAttr>::id() == type) {
-        return _poffs;
-      }
-
-      return nullptr;
-    }
-
-    void Clear() {
-      _next = _owner._prev->positions().begin();
-      _value = irs::pos_limits::invalid();
-      _offs.clear();
-    }
-
-    bool next() final {
-      if (_next == _owner._prev->positions().end()) {
-        _value = irs::pos_limits::eof();
-        return false;
-      }
-
-      _value = _next->pos;
-      _offs.start = _next->start;
-      _offs.end = _next->end;
-      ++_next;
-
-      return true;
-    }
-
-    void reset() final { ASSERT_TRUE(false); }
-
-   private:
-    std::set<Posting::Position>::const_iterator _next;
-    irs::OffsAttr _offs;
-    irs::OffsAttr* _poffs{};
-    const PostingsImpl& _owner;
-  };
-
   const tests::Term& _data;
-  uint32_t _freq = 0;
-  PosIterator _pos;
-  irs::PosAttr* _positions{};
-  std::set<Posting>::const_iterator _prev;
-  std::set<Posting>::const_iterator _next;
+  bool _has_freq;
+  std::set<Posting>::const_iterator _docs;
+  std::set<Posting>::const_iterator _pos_doc;
+  std::set<Posting::Position>::const_iterator _pos;
+  uint32_t _last_pos = 0;
+  uint32_t _last_start = 0;
 };
-
-PostingsImpl::PostingsImpl(irs::IndexFeatures features, const tests::Term& data)
-  : _data(data), _pos(*this, features) {
-  _next = _data.postings.begin();
-
-  if (irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)) {
-    _positions = &_pos;
-  }
-}
 
 class TermIterator : public irs::SeekTermIterator {
  public:
@@ -542,12 +446,15 @@ irs::SeekTermIterator::ptr Field::iterator() const {
 
 template<typename PostingsFactory>
 void AssertDocs(irs::IndexFeatures features,
-                irs::TermPostings::ptr expected_docs,
+                irs::TermPostings::ptr expected_postings,
                 PostingsFactory&& factory) {
-  ASSERT_NE(nullptr, expected_docs);
+  ASSERT_NE(nullptr, expected_postings);
 
-  auto actual_docs = factory();
-  ASSERT_NE(nullptr, actual_docs);
+  auto actual_postings = factory();
+  ASSERT_NE(nullptr, actual_postings);
+
+  auto expected_docs = Docs(std::move(expected_postings), features);
+  auto actual_docs = Docs(std::move(actual_postings), features);
 
   ASSERT_TRUE(!irs::doc_limits::valid(expected_docs->Value()));
   ASSERT_TRUE(!irs::doc_limits::valid(actual_docs->Value()));
@@ -630,8 +537,9 @@ void AssertSeek(const irs::SubReader& segment,
                 const irs::TermReader& actual_terms,
                 const irs::PostingMeta& actual_cookie,
                 irs::IndexFeatures requested_features) {
-  auto expected_docs = expected_term.postings(requested_features);
-  ASSERT_NE(nullptr, expected_docs);
+  auto expected_postings = expected_term.postings(requested_features);
+  ASSERT_NE(nullptr, expected_postings);
+  auto expected_docs = Docs(std::move(expected_postings));
 
   auto seq_docs = MakeLeadDocs(segment, actual_terms, actual_cookie);
   ASSERT_NE(nullptr, seq_docs);
@@ -653,8 +561,6 @@ void AssertSeek(const irs::SubReader& segment,
   ASSERT_TRUE(irs::doc_limits::eof(expected_docs->Value()));
   ASSERT_TRUE(irs::doc_limits::eof(seq_docs->Next()));
   ASSERT_TRUE(irs::doc_limits::eof(seek_docs->Next()));
-
-  // FIXME(gnusi): check BitUnion
 }
 
 void AssertTerm(irs::TermIterator& expected_term,
@@ -668,34 +574,36 @@ void AssertTerm(irs::TermIterator& expected_term,
              [&] { return actual_term.postings(requested_features); });
 }
 
-irs::SeekTermIterator::ptr ExpectedTerms(
-  const Field& expected_field, irs::automaton_table_matcher* matcher) {
-  auto terms = expected_field.iterator();
-  if (!matcher) {
+irs::TermIterator::ptr ExpectedTerms(const Field& expected_field,
+                                     const irs::RegexpAcceptor* acceptor) {
+  irs::TermIterator::ptr terms = expected_field.iterator();
+  if (!acceptor) {
     return terms;
   }
-  return irs::memory::make_managed<irs::AutomatonTermIterator>(
-    matcher->GetFst(), std::move(terms));
+  return irs::memory::make_managed<irs::FilteredTermIterator>(
+    std::move(terms), irs::MakeTermPredicate([acceptor](irs::bytes_view term) {
+      return acceptor->Matches(term);
+    }));
 }
 
 irs::SeekTermIterator::ptr ActualTerms(const irs::TermReader& actual_field,
-                                       irs::automaton_table_matcher* matcher) {
-  return matcher ? actual_field.iterator(*matcher) : actual_field.iterator();
+                                       const irs::RegexpAcceptor* acceptor) {
+  return acceptor ? actual_field.iterator(*acceptor) : actual_field.iterator();
 }
 
 void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
-                     irs::automaton_table_matcher* matcher) {
+                     const irs::RegexpAcceptor* acceptor) {
   irs::bytes_view actual_min{};
   irs::bytes_view actual_max{};
   irs::bstring actual_min_buf;
   irs::bstring actual_max_buf;
   size_t actual_size = 0;
 
-  auto expected_term = ExpectedTerms(expected_field, matcher);
+  auto expected_term = ExpectedTerms(expected_field, acceptor);
 
-  auto actual_term = ActualTerms(actual_field, matcher);
+  auto actual_term = ActualTerms(actual_field, acceptor);
 
   size_t term_index = 0;
   for (; expected_term->next(); ++actual_size) {
@@ -715,7 +623,7 @@ void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
     actual_max = actual_max_buf;
   }
 
-  if (!matcher) {
+  if (!acceptor) {
     ASSERT_EQ(expected_field.terms.size(), actual_size);
     ASSERT_EQ((expected_field.min)(), actual_min);
     ASSERT_EQ((expected_field.max)(), actual_max);
@@ -725,11 +633,11 @@ void AssertTermsNext(const irs::SubReader& segment, const Field& expected_field,
 void AssertTermsSeek(const Field& expected_field,
                      const irs::TermReader& actual_field,
                      irs::IndexFeatures features,
-                     irs::automaton_table_matcher* matcher,
+                     const irs::RegexpAcceptor* acceptor,
                      size_t lookahead = 10) {
-  auto expected_term = ExpectedTerms(expected_field, matcher);
+  auto expected_term = ExpectedTerms(expected_field, acceptor);
 
-  auto actual_term_with_state = ActualTerms(actual_field, matcher);
+  auto actual_term_with_state = ActualTerms(actual_field, acceptor);
   ASSERT_NE(nullptr, actual_term_with_state);
 
   auto actual_term_with_state_random_only = actual_field.iterator();
@@ -829,7 +737,7 @@ void AssertTermsSeek(const Field& expected_field,
 
 void AssertIndex(irs::IndexReader::ptr actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip, irs::automaton_table_matcher* matcher) {
+                 size_t skip, const irs::RegexpAcceptor* acceptor) {
   ASSERT_EQ(expected_index.size(), actual_index->size());
   size_t i = 0;
   size_t segment_index = 0;
@@ -894,9 +802,9 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
       const auto field_features =
         expected_field->second.index_features & features;
       AssertTermsNext(actual_segment, expected_field->second, *actual_terms,
-                      field_features, matcher);
+                      field_features, acceptor);
       AssertTermsSeek(expected_field->second, *actual_terms, field_features,
-                      matcher);
+                      acceptor);
     }
     ASSERT_EQ(actual_field_ids.end(), actual_id_it);
 
@@ -905,14 +813,13 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
   }
 }
 
-void AssertIndex(const irs::Directory& dir, irs::Format::ptr codec,
-                 const index_t& expected_index, irs::IndexFeatures features,
-                 size_t skip, irs::automaton_table_matcher* matcher) {
-  auto reader =
-    irs::DirectoryReader(dir, codec, ::irs::tests::DefaultReaderOptions());
+void AssertIndex(const irs::Directory& dir, const index_t& expected_index,
+                 irs::IndexFeatures features, size_t skip,
+                 const irs::RegexpAcceptor* acceptor) {
+  auto reader = irs::DirectoryReader(dir, ::irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, reader);
 
-  AssertIndex(reader.GetImpl(), expected_index, features, skip, matcher);
+  AssertIndex(reader.GetImpl(), expected_index, features, skip, acceptor);
 }
 
 }  // namespace tests

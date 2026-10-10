@@ -1,0 +1,75 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE procedure_target (i INTEGER);
+
+
+statement ok
+CREATE PROCEDURE append_seven() LANGUAGE SQL AS $$ INSERT INTO procedure_target VALUES (7) $$;
+
+
+statement ok
+CREATE FUNCTION scored() RETURNS TABLE(name TEXT, score INTEGER) LANGUAGE SQL
+BEGIN ATOMIC
+  VALUES ('a', 1);
+END;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT name, score FROM scored();
+----
+name	score
+a	1
+
+
+connection after_crash
+statement ok
+CALL append_seven();
+
+
+connection after_crash
+query
+SELECT i FROM procedure_target;
+----
+i
+7
+
+
+connection after_crash
+statement error
+SELECT append_seven();
+----
+db error: ERROR: append_seven() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+connection after_crash
+statement error
+DROP FUNCTION append_seven();
+----
+db error: ERROR: append_seven() is not a function
+
+
+connection after_crash
+statement ok
+DROP PROCEDURE append_seven;
+
+
+connection after_crash
+statement ok
+DROP FUNCTION scored;
+
+
+connection after_crash
+statement ok
+DROP TABLE procedure_target;

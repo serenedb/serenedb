@@ -97,8 +97,7 @@ EXPLAIN SELECT kostya, bm25(vedernikoff_alias_idx.tableoid) AS s1 FROM vederniko
 QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
 │ Top: 2                                 │
-│ Order By:                              │
-│ vedernikoff_alias_idx.kostya DESC      │
+│ Order By: kostya DESC                  │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
@@ -296,25 +295,22 @@ query
 EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
-╭─ TOP_N ────────────────────────────────╮
-│ Top: 2                                 │
-│ Order By:                              │
-│ vedernikoff_alias_idx.kostya ASC,      │
-│ #1 DESC                                │
-│ ~1 row                                 │
-╰────────────────────┬───────────────────╯
-╭─ IRESEARCH_SCAN ───┴───────────────────╮
-│ Index: vedernikoff_alias_idx           │
-│ Lookup: table                          │
-│ Index Filter:                          │
-│ ╭─ Term ─────────────────╮             │
-│ │ Field: abramov(string) │             │
-│ │ Value: clickclack      │             │
-│ ╰────────────────────────╯             │
-│ Column Filter:                         │
-│ optional: Dynamic Filter (kostya <= ?) │
-│ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: kostya,                   │
-│              sdb_inverted_index_score  │
-│ ~1 row                                 │
-╰────────────────────────────────────────╯
+╭─ TOP_N ───────────────────────────────╮
+│ Top: 2                                │
+│ Order By: kostya ASC                  │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: vedernikoff_alias_idx          │
+│ Lookup: table                         │
+│ Index Filter:                         │
+│ ╭─ Term ─────────────────╮            │
+│ │ Field: abramov(string) │            │
+│ │ Value: clickclack      │            │
+│ ╰────────────────────────╯            │
+│ Column Filter:                        │
+│ optional: Dynamic Filter (kostya < ?) │
+│ Score: bm25(k1=1.2, b=0.75)           │
+│ Projections: kostya                   │
+│ ~1 row                                │
+╰───────────────────────────────────────╯

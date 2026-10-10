@@ -19,9 +19,6 @@ statement ok
 CREATE SCHEMA vedernikoff_ml_paper_bravo;
 
 
-# A SERIAL table inside the core schema -- its owned sequence is what
-# triggers `crash_on_drop` in TableDrop::Finalize during the
-# cascade drop.
 statement ok
 CREATE TABLE vedernikoff_ml_paper_core.runs (
   id SERIAL PRIMARY KEY,

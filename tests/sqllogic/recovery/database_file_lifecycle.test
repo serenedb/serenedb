@@ -116,10 +116,39 @@ count
 
 
 connection after_crash
-statement ok
-DROP DATABASE IF EXISTS dbfile_crashed;
+query
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+----
+one_file_per_database
+t
 
 
 connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_drop';
+
+
+connection after_crash
+statement error connection closed
+DROP DATABASE dbfile_crashed;
+
+
+connection after_drop_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT datname FROM pg_database WHERE datname LIKE 'dbfile_%' ORDER BY datname;
+----
+datname
+dbfile_keep
+
+
+connection after_drop_crash
+query
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+----
+one_file_per_database
+t
+
+
+connection after_drop_crash
 statement ok
 DROP DATABASE IF EXISTS dbfile_keep;

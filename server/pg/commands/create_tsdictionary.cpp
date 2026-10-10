@@ -21,14 +21,18 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/escaping.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
-#include <unicode/locid.h>
 
+#include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
+#include <iresearch/analysis/filter_tokens_tokenizer.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
+#include <iresearch/analysis/html_strip_tokenizer.hpp>
 #include <iresearch/analysis/icu_text_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/multi_delimited_tokenizer.hpp>
@@ -53,9 +57,10 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/attribute_provider.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/icu_locale_serde.hpp>
+#include <iresearch/utils/locale_serde.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/snowball_stemmer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
@@ -66,10 +71,9 @@
 #include <utility>
 #include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/tokenizer.h"
+#include "auth/role_closure.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/tokenizer.h"
 #include "pg/commands/tsdictionary_spec.h"
 #include "pg/connection_context.h"
 #include "pg/option_help.h"
@@ -126,8 +130,7 @@ constexpr std::string_view kCreateOperation = "CREATE TEXT SEARCH DICTIONARY";
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
-  CreateTSDictionaryOptions(duckdb::ClientContext& context, ObjectId db_id,
-                            std::string_view current_schema,
+  CreateTSDictionaryOptions(duckdb::ClientContext& context,
                             std::string_view type, Options options,
                             TokenizerConfigs children,
                             std::string_view operation = kCreateOperation)
@@ -138,8 +141,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
                                     ? "Use WITH (HELP) to see available options"
                                     : ""}},
       _context{context},
-      _db_id{db_id},
-      _current_schema{current_schema},
       _children{std::move(children)} {
     ParseOptions([&] { BuildChild(type, _config); });
   }
@@ -157,7 +158,12 @@ class CreateTSDictionaryOptions : public OptionsParser {
   template<const OptionInfo& Info>
   duckdb::Value EraseValue() {
     auto entry = OptionsParser::EraseOption(Info, /*requires_parameter=*/true);
-    SDB_ASSERT(entry && *entry);
+    if (!entry) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG("required parameter \"", Info.name, "\" was not found"));
+    }
+    SDB_ASSERT(*entry);
     return std::move(**entry);
   }
 
@@ -234,21 +240,23 @@ class CreateTSDictionaryOptions : public OptionsParser {
   }
 
   template<const OptionInfo& Info>
-  icu::Locale ResolveLocale() {
+  duckdb::text::Locale ResolveLocale() {
     if (OptionsParser::HasOption(Info.name)) {
       auto raw = OptionsParser::EraseOptionOrDefault<Info>();
       if (raw.empty()) {
-        return irs::MakeBogusLocale();
+        return {};
       }
-      auto loc = icu::Locale::createFromName(raw.c_str());
-      if (loc.isBogus()) {
+      duckdb::text::Locale loc;
+      std::string reason;
+      if (!duckdb::text::Locale::TryParse(raw, loc, reason)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("Invalid locale \"", raw, "\" for option \"",
-                                Info.name, "\""));
+                                Info.name, "\""),
+                        ERR_DETAIL(reason));
       }
       return loc;
     }
-    return irs::MakeBogusLocale();
+    return {};
   }
 
   template<const OptionInfo& Info, typename Enum>
@@ -272,19 +280,44 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::StemmingTokenizer::Options BuildStem() {
     irs::analysis::StemmingTokenizer::Options opts;
     opts.locale = ResolveLocale<tokenizer_options::kLocale>();
+    if (!opts.locale.IsBogus()) {
+      const std::string language{opts.locale.GetLanguage()};
+      if (!irs::make_stemmer_ptr(language.c_str(), nullptr)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG("stem_words: there is no stemmer for the language \"",
+                  language, "\" of locale \"", opts.locale.GetName(), "\""));
+      }
+    }
     return opts;
   }
 
   irs::analysis::CollationTokenizer::Options BuildCollation() {
     irs::analysis::CollationTokenizer::Options opts;
     opts.locale = ResolveLocale<tokenizer_options::kLocale>();
+    std::string collation;
+    if (!opts.locale.IsBogus() && !opts.locale.GetCollation(collation)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("collate_tokens: there is no collation for locale \"",
+                opts.locale.GetName(), "\""));
+    }
     return opts;
   }
 
   irs::analysis::NormalizingTokenizer::Options BuildNormalizing() {
     irs::analysis::NormalizingTokenizer::Options opts;
     opts.locale = ResolveLocale<tokenizer_options::kNormLocale>();
-    opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>();
+    const std::string convert = Value<tokenizer_options::kNormCase>();
+    if (absl::EqualsIgnoreCase(convert, tokenizer_options::kFoldCase)) {
+      opts.fold = true;
+      opts.case_convert = irs::Case::Lower;
+    } else {
+      const auto parsed =
+        magic_enum::enum_cast<irs::Case>(convert, magic_enum::case_insensitive);
+      SDB_ASSERT(parsed.has_value());
+      opts.case_convert = *parsed;
+    }
     opts.accent = Value<tokenizer_options::kAccent>();
     opts.form =
       ResolveEnum<tokenizer_options::kForm, irs::analysis::NormForm>();
@@ -351,6 +384,22 @@ class CreateTSDictionaryOptions : public OptionsParser {
     irs::analysis::SparseNGramTokenizer::Options opts;
     opts.max_ngram_length = Value<tokenizer_options::kMaxNGramLength>();
     opts.covering = Value<tokenizer_options::kCovering>();
+    opts.min_ngram_length =
+      static_cast<size_t>(Value<tokenizer_options::kMinNGramLength>());
+    opts.min_cutoff_length =
+      static_cast<size_t>(Value<tokenizer_options::kMinCutoffLength>());
+    if (opts.max_ngram_length < opts.min_ngram_length) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("\"max_ngram_length\" must be >= \"min_ngram_length\""));
+    }
+    if (opts.min_cutoff_length != 0 &&
+        (opts.min_cutoff_length < opts.min_ngram_length ||
+         opts.min_cutoff_length > opts.max_ngram_length)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("\"min_cutoff_length\" must be between "
+                              "\"min_ngram_length\" and \"max_ngram_length\""));
+    }
     return opts;
   }
 
@@ -369,7 +418,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
       } else if (separate && *separate != Opts::Separate::Word &&
                  *separate != Opts::Separate::None) {
         opts.separate = *separate;
-        opts.accept = Opts::Accept::Any;
+        opts.accept = *separate == Opts::Separate::Grapheme
+                        ? Opts::Accept::Graphic
+                        : Opts::Accept::Any;
       } else {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("invalid value in \"break\" parameter"),
@@ -434,6 +485,29 @@ class CreateTSDictionaryOptions : public OptionsParser {
   irs::analysis::SplitByNonAlphaTokenizer::Options BuildSplitByNonAlpha() {
     irs::analysis::SplitByNonAlphaTokenizer::Options opts;
     opts.case_convert = ResolveEnum<tokenizer_options::kCase, irs::Case>();
+    opts.chars =
+      ResolveEnum<tokenizer_options::kNonAlphaBreak,
+                  irs::analysis::SplitByNonAlphaTokenizer::Options::Chars>();
+    return opts;
+  }
+
+  irs::analysis::HtmlStripTokenizer::Options BuildHtmlStrip() {
+    irs::analysis::HtmlStripTokenizer::Options opts;
+    opts.join_inline_tags = Value<tokenizer_options::kJoinInlineTags>();
+    return opts;
+  }
+
+  irs::analysis::FilterTokensTokenizer::Options BuildFilterTokens() {
+    irs::analysis::FilterTokensTokenizer::Options opts;
+    opts.predicate = Value<tokenizer_options::kPredicate>();
+    opts.min_length =
+      static_cast<size_t>(Value<tokenizer_options::kMinLength>());
+    opts.max_length =
+      static_cast<size_t>(Value<tokenizer_options::kMaxLength>());
+    if (opts.max_length != 0 && opts.max_length < opts.min_length) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("\"max_length\" must be >= \"min_length\""));
+    }
     return opts;
   }
 
@@ -539,7 +613,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     opts.output_unigrams = Value<tokenizer_options::kOutputUnigrams>();
     opts.fallback_unigrams =
       Value<tokenizer_options::kOutputUnigramsIfNoShingles>();
-    opts.store_tokens = Value<tokenizer_options::kStoreTokens>();
     if (OptionsParser::HasOption(tokenizer_options::kFrequentWords)) {
       ForEachListItem<tokenizer_options::kFrequentWords>(
         [&](std::string_view w) {
@@ -547,15 +620,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
             reinterpret_cast<const irs::byte_type*>(w.data()), w.size());
         });
     }
-    if (!opts.store_tokens && !opts.frequent_words.empty()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("\"store_tokens\" = false cannot be combined with "
-                "\"frequent_words\""),
-        ERR_HINT("Without the stored token stream every shingle size must be "
-                 "dense so phrases up to max_gram stay exact."));
-    }
-    ResolveStringInto<tokenizer_options::kFillerToken>(opts.filler_token);
     if (OptionsParser::HasOption(tokenizer_options::kTokenSeparator)) {
       const auto raw = OptionsParser::EraseOptionOrDefault<
         tokenizer_options::kTokenSeparator>();
@@ -618,6 +682,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
         {SolrSynonymsTokenizer::type_name(), &Build<&Self::BuildSolrSynonyms>},
         {WordnetSynonymsTokenizer::type_name(),
          &Build<&Self::BuildWordnetSynonyms>},
+        {HtmlStripTokenizer::type_name(), &Build<&Self::BuildHtmlStrip>},
+        {FilterTokensTokenizer::type_name(), &Build<&Self::BuildFilterTokens>},
       };
     const auto it = kBuilders.find(type);
     SDB_ASSERT(it != kBuilders.end());
@@ -626,12 +692,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   void BuildDictionary(irs::analysis::TokenizerConfig& out) {
     std::string from = Value<tokenizer_options::kFrom>();
-    auto name = ParseObjectName(from, _current_schema);
-    const auto schema_id =
-      catalog::FindSchemaId(&_context, _db_id, name.schema);
-    auto tokenizer = schema_id.isSet() ? catalog::FindTokenizer(
-                                           &_context, schema_id, name.relation)
-                                       : nullptr;
+    auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
+      _context, duckdb::QualifiedName::Parse(from),
+      duckdb::OnEntryNotFound::RETURN_NULL);
     if (!tokenizer) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -642,8 +705,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
 
   irs::analysis::TokenizerConfig _config;
   duckdb::ClientContext& _context;
-  ObjectId _db_id;
-  std::string_view _current_schema;
   TokenizerConfigs _children;
 };
 
@@ -704,26 +765,24 @@ void CheckWithClause(const duckdb::named_parameter_map_t& with) {
 
 }  // namespace
 
-irs::analysis::TokenizerConfig BuildStage(
-  duckdb::ClientContext& context, ObjectId db_id,
-  std::string_view current_schema, std::string_view type, Options options,
-  TokenizerConfigs children, std::string_view operation) {
-  return std::move(CreateTSDictionaryOptions{context, db_id, current_schema,
-                                             type, std::move(options),
+irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
+                                          std::string_view type,
+                                          Options options,
+                                          TokenizerConfigs children,
+                                          std::string_view operation) {
+  return std::move(CreateTSDictionaryOptions{context, type, std::move(options),
                                              std::move(children), operation})
     .Result();
 }
 
-void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
-                     std::string_view schema, bool if_not_exists,
+void CreateTokenizer(ConnectionContext& conn_ctx, duckdb::QualifiedName name,
+                     bool if_not_exists,
                      const duckdb::named_parameter_map_t& with,
                      std::string_view spec) {
-  auto db_id = conn_ctx.GetDatabaseId();
-  auto current_schema = conn_ctx.GetCurrentSchema();
   auto& client_ctx = conn_ctx.GetClientContext();
 
   CheckWithClause(with);
-  auto cfg = CompileTSDictionarySpec(client_ctx, db_id, current_schema, spec);
+  const auto [cfg, definition] = CompileTSDictionarySpec(client_ctx, spec);
   auto features = ParseFeatures(with, TypeNameOf(cfg));
 
   auto test_analyzer = irs::analysis::CreateTokenizer(
@@ -735,8 +794,10 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
 
   if (features.HasFeatures(irs::IndexFeatures::Offs) &&
       !test_analyzer->Traits().offsets) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("Unsupported index features are specified"));
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("Unsupported index features are specified: offset"),
+      ERR_HINT("A step of this dictionary produces no text offsets."));
   }
 
   if (features.HasFeatures(irs::IndexFeatures::Norm) &&
@@ -745,17 +806,33 @@ void CreateTokenizer(ConnectionContext& conn_ctx, std::string_view name,
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("the 'norm' feature cannot be combined with an analyzer that "
               "stores a per-document blob"),
-      ERR_HINT("norm and the stored blob share one synthetic column; disable "
-               "the analyzer's token storage or drop the 'norm' feature."));
+      ERR_HINT("norm and the stored blob share one synthetic column; drop "
+               "the 'norm' feature."));
   }
 
-  auto tokenizer = std::make_shared<catalog::CreateTokenizerInfo>(
-    ObjectId{}, ObjectId{}, name, features, std::move(cfg));
+  duckdb::CreateTokenizerInfo tokenizer;
+  tokenizer.SetQualifiedName(std::move(name));
+  tokenizer.features = std::to_underlying(features.GetIndexFeatures());
+  tokenizer.config = catalog::PackTokenizerConfig(cfg);
+  tokenizer.definition = definition;
+  tokenizer.on_conflict = if_not_exists
+                            ? duckdb::OnCreateConflict::IGNORE_ON_CONFLICT
+                            : duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
 
-  auto& catalog = catalog::DatabaseCatalog(&conn_ctx.GetClientContext(), db_id);
-  catalog.CreateTokenizer(
-    catalog::ActingAs(conn_ctx.GetRoleId(), conn_ctx.GetClientContext()), db_id,
-    schema, std::move(tokenizer), if_not_exists);
+  auto& target =
+    duckdb::Binder::CreateBinder(client_ctx)->BindSchema(tokenizer);
+  const auto role = conn_ctx.GetRoleId();
+  if (!auth::ClosureFor(&client_ctx, role)
+         ->Can(duckdb::CatalogType::SCHEMA_ENTRY, target.permissions,
+               duckdb::AclMode::Create)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for schema ",
+                            target.name.GetIdentifierName()));
+  }
+  tokenizer.permissions.owner = role;
+  auto& catalog = target.catalog.Cast<catalog::SereneDBCatalog>();
+  catalog.CreateTokenizer(catalog.GetCatalogTransaction(client_ctx),
+                          target.Cast<duckdb::DuckSchemaEntry>(), tokenizer);
 }
 
 }  // namespace sdb::pg

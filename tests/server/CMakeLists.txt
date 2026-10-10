@@ -4,9 +4,12 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
-    catalog_persistence_test.cpp
-    catalog_table_info_test.cpp
+    background_scheduler_test.cpp
+    database_directory_test.cpp
+    docs_search_test.cpp
+    duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
+    duckdb_threads_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     meta_transaction_snapshot_test.cpp
@@ -15,6 +18,7 @@ add_executable(
     network_duck_pump_test.cpp
     network_h1_codec_test.cpp
     network_header_test.cpp
+    network_http_compression_test.cpp
     network_http_test.cpp
     network_listen_spec_test.cpp
     network_pg_bind_decoder_test.cpp
@@ -29,9 +33,13 @@ add_executable(
     network_proxy_protocol_test.cpp
     network_router_test.cpp
     number_of_cores_test.cpp
+    pointer_union_test.cpp
     scorer_bounds_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
+    storage_version_test.cpp
+    catalog/entry/tokenizer_test.cpp
+    connector/ai_functions_test.cpp
     connector/copy_in_bridge_test.cpp
     connector/duckdb_search_filter_builder_test.cpp
     connector/duckdb_search_sink_writer_test.cpp
@@ -43,7 +51,17 @@ add_executable(
     connector/writer_generations_test.cpp
 )
 
-target_link_libraries(serenedb-tests PUBLIC sereneserver gtest)
+target_link_libraries(
+    serenedb-tests
+    PUBLIC sereneserver gtest serene_docs_corpus
+)
+sdb_link_duckdb_extensions(serenedb-tests PUBLIC)
+
+if(SDB_EMBEDDED_DOCS)
+    target_link_libraries(serenedb-tests PUBLIC serene_docs_index)
+    add_dependencies(serenedb-tests serened)
+    sdb_embed_docs_index(serenedb-tests)
+endif()
 
 target_compile_definitions(
     serenedb-tests

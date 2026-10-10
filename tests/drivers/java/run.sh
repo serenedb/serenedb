@@ -7,8 +7,8 @@ set -u
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 if ! command -v mvn >/dev/null 2>&1; then
-	echo "[java] mvn not found; skipping" >&2
-	exit 0
+	echo "[java] mvn not found" >&2
+	exit 1
 fi
 
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
@@ -26,6 +26,7 @@ mvn_args=(-q -B -Dtest.host="${SDB_DRV_HOST}"
 	-Dtest.spec="${SDB_DRV_SPEC:-${SCRIPT_DIR}/../spec}"
 )
 [[ "${SDB_DRV_DEBUG:-false}" == "true" ]] && mvn_args+=(-X)
+[[ -n "${SDB_DRIVERS_DEPS:-}" ]] && mvn_args+=(-o "-Dmaven.repo.local=${SDB_DRIVERS_DEPS}/m2")
 
 if ! mvn "${mvn_args[@]}" test; then
 	cp -f target/surefire-reports/TEST-*.xml "$JUNIT/" 2>/dev/null || true

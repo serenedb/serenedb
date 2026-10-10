@@ -156,14 +156,97 @@ t
 {"Grüße, Welt!",北京}
 
 
-# --- split_by_non_alpha knows ASCII letters only: every non-ASCII letter is a
-# separator, so a purely non-ASCII word yields nothing ---
+query
+SELECT split_text('ab 北京👍🏽🇩🇪', break := 'grapheme') AS t;
+----
+t
+{a,b,北,京,👍🏽,🇩🇪}
+
+
+query
+SELECT split_text('A　b', case := 'lower', break := 'grapheme') AS t;
+----
+t
+{a,b}
+
 
 query
 SELECT split_by_non_alpha('Grüße, Welt! 北京123', case := 'lower') AS t;
 ----
 t
 {gr,e,welt,123}
+
+
+query
+SELECT split_by_non_alpha('Grüße, Welt! 北京123', break := 'ascii_bytes') AS t;
+----
+t
+{Grüße,Welt,北京123}
+
+
+query
+SELECT split_by_non_alpha('ÜBER Grüße, Welt!', case := 'lower', break := 'ascii_bytes') AS t;
+----
+t
+{über,grüße,welt}
+
+
+query
+SELECT split_by_non_alpha('foo—bar a，b', break := 'ascii_bytes') AS t;
+----
+t
+{foo—bar,a，b}
+
+
+query
+SELECT split_by_non_alpha('Hello, World! 123_abc', break := 'ascii_bytes') =
+       split_by_non_alpha('Hello, World! 123_abc') AS same;
+----
+same
+t
+
+
+query
+SELECT split_by_non_alpha('Hello, World! 123_abc', break := 'alnum') =
+       split_by_non_alpha('Hello, World! 123_abc') AS same;
+----
+same
+t
+
+
+query
+SELECT split_by_non_alpha('Grüße, Welt! 北京123 foo—bar', break := 'alnum') AS t;
+----
+t
+{Grüße,Welt,北京123,foo,bar}
+
+
+query
+SELECT split_by_non_alpha('Grüße, Welt! 北京123 foo—bar', break := 'letters') AS t;
+----
+t
+{Grüße,Welt,北京,foo,bar}
+
+
+query
+SELECT split_by_non_alpha('ÜBER Straße ٣٤ 42', case := 'lower', break := 'alnum') AS t;
+----
+t
+{über,straße,٣٤,42}
+
+
+query
+SELECT split_by_non_alpha('über 42 STRASSE', case := 'upper', break := 'letters') AS t;
+----
+t
+{ÜBER,STRASSE}
+
+
+query
+SELECT split_by_non_alpha('नमस्ते, café', break := 'letters') AS t;
+----
+t
+{नमस्ते,café}
 
 
 query
@@ -221,7 +304,7 @@ t
 # SHINGLES
 
 query
-SELECT generate_shingles(['Ωμέγα', 'ΟΔΟΣ', '北京'], 2, 2, store_tokens := false) AS t;
+SELECT generate_shingles(['Ωμέγα', 'ΟΔΟΣ', '北京'], 2, 2) AS t;
 ----
 t
 {Ωμέγα,"Ωμέγα ΟΔΟΣ",ΟΔΟΣ,"ΟΔΟΣ 北京",北京}
@@ -230,7 +313,7 @@ t
 # --- the separator may itself be multi-byte ---
 
 query
-SELECT generate_shingles(['Ωμέγα', '北京'], 2, 2, store_tokens := false, token_separator := '—') AS t;
+SELECT generate_shingles(['Ωμέγα', '北京'], 2, 2, token_separator := '—') AS t;
 ----
 t
 {Ωμέγα,Ωμέγα—北京,北京}
@@ -313,7 +396,7 @@ chain	nested
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY sh_mb_grams AS
-    generate_shingles(split_text(), 2, 2, store_tokens := false, token_separator := '—')
+    generate_shingles(split_text(), 2, 2, token_separator := '—')
     | generate_ngrams(1, 2)
 
 

@@ -35,7 +35,6 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
 
 using tests::FormatTestCase;
-using tests::FormatTestCaseWithEncryption;
 
 bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   auto ctx = writer.GetBatch();
@@ -56,7 +55,7 @@ bool InsertWithName(irs::IndexWriter& writer, const tests::Document& doc) {
   return true;
 }
 
-class Format13TestCase : public FormatTestCaseWithEncryption {};
+class Format13TestCase : public FormatTestCase {};
 
 TEST_P(Format13TestCase, open_10_with_13) {
   tests::JsonDocGenerator gen(resource("simple_sequential.json"),
@@ -66,9 +65,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -79,10 +76,7 @@ TEST_P(Format13TestCase, open_10_with_13) {
   }
 
   // check index
-  auto codec = irs::formats::Get("1_5simd");
-  ASSERT_NE(nullptr, codec);
-  auto index =
-    irs::DirectoryReader(dir(), codec, irs::tests::DefaultReaderOptions());
+  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(1, index->size());
   ASSERT_EQ(1, index->docs_count());
@@ -106,7 +100,8 @@ TEST_P(Format13TestCase, open_10_with_13) {
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           tests::Docs(term_itr->postings(irs::IndexFeatures::None));
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -126,9 +121,7 @@ TEST_P(Format13TestCase, formats_13) {
 
   // write segment with format10
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -140,9 +133,7 @@ TEST_P(Format13TestCase, formats_13) {
 
   // write segment with format13
   {
-    auto codec = irs::formats::Get("1_5simd");
-    ASSERT_NE(nullptr, codec);
-    auto writer = irs::IndexWriter::Make(dir(), codec, irs::kOmAppend,
+    auto writer = irs::IndexWriter::Make(dir(), irs::kOmAppend,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
@@ -153,8 +144,7 @@ TEST_P(Format13TestCase, formats_13) {
   }
 
   // check index
-  auto index =
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
+  auto index = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
   ASSERT_TRUE(index);
   ASSERT_EQ(2, index->size());
   ASSERT_EQ(2, index->docs_count());
@@ -178,7 +168,8 @@ TEST_P(Format13TestCase, formats_13) {
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           tests::Docs(term_itr->postings(irs::IndexFeatures::None));
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -206,7 +197,8 @@ TEST_P(Format13TestCase, formats_13) {
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
 
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           tests::Docs(term_itr->postings(irs::IndexFeatures::None));
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -217,11 +209,9 @@ TEST_P(Format13TestCase, formats_13) {
   }
 }
 
-static constexpr auto kTestDirs =
-  tests::GetDirectories<tests::kTypesAllRot13>();
+static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 static const auto kTestValues =
-  ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                     ::testing::Values(tests::FormatInfo{"1_5simd"}));
+  ::testing::Combine(::testing::ValuesIn(kTestDirs));
 
 // 1.3 specific tests
 INSTANTIATE_TEST_SUITE_P(Format13Test, Format13TestCase, kTestValues,

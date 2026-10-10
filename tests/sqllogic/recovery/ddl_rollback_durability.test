@@ -227,6 +227,14 @@ CREATE TABLE rbd_move_t (a INTEGER, b TEXT);
 
 
 statement ok
+CREATE TABLE rbd_rename_t (a INTEGER);
+
+
+statement ok
+CREATE TABLE rbd_move_r (a INTEGER);
+
+
+statement ok
 CREATE VIEW rbd_keep_v (va, vb) AS SELECT a, b FROM rbd_keep_t;
 
 
@@ -272,19 +280,19 @@ BEGIN;
 
 
 statement ok
-ALTER TABLE rbd_keep_t RENAME TO rbd_keep_t_renamed;
+ALTER TABLE rbd_rename_t RENAME TO rbd_rename_t_renamed;
 
 
 statement ok
-ALTER TABLE rbd_keep_t_renamed OWNER TO rbd_owner;
+ALTER TABLE rbd_keep_t OWNER TO rbd_owner;
 
 
 statement ok
-GRANT SELECT ON rbd_keep_t_renamed TO rbd_grantee;
+GRANT SELECT ON rbd_keep_t TO rbd_grantee;
 
 
 statement ok
-GRANT SELECT (a) ON rbd_keep_t_renamed TO rbd_grantee;
+GRANT SELECT (a) ON rbd_keep_t TO rbd_grantee;
 
 
 statement ok
@@ -327,19 +335,19 @@ BEGIN;
 
 
 statement ok
-ALTER TABLE rbd_move_t RENAME TO rbd_move_t_renamed;
+ALTER TABLE rbd_move_r RENAME TO rbd_move_r_renamed;
 
 
 statement ok
-ALTER TABLE rbd_move_t_renamed OWNER TO rbd_owner;
+ALTER TABLE rbd_move_t OWNER TO rbd_owner;
 
 
 statement ok
-GRANT SELECT ON rbd_move_t_renamed TO rbd_grantee;
+GRANT SELECT ON rbd_move_t TO rbd_grantee;
 
 
 statement ok
-GRANT SELECT (a) ON rbd_move_t_renamed TO rbd_grantee;
+GRANT SELECT (a) ON rbd_move_t TO rbd_grantee;
 
 
 statement ok
@@ -495,8 +503,8 @@ schema	view	function	type	sequence	role	tokenizer	database
 connection after_crash
 query
 SELECT
-  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_t_renamed') AS renamed,
-  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_keep_t') AS original;
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_rename_t_renamed') AS renamed,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_rename_t') AS original;
 ----
 renamed	original
 0	1
@@ -595,8 +603,8 @@ rbd_owner	r	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
 connection after_crash
 query
 SELECT
-  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_t_renamed') AS renamed,
-  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_t') AS original,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_r_renamed') AS renamed,
+  (SELECT count(*) FROM pg_class WHERE relname = 'rbd_move_r') AS original,
   (SELECT count(*) FROM pg_roles WHERE rolname = 'rbd_dropme') AS dropped;
 ----
 renamed	original	dropped
@@ -607,7 +615,7 @@ connection after_crash
 query
 SELECT pg_get_userbyid(relowner) AS owner,
        coalesce(array_to_string(relacl, '|'), '-') AS acl
-FROM pg_class WHERE relname = 'rbd_move_t_renamed';
+FROM pg_class WHERE relname = 'rbd_move_t';
 ----
 owner	acl
 rbd_owner	rbd_owner=arwdDxtm/rbd_owner|rbd_grantee=r/rbd_owner
@@ -617,7 +625,7 @@ connection after_crash
 query
 SELECT coalesce(array_to_string(attacl, '|'), '-') AS colacl
 FROM pg_attribute
-WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'rbd_move_t_renamed')
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'rbd_move_t')
   AND attname = 'a';
 ----
 colacl

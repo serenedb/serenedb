@@ -2,18 +2,20 @@ target_sources(
     sereneserver
     PRIVATE
         key_encoding.cpp
+        primary_key.cpp
         offsets_collector.cpp
         search_sink_writer.cpp
         search_table_backfill.cpp
-        search_table_dispatch.cpp
         search_remove_filter.cpp
         duckdb_storage_extension.cpp
         index_expression.cpp
+        inverted_index_bind.cpp
         search_filter_builder.cpp
         geo_filter_builder.cpp
         search_filter_printer.cpp
         duckdb_client_state.cpp
         scan/col_filter_verify.cpp
+        scan/deferred_verify.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
         scan/scan_claim.cpp
@@ -28,21 +30,24 @@ target_sources(
         scan/scan_stream.cpp
         scan/scan_topk.cpp
         scan/scan_tsdict.cpp
+        system_table_scan.cpp
         full_scanner.cpp
         index_source_factory.cpp
         index_source_view.cpp
         inverted_store_index.cpp
+        iresearch_replacement_scan.cpp
         index_source_view_file.cpp
         index_source_view_table.cpp
         index_source_external_lookup.cpp
         view_fast_path.cpp
+        view_index_bind.cpp
         duckdb_copy_filesystem.cpp
+        duckdb_physical_search_delete.cpp
         duckdb_physical_search_insert.cpp
+        duckdb_physical_search_update.cpp
         duckdb_pg_binary_copy.cpp
         duckdb_pg_text_copy.cpp
-        duckdb_physical_ctas.cpp
         duckdb_tokenizer_function.cpp
-        duckdb_rbac_function.cpp
         duckdb_foreign_server_function.cpp
         duckdb_physical_create_index.cpp
         duckdb_index_utils.cpp
@@ -50,9 +55,6 @@ target_sources(
         file_manifest.cpp
         duckdb_vacuum_function.cpp
         duckdb_physical_search_truncate.cpp
-        duckdb_physical_search_delete.cpp
-        duckdb_physical_search_update.cpp
-        duckdb_transaction.cpp
         highlight/highlight_options.cpp
         highlight/memory_index.cpp
 )
@@ -66,6 +68,12 @@ target_include_directories(
     PRIVATE
         "${CMAKE_SOURCE_DIR}/third_party/duckdb_iceberg/src/include"
         "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/yyjson/include"
+)
+
+target_include_directories(
+    sereneserver
+    PRIVATE
+        "${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include"
 )
 
 add_subdirectory(functions)

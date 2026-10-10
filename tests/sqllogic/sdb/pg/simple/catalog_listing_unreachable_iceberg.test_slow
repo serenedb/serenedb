@@ -1,0 +1,110 @@
+control substitution on
+
+
+statement ok
+CREATE OR REPLACE SECRET clu_sec_${__DATABASE__} (
+  TYPE S3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/warehouse/${__DATABASE__}/'
+);
+
+
+statement ok
+SET s3_use_ssl=false;
+
+
+statement ok
+DETACH DATABASE IF EXISTS clu_cat_${__DATABASE__};
+
+
+statement ok
+ATTACH '${ICEBERG_WAREHOUSE}' AS clu_cat_${__DATABASE__} (
+  TYPE ICEBERG,
+  URI '${ICEBERG_REST_URL}',
+  AUTHORIZATION_TYPE 'sigv4',
+  SIGV4_SERVICE 'custom',
+  SIGV4_REGION 'us-east-1',
+  SECRET 'clu_sec_${__DATABASE__}'
+);
+
+
+statement ok
+CREATE SCHEMA clu_cat_${__DATABASE__}.${__DATABASE__};
+
+
+statement ok
+CREATE TABLE clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE__} (id INTEGER);
+
+
+statement ok
+INSERT INTO clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE__} VALUES (1);
+
+
+query
+SELECT count(*) AS n FROM clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE__};
+----
+n
+1
+
+
+# The catalog stays attached; only its credential goes away.
+statement ok
+DROP SECRET clu_sec_${__DATABASE__};
+
+
+# Reaching it directly still reports the real error.
+statement error
+SELECT count(*) AS n FROM clu_cat_${__DATABASE__}.${__DATABASE__}.t_${__DATABASE__};
+----
+db error: ERROR: No secret by the name of '<slt:ignore>' could be found, consider changing the 'secret'
+
+
+# Listings leave out what they cannot read and list everything else.
+query
+SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'clu_cat_${__DATABASE__}';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM duckdb_schemas() WHERE database_name = 'clu_cat_${__DATABASE__}';
+----
+n
+0
+
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables();
+----
+listed
+t
+
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_columns();
+----
+listed
+t
+
+
+query
+SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = current_database();
+----
+listed
+t
+
+
+# A missing table reports its own error, not the unreachable catalog's.
+statement error
+SELECT * FROM clu_no_such_table_${__DATABASE__};
+----
+db error: ERROR: Table with name clu_no_such_table_<slt:ignore> does not exist!<slt:ignore>
+
+
+statement ok
+DETACH DATABASE IF EXISTS clu_cat_${__DATABASE__};

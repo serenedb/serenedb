@@ -25,23 +25,35 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index/burst_trie.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/formats/index_meta_reader.hpp>
+#include <iresearch/formats/index_meta_writer.hpp>
+#include <iresearch/formats/reader_state.hpp>
+#include <iresearch/formats/segment_meta_reader.hpp>
+#include <iresearch/formats/segment_meta_writer.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/crc.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/resource_manager.hpp>
+#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <roaring/roaring.hh>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -70,7 +82,7 @@ bool VisitFiles(const irs::IndexMeta& meta, Visitor&& visitor) {
 namespace tests {
 
 void FormatTestCase::AssertNoDirectoryArtifacts(
-  const irs::Directory& dir, const irs::Format& codec,
+  const irs::Directory& dir,
   const std::unordered_set<std::string>& expect_additional /* ={} */) {
   std::vector<std::string> dir_files;
   auto visitor = [&dir_files](std::string_view file) {
@@ -85,13 +97,12 @@ void FormatTestCase::AssertNoDirectoryArtifacts(
   irs::IndexMeta index_meta;
   std::string segment_file;
 
-  auto reader = codec.get_index_meta_reader();
   std::unordered_set<std::string> index_files(expect_additional.begin(),
                                               expect_additional.end());
-  const bool exists = reader->last_segments_file(dir, segment_file);
+  const bool exists = irs::index_meta::LastFile(dir, segment_file);
 
   if (exists) {
-    reader->read(dir, index_meta, segment_file);
+    irs::index_meta::Read(dir, index_meta, segment_file);
 
     VisitFiles(index_meta, [&index_files](const std::string& file) {
       index_files.emplace(file);
@@ -142,7 +153,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   // cleanup on refcount decrement (old files not in use)
   {
     // create writer to directory
-    auto writer = irs::IndexWriter::Make(*dir, codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     // initialize directory
@@ -150,10 +161,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // add first segment
@@ -163,10 +173,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // add second segment (creating new index_meta file, remove old)
@@ -175,10 +184,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // delete record from first segment (creating new index_meta file + doc_mask
@@ -188,10 +196,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // delete all record from first segment (creating new index_meta file,
@@ -201,10 +208,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // delete all records from second segment (creating new index_meta file,
@@ -214,10 +220,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
   }
 
@@ -236,7 +241,7 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   // cleanup on refcount decrement (old files still in use)
   {
     // create writer to directory
-    auto writer = irs::IndexWriter::Make(*dir, codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     // initialize directory
@@ -244,10 +249,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // add first segment
@@ -258,10 +262,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // delete record from first segment (creating new doc_mask file)
@@ -270,24 +273,22 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
 
     // create reader to directory
     auto reader =
-      irs::DirectoryReader(*dir, codec(), irs::tests::DefaultReaderOptions());
+      irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions());
     std::unordered_set<std::string> reader_files;
     {
       irs::IndexMeta index_meta;
       std::string segments_file;
-      auto meta_reader = codec()->get_index_meta_reader();
-      const bool exists = meta_reader->last_segments_file(*dir, segments_file);
+      const bool exists = irs::index_meta::LastFile(*dir, segments_file);
       ASSERT_TRUE(exists);
 
-      meta_reader->read(*dir, index_meta, segments_file);
+      irs::index_meta::Read(*dir, index_meta, segments_file);
 
       VisitFiles(index_meta, [&reader_files](std::string_view file) {
         reader_files.emplace(file);
@@ -303,10 +304,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec(), reader_files);
+      AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // delete record from first segment (creating new doc_mask file, not-remove
@@ -316,10 +316,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec(), reader_files);
+      AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // delete all record from first segment (creating new index_meta file,
@@ -329,10 +328,9 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec(), reader_files);
+      AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // delete all records from second segment (creating new index_meta file,
@@ -342,17 +340,16 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
       writer->RefreshCommit();
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec(), reader_files);
+      AssertNoDirectoryArtifacts(*dir, reader_files);
     }
 
     // close reader (remove old meta + old doc_mask + first segment)
     {
       reader = {};
       irs::DirectoryCleaner::clean(*dir);  // clean unused files
-      AssertNoDirectoryArtifacts(*dir, *codec());
+      AssertNoDirectoryArtifacts(*dir);
     }
   }
 
@@ -372,33 +369,29 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
   {
     // fill directory
     {
-      auto writer = irs::IndexWriter::Make(*dir, codec(), irs::kOmCreate,
+      auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
 
       writer->RefreshCommit();  // initialize directory
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
       writer->RefreshCommit();  // add first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       ASSERT_TRUE(Insert(*writer, doc2->indexed.begin(), doc2->indexed.end()));
       ASSERT_TRUE(Insert(*writer, doc3->indexed.begin(), doc3->indexed.end()));
       writer->RefreshCommit();  // add second segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
       tests::Remove(*writer, *(query_doc1));
       writer->RefreshCommit();  // remove first segment
       tests::AssertSnapshotEquality(
         writer->GetSnapshot(),
-        irs::DirectoryReader(*dir, nullptr,
-                             irs::tests::DefaultReaderOptions()));
+        irs::DirectoryReader(*dir, irs::tests::DefaultReaderOptions()));
     }
 
     // add invalid files
@@ -415,14 +408,14 @@ TEST_P(FormatTestCase, directory_artifact_cleaner) {
     ASSERT_TRUE(dir->exists(exists, "dummy.file.2") && exists);
 
     // open writer
-    auto writer = irs::IndexWriter::Make(*dir, codec(), irs::kOmCreate,
+    auto writer = irs::IndexWriter::Make(*dir, irs::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
 
     // if directory has files (for fs directory) then ensure only valid
     // meta+segments loaded
     ASSERT_TRUE(dir->exists(exists, "dummy.file.1") && !exists);
     ASSERT_TRUE(dir->exists(exists, "dummy.file.2") && !exists);
-    AssertNoDirectoryArtifacts(*dir, *codec());
+    AssertNoDirectoryArtifacts(*dir);
   }
 }
 
@@ -735,12 +728,9 @@ TEST_P(FormatTestCase, fields_read_write) {
       (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.begin()),
       (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
 
-    irs::IdxWriter idx{dir(), "segment_name",
-                       ::irs::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter writer{
-      codec()->get_postings_writer(/*compaction=*/false,
-                                   irs::IResourceManager::gNoop),
-      /*compaction=*/false, irs::IResourceManager::gNoop};
+    irs::IdxWriter idx{dir(), "segment_name"};
+    irs::burst_trie::FieldWriter writer{/*compaction=*/false,
+                                        irs::IResourceManager::gNoop};
     writer.SetIdxWriter(idx);
     writer.prepare(state);
     writer.write(term_reader);
@@ -754,8 +744,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     meta.name = "segment_name";
 
     irs::IdxReader idx{dir(), "segment_name"};
-    irs::burst_trie::FieldReader reader_obj{codec()->get_postings_reader(),
-                                            irs::IResourceManager::gNoop};
+    irs::burst_trie::FieldReader reader_obj{irs::IResourceManager::gNoop};
     auto* reader = &reader_obj;
     reader->prepare(
       irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
@@ -960,8 +949,10 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     meta.byte_size = 666;
     meta.version = 100;
     meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMask docs_mask{irs::IResourceManager::gNoop};
-      docs_mask.insert({42, 100});
+      irs::DocumentMask docs_mask;
+      docs_mask.Add(42);
+      docs_mask.Add(100);
+      docs_mask.Trim();
       return docs_mask;
     }());
     meta.files.emplace_back("file1");
@@ -972,10 +963,7 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
     std::string filename;
 
     // write segment meta
-    {
-      auto writer = codec()->get_segment_meta_writer();
-      writer->write(dir(), filename, meta);
-    }
+    irs::segment_meta::Write(dir(), filename, meta);
 
     // read segment meta
     {
@@ -983,9 +971,8 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       read_meta.name = meta.name;
       read_meta.version = 100;
 
-      auto reader = codec()->get_segment_meta_reader();
-      reader->read(dir(), read_meta);
-      ASSERT_EQ(meta.codec, read_meta.codec);  // codec stays nullptr
+      irs::segment_meta::Read(dir(), read_meta,
+                              irs::segment_meta::FileName(read_meta));
       ASSERT_EQ(meta.name, read_meta.name);
       ASSERT_EQ(meta.docs_count, read_meta.docs_count);
       ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
@@ -994,499 +981,484 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
       ASSERT_EQ(meta.files, read_meta.files);
       ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
     }
-  }
 
-  // write broken meta (live_docs_count > docs_count)
-  {
-    irs::SegmentMeta meta;
-    meta.name = "broken_meta_name";
-    meta.docs_count = 453;
-    meta.live_docs_count = 1345;
-    meta.byte_size = 666;
-    meta.version = 100;
-
-    meta.files.emplace_back("file1");
-    meta.files.emplace_back("index_file2");
-    meta.files.emplace_back("file3");
-    meta.files.emplace_back("stored_file4");
-
-    std::string filename;
-
-    // write segment meta
-    {
-      auto writer = codec()->get_segment_meta_writer();
-      ASSERT_THROW(writer->write(dir(), filename, meta), irs::IndexError);
-    }
-
-    // read segment meta
+    // The name and the version are not in the body: a blank meta read by file
+    // name has to recover both from the name itself.
     {
       irs::SegmentMeta read_meta;
-      read_meta.name = meta.name;
-      read_meta.version = 100;
 
-      auto reader = codec()->get_segment_meta_reader();
-      ASSERT_THROW(reader->read(dir(), read_meta), irs::IoError);
-    }
-  }
-
-  {
-    irs::SegmentMeta meta;
-    meta.name = "broken_meta_name";
-    meta.docs_count = 1600;
-    meta.live_docs_count = 1345;
-    meta.byte_size = 666;
-    meta.version = 100;
-
-    meta.files.emplace_back("file1");
-    meta.files.emplace_back("index_file2");
-    meta.files.emplace_back("file3");
-    meta.files.emplace_back("stored_file4");
-
-    std::string filename;
-
-    // write segment meta
-    {
-      auto writer = codec()->get_segment_meta_writer();
-      ASSERT_THROW(writer->write(dir(), filename, meta), irs::IndexError);
+      irs::segment_meta::Read(dir(), read_meta, filename);
+      ASSERT_EQ(meta.name, read_meta.name);
+      ASSERT_EQ(meta.version, read_meta.version);
+      ASSERT_EQ(meta.docs_count, read_meta.docs_count);
+      ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
     }
 
-    // read segment meta
     {
       irs::SegmentMeta read_meta;
-      read_meta.name = meta.name;
-      read_meta.version = 100;
 
-      auto reader = codec()->get_segment_meta_reader();
-      ASSERT_THROW(reader->read(dir(), read_meta), irs::IoError);
+      ASSERT_THROW(
+        irs::segment_meta::Read(dir(), read_meta, "no_generation.sm"),
+        irs::IndexError);
     }
   }
 
-  // read broken meta (live_docs_count > docs_count)
   {
-    class SegmentMetaCorruptingDirectory : public irs::Directory {
-     public:
-      SegmentMetaCorruptingDirectory(irs::Directory& dir,
-                                     irs::SegmentMeta& meta)
-        : Directory{dir.ResourceManager()}, _dir(dir), _meta(meta) {}
+    constexpr irs::doc_id_t kDocs = 30000;
 
-      using Directory::attributes;
-
-      irs::DirectoryAttributes& attributes() noexcept final {
-        return _dir.attributes();
+    auto scattered = [](irs::doc_id_t first, irs::doc_id_t step) {
+      irs::DocumentMask mask;
+      for (auto doc = first; doc < kDocs; doc += step) {
+        mask.Add(doc);
       }
-
-      irs::IndexOutput::ptr create(std::string_view name) noexcept final {
-        // corrupt meta before writing it
-        _meta.docs_count = _meta.live_docs_count - 1;
-        return _dir.create(name);
-      }
-
-      bool exists(bool& result, std::string_view name) const noexcept final {
-        return _dir.exists(result, name);
-      }
-
-      bool length(uint64_t& result,
-                  std::string_view name) const noexcept final {
-        return _dir.length(result, name);
-      }
-
-      irs::IndexLock::ptr make_lock(std::string_view name) noexcept final {
-        return _dir.make_lock(name);
-      }
-
-      bool mtime(std::time_t& result,
-                 std::string_view name) const noexcept final {
-        return _dir.mtime(result, name);
-      }
-
-      irs::IndexInput::ptr open(std::string_view name,
-                                irs::IOAdvice advice) const noexcept final {
-        return _dir.open(name, advice);
-      }
-
-      bool remove(std::string_view name) noexcept final {
-        return _dir.remove(name);
-      }
-
-      bool rename(std::string_view src, std::string_view dst) noexcept final {
-        return _dir.rename(src, dst);
-      }
-
-      bool sync(std::span<const std::string_view> files) noexcept final {
-        return _dir.sync(files);
-      }
-
-      bool visit(const irs::Directory::visitor_f& visitor) const final {
-        return _dir.visit(visitor);
-      }
-
-     private:
-      irs::Directory& _dir;
-      irs::SegmentMeta& _meta;
+      mask.Trim();
+      return mask;
     };
 
     irs::SegmentMeta meta;
-    irs::DocumentMask docs_mask{{irs::IResourceManager::gNoop}};
-    docs_mask.insert({42, 100, 200});
-    meta.name = "broken_meta_name";
-    meta.docs_count = 1453;
-    meta.live_docs_count = 1451;
+    meta.name = "chained_meta_name";
+    meta.docs_count = kDocs;
     meta.byte_size = 666;
     meta.version = 100;
-
     meta.files.emplace_back("file1");
-    meta.files.emplace_back("index_file2");
-    meta.files.emplace_back("file3");
-    meta.files.emplace_back("stored_file4");
+    meta.files.emplace_back("file2");
+
+    const std::vector<std::string> data_files{"file1", "file2"};
+
+    auto mask = scattered(irs::doc_limits::min(), 3);
+    ASSERT_LT(irs::segment_meta::kMinChainBytes,
+              mask.Compress().getSizeInBytes());
 
     std::string filename;
 
-    // write segment meta
-    {
-      auto writer = codec()->get_segment_meta_writer();
+    auto flush = [&](const irs::DocumentMask* patch, uint64_t parent) {
+      meta.docs_mask = std::make_shared<irs::DocumentMask>(mask);
+      meta.live_docs_count =
+        meta.docs_count - static_cast<irs::doc_id_t>(mask.Count());
+      irs::segment_meta::Write(dir(), filename, meta, patch, parent);
+    };
 
-      SegmentMetaCorruptingDirectory currupting_dir(dir(), meta);
-      ASSERT_THROW(writer->write(currupting_dir, filename, meta),
-                   irs::IndexError);
+    flush(nullptr, 0);
+    ASSERT_EQ(1, meta.docs_mask_chain);
+    ASSERT_EQ(data_files, meta.files);
+
+    const auto first_patch = scattered(2, 9);
+    mask.Merge(first_patch);
+    mask.Trim();
+    meta.version = 101;
+    flush(&first_patch, 100);
+    ASSERT_EQ(2, meta.docs_mask_chain);
+
+    const auto second_patch = scattered(5, 9);
+    mask.Merge(second_patch);
+    mask.Trim();
+    meta.version = 105;
+    flush(&second_patch, 101);
+    ASSERT_EQ(3, meta.docs_mask_chain);
+
+    auto expected_files = data_files;
+    expected_files.emplace_back(
+      irs::FileName(meta.name, 100, irs::segment_meta::kExt));
+    expected_files.emplace_back(
+      irs::FileName(meta.name, 101, irs::segment_meta::kExt));
+    ASSERT_EQ(expected_files, meta.files);
+
+    auto link_of = [&](uint64_t version, std::vector<std::string>& files) {
+      const auto file =
+        irs::FileName(meta.name, version, irs::segment_meta::kExt);
+      auto in = dir().open(file, irs::IOAdvice::NORMAL);
+      EXPECT_NE(nullptr, in);
+      std::vector<uint64_t> parents;
+      const auto footer = irs::format_utils::ReadFooter(
+        *in, file, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+          meta_in.ReadOptionalList(
+            irs::segment_meta::kFieldParents, "parents",
+            [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+              parents.push_back(list.ReadElement<uint64_t>());
+            });
+          meta_in.ReadOptionalList(
+            irs::segment_meta::kFieldFiles, "files",
+            [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+              files.push_back(list.ReadElement<std::string>());
+            });
+          meta_in.ReadProperty<uint32_t>(irs::segment_meta::kFieldDocsCount,
+                                         "docs_count");
+          meta_in.ReadProperty<uint64_t>(irs::segment_meta::kFieldByteSize,
+                                         "byte_size");
+        });
+      EXPECT_NE(0, footer.data_len);
+      return parents;
+    };
+
+    {
+      std::vector<std::string> head_files;
+      ASSERT_EQ((std::vector<uint64_t>{100, 101}), link_of(105, head_files));
+      ASSERT_TRUE(head_files.empty());
+
+      std::vector<std::string> link_files;
+      ASSERT_EQ((std::vector<uint64_t>{100}), link_of(101, link_files));
+      ASSERT_TRUE(link_files.empty());
+
+      std::vector<std::string> root_files;
+      ASSERT_TRUE(link_of(100, root_files).empty());
+      ASSERT_EQ(data_files, root_files);
     }
 
-    // read segment meta
     {
       irs::SegmentMeta read_meta;
       read_meta.name = meta.name;
-      read_meta.version = 100;
+      read_meta.version = 105;
 
-      auto reader = codec()->get_segment_meta_reader();
-      ASSERT_THROW(reader->read(dir(), read_meta), irs::IoError);
+      irs::segment_meta::Read(dir(), read_meta,
+                              irs::segment_meta::FileName(read_meta));
+      ASSERT_EQ(meta.docs_count, read_meta.docs_count);
+      ASSERT_EQ(meta.live_docs_count, read_meta.live_docs_count);
+      ASSERT_EQ(meta.byte_size, read_meta.byte_size);
+      ASSERT_EQ(meta.docs_mask_size, read_meta.docs_mask_size);
+      ASSERT_EQ(3, read_meta.docs_mask_chain);
+      ASSERT_EQ(expected_files, read_meta.files);
+      ASSERT_EQ(mask, *read_meta.docs_mask);
     }
-  }
-}
 
-TEST_P(FormatTestCase, format_utils_checksum) {
-  {
-    auto stream = dir().create("file");
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteHeader(*stream, "test", 42);
-    irs::format_utils::WriteFooter(*stream);
-  }
+    ASSERT_TRUE(
+      dir().remove(irs::FileName(meta.name, 101, irs::segment_meta::kExt)));
 
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-
-    int64_t expected_checksum;
     {
-      auto dup = stream->Dup();
-      ASSERT_NE(nullptr, dup);
-      expected_checksum = dup->Checksum(dup->Length() - sizeof(int64_t));
+      irs::SegmentMeta read_meta;
+      read_meta.name = meta.name;
+      read_meta.version = 105;
+
+      ASSERT_THROW(irs::segment_meta::Read(
+                     dir(), read_meta, irs::segment_meta::FileName(read_meta)),
+                   irs::IoError);
     }
-
-    ASSERT_EQ(expected_checksum, irs::format_utils::Checksum(*stream));
-  }
-
-  {
-    auto stream = dir().create("empty_file");
-    ASSERT_NE(nullptr, stream);
-  }
-
-  {
-    auto stream = dir().open("empty_file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::Checksum(*stream), irs::IndexError);
   }
 }
 
-TEST_P(FormatTestCase, format_utils_header_footer) {
-  {
-    auto stream = dir().create("file");
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::WriteHeader(*stream, "test", 42);
-    irs::format_utils::WriteFooter(*stream);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-
-    int64_t expected_checksum;
-    {
-      auto dup = stream->Dup();
-      ASSERT_NE(nullptr, dup);
-      expected_checksum = dup->Checksum(dup->Length() - sizeof(int64_t));
-    }
-
-    irs::format_utils::CheckHeader(*stream, "test", 42);
-    ASSERT_EQ(expected_checksum,
-              irs::format_utils::CheckFooter(*stream, expected_checksum));
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    irs::format_utils::CheckHeader(*stream, "test", 42);
-    ASSERT_THROW(irs::format_utils::CheckFooter(*stream, 0), irs::IndexError);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 42),
-                 irs::IndexError);
-  }
-
-  {
-    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "test", 43),
-                 irs::IndexError);
-  }
-
-  {
-    auto stream = dir().create("empty_file");
-    ASSERT_NE(nullptr, stream);
-  }
-
-  {
-    auto stream = dir().open("empty_file", irs::IOAdvice::NORMAL);
-    ASSERT_NE(nullptr, stream);
-    ASSERT_THROW(irs::format_utils::CheckHeader(*stream, "invalid", 42),
-                 irs::IndexError);
-  }
-}
-
-TEST_P(FormatTestCaseWithEncryption, read_zero_block_encryption) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  // replace encryption
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
-  // write segment with format10
-  {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
-  }
-
-  // replace encryption
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(6)};
-
-  // can't open encrypted index without encryption
-  ASSERT_THROW(
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions()),
-    irs::IndexError);
-}
-
-TEST_P(FormatTestCaseWithEncryption, fields_read_write_wrong_encryption) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  // create sorted && unsorted terms
-  typedef std::set<irs::bytes_view> SortedTermsT;
-  typedef std::vector<irs::bytes_view> UnsortedTermsT;
-  SortedTermsT sorted_terms;
-  UnsortedTermsT unsorted_terms;
-
-  tests::JsonDocGenerator gen(
-    resource("fst_prefixes.json"),
-    [&sorted_terms, &unsorted_terms](
-      tests::Document& doc, const std::string& name,
-      const tests::JsonDocGenerator::JsonValue& data) {
-      doc.insert(std::make_shared<tests::StringField>(name, data.str));
-
-      auto ref = irs::ViewCast<irs::byte_type>(
-        (doc.indexed.end() - 1).as<tests::StringField>().value());
-      sorted_terms.emplace(ref);
-      unsorted_terms.emplace_back(ref);
-    });
-
-  // define field
-  constexpr irs::field_id kFieldId = 1;
-  irs::FieldMeta field;
-  field.id = kFieldId;
-  field.norm = 5;
-
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
-  // write fields
-  {
-    irs::FlushState state{
-      .dir = &dir(),
-      .name = "segment_name",
-      .doc_count = 100,
-    };
-
-    // should use sorted terms on write
-    tests::FormatTestCase::Terms<SortedTermsT::iterator> terms(
-      sorted_terms.begin(), sorted_terms.end());
-    tests::MockTermReader term_reader{
-      terms, irs::FieldMeta{field.id, field.index_features},
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.begin()),
-      (sorted_terms.empty() ? irs::bytes_view{} : *sorted_terms.rbegin())};
-
-    irs::IdxWriter idx{dir(), "segment_name",
-                       ::irs::DuckDBEngine::Instance().instance()};
-    irs::burst_trie::FieldWriter writer{
-      codec()->get_postings_writer(/*compaction=*/false,
-                                   irs::IResourceManager::gNoop),
-      /*compaction=*/false, irs::IResourceManager::gNoop};
-    writer.SetIdxWriter(idx);
-    writer.prepare(state);
-    writer.write(term_reader);
-    writer.end();
-    idx.Commit();
-  }
+TEST_P(FormatTestCase, segment_meta_rejects_unknown_fields) {
+  namespace sm = irs::segment_meta;
 
   irs::SegmentMeta meta;
-  meta.name = "segment_name";
+  meta.name = "extended_meta_name";
+  meta.docs_count = 10;
+  meta.live_docs_count = 10;
+  meta.byte_size = 42;
+  meta.version = 7;
+  meta.files.emplace_back("file1");
 
-  // Open-with-wrong-cipher / open-encrypted-without-cipher must throw:
-  // `IdxReader` opens the `.idx` and consults
-  // `dir.attributes().encryption()`, so the failure surfaces from
-  // `IdxReader` construction (`FieldReader::prepare` then reads
-  // already-decrypted bytes from that stream).
+  {
+    auto out = dir().create(sm::FileName(meta));
+    ASSERT_NE(nullptr, out);
 
-  // can't open encrypted index without encryption
-  dir().attributes() = irs::DirectoryAttributes{nullptr};
-  ASSERT_THROW(irs::IdxReader(dir(), "segment_name"), irs::IndexError);
+    irs::format_utils::WriteFooter(
+      *out, [&](duckdb::BinarySerializer& meta_out) {
+        meta_out.WriteList(
+          sm::kFieldFiles, "files", meta.files.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<std::string>(meta.files[i]);
+          });
+        meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count",
+                                         meta.docs_count);
+        meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size",
+                                         meta.byte_size);
+        meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize + 1,
+                                         "from_the_future", 123);
+      });
+  }
 
-  // can't open encrypted index with wrong encryption
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(6)};
-  ASSERT_THROW(irs::IdxReader(dir(), "segment_name"), irs::IndexError);
+  irs::SegmentMeta read_meta;
+  read_meta.name = meta.name;
+  read_meta.version = meta.version;
+
+  std::string message;
+  try {
+    sm::Read(dir(), read_meta, sm::FileName(read_meta));
+  } catch (const irs::IndexError& e) {
+    message = e.what();
+  }
+  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+    << message;
 }
 
-TEST_P(FormatTestCaseWithEncryption, open_ecnrypted_with_wrong_encryption) {
-  if (!supports_encryption()) {
-    return;
-  }
+TEST_P(FormatTestCase, segment_meta_rejects_malformed) {
+  namespace sm = irs::segment_meta;
 
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
+  auto create = [&](std::string_view name, uint64_t version) {
+    auto out = dir().create(irs::FileName(name, version, sm::kExt));
+    EXPECT_NE(nullptr, out);
+    return out;
+  };
 
-  const tests::Document* doc1 = gen.next();
-
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
-  {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
-  }
-
-  // can't open encrypted index with wrong encryption
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(6)};
-  ASSERT_THROW(
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions()),
-    irs::IndexError);
-}
-
-TEST_P(FormatTestCaseWithEncryption, open_ecnrypted_with_non_encrypted) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  ASSERT_NE(nullptr, dir().attributes().encryption());
-
-  {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
-  }
-
-  // remove encryption
-  dir().attributes() = irs::DirectoryAttributes{nullptr};
-
-  // can't open encrypted index without encryption
-  ASSERT_THROW(
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions()),
-    irs::IndexError);
-}
-
-TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
-  if (!supports_encryption()) {
-    return;
-  }
-
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  const tests::Document* doc1 = gen.next();
-
-  dir().attributes() = irs::DirectoryAttributes{nullptr};
-
-  // write segment with format11
-  {
-    auto writer = irs::IndexWriter::Make(dir(), codec(), irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(Insert(*writer, doc1->indexed.begin(), doc1->indexed.end()));
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    AssertSnapshotEquality(*writer);
-  }
-
-  // add cipher
-  dir().attributes() =
-    irs::DirectoryAttributes{std::make_unique<tests::Rot13Encryption>(7)};
-
-  // check index
-  auto index =
-    irs::DirectoryReader(dir(), nullptr, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(index);
-  ASSERT_EQ(1, index->size());
-  ASSERT_EQ(1, index->docs_count());
-  ASSERT_EQ(1, index->live_docs_count());
-
-  // check segment 0
-  {
-    auto& segment = index[0];
-    ASSERT_EQ(1, segment.size());
-    ASSERT_EQ(1, segment.docs_count());
-    ASSERT_EQ(1, segment.live_docs_count());
-
-    auto terms = segment.field(tests::FieldIdFor("same"));
-    ASSERT_NE(nullptr, terms);
-    auto term_itr = terms->iterator();
-    ASSERT_TRUE(term_itr->next());
-
-    size_t hits = 0;
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
-         !irs::doc_limits::eof(docs_itr->Next());) {
-      ++hits;
+  // Pins each case to the check that is supposed to catch it, rather than to
+  // any failure at all.
+  auto rejected = [&](std::string_view name, uint64_t version,
+                      std::string_view expected) {
+    std::string message{"not rejected"};
+    try {
+      irs::SegmentMeta meta;
+      sm::Read(dir(), meta, irs::FileName(name, version, sm::kExt));
+    } catch (const irs::IndexError& e) {
+      message = e.what();
     }
-    ASSERT_EQ(1, hits);
+    EXPECT_NE(std::string::npos, message.find(expected))
+      << name << ": " << message;
+  };
+
+  auto serialize = [](std::initializer_list<uint32_t> docs) {
+    roaring::Roaring compressed;
+    for (const auto doc : docs) {
+      compressed.add(doc);
+    }
+    std::string blob(compressed.getSizeInBytes(), 0);
+    compressed.write(blob.data());
+    return blob;
+  };
+
+  auto write = [&](std::string_view name, uint64_t version,
+                   std::string_view mask,
+                   std::initializer_list<uint64_t> parents, bool files) {
+    auto out = create(name, version);
+    if (!mask.empty()) {
+      out->WriteData(reinterpret_cast<const irs::byte_type*>(mask.data()),
+                     mask.size());
+    }
+    irs::format_utils::WriteFooter(*out, [&](
+                                           duckdb::BinarySerializer& meta_out) {
+      if (parents.size() != 0) {
+        meta_out.WriteList(
+          sm::kFieldParents, "parents", parents.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<uint64_t>(parents.begin()[i]);
+          });
+      }
+      if (files) {
+        meta_out.WriteList(
+          sm::kFieldFiles, "files", 1,
+          [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+            list.WriteElement<std::string>("file1");
+          });
+      }
+      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
+      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
+    });
+  };
+
+  // the mask is not a bitmap at all
+  write("not_a_bitmap", 1, "garbage!", {}, true);
+  rejected("not_a_bitmap", 1, "Corrupted document mask");
+
+  // a document id at the eof sentinel, i.e. an unbounded mask
+  write("mask_at_eof", 1, serialize({irs::doc_limits::eof()}), {}, true);
+  rejected("mask_at_eof", 1, "Invalid document id");
+
+  // a document id below the first valid one
+  write("mask_below_min", 1, serialize({0}), {}, true);
+  rejected("mask_below_min", 1, "Invalid document id");
+
+  // only the root of a chain may carry the segment's file list
+  const auto mask = serialize({1, 2, 3});
+  write("two_file_lists", 1, mask, {}, true);
+  write("two_file_lists", 2, mask, {1}, true);
+  rejected("two_file_lists", 2, "a second link carries");
+
+  write("no_file_list", 1, mask, {}, false);
+  write("no_file_list", 2, mask, {1}, false);
+  rejected("no_file_list", 1, "the segment file list is missing");
+  rejected("no_file_list", 2, "the segment file list is missing");
+
+  write("maskless_head", 1, mask, {}, true);
+  write("maskless_head", 2, {}, {1}, false);
+  rejected("maskless_head", 2, "maskless head derives from 1 link(s)");
+
+  write("self_parent", 2, mask, {2}, true);
+  rejected("self_parent", 2, "out of order");
+
+  write("unordered_parents", 1, mask, {}, true);
+  write("unordered_parents", 2, mask, {1}, false);
+  write("unordered_parents", 3, mask, {2, 1}, false);
+  rejected("unordered_parents", 3, "out of order");
+}
+
+TEST_P(FormatTestCase, segment_meta_derives_from_listed_links) {
+  namespace sm = irs::segment_meta;
+
+  constexpr std::string_view kName = "listed_meta_name";
+
+  auto write = [&](uint64_t version, irs::doc_id_t doc,
+                   std::initializer_list<uint64_t> parents, bool files) {
+    auto out = dir().create(irs::FileName(kName, version, sm::kExt));
+    ASSERT_NE(nullptr, out);
+    roaring::Roaring compressed;
+    compressed.add(doc);
+    std::string blob(compressed.getSizeInBytes(), 0);
+    compressed.write(blob.data());
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(blob.data()),
+                   blob.size());
+    irs::format_utils::WriteFooter(*out, [&](
+                                           duckdb::BinarySerializer& meta_out) {
+      if (parents.size() != 0) {
+        meta_out.WriteList(
+          sm::kFieldParents, "parents", parents.size(),
+          [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+            list.WriteElement<uint64_t>(parents.begin()[i]);
+          });
+      }
+      if (files) {
+        meta_out.WriteList(
+          sm::kFieldFiles, "files", 1,
+          [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+            list.WriteElement<std::string>("file1");
+          });
+      }
+      meta_out.WriteProperty<uint32_t>(sm::kFieldDocsCount, "docs_count", 100);
+      meta_out.WriteProperty<uint64_t>(sm::kFieldByteSize, "byte_size", 42);
+    });
+  };
+
+  write(1, 1, {}, true);
+  write(2, 2, {1}, false);
+  write(3, 3, {1, 2}, false);
+  write(5, 5, {1, 3}, false);
+
+  irs::SegmentMeta meta;
+  sm::Read(dir(), meta, irs::FileName(kName, 5, sm::kExt));
+
+  irs::DocumentMask expected;
+  expected.Add(1);
+  expected.Add(3);
+  expected.Add(5);
+  expected.Trim();
+  ASSERT_NE(nullptr, meta.docs_mask);
+  ASSERT_EQ(expected, *meta.docs_mask);
+  ASSERT_EQ(97, meta.live_docs_count);
+  ASSERT_EQ(3, meta.docs_mask_chain);
+  ASSERT_EQ(
+    (std::vector<std::string>{"file1", irs::FileName(kName, 1, sm::kExt),
+                              irs::FileName(kName, 3, sm::kExt)}),
+    meta.files);
+}
+
+TEST_P(FormatTestCase, format_utils_footer) {
+  constexpr std::string_view kData = "segment data";
+  const auto write = [&](std::string_view name, std::string_view data) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    if (!data.empty()) {
+      stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
+                        data.size());
+    }
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+      meta.WriteProperty<uint32_t>(0, "value", 42);
+    });
+  };
+  const auto read = [&](std::string_view name, std::string_view data) {
+    auto stream = dir().open(name, irs::IOAdvice::NORMAL);
+    ASSERT_NE(nullptr, stream);
+    uint32_t value = 0;
+    uint64_t data_size = 0;
+    const auto footer = irs::format_utils::ReadFooter(
+      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
+        value = meta.ReadProperty<uint32_t>(0, "value");
+        data_size = size;
+      });
+    irs::Crc32c crc;
+    crc.process_bytes(data.data(), data.size());
+    ASSERT_EQ(42, value);
+    ASSERT_EQ(data.size(), data_size);
+    ASSERT_EQ(data.size(), footer.data_len);
+    ASSERT_EQ(crc.checksum(), footer.data_expected_crc32c);
+  };
+
+  write("file", kData);
+  read("file", kData);
+
+  write("no_data", {});
+  read("no_data", {});
+}
+
+TEST_P(FormatTestCase, format_utils_footer_damaged) {
+  {
+    auto stream = dir().create("file");
+    ASSERT_NE(nullptr, stream);
+    stream->WriteU64(7);
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+      meta.WriteProperty<uint32_t>(0, "value", 42);
+    });
   }
+
+  irs::bstring bytes;
+  {
+    auto stream = dir().open("file", irs::IOAdvice::NORMAL);
+    ASSERT_NE(nullptr, stream);
+    bytes.resize(stream->Length());
+    stream->ReadData(0, bytes.data(), bytes.size());
+  }
+
+  const auto write = [&](std::string_view name, irs::bytes_view data) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    if (!data.empty()) {
+      stream->WriteData(data.data(), data.size());
+    }
+  };
+  const auto read = [&](std::string_view name) {
+    auto stream = dir().open(name, irs::IOAdvice::NORMAL);
+    ASSERT_NE(nullptr, stream);
+    irs::format_utils::ReadFooter(
+      *stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
+        meta.ReadProperty<uint32_t>(0, "value");
+      });
+  };
+
+  auto flipped = bytes;
+  flipped[sizeof(uint64_t)] ^= 1;
+  write("flipped", flipped);
+  ASSERT_THROW(read("flipped"), irs::IndexError);
+
+  auto long_footer = bytes;
+  long_footer[long_footer.size() - 1] = 0xFF;
+  write("long_footer", long_footer);
+  ASSERT_THROW(read("long_footer"), irs::IndexError);
+
+  write("truncated", irs::bytes_view{bytes}.substr(0, bytes.size() - 1));
+  ASSERT_THROW(read("truncated"), irs::IndexError);
+
+  write("empty", {});
+  ASSERT_THROW(read("empty"), irs::IndexError);
+}
+
+TEST_P(FormatTestCase, index_meta_reads_its_storage_version_range) {
+  namespace im = irs::index_meta;
+
+  const auto read = [&](uint64_t gen, uint64_t version) -> std::string {
+    const auto name = im::FileName(gen);
+    {
+      auto out = dir().create(name);
+      EXPECT_NE(nullptr, out);
+      irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta) {
+        meta.WriteProperty<uint64_t>(im::kFieldStorageVersion,
+                                     "storage_version", version);
+        meta.WriteProperty<uint64_t>(im::kFieldSegCounter, "seg_counter", 0);
+      });
+    }
+    try {
+      irs::IndexMeta meta;
+      im::Read(dir(), meta, name);
+    } catch (const irs::IndexError& e) {
+      return e.what();
+    }
+    return {};
+  };
+
+  const auto lower = static_cast<uint64_t>(duckdb::SERENEDB_VERSION_LOWER);
+  const auto upper = static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER);
+  EXPECT_EQ("", read(1, lower));
+  EXPECT_EQ("", read(2, upper));
+  const auto newer = read(3, upper + 1);
+  EXPECT_NE(std::string::npos, newer.find("written by a newer release"))
+    << newer;
+  const auto older = read(4, lower - 1);
+  EXPECT_NE(std::string::npos, older.find("older than this release")) << older;
 }
 
 }  // namespace tests
@@ -1494,8 +1466,7 @@ TEST_P(FormatTestCaseWithEncryption, open_non_ecnrypted_with_encrypted) {
 // --- columns_* coverage -------------------------------------------------
 // `irs::ColWriter` (one `.col` file per segment, independent of
 // the per-format codec) is the column-data substrate the tests below
-// exercise. The two `FormatTestCaseWithEncryption` columnstore tests are
-// GTEST_SKIP'd pending the encryption follow-up.
+// exercise.
 
 namespace {
 
@@ -3858,14 +3829,6 @@ TEST_P(FormatTestCase, columns_issue700) {
       }
     }
   }
-}
-
-TEST_P(FormatTestCaseWithEncryption, columnstore_read_write_wrong_encryption) {
-  GTEST_SKIP() << "columnstore encryption not yet supported";
-}
-
-TEST_P(FormatTestCaseWithEncryption, write_zero_block_encryption) {
-  GTEST_SKIP() << "columnstore encryption not yet supported";
 }
 
 }  // namespace tests

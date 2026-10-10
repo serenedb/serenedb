@@ -27,7 +27,6 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <list>
 #include <magic_enum/magic_enum.hpp>
@@ -51,7 +50,7 @@ template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTrip(const T& in, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -67,7 +66,7 @@ template<typename T, typename Arg = irs::utils::detail::Empty>
 void RoundTripInto(const T& in, T& out, const Arg& arg = {}) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in, arg);
   }
   stream.Rewind();
@@ -350,7 +349,7 @@ TEST(DuckRoundTrip, write_invalid_enum_throws) {
     MyIntEnum v{};
   };
   duckdb::MemoryStream stream;
-  duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+  duckdb::BinarySerializer sink{stream};
   EXPECT_ANY_THROW(
     irs::utils::WriteTuple(sink, EnumField{static_cast<MyIntEnum>(999)}));
 }
@@ -420,9 +419,7 @@ TEST(DuckRoundTrip, error_t_test) {
   RoundTrip(ErrorTTest{.s = "ReturnNode", .id = 3});
 }
 
-TEST(DuckRoundTrip, truncated_payload_throws) {
-  // Write a narrow shape, attempt to read into a wider one => ReadTuple
-  // raises when the stream runs out before all fields are populated.
+TEST(DuckRoundTrip, narrow_payload_reads_defaults) {
   struct Narrow {
     int i{};
     bool operator==(const Narrow&) const = default;
@@ -435,15 +432,29 @@ TEST(DuckRoundTrip, truncated_payload_throws) {
     bool operator==(const Wide&) const = default;
   };
 
+  Wide out{.i = 1, .d = 2.5, .b = true, .s = "x"};
+  RoundTripInto(Wide{.i = 42}, out);
+  EXPECT_EQ(out, (Wide{.i = 42}));
+
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, Narrow{.i = 42});
   }
   stream.Rewind();
   duckdb::BinaryDeserializer source{stream};
-  Wide out{};
-  EXPECT_ANY_THROW(irs::utils::ReadTuple(source, out));
+  irs::utils::ReadTuple(source, out);
+  EXPECT_EQ(out, (Wide{.i = 42}));
+
+  duckdb::MemoryStream wide;
+  {
+    duckdb::BinarySerializer sink{wide};
+    irs::utils::WriteTuple(sink, Wide{.i = 42, .s = "new"});
+  }
+  wide.Rewind();
+  duckdb::BinaryDeserializer wide_source{wide};
+  Narrow narrow;
+  EXPECT_ANY_THROW(irs::utils::ReadTuple(wide_source, narrow));
 }
 
 // Serializes `in` as a `Src`, then reads it back as a `Dst`; returns the error
@@ -452,7 +463,7 @@ template<typename Dst, typename Src>
 std::string ReadTupleError(const Src& in) {
   duckdb::MemoryStream stream;
   {
-    duckdb::BinarySerializer sink{stream, duckdb::VersionStorageOptions()};
+    duckdb::BinarySerializer sink{stream};
     irs::utils::WriteTuple(sink, in);
   }
   stream.Rewind();
@@ -466,7 +477,7 @@ std::string ReadTupleError(const Src& in) {
   return {};
 }
 
-TEST(DuckRoundTrip, field_count_mismatch_reports_counts) {
+TEST(DuckRoundTrip, unknown_field_reports_its_id) {
   struct OneField {
     int a{};
   };
@@ -474,9 +485,10 @@ TEST(DuckRoundTrip, field_count_mismatch_reports_counts) {
     int a{};
     int b{};
   };
-  const std::string msg = ReadTupleError<TwoFields>(OneField{.a = 1});
-  EXPECT_NE(msg.find("serialized data has 1"), std::string::npos) << msg;
-  EXPECT_NE(msg.find("expected 2"), std::string::npos) << msg;
+  const std::string msg = ReadTupleError<OneField>(TwoFields{.a = 1, .b = 2});
+  EXPECT_NE(msg.find("expected end of object"), std::string::npos) << msg;
+  EXPECT_NE(msg.find("field id: 1"), std::string::npos) << msg;
+  EXPECT_TRUE(ReadTupleError<TwoFields>(OneField{.a = 1}).empty());
 }
 
 TEST(DuckRoundTrip, invalid_enum_value_throws) {
@@ -503,17 +515,13 @@ TEST(DuckRoundTrip, variant_index_out_of_range_throws) {
 }
 
 TEST(DuckRoundTrip, element_error_reports_index) {
-  // A bad value at field index 1 must be wrapped with that index, not 0.
-  struct TwoInts {
-    int32_t a{};
-    int32_t b{};
+  struct Ints {
+    std::vector<int32_t> v;
   };
-  struct IntThenEnum {
-    int32_t a{};
-    MyIntEnum b{};
+  struct Enums {
+    std::vector<MyIntEnum> v;
   };
-  const std::string msg =
-    ReadTupleError<IntThenEnum>(TwoInts{.a = 1, .b = 999});
+  const std::string msg = ReadTupleError<Enums>(Ints{.v = {1, 999}});
   EXPECT_NE(msg.find("element 1"), std::string::npos) << msg;
   EXPECT_NE(msg.find("Invalid enum value"), std::string::npos) << msg;
 }
@@ -525,7 +533,7 @@ TEST(DuckRoundTrip, fixed_array_size_mismatch_throws) {
   struct A2 {
     std::array<int, 2> v{};
   };
-  const std::string msg = ReadTupleError<A2>(A3{});
+  const std::string msg = ReadTupleError<A2>(A3{.v = {1, 2, 3}});
   EXPECT_NE(msg.find("serialized data has 3"), std::string::npos) << msg;
   EXPECT_NE(msg.find("expected 2"), std::string::npos) << msg;
 }

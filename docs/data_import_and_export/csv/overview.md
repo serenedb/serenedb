@@ -6,10 +6,11 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 ## Examples
 
-The following examples use the <a href="/files/docs/flights.csv" download>`flights.csv`</a> file.
+The following examples use the <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> file.
 
 Read a CSV file from disk, auto-infer options:
 
@@ -50,7 +51,7 @@ Below are parameters that can be passed to the [`read_csv` function](#csv-functi
 | Name                                                                           | Description                                                                                                                                                                                                                                                                                                                                                     | Type                     | Default                                        |
 | :----------------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :----------------------- | :--------------------------------------------- |
 | `all_varchar`                                                                  | Skip type detection and assume all columns are of type `VARCHAR`. This option is only supported by the `read_csv` function.                                                                                                                                                                                                                                     | `BOOL`                   | `false`                                        |
-| `allow_quoted_nulls`                                                           | Allow the conversion of quoted values to `NULL` values                                                                                                                                                                                                                                                                                                          | `BOOL`                   | `true`                                         |
+| `allow_quoted_nulls`                                                           | Allow the conversion of quoted values to `NULL` values. `COPY ... FROM` into a table defaults it to `false`, as PostgreSQL does: a quoted empty field (`""`) loads as an empty string, an unquoted empty field as `NULL`.                                                                                                                                                                                                                                                                                  | `BOOL`                   | `true`                                         |
 | `auto_detect`                                                                  | [Auto detect CSV parameters](../../data_import_and_export/csv/auto_detection.md).                                                                                                                                                                                                                                                                               | `BOOL`                   | `true`                                         |
 | `auto_type_candidates`                                                         | Types that the sniffer uses when detecting column types. The `VARCHAR` type is always included as a fallback option. See [example](#auto_type_candidates-details).                                                                                                                                                                                              | `TYPE[]`                 | [default types](#auto_type_candidates-details) |
 | `buffer_size`                                                                  | Size of the buffers used to read files, in bytes. Must be large enough to hold four lines and can significantly impact performance.                                                                                                                                                                                                                             | `BIGINT`                 | `16 * max_line_size`                           |
@@ -113,7 +114,7 @@ The default value for the `auto_type_candidates` option is `['NULL', 'BOOLEAN', 
 
 ## CSV Functions
 
-The `read_csv` automatically attempts to figure out the correct configuration of the CSV reader using the CSV sniffer. It also automatically deduces types of columns. If the CSV file has a header, it will use the names found in that header to name the columns. Otherwise, the columns will be named `column0, column1, column2, ...`. An example with the <a href="/files/docs/flights.csv" download>`flights.csv`</a> file:
+The `read_csv` automatically attempts to figure out the correct configuration of the CSV reader using the CSV sniffer. It also automatically deduces types of columns. If the CSV file has a header, it will use the names found in that header to name the columns. Otherwise, the columns will be named `column0, column1, column2, ...`. An example with the <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> file:
 
 <SqlLogicTest id="data_import_and_export/csv/overview/example_007" />
 

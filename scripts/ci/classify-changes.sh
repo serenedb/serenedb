@@ -16,7 +16,7 @@ changed="$(git diff --name-only "${BASE_REF}...HEAD")"
 #
 # Directories that affect no DuckDB suite -- iresearch and the rest of the serenedb
 # stack -- deliberately fall through to none here; they have their own gates.
-ALL_SUITES="core avro azure httpfs iceberg inet markdown postgres_scanner spatial"
+ALL_SUITES="core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop"
 ALL_SUITES_DIRS="abseil-cpp ada brotli fast_float fmt jemalloc jemalloc-cmake llvm-project lz4 re2 simdutf snappy tcmalloc zlib-ng zstd"
 
 # dir -> space-separated suite list
@@ -34,20 +34,6 @@ declare -A SUITE_OF_DIR=(
 	[jansson]="avro iceberg"
 	[duckdb_iceberg]="iceberg"
 	[croaring]="iceberg"
-	[aws-cmake]="iceberg"
-	[aws-checksums]="iceberg"
-	[aws-crt-cpp]="iceberg"
-	[aws-sdk-cpp]="iceberg"
-	[aws-c-auth]="iceberg"
-	[aws-c-cal]="iceberg"
-	[aws-c-common]="iceberg"
-	[aws-c-compression]="iceberg"
-	[aws-c-event-stream]="iceberg"
-	[aws-c-http]="iceberg"
-	[aws-c-io]="iceberg"
-	[aws-c-mqtt]="iceberg"
-	[aws-c-s3]="iceberg"
-	[aws-c-sdkutils]="iceberg"
 	[duckdb_postgres]="postgres_scanner"
 	[postgres]="postgres_scanner"
 	[database-connector]="postgres_scanner"
@@ -72,6 +58,10 @@ while IFS= read -r f; do
 		;;
 	tests/sqllogic/pg/* | tests/sqllogic/any/pg/*)
 		pg_files+=("${f#tests/sqllogic/}")
+		continue
+		;;
+	tests/duckdb/interop/*)
+		suite_hit[interop]=1
 		continue
 		;;
 	esac

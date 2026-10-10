@@ -45,6 +45,9 @@ enum class ClusteringAlgo {
 
 std::vector<float> MakeRotation(uint32_t d, uint32_t seed);
 
+bool UsesSuperKMeans(VectorMetric metric, size_t n, uint32_t k, uint32_t d,
+                     ClusteringAlgo algo = ClusteringAlgo::Auto);
+
 faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d);
 
 std::vector<float> TrainCentroids(VectorMetric metric, const float* data,

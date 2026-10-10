@@ -163,8 +163,8 @@ DROP TABLE public.docs;
 
 
 statement ok
-DROP TEXT SEARCH DICTIONARY public.en;
+DROP SCHEMA s1 CASCADE;
 
 
 statement ok
-DROP SCHEMA s1 CASCADE;
+DROP TEXT SEARCH DICTIONARY public.en;

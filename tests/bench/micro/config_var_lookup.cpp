@@ -478,5 +478,3 @@ BENCHMARK(BmAbslIcase_Miss);
 BENCHMARK(BmLinear_Miss);
 
 }  // namespace
-
-BENCHMARK_MAIN();

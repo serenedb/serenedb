@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -28,6 +30,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <optional>
 #include <span>
@@ -118,11 +123,11 @@ class Transport : public TransportBase {
  public:
   explicit Transport(IoExecutor& exec)
     requires(Kind == SocketKind::Tcp || Kind == SocketKind::Unix)
-    : _socket{exec.Context()}, _ioexec{&exec} {}
+    : _socket{exec.Context()}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
 
   Transport(IoExecutor& exec, asio_ns::ssl::context& ssl)
     requires(Kind == SocketKind::Ssl || Kind == SocketKind::MaybeTls)
-    : _socket{exec.Context(), ssl}, _ioexec{&exec} {}
+    : _socket{exec.Context(), ssl}, _ioexec{&exec}, _task{MakeResumer(exec)} {}
 
   void Close() noexcept { _socket.Close(); }
   auto& Lowest() noexcept { return _socket.Lowest(); }
@@ -139,9 +144,7 @@ class Transport : public TransportBase {
     }
     _write_gate.Kick();
     _producer_gate.Kick();
-    if (_task) {
-      _task->RequestRun();
-    }
+    _task->RequestRun();
     static_cast<Session*>(this)->OnStop();
   }
 
@@ -293,9 +296,22 @@ class Transport : public TransportBase {
   // the returned future and joins it at teardown -- so it runs on a raw `this`
   // kept alive by Run's owning self.
   yaclib::Future<> SendWriter() {
+    // io-side close: cancels RecvLoop's pending read so it unwinds.
+    absl::Cleanup close_guard = [this] {
+      Stop();
+      _socket.Close();
+    };
     for (;;) {
+      if (_stopping.load(std::memory_order_acquire) &&
+          !_write_armed.load(std::memory_order_acquire)) {
+        break;
+      }
       co_await _write_gate.Wait(*_ioexec);
       if (_write_armed.exchange(false, std::memory_order_acq_rel)) {
+        SDB_IF_FAILURE("send_writer_throw") {
+          irs::RemoveFailurePointDebugging("send_writer_throw");
+          THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+        }
         auto [ec, bytes] = co_await _socket.Write(_write_view).NoThrow();
         if (ec) [[unlikely]] {
           Stop();  // client gone
@@ -305,10 +321,7 @@ class Transport : public TransportBase {
         // May immediately re-arm via the send callback -- the pending kick is
         // consumed by the next Wait.
         _send.FlushDone();
-        // _producer_gate has a waiter only pre-handoff (Flush, before the
-        // SessionTask exists). Once _task is set the steady-state drive parks
-        // on the task, not here, so skip the seq_cst-fenced Kick per flush.
-        if (!_task) {
+        if (!_handed_off) {
           _producer_gate.Kick();
         }
         // Wake the cpu task only when it declared interest (ArmSendWaiter): the
@@ -317,18 +330,12 @@ class Transport : public TransportBase {
         // ArmSendWaiter, seq_cst-fenced, so a wake is never lost.
         std::atomic_thread_fence(std::memory_order_seq_cst);
         const auto seen = _send_waiter.load(std::memory_order_relaxed);
-        if (seen != kSendWaiterIdle && _task &&
+        if (seen != kSendWaiterIdle &&
             _send_written.load(std::memory_order_relaxed) > seen) {
           _task->RequestRun();
         }
-        continue;
-      }
-      if (_stopping.load(std::memory_order_acquire)) {
-        break;
       }
     }
-    // io-side close: cancels RecvLoop's pending read so it unwinds.
-    _socket.Close();
     co_return {};
   }
 
@@ -356,10 +363,16 @@ class Transport : public TransportBase {
   // SendWriter so a waiting Flush wakes.
   Gate _producer_gate;
 
-  // Hosts the cpu coroutine as a duckdb::Task; created just before it spawns.
-  // Null == not spawned yet, so it also gates RequestRun wakes from io-side
-  // code. Standalone shared_ptr, co-owned with the DuckDB scheduler.
-  duckdb::shared_ptr<CpuResumer> _task;
+  const duckdb::shared_ptr<CpuResumer> _task;
+  bool _handed_off = false;
+
+ private:
+  static duckdb::shared_ptr<CpuResumer> MakeResumer(IoExecutor& exec) {
+    return duckdb::make_shared_ptr<CpuResumer>(
+      duckdb::TaskScheduler::GetScheduler(
+        irs::DuckDBEngine::Instance().instance()),
+      exec);
+  }
 };
 
 }  // namespace sdb::network

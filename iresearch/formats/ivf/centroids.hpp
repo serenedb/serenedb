@@ -30,7 +30,6 @@
 #include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/vector.hpp"
 
 namespace irs {
 

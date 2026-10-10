@@ -3,6 +3,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import DocCallout from "@site/src/components/DocCallout";
 
 # System Table Compatibility
 
@@ -16,7 +17,7 @@ This page provides an overview of the currently supported system tables and view
 
 ## System Tables
 
-System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements.
+System tables provide a raw view into the state of the database system. In contrast to PostgreSQL, system tables in SereneDB are read-only, and can only be indirectly influenced through DDL statements: `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `TRUNCATE` and `COPY ... FROM` on a system table, in `pg_catalog` or `information_schema`, fail with `permission denied: "<table>" is a system catalog`, the error PostgreSQL raises for what it refuses on its catalogs.
 
 System tables often contain many low-level details. For more accessible and friendly access to the same information, consider using the built-in system views, or the SQL-standard information schema.
 
@@ -27,7 +28,7 @@ System tables often contain many low-level details. For more accessible and frie
 | pg_amop                     | 🟡            | Stores information about operators associated with access methods. |
 | pg_amproc                   | 🟡            | Contains information about support procedures associated with access methods. |
 | pg_attrdef                  | 🟢            | Stores column default values. |
-| pg_attribute                | 🟢            | Contains information about table columns. |
+| pg_attribute                | 🟢            | Contains information about the columns of tables, views and composite types. |
 | pg_authid                   | 🟢            | Stores information about database roles. |
 | pg_auth_members             | 🟢            | Tracks role memberships. |
 | pg_cast                     | 🟡            | Contains information about type casts. |
@@ -135,9 +136,14 @@ SereneDB does not currently expose additional system views beyond the PostgreSQL
 
 The `information_schema` is a standardized, cross-database schema that allows portable system introspection. For compatibility, SereneDB follows the PostgreSQL Information Schema, which matches the ISO/IEC 9075-11 standard.
 
->The information schema views are not included in the default search path, so queries on it need to use the fully qualified
-> name:
-><SqlLogicTest id="compatibility/system-table-compatibility/example_003" />
+<DocCallout type="note">
+
+The information schema views are not included in the default search path, so queries on it need to use the fully qualified
+name:
+
+<SqlLogicTest id="compatibility/system-table-compatibility/example_003" />
+
+</DocCallout>
 
 | Table name | Support State | Details |
 |-----------|---------------|---------|

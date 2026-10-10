@@ -683,11 +683,11 @@ TEST_P(TermsFilterTestCase, compile_term_iterator_matches_predicate) {
     check(f, true);
   }
   {
-    auto dfa = irs::FromRegexp(std::string_view{"a.*|v.*"});
-    ASSERT_NE(0, dfa.NumStates());
+    irs::AutomatonOptions options{B("a.*|v.*"), irs::PatternKind::RegexpPerl};
+    ASSERT_TRUE(options.source->ok());
     irs::AutomatonFilter f;
     *f.mutable_field_id() = kDuplicatedId;
-    *f.mutable_options() = irs::AutomatonOptions{std::move(dfa), B("a.*|v.*")};
+    *f.mutable_options() = std::move(options);
     check(f, true);
   }
 }
@@ -733,7 +733,5 @@ TEST_P(TermsFilterTestCase, levenshtein_iterator_boosts) {
 static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
 
 INSTANTIATE_TEST_SUITE_P(terms_filter_test, TermsFilterTestCase,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs),
-                                            ::testing::Values(tests::FormatInfo{
-                                              "1_5simd"})),
+                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          TermsFilterTestCase::to_string);

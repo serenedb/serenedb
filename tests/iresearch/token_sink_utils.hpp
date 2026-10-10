@@ -122,14 +122,20 @@ inline duckdb::string_t ToStringT(std::string_view v) noexcept {
   return {v.data(), static_cast<uint32_t>(v.size())};
 }
 
-inline void FillColumn(irs::analysis::Tokenizer& tokenizer,
-                       std::span<const duckdb::string_t> values,
-                       irs::doc_id_t first_doc, irs::TokenSink& sink,
-                       irs::TokenLayout layout) {
+inline duckdb::UnifiedVectorFormat ValuesFormat(
+  std::span<const duckdb::string_t> values) {
   duckdb::UnifiedVectorFormat fmt;
   fmt.sel = duckdb::FlatVector::IncrementalSelectionVector();
   fmt.data = reinterpret_cast<duckdb::const_data_ptr_t>(values.data());
   fmt.physical_type = duckdb::PhysicalType::VARCHAR;
+  return fmt;
+}
+
+inline void FillColumn(irs::analysis::Tokenizer& tokenizer,
+                       std::span<const duckdb::string_t> values,
+                       irs::doc_id_t first_doc, irs::TokenSink& sink,
+                       irs::TokenLayout layout) {
+  const auto fmt = ValuesFormat(values);
   tokenizer.Fill(fmt, static_cast<uint32_t>(values.size()), first_doc, sink,
                  {layout});
 }

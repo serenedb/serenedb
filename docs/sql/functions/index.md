@@ -35,16 +35,16 @@ Function chaining also works on literals and on the result of array access. Wrap
 
 <SqlLogicTest id="sql/functions/index/example_005" />
 
+`coalesce` and `ifnull` chain the same way:
+
+<SqlLogicTest id="sql/functions/index/example_007" />
+
 ### Limitations
 
 Function chaining via the dot operator is limited to _scalar_ functions and is not supported for _table_ functions.
 For example, the following call returns a `Parser Error`:
 
 <SqlLogicTest id="sql/functions/index/example_006" />
-
-Additionally, the functions `coalesce` and `ifnull` cannot be used with function chaining for the time being:
-
-<SqlLogicTest id="sql/functions/index/example_007" />
 
 ## Query Functions
 

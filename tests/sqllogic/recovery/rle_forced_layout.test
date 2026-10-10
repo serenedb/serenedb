@@ -18,7 +18,7 @@ SET force_compression='rle';
 
 
 statement ok
-ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
+CREATE DATABASE fown;
 
 
 statement ok
@@ -108,21 +108,16 @@ SELECT 1;
 
 connection after_crash
 statement ok
-ATTACH '${__TEST_DIR__}/rlef_owned.db' AS fown2 (TYPE duckdb, STORAGE_VERSION 'serenedb_v1');
-
-
-connection after_crash
-statement ok
 ATTACH '${__TEST_DIR__}/rlef_native.db' AS fnat2 (TYPE duckdb, STORAGE_VERSION 'v2.0.0');
 
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM fown2.t) AS owned_n,
+SELECT (SELECT count(*) FROM fown.t) AS owned_n,
        (SELECT count(*) FROM fnat2.t) AS native_n,
-       (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fown2.t)
+       (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fown.t)
          = (SELECT bit_xor(hash(i32, i64, f64, i16_nulls)) FROM fnat2.t) AS layouts_agree,
-       (SELECT count(*) FROM fown2.t WHERE i16_nulls IS NULL) AS owned_nulls;
+       (SELECT count(*) FROM fown.t WHERE i16_nulls IS NULL) AS owned_nulls;
 ----
 owned_n	native_n	layouts_agree	owned_nulls
 200000	200000	t	18200
@@ -130,7 +125,7 @@ owned_n	native_n	layouts_agree	owned_nulls
 
 connection after_crash
 statement ok
-DETACH fown2;
+DROP DATABASE fown;
 
 
 connection after_crash

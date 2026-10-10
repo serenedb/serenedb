@@ -26,11 +26,11 @@
 #include <cstdint>
 #include <utility>
 
-#include "iresearch/index/index_meta.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/detail/window.hpp"
+#include "iresearch/search/fill/docs_mask.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -66,10 +66,13 @@ class LazyBitset {
   static constexpr auto kBits = BitsetStorage::kBits;
   static constexpr auto kMin = BitsetStorage::kMin;
 
-  LazyBitset(BitsetStorage&& set, const DocumentMask* removals,
+  LazyBitset(BitsetStorage&& set, fill::DocsMask&& mask,
              TableFilter* table = nullptr) noexcept
-    : _set{std::move(set)}, _filled{_set.End()} {
-    Drop(removals, 0, _set.WordCount());
+    : _set{std::move(set)},
+      _mask{std::move(mask)},
+      _has_removals{!_mask.Empty()},
+      _filled{_set.End()} {
+    Drop(0, _set.WordCount());
     if (table != nullptr) {
       SDB_ASSERT(table->Foldable());
       _set.Trim();
@@ -83,20 +86,23 @@ class LazyBitset {
     }
   }
 
-  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count,
-             const DocumentMask* removals, TableFilter* table = nullptr)
+  LazyBitset(FillNode::ptr&& node, doc_id_t docs_count, fill::DocsMask&& mask,
+             TableFilter* table = nullptr)
     : _set{docs_count},
       _node{std::move(node)},
-      _removals{removals},
+      _mask{std::move(mask)},
+      _has_removals{!_mask.Empty()},
       _table{table} {
     SDB_ASSERT(_node);
     SDB_ASSERT(_table == nullptr || _table->Foldable());
   }
 
   // Every doc of the segment, narrowed by the removals and the table filter.
-  LazyBitset(doc_id_t docs_count, const DocumentMask* removals,
-             TableFilter* table)
-    : _set{docs_count}, _removals{removals}, _table{table} {
+  LazyBitset(doc_id_t docs_count, fill::DocsMask&& mask, TableFilter* table)
+    : _set{docs_count},
+      _mask{std::move(mask)},
+      _has_removals{!_mask.Empty()},
+      _table{table} {
     SDB_ASSERT(_table == nullptr || _table->Foldable());
   }
 
@@ -131,7 +137,7 @@ class LazyBitset {
         std::fill_n(words + first, kWindowWords, ~uint64_t{0});
         next = min + kWindowDocs;
       }
-      Drop(_removals, first, first + kWindowWords);
+      Drop(first, first + kWindowWords);
       if (_table != nullptr) {
         const auto last =
           std::min<size_t>(first + kWindowWords, _set.WordCount());
@@ -249,22 +255,19 @@ class LazyBitset {
     return doc < stop ? doc : doc_limits::invalid();
   }
 
-  void Drop(const DocumentMask* removals, size_t first, size_t last) noexcept {
-    if (removals == nullptr) {
+  void Drop(size_t first, size_t last) noexcept {
+    if (!_has_removals) {
       return;
     }
     auto* const words = _set.Words();
     last = std::min(last, size_t{_set.WordCount()});
-    for (auto w = first; w < last; ++w) {
-      auto rest = words[w];
-      while (rest != 0) {
-        const auto bit = static_cast<size_t>(std::countr_zero(rest));
-        rest &= rest - 1;
-        const auto doc = static_cast<doc_id_t>(kMin + w * kBits + bit);
-        if (removals->contains(doc)) {
-          UnsetBit(words[w], bit);
-        }
-      }
+    for (auto w = first; w < last; w += kWindowWords) {
+      const auto n = std::min(kWindowWords, last - w);
+      const auto min = static_cast<doc_id_t>(kMin + w * kBits);
+      uint64_t dead[kWindowWords];
+      std::fill_n(dead, n, uint64_t{0});
+      _mask.FillOr(min, static_cast<doc_id_t>(min + n * kBits), dead);
+      FoldAndNot(words + w, dead, n);
     }
   }
 
@@ -276,7 +279,8 @@ class LazyBitset {
 
   BitsetStorage _set;
   FillNode::ptr _node;
-  const DocumentMask* _removals = nullptr;
+  fill::DocsMask _mask;
+  bool _has_removals = false;
   TableFilter* _table = nullptr;
   doc_id_t _filled = kMin;
 };
@@ -313,8 +317,7 @@ class CountAgainst {
     _set->Reach(static_cast<doc_id_t>(max + 1));
     const auto begin = prev + 1;
     if (begin >= _min && begin + uint64_t{n} * kBits <= _max) [[likely]] {
-      _total +=
-        CountBlock(_set->Words(), static_cast<int64_t>(prev) - kMin, src, n);
+      _total += CountBlock(_set->Words(), begin - kMin, src, n);
       return;
     }
     const auto* const live = _set->Words();

@@ -1,0 +1,89 @@
+control substitution on
+
+statement ok
+CREATE TABLE melstroi_subs (id INTEGER, a INTEGER, b TEXT);
+
+
+statement ok
+INSERT INTO melstroi_subs SELECT i, i, 'x' FROM range(0, 100) r(i);
+
+
+connection papich
+statement ok
+BEGIN;
+
+
+connection papich
+statement ok
+INSERT INTO melstroi_subs SELECT i, i, 'y' || i FROM range(100, 3100) r(i);
+
+
+connection default
+statement ok
+SET debug_local_file_system_delay_ms = 500;
+
+
+connection papich
+statement async ok
+COMMIT;
+
+
+connection default
+query ok retry 40 backoff 100ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'COMMIT%';
+----
+n
+1
+
+
+sleep 300ms
+
+
+connection donsimon
+statement ok
+ALTER TABLE melstroi_subs ADD COLUMN c INTEGER DEFAULT 1;
+
+
+connection papich
+wait
+
+
+connection default
+statement ok
+SET debug_local_file_system_delay_ms = 0;
+
+
+connection default
+statement ok
+INSERT INTO melstroi_subs (id, a, b) SELECT i, i, 'z' FROM range(5000, 5010) r(i);
+
+
+connection default
+statement ok
+DELETE FROM melstroi_subs WHERE id >= 5005;
+
+
+connection default
+query
+SELECT count(*) AS n, sum(id) AS s, sum(c) AS c FROM melstroi_subs;
+----
+n	s	c
+3105	4828460	3105
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, sum(id) AS s, sum(c) AS c FROM melstroi_subs;
+----
+n	s	c
+3105	4828460	3105

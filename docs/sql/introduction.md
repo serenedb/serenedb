@@ -6,6 +6,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 This page provides an overview of how to perform simple operations in SQL.
 This tutorial is only intended to give you an introduction and is in no way a complete tutorial on SQL.
@@ -82,7 +83,7 @@ Many developers consider explicitly listing the columns better style than relyin
 
 Please enter all the commands shown above so you have some data to work with in the following sections.
 
-Alternatively, you can use the `COPY` statement. This is faster for large amounts of data because the `COPY` command is optimized for bulk loading while allowing less flexibility than `INSERT`. An example with <a href="/files/docs/weather.csv" download>weather.csv</a> would be:
+Alternatively, you can use the `COPY` statement. This is faster for large amounts of data because the `COPY` command is optimized for bulk loading while allowing less flexibility than `INSERT`. An example with <a href={useBaseUrl("/files/docs/weather.csv")} download>weather.csv</a> would be:
 
 <SqlLogicTest id="sql/introduction/example_008" hideResult />
 

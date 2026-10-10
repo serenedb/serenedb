@@ -25,8 +25,8 @@
 #include <duckdb/execution/operator/helper/physical_result_collector.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/materialized_query_result.hpp>
 #include <duckdb/main/prepared_statement_data.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/debugging.hpp>
 
@@ -47,7 +47,7 @@ sdb::pg::SerializationContext CloneProto(
   context.extra_float_digits = proto.extra_float_digits;
   context.bytea_output = proto.bytea_output;
   if (proto.time_zone) {
-    context.time_zone.reset(proto.time_zone->clone());
+    context.time_zone = proto.time_zone->Copy();
   }
   context.client = proto.client;
   context.quote_seq = proto.quote_seq;
@@ -58,12 +58,12 @@ sdb::pg::SerializationContext CloneProto(
   return context;
 }
 
-class PgWireCollectorGlobalState : public duckdb::GlobalSinkState {
+class PgWireCollectorGlobalState final : public duckdb::GlobalSinkState {
  public:
   std::shared_ptr<WireSinkContext> ctx;
 };
 
-class PgWireCollectorLocalState : public duckdb::LocalSinkState {
+class PgWireCollectorLocalState final : public duckdb::LocalSinkState {
  public:
   // Parallel mode encodes into this; direct mode points sctx at the session's
   // _send instead and never touches it. Starts tiny: short queries seal one
@@ -81,7 +81,7 @@ class PgWireCollectorLocalState : public duckdb::LocalSinkState {
   bool initialized = false;
 };
 
-class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
+class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
  public:
   PhysicalPgWireCollector(duckdb::PhysicalPlan& physical_plan,
                           duckdb::PreparedStatementData& data,
@@ -132,10 +132,10 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
         std::min<duckdb::idx_t>(chunk.size() - start, budget - sent);
       WriteDataChunk(out, chunk, lstate.serializers, lstate.sctx, start,
                      start + take);
-      ctx.rows.fetch_add(take, std::memory_order_relaxed);
       ctx.direct_committed.store(out.TotalCommitted(),
                                  std::memory_order_release);
-      if (start + take < chunk.size()) {
+      ctx.rows.fetch_add(take, std::memory_order_release);
+      if (start + take < chunk.size() || sent + take == budget) {
         ctx.page_offset = start + take;
         ctx.BlockSink(input.interrupt_state);
         return duckdb::SinkResultType::BLOCKED;
@@ -208,9 +208,9 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
     duckdb::GlobalSinkState& state) const override {
     auto collection = duckdb::make_uniq<duckdb::ColumnDataCollection>(
       duckdb::Allocator::DefaultAllocator(), types);
-    return duckdb::make_uniq<duckdb::MaterializedQueryResult>(
-      statement_type, properties, duckdb::IdentifiersToStrings(names),
-      std::move(collection), duckdb::ClientProperties{});
+    return duckdb::make_uniq<duckdb::QueryResult>(statement_type, properties,
+                                                  names, std::move(collection),
+                                                  duckdb::ClientProperties{});
   }
 
   bool ParallelSink() const override {
@@ -238,7 +238,7 @@ class PhysicalPgWireCollector : public duckdb::PhysicalResultCollector {
   void Seal(WireSinkContext& ctx, PgWireCollectorLocalState& lstate) const {
     lstate.sealed_total = lstate.buffer.TotalCommitted();
     auto chain = lstate.buffer.ReleaseChain();
-    if (chain.head != nullptr) {
+    if (chain.head) {
       ctx.PushChain(std::move(chain));
     }
   }
@@ -268,7 +268,7 @@ duckdb::PhysicalOperator& ExecutedPlan(duckdb::PhysicalOperator& root) {
 
 bool PlanRunsParallel(duckdb::ClientContext& context,
                       duckdb::PhysicalOperator& root) {
-  if (duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads() <= 1) {
+  if (duckdb::TaskScheduler::QueryThreads(context) <= 1) {
     return false;
   }
   for (auto& source : root.GetSources()) {
@@ -293,7 +293,8 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   ctx->context = context.shared_from_this();
   ctx->engaged = true;
   if (ctx->announce_rowdesc) {
-    WriteRowDescription(*ctx->send, data.types, data.names, ctx->formats);
+    WriteRowDescription(*ctx->send, context, data.types, data.names,
+                        ctx->formats);
   }
   auto& physical_plan = *data.physical_plan;
   auto& root = physical_plan.Root();

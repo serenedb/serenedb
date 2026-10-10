@@ -55,9 +55,7 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
     bool output_unigrams = true;
     bool fallback_unigrams = false;
     bstring token_separator = bstring(1, kDefaultSeparator);
-    bstring filler_token;
     std::vector<bstring> frequent_words;
-    bool store_tokens = true;
   };
 
   static constexpr std::string_view type_name() noexcept {
@@ -65,95 +63,80 @@ class ShingleTokenizer final : public TypedTokenizer<ShingleTokenizer>,
   }
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
 
-  static constexpr uint32_t kMaxTokenSize = (uint32_t{1} << 30) - 1;
-
-  static void WriteToken(bytes_view token, bstring& out);
-  static const byte_type* ReadToken(const byte_type* p,
-                                    bytes_view& token) noexcept;
-  static const byte_type* ReadTokenChecked(const byte_type* p,
-                                           const byte_type* end,
-                                           bytes_view& token) noexcept;
-
   ShingleTokenizer(Tokenizer::ptr base, Options&& options);
 
   TokenTraits Traits() const noexcept final {
     return {
-      .explicit_pos = _output_unigrams || !_producer_dense || _min != _max,
-      .store = _store_tokens,
+      .explicit_pos =
+        _output_unigrams || _producer.explicit_pos || _min != _max,
+      .offsets = _producer.offsets,
     };
+  }
+
+  auto& Base(this auto& self) noexcept { return *self._analyzer; }
+  uint32_t MinShingle() const noexcept { return _min; }
+  uint32_t MaxShingle() const noexcept { return _max; }
+  bool OutputUnigrams() const noexcept { return _output_unigrams; }
+  bytes_view Separator() const noexcept { return _separator; }
+  bool HasFrequentWords() const noexcept { return !_frequent.Empty(); }
+  bool IsFrequent(bytes_view word) const noexcept {
+    return _frequent.Contains(MakeTermView(ViewCast<char>(word)));
   }
 
   void Bind(duckdb::ClientContext& ctx) final { _analyzer->Bind(ctx); }
   void Unbind() noexcept final { _analyzer->Unbind(); }
   size_t MemoryUsage() const noexcept final {
     return _analyzer->MemoryUsage() + _freq.capacity() * sizeof(uint8_t) +
-           _shingle_ends.capacity() * sizeof(uint32_t) +
-           _tok_psum.capacity() * sizeof(uint32_t) + _blob.capacity() +
-           _frequent.MemoryBytes() +
-           (_sub ? sizeof(Sub) + _sub->tokens.MemoryUsage() : 0);
+           _shingle_sizes.capacity() * sizeof(uint32_t) +
+           _tok_psum.capacity() * sizeof(uint32_t) + _frequent.MemoryBytes() +
+           (_sub ? sizeof(Sub) + _sub->tokens.MemoryUsage() +
+                     _sub->offs_tokens.MemoryUsage()
+                 : 0);
   }
 
   auto PrepareBatch(BlockTraits) {
     if (!_sub) {
-      _sub = std::make_unique<Sub>(_analyzer->Traits());
+      _sub = std::make_unique<Sub>(_producer);
     }
-    return std::tuple{_output_unigrams, _has_frequent, _store_tokens};
+    return std::tuple{_output_unigrams, HasFrequentWords()};
   }
 
-  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
-           bool StoreTokens>
+  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
   bool DoFill(duckdb::string_t value, TokenSink& sink);
 
+  bool FillTokens(std::span<const duckdb::string_t> tokens, TokenSink& sink,
+                  FillCtx ctx) final;
+
  private:
-  IRS_FORCE_INLINE bool DrainBase(duckdb::string_t raw);
+  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent,
+           typename Base>
+  IRS_FORCE_INLINE void EmitBaseTokens(const duckdb::string_t* raw,
+                                       TokenSink& sink, const Base& base);
   template<bool HasFrequent>
-  IRS_FORCE_INLINE void BuildTables(uint32_t n);
-  template<TokenLayout Layout, bool OutputUnigrams, bool HasFrequent>
-  IRS_FORCE_INLINE void EmitRuns(duckdb::string_t raw, TokenSink& sink,
-                                 uint32_t n, bool no_shingles);
-  IRS_FORCE_INLINE void StoreBlob(TokenSink& sink, uint32_t n);
+  IRS_FORCE_INLINE void BuildTables(std::span<const duckdb::string_t> tok);
 
   Tokenizer::ptr _analyzer;
   uint32_t _min;
   uint32_t _max;
   bool _output_unigrams;
   bool _fallback_unigrams;
-  bool _has_frequent;
-  bool _producer_dense = true;
-  bool _store_tokens;
+  TokenTraits _producer;
   bstring _separator;
-  bstring _filler;
   dict::StringSet<std::string> _frequent;
 
   struct Sub {
-    explicit Sub(TokenTraits producer) : tokens{producer} {}
+    explicit Sub(TokenTraits producer)
+      : tokens{producer}, offs_tokens{producer} {}
 
     ValueAnalyzer analyzer;
     ValueTokens<TokenLayout::TermsPos> tokens;
+    ValueTokens<TokenLayout::TermsPosOffs> offs_tokens;
   };
 
   std::unique_ptr<Sub> _sub;
   std::vector<uint8_t> _freq;
-  std::vector<uint32_t> _shingle_ends;
+  std::vector<uint32_t> _shingle_sizes;
   std::vector<uint32_t> _tok_psum;
-  bstring _blob;
 };
-
-template<typename Context>
-void SerdeWrite(Context ctx, const ShingleTokenizer::Options& o) {
-  irs::utils::WriteTupleOrObject(
-    ctx, std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-                  o.output_unigrams, o.fallback_unigrams, o.token_separator,
-                  o.filler_token, o.frequent_words, o.store_tokens));
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, ShingleTokenizer::Options& o) {
-  auto refs =
-    std::tie(o.base_analyzer, o.min_shingle_size, o.max_shingle_size,
-             o.output_unigrams, o.fallback_unigrams, o.token_separator,
-             o.filler_token, o.frequent_words, o.store_tokens);
-  irs::utils::ReadTupleOrObject(ctx, refs);
-}
 
 }  // namespace irs::analysis

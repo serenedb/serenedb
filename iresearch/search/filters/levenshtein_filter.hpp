@@ -26,7 +26,8 @@
 #include <utility>
 
 #include "filter.hpp"
-#include "iresearch/utils/automaton.hpp"
+#include "iresearch/search/detail/term_acceptor.hpp"
+#include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -36,7 +37,6 @@ namespace irs {
 class ByEditDistance;
 class LevenshteinAutomatonFilter;
 struct FilterVisitor;
-struct CompiledAcceptor;
 struct PayAttr;
 
 struct ByEditDistanceAllOptions {
@@ -101,18 +101,26 @@ struct LevenshteinAutomatonOptions {
   using FilterType = LevenshteinAutomatonFilter;
 
   bstring target;
-  std::shared_ptr<const CompiledAcceptor> compiled;
+  std::shared_ptr<const LevenshteinAcceptor> parametric;
+  TermAcceptorSource::ptr source;
+  ByEditDistanceAllOptions::pdp_f provider{};
   uint32_t utf8_target_size{1};
   byte_type no_distance{1};
+  bool with_transpositions{false};
+  bool with_ties{false};
   size_t max_terms{};
 
   LevenshteinAutomatonOptions() = default;
-  LevenshteinAutomatonOptions(const ParametricDescription& d, bytes_view prefix,
+  LevenshteinAutomatonOptions(const ParametricDescription& d,
+                              ByEditDistanceAllOptions::pdp_f provider,
+                              bool with_transpositions, bytes_view prefix,
                               bytes_view term, size_t max_terms);
 
   bool operator==(const LevenshteinAutomatonOptions& rhs) const noexcept {
     return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
-           no_distance == rhs.no_distance && max_terms == rhs.max_terms;
+           no_distance == rhs.no_distance &&
+           with_transpositions == rhs.with_transpositions &&
+           with_ties == rhs.with_ties && max_terms == rhs.max_terms;
   }
 };
 

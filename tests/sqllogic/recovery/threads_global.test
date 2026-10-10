@@ -1,0 +1,105 @@
+statement ok
+SET GLOBAL threads = 3;
+
+
+query
+SHOW threads;
+----
+threads
+3
+
+
+connection other
+query
+SHOW threads;
+----
+threads
+3
+
+
+connection other
+statement ok
+SET threads = 2;
+
+
+connection default
+statement ok
+SET threads = 1000;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+1000
+
+
+connection default
+query
+SELECT count(*) FROM generate_series(1, 100000);
+----
+count
+100000
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+SET GLOBAL threads = 5;
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection other
+query
+SHOW threads;
+----
+threads
+2
+
+
+connection other
+statement ok
+RESET threads;
+
+
+connection other
+query
+SHOW threads;
+----
+threads
+5
+
+
+connection default
+statement ok
+RESET threads;
+
+
+connection default
+query
+SHOW threads;
+----
+threads
+5
+
+
+connection default
+statement ok
+RESET GLOBAL threads;
+
+
+connection other
+query
+SELECT current_setting('threads')::BIGINT > 0;
+----
+?column?
+t

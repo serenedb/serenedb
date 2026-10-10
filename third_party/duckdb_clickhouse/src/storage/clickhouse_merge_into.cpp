@@ -1,5 +1,6 @@
 #include "storage/clickhouse_catalog.hpp"
 #include "duckdb/execution/operator/persistent/physical_merge_into.hpp"
+#include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/operator/logical_merge_into.hpp"
 #include "duckdb/planner/operator/logical_update.hpp"
 #include "duckdb/planner/operator/logical_delete.hpp"
@@ -101,18 +102,22 @@ PhysicalOperator &ClickHouseCatalog::PlanMergeInto(ClientContext &context, Physi
 	map<MergeActionCondition, vector<unique_ptr<MergeIntoOperator>>> actions;
 
 	// plan the merge into clauses
+	idx_t write_count = 0;
 	for (auto &entry : op.actions) {
 		vector<unique_ptr<MergeIntoOperator>> planned_actions;
 		for (auto &action : entry.second) {
+			if (action->action_type == MergeActionType::MERGE_INSERT ||
+			    action->action_type == MergeActionType::MERGE_UPDATE ||
+			    action->action_type == MergeActionType::MERGE_DELETE) {
+				write_count++;
+			}
 			planned_actions.push_back(ClickHousePlanMergeIntoAction(*this, context, op, planner, *action, plan));
 		}
 		actions.emplace(entry.first, std::move(planned_actions));
 	}
 
-	auto &result = planner.Make<PhysicalMergeInto>(op.types, std::move(actions), op.row_id_start, op.source_marker,
-	                                               false, op.return_chunk);
-	result.children.push_back(plan);
-	return result;
+	return planner.Make<PhysicalMergeInto>(op.types, plan, std::move(actions), op.row_id_start, op.source_marker, false,
+	                                       op.return_chunk, write_count > 1);
 }
 
 } // namespace duckdb

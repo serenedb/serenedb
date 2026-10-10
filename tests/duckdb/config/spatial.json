@@ -2,7 +2,7 @@
   "description": "SereneDB test-config for the vendored duckdb_spatial test suite. The extension is built with no dependency outside this repository: geometry operations run on Boost.Geometry, and GEOS, PROJ and GDAL are not vendored -- see tests/duckdb/README.md.",
   "skip_tests": [
     {
-      "reason": "The persistent RTREE index is not built (SPATIAL_USE_RTREE=OFF). SereneDB indexes geometry through `USING inverted` (iresearch/S2), so spatial's index type, its CREATE INDEX plan, its rtree_index_* pragmas and its scan-pushdown optimizer pass are compiled out rather than merely rejected by the CREATE INDEX access-method whitelist. Every file in test/sql/index/ exercises that index, so the whole directory is skipped. The in-memory FlatRTree that accelerates spatial joins is a separate per-query structure, is still built, and its tests (test/sql/join/) still run.",
+      "reason": "The persistent RTREE index is not built (SPATIAL_USE_RTREE=OFF). SereneDB indexes geometry through `USING inverted` (iresearch/S2), so spatial's index type, its CREATE INDEX plan, its rtree_index_* pragmas and its scan-pushdown optimizer pass are compiled out rather than merely rejected by the CREATE INDEX access-method whitelist. Every file below creates that index and tests it. The in-memory FlatRTree that accelerates spatial joins is a separate per-query structure, is still built, and its tests (test/sql/join/) run.",
       "paths": [
         "test/sql/index/rtree_basic.test",
         "test/sql/index/rtree_basic_data.test_slow",
@@ -14,7 +14,6 @@
         "test/sql/index/rtree_dump.test",
         "test/sql/index/rtree_empty.test",
         "test/sql/index/rtree_filter_prune.test",
-        "test/sql/index/rtree_filter_pullup.test",
         "test/sql/index/rtree_filter_pullup_2.test",
         "test/sql/index/rtree_insert.test_slow",
         "test/sql/index/rtree_insert_empty.test",
@@ -27,11 +26,21 @@
         "test/sql/index/rtree_projection.test",
         "test/sql/index/rtree_pushdown.test",
         "test/sql/index/rtree_single.test",
-        "test/sql/index/rtree_transaction.test"
+        "test/sql/index/rtree_transaction.test",
+        "test/sql/index/rtree_crs.test",
+        "test/sql/index/rtree_delete_verification.test",
+        "test/sql/index/rtree_filter_pullup_optional.test",
+        "test/sql/index/rtree_generated_columns.test",
+        "test/sql/index/rtree_join_deferred.test",
+        "test/sql/index/rtree_join_deferred_projection.test",
+        "test/sql/index/rtree_parallel_scan.test",
+        "test/sql/index/rtree_persistence_wal_append.test",
+        "test/sql/index/rtree_scan_cost.test",
+        "test/sql/index/rtree_struct_column.test"
       ]
     },
     {
-      "reason": "GEOS is not vendored (SPATIAL_USE_GEOS=OFF, SPATIAL_USE_BOOST=ON): geometry operations run on Boost.Geometry, which has no equivalent for ST_MakeValid, ST_Node, ST_Polygonize, ST_BuildArea, ST_LineMerge, ST_SimplifyPreserveTopology, ST_ConcaveHull, ST_VoronoiDiagram, ST_MaximumInscribedCircle, ST_MinimumRotatedRectangle, ST_ReducePrecision, ST_AsMVTGeom or the seven ST_Coverage* functions, so none of them is registered. The rest of test/sql/geos/ uses functions Boost.Geometry does provide and is expected to run, but its files were written against GEOS output, so vertex order and WKT rounding may still differ -- add them here if they do.",
+      "reason": "GEOS is not vendored (SPATIAL_USE_GEOS=OFF, SPATIAL_USE_BOOST=ON): geometry operations run on Boost.Geometry, which has no equivalent for ST_MakeValid, ST_Node, ST_Polygonize, ST_BuildArea, ST_LineMerge, ST_SimplifyPreserveTopology, ST_ConcaveHull, ST_VoronoiDiagram, ST_MaximumInscribedCircle, ST_MinimumRotatedRectangle, ST_ReducePrecision, ST_AsMVTGeom or the seven ST_Coverage* functions, so none of them is registered, and each file below tests one of them. The rest of test/sql/geos/ uses functions Boost.Geometry does provide and runs.",
       "paths": [
         "test/sql/geos/st_concavehull.test",
         "test/sql/geos/st_coverageclean.test",
@@ -43,6 +52,26 @@
         "test/sql/postgis/st_coverageunion.test",
         "test/sql/postgis/st_linemerge.test",
         "test/sql/postgis/st_reduceprecision.test"
+      ]
+    },
+    {
+      "reason": "GDAL and PROJ are not vendored (feat: Boost.Geometry backend, drop PROJ/GDAL/SQLite): ST_Read, ST_Read_Meta, ST_Drivers, COPY ... (FORMAT GDAL) and ST_Transform are not registered. The files under test/sql/gdal/ and test/sql/proj.test test them; test/sql/shapefile/test_shapefile_read.test writes its shapefile through GDAL to compare ST_Read with ST_ReadSHP; test/sql/mvt/st_asmvt.test and test/sql/mvt/st_asmvt_linestring.test read the tiles back through GDAL's MVT driver, and the latter also clips with ST_AsMVTGeom, a GEOS function. test/sql/mvt/st_asmvt_encoding.test pins ST_AsMVT's encoding without GDAL.",
+      "paths": [
+        "test/sql/gdal/gdal_axis_order.test",
+        "test/sql/gdal/gdal_filter_pushdown.test",
+        "test/sql/gdal/gdal_read.test",
+        "test/sql/gdal/gdal_shapefile.test",
+        "test/sql/gdal/gdal_vsi.test",
+        "test/sql/gdal/st_read_gdb.test",
+        "test/sql/gdal/st_read_gpkg_fid.test",
+        "test/sql/gdal/st_read_order.test",
+        "test/sql/gdal/st_read_xlsx.test",
+        "test/sql/gdal/st_write_basic.test",
+        "test/sql/gdal/st_write_types.test",
+        "test/sql/proj.test",
+        "test/sql/shapefile/test_shapefile_read.test",
+        "test/sql/mvt/st_asmvt.test",
+        "test/sql/mvt/st_asmvt_linestring.test"
       ]
     }
   ]

@@ -28,7 +28,7 @@
 namespace sdb::pg {
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgHbaFileRule>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgHbaFileRule>::GetTableData() {
   // Keep the rendered rules alive: the row structs hold Text (string_view) and
   // Array<Text> spans that point into these strings and into the per-row Text
   // vectors below, so both must outlive WriteData.

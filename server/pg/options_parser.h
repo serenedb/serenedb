@@ -30,6 +30,7 @@
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <type_traits>
@@ -70,9 +71,9 @@ class OptionsParser {
            (value_raw.front() == '\'' && value_raw.back() == '\''))) {
         value_raw = value_raw.substr(1, value_raw.size() - 2);
       }
-      auto [_, inserted] = out.try_emplace(
-        absl::AsciiStrToLower(key_raw),
-        std::make_unique<duckdb::Value>(std::string{value_raw}));
+      auto [_, inserted] =
+        out.try_emplace(absl::AsciiStrToLower(key_raw),
+                        std::make_unique<duckdb::Value>(value_raw));
       if (!inserted) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("conflicting or redundant options"));
@@ -116,7 +117,8 @@ class OptionsParser {
   T EraseOptionOrDefault() {
     constexpr bool kIsBool = Info.type == OptionInfo::Type::Boolean;
     constexpr bool kIsString = Info.type == OptionInfo::Type::String ||
-                               Info.type == OptionInfo::Type::StringList;
+                               Info.type == OptionInfo::Type::StringList ||
+                               Info.type == OptionInfo::Type::Lambda;
     if (const auto option = EraseOption(Info, !kIsBool)) {
       if constexpr (kIsBool) {
         if (!*option) {
@@ -215,19 +217,6 @@ class OptionsParser {
     }
   }
 
-  void MakeOptions(const duckdb::named_parameter_map_t& options) {
-    _options.reserve(options.size());
-    for (const auto& option : options) {
-      std::string_view option_name = option.first.GetIdentifierName();
-      auto [_, emplaced] = _options.try_emplace(
-        option_name, std::make_unique<duckdb::Value>(option.second));
-      if (!emplaced) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("conflicting or redundant options"));
-      }
-    }
-  }
-
   void HandleHelp() {
     auto it = _options.find("help");
     if (it == _options.end()) {
@@ -266,12 +255,6 @@ class OptionsParser {
   }
 
  protected:
-  void WriteNotice(std::string msg) {
-    if (_notice) {
-      _notice(std::move(msg));
-    }
-  }
-
   std::string _operation;
   std::string _help_hint;
   std::function<void(std::string)> _notice;

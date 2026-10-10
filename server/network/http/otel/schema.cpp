@@ -20,14 +20,12 @@
 
 #include "network/http/otel/schema.h"
 
+#include <absl/status/status.h>
 #include <absl/strings/str_cat.h>
 
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_result.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
@@ -35,55 +33,37 @@
 #include <string_view>
 #include <vector>
 
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/read/duckdb_catalog_sets.h"
+#include "catalog/cluster.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "otel/schema_sql.h"
 #include "pg/connection_context.h"
+#include "pg/pg_types.h"
 
 namespace sdb::otel {
 namespace {
 
 class Creator {
  public:
-  Creator(std::string_view database, ObjectId database_id)
-    : _conn{irs::DuckDBEngine::Instance().CreateConnection()} {
-    // The catalog layer reaches the role, database and transaction through
-    // this; a bare DuckDB connection cannot resolve a SereneDB relation.
-    auto ctx = std::make_shared<ConnectionContext>(
-      *_conn->context, irs::StaticStrings::kDefaultUser, id::kRootUser,
-      database, database_id, nullptr, 0, nullptr);
-    ctx->MarkSystemWriter();
-    connector::SereneDBClientState::Register(*_conn->context, std::move(ctx));
-    _conn->context->session_user =
-      std::string{irs::StaticStrings::kDefaultUser};
-    std::vector<duckdb::CatalogSearchEntry> paths{
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"$user"}},
-      duckdb::CatalogSearchEntry{duckdb::Identifier{std::string{database}},
-                                 duckdb::Identifier{"public"}},
-    };
-    _conn->context->client_data->catalog_search_path->SetDefaultPaths(
-      std::vector{paths});
-    _conn->context->client_data->catalog_search_path->Set(
-      std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
-  }
+  Creator(std::string_view database, duckdb::idx_t database_id,
+          std::string_view schema = "public")
+    : _conn{connector::MakeSystemConnection(database, database_id).conn},
+      _schema{schema} {}
 
   // A search table cannot gain an index once it holds rows, so re-running the
   // DDL over an existing schema is not just wasteful, it fails. Presence of
   // the logs table is the marker that the schema is already there.
   bool Exists() {
-    auto result = _conn->Query(absl::StrCat(
-      "SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = '",
-      connector::kOtelLogsTable, "'"));
+    auto result = _conn->Query(
+      absl::StrCat("SELECT 1 FROM pg_tables WHERE schemaname = ",
+                   network::http::SqlLiteral(_schema), " AND tablename = ",
+                   network::http::SqlLiteral(connector::kOtelLogsTable)));
     return !result->HasError() && result->RowCount() == 1;
   }
 
-  bool Run(std::string sql) {
-    auto result = _conn->Query(std::move(sql));
+  bool Run(std::string_view sql) {
+    auto result = _conn->Query(sql);
     if (result->HasError()) {
       SDB_WARN(STARTUP, "OpenTelemetry schema: ", result->GetError());
       return false;
@@ -92,52 +72,97 @@ class Creator {
   }
 
   bool Create() {
+    const auto schema = network::http::SqlIdentifier(_schema);
+    if (!Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", schema)) ||
+        !Run(absl::StrCat("SET search_path TO ", schema))) {
+      return false;
+    }
     for (const auto statement : kSchemaStatements) {
-      if (!Run(std::string{statement})) {
+      if (!Run(statement)) {
         return false;
       }
     }
     return true;
   }
 
+  absl::Status Check() {
+    std::vector<std::string> inserts{
+      InsertSql(_schema, connector::kOtelLogsTable,
+                connector::kOtelSourceLogsFunction),
+      InsertSql(_schema, connector::kOtelTracesTable,
+                connector::kOtelSourceTracesFunction),
+    };
+    for (size_t i = 0; i < connector::kOtelMetricTables.size(); ++i) {
+      inserts.push_back(InsertSql(_schema, connector::kOtelMetricTables[i],
+                                  connector::kOtelSourceMetricsFunctions[i]));
+    }
+    for (const auto& insert : inserts) {
+      auto prepared = _conn->Prepare(insert);
+      if (prepared->HasError()) {
+        return absl::FailedPreconditionError(
+          prepared->GetErrorObject().RawMessage());
+      }
+    }
+    return absl::OkStatus();
+  }
+
  private:
   std::unique_ptr<duckdb::Connection> _conn;
+  std::string _schema;
 };
 
 }  // namespace
 
-void EnsureSchema(std::string_view database) {
-  const auto* entry = catalog::FindDatabase(nullptr, database);
-  if (entry == nullptr) {
+std::string InsertSql(std::string_view schema, std::string_view table,
+                      std::string_view source) {
+  return absl::StrCat("INSERT INTO ", network::http::SqlIdentifier(schema), ".",
+                      network::http::SqlIdentifier(table), " SELECT * FROM ",
+                      source, "(", network::http::SqlLiteral(schema), ")");
+}
+
+absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
+  std::string name;
+  duckdb::idx_t oid = 0;
+  const auto read = [&](const catalog::DatabaseCatalogEntry& entry) {
+    name = entry.name.GetIdentifierName();
+    oid = entry.oid;
+  };
+  if (!catalog::ReadDatabase(database, read)) {
     // CREATE DATABASE has to run somewhere: the default database always
     // exists and every role may connect to it.
-    const auto* home =
-      catalog::FindDatabase(nullptr, irs::StaticStrings::kDefaultDatabase);
-    if (home == nullptr) {
-      SDB_WARN(STARTUP, "OpenTelemetry schema: default database not found");
-      return;
+    if (!catalog::ReadDatabase(irs::StaticStrings::kDefaultDatabase, read)) {
+      return absl::NotFoundError("default database not found");
     }
-    Creator bootstrap{home->name.GetIdentifierName(), catalog::IdOf(*home)};
+    Creator bootstrap{name, oid};
     if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
                                     network::http::SqlIdentifier(database)))) {
-      return;
+      return absl::InternalError(
+        absl::StrCat("cannot create database '", database, "'"));
     }
-    entry = catalog::FindDatabase(nullptr, database);
-    if (entry == nullptr) {
-      SDB_WARN(STARTUP, "OpenTelemetry schema: database '", database,
-               "' not visible after CREATE DATABASE");
-      return;
+    if (!catalog::ReadDatabase(database, read)) {
+      return absl::InternalError(absl::StrCat(
+        "database '", database, "' not visible after CREATE DATABASE"));
     }
     SDB_INFO(STARTUP, "OpenTelemetry database created: ", database);
   }
-  Creator creator{entry->name.GetIdentifierName(), catalog::IdOf(*entry)};
+  Creator creator{name, oid, schema};
   if (creator.Exists()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database);
-    return;
+    SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database, ".",
+             schema);
+  } else if (creator.Create()) {
+    SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database, ".",
+             schema);
   }
-  if (creator.Create()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database);
+  auto status = creator.Check();
+  if (status.ok()) {
+    return status;
   }
+  return absl::FailedPreconditionError(absl::StrCat(
+    "database '", database,
+    "' does not match the built-in schema: ", status.message(),
+    ". Fix the table, or start with the built-in schema elsewhere: set "
+    "db=<new database> or schema=<new schema> on the ?api=otel listener, e.g. "
+    "--listen='http://0.0.0.0:4318?api=otel&db=otel'"));
 }
 
 }  // namespace sdb::otel

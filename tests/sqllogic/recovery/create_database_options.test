@@ -1,0 +1,118 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE opt_db WITH (BLOCK_SIZE = 16384, ROW_GROUP_SIZE = 1048576);
+
+
+statement ok
+CREATE DATABASE plain_db;
+
+
+statement ok
+CREATE TABLE opt_db.public.t AS SELECT i FROM range(300000) r(i);
+
+
+statement ok
+CREATE TABLE plain_db.public.t AS SELECT i FROM range(300000) r(i);
+
+
+statement ok
+CHECKPOINT opt_db;
+
+
+statement ok
+CHECKPOINT plain_db;
+
+
+query
+SELECT database_name, block_size FROM pragma_database_size()
+  WHERE database_name IN ('opt_db', 'plain_db') ORDER BY 1;
+----
+database_name	block_size
+opt_db	16384
+plain_db	262144
+
+
+query
+SELECT (SELECT count(DISTINCT row_group_id) FROM pragma_storage_info('opt_db.public.t')) AS opt_row_groups,
+       (SELECT count(DISTINCT row_group_id) FROM pragma_storage_info('plain_db.public.t')) AS plain_row_groups;
+----
+opt_row_groups	plain_row_groups
+1	3
+
+
+statement error Unrecognized CREATE DATABASE option "storage_version": the options are BLOCK_SIZE and ROW_GROUP_SIZE
+CREATE DATABASE bad_db WITH (STORAGE_VERSION = 'serenedb_v1');
+
+
+statement error CREATE DATABASE option "row_group_size" must be a constant
+CREATE DATABASE bad_db WITH (ROW_GROUP_SIZE = big);
+
+
+statement error CREATE DATABASE option "row_group_size" needs a value
+CREATE DATABASE bad_db WITH (ROW_GROUP_SIZE);
+
+
+statement error the block size must be a power of two, got 1000
+CREATE DATABASE bad_db WITH (BLOCK_SIZE = 1000);
+
+
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'bad_db';
+----
+n
+0
+
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_restart
+query
+SELECT database_name, block_size FROM pragma_database_size()
+  WHERE database_name IN ('opt_db', 'plain_db') ORDER BY 1;
+----
+database_name	block_size
+opt_db	16384
+plain_db	262144
+
+
+connection after_restart
+statement ok
+CREATE TABLE opt_db.public.after AS SELECT i FROM range(300000) r(i);
+
+
+connection after_restart
+statement ok
+CREATE TABLE plain_db.public.after AS SELECT i FROM range(300000) r(i);
+
+
+connection after_restart
+statement ok
+CHECKPOINT opt_db;
+
+
+connection after_restart
+statement ok
+CHECKPOINT plain_db;
+
+
+connection after_restart
+query
+SELECT (SELECT count(DISTINCT row_group_id) FROM pragma_storage_info('opt_db.public.after')) AS opt_row_groups,
+       (SELECT count(DISTINCT row_group_id) FROM pragma_storage_info('plain_db.public.after')) AS plain_row_groups,
+       (SELECT count(*) FROM opt_db.public.t) AS opt_rows;
+----
+opt_row_groups	plain_row_groups	opt_rows
+1	3	300000

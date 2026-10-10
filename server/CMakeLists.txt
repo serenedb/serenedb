@@ -11,7 +11,8 @@ target_compile_definitions(
         SDB_REMAP_EXECUTABLE_DEFAULT=$<IF:$<CONFIG:Release,MinSizeRel>,true,false>
 )
 
-target_link_libraries(serened sereneserver duckdb_shell_static)
+target_link_libraries(serened serene_docs_shell)
+sdb_link_duckdb_extensions(serened)
 
 ################################################################################
 ## installation
@@ -35,6 +36,13 @@ target_link_libraries(
         serene
         llhttp
         duckdb_static
+        ZLIB::ZLIB
+        zstd::zstd
+        lz4_static
+        zxc::zxc_lib
+        brotlienc
+        brotlidec
+        snappy
 )
 
 target_include_directories(
@@ -43,6 +51,7 @@ target_include_directories(
         ${CMAKE_SOURCE_DIR}/server
         # ICU extension helpers for session-zone TIMESTAMPTZ text I/O.
         ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/include
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/icu/datetime/include
 )
 
 add_subdirectory(auth)
@@ -57,3 +66,13 @@ add_subdirectory(rest_server)
 add_subdirectory(scheduler)
 add_subdirectory(storage_engine)
 add_subdirectory(search)
+
+if(SDB_EMBEDDED_DOCS)
+    target_link_libraries(
+        serened
+        serene_docs_builder
+        serene_docs_bootstrap
+        serene_docs_index
+    )
+    sdb_build_docs_index(serened)
+endif()

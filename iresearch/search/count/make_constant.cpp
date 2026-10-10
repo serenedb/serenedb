@@ -82,8 +82,9 @@ class TermRange : public detail::PostingBatch<InputType, false> {
     if (left == 0) {
       return 0;
     }
-    In().Seek(_walk.Landing().doc_ptr);
-    _last = _walk.Landing().doc;
+    const auto landing = _walk.Landing();
+    In().Seek(landing.doc_ptr);
+    _last = landing.doc;
     _left_in_list = left;
     const auto len = std::min(left, kBlock);
     ReadDocs(_block.data(), len);
@@ -146,6 +147,10 @@ class TermCount : public Root {
     const bool to_end = doc_limits::eof(max);
     if (from_start && to_end) {
       return count;
+    }
+    if (count == 1) {
+      const auto doc = doc_limits::min() + _posting.state.cookie.doc_delta;
+      return min <= doc && doc < max;
     }
     const auto above = from_start ? count : Rank(min);
     const auto below = to_end ? 0 : Rank(max);

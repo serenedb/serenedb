@@ -77,9 +77,7 @@ id	iq
 504	322
 
 
-# Critical: next id must be > 504. The Merge that burned IDs 4..503 was
-# committed to the WAL before the rollback; recovery folds it and the
-# counter resumes from 504.
+# Critical: next id must be > 504.
 connection after_crash
 statement count 1
 INSERT INTO konstantin_iceberg_audit_log (iq) VALUES (999);

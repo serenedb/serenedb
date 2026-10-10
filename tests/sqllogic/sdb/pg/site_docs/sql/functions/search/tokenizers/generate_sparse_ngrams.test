@@ -110,6 +110,20 @@ SELECT ts_lexize('code_grams_short', 'hello world');
 ts_lexize
 {hel,ell,llo,"lo ","o w","lo w"," wo",wor,orl,worl,rld}
 
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY code_grams_long_only AS
+    generate_sparse_ngrams(min_cutoff_length := 4);
+
+query
+SELECT ts_lexize('code_grams_long_only', 'hello world');
+----
+ts_lexize
+{"lo w","lo wo",worl}
+
 # DOCS_TEST: function_form
 
 # DOCS_TEST_BODY

@@ -36,7 +36,6 @@ statement error
 DROP INDEX pudge;
 
 
-skipif serenedb # TODO(mbkkt) DuckDB lookups concrete type
 statement error
 DROP INDEX IF EXISTS pudge;
 ----
@@ -48,7 +47,6 @@ statement error
 DROP VIEW pudge;
 
 
-skipif serenedb # TODO(mbkkt) DuckDB lookups concrete type
 statement error
 DROP VIEW IF EXISTS pudge;
 ----
@@ -60,7 +58,6 @@ statement error
 DROP VIEW deadinside;
 
 
-skipif serenedb # TODO(mbkkt) DuckDB lookups concrete type
 statement error
 DROP VIEW IF EXISTS deadinside;
 ----

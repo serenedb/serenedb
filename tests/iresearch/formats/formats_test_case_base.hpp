@@ -26,7 +26,8 @@
 #include <algorithm>
 #include <deque>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
+#include <iresearch/formats/basic_term_reader.hpp>
+#include <iresearch/formats/term_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/posting_pos.hpp>
@@ -191,7 +192,7 @@ class BatchingTermIterator final : public irs::TermOnlyIterator {
     size_t n = 0;
     while (n < std::min(terms.size(), postings.size()) && _it->next()) {
       _terms.emplace_back(_it->value());
-      auto docs = _it->postings(features);
+      auto docs = Docs(_it->postings(features), features);
       auto* pos = docs->Positions();
       const auto* offs =
         pos != nullptr ? irs::get<irs::OffsAttr>(*pos) : nullptr;
@@ -313,12 +314,38 @@ class FormatTestCase : public IndexTestBase {
                  irs::IndexFeatures features = irs::IndexFeatures::None)
       : _next(std::begin(docs)),
         _end(std::end(docs)),
+        _pos_doc(std::begin(docs)),
         _pos(features),
         _has_pos{
           irs::IndexFeatures::None != (features & irs::IndexFeatures::Freq) &&
           irs::IndexFeatures::None != (features & irs::IndexFeatures::Pos)} {}
 
-    irs::doc_id_t Next() final {
+    uint32_t NextDocs(irs::doc_id_t* docs, uint32_t* freqs) final {
+      uint32_t n = 0;
+      for (; n != irs::doc_limits::kBlockSize && _next != _end; ++n, ++_next) {
+        docs[n] = _next->first;
+        freqs[n] = _next->second;
+      }
+      return n;
+    }
+
+    void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                       uint32_t n) final {
+      for (uint32_t i = 0; i != n; ++i, ++_pos_k) {
+        while (_pos_k == _pos_doc->second) {
+          ++_pos_doc;
+          _pos_k = 0;
+        }
+        const uint32_t value = _pos_doc->first + 1 + _pos_k;
+        pos[i] = _pos_k == 0 ? value : 1;
+        if (offs_start != nullptr) {
+          offs_start[i] = pos[i];
+          offs_len[i] = static_cast<uint32_t>(std::to_string(value).size());
+        }
+      }
+    }
+
+    irs::doc_id_t Next() {
       if (_next == _end) {
         return _doc = irs::doc_limits::eof();
       }
@@ -342,21 +369,22 @@ class FormatTestCase : public IndexTestBase {
       return _doc;
     }
 
-    uint32_t GetFreq() const final { return _freq; }
+    irs::doc_id_t Value() const noexcept { return _doc; }
 
-    irs::PosAttr* Positions() noexcept final {
-      return _has_pos ? &_pos : nullptr;
-    }
+    uint32_t GetFreq() const { return _freq; }
+
+    irs::PosAttr* Positions() noexcept { return _has_pos ? &_pos : nullptr; }
 
    private:
     docs_t::iterator _next;
     docs_t::iterator _end;
+    docs_t::iterator _pos_doc;
+    uint32_t _pos_k = 0;
+    irs::doc_id_t _doc = irs::doc_limits::invalid();
     uint32_t _freq = 0;
     FormatTestCase::Position _pos;
     bool _has_pos;
   };
-
-  bool supports_encryption() const noexcept { return true; }
 
   bool supports_columnstore_headers() const noexcept { return true; }
 
@@ -456,11 +484,9 @@ class FormatTestCase : public IndexTestBase {
   }
 
   void AssertNoDirectoryArtifacts(
-    const irs::Directory& dir, const irs::Format& codec,
+    const irs::Directory& dir,
     const std::unordered_set<std::string>& expect_additional = {});
 };
-
-class FormatTestCaseWithEncryption : public FormatTestCase {};
 
 }  // namespace tests
 namespace irs {

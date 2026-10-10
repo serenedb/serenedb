@@ -24,6 +24,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/functional/function_ref.h>
 
 #include <atomic>
 #include <cstdint>
@@ -39,8 +40,10 @@
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 
-#include "iresearch/formats/formats.hpp"
+#include "iresearch/formats/index_meta_reader.hpp"
+#include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/async_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
@@ -62,7 +65,6 @@ class DatabaseInstance;
 
 namespace irs {
 
-class Comparer;
 struct Directory;
 
 enum OpenMode {
@@ -111,14 +113,12 @@ struct SegmentOptions {
 using ProgressReportCallback =
   std::function<void(std::string_view phase, size_t current, size_t total)>;
 
-using PayloadProvider = std::function<bool(uint64_t, bstring&)>;
-
 struct IndexWriterOptions : public SegmentOptions {
   IndexReaderOptions reader_options;
 
-  PayloadProvider meta_payload_provider;
+  MetaPayloadWriter meta_payload_writer;
 
-  const Comparer* comparator = nullptr;
+  MetaPayloadReader meta_payload_reader;
 
   size_t segment_pool_size = 128;
 
@@ -138,13 +138,11 @@ struct IndexWriterOptions : public SegmentOptions {
 };
 
 struct CommitInfo {
-  uint64_t tick = writer_limits::kMaxTick;
   ProgressReportCallback progress;
   bool reopen_reader = false;
 };
 
 struct CommitOnFlush {
-  std::atomic<uint64_t>& tick;
   bool committed = false;
 };
 
@@ -248,6 +246,11 @@ class IndexWriter : private util::Noncopyable {
       return _writer.WithTokens(std::forward<Args>(args)...);
     }
 
+    template<typename... Args>
+    bool WithEntryTokens(Args&&... args) const {
+      return _writer.WithEntryTokens(std::forward<Args>(args)...);
+    }
+
 #ifdef SDB_GTEST
     SegmentWriter& Writer() noexcept { return _writer; }
 #endif
@@ -301,16 +304,7 @@ class IndexWriter : private util::Noncopyable {
       if (segment == nullptr) {
         return true;
       }
-      if (_tick_source) {
-        return CommitImpl(_tick_source(_queries + 1));
-      }
-      const auto first_tick =
-        _writer->_tick.fetch_add(_queries, std::memory_order_relaxed);
-      return CommitImpl(first_tick + _queries);
-    }
-
-    void SetTickSource(std::function<uint64_t(uint64_t)> source) noexcept {
-      _tick_source = std::move(source);
+      return CommitImpl(_writer->NextTick(_queries), {});
     }
 
     bool FlushAndCommit() noexcept {
@@ -324,21 +318,13 @@ class IndexWriter : private util::Noncopyable {
 
     std::span<const FlushedSegment> FlushAndFsync();
 
-    bool FlushAndCommit(uint64_t last_tick) noexcept {
-      try {
-        Flush();
-      } catch (...) {
-        return false;
-      }
-      return Commit(last_tick);
-    }
-
-    bool Commit(uint64_t last_tick) noexcept {
+    bool Commit(uint64_t last_tick,
+                const SourcePosition& position = {}) noexcept {
       auto* segment = _active.Segment();
       if (segment == nullptr) {
         return true;
       }
-      return CommitImpl(last_tick);
+      return CommitImpl(last_tick, position);
     }
 
     void Abort() noexcept;
@@ -383,19 +369,15 @@ class IndexWriter : private util::Noncopyable {
       _field_options = std::move(options);
     }
 
-    // Queues this transaction into `flush` with its `pending_mutex` already
-    // held by the caller
-    bool CommitLocked(uint64_t last_tick, FlushContext& flush) noexcept;
-
    private:
-    bool CommitImpl(uint64_t last_tick) noexcept;
+    bool CommitImpl(uint64_t last_tick,
+                    const SourcePosition& position) noexcept;
     void UpdateSegment(bool disable_flush, CommitOnFlush* commit_on_flush);
 
     IndexWriter* _writer{nullptr};
     ActiveSegmentContext _active;
     uint64_t _queries{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
-    std::function<uint64_t(uint64_t)> _tick_source;
     bool _exclusive_segment{false};
   };
   static_assert(std::is_nothrow_move_constructible_v<Transaction>);
@@ -421,20 +403,22 @@ class IndexWriter : private util::Noncopyable {
     return _segments_active.load(std::memory_order_acquire) != 0;
   }
 
-  void Clear(uint64_t tick = writer_limits::kMinTick);
+  void Clear(const SourcePosition& position = {});
+
+  uint64_t NextTick(uint64_t queries) noexcept {
+    return _tick.fetch_add(queries, std::memory_order_relaxed) + queries;
+  }
 
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
-                           Format::ptr codec = nullptr,
                            const MergeWriter::FlushProgress& progress = {});
 
   auto CompactAsync(const CompactionPolicy& policy,
-                    const IndexFieldOptions* field_options, Format::ptr codec,
+                    const IndexFieldOptions* field_options,
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
 
-  bool AdoptSegment(std::string_view meta_file, const Format::ptr& codec,
-                    uint64_t tick);
+  bool AdoptSegment(std::string_view meta_file, uint64_t tick);
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
@@ -465,25 +449,17 @@ class IndexWriter : private util::Noncopyable {
 
   CompactionFloorGuard ArmCompactionFloor();
 
-  const Format::ptr& Codec() const noexcept { return _codec; }
-
   uint64_t CurrentSegmentId() const noexcept;
 
-  bool ReplaceSegments(std::span<const std::string_view> replaced,
-                       std::span<const std::string_view> adopted_metas,
-                       const Format::ptr& codec,
-                       Transaction* removals = nullptr,
-                       uint64_t removals_tick = writer_limits::kMinTick);
+  bool ReplaceSegments(
+    std::span<const std::string_view> replaced,
+    std::span<const std::string_view> adopted_metas,
+    absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);
 
-  bool Import(const IndexReader& reader, Format::ptr codec = nullptr,
-              const MergeWriter::FlushProgress& progress = {});
-
-  static IndexWriter::ptr Make(Directory& dir, Format::ptr codec, OpenMode mode,
-                               const IndexWriterOptions& opts = {});
+  static IndexWriter::ptr Make(Directory& dir, OpenMode mode,
+                               IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
-
-  const Comparer* Comparator() const noexcept { return _comparator; }
 
   bool RefreshBegin(const CommitInfo& info = {}) {
     _commit_lock.ForgetDeadlockInfo();
@@ -495,6 +471,12 @@ class IndexWriter : private util::Noncopyable {
     _commit_lock.ForgetDeadlockInfo();
     std::lock_guard lock{_commit_lock};
     Abort();
+  }
+
+  void RefreshFinish() {
+    _commit_lock.ForgetDeadlockInfo();
+    std::lock_guard lock{_commit_lock};
+    Finish();
   }
 
   bool RefreshCommit(const CommitInfo& info = {}) {
@@ -509,9 +491,8 @@ class IndexWriter : private util::Noncopyable {
 
   IndexWriter(ConstructToken, IndexLock::ptr&& lock,
               IndexFileRefs::ref_t&& lock_file_ref, Directory& dir,
-              Format::ptr codec, size_t segment_pool_size,
-              const SegmentOptions& segment_limits, const Comparer* comparator,
-              const PayloadProvider& meta_payload_provider,
+              size_t segment_pool_size, const SegmentOptions& segment_limits,
+              MetaPayloadWriter&& meta_payload_writer,
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
@@ -523,8 +504,8 @@ class IndexWriter : private util::Noncopyable {
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
 
-  struct ImportContext {
-    ImportContext(
+  struct IncomingSegment {
+    IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
       Compaction&& compaction_candidates,
       std::shared_ptr<const SegmentReaderImpl>&& reader,
@@ -538,7 +519,7 @@ class IndexWriter : private util::Noncopyable {
                        .candidates = std::move(compaction_candidates),
                        .merger = std::move(merger)} {}
 
-    ImportContext(
+    IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
       Compaction&& compaction_candidates,
       std::shared_ptr<const SegmentReaderImpl>&& reader,
@@ -550,49 +531,43 @@ class IndexWriter : private util::Noncopyable {
         compaction_ctx{.compaction_reader = std::move(compaction_reader),
                        .candidates = std::move(compaction_candidates)} {}
 
-    ImportContext(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
-                  std::shared_ptr<const SegmentReaderImpl>&& reader) noexcept
+    IncomingSegment(IndexSegment&& segment, uint64_t tick, FileRefs&& refs,
+                    std::shared_ptr<const SegmentReaderImpl>&& reader) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)} {}
 
-    ImportContext(ImportContext&&) = default;
+    IncomingSegment(IncomingSegment&&) = default;
 
-    ImportContext& operator=(const ImportContext&) = delete;
-    ImportContext& operator=(ImportContext&&) = delete;
+    IncomingSegment& operator=(const IncomingSegment&) = delete;
+    IncomingSegment& operator=(IncomingSegment&&) = delete;
 
     uint64_t tick;
     IndexSegment segment;
     FileRefs refs;
     std::shared_ptr<const SegmentReaderImpl> reader;
     CompactionContext compaction_ctx;
+    QueryContext::FilterPtr removal;
   };
 
-  static_assert(std::is_nothrow_move_constructible_v<ImportContext>);
+  static_assert(std::is_nothrow_move_constructible_v<IncomingSegment>);
 
  public:
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
-    explicit FlushedSegment(IndexSegment&& segment, DocMap&& old2new,
-                            DocsMask&& docs_mask, DocContexts&& docs,
-                            size_t committed_docs) noexcept
+    explicit FlushedSegment(IndexSegment&& segment, DocumentMask&& docs_mask,
+                            DocContexts&& docs, size_t committed_docs) noexcept
       : IndexSegment{std::move(segment)},
-        old2new{std::move(old2new)},
         docs_mask{std::move(docs_mask)},
-        document_mask{{this->docs_mask.set.get_allocator()}},
         docs{std::move(docs)},
         committed_docs{committed_docs} {
       SDB_ASSERT(this->docs.size() == meta.docs_count);
     }
 
-    DocMap old2new;
-    DocMap new2old;
-    DocsMask docs_mask;
-    DocumentMask document_mask;
+    DocumentMask docs_mask;
     DocContexts docs;
     size_t committed_docs;
-    bool was_flush = false;
     bool meta_on_disk = false;
   };
 
@@ -612,8 +587,7 @@ class IndexWriter : private util::Noncopyable {
     size_t committed_queries{0};
     size_t committed_buffered_docs{0};
 
-    uint64_t first_tick{writer_limits::kMaxTick};
-    uint64_t last_tick{writer_limits::kMinTick};
+    bool committed{false};
 
     std::unique_ptr<SegmentWriter> writer;
     IndexSegment writer_meta;
@@ -689,19 +663,15 @@ class IndexWriter : private util::Noncopyable {
     }
   };
 
-  using CachedReaders =
-    absl::flat_hash_map<FlushedSegment*,
-                        std::shared_ptr<const SegmentReaderImpl>>;
-
   struct FlushContext {
     RefTrackingDirectory::ptr dir;
     absl::Mutex context_mutex;
     FlushContext* next{nullptr};
 
     std::vector<std::shared_ptr<SegmentContext>> segments;
-    CachedReaders cached;
+    SourcePosition position;
 
-    std::vector<ImportContext> imports;
+    std::vector<IncomingSegment> incoming;
 
     void ClearPending() noexcept {
       while (pending_freelist.pop() != nullptr) {
@@ -716,7 +686,7 @@ class IndexWriter : private util::Noncopyable {
 
     CompactingSegments segment_mask;
     // Backing store for segment_mask entries whose name is not kept alive by a
-    // pinned reader in `imports`. A deque so an append never invalidates the
+    // pinned reader in `incoming`. A deque so an append never invalidates the
     // views already handed to segment_mask.
     std::deque<std::string> masked_names;
 
@@ -724,29 +694,30 @@ class IndexWriter : private util::Noncopyable {
 
     ~FlushContext() noexcept { Reset(); }
 
-    void Emplace(ActiveSegmentContext&& active);
+    void Emplace(ActiveSegmentContext&& active,
+                 const SourcePosition& position = {});
 
     bool PrepareEmplace(ActiveSegmentContext& active) noexcept;
     void EmplaceLocked(ActiveSegmentContext&& active);
 
     void AddToPending(ActiveSegmentContext& active);
 
-    uint64_t FlushPending(uint64_t committed_tick, uint64_t tick);
+    void FlushPending();
 
     void Reset() noexcept;
   };
 
-  void Cleanup(FlushContext& curr, FlushContext* next = nullptr) noexcept;
+  void Cleanup(FlushContext& curr) noexcept;
 
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
-    uint64_t tick{writer_limits::kMinTick};
+    SourcePosition position;
 
-    void StartReset(IndexWriter& writer, bool keep_next = false) noexcept {
+    void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
       if (curr != nullptr) {
         std::lock_guard lock{writer._compacting.lock};
-        writer.Cleanup(*curr, keep_next ? nullptr : curr->next);
+        writer.Cleanup(*curr);
       }
     }
   };
@@ -793,7 +764,7 @@ class IndexWriter : private util::Noncopyable {
     bool compaction, const IndexFieldOptions* field_options) const noexcept;
 
   uint64_t NextSegmentId() noexcept;
-  void InitMeta(IndexMeta& meta, uint64_t tick) const;
+  void InitMeta(IndexMeta& meta) const;
 
   bool Start(const CommitInfo& info);
   void Finish();
@@ -804,9 +775,6 @@ class IndexWriter : private util::Noncopyable {
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
   std::shared_ptr<const IndexFieldOptions> _field_options;
-  PayloadProvider _meta_payload_provider;
-  const Comparer* _comparator;
-  Format::ptr _codec;
   absl::Mutex _commit_lock;
   struct {
     std::recursive_mutex lock;
@@ -822,9 +790,8 @@ class IndexWriter : private util::Noncopyable {
   std::atomic_size_t _segments_active{0};
   std::atomic_uint64_t _seg_counter;
   std::atomic_uint64_t _tick{writer_limits::kMinTick + 1};
-  uint64_t _committed_tick{writer_limits::kMinTick};
   uint64_t _last_gen;
-  IndexMetaWriter::ptr _writer;
+  IndexMetaWriter _writer;
   IndexLock::ptr _write_lock;
   IndexFileRefs::ref_t _write_lock_file_ref;
   std::array<FlushContext, 2> _flush_contexts;

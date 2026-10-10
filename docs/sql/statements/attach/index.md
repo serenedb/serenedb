@@ -38,6 +38,8 @@ Use `IF NOT EXISTS` to attach only when the alias is not already in use, or `OR 
 
 The `DETACH` statement closes a previously attached database and releases any locks held on it.
 
+`DETACH` of a database made by [`CREATE DATABASE`](../create_database/index.md) drops it, the same as [`DROP DATABASE`](../create_database/index.md#dropping-a-database).
+
 ### `DETACH` Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram2" />
@@ -45,6 +47,12 @@ The `DETACH` statement closes a previously attached database and releases any lo
 It is not possible to detach the default database. To do so, first issue the [`USE` statement](../use/index.md) to change the default database to another one. For example, if you are connected to a persistent database, you may switch to an in-memory database:
 
 <SqlLogicTest id="sql/statements/attach/index/example_021" />
+
+A database file stays open after `DETACH` while another transaction still uses it, including a transaction that only listed the catalogs, and closes when the last one ends. Attaching the same file again right away still works:
+
+- Under the same alias, `ATTACH` takes over the open database at once, in either access mode if the file was opened for reading and writing, and read-only if it was opened `READ_ONLY`.
+- Under a different alias, or for reading and writing when the file was opened `READ_ONLY`, `ATTACH` waits until those transactions end and then opens the file anew.
+- If the waiting transaction itself still holds the detached database, for example because it attached the file earlier in the same transaction, `ATTACH` fails with `Unique file handle conflict` instead of waiting on itself.
 
 ## Name Qualification
 

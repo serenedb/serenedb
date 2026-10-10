@@ -435,16 +435,134 @@ count
 500
 
 
-statement error
+statement ok
 CREATE INDEX p_art ON goshandr_subscribers(x) WHERE live;
-----
-db error: ERROR: partial indexes are only supported for inverted indexes
 
 
 statement error
 CREATE INDEX p_bad ON goshandr_subscribers USING inverted(label) WHERE label;
 ----
 db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement error
+CREATE INDEX vmin_bad ON vmin USING inverted(label) WHERE label;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement ok
+CREATE TABLE p_bad_empty (label TEXT, n INT);
+
+
+statement error
+CREATE INDEX p_bad_empty_inv ON p_bad_empty USING inverted(label) WHERE label;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type VARCHAR
+
+
+statement error
+CREATE INDEX p_bad_empty_art ON p_bad_empty (n) WHERE n;
+----
+db error: ERROR: argument of WHERE must be type boolean, not type INTEGER
+
+
+statement ok
+DROP TABLE p_bad_empty;
+
+
+statement ok
+CREATE TABLE pe_t (x bigint, label text);
+
+
+statement ok
+CREATE INDEX pe_empty_table ON pe_t USING inverted(label) WHERE x > 5;
+
+
+statement ok
+INSERT INTO pe_t VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CREATE INDEX pe_below_range ON pe_t USING inverted(label) WHERE x > 5;
+
+
+statement ok
+CREATE INDEX pe_false ON pe_t USING inverted(label) WHERE false;
+
+
+statement ok
+CREATE INDEX pe_null ON pe_t USING inverted(label) WHERE NULL;
+
+
+statement ok
+CREATE INDEX pe_true_text ON pe_t USING inverted(label) WHERE 'true';
+
+
+statement ok
+CREATE INDEX pe_false_text ON pe_t USING inverted(label) WHERE 'f';
+
+
+statement ok
+CREATE INDEX pe_typed_text ON pe_t USING inverted(label) WHERE 'true'::text AND 1 + 1 = 2;
+
+
+statement ok
+CREATE INDEX pe_art_text ON pe_t (label) WHERE 'yes';
+
+
+statement ok
+CREATE INDEX pe_art_false_text ON pe_t (x) WHERE NOT 'true';
+
+
+statement error
+CREATE INDEX pe_bad_text ON pe_t USING inverted(label) WHERE 'abc';
+----
+db error: ERROR: Could not convert string 'abc' to BOOL
+
+
+statement error
+CREATE INDEX pe_bad_art_text ON pe_t (label) WHERE 'abc';
+----
+db error: ERROR: Could not convert string 'abc' to BOOL
+
+
+query
+SELECT indexname, regexp_extract(indexdef, 'WHERE .*$') AS predicate FROM pg_indexes WHERE indexname IN ('pe_null', 'pe_true_text', 'pe_false_text', 'pe_typed_text', 'pe_art_text', 'pe_art_false_text') ORDER BY indexname;
+----
+indexname	predicate
+pe_art_false_text	WHERE false
+pe_art_text	(empty)
+pe_false_text	WHERE false
+pe_null	WHERE NULL
+pe_true_text	(empty)
+pe_typed_text	(empty)
+
+
+statement ok
+INSERT INTO pe_t VALUES (10, 'ten');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) pe_t;
+
+
+query
+SELECT (SELECT count(*) FROM pe_empty_table) AS empty_table, (SELECT count(*) FROM pe_below_range) AS below_range, (SELECT count(*) FROM pe_false) AS never, (SELECT count(*) FROM pe_null) AS null_predicate;
+----
+empty_table	below_range	never	null_predicate
+1	1	0	0
+
+
+query
+SELECT (SELECT count(*) FROM pe_true_text) AS true_text, (SELECT count(*) FROM pe_false_text) AS false_text, (SELECT count(*) FROM pe_typed_text) AS typed_text;
+----
+true_text	false_text	typed_text
+3	0	3
+
+
+statement ok
+DROP TABLE pe_t CASCADE;
 
 
 statement ok

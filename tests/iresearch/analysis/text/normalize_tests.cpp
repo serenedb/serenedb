@@ -22,10 +22,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <stringzilla/utf8_norm/serial.h>
+#if defined(__x86_64__)
 #include <stringzilla/utf8_norm/haswell.h>
 #include <stringzilla/utf8_norm/icelake.h>
-#include <stringzilla/utf8_norm/serial.h>
 #include <stringzilla/utf8_norm/skylake.h>
+#elif defined(__aarch64__)
+#include <stringzilla/utf8_norm/neon.h>
+#endif
 
 #include <fstream>
 #include <iresearch/analysis/text/normalize/normalize.hpp>
@@ -171,22 +175,11 @@ TEST(norm_stringzilla_test, part1_unlisted_codepoints_are_normalization_inert) {
 }
 
 template<sz_normal_form_t Form>
-void CheckClassifyAndStripSafe() {
+void CheckClassify() {
   std::vector<bool> part1_cps(0x110000);
   const auto cases = LoadCases(part1_cps);
   ASSERT_GT(cases.size(), 18000u);
-  std::string buf_a;
-  std::string buf_b;
-  const auto decompose = [](std::string_view in, std::string& out) {
-    out.resize(irs::analysis::normalize::Bound<Form>(in.size()));
-    out.resize(irs::analysis::normalize::Decompose<Form>(in, out.data()));
-  };
-  const auto compose = [](std::string_view in, std::string& out) {
-    out.resize(irs::analysis::normalize::Bound<Form>(in.size()));
-    out.resize(irs::analysis::normalize::Compose<Form>(in, out.data()));
-  };
   size_t failures = 0;
-  size_t strip_safe = 0;
   for (const auto& c : cases) {
     for (const auto& s : c.columns) {
       const bool normalized = IsNormalized(s, Form);
@@ -196,33 +189,73 @@ void CheckClassifyAndStripSafe() {
         ++failures;
         EXPECT_EQ(normalized, !denormalized) << "line: " << c.line;
       }
-      if (!irs::analysis::normalize::StripSafe<Form>(s.data(), s.size())) {
-        continue;
-      }
-      ++strip_safe;
-      decompose(s, buf_a);
-      irs::analysis::normalize::StripNonspacingMarks(buf_a, buf_b);
-      compose(buf_b, buf_a);
-      if (buf_a != s || !normalized) {
+      const std::string padded =
+        std::string(37, '.') + s + std::string(29, '.');
+      if (IsNormalized(padded, Form) !=
+          !irs::analysis::normalize::Denormalized<Form>(padded.data(),
+                                                        padded.size())) {
         ++failures;
-        EXPECT_TRUE(false) << "StripSafe not an identity, line: " << c.line;
+        EXPECT_TRUE(false) << "padded, line: " << c.line;
       }
     }
   }
   EXPECT_EQ(0u, failures);
-  EXPECT_GT(strip_safe, 0u);
 }
 
-TEST(norm_stringzilla_test, classify_nfc_and_strip_safe_conformance) {
-  CheckClassifyAndStripSafe<sz_normal_form_nfc_k>();
+TEST(norm_stringzilla_test, classify_nfc_conformance) {
+  CheckClassify<sz_normal_form_nfc_k>();
 }
 
-TEST(norm_stringzilla_test, classify_nfkc_and_strip_safe_conformance) {
-  CheckClassifyAndStripSafe<sz_normal_form_nfkc_k>();
+TEST(norm_stringzilla_test, classify_nfkc_conformance) {
+  CheckClassify<sz_normal_form_nfkc_k>();
+}
+
+template<sz_normal_form_t Form>
+void CheckQuickCheckEveryCodepoint() {
+  constexpr std::string_view kAcute = "\xCC\x81";
+  size_t failures = 0;
+  std::string text;
+  for (uint32_t cp = 0; cp < 0x110000 && failures <= 20; ++cp) {
+    if (cp >= 0xD800 && cp <= 0xDFFF) {
+      continue;
+    }
+    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
+    const auto len = irs::utf8_utils::FromChar32(cp, buf);
+    const std::string_view c{reinterpret_cast<const char*>(buf), len};
+    const auto check = [&](std::string_view prefix, std::string_view suffix) {
+      text.assign(prefix);
+      text.append(c);
+      text.append(suffix);
+      if (IsNormalized(text, Form) ==
+          irs::analysis::normalize::Denormalized<Form>(text.data(),
+                                                       text.size())) {
+        ++failures;
+        EXPECT_TRUE(false) << "cp: " << std::hex << cp << " size: " << std::dec
+                           << text.size();
+      }
+    };
+    check({}, {});
+    check("e", {});
+    check({}, kAcute);
+    check("e", kAcute);
+    for (const size_t pad : {29, 30, 31, 61}) {
+      const std::string before(pad, '.');
+      check(before, std::string(40, '.'));
+      check(before, std::string(kAcute) + std::string(40, '.'));
+    }
+  }
+  EXPECT_EQ(0u, failures);
+}
+
+TEST(norm_stringzilla_test, quick_check_nfc_every_codepoint) {
+  CheckQuickCheckEveryCodepoint<sz_normal_form_nfc_k>();
+}
+
+TEST(norm_stringzilla_test, quick_check_nfkc_every_codepoint) {
+  CheckQuickCheckEveryCodepoint<sz_normal_form_nfkc_k>();
 }
 
 TEST(norm_stringzilla_test, simd_backends_match_serial) {
-  const bool has_avx512 = irs::analysis::sz::HasAvx512();
   std::vector<bool> part1_cps(0x110000);
   const auto cases = LoadCases(part1_cps);
   ASSERT_FALSE(cases.empty());
@@ -246,11 +279,16 @@ TEST(norm_stringzilla_test, simd_backends_match_serial) {
             EXPECT_TRUE(false) << name << " diverges, line: " << c.line;
           }
         };
+        check_backend(irs::analysis::sz::Norm, "native");
+#if defined(__x86_64__)
         check_backend(sz_utf8_norm_haswell, "haswell");
-        if (has_avx512) {
+        if (irs::analysis::sz::HasAvx512()) {
           check_backend(sz_utf8_norm_skylake, "skylake");
           check_backend(sz_utf8_norm_icelake, "icelake");
         }
+#elif defined(__aarch64__)
+        check_backend(sz_utf8_norm_neon, "neon");
+#endif
       }
     }
     if (failures > 20) {

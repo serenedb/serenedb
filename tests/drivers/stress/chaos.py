@@ -27,11 +27,10 @@ COMPACTION_FAULTS = (
 # the data follows, but every crash window exercised so far is a catalog one. These
 # fire on the search/data side and need a workload that actually writes an index.
 DATA_DOMAIN_FAULTS = (
-    faults_mod.CRASH_BEFORE_SEARCH_COMMIT_FAULT,
-    faults_mod.CRASH_AFTER_SEARCH_COMMIT_FAULT,
+    faults_mod.CRASH_BEFORE_COMMIT_FAULT,
+    faults_mod.CRASH_AFTER_COMMIT_FAULT,
     faults_mod.CRASH_BEFORE_SEARCH_WAL_COMMIT_FAULT,
     faults_mod.CRASH_AFTER_SEARCH_WAL_COMMIT_FAULT,
-    faults_mod.CRASH_SST_SINK_AFTER_INGEST_FAULT,
 )
 VIEW_INDEX_FAULTS = (
     faults_mod.CRASH_AFTER_SEARCH_REFRESH_FAULT,
@@ -45,14 +44,11 @@ GENERIC_CRASH_FAULTS = (
     faults_mod.CRASH_ON_PACKET_FAULT,
 )
 
-# Not crashes: an error injector and two more parks, none of which any scenario
-# reached before.
 SLOW_FAULTS = (
     faults_mod.SLOW_SEARCH_TASK_FAULT,
 )
 
 EXTRA_PARK_FAULTS = (
-    faults_mod.PAUSE_CTAS_MID_INGEST_FAULT,
     faults_mod.PAUSE_VACUUM_MID_WALK_FAULT,
 )
 

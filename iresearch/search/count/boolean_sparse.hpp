@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <tuple>
@@ -41,6 +42,10 @@ class BooleanSparse : public Root {
   static constexpr bool kProbes = !std::is_same_v<Probes, utils::Empty>;
   static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
   static constexpr bool kTable = !std::is_same_v<Table, utils::Empty>;
+  static constexpr bool kLeaves = !kProbes && !kTable && requires(Lead& lead) {
+    lead.Leaf();
+    lead.NextLeaf();
+  };
   static constexpr uint32_t kRun = 2048;
   static_assert(kProbes || kExcludes);
 
@@ -57,6 +62,9 @@ class BooleanSparse : public Root {
   BooleanSparse& operator=(BooleanSparse&&) = delete;
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
+    if constexpr (kLeaves) {
+      return RunLeaves(min, max);
+    }
     uint64_t total = 0;
     uint32_t n = 0;
     auto doc = _lead.Seek(min);
@@ -103,6 +111,25 @@ class BooleanSparse : public Root {
   }
 
  private:
+  uint64_t RunLeaves(doc_id_t min, doc_id_t max) {
+    uint64_t total = 0;
+    for (auto doc = _lead.Seek(min); doc < max;) {
+      const auto leaf = _lead.Leaf();
+      if (leaf.back() < max) {
+        const auto len = static_cast<uint32_t>(leaf.size());
+        total += len - detail::CountExcluded(_excludes, leaf.data(), len);
+        doc = _lead.NextLeaf();
+        continue;
+      }
+      const auto len = static_cast<uint32_t>(
+        std::lower_bound(leaf.begin(), leaf.end(), max) - leaf.begin());
+      total += len - detail::CountExcluded(_excludes, leaf.data(), len);
+      _lead.Seek(max);
+      break;
+    }
+    return total;
+  }
+
   Lead _lead;
   [[no_unique_address]] Probes _probes;
   [[no_unique_address]] Excludes _excludes;

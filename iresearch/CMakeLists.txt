@@ -4,7 +4,6 @@ if(uring_FOUND)
     add_definitions(-DIRESEARCH_URING)
 endif()
 
-set(SIMD_LIBRARY_STATIC "simdcomp-static")
 set(FASTTEXT_LIBRARY_STATIC "fasttext-static")
 
 if(
@@ -35,7 +34,6 @@ set(IResearch_core_sources
     ./analysis/icu_text_tokenizer.cpp
     ./analysis/classification_tokenizer.cpp
     ./analysis/nearest_neighbors_tokenizer.cpp
-    ./analysis/text/normalize/normalize.cpp
     ./analysis/normalizing_tokenizer.cpp
     ./analysis/collation_tokenizer.cpp
     ./analysis/text_tokenizer.cpp
@@ -51,6 +49,8 @@ set(IResearch_core_sources
     ./analysis/shingle_tokenizer.cpp
     ./analysis/sql_tokenizer.cpp
     ./analysis/wildcard_tokenizer.cpp
+    ./analysis/html_strip_tokenizer.cpp
+    ./analysis/filter_tokens_tokenizer.cpp
     ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
@@ -62,10 +62,12 @@ set(IResearch_core_sources
     ./formats/column/merge.cpp
     ./formats/column/internal/write_context.cpp
     ./formats/column/read_context.cpp
-    ./formats/formats.cpp
     ./formats/format_utils.cpp
-    ./formats/posting/skip_list.cpp
-    ./formats/format_block_128.cpp
+    ./formats/posting/block_codec.cpp
+    ./formats/index_meta_reader.cpp
+    ./formats/index_meta_writer.cpp
+    ./formats/segment_meta_reader.cpp
+    ./formats/segment_meta_writer.cpp
     ./formats/index/burst_trie.cpp
     ./formats/index/idx_reader.cpp
     ./formats/index/idx_writer.cpp
@@ -78,6 +80,7 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
     ./index/directory_reader.cpp
+    ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp
@@ -102,12 +105,16 @@ set(IResearch_core_sources
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
+    ./search/detail/pattern_cache.cpp
+    ./search/detail/term_acceptor.cpp
     ./search/filters/filter.cpp
+    ./search/queries/docs_mask_query.cpp
     ./search/filters/term_filter.cpp
     ./search/filters/nested_filter.cpp
     ./search/filters/prefix_filter.cpp
     ./search/filters/range_filter.cpp
     ./search/filters/phrase_filter.cpp
+    ./search/filters/shingle_phrase.cpp
     ./search/filters/automaton_filter.cpp
     ./search/filters/wildcard_filter.cpp
     ./search/filters/regexp_filter.cpp
@@ -133,7 +140,6 @@ set(IResearch_core_sources
     ./search/count/make_geo_contains.cpp
     ./search/count/make_geo_is_contained.cpp
     ./search/count/make_geo_distance.cpp
-    ./search/count/make_masked.cpp
     ./search/count/make_term_counts.cpp
     ./search/lead/make.cpp
     ./search/lead/make_hnsw.cpp
@@ -316,13 +322,13 @@ set(IResearch_core_sources
     ./search/top/make_geo_contains.cpp
     ./search/top/make_geo_is_contained.cpp
     ./search/top/make_geo_distance.cpp
-    ./search/top/make_masked.cpp
     ./search/top/make_pruned_posting.cpp
     ./search/top/make_fixed_phrase_pruned.cpp
     ./search/top/make_fixed_phrase_intervals_pruned.cpp
     ./search/top/make_pruned_disjunction.cpp
     ./search/top/make_pruned_conjunction.cpp
     ./search/top/make_pruned_conjunction_nested.cpp
+    ./search/top/make_pruned_req_opt.cpp
     ./search/queries/multiterm_query.cpp
     ./search/queries/term_query.cpp
     ./search/filters/boolean_filter.cpp
@@ -360,14 +366,14 @@ set(IResearch_core_sources
     ./store/memory_directory.cpp
     ./store/store_utils.cpp
     ./utils/attributes.cpp
-    ./utils/automaton_utils.cpp
-    ./utils/encryption.cpp
-    ./utils/ctr_encryption.cpp
     ./utils/directory_utils.cpp
     ./utils/mmap_utils.cpp
     ./utils/index_utils.cpp
     ./utils/levenshtein_utils.cpp
     ./utils/wildcard_utils.cpp
+    ./utils/regexp_acceptor.cpp
+    ./utils/regexp_ngram.cpp
+    ./utils/conjunction_acceptor.cpp
     ./utils/regexp_utils.cpp
     ./utils/levenshtein_default_pdp.cpp
     ./utils/timer_utils.cpp
@@ -391,7 +397,6 @@ set(IResearch_core_sources
     ./utils/log_flags.cpp
     ./utils/network_utils.cpp
     ./utils/remap_executable.cpp
-    ./utils/static_strings.cpp
     ./utils/string_utils.cpp
     ./utils/zstd_context.cpp
 )
@@ -470,8 +475,9 @@ target_include_directories(
         $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INTERFACE_INCLUDE_DIRECTORIES>
     PRIVATE $<TARGET_PROPERTY:${FASTTEXT_LIBRARY_STATIC},INCLUDE_DIRECTORIES>
     PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
-    PRIVATE ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/utf8proc/include
     PUBLIC ${CMAKE_SOURCE_DIR}/third_party/stringzilla/include
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/extension/core_functions/include
 )
 
 if(ARCH_AMD64)
@@ -480,7 +486,10 @@ if(ARCH_AMD64)
         PUBLIC SZ_USE_HASWELL=1 SZ_USE_SKYLAKE=1 SZ_USE_ICELAKE=1
     )
 elseif(ARCH_AARCH64)
-    target_compile_definitions(iresearch-static PUBLIC SZ_USE_NEON=1)
+    target_compile_definitions(
+        iresearch-static
+        PUBLIC SZ_USE_NEON=1 SZ_USE_SVE=1 SZ_USE_SVE2=1
+    )
 endif()
 
 target_link_libraries(
@@ -510,13 +519,12 @@ target_link_libraries(
     PUBLIC boost_boost
     PUBLIC simdjson
     PRIVATE simdutf
-    PUBLIC iresearch-ofst
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
-    PUBLIC ${SIMD_LIBRARY_STATIC}
+    PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
     PUBLIC re2
+    PUBLIC roaring::roaring
     PUBLIC s2
-    PUBLIC streamvbyte
     PUBLIC duckdb_static
     PRIVATE lz4_static
     PRIVATE stemmer-static

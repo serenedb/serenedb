@@ -24,7 +24,7 @@ RESET sdb_faults;
 
 connection ctas_after_1
 statement ok
-SET sdb_faults = 'crash_sst_sink_after_ingest';
+SET sdb_faults = 'crash_before_commit';
 
 connection ctas_after_1
 statement error connection closed
@@ -97,7 +97,7 @@ RESET sdb_faults;
 
 connection select_into_after_1
 statement ok
-SET sdb_faults = 'crash_sst_sink_after_ingest';
+SET sdb_faults = 'crash_before_commit';
 
 connection select_into_after_1
 statement error connection closed

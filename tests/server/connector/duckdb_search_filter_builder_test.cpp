@@ -19,15 +19,20 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <s2/s2latlng.h>
 
 #include <algorithm>
 #include <duckdb.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
+#include <functional>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/ngram_tokenizer.hpp>
@@ -35,7 +40,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -60,7 +64,9 @@
 #include <utility>
 #include <vector>
 
+#include "connector/column_id.h"
 #include "connector/functions/search.h"
+#include "connector/functions/ts_common.hpp"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
 #include "query/config.h"
@@ -84,8 +90,8 @@ duckdb::ClientContext& TestContext() {
 // outside `[1, kMaxRealIdValue]` (the real-column range) and outside the
 // {PK, score, offsets} synthetics so it can never collide with anything
 // the catalog or filter machinery might allocate.
-constexpr catalog::ColumnId kTestTokenizerColumnId =
-  catalog::ColumnId{catalog::kMaxRealColumnIdValue + 4};
+constexpr connector::ColumnId kTestTokenizerColumnId =
+  connector::ColumnId{connector::kMaxRealColumnIdValue + 4};
 
 // ---------------------------------------------------------------------------
 // Plan capture: the production MakeSearchFilter runs from an OptimizerExtension
@@ -153,21 +159,20 @@ struct ColumnSpec {
 using AnalyzerProvider = std::function<catalog::ColumnTokenizer(uint64_t)>;
 
 catalog::ColumnTokenizer IdentityAnalyzerProvider(uint64_t) {
-  static catalog::Tokenizer gKeywordTokenizer(
-    ObjectId{12345}, {},
+  static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{.config = irs::KeywordTokenizer::Options{}});
-  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::None};
 }
 
 template<irs::IndexFeatures Features>
 catalog::ColumnTokenizer SegmentationAnalyzerProviderBase(uint64_t) {
-  static catalog::Tokenizer gKeywordTokenizer(
-    ObjectId{12346}, {},
-    irs::analysis::TokenizerConfig{.config =
-                                     irs::analysis::TextTokenizer::Options{}});
-  auto tokenizer = gKeywordTokenizer.GetTokenizer(TestContext());
+  static auto gKeywordTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{}, irs::analysis::TokenizerConfig{
+                          .config = irs::analysis::TextTokenizer::Options{}});
+  auto tokenizer = gKeywordTokenizer->Acquire(TestContext());
   return {.analyzer = std::move(tokenizer), .features = Features};
 }
 
@@ -183,10 +188,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
     .preserve_original = false,
     .stream_bytes_type = irs::analysis::NGramTokenizer::InputType::UTF8,
   };
-  static catalog::Tokenizer gNGramTokenizer(
-    ObjectId{12347}, {},
+  static auto gNGramTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(ngram_opts)});
-  auto tokenizer = gNGramTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gNGramTokenizer->Acquire(TestContext());
   return {.analyzer = std::move(tokenizer),
           .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq};
 }
@@ -198,10 +203,10 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
                                        irs::KeywordTokenizer::Options{}}),
     .ngram_size = 3,
   };
-  static catalog::Tokenizer gWildcardTokenizer(
-    ObjectId{12348}, {},
+  static auto gWildcardTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{.config = std::move(wildcard_opts)});
-  auto tokenizer = gWildcardTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gWildcardTokenizer->Acquire(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::Pos | irs::IndexFeatures::Freq,
@@ -210,11 +215,11 @@ catalog::ColumnTokenizer SegmentationAnalyzerProvider(uint64_t id) {
 }
 
 [[maybe_unused]] catalog::ColumnTokenizer GeoJsonTokenizerProvider(uint64_t) {
-  static catalog::Tokenizer gGeoTokenizer(
-    ObjectId{12349}, {},
+  static auto gGeoTokenizer = std::make_shared<catalog::Tokenizer>(
+    search::Features{},
     irs::analysis::TokenizerConfig{
       .config = irs::analysis::GeoJsonTokenizer::Options{}});
-  auto tokenizer = gGeoTokenizer.GetTokenizer(TestContext());
+  auto tokenizer = gGeoTokenizer->Acquire(TestContext());
   return {
     .analyzer = std::move(tokenizer),
     .features = irs::IndexFeatures::None,
@@ -324,7 +329,7 @@ irs::bstring ExpectedTerm(const T& value) {
 }
 
 std::string ScorerName(const irs::Scorer* scorer) {
-  if (scorer == nullptr) {
+  if (!scorer) {
     return "none";
   }
   return scorer == &irs::ForceConstScore() ? "const" : "other";
@@ -583,6 +588,27 @@ irs::ByWildcardNGram& AddWildcardNGramFilter(Filter&& root, uint64_t column,
   return wf;
 }
 
+template<typename Filter>
+irs::ByWildcardNGram& AddRegexpNGramFilter(
+  Filter&& root, uint64_t column, std::string_view pattern,
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl) {
+  auto column_analyzer = WildcardTokenizerProvider(column);
+  auto& rf = AddChild<irs::ByWildcardNGram>(root);
+  *rf.mutable_field_id() = ExpectedFieldId(column);
+  auto* opts = rf.mutable_options();
+  *opts = {
+    irs::ViewCast<irs::byte_type>(pattern),
+    syntax,
+    irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+      *column_analyzer.analyzer.get()),
+    (column_analyzer.features & irs::IndexFeatures::Pos) ==
+      irs::IndexFeatures::Pos,
+  };
+  SDB_ASSERT(irs::field_limits::valid(column_analyzer.tokenizer_column));
+  opts->store_field_id = column_analyzer.tokenizer_column;
+  return rf;
+}
+
 // The old `irs::ByTerms{field, terms, min_match}`: one node of its own
 // holding the terms of a single field, required when every one of them has
 // to match and counted to `min_match` otherwise.
@@ -625,8 +651,6 @@ void CloseShouldBuckets(irs::BooleanFilter& node) {
 class SearchFilterBuilderTest : public ::testing::Test {
  public:
   SearchFilterBuilderTest() : _db(nullptr), _conn(_db) {}
-
-  static void SetUpTestCase() { irs::formats::Init(); }
 
   void SetUp() final {
     sdb::connector::RegisterSearchFunctions(*_db.instance);
@@ -692,10 +716,12 @@ class SearchFilterBuilderTest : public ::testing::Test {
       << " (SQL: " << create_sql << ")";
 
     tlCapturedPlan.reset();
+    _conn.BeginTransaction();
+    absl::Cleanup rollback = [&] { _conn.Rollback(); };
     // ExtractPlan may throw duckdb::Exception on binding errors. We want
     // those surfaced into the test result, not swallowed.
     try {
-      (void)_conn.ExtractPlan(std::string{sql});
+      (void)_conn.ExtractPlan(sql);
     } catch (const std::exception& e) {
       if (must_succeed) {
         FAIL() << "ExtractPlan threw: " << e.what();
@@ -755,6 +781,9 @@ class SearchFilterBuilderTest : public ::testing::Test {
     size_t claimed = 0;
     std::string caught_message;
     for (const auto& expr : filter_op->expressions) {
+      if (_mutate_filter) {
+        _mutate_filter(*expr);
+      }
       irs::BooleanFilter node;
       std::span<const duckdb::unique_ptr<duckdb::Expression>> single{&expr, 1};
       try {
@@ -787,8 +816,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
     if (!expected_error.empty()) {
       ASSERT_FALSE(caught_message.empty())
         << "expected MakeSearchFilter to throw";
-      ASSERT_NE(caught_message.find(std::string{expected_error}),
-                std::string::npos)
+      ASSERT_NE(caught_message.find(expected_error), std::string::npos)
         << "exception message: <" << caught_message << ">\n"
         << "expected substring: <" << expected_error << ">";
       return;
@@ -805,19 +833,17 @@ class SearchFilterBuilderTest : public ::testing::Test {
         const auto name = [&]() -> std::string {
           if (type == irs::Type<irs::BooleanFilter>::id()) {
             const auto& node = irs::utils::downCast<irs::BooleanFilter>(f);
-            return "Boolean(mm=" + std::to_string(node.MinShouldMatch()) + ")";
+            return absl::StrCat("Boolean(mm=", node.MinShouldMatch(), ")");
           }
           if (type == irs::Type<irs::ByRange>::id()) {
-            return "ByRange(f=" +
-                   std::to_string(
-                     irs::utils::downCast<irs::ByRange>(f).field_id()) +
-                   ")";
+            return absl::StrCat(
+              "ByRange(f=", irs::utils::downCast<irs::ByRange>(f).field_id(),
+              ")");
           }
           if (type == irs::Type<irs::ByGranularRange>::id()) {
-            return "ByGranularRange(f=" +
-                   std::to_string(
-                     irs::utils::downCast<irs::ByGranularRange>(f).field_id()) +
-                   ")";
+            return absl::StrCat(
+              "ByGranularRange(f=",
+              irs::utils::downCast<irs::ByGranularRange>(f).field_id(), ")");
           }
           return std::string{f.type()().name()};
         }();
@@ -827,14 +853,13 @@ class SearchFilterBuilderTest : public ::testing::Test {
           for (const auto occur : irs::kAllOccur) {
             for (const auto& clause : node.Terms(occur)) {
               out.append((depth + 1) * 2, ' ');
-              out += "Term(occur=" + std::to_string(irs::OccurIndex(occur)) +
-                     ", f=" + std::to_string(clause.field) +
-                     ", boost=" + std::to_string(clause.boost) +
-                     ", scorer=" + ScorerName(clause.scorer) + ")\n";
+              absl::StrAppend(&out, "Term(occur=", irs::OccurIndex(occur),
+                              ", f=", clause.field, ", boost=", clause.boost,
+                              ", scorer=", ScorerName(clause.scorer), ")\n");
             }
             for (const auto& child : node.Filters(occur)) {
               out.append((depth + 1) * 2, ' ');
-              out += "occur=" + std::to_string(irs::OccurIndex(occur)) + "\n";
+              absl::StrAppend(&out, "occur=", irs::OccurIndex(occur), "\n");
               self(*child, out, depth + 2);
             }
           }
@@ -861,6 +886,7 @@ class SearchFilterBuilderTest : public ::testing::Test {
  protected:
   duckdb::DuckDB _db;
   duckdb::Connection _conn;
+  std::function<void(duckdb::Expression&)> _mutate_filter;
 };
 
 // ---------------------------------------------------------------------------
@@ -1031,9 +1057,8 @@ TEST_F(SearchFilterBuilderTest, test_NotOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
   irs::BooleanFilter expected;
-  auto or_filter = AddDisjunction(AddNegation(expected));
-  AddTermFilter<int32_t>(or_filter, 1, 10);
-  AddTermFilter<int32_t>(or_filter, 1, 20);
+  AddTermFilter<int32_t>(AddNegation(expected), 1, 10);
+  AddTermFilter<int32_t>(AddNegation(expected), 1, 20);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = 10 OR a = 20)",
                columns, true);
 }
@@ -1043,9 +1068,9 @@ TEST_F(SearchFilterBuilderTest, test_NotAnd) {
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"},
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "b"}};
   irs::BooleanFilter expected;
-  auto and_filter = AddConjunction(AddNegation(expected));
-  AddTermFilter<int32_t>(and_filter, 1, 10);
-  AddTermFilter<int32_t>(and_filter, 2, 20);
+  auto or_filter = AddDisjunction(expected);
+  AddTermFilter<int32_t>(AddNegation(AddConjunction(or_filter)), 1, 10);
+  AddTermFilter<int32_t>(AddNegation(AddConjunction(or_filter)), 2, 20);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (a = 10 AND b = 20)",
                columns, true);
 }
@@ -1273,9 +1298,8 @@ TEST_F(SearchFilterBuilderTest, test_AndWithNotOr) {
     {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "value"}};
   irs::BooleanFilter expected;
   AddTermFilter<bool>(expected, 1, true);
-  auto or_filter = AddDisjunction(AddNegation(expected));
-  AddTermFilter<int32_t>(or_filter, 2, 10);
-  AddTermFilter<int32_t>(or_filter, 2, 20);
+  AddTermFilter<int32_t>(AddNegation(expected), 2, 10);
+  AddTermFilter<int32_t>(AddNegation(expected), 2, 20);
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE active = true AND NOT (value = 10 OR value = 20)",
@@ -1342,9 +1366,8 @@ TEST_F(SearchFilterBuilderTest, test_NestedNotWithOr) {
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::INTEGER, .name = "a"}};
   irs::BooleanFilter root;
-  auto expected = AddConjunction(root);
-  AddRangeFilter<int32_t>(expected, 1, 10, true, std::nullopt, false);
-  AddRangeFilter<int32_t>(expected, 1, std::nullopt, false, 100, true);
+  AddRangeFilter<int32_t>(root, 1, 10, true, std::nullopt, false);
+  AddRangeFilter<int32_t>(root, 1, std::nullopt, false, 100, true);
   AssertFilter(root, "SELECT * FROM foo WHERE NOT (a < 10 OR a > 100)", columns,
                true);
 }
@@ -1778,16 +1801,16 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_Numeric_NullScoped) {
                                    .name = "a",
                                    .null_field = 8}};
   irs::BooleanFilter expected;
-  auto group = AddDisjunction(AddNegation(expected));
-  AddTermFilter<int32_t>(group, 1, 6);
-  AddTermFilter<int32_t>(group, 2, 7);
-  AddNullFilter(group, 7);
-  AddNullFilter(group, 8);
+  auto negation = AddNegation(expected);
+  AddTermFilter<int32_t>(negation, 1, 6);
+  AddTermFilter<int32_t>(negation, 2, 7);
+  AddNullFilter(negation, 7);
+  AddNullFilter(negation, 8);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 OR a = 7)",
                columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NotAndGroup_Nullable_Declines) {
+TEST_F(SearchFilterBuilderTest, test_NotAndGroup_Nullable_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
@@ -1797,8 +1820,15 @@ TEST_F(SearchFilterBuilderTest, test_NotAndGroup_Nullable_Declines) {
                                    .name = "a",
                                    .null_field = 8}};
   irs::BooleanFilter expected;
+  auto or_filter = AddDisjunction(expected);
+  auto not_c = AddNegation(AddConjunction(or_filter));
+  AddTermFilter<int32_t>(not_c, 1, 6);
+  AddNullFilter(not_c, 7);
+  auto not_a = AddNegation(AddConjunction(or_filter));
+  AddTermFilter<int32_t>(not_a, 2, 7);
+  AddNullFilter(not_a, 8);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 AND a = 7)",
-               columns, false);
+               columns, true);
 }
 
 TEST_F(SearchFilterBuilderTest, test_NotTerm_NullScoped) {
@@ -1838,7 +1868,7 @@ TEST_F(SearchFilterBuilderTest, test_NotIn_NullElement_Empty) {
                columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NotGroup_NullLiteral_Declines) {
+TEST_F(SearchFilterBuilderTest, test_NotGroup_NullLiteral_Empty) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
@@ -1848,22 +1878,27 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_NullLiteral_Declines) {
                                    .name = "a",
                                    .null_field = 8}};
   irs::BooleanFilter expected;
+  AddChild<irs::Empty>(expected);
+  AddTermFilter<int32_t>(AddNegation(expected), 2, 7);
+  AddNullFilter(AddNegation(expected), 8);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE NOT (c IN (1, 2, NULL) OR a = 7)",
-               columns, false);
+               columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NotGroup_NonStrictMember_Declines) {
+TEST_F(SearchFilterBuilderTest, test_NotGroup_NonStrictMember_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::INTEGER,
                                    .name = "c",
                                    .null_field = 7}};
   irs::BooleanFilter expected;
+  AddTermFilter<int32_t>(AddNegation(expected), 1, 6);
+  AddNullFilter(AddNegation(expected), 7);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (c = 6 OR c IS NULL)",
-               columns, false);
+               columns, true);
 }
 
-TEST_F(SearchFilterBuilderTest, test_NotGroup_IndexOnly_Nullable_Throws) {
+TEST_F(SearchFilterBuilderTest, test_NotGroup_IndexOnly_Nullable_NullScoped) {
   std::vector<ColumnSpec> columns{{.id = 1,
                                    .type = duckdb::LogicalType::VARCHAR,
                                    .name = "t",
@@ -1873,9 +1908,15 @@ TEST_F(SearchFilterBuilderTest, test_NotGroup_IndexOnly_Nullable_Throws) {
                                    .name = "c",
                                    .null_field = 8}};
   irs::BooleanFilter expected;
+  auto or_filter = AddDisjunction(expected);
+  auto not_t = AddNegation(AddConjunction(or_filter));
+  AddTermFilter<std::string_view>(not_t, 1, std::string_view{"x"});
+  AddNullFilter(not_t, 7);
+  auto not_c = AddNegation(AddConjunction(or_filter));
+  AddTermFilter<int32_t>(not_c, 2, 6);
+  AddNullFilter(not_c, 8);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT (t @@ 'x' AND c = 6)",
-               columns, false, IdentityAnalyzerProvider,
-               "mixes index-only search predicates");
+               columns, true, IdentityAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_LikeWithFunc) {
@@ -2400,6 +2441,38 @@ TEST_F(SearchFilterBuilderTest, test_TermLike_WildcardTokenizer_WithNot) {
   auto not_filter = AddNegation(expected);
   AddWildcardNGramFilter(not_filter, 1, "%foo_", true);
   AssertFilter(expected, "SELECT * FROM foo WHERE NOT(a LIKE '%foo_')", columns,
+               true, WildcardTokenizerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_Regexp_WildcardTokenizer) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  AddRegexpNGramFilter(expected, 1, "foo.*bar");
+  AssertFilter(expected, "SELECT * FROM foo WHERE b @@ ts_regexp('foo.*bar')",
+               columns, true, WildcardTokenizerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_Regexp_WildcardTokenizer_Posix) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  AddRegexpNGramFilter(expected, 1, "gr[ae]y", irs::RegexpSyntax::PosixEre);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ts_regexp('gr[ae]y', 'posix')",
+               columns, true, WildcardTokenizerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest,
+       test_TSQueryMatch_Regexp_WildcardTokenizer_WithNot) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  auto not_filter = AddNegation(expected);
+  AddRegexpNGramFilter(not_filter, 1, "foo.*");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE NOT (b @@ ts_regexp('foo.*'))", columns,
                true, WildcardTokenizerProvider);
 }
 
@@ -4812,13 +4885,13 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_BitwiseOnIntegersUnchanged) {
   // Smoke test: non-FTS expressions continue to work.
   auto res = _conn.Query("SELECT 5 | 3");
   ASSERT_FALSE(res->HasError());
-  ASSERT_EQ(res->types[0].id(), duckdb::LogicalTypeId::INTEGER);
+  ASSERT_EQ(res->GetTypes()[0].id(), duckdb::LogicalTypeId::INTEGER);
   auto chunk = res->Fetch();
   ASSERT_EQ(chunk->GetValue(0, 0).GetValue<int32_t>(), 7);
 
   auto res2 = _conn.Query("SELECT 'a' || 'b'");
   ASSERT_FALSE(res2->HasError());
-  ASSERT_EQ(res2->types[0].id(), duckdb::LogicalTypeId::VARCHAR);
+  ASSERT_EQ(res2->GetTypes()[0].id(), duckdb::LogicalTypeId::VARCHAR);
   auto chunk2 = res2->Fetch();
   ASSERT_EQ(chunk2->GetValue(0, 0).GetValue<std::string>(), "ab");
 }
@@ -5242,6 +5315,19 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchPhrase) {
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('\"quick brown\"')",
+    columns, true, SegmentationAnalyzerProvider);
+}
+
+TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_WebsearchHyphenatedWord) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
+  irs::BooleanFilter expected;
+  auto and_group = AddConjunction(expected);
+  AddPhraseFilter(and_group, 1, {"wi", "fi"});
+  AddTermFilter<std::string_view>(and_group, 1, std::string_view{"router"});
+  AssertFilter(
+    expected,
+    "SELECT * FROM foo WHERE b @@ websearch_to_tsquery('wi-fi router')",
     columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -6028,15 +6114,13 @@ TEST_F(SearchFilterBuilderTest, test_PredicateMix_OrOfDifferentPredicates) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_PredicateMix_NotOfAnd) {
-  // DuckDB does not apply De Morgan here -- the bound expression
-  // arrives as `NOT (A AND B)` and the filter builder mirrors that
-  // shape with a Not over an And.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;
-  auto inner_and = AddConjunction(AddNegation(expected));
-  AddPhraseFilter(inner_and, 1, {"quick", "brown"});
-  AddPhraseFilter(inner_and, 1, {"red", "fox"});
+  auto or_filter = AddDisjunction(expected);
+  AddPhraseFilter(AddNegation(AddConjunction(or_filter)), 1,
+                  {"quick", "brown"});
+  AddPhraseFilter(AddNegation(AddConjunction(or_filter)), 1, {"red", "fox"});
   AssertFilter(
     expected,
     "SELECT * FROM foo WHERE NOT (phrase_matches(category, 'quick brown') "
@@ -6638,16 +6722,13 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseEmptyPhrase) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopMax) {
-  // INT32_MAX slop fits PosAttr::value_t (uint32_t) and flows through
-  // unchanged. Values above uint32_t max are rejected -- see
-  // test_SloppyPhraseSlopTooLarge.
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;
-  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 2147483647);
+  AddSloppyPhraseFilter(expected, 1, {"a", "b"}, 65535);
   AssertFilter(expected,
                "SELECT * FROM foo WHERE category @@ "
-               "ts_phrase('a b', slop := 2147483647)",
+               "ts_phrase('a b', slop := 65535)",
                columns, true, SegmentationAnalyzerProvider);
 }
 
@@ -6753,9 +6834,6 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseMultipleChunksMultipleGaps) {
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopTooLarge) {
-  // The named argument binds as an ANY vararg, so an out-of-uint32
-  // budget reaches the builder's overflow check instead of a generic
-  // binder cast error -- symmetric with ::slop(5000000000).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"}};
   irs::BooleanFilter expected;  // unused on the negative path
@@ -6763,6 +6841,46 @@ TEST_F(SearchFilterBuilderTest, test_SloppyPhraseSlopTooLarge) {
                "SELECT * FROM foo WHERE category @@ "
                "ts_phrase('a b', slop := 5000000000)",
                columns, false, SegmentationAnalyzerProvider, "slop too large");
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE category @@ "
+               "ts_phrase('a b', slop := 65536)",
+               columns, false, SegmentationAnalyzerProvider, "slop too large");
+}
+
+TEST_F(SearchFilterBuilderTest, test_MinMatchRewrittenOrRejected) {
+  std::vector<ColumnSpec> columns{
+    {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "category"},
+    {.id = 2, .type = duckdb::LogicalType::INTEGER, .name = "price"}};
+  _mutate_filter = [](duckdb::Expression& root) {
+    const auto record = [](this auto& self, duckdb::Expression& expr) -> void {
+      duckdb::ExpressionIterator::EnumerateChildren(
+        expr, [&](duckdb::Expression& child) { self(child); });
+      sdb::connector::RecordWrittenMinMatchBranches(expr);
+    };
+    record(root);
+    const auto drop_branch = [](this auto& self,
+                                duckdb::Expression& expr) -> bool {
+      if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR) {
+        expr.Cast<duckdb::BoundConjunctionExpression>()
+          .GetChildrenMutable()
+          .pop_back();
+        return true;
+      }
+      bool dropped = false;
+      duckdb::ExpressionIterator::EnumerateChildren(
+        expr,
+        [&](duckdb::Expression& child) { dropped = dropped || self(child); });
+      return dropped;
+    };
+    ASSERT_TRUE(drop_branch(root));
+  };
+  irs::BooleanFilter expected;
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE (category @@ 'a' OR category @@ 'b' "
+               "OR price > 1)::min_match(2)",
+               columns, false, SegmentationAnalyzerProvider,
+               "rewritten before the index claimed it (3 branches written, 2 "
+               "seen)");
 }
 
 TEST_F(SearchFilterBuilderTest, test_SloppyPhraseNonConstantSlop) {

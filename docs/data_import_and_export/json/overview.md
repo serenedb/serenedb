@@ -16,7 +16,9 @@ While it is not a very efficient format for tabular data, it is very commonly us
 
 ## JSONPath and JSON Pointer Syntax
 
-SereneDB implements multiple interfaces for JSON extraction: [JSONPath](https://goessner.net/articles/JsonPath/) and [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901). Both of them work with the arrow operator (`->`) and the `json_extract` function call.
+SereneDB implements multiple interfaces for JSON extraction: [JSONPath](https://goessner.net/articles/JsonPath/) and [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901). Both of them work with the `json_extract` function call: `json_extract(j, '$.a.b')` and `json_extract(j, '/a/b')`.
+
+The arrow operators follow PostgreSQL instead. `->` and `->>` take a key or an array index (`j -> 'a'`, `j -> 0`), and `#>` and `#>>` take a path array (`j #> '{a,b}'`). A JSONPath or JSON Pointer string after `->` matches no key and returns `NULL`.
 
 Note that SereneDB only supports lookups in JSONPath, i.e., extracting fields with `.<key>` or array elements with `[<index>]`.
 Arrays can be indexed from the back and both approaches support the wildcard `*`.

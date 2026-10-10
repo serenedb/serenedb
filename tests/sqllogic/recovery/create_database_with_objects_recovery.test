@@ -1,0 +1,87 @@
+control substitution on
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE DATABASE cdo_db;
+
+
+statement ok
+CREATE SCHEMA cdo_db.cdo_s;
+
+
+statement ok
+CREATE SEQUENCE cdo_db.cdo_s.cdo_seq;
+
+
+statement ok
+CREATE TABLE cdo_db.cdo_s.cdo_t (id INTEGER PRIMARY KEY, body TEXT);
+
+
+statement ok
+CREATE INDEX cdo_body ON cdo_db.cdo_s.cdo_t (body);
+
+
+statement ok
+INSERT INTO cdo_db.cdo_s.cdo_t VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CREATE VIEW cdo_db.cdo_s.cdo_v AS SELECT id FROM cdo_db.cdo_s.cdo_t;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+INSERT INTO cdo_db.cdo_s.cdo_t VALUES (3, 'three');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM cdo_db.cdo_s.cdo_t;
+----
+n
+3
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM cdo_db.cdo_s.cdo_v;
+----
+n
+3
+
+
+connection after_crash
+query
+SELECT nextval('cdo_db.cdo_s.cdo_seq') AS n;
+----
+n
+1
+
+
+connection after_crash
+statement error
+INSERT INTO cdo_db.cdo_s.cdo_t VALUES (1, 'dup');
+----
+db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM duckdb_indexes() WHERE index_name = 'cdo_body';
+----
+n
+1

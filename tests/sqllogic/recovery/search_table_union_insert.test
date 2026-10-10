@@ -1,0 +1,260 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+COPY (SELECT i AS x, 'v' || i AS y FROM range(0, 60000) t(i))
+  TO '${__TEST_DIR__}/union_src.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 2000);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE u (x INTEGER, y TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+query
+EXPLAIN INSERT INTO u
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+----
+QUERY PLAN
+╭─ EXTENSION ───────────────────────╮
+╰─────────────────┬─────────────────╯
+╭─ PROJECTION ────┴─────────────────╮
+│ Projections: CAST(#0 AS INTEGER), │
+│              #1                   │
+│ ~60,002 rows                      │
+╰─────────────────┬─────────────────╯
+╭─ UNION ─────────┴─────────────────╮
+╰─────────────────┬─────────────────╯
+                  ├─────────────────────────────────╮
+╭─ PROJECTION ────┴─────────────────╮  ╭─ READ_PARQUET ─────────╮
+│ Projections: x, y                 │  │ Function: READ_PARQUET │
+│ ~2 rows                           │  │ Projections: x, y      │
+╰─────────────────┬─────────────────╯  │ ~60,000 rows           │
+╭─ COLUMN_DATA_SCAN ────────────────╮  ╰────────────────────────╯
+│ ~2 rows                           │
+╰───────────────────────────────────╯
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO u
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+
+statement ok
+VACUUM (REFRESH_TABLE) u;
+
+query
+SELECT value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
+  AND metric = 'num_segments';
+----
+value
+2
+
+query
+SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
+----
+n	d
+60002	60002
+
+query
+SELECT y FROM u WHERE x IN (5, 7) ORDER BY y;
+----
+y
+i5
+i7
+v5
+v7
+
+statement ok
+DROP TABLE u;
+
+statement ok
+CREATE TABLE u (x INTEGER, y TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO u
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet')
+  UNION ALL
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) u;
+
+query
+SELECT value FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
+  AND metric = 'num_segments';
+----
+value
+2
+
+query
+SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
+----
+n	d
+60002	60002
+
+statement ok
+DROP TABLE u;
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE u (x INTEGER, y TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO u
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+
+statement ok
+VACUUM (REFRESH_TABLE) u;
+
+query
+SELECT value > 2 AS parallel FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
+  AND metric = 'num_segments';
+----
+parallel
+t
+
+query
+SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
+----
+n	d
+60002	60002
+
+query
+SELECT y FROM u WHERE x IN (5, 7) ORDER BY y;
+----
+y
+i5
+i7
+v5
+v7
+
+statement ok
+DROP TABLE u;
+
+statement ok
+CREATE TABLE u (x INTEGER, y TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO u
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet')
+  UNION ALL
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) u;
+
+query
+SELECT value > 2 AS parallel FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'u')
+  AND metric = 'num_segments';
+----
+parallel
+t
+
+query
+SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
+----
+n	d
+60002	60002
+
+statement ok
+DROP TABLE u;
+
+statement ok
+CREATE TABLE u (x INTEGER, y TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO u
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+
+statement ok
+INSERT INTO u VALUES (5, 's5'), (7, 's7');
+
+statement ok
+COMMIT;
+
+statement ok
+VACUUM (REFRESH_TABLE) u;
+
+query
+SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
+----
+n	d
+60004	60004
+
+query
+SELECT y FROM u WHERE x IN (5, 7) ORDER BY y;
+----
+y
+i5
+i7
+s5
+s7
+v5
+v7
+
+statement ok
+DROP TABLE u;
+
+statement ok
+CREATE TABLE u (x INTEGER, y TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+SET sdb_faults = 'crash_after_search_wal_commit';
+
+statement error connection closed
+INSERT INTO u
+  SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(x) AS n, count(DISTINCT y) AS d FROM u;
+----
+n	d
+60002	60002
+
+connection after_crash
+query
+SELECT y FROM u WHERE x IN (5, 7) ORDER BY y;
+----
+y
+i5
+i7
+v5
+v7
+
+connection after_crash
+statement ok
+DROP TABLE u;
+
+connection after_crash
+statement ok
+RESET threads;

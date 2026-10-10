@@ -23,7 +23,7 @@
 // is correctness-checked against the current impl over adversarial inputs
 // before timing.
 //
-//   taskset -c N ./serenedb-bench-micro-ci_compare --benchmark_min_time=0.3s \
+//   taskset -c N ./serenedb-bench-micro ci_compare --benchmark_min_time=0.3s \
 //     --benchmark_repetitions=12 --benchmark_report_aggregates_only=true
 
 #include <absl/strings/internal/memutil.h>
@@ -331,5 +331,3 @@ BENCHMARK_TEMPLATE(Bm, LtSwar, true)->Name("lt_swar");
 #if defined(__x86_64__) || defined(__i386__)
 BENCHMARK_TEMPLATE(Bm, LtSimd, true)->Name("lt_simd");
 #endif
-
-BENCHMARK_MAIN();

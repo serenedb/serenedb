@@ -31,11 +31,9 @@ namespace sdb::connector {
 struct FilterContext;  // ts_common.hpp
 
 // Returns the inner expression as a ST_Distance_Centroid(field, centroid)
-// call -- or its `<->` operator-form synonym -- when it matches that
-// exact shape, or nullptr otherwise. `<->` shares its operator name with
-// the vector L2 op, so disambiguation needs the catalog (FilterContext).
+// call when it matches that exact shape, or nullptr otherwise.
 const duckdb::BoundFunctionExpression* TryGetGeoDistanceCall(
-  const FilterContext& ctx, const duckdb::Expression& expr);
+  const duckdb::Expression& expr);
 
 // ST_Distance_Centroid(field, centroid) = / != distance  ->  point range.
 void FromGeoDistanceBinaryEq(BoolTarget filter, const FilterContext& ctx,

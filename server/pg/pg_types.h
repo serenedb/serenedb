@@ -20,11 +20,15 @@
 
 #pragma once
 
+#include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/qualified_name.hpp>
 #include <expected>
+#include <iresearch/utils/assert.hpp>
 #include <magic_enum/magic_enum.hpp>
-
-#include "catalog/identifiers/object_id.h"
+#include <string>
+#include <string_view>
 
 namespace duckdb {
 
@@ -41,6 +45,45 @@ using ParamIndex = int16_t;
 
 inline constexpr uint64_t kInvalidOid = 0;
 
+constexpr uint32_t WireOid(uint64_t oid) { return static_cast<uint32_t>(oid); }
+
+constexpr uint64_t OidFromSql(int64_t value) {
+  return static_cast<uint64_t>(value);
+}
+
+constexpr int64_t OidToSql(uint64_t oid) { return static_cast<int64_t>(oid); }
+
+// Postgres' PUBLIC pseudo-role. It is not a role id at all: 0 is the oid no
+// pg_authid row can carry, which is what lets an acl item name "everybody".
+inline constexpr duckdb::idx_t kPublicGrantee = 0;
+
+inline constexpr duckdb::idx_t kMinSystem = 16384;
+inline constexpr duckdb::idx_t kMaxSystem = 65536;
+
+inline constexpr duckdb::idx_t kPgCatalogSchema = 11;
+inline constexpr duckdb::idx_t kPgInformationSchema = kMinSystem + 3;
+inline constexpr duckdb::idx_t kPgPublicSchema = 2200;
+inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
+inline constexpr duckdb::idx_t kPgPostgresDatabase = 5;
+
+inline constexpr duckdb::idx_t kRootUser = kMinSystem;
+
+inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
+inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;
+inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
+
+inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
+inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
+inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
+
+inline constexpr duckdb::idx_t kFirstSystemView = kMinSystem + 1000;
+inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
+
+inline uint64_t TypeArrayOid(uint64_t element_oid) {
+  SDB_ASSERT(element_oid > kMaxSystem);
+  return element_oid - 1;
+}
+
 // Postgres stores date/time/timestamp from 2000-01-01
 inline constexpr int64_t kGapDays =
   absl::CivilDay{2000, 1, 1} - absl::CivilDay{1970, 1, 1};
@@ -49,7 +92,7 @@ inline constexpr int64_t kGapMs = kGapSec * 1000;
 inline constexpr int64_t kGapUs = kGapMs * 1000;
 inline constexpr int64_t kGapNs = kGapUs * 1000;
 
-enum PgTypeOID : int32_t {
+enum PgTypeOID : uint64_t {
   kBool = 16,
   kBoolArray = 1000,
   kBytea = 17,
@@ -239,33 +282,39 @@ enum PgTypeOID : int32_t {
   kAnycompatiblemultirange = 4538,
   kPgBrinBloomSummary = 4600,
   kPgBrinMinmaxMultiSummary = 4601,
-  kVariant = id::kVariant.id(),
-  kVariantArray = id::kVariantArray.id(),
-  kTsquery = id::kTsquery.id(),
-  kTsqueryArray = id::kTsqueryArray.id(),
-  kUnion = id::kUnion.id(),
-  kUnionArray = id::kUnionArray.id(),
-  kGeometry = id::kGeometry.id(),
-  kGeometryArray = id::kGeometryArray.id(),
+  kVariant = kMinSystem + 100,
+  kVariantArray = kMinSystem + 101,
+  kTsquery = kMinSystem + 102,
+  kTsqueryArray = kMinSystem + 103,
+  kUnion = kMinSystem + 104,
+  kUnionArray = kMinSystem + 105,
+  kGeometry = kMinSystem + 106,
+  kGeometryArray = kMinSystem + 107,
 };
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the
 // fixed byte width of a fixed-length type, or -1 for a varlena type), and
 // typmod (the type modifier, e.g. DECIMAL precision/scale, or -1 for none).
 struct PgTypeInfo {
-  int32_t oid;
+  uint64_t oid;
   int16_t typlen;
   int32_t typmod;
 };
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array = false);
-int32_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
-duckdb::LogicalType Oid2Type(int32_t oid, duckdb::ClientContext& context);
+uint64_t Type2Oid(const duckdb::LogicalType& type, bool in_array = false);
+duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context);
 
-std::string RegtypeOut(uint64_t oid);
+std::string RegtypeOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegtypeIn(std::string_view name);
 
 std::string RegclassOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegclassIn(const ConnectionContext& ctx, std::string_view name);
+
+uint64_t ResolveRelation(duckdb::ClientContext& context,
+                         const duckdb::QualifiedName& name);
+std::string RelationName(duckdb::ClientContext& context,
+                         std::string_view schema, std::string_view name,
+                         uint64_t oid);
 
 std::string RegnamespaceOut(duckdb::ClientContext* context, uint64_t oid);
 uint64_t RegnamespaceIn(const ConnectionContext& ctx, std::string_view name);

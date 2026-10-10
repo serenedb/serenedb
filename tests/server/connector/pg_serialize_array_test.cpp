@@ -61,7 +61,7 @@ class PgSerializeArrayTest : public ::testing::Test {
   std::unique_ptr<sdb::message::Buffer> _buffer;
   sdb::pg::SerializationContext _ctx;
 
-  void SetUp() override {
+  void SetUp() final {
     // flush_size=1 so every Commit(true) drains via the send callback into
     // `_collected`. types_cache is only consulted by STRUCT serialization;
     // initialize it for safety even though our test types don't need it.

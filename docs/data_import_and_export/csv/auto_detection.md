@@ -4,6 +4,7 @@ split: headings
 ---
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 
 When using `read_csv`, the system tries to automatically infer how to read the CSV file using the CSV sniffer.
 This step is necessary because CSV files are not self-describing and come in many different dialects. The auto-detection works roughly as follows:
@@ -72,7 +73,7 @@ The following dialects are considered for automatic dialect detection.
 
 <!-- markdownlint-enable MD056 -->
 
-Consider the example file <a href="/files/docs/flights.csv" download>`flights.csv`</a>:
+Consider the example file <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a>:
 
 ```csv
 FlightDate|UniqueCarrier|OriginCityName|DestCityName
@@ -96,7 +97,7 @@ After detecting the dialect, the system will attempt to figure out the types of 
 
 The type detection works by attempting to convert the values in each column to the candidate types. If the conversion is unsuccessful, the candidate type is removed from the set of candidate types for that column. After all samples have been handled – the remaining candidate type with the highest priority is chosen. The default set of candidate types is given below, in order of priority:
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | Types       |
 | ----------- |
@@ -110,14 +111,16 @@ The type detection works by attempting to convert the values in each column to t
 | DOUBLE      |
 | VARCHAR     |
 
+</div>
+
 Everything can be cast to `VARCHAR`, therefore, this type has the lowest priority meaning that all columns are converted to `VARCHAR` as a fallback if they cannot be cast to anything else.
-In <a href="/files/docs/flights.csv" download>`flights.csv`</a> the `FlightDate` column will be cast to a `DATE`, while the other columns will be cast to `VARCHAR`.
+In <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a> the `FlightDate` column will be cast to a `DATE`, while the other columns will be cast to `VARCHAR`.
 
 The set of candidate types that should be considered by the CSV reader can be specified explicitly using the [`auto_type_candidates`](../../data_import_and_export/csv/overview.md#auto_type_candidates-details) option. `VARCHAR` as the fallback type will always be considered as a candidate type whether you specify it or not.
 
 Here are all additional candidate types that may be specified using the `auto_type_candidates` option, in order of priority:
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | Types    |
 | -------- |
@@ -126,6 +129,8 @@ Here are all additional candidate types that may be specified using the `auto_ty
 | INTEGER  |
 | DECIMAL  |
 | FLOAT    |
+
+</div>
 
 Even though the set of data types that can be automatically detected may appear quite limited, the CSV reader can be configured to read arbitrarily complex types by using the `types`-option described in the next section.
 
@@ -147,7 +152,7 @@ The `sniff_csv()` function's `Column` field returns a struct with column names a
 
 ## Header Detection
 
-Header detection works by checking if the candidate header row deviates from the other rows in the file in terms of types. For example, in <a href="/files/docs/flights.csv" download>`flights.csv`</a>, we can see that the header row consists of only `VARCHAR` columns – whereas the values contain a `DATE` value for the `FlightDate` column. As such – the system defines the first row as the header row and extracts the column names from the header row.
+Header detection works by checking if the candidate header row deviates from the other rows in the file in terms of types. For example, in <a href={useBaseUrl("/files/docs/flights.csv")} download>`flights.csv`</a>, we can see that the header row consists of only `VARCHAR` columns – whereas the values contain a `DATE` value for the `FlightDate` column. As such – the system defines the first row as the header row and extracts the column names from the header row.
 
 In files that do not have a header row, the column names are generated as `column0`, `column1`, etc.
 
@@ -163,7 +168,7 @@ If the ambiguities cannot be resolved by looking at the data the system has a li
 
 The system considers the following formats for dates (`dateformat`). Higher entries are chosen over lower entries in case of ambiguities (i.e., ISO 8601 is preferred over `MM-DD-YYYY`).
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | dateformat |
 | ---------- |
@@ -175,9 +180,11 @@ The system considers the following formats for dates (`dateformat`). Higher entr
 | %m-%d-%y   |
 | %m-%d-%Y   |
 
+</div>
+
 The system considers the following formats for timestamps (`timestampformat`). Higher entries are chosen over lower entries in case of ambiguities.
 
-<div class="monospace_table"></div>
+<div className="docs-table-monospace">
 
 | timestampformat      |
 | -------------------- |
@@ -189,3 +196,5 @@ The system considers the following formats for timestamps (`timestampformat`). H
 | %m-%d-%y %I:%M:%S %p |
 | %m-%d-%Y %I:%M:%S %p |
 | %Y-%m-%d %H:%M:%S.%f |
+
+</div>

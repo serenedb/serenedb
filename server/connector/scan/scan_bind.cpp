@@ -23,6 +23,10 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <cmath>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/boolean_rules.hpp>
@@ -31,14 +35,19 @@
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <cmath>
 #include <magic_enum/magic_enum.hpp>
 #include <ranges>
 
-#include "catalog/entry/duckdb_table_entry.h"
+#include "catalog/entry/search_table.h"
+#include "connector/duckdb_client_state.h"
+#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
+#include "connector/scan/scan_function.h"
 #include "connector/search_filter_builder.hpp"
+#include "pg/connection_context.h"
 #include "query/config.h"
+#include "search/search_table.h"
+#include "search/search_table_transaction.h"
 
 namespace sdb::connector {
 namespace {
@@ -70,8 +79,7 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
       }
       uint64_t terms = 0;
       for (const auto& segment : bind.search.snapshot->reader) {
-        if (const auto* field =
-              segment.field(static_cast<irs::field_id>(req.field_id))) {
+        if (const auto* field = segment.field(req.field_id)) {
           terms += field->size();
         }
       }
@@ -84,27 +92,84 @@ duckdb::unique_ptr<duckdb::NodeStatistics> TsDictEstimation(
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
 }
 
-}  // namespace
-
-std::vector<const catalog::InvertedIndex*> RelationSpec::InvertedIndexes()
-  const {
-  return indexes | std::views::transform([](const auto& index) {
-           return &catalog::InvertedInfo(*index);
-         }) |
-         std::ranges::to<std::vector>();
-}
-
-double SegmentBeamShare(double k, size_t segments) noexcept {
-  if (segments <= 1) {
-    return k;
+const duckdb::ColumnDefinition* FindColumnById(
+  const duckdb::TableCatalogEntry& entry, ColumnId col_id) {
+  for (const auto& column : entry.GetColumns().Logical()) {
+    if (TableColumnId(column) == col_id) {
+      return &column;
+    }
   }
-  const double n = static_cast<double>(segments);
-  const double mean = k / n;
-  const double sd = std::sqrt(mean * (1.0 - 1.0 / n));
-  return std::min(k, std::max(16.0, std::ceil(mean + 3.0 * sd)));
+  return nullptr;
 }
 
-namespace {
+irs::DirectoryReader PinnedSearchReader(
+  duckdb::ClientContext& context, duckdb::idx_t oid,
+  const std::shared_ptr<search::SearchTable>& store) {
+  auto* conn_ctx = GetSereneDBContextPtr(context);
+  if (!conn_ctx) {
+    return store->GetDirectoryReader();
+  }
+  return irs::DirectoryReader{*conn_ctx->SearchTxn().EnsureSearchTableReader(
+    oid, [&] { return store->GetDirectoryReader(); })};
+}
+
+irs::DirectoryReader PinnedSearchReader(
+  duckdb::ClientContext& context, const catalog::SearchTableEntry& table) {
+  return PinnedSearchReader(context, table.oid, table.Storage());
+}
+
+decltype(PlanCacheSpec::reacquire_snapshot) SearchTableReacquire(
+  const catalog::SearchTableEntry& table) {
+  return [oid = table.oid, store = table.Storage()](
+           duckdb::ClientContext& context) -> search::InvertedIndexSnapshotPtr {
+    return std::make_shared<search::InvertedIndexSnapshot>(
+      PinnedSearchReader(context, oid, store), nullptr);
+  };
+}
+
+duckdb::unique_ptr<ScanBindData> MakeTableScanBindData(
+  duckdb::TableCatalogEntry& table, ScanEntryKind kind,
+  std::string lookup_label, search::InvertedIndexSnapshotPtr snapshot) {
+  auto data = duckdb::make_uniq<ScanBindData>();
+  data->relation.table_entry = &table;
+  data->relation.kind = kind;
+  data->lookup.label = std::move(lookup_label);
+  data->search.snapshot = std::move(snapshot);
+  for (const auto& column : table.GetColumns().Logical()) {
+    data->columns.ids.emplace_back(TableColumnId(column));
+    data->columns.types.emplace_back(column.Type());
+  }
+  return data;
+}
+
+duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
+  duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view,
+  const duckdb::case_insensitive_map_t<duckdb::Value>& index_options,
+  search::InvertedIndexSnapshotPtr snapshot) {
+  auto view_info = view.GetInfo();
+  const auto& view_base = view_info->Cast<duckdb::CreateViewInfo>();
+  auto data = duckdb::make_uniq<ScanBindData>();
+  auto& spec = data->view.emplace();
+  spec.id = view.oid;
+  spec.name = view.name.GetIdentifierName();
+  data->relation.kind = ScanEntryKind::InvertedIndex;
+  data->search.snapshot = std::move(snapshot);
+  spec.fast_path = ResolveViewFastPath(context, view.ParentCatalog(), view_base,
+                                       catalog::ParseKeyColumns(index_options));
+  data->lookup.supports_filters = false;
+  if (spec.fast_path) {
+    data->lookup.label = FormatLookupLabel(*spec.fast_path);
+    data->lookup.supports_filters = spec.fast_path->supports_filters;
+  } else {
+    data->lookup.label = "view";
+  }
+  for (duckdb::idx_t i = 0; i < view_base.names.size(); ++i) {
+    data->columns.ids.emplace_back(i);
+    data->columns.types.emplace_back(view_base.types[i]);
+    spec.column_names.emplace_back(view_base.names[i].GetIdentifierName());
+  }
+  return data;
+}
 
 // Auto is 0 or 1 and never more: a default decides *whether* to re-score, not
 // how much to spend on it. 1 gives every segment its own pool, re-scored
@@ -141,6 +206,16 @@ double AutoOversample(const VectorScorerOptions& vs) noexcept {
 
 }  // namespace
 
+double SegmentBeamShare(double k, size_t segments) noexcept {
+  if (segments <= 1) {
+    return k;
+  }
+  const double n = static_cast<double>(segments);
+  const double mean = k / n;
+  const double sd = std::sqrt(mean * (1.0 - 1.0 / n));
+  return std::min(k, std::max(16.0, std::ceil(mean + 3.0 * sd)));
+}
+
 double AnnOversample(duckdb::ClientContext& context,
                      const VectorScorerOptions& vs, bool& chosen_here) {
   static constinit SettingRef gOversample{"sdb_ann_oversample"};
@@ -158,11 +233,9 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   const auto nprobe = gNprobe.SignedInt(context);
   vs.nprobe = nprobe < 0 ? 0 : static_cast<uint32_t>(nprobe);
   const auto min_fanout = gMinFanout.SignedInt(context);
-  vs.min_search_fanout =
-    min_fanout < 0 ? 0 : static_cast<uint32_t>(min_fanout);
+  vs.min_search_fanout = min_fanout < 0 ? 0 : static_cast<uint32_t>(min_fanout);
   const auto max_fanout = gMaxFanout.SignedInt(context);
-  vs.max_search_fanout =
-    max_fanout < 0 ? 0 : static_cast<uint32_t>(max_fanout);
+  vs.max_search_fanout = max_fanout < 0 ? 0 : static_cast<uint32_t>(max_fanout);
   const auto ef = gEfSearch.SignedInt(context);
   vs.ef_search = ef < 0 ? 0 : static_cast<uint32_t>(ef);
   vs.hnsw_filter_mode = ReadHnswFilterMode(context);
@@ -207,10 +280,6 @@ TsDictRequest& TsDictSpec::For(irs::field_id field_id) {
     TsDictRequest{.field_id = field_id, .display_id = field_id});
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> ScanBindData::Copy() const {
-  return duckdb::make_uniq<ScanBindData>(*this);
-}
-
 bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<ScanBindData>();
   if (view.has_value() != o.view.has_value()) {
@@ -225,77 +294,70 @@ bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
   return relation.table_entry.get() == o.relation.table_entry.get();
 }
 
-catalog::ColumnId ScanBindData::ColumnIdByName(std::string_view name) const {
-  if (view) {
-    const auto& names = view->column_names;
-    for (size_t i = 0; i < names.size(); ++i) {
-      if (names[i] == name) {
-        return static_cast<catalog::ColumnId>(i);
-      }
-    }
-    return catalog::kInvalidColumnId;
-  }
-  const auto& entry_columns = relation.table_entry->GetColumns();
-  const duckdb::Identifier key{name};
-  return entry_columns.ColumnExists(key)
-           ? catalog::ColumnId{entry_columns.GetColumn(key).CatalogOid()}
-           : catalog::kInvalidColumnId;
-}
-
-std::string_view ScanBindData::ColumnNameById(catalog::ColumnId col_id) const {
+std::string_view ScanBindData::ColumnNameById(ColumnId col_id) const {
   if (view) {
     const auto idx = static_cast<size_t>(col_id);
     const auto& names = view->column_names;
     return idx < names.size() ? std::string_view{names[idx]}
                               : std::string_view{};
   }
-  const auto* column = catalog::TableEntryColumn(*relation.table_entry, col_id);
+  const auto* column = FindColumnById(*relation.table_entry, col_id);
   return column ? column->Name().GetIdentifierName() : std::string_view{};
 }
 
-duckdb::LogicalType ScanBindData::ColumnTypeById(
-  catalog::ColumnId col_id) const {
+duckdb::LogicalType ScanBindData::ColumnTypeById(ColumnId col_id) const {
   if (view) {
     const auto idx = static_cast<size_t>(col_id);
     return idx < columns.types.size() ? columns.types[idx]
                                       : duckdb::LogicalType::INVALID;
   }
-  const auto* column = catalog::TableEntryColumn(*relation.table_entry, col_id);
+  const auto* column = FindColumnById(*relation.table_entry, col_id);
   return column ? column->Type() : duckdb::LogicalType::INVALID;
 }
 
-std::string ScanBindData::DisplayColumnName(catalog::ColumnId col_id) const {
+std::string ScanBindData::DisplayColumnName(ColumnId col_id) const {
   auto name = ColumnNameById(col_id);
+  if (name.empty()) {
+    name = ColumnNameById(relation.inverted_config->ColumnOf(col_id));
+  }
   if (!name.empty()) {
     return std::string{name};
   }
-  if (relation.IsIndexRelation()) {
-    const auto* expr = relation.ScannedIndex().ExpressionByFieldId(
-      static_cast<irs::field_id>(col_id));
-    if (expr && !expr->pretty_printed.empty()) {
-      return expr->pretty_printed;
-    }
+  if (auto expr = relation.inverted_config->ExpressionText(col_id);
+      !expr.empty()) {
+    return expr;
   }
   return absl::StrCat("col", col_id);
 }
 
-bool ScanBindData::IsColumnNotNull(catalog::ColumnId col_id) const {
+bool ScanBindData::IsColumnNotNull(ColumnId col_id) const {
   if (view) {
     return false;
   }
-  return catalog::TableEntryColumnNotNull(*relation.table_entry, col_id);
+  const auto* column = FindColumnById(*relation.table_entry, col_id);
+  if (!column) {
+    return false;
+  }
+  const auto index = column->Logical();
+  for (const auto& constraint : relation.table_entry->GetConstraints()) {
+    if (constraint->type == duckdb::ConstraintType::NOT_NULL &&
+        constraint->Cast<duckdb::NotNullConstraint>().index == index) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void ScanBindData::IterateColumns(const ColumnVisitor& cb) const {
   if (view) {
     const auto& names = view->column_names;
     for (size_t i = 0; i < names.size(); ++i) {
-      cb(static_cast<catalog::ColumnId>(i), columns.types[i]);
+      cb(static_cast<ColumnId>(i), columns.types[i]);
     }
     return;
   }
   for (const auto& column : relation.table_entry->GetColumns().Logical()) {
-    cb(catalog::ColumnId{column.CatalogOid()}, column.Type());
+    cb(TableColumnId(column), column.Type());
   }
 }
 
@@ -303,21 +365,15 @@ bool ScanBindData::IsHnswScored() const noexcept {
   if (!score.vector) {
     return false;
   }
-  for (const auto& index : relation.indexes) {
-    const auto info =
-      catalog::InvertedInfo(*index).GetAnnInfo(score.vector->field_id);
-    if (info) {
-      return info->kind == irs::AnnKind::Hnsw;
-    }
-  }
-  return false;
-}
-
-ObjectId ScanBindData::RelationId() const {
-  return view ? view->id : catalog::ScanRelationId(*relation.table_entry);
+  const auto info =
+    relation.inverted_config->GetColumnOptions(score.vector->field_id).ann_info;
+  return info && info->kind == irs::AnnKind::Hnsw;
 }
 
 std::string_view ScanBindData::RelationName() const {
+  if (relation.IsInvertedIndex()) {
+    return relation.inverted_index->name.GetIdentifierName();
+  }
   return view ? std::string_view{view->name}
               : relation.table_entry->name.GetIdentifierName();
 }
@@ -339,9 +395,84 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
 duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   duckdb::ClientContext& context, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
-  duckdb::vector<duckdb::string>& names) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("ScanBind: should be provided via GetScanFunction"));
+  duckdb::vector<duckdb::Identifier>& names) {
+  const duckdb::QualifiedName qualified{
+    duckdb::Identifier{input.inputs[0].GetValue<std::string>()},
+    duckdb::Identifier{input.inputs[1].GetValue<std::string>()},
+    duckdb::Identifier{input.inputs[2].GetValue<std::string>()}};
+  auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
+    context, qualified, duckdb::OnEntryNotFound::RETURN_NULL);
+  if (!index || !IsInvertedIndex(*index)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+                    ERR_MSG("relation \"", qualified.Name().GetIdentifierName(),
+                            "\" does not exist"));
+  }
+  const auto& entry = irs::utils::downCast<catalog::InvertedIndexEntry>(*index);
+  auto host = index->GetRelation(index->catalog.GetCatalogTransaction(context));
+  if (!host) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_TABLE),
+      ERR_MSG("relation \"", index->GetTableName().GetIdentifierName(),
+              "\" does not exist"));
+  }
+  auto& relation = *host;
+  const auto* search_table =
+    dynamic_cast<const catalog::SearchTableEntry*>(&relation);
+  search::InvertedIndexSnapshotPtr snapshot;
+  if (search_table) {
+    snapshot = std::make_shared<search::InvertedIndexSnapshot>(
+      PinnedSearchReader(context, *search_table), nullptr);
+  } else {
+    snapshot = GetSereneDBContext(context).EnsureSearchSnapshot(
+      entry.oid, entry.Storage());
+  }
+  auto data =
+    relation.type == duckdb::CatalogType::VIEW_ENTRY
+      ? MakeViewScanBindData(context, relation.Cast<duckdb::ViewCatalogEntry>(),
+                             entry.options, std::move(snapshot))
+      : MakeTableScanBindData(relation.Cast<duckdb::TableCatalogEntry>(),
+                              search_table ? ScanEntryKind::SearchTableIndex
+                                           : ScanEntryKind::InvertedIndex,
+                              search_table ? "search" : "table",
+                              std::move(snapshot));
+  data->relation.inverted_index = &entry;
+  if (search_table) {
+    data->plan_cache.reacquire_snapshot = SearchTableReacquire(*search_table);
+  } else {
+    data->plan_cache.reacquire_snapshot =
+      [oid = entry.oid, storage = entry.Storage()](
+        duckdb::ClientContext& ctx) -> search::InvertedIndexSnapshotPtr {
+      return GetSereneDBContext(ctx).EnsureSearchSnapshot(oid, storage);
+    };
+  }
+  data->relation.inverted_config = entry.Config();
+  data->relation.row_group_size =
+    search_table ? search_table->Storage()->Config()->row_group_size
+                 : entry.Config()->row_group_size;
+  data->score.prune = search_table ? search_table->Storage()->TopKScorer()
+                                   : entry.Config()->top_k_scorer;
+  data->IterateColumns([&](ColumnId id, const duckdb::LogicalType& type) {
+    return_types.emplace_back(type);
+    names.emplace_back(data->ColumnNameById(id));
+  });
+  return data;
+}
+
+duckdb::TableFunction BindSearchTableScan(
+  duckdb::ClientContext& context, catalog::SearchTableEntry& entry,
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
+  const auto& store = entry.Storage();
+  auto data =
+    MakeTableScanBindData(entry, ScanEntryKind::SearchTable, "search",
+                          std::make_shared<search::InvertedIndexSnapshot>(
+                            PinnedSearchReader(context, entry), nullptr));
+  data->plan_cache.reacquire_snapshot = SearchTableReacquire(entry);
+  data->score.prune = store->TopKScorer();
+  data->relation.inverted_config = store->Config();
+  data->relation.row_group_size =
+    data->relation.inverted_config->row_group_size;
+  bind_data = std::move(data);
+  return CreateIResearchScanFunction();
 }
 
 std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
@@ -351,21 +482,14 @@ std::optional<duckdb::LogicalType> GeneratedPkTypeOf(const ScanBindData& bind) {
   return std::nullopt;
 }
 
-std::optional<catalog::PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
-  if (bind.view && bind.relation.IsIndexRelation() &&
-      bind.relation.ScannedIndex().GetOptions().pk_column ==
-        catalog::PkColumnKind::Has) {
+std::optional<PkSpec> ViewPkSpecOf(const ScanBindData& bind) {
+  if (bind.view &&
+      bind.relation.inverted_config->pk.column == PkColumnKind::Has) {
     if (const auto& fp = bind.view->fast_path) {
       return fp->pk_spec;
     }
   }
   return std::nullopt;
-}
-
-const irs::Scorer* ResolvePruneScorer(
-  const std::optional<catalog::ScorerOptions>& topk,
-  const irs::Scorer* scorer) {
-  return topk && scorer && scorer->Compatible(*topk) ? scorer : nullptr;
 }
 
 std::shared_ptr<const irs::Filter> BuildDeferredFilter(

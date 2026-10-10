@@ -20,28 +20,24 @@
 
 #include "query/transaction.h"
 
-#include <absl/cleanup/cleanup.h>
-#include <absl/random/random.h>
+#include <absl/algorithm/container.h>
+#include <absl/container/flat_hash_map.h>
 
-#include <chrono>
+#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
-#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <thread>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/log/store.h"
-#include "connector/inverted_store_index.h"
+#include "catalog/catalog.h"
+#include "catalog/entry/inverted_index.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
-#include "search/tick_domain.h"
 
 namespace sdb::query {
 
@@ -92,7 +88,7 @@ bool Transaction::IsStableSnapshot() const {
   return _had_dml;
 }
 
-bool Transaction::TryDropSearchReader(ObjectId shard_id) {
+bool Transaction::TryDropSearchReader(duckdb::idx_t shard_id) {
   if (IsStableSnapshot() || !_search_txn) {
     return false;
   }
@@ -153,7 +149,15 @@ void Transaction::OnStatementEnd() {
   // same view, so there is nothing to drop here.
 }
 
-void Transaction::PreCommit() noexcept {
+void Transaction::PreCommit() {
+  // Search-table writes still held in the buffer reach iresearch through
+  // a sink built off the catalog, so they have to be fed while the DuckDB
+  // transaction is still active. Ahead of CommitVariables so that a throw
+  // here leaves the SET LOCAL overlays for RollbackVariables to undo on the
+  // rollback this refusal turns into.
+  if (_search_txn) {
+    _search_txn->FlushPending(GetClientContext());
+  }
   // Revert SET LOCAL overlays (and clear the txn map) while the DuckDB
   // transaction is still active so custom-impl settings (search_path,
   // transaction_isolation) can use their normal set_local path (which may
@@ -161,70 +165,71 @@ void Transaction::PreCommit() noexcept {
   CommitVariables();
 }
 
-void Transaction::PreRollback() noexcept { RollbackVariables(); }
-
-void Transaction::CommitSearch(
-  std::optional<search::WalCursor> cursor) noexcept {
-  if (_search_feeds.empty()) {
-    return;
+Transaction::SearchSlot& Transaction::EnsureIndexSlot(
+  duckdb::idx_t index_id, std::shared_ptr<search::InvertedIndexStorage> storage,
+  std::shared_ptr<const catalog::InvertedIndexConfig> config, size_t slot) {
+  auto& entry = _search_transactions.try_emplace(index_id).first->second;
+  if (entry.slots.size() <= slot) {
+    entry.slots.resize(slot + 1);
   }
-  absl::Cleanup rollback = [&] {
-    AbortInvertedFeeds();
-    _search_feeds.clear();
-  };
-
-  // Phase 1, before the tick exists: drain the workers and pin every staged
-  // segment onto the flush context. Pinning must precede Next -- otherwise a
-  // refresh whose tick snapshot lands in between could advance its committed
-  // tick past an unpinned segment (lost insert / FlushPending assert). Returns
-  // each feed's widest query count, so the reserved band leaves every writer's
-  // first_tick strictly above the tick it last committed at.
-  uint64_t max_queries = 0;
-  for (auto& [index_id, feed] : _search_feeds) {
-    max_queries =
-      std::max<uint64_t>(max_queries, connector::PrepareInvertedFeed(*feed));
+  auto& result = entry.slots[slot];
+  if (!result.transaction) {
+    result.transaction = std::make_unique<irs::IndexWriter::Transaction>(
+      storage->GetTransaction());
+    result.transaction->SetFieldOptions(std::move(config));
   }
-  SDB_IF_FAILURE("long_waited_advance") {
-    absl::BitGen gen;
-    std::this_thread::sleep_for(std::chrono::microseconds(
-      absl::Uniform(absl::IntervalClosed, gen, 0, 20000)));
+  if (!entry.storage) {
+    entry.storage = std::move(storage);
   }
-
-  const auto last_tick = search::TickDomain::Instance().Next(max_queries + 1);
-
-  std::move(rollback).Cancel();
-
-  // Phase 2: each feed records this commit's WAL cursor into its own table
-  // before its segments become flushable, then commits them all at the tick.
-  // The cursor is this commit's exact WAL position, captured under the WAL lock
-  // by the engine: commits overlap, so reading the WAL size here would include
-  // later transactions' bytes and over-claim (skipping their re-stream after a
-  // crash).
-  for (auto& [index_id, feed] : _search_feeds) {
-    connector::FinishInvertedFeed(*feed, last_tick, cursor);
-  }
-
-  _search_feeds.clear();
+  return result;
 }
 
-void Transaction::AbortInvertedFeeds() noexcept {
-  for (auto& [index_id, feed] : _search_feeds) {
-    connector::AbortInvertedFeed(*feed);
+void Transaction::StageSearch(const irs::SourcePosition& position,
+                              duckdb::idx_t database) noexcept {
+  for (auto& [index_id, entry] : _search_transactions) {
+    if (entry.storage->GetDatabaseId() != database) {
+      continue;
+    }
+    uint64_t queries = 0;
+    for (auto& slot : entry.slots) {
+      slot.writer.reset();
+      if (slot.transaction) {
+        slot.transaction->RegisterFlush();
+        queries = std::max<uint64_t>(queries, slot.transaction->GetQueries());
+      }
+    }
+    entry.tick = entry.storage->NextTick(queries);
+    entry.position = position;
   }
+}
+
+void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
+  const auto in_scope = [&](const auto& item) {
+    return item.second.storage->GetDatabaseId() == database;
+  };
+  for (auto& item : _search_transactions) {
+    if (!in_scope(item)) {
+      continue;
+    }
+    auto& [index_id, entry] = item;
+    SDB_ASSERT(entry.tick != 0);
+    for (auto& slot : entry.slots) {
+      if (!slot.transaction ||
+          slot.transaction->Commit(entry.tick, entry.position)) {
+        continue;
+      }
+      SDB_ERROR(SEARCH, "search index commit failed for index '", index_id,
+                "'; the index replays it from the WAL on next boot");
+      entry.storage->MarkOutOfSync();
+    }
+  }
+  absl::erase_if(_search_transactions, in_scope);
 }
 
 void Transaction::Commit() {
-  // Search-table segments commit on the database WAL tick; register their flush
-  // up-front -- before any commit point -- so a concurrent background
-  // RefreshCommit waits for them. They commit in the WAL block below.
-  if (_search_txn) {
-    _search_txn->RegisterFlush();
+  for (auto& action : _on_commit) {
+    action();
   }
-
-  // Inverted-index trxs: normally already settled inside the engine commit
-  // (TransactionPreCheckpoint); this is the fallback for transactions that did
-  // not commit the store database, so there is no store-WAL cursor to record.
-  CommitSearch(std::nullopt);
 
   // Search-table (TableEngine::Search) commit point (WAL_DESIGN.md §9): the §9
   // crash boundaries + the single multi-shard WAL fsync that is the atomic
@@ -251,7 +256,7 @@ void Transaction::Rollback() {
 }
 
 search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
-  ObjectId index_id,
+  duckdb::idx_t index_id,
   const std::shared_ptr<search::InvertedIndexStorage>& storage) {
   auto it = _search_snapshots.find(index_id);
   if (it == _search_snapshots.end()) {
@@ -263,13 +268,46 @@ search::InvertedIndexSnapshotPtr Transaction::EnsureSearchSnapshot(
   return it->second;
 }
 
+const duckdb::Vector& Transaction::FeedColumn(
+  const void* database, duckdb::idx_t table_oid, duckdb::row_t first_row,
+  duckdb::idx_t count, duckdb::idx_t column, const duckdb::Vector& source) {
+  if (_feed_columns.database != database ||
+      _feed_columns.table_oid != table_oid ||
+      _feed_columns.first_row != first_row || _feed_columns.count != count) {
+    _feed_columns.database = database;
+    _feed_columns.table_oid = table_oid;
+    _feed_columns.first_row = first_row;
+    _feed_columns.count = count;
+    _feed_columns.columns.clear();
+  }
+  for (const auto& [index, copy] : _feed_columns.columns) {
+    if (index == column) {
+      return copy;
+    }
+  }
+  auto& copy = _feed_columns.columns
+                 .emplace_back(column, duckdb::Vector{source.GetType(), count})
+                 .second;
+  duckdb::VectorOperations::Copy(source, copy, count, 0, 0);
+  duckdb::FlatVector::SetSize(copy, count);
+  return copy;
+}
+
+void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
+  for (const auto& [owner, storage] : _created_indexes) {
+    if (owner == database) {
+      storage->Refresh();
+    }
+  }
+}
+
 void Transaction::Destroy() noexcept {
-  // Commit clears these in CommitSearch; on the rollback/teardown path the
-  // sessions still hold uncommitted staged segments -- drain and drop them.
-  AbortInvertedFeeds();
-  _search_feeds.clear();
+  _search_transactions.clear();
   _search_snapshots.clear();
+  _feed_columns = {};
   _search_txn.reset();
+  _on_commit.clear();
+  _created_indexes.clear();
   _num_log_data_markers = 0;
   _had_query_in_transaction = false;
   _had_dml = false;

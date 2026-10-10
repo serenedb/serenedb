@@ -1,0 +1,208 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE SEQUENCE ccc_seq;
+
+
+statement ok
+CREATE TABLE ccc_ids (id BIGINT PRIMARY KEY, src TEXT);
+
+
+statement ok
+CREATE TABLE ccc_rows (a INT, body TEXT);
+
+
+statement ok
+CREATE INDEX ccc_rows_body ON ccc_rows USING inverted (body);
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection w1
+statement async ok
+INSERT INTO ccc_ids SELECT nextval('ccc_seq'), 'w1' FROM generate_series(1, 300000);
+
+
+connection w2
+statement async ok
+INSERT INTO ccc_rows SELECT i, 'row ' || i FROM generate_series(1, 200000) AS s(i);
+
+
+connection w3
+statement async ok
+INSERT INTO ccc_ids SELECT nextval('ccc_seq'), 'w3' FROM generate_series(1, 300000);
+
+
+connection default
+statement ok
+CREATE TABLE ccc_t1 (a INT PRIMARY KEY);
+
+
+connection default
+statement ok
+CREATE TABLE ccc_t2 (a INT, b TEXT);
+
+
+connection default
+statement ok
+COMMENT ON TABLE ccc_t1 IS 'first';
+
+
+connection default
+statement ok
+CREATE SEQUENCE ccc_other START 100;
+
+
+connection default
+statement ok
+CREATE VIEW ccc_v AS SELECT a FROM ccc_t1;
+
+
+connection default
+statement ok
+ALTER TABLE ccc_t2 ADD COLUMN c INT DEFAULT 5;
+
+
+connection default
+statement ok
+CREATE INDEX ccc_t2_b ON ccc_t2 (b);
+
+
+connection default
+statement ok
+BEGIN;
+
+
+connection default
+statement ok
+CREATE TABLE ccc_rolled (a INT);
+
+
+connection default
+statement ok
+ROLLBACK;
+
+
+connection default
+statement ok
+DROP TABLE ccc_t2;
+
+
+connection default
+statement ok
+CREATE TABLE ccc_t3 (a INT, b TEXT DEFAULT 'three');
+
+
+connection default
+query
+SELECT nextval('ccc_other') AS n;
+----
+n
+100
+
+
+wait
+
+
+connection default
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+connection default
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d FROM ccc_ids;
+----
+n	d
+600000	600000
+
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection default
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'ccc%' ORDER BY relname;
+----
+relname	relkind
+ccc_ids	r
+ccc_ids_pkey	i
+ccc_other	S
+ccc_rows	r
+ccc_rows_body	i
+ccc_seq	S
+ccc_t1	r
+ccc_t1_pkey	i
+ccc_t3	r
+ccc_v	v
+
+
+connection after_crash
+query
+SELECT count(*) AS n, count(DISTINCT id) AS d, max(id) AS m FROM ccc_ids;
+----
+n	d	m
+600000	600000	600000
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ccc_rows;
+----
+n
+200000
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ccc_rows WHERE body = 'row 4242';
+----
+n
+1
+
+
+connection after_crash
+query
+SELECT nextval('ccc_seq') > 600000 AS above, nextval('ccc_other') > 100 AS other_above;
+----
+above	other_above
+t	t
+
+
+connection after_crash
+query
+SELECT obj_description('ccc_t1'::regclass) AS c;
+----
+c
+first
+
+
+connection after_crash
+statement count 1
+INSERT INTO ccc_t3 (a) VALUES (1);
+
+
+connection after_crash
+query
+SELECT a, b FROM ccc_t3;
+----
+a	b
+1	three

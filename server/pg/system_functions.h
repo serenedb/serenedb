@@ -898,7 +898,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
 
   // set_config: registered as C++ function in connector/functions/system.cpp
 
-
   {"pg_catalog", "aclexplode",
    R"((acl) AS TABLE
     SELECT
@@ -928,71 +927,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
         ELSE CAST(NULL AS TEXT[])
       END)"},
 
-  // Stubs for PG C built-in functions from ruleutils.c / misc.
-  // These take OIDs and return text representations of database objects.
-  // TODO(mbkkt): implement properly -- currently return NULL.
-  {"pg_catalog", "pg_get_ruledef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_ruledef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_viewdef",
-   "(relid) AS (SELECT regexp_replace(vd_view.sql, '^CREATE VIEW [^ ]+ "
-   "([(][^)]*[)] )?AS ', '') FROM pg_catalog.pg_class vd_class JOIN "
-   "duckdb_views() vd_view ON vd_view.view_name = vd_class.relname AND "
-   "vd_view.database_name = current_database() JOIN pg_catalog.pg_namespace "
-   "vd_ns ON vd_ns.oid = vd_class.relnamespace AND vd_ns.nspname = "
-   "vd_view.schema_name WHERE vd_class.oid = relid)"},
-  {"pg_catalog", "pg_get_viewdef",
-   "(relid, flag) AS (SELECT regexp_replace(vd_view.sql, '^CREATE VIEW "
-   "[^ ]+ ([(][^)]*[)] )?AS ', '') FROM pg_catalog.pg_class vd_class JOIN "
-   "duckdb_views() vd_view ON vd_view.view_name = vd_class.relname AND "
-   "vd_view.database_name = current_database() JOIN pg_catalog.pg_namespace "
-   "vd_ns ON vd_ns.oid = vd_class.relnamespace AND vd_ns.nspname = "
-   "vd_view.schema_name WHERE vd_class.oid = relid)"},
-  {"pg_catalog", "pg_get_indexdef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_indexdef", "(oid, col, pretty_bool) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_triggerdef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_triggerdef", "(oid, pretty_bool) AS CAST(NULL AS TEXT)"},
-  // Rebuilt from the catalog row rather than deparsed from a stored node
-  // tree: the key columns are positions, so each one is resolved through
-  // pg_attribute of the relation the constraint (or, for the referenced half
-  // of a foreign key, confrelid) belongs to.
-  {"pg_catalog", "pg_get_constraintdef",
-   R"((cd_oid) AS (
-    SELECT CASE cd_c.contype
-      WHEN 'c' THEN 'CHECK (' || cd_c.conbin || ')'
-      WHEN 'n' THEN 'NOT NULL ' || (
-        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
-          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
-          JOIN pg_catalog.pg_attribute cd_a
-            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
-      WHEN 'p' THEN 'PRIMARY KEY (' || (
-        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
-          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
-          JOIN pg_catalog.pg_attribute cd_a
-            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
-        || ')'
-      WHEN 'u' THEN 'UNIQUE (' || (
-        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
-          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
-          JOIN pg_catalog.pg_attribute cd_a
-            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
-        || ')'
-      WHEN 'f' THEN 'FOREIGN KEY (' || (
-        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
-          FROM unnest(cd_c.conkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
-          JOIN pg_catalog.pg_attribute cd_a
-            ON cd_a.attrelid = cd_c.conrelid AND cd_a.attnum = cd_k.attnum)
-        || ') REFERENCES ' || (
-        SELECT cd_r.relname FROM pg_catalog.pg_class cd_r
-          WHERE cd_r.oid = cd_c.confrelid) || '(' || (
-        SELECT string_agg(cd_a.attname, ', ' ORDER BY cd_k.ordinality)
-          FROM unnest(cd_c.confkey) WITH ORDINALITY AS cd_k(attnum, ordinality)
-          JOIN pg_catalog.pg_attribute cd_a
-            ON cd_a.attrelid = cd_c.confrelid AND cd_a.attnum = cd_k.attnum)
-        || ')'
-    END
-    FROM pg_catalog.pg_constraint cd_c WHERE cd_c.oid = cd_oid))"},
-  {"pg_catalog", "pg_get_constraintdef",
-   "(cd_oid, pretty_bool) AS pg_catalog.pg_get_constraintdef(cd_oid)"},
   // adbin / conbin already hold the deparsed expression rather than a node
   // tree, so deparsing it is handing it back.
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},
@@ -1003,28 +937,6 @@ inline constexpr SystemMacro kExternalMacros[] = {
    R"((role_oid) AS COALESCE(
         (SELECT a.rolname FROM pg_catalog.pg_authid a WHERE a.oid = role_oid),
         ('unknown (OID=' || role_oid || ')')))"},
-  {"pg_catalog", "pg_get_function_result",
-   "(function_oid) AS (SELECT format_type(prorettype, NULL) "
-   "FROM pg_catalog.pg_proc WHERE oid = function_oid)"},
-  {"pg_catalog", "pg_get_function_arguments",
-   "(function_oid) AS (SELECT string_agg("
-   "  CASE WHEN proargnames IS NOT NULL "
-   "         AND array_length(proargnames, 1) >= i "
-   "         AND proargnames[i] IS NOT NULL "
-   "         AND proargnames[i] <> '' "
-   "       THEN proargnames[i] || ' ' ELSE '' END "
-   "  || format_type(proargtypes[i], NULL), ', ' ORDER BY i) "
-   "FROM pg_catalog.pg_proc, unnest(proargtypes) WITH ORDINALITY AS u(t, i) "
-   "WHERE oid = function_oid GROUP BY proargnames)"},
-  {"pg_catalog", "pg_get_function_arg_default", "(oid, n) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_function_identity_arguments",
-   "(function_oid) AS (SELECT string_agg(format_type(proargtypes[i], NULL), ', ' ORDER BY i) "
-   "FROM pg_catalog.pg_proc, unnest(proargtypes) WITH ORDINALITY AS u(t, i) "
-   "WHERE oid = function_oid)"},
-  {"pg_catalog", "pg_get_functiondef", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_statisticsobjdef_expressions", "(oid) AS CAST(NULL AS TEXT[])"},
-  {"pg_catalog", "pg_get_statisticsobjdef_columns", "(oid) AS CAST(NULL AS TEXT)"},
-  {"pg_catalog", "pg_get_partkeydef", "(oid) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_get_serial_sequence", "(tbl, col) AS CAST(NULL AS TEXT)"},
   {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST(NULL AS TEXT)"},
 
@@ -1049,17 +961,23 @@ inline constexpr SystemMacro kExternalMacros[] = {
    "(oid, col) AS (SELECT d.description FROM pg_catalog.pg_description d "
    "WHERE d.objoid = oid AND d.objsubid = col)"},
   {"pg_catalog", "pg_function_is_visible",
-   "(function_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
-   "(SELECT pronamespace FROM pg_catalog.pg_proc WHERE oid = function_oid)) = "
-   "ANY(current_schemas(true)))"},
+   "(function_oid) AS ((SELECT __sdb_nsp.nspname FROM "
+   "(SELECT oid AS __sdb_oid, nspname FROM pg_catalog.pg_namespace) __sdb_nsp "
+   "WHERE __sdb_nsp.__sdb_oid = (SELECT __sdb_proc.pronamespace FROM "
+   "(SELECT oid AS __sdb_oid, pronamespace FROM pg_catalog.pg_proc) __sdb_proc "
+   "WHERE __sdb_proc.__sdb_oid = function_oid)) = ANY(current_schemas(true)))"},
   {"pg_catalog", "pg_table_is_visible",
-   "(table_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
-   "(SELECT relnamespace FROM pg_catalog.pg_class WHERE oid = table_oid)) = "
-   "ANY(current_schemas(true)))"},
+   "(table_oid) AS ((SELECT __sdb_nsp.nspname FROM "
+   "(SELECT oid AS __sdb_oid, nspname FROM pg_catalog.pg_namespace) __sdb_nsp "
+   "WHERE __sdb_nsp.__sdb_oid = (SELECT __sdb_rel.relnamespace FROM "
+   "(SELECT oid AS __sdb_oid, relnamespace FROM pg_catalog.pg_class) __sdb_rel "
+   "WHERE __sdb_rel.__sdb_oid = table_oid)) = ANY(current_schemas(true)))"},
   {"pg_catalog", "pg_type_is_visible",
-   "(type_oid) AS ((SELECT n.nspname FROM pg_catalog.pg_namespace n WHERE n.oid = "
-   "(SELECT typnamespace FROM pg_catalog.pg_type WHERE oid = type_oid)) = "
-   "ANY(current_schemas(true)))"},
+   "(type_oid) AS ((SELECT __sdb_nsp.nspname FROM "
+   "(SELECT oid AS __sdb_oid, nspname FROM pg_catalog.pg_namespace) __sdb_nsp "
+   "WHERE __sdb_nsp.__sdb_oid = (SELECT __sdb_typ.typnamespace FROM "
+   "(SELECT oid AS __sdb_oid, typnamespace FROM pg_catalog.pg_type) __sdb_typ "
+   "WHERE __sdb_typ.__sdb_oid = type_oid)) = ANY(current_schemas(true)))"},
 
   // Stub scalar functions returning 0/NULL -- PG C built-ins not yet implemented.
   // TODO(mbkkt): implement properly.

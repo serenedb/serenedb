@@ -90,8 +90,6 @@ pk
 1498
 
 
-# 0 restores the legacy derivation, so sdb_nprobe drives ef again and the old
-# floor of 64 applies -- five rows come back where ef = 3 returned three.
 statement error db error: ERROR: invalid value for parameter "sdb_hnsw_ef_search": "0"
 SET sdb_hnsw_ef_search = 0;
 

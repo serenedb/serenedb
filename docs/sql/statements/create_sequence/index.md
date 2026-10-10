@@ -25,7 +25,7 @@ Generate odd numbers using `INCREMENT BY`:
 
 <SqlLogicTest id="sql/statements/create_sequence/increment_by/example_003" />
 
-Descending sequences are not yet supported. A negative `INCREMENT BY` is rejected:
+A negative `INCREMENT BY` creates a descending sequence:
 
 <SqlLogicTest id="sql/statements/create_sequence/index/example_004" />
 
@@ -81,9 +81,21 @@ Using this sequence in an `INSERT` command:
 
 ### Selecting the Current Value
 
-You may also view the current number from the sequence. Note that the `nextval` function must have already been called before calling `currval`, otherwise a Serialization Error (`sequence is not yet defined in this session`) will be thrown.
+You may also view the current number from the sequence. `currval` returns the value `nextval` most recently returned in the current session, so the `nextval` function must have already been called in this session before calling `currval`, otherwise a Serialization Error (`sequence is not yet defined in this session`) will be thrown.
 
 <SqlLogicTest id="sql/statements/create_sequence/currval/example_015" />
+
+### Caching Values
+
+`CACHE` makes each session take that many values at a time and hand them out from memory, as PostgreSQL does:
+
+<SqlLogicTest id="sql/statements/create_sequence/cache/example_019" />
+
+### Restarting a Sequence
+
+`ALTER SEQUENCE ... RESTART` sets a sequence back to its start value, and `RESTART WITH value` to the given value: the next `nextval` returns that value. As in PostgreSQL, the restart belongs to the transaction, so if the transaction rolls back, the sequence continues where it was. [`TRUNCATE ... RESTART IDENTITY`](../delete/index.md#the-truncate-statement) restarts the sequences of the truncated tables' `SERIAL` columns the same way.
+
+<SqlLogicTest id="sql/statements/create_sequence/restart/example_020" />
 
 ## Syntax
 
@@ -99,6 +111,9 @@ After a sequence is created, you use the function `nextval` to operate on the se
 
 | Name                  | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | :-------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AS data_type`        | The optional clause `AS data_type` specifies the data type of the sequence: `smallint`, `integer`, or `bigint` (the default). As in PostgreSQL, the type sets the default `maxvalue` (or `minvalue` for a descending sequence), and `minvalue` and `maxvalue` must fit in it; `nextval` returns `bigint` either way. |
+| `OWNED BY`            | The optional clause `OWNED BY table.column` (or `schema.table.column`) makes the sequence belong to that table column: dropping the table drops the sequence, and `TRUNCATE ... RESTART IDENTITY` restarts it. The table must be in the same schema and have the same owner as the sequence. `OWNED BY NONE`, the default, makes the sequence independent. `ALTER SEQUENCE name OWNED BY ...` changes or removes the owner of an existing sequence; a column default that calls `nextval` on the sequence keeps depending on it either way. |
+| `cache`               | The optional clause `CACHE cache` specifies how many sequence numbers each session takes at a time and keeps in memory for faster access. The minimum and default value is 1 (one value at a time, no cache). As in PostgreSQL, the cache belongs to the session: with a cache larger than 1, values handed out by different sessions interleave, and the values a session took but did not use are lost when it disconnects. |
 | `CYCLE` or `NO CYCLE` | The `CYCLE` option allows the sequence to wrap around when the `maxvalue` or `minvalue` has been reached by an ascending or descending sequence respectively. If the limit is reached, the next number generated will be the `minvalue` or `maxvalue`, respectively. If `NO CYCLE` is specified, any calls to `nextval` after the sequence has reached its maximum value will return an error. If neither `CYCLE` nor `NO CYCLE` are specified, `NO CYCLE` is the default. |
 | `increment`           | The optional clause `INCREMENT BY increment` specifies which value is added to the current sequence value to create a new value. A positive value will make an ascending sequence, a negative one a descending sequence. The default value is 1.                                                                                                                                                                                                                           |
 | `maxvalue`            | The optional clause `MAXVALUE maxvalue` determines the maximum value for the sequence. If this clause is not supplied or `NO MAXVALUE` is specified, then default values will be used. The defaults are 2^63 - 1 and -1 for ascending and descending sequences, respectively.                                                                                                                                                                                              |
@@ -112,6 +127,12 @@ Sequences are based on `BIGINT` arithmetic, so the range cannot exceed the range
 </DocCallout>
 
 ## Limitations
+
+Like PostgreSQL, a sequence is logged ahead of the values sessions have taken, but by a step that grows with use: 32 values (or the `CACHE` size, if larger) for a new sequence, then about one sixteenth of the values taken so far, rounded up to a power of two, and at most 4096. When the logged values are half used, `nextval` writes the next position, which is flushed to disk in the background, so a commit usually finds it durable and waits for that flush only if it has not finished yet. A committed value is never handed out twice. After a crash, a sequence resumes after its last durable position, so up to one and a half steps of values, plus the values sessions had cached, can be skipped, and a value drawn by a transaction that never committed can be handed out again. `setval` is durable when it returns.
+
+A sequence `OWNED BY` a column belongs to the column's table: dropping the table drops it, but dropping only the column does not, unlike in PostgreSQL.
+
+While a transaction that restarted or renamed a sequence is open, `nextval` and `setval` on that sequence in other transactions fail with a serialization error (`40001`) instead of waiting for it as in PostgreSQL; a session still hands out the values it has cached. Once that transaction commits, transactions that started before the commit keep getting the error, and later transactions use the restarted or renamed sequence.
 
 When a table column uses a sequence as its `DEFAULT`, the column keeps a dependency on that sequence. The default can be changed with `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` — here it is reset to `NULL`, so subsequent rows no longer draw from the sequence:
 

@@ -1,0 +1,4468 @@
+# CREATE OR REPLACE across every object kind serenedb accepts it for.
+#
+# PostgreSQL has OR REPLACE only for views, functions and triggers; tables,
+# sequences, types, macros, secrets and schemas follow duckdb, where a replace
+# is a DROP of the old entry plus a CREATE of the new one in the same
+# transaction. That drop is RESTRICT: anything that depends on the old entry
+# refuses the replace and leaves it untouched. What the old entry owned (its
+# rows, indexes, triggers and comments) goes with it; its privileges are
+# carried onto the new entry.
+#
+# The replace is transactional: a ROLLBACK brings back the old definition and
+# the old data, and another connection keeps seeing the old entry until the
+# COMMIT. A second writer of the same name is refused with a write-write
+# conflict instead of waiting on a lock, and a dependent that another
+# transaction hangs off the old entry makes whichever side commits last fail.
+#
+# TEXT SEARCH DICTIONARY has no OR REPLACE form, as in PostgreSQL.
+
+
+# Roles and secrets outlive the per-file database.
+statement ok
+DROP ROLE IF EXISTS coro_reader;
+
+
+statement ok
+DROP SECRET IF EXISTS coro_sec;
+
+
+# --- OR REPLACE TABLE: what goes with the old table -------------------------
+
+statement ok
+CREATE TABLE coro_audit (tag TEXT, a INT);
+
+
+statement ok
+CREATE ROLE coro_reader;
+
+
+statement ok
+CREATE TABLE coro_t (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_t VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE INDEX coro_t_idx ON coro_t (id);
+
+
+statement ok
+COMMENT ON TABLE coro_t IS 'old table';
+
+
+statement ok
+COMMENT ON COLUMN coro_t.v IS 'old column';
+
+
+statement ok
+GRANT SELECT ON coro_t TO coro_reader;
+
+
+statement ok
+CREATE TRIGGER coro_t_trg AFTER INSERT ON coro_t FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('coro_t_trg', 0);
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_t (k INT, w TEXT, extra DOUBLE);
+
+
+# New shape, no rows.
+query
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_name = 'coro_t' ORDER BY ordinal_position;
+----
+column_name	data_type
+k	integer
+w	text
+extra	double precision
+
+
+query
+SELECT count(*) AS n FROM coro_t;
+----
+n
+0
+
+
+# One relation under the name, and the index went with the old table.
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'coro_t%' ORDER BY relname;
+----
+relname	relkind
+coro_t	r
+
+
+query
+SELECT count(*) AS n FROM pg_indexes WHERE tablename = 'coro_t';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM duckdb_triggers()
+WHERE table_name = 'coro_t' AND database_name = current_database();
+----
+n
+0
+
+
+# The comments were the old table's; the grant is carried over.
+query
+SELECT comment IS NULL OR comment = '' AS no_comment FROM duckdb_tables()
+WHERE table_name = 'coro_t' AND database_name = current_database();
+----
+no_comment
+t
+
+
+query
+SELECT count(*) AS n FROM duckdb_columns()
+WHERE table_name = 'coro_t' AND database_name = current_database()
+  AND comment IS NOT NULL AND comment <> '';
+----
+n
+0
+
+
+query
+SELECT has_table_privilege('coro_reader', 'coro_t', 'SELECT') AS kept_grant;
+----
+kept_grant
+t
+
+
+# The dropped trigger does not fire any more.
+statement count 1
+INSERT INTO coro_t VALUES (7, 'x', 1.5);
+
+
+query
+SELECT count(*) AS n FROM coro_audit;
+----
+n
+0
+
+
+# The index name is free again.
+statement ok
+CREATE INDEX coro_t_idx ON coro_t (k);
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'coro_t';
+----
+indexname
+coro_t_idx
+
+
+statement ok
+DROP TABLE coro_t;
+
+
+# --- OR REPLACE TABLE: dependents refuse the replace ------------------------
+
+statement ok
+CREATE TABLE coro_dep (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_dep VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE VIEW coro_dep_v AS SELECT id FROM coro_dep;
+
+
+statement error
+CREATE OR REPLACE TABLE coro_dep (x INT);
+----
+db error: ERROR: Cannot drop entry "coro_dep" because there are entries that depend on it.
+view "coro_dep_v" depends on table "coro_dep".
+Use DROP...CASCADE to drop all dependents.
+
+
+# The refused replace left the table and its dependent as they were.
+query
+SELECT id, v FROM coro_dep ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+query
+SELECT id FROM coro_dep_v ORDER BY id;
+----
+id
+1
+2
+
+
+statement ok
+DROP VIEW coro_dep_v;
+
+
+statement ok
+CREATE MACRO coro_dep_tm() AS TABLE SELECT * FROM coro_dep;
+
+
+statement error
+CREATE OR REPLACE TABLE coro_dep AS SELECT 1 AS x;
+----
+db error: ERROR: Cannot drop entry "coro_dep" because there are entries that depend on it.
+table macro function "coro_dep_tm" depends on table "coro_dep".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT id, v FROM coro_dep_tm() ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+statement ok
+DROP MACRO TABLE coro_dep_tm;
+
+
+# Once nothing depends on it, the same statement goes through.
+statement ok
+CREATE OR REPLACE TABLE coro_dep AS SELECT 1 AS x;
+
+
+query
+SELECT x FROM coro_dep;
+----
+x
+1
+
+
+statement ok
+DROP TABLE coro_dep;
+
+
+# A foreign key child blocks replacing its parent; replacing the child first
+# releases it.
+statement ok
+CREATE TABLE coro_pk (id INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE coro_fk (id INT REFERENCES coro_pk (id));
+
+
+statement error
+CREATE OR REPLACE TABLE coro_pk (id INT PRIMARY KEY, z INT);
+----
+db error: ERROR: Could not drop the table because this table is main key table of the table "coro_fk"
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_fk (id INT);
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_pk (id INT PRIMARY KEY, z INT);
+
+
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'coro_pk' ORDER BY ordinal_position;
+----
+column_name
+id
+z
+
+
+statement ok
+DROP TABLE coro_fk;
+
+
+statement ok
+DROP TABLE coro_pk;
+
+
+# --- OR REPLACE TABLE: what the old table depended on -----------------------
+
+# A column DEFAULT nextval() ties the table to the sequence; the replacement
+# that no longer uses it releases the sequence.
+statement ok
+CREATE SEQUENCE coro_def_seq;
+
+
+statement ok
+CREATE TABLE coro_def (id INT DEFAULT nextval('coro_def_seq'), v TEXT);
+
+
+statement error
+DROP SEQUENCE coro_def_seq;
+----
+db error: ERROR: Cannot drop entry "coro_def_seq" because there are entries that depend on it.
+table "coro_def" depends on sequence "coro_def_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_def (id INT, v TEXT);
+
+
+statement ok
+DROP SEQUENCE coro_def_seq;
+
+
+statement ok
+DROP TABLE coro_def;
+
+
+# A SERIAL column owns its sequence: the replace drops the old one and the
+# new column counts from 1 again, with exactly one sequence left behind.
+statement ok
+CREATE TABLE coro_ser (id SERIAL, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_ser (v) VALUES ('a'), ('b');
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_ser (id SERIAL, v TEXT);
+
+
+statement count 1
+INSERT INTO coro_ser (v) VALUES ('c');
+
+
+query
+SELECT id, v FROM coro_ser;
+----
+id	v
+1	c
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'coro_ser%' AND relkind = 'S';
+----
+n
+1
+
+
+# Replaced by a table without SERIAL, the owned sequence is gone too.
+statement ok
+CREATE OR REPLACE TABLE coro_ser (x INT);
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'coro_ser%' ORDER BY relname;
+----
+relname
+coro_ser
+
+
+statement ok
+DROP TABLE coro_ser;
+
+
+statement ok
+CREATE TABLE coro_src (id INT);
+
+
+statement ok
+CREATE TABLE coro_sink (tag TEXT, a INT);
+
+
+statement ok
+CREATE TRIGGER coro_src_trg AFTER INSERT ON coro_src FOR EACH STATEMENT
+  INSERT INTO coro_sink VALUES ('fired', 0);
+
+
+statement error
+CREATE OR REPLACE TABLE coro_sink (x INT);
+----
+db error: ERROR: Cannot drop entry "coro_sink" because there are entries that depend on it.
+trigger "coro_src_trg" on table "coro_src" depends on table "coro_sink".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement count 1
+INSERT INTO coro_src VALUES (1);
+
+
+query
+SELECT tag, a FROM coro_sink;
+----
+tag	a
+fired	0
+
+
+statement ok
+DROP TABLE coro_src;
+
+
+statement ok
+DROP TABLE coro_sink;
+
+
+# --- OR REPLACE TABLE ... AS ------------------------------------------------
+
+statement ok
+CREATE TABLE coro_ctas (id INT, v TEXT);
+
+
+statement count 3
+INSERT INTO coro_ctas VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+# The query may read the table it replaces: it sees the old rows.
+statement ok
+CREATE OR REPLACE TABLE coro_ctas AS SELECT id * 10 AS id FROM coro_ctas WHERE id > 1;
+
+
+query
+SELECT id FROM coro_ctas ORDER BY id;
+----
+id
+20
+30
+
+
+# A query that fails part-way through leaves the old table in place.
+statement error
+CREATE OR REPLACE TABLE coro_ctas AS
+  SELECT (CASE WHEN range = 150000 THEN 'x' ELSE range::TEXT END)::INT AS id FROM range(200000);
+----
+db error: ERROR: Could not convert string 'x' to INT32
+
+
+query
+SELECT id FROM coro_ctas ORDER BY id;
+----
+id
+20
+30
+
+
+# WITH NO DATA takes the shape only.
+statement ok
+CREATE OR REPLACE TABLE coro_ctas AS SELECT 1 AS a, 'x' AS b WITH NO DATA;
+
+
+query
+SELECT count(*) AS n FROM coro_ctas;
+----
+n
+0
+
+
+query
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_name = 'coro_ctas' ORDER BY ordinal_position;
+----
+column_name	data_type
+a	integer
+b	text
+
+
+# A CTAS does not carry the old primary key.
+statement ok
+CREATE OR REPLACE TABLE coro_ctas (a INT PRIMARY KEY);
+
+
+statement ok
+INSERT INTO coro_ctas VALUES (1);
+
+
+statement error
+INSERT INTO coro_ctas VALUES (1);
+----
+db error: ERROR: Duplicate key "a: 1" violates primary key constraint.
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_ctas AS SELECT a FROM coro_ctas;
+
+
+statement count 1
+INSERT INTO coro_ctas VALUES (1);
+
+
+query
+SELECT a FROM coro_ctas ORDER BY a;
+----
+a
+1
+1
+
+
+statement ok
+DROP TABLE coro_ctas;
+
+
+# --- The replacement must be of the same kind -------------------------------
+
+statement ok
+CREATE TABLE coro_kt (a INT);
+
+
+statement count 1
+INSERT INTO coro_kt VALUES (1);
+
+
+statement ok
+CREATE VIEW coro_kv AS SELECT 1 AS a;
+
+
+statement ok
+CREATE SEQUENCE coro_ks;
+
+
+statement ok
+CREATE INDEX coro_ki ON coro_kt (a);
+
+
+statement error
+CREATE OR REPLACE TABLE coro_kv (a INT);
+----
+db error: ERROR: Existing object "coro_kv" is of type View, trying to replace with type Table
+
+
+statement error
+CREATE OR REPLACE SEQUENCE coro_kt;
+----
+db error: ERROR: Existing object "coro_kt" is of type Table, trying to replace with type Sequence
+
+
+statement error
+CREATE OR REPLACE TABLE coro_ks (a INT);
+----
+db error: ERROR: Existing object "coro_ks" is of type Sequence, trying to replace with type Table
+
+
+statement error
+CREATE OR REPLACE VIEW coro_ks AS SELECT 1 AS a;
+----
+db error: ERROR: Existing object "coro_ks" is of type Sequence, trying to replace with type View
+
+
+statement error
+CREATE OR REPLACE SEQUENCE coro_kv;
+----
+db error: ERROR: Existing object "coro_kv" is of type View, trying to replace with type Sequence
+
+
+statement error
+CREATE OR REPLACE TABLE coro_ki (a INT);
+----
+db error: ERROR: Existing object "coro_ki" is of type Index, trying to replace with type Table
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'coro_k%' ORDER BY relname;
+----
+relname	relkind
+coro_ki	i
+coro_ks	S
+coro_kt	r
+coro_kv	v
+
+
+query
+SELECT a FROM coro_kt;
+----
+a
+1
+
+
+statement ok
+DROP VIEW coro_kv;
+
+
+statement ok
+DROP SEQUENCE coro_ks;
+
+
+statement ok
+DROP TABLE coro_kt;
+
+
+# --- OR REPLACE and IF NOT EXISTS exclude each other ------------------------
+
+statement error
+CREATE OR REPLACE TABLE IF NOT EXISTS coro_x (a INT);
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE VIEW IF NOT EXISTS coro_x AS SELECT 1 AS a;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE MACRO IF NOT EXISTS coro_x(a) AS a;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE SEQUENCE IF NOT EXISTS coro_x;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE TYPE IF NOT EXISTS coro_x AS INT;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE SCHEMA IF NOT EXISTS coro_x;
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+statement error
+CREATE OR REPLACE SECRET IF NOT EXISTS coro_x (TYPE s3, KEY_ID 'k', SECRET 's', SCOPE 's3://coro-objects-bucket');
+----
+db error: ERROR: Cannot specify both OR REPLACE and IF NOT EXISTS within single create statement
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'coro_x';
+----
+n
+0
+
+
+# --- Name resolution: the creation schema is the first one on search_path --
+
+statement ok
+CREATE SCHEMA coro_sch;
+
+
+statement ok
+CREATE TABLE coro_sp (a INT);
+
+
+statement count 1
+INSERT INTO coro_sp VALUES (1);
+
+
+statement ok
+CREATE TABLE coro_sch.coro_sp (a INT);
+
+
+statement count 1
+INSERT INTO coro_sch.coro_sp VALUES (2);
+
+
+statement ok
+SET search_path = coro_sch, public;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_sp (b INT);
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_schema = 'coro_sch' AND table_name = 'coro_sp';
+----
+column_name
+b
+
+
+query
+SELECT a FROM public.coro_sp;
+----
+a
+1
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_sch.coro_sp AS SELECT 3 AS c;
+
+
+query
+SELECT c FROM coro_sch.coro_sp;
+----
+c
+3
+
+
+query
+SELECT a FROM coro_sp;
+----
+a
+1
+
+
+statement ok
+DROP TABLE coro_sch.coro_sp;
+
+
+statement ok
+DROP TABLE coro_sp;
+
+
+# A name that exists only further down search_path is not replaced: the new
+# object goes into the first schema and the old one stays as it was.
+statement ok
+CREATE TABLE coro_spl_t (a INT);
+
+
+statement count 1
+INSERT INTO coro_spl_t VALUES (1);
+
+
+statement ok
+CREATE VIEW coro_spl_v AS SELECT 1 AS a;
+
+
+statement ok
+CREATE MACRO coro_spl_m(x) AS x + 1;
+
+
+statement ok
+CREATE SEQUENCE coro_spl_s;
+
+
+statement ok
+CREATE TYPE coro_spl_ty AS ENUM ('p');
+
+
+statement ok
+SET search_path = coro_sch, public;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_spl_t (b INT);
+
+
+statement ok
+CREATE OR REPLACE VIEW coro_spl_v AS SELECT 2 AS a;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_spl_m(x) AS x + 2;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_spl_s START 50;
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_spl_ty AS ENUM ('q');
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT n.nspname, c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE c.relname LIKE 'coro_spl%' ORDER BY c.relname, n.nspname;
+----
+nspname	relname	relkind
+coro_sch	coro_spl_s	S
+public	coro_spl_s	S
+coro_sch	coro_spl_t	r
+public	coro_spl_t	r
+coro_sch	coro_spl_v	v
+public	coro_spl_v	v
+
+
+query
+SELECT n.nspname FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+WHERE p.proname = 'coro_spl_m' ORDER BY n.nspname;
+----
+nspname
+coro_sch
+public
+
+
+query
+SELECT n.nspname FROM pg_type t JOIN pg_namespace n ON t.typnamespace = n.oid
+WHERE t.typname = 'coro_spl_ty' ORDER BY n.nspname;
+----
+nspname
+coro_sch
+public
+
+
+query
+SELECT (SELECT a FROM public.coro_spl_t) AS t, (SELECT a FROM public.coro_spl_v) AS v,
+       public.coro_spl_m(0) AS m, nextval('public.coro_spl_s') AS s,
+       enum_range(NULL::public.coro_spl_ty) AS ty;
+----
+t	v	m	s	ty
+1	1	1	1	{p}
+
+
+query
+SELECT (SELECT a FROM coro_sch.coro_spl_v) AS v, coro_sch.coro_spl_m(0) AS m,
+       nextval('coro_sch.coro_spl_s') AS s, enum_range(NULL::coro_sch.coro_spl_ty) AS ty;
+----
+v	m	s	ty
+2	2	50	{q}
+
+
+statement ok
+DROP TABLE coro_sch.coro_spl_t;
+
+
+statement ok
+DROP VIEW coro_sch.coro_spl_v;
+
+
+statement ok
+DROP MACRO coro_sch.coro_spl_m;
+
+
+statement ok
+DROP SEQUENCE coro_sch.coro_spl_s;
+
+
+statement ok
+DROP TYPE coro_sch.coro_spl_ty;
+
+
+statement ok
+DROP TABLE coro_spl_t;
+
+
+statement ok
+DROP VIEW coro_spl_v;
+
+
+statement ok
+DROP MACRO coro_spl_m;
+
+
+statement ok
+DROP SEQUENCE coro_spl_s;
+
+
+statement ok
+DROP TYPE coro_spl_ty;
+
+
+# A temporary table replaces only its own temporary predecessor and shadows the
+# persistent table of the same name.
+statement ok
+CREATE TABLE coro_shadow (a INT);
+
+
+statement count 1
+INSERT INTO coro_shadow VALUES (1);
+
+
+statement ok
+CREATE OR REPLACE TEMP TABLE coro_shadow (b INT);
+
+
+statement ok
+CREATE OR REPLACE TEMP TABLE coro_shadow (c INT);
+
+
+query
+SELECT database_name = 'temp' AS in_temp, temporary FROM duckdb_tables()
+WHERE table_name = 'coro_shadow' AND database_name IN (current_database(), 'temp')
+ORDER BY temporary;
+----
+in_temp	temporary
+f	f
+t	t
+
+
+query
+SELECT column_name FROM duckdb_columns()
+WHERE table_name = 'coro_shadow' AND database_name IN (current_database(), 'temp')
+ORDER BY column_name;
+----
+column_name
+a
+c
+
+
+query
+SELECT a FROM public.coro_shadow;
+----
+a
+1
+
+
+statement ok
+DROP TABLE coro_shadow;
+
+
+query
+SELECT a FROM coro_shadow;
+----
+a
+1
+
+
+statement ok
+DROP TABLE coro_shadow;
+
+
+# The same for a view; the temporary one belongs to this connection only.
+statement ok
+CREATE VIEW coro_shadow_v AS SELECT 1 AS a;
+
+
+statement ok
+CREATE OR REPLACE TEMP VIEW coro_shadow_v AS SELECT 2 AS a;
+
+
+statement ok
+CREATE OR REPLACE TEMP VIEW coro_shadow_v AS SELECT 3 AS a;
+
+
+query
+SELECT a, (SELECT a FROM public.coro_shadow_v) AS persistent FROM coro_shadow_v;
+----
+a	persistent
+3	1
+
+
+connection s1
+query
+SELECT a FROM coro_shadow_v;
+----
+a
+1
+
+
+statement ok
+DROP VIEW coro_shadow_v;
+
+
+query
+SELECT a FROM coro_shadow_v;
+----
+a
+1
+
+
+statement ok
+DROP VIEW coro_shadow_v;
+
+
+# A quoted mixed-case name is a name of its own: the unquoted spelling does not
+# replace it, the quoted one does.
+statement ok
+CREATE TABLE "Coro_Case" (a INT);
+
+
+statement count 1
+INSERT INTO "Coro_Case" VALUES (1);
+
+
+statement ok
+CREATE VIEW "Coro_CaseV" AS SELECT 1 AS a;
+
+
+statement ok
+CREATE TYPE "Coro_CaseTy" AS ENUM ('a');
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_case (b INT);
+
+
+statement ok
+CREATE OR REPLACE VIEW coro_casev AS SELECT 2 AS z;
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_casety AS ENUM ('b');
+
+
+query
+SELECT (SELECT a FROM "Coro_Case") AS t, (SELECT a FROM "Coro_CaseV") AS v,
+       (SELECT z FROM coro_casev) AS lv, enum_range(NULL::"Coro_CaseTy") AS ty,
+       enum_range(NULL::coro_casety) AS lty;
+----
+t	v	lv	ty	lty
+1	1	2	{a}	{b}
+
+
+statement ok
+CREATE OR REPLACE TABLE "Coro_Case" (c INT);
+
+
+query
+SELECT table_name, column_name FROM information_schema.columns
+WHERE table_name IN ('Coro_Case', 'coro_case') ORDER BY table_name;
+----
+table_name	column_name
+Coro_Case	c
+coro_case	b
+
+
+query
+SELECT relname, relkind FROM pg_class WHERE lower(relname) LIKE 'coro_case%' ORDER BY relname;
+----
+relname	relkind
+Coro_Case	r
+Coro_CaseV	v
+coro_case	r
+coro_casev	v
+
+
+statement ok
+DROP TABLE "Coro_Case";
+
+
+statement ok
+DROP TABLE coro_case;
+
+
+statement ok
+DROP VIEW "Coro_CaseV";
+
+
+statement ok
+DROP VIEW coro_casev;
+
+
+statement ok
+DROP TYPE "Coro_CaseTy";
+
+
+statement ok
+DROP TYPE coro_casety;
+
+
+# --- OR REPLACE TABLE inside a transaction ----------------------------------
+
+statement ok
+CREATE TABLE coro_tx (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_tx VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+CREATE INDEX coro_tx_idx ON coro_tx (id);
+
+
+statement ok
+COMMENT ON TABLE coro_tx IS 'orig';
+
+
+# Replace twice, write into each version, then roll back: the old definition,
+# rows, index and comment are all back.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_tx (x INT);
+
+
+statement count 1
+INSERT INTO coro_tx VALUES (10);
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_tx (y TEXT);
+
+
+statement count 1
+INSERT INTO coro_tx VALUES ('z');
+
+
+query
+SELECT y FROM coro_tx;
+----
+y
+z
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, v FROM coro_tx ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'coro_tx';
+----
+indexname
+coro_tx_idx
+
+
+query
+SELECT comment FROM duckdb_tables()
+WHERE table_name = 'coro_tx' AND database_name = current_database();
+----
+comment
+orig
+
+
+# Replace then drop, rolled back.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_tx (x INT);
+
+
+statement ok
+DROP TABLE coro_tx;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'coro_tx';
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, v FROM coro_tx ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+# A write, then a replace that reads it, rolled back together.
+statement ok
+BEGIN;
+
+
+statement count 2
+UPDATE coro_tx SET v = 'u';
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_tx AS SELECT id, v || '!' AS v FROM coro_tx;
+
+
+query
+SELECT id, v FROM coro_tx ORDER BY id;
+----
+id	v
+1	u!
+2	u!
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, v FROM coro_tx ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+# A refused replace aborts the transaction; the ROLLBACK undoes the writes
+# before it.
+statement ok
+CREATE VIEW coro_tx_v AS SELECT id FROM coro_tx;
+
+
+statement ok
+BEGIN;
+
+
+statement count 1
+INSERT INTO coro_tx VALUES (3, 'c');
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_tx_m(x) AS x;
+
+
+statement error
+CREATE OR REPLACE TABLE coro_tx (q INT);
+----
+db error: ERROR: Cannot drop entry "coro_tx" because there are entries that depend on it.
+view "coro_tx_v" depends on table "coro_tx".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement error
+SELECT * FROM coro_tx;
+----
+db error: ERROR: current transaction is aborted, commands ignored until end of transaction block
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, v FROM coro_tx ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+query
+SELECT count(*) AS n FROM duckdb_functions()
+WHERE function_name = 'coro_tx_m' AND database_name = current_database();
+----
+n
+0
+
+
+statement ok
+DROP VIEW coro_tx_v;
+
+
+# Replace then drop, committed: the table and its index are gone.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_tx (x INT);
+
+
+statement ok
+DROP TABLE coro_tx;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname IN ('coro_tx', 'coro_tx_idx');
+----
+n
+0
+
+
+# Created, filled and replaced from itself in one transaction.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE TABLE coro_tx (a INT);
+
+
+statement count 2
+INSERT INTO coro_tx VALUES (1), (2);
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_tx AS SELECT a + 1 AS b FROM coro_tx;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT b FROM coro_tx ORDER BY b;
+----
+b
+2
+3
+
+
+statement ok
+DROP TABLE coro_tx;
+
+
+# The SERIAL sequence of the old table is back after a rolled-back replace and
+# keeps counting where it was.
+statement ok
+CREATE TABLE coro_ser_tx (id SERIAL, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_ser_tx (v) VALUES ('a'), ('b');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_ser_tx (id SERIAL, v TEXT);
+
+
+statement count 1
+INSERT INTO coro_ser_tx (v) VALUES ('z');
+
+
+query
+SELECT id, v FROM coro_ser_tx;
+----
+id	v
+1	z
+
+
+statement ok
+ROLLBACK;
+
+
+statement count 1
+INSERT INTO coro_ser_tx (v) VALUES ('c');
+
+
+query
+SELECT id, v FROM coro_ser_tx ORDER BY id;
+----
+id	v
+1	a
+2	b
+3	c
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname LIKE 'coro_ser_tx%' AND relkind = 'S';
+----
+n
+1
+
+
+statement ok
+DROP TABLE coro_ser_tx;
+
+
+# --- OR REPLACE TABLE seen from another connection --------------------------
+
+statement ok
+CREATE TABLE coro_mc (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_mc VALUES (1, 'a'), (2, 'b');
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_mc (x INT);
+
+
+connection s1
+statement count 1
+INSERT INTO coro_mc VALUES (100);
+
+
+# Until the COMMIT, the other connection sees the old table: its rows and its
+# columns.
+connection s2
+query
+SELECT id, v FROM coro_mc ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'coro_mc' ORDER BY ordinal_position;
+----
+column_name
+id
+v
+
+
+# Writing into the old table is refused when that write commits.
+connection s2
+statement error
+INSERT INTO coro_mc VALUES (3, 'c');
+----
+db error: ERROR: Failed to commit: Attempting to modify table "coro_mc" but another transaction has no changes this table
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT x FROM coro_mc;
+----
+x
+100
+
+
+# A reader whose snapshot predates the replace keeps reading the old table
+# after the replace commits.
+statement ok
+CREATE OR REPLACE TABLE coro_mc (id INT, v TEXT);
+
+
+statement count 2
+INSERT INTO coro_mc VALUES (1, 'a'), (2, 'b');
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_mc;
+----
+n
+2
+
+
+connection s2
+statement ok
+CREATE OR REPLACE TABLE coro_mc (z INT);
+
+
+connection s2
+statement count 1
+INSERT INTO coro_mc VALUES (42);
+
+
+connection s1
+query
+SELECT id, v FROM coro_mc ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+connection s1
+query
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'coro_mc' ORDER BY ordinal_position;
+----
+column_name
+id
+v
+
+
+# That snapshot cannot write into the table that is gone.
+connection s1
+statement error
+INSERT INTO coro_mc VALUES (3, 'c');
+----
+db error: ERROR: Transaction conflict: attempting to insert into table "coro_mc" but it has been dropped by a different transaction
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection s1
+query
+SELECT z FROM coro_mc;
+----
+z
+42
+
+
+# An open writer loses to a replace that commits first.
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement count 1
+INSERT INTO coro_mc VALUES (43);
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_mc (w TEXT);
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "coro_mc" but it has been dropped by a different transaction
+
+
+connection s2
+query
+SELECT count(*) AS n FROM coro_mc;
+----
+n
+0
+
+
+# The same when the replace copies the old rows: the copy did not see the open
+# insert, so that insert may not commit either.
+statement count 1
+INSERT INTO coro_mc VALUES ('kept');
+
+
+connection s2
+statement ok
+BEGIN;
+
+
+connection s2
+statement count 1
+INSERT INTO coro_mc VALUES ('lost');
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_mc AS SELECT w || '!' AS w FROM coro_mc;
+
+
+connection s2
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Transaction conflict: attempting to insert into table "coro_mc" but it has been dropped by a different transaction
+
+
+connection s2
+query
+SELECT w FROM coro_mc;
+----
+w
+kept!
+
+
+# Two replacers of one table: the second is refused, and so are a DROP and an
+# ALTER behind the open replace. The first one's table is what stays.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_mc (first_wins INT);
+
+
+connection s2
+statement error
+CREATE OR REPLACE TABLE coro_mc (second INT);
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection s2
+statement error
+DROP TABLE coro_mc;
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection s2
+statement error
+ALTER TABLE coro_mc ADD COLUMN extra INT;
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'coro_mc';
+----
+column_name
+first_wins
+
+
+statement ok
+DROP TABLE coro_mc;
+
+
+# Racing OR REPLACE creates of names that do not exist yet: the first holds
+# each name and the second is refused, so every name ends up with one object.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_race_t (a INT);
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW coro_race_v AS SELECT 1 AS a;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO coro_race_m(x) AS x;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE coro_race_s;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE coro_race_ty AS INT;
+
+
+connection s2
+statement error
+CREATE OR REPLACE TABLE coro_race_t (b INT);
+----
+db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+
+
+connection s2
+statement error
+CREATE OR REPLACE VIEW coro_race_v AS SELECT 2 AS a;
+----
+db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+
+
+connection s2
+statement error
+CREATE OR REPLACE MACRO coro_race_m(x) AS x + 1;
+----
+db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+
+
+connection s2
+statement error
+CREATE OR REPLACE SEQUENCE coro_race_s;
+----
+db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+
+
+connection s2
+statement error
+CREATE OR REPLACE TYPE coro_race_ty AS TEXT;
+----
+db error: ERROR: Catalog write-write conflict on create with <slt:ignore>
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT relname, relkind FROM pg_class WHERE relname LIKE 'coro_race%' ORDER BY relname;
+----
+relname	relkind
+coro_race_s	S
+coro_race_t	r
+coro_race_v	v
+
+
+connection s2
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'coro_race_t';
+----
+column_name
+a
+
+
+connection s2
+query
+SELECT coro_race_m(5) AS r, (SELECT a FROM coro_race_v) AS v;
+----
+r	v
+5	1
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_type WHERE typname = 'coro_race_ty';
+----
+n
+1
+
+
+statement ok
+DROP TABLE coro_race_t;
+
+
+statement ok
+DROP VIEW coro_race_v;
+
+
+statement ok
+DROP MACRO coro_race_m;
+
+
+statement ok
+DROP SEQUENCE coro_race_s;
+
+
+statement ok
+DROP TYPE coro_race_ty;
+
+
+# A dependent that another connection adds to the old table while the replace
+# is open makes the replace fail at COMMIT; the old table and the new dependent
+# stay.
+statement ok
+CREATE TABLE coro_od (a INT);
+
+
+statement count 1
+INSERT INTO coro_od VALUES (1);
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_od (b INT);
+
+
+connection s2
+statement ok
+CREATE VIEW coro_od_v AS SELECT a FROM coro_od;
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "coro_od" because a dependency was created after the transaction started
+
+
+query
+SELECT a FROM coro_od_v;
+----
+a
+1
+
+
+statement ok
+DROP VIEW coro_od_v;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_od (b INT);
+
+
+connection s2
+statement ok
+CREATE INDEX coro_od_idx ON coro_od (a);
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "coro_od" because a dependency was created after the transaction started
+
+
+query
+SELECT c.column_name, i.indexname FROM information_schema.columns c, pg_indexes i
+WHERE c.table_name = 'coro_od' AND i.tablename = 'coro_od';
+----
+column_name	indexname
+a	coro_od_idx
+
+
+statement ok
+DROP INDEX coro_od_idx;
+
+
+# The same for a column default that starts drawing from the old sequence.
+statement ok
+CREATE SEQUENCE coro_od_seq;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE coro_od_seq START 100;
+
+
+connection s2
+statement ok
+CREATE TABLE coro_od_seq_t (id INT DEFAULT nextval('coro_od_seq'), v TEXT);
+
+
+connection s2
+statement count 1
+INSERT INTO coro_od_seq_t (v) VALUES ('a');
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "coro_od_seq" because a dependency was created after the transaction started
+
+
+statement count 1
+INSERT INTO coro_od_seq_t (v) VALUES ('b');
+
+
+query
+SELECT id, v FROM coro_od_seq_t ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+statement ok
+DROP TABLE coro_od_seq_t;
+
+
+# A transaction whose snapshot predates a committed replace cannot hang a new
+# dependent off the object that is gone: the view and the column default fail
+# at COMMIT, the index at once.
+statement ok
+CREATE TYPE coro_od_ty AS ENUM ('a');
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_od;
+----
+n
+1
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_od (b INT);
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_od_seq START 100;
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_od_ty AS ENUM ('z');
+
+
+connection s1
+statement ok
+CREATE VIEW coro_od_v AS SELECT a FROM coro_od;
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "coro_od" was dropped and re-created by another transaction
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_od;
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_od_seq START 200;
+
+
+connection s1
+statement ok
+CREATE TABLE coro_od_seq_t (id INT DEFAULT nextval('coro_od_seq'));
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "coro_od_seq" was dropped and re-created by another transaction
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_od;
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_od_ty AS ENUM ('y');
+
+
+connection s1
+statement ok
+CREATE TABLE coro_od_ty_t (m coro_od_ty);
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "coro_od_ty" was dropped and re-created by another transaction
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_od;
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_od (c INT);
+
+
+connection s1
+statement error
+CREATE INDEX coro_od_idx ON coro_od (b);
+----
+db error: ERROR: Transaction conflict: cannot add an index to a table that has been altered or dropped
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'coro_od%' ORDER BY relname;
+----
+relname
+coro_od
+coro_od_seq
+
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 'coro_od';
+----
+column_name
+c
+
+
+# Such a transaction cannot replace the object again either.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_od;
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_od (d INT);
+
+
+statement ok
+CREATE MACRO coro_od_m(x) AS x;
+
+
+connection s1
+statement error
+CREATE OR REPLACE TABLE coro_od (e INT);
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT count(*) AS n FROM coro_od;
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_od_m(x) AS x + 1;
+
+
+connection s1
+statement error
+CREATE OR REPLACE MACRO coro_od_m(x) AS x + 2;
+----
+db error: ERROR: Catalog write-write conflict on alter with "coro_od_m"
+
+
+connection s1
+statement ok
+ROLLBACK;
+
+
+query
+SELECT column_name, coro_od_m(0) AS m FROM information_schema.columns WHERE table_name = 'coro_od';
+----
+column_name	m
+d	1
+
+
+statement ok
+DROP MACRO coro_od_m;
+
+
+statement ok
+DROP TYPE coro_od_ty;
+
+
+statement ok
+DROP SEQUENCE coro_od_seq;
+
+
+statement ok
+DROP TABLE coro_od;
+
+
+# A snapshot taken before a replace of a view, a macro or a trigger keeps the
+# old definitions until it ends; the next transaction sees the new ones.
+statement ok
+CREATE TABLE coro_snap_t (a INT);
+
+
+statement count 2
+INSERT INTO coro_snap_t VALUES (1), (2);
+
+
+statement ok
+CREATE TABLE coro_snap_log (tag TEXT);
+
+
+statement ok
+CREATE VIEW coro_snap_v AS SELECT a FROM coro_snap_t;
+
+
+statement ok
+CREATE MACRO coro_snap_m(x) AS x + 1;
+
+
+statement ok
+CREATE TRIGGER coro_snap_trg AFTER INSERT ON coro_snap_t FOR EACH STATEMENT
+  INSERT INTO coro_snap_log VALUES ('old');
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+query
+SELECT coro_snap_m(0) AS m, (SELECT count(*) FROM coro_snap_v) AS v;
+----
+m	v
+1	2
+
+
+statement ok
+CREATE OR REPLACE VIEW coro_snap_v AS SELECT a FROM coro_snap_t WHERE a > 1;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_snap_m(x) AS x + 2;
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coro_snap_trg AFTER INSERT ON coro_snap_t FOR EACH STATEMENT
+  INSERT INTO coro_snap_log VALUES ('new');
+
+
+connection s1
+query
+SELECT coro_snap_m(0) AS m, (SELECT count(*) FROM coro_snap_v) AS v;
+----
+m	v
+1	2
+
+
+connection s1
+statement count 1
+INSERT INTO coro_snap_t VALUES (3);
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s1
+query
+SELECT coro_snap_m(0) AS m, (SELECT count(*) FROM coro_snap_v) AS v;
+----
+m	v
+2	2
+
+
+connection s1
+statement count 1
+INSERT INTO coro_snap_t VALUES (4);
+
+
+query
+SELECT tag FROM coro_snap_log ORDER BY tag;
+----
+tag
+new
+old
+
+
+statement ok
+DROP VIEW coro_snap_v;
+
+
+statement ok
+DROP MACRO coro_snap_m;
+
+
+statement ok
+DROP TABLE coro_snap_t;
+
+
+statement ok
+DROP TABLE coro_snap_log;
+
+
+# --- OR REPLACE on a search table -------------------------------------------
+
+statement ok
+CREATE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement count 2
+INSERT INTO coro_s VALUES (1, 'alpha'), (2, 'bravo');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+statement ok
+CREATE INDEX coro_s_idx ON coro_s USING inverted (body);
+
+
+query
+SELECT id FROM coro_s_idx WHERE body = 'alpha';
+----
+id
+1
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT, n INT) WITH (storage = 'search');
+
+
+# The old documents and the old inverted index are gone.
+query
+SELECT count(*) AS n FROM coro_s;
+----
+n
+0
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'coro_s' ORDER BY indexname;
+----
+indexname
+coro_s_pkey
+
+
+statement count 1
+INSERT INTO coro_s VALUES (3, 'alpha', 7);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+query
+SELECT id, body, n FROM coro_s ORDER BY id;
+----
+id	body	n
+3	alpha	7
+
+
+# A new index of the old name indexes only the new documents.
+statement ok
+CREATE INDEX coro_s_idx ON coro_s USING inverted (body);
+
+
+query
+SELECT id FROM coro_s_idx WHERE body = 'alpha';
+----
+id
+3
+
+
+# A search table may be replaced by a transactional one and back.
+statement ok
+CREATE OR REPLACE TABLE coro_s (id INT, body TEXT);
+
+
+statement count 1
+INSERT INTO coro_s VALUES (4, 'x');
+
+
+query
+SELECT id, body FROM coro_s;
+----
+id	body
+4	x
+
+
+query
+SELECT count(*) AS n FROM pg_indexes WHERE tablename = 'coro_s';
+----
+n
+0
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_s WITH (storage = 'search') AS
+  SELECT range::INT AS id, 'b' || range AS body FROM range(3);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+query
+SELECT id, body FROM coro_s ORDER BY id;
+----
+id	body
+0	b0
+1	b1
+2	b2
+
+
+# A CTAS replace that fails keeps the old documents.
+statement error
+CREATE OR REPLACE TABLE coro_s WITH (storage = 'search') AS
+  SELECT range::INT AS id, (CASE WHEN range = 150000 THEN 'x' ELSE range::TEXT END)::INT::TEXT AS body FROM range(200000);
+----
+db error: ERROR: Could not convert string 'x' to INT32
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+query
+SELECT id, body FROM coro_s ORDER BY id;
+----
+id	body
+0	b0
+1	b1
+2	b2
+
+
+# Rolled back, the replace of a search table brings back its documents and its
+# index, which keeps indexing new writes.
+statement ok
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement count 2
+INSERT INTO coro_s VALUES (1, 'alpha'), (2, 'bravo');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+statement ok
+CREATE INDEX coro_s_idx ON coro_s USING inverted (body);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+statement count 1
+INSERT INTO coro_s VALUES (9, 'zulu');
+
+
+query
+SELECT count(*) AS n FROM coro_s WHERE id < 9;
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+query
+SELECT id, body FROM coro_s ORDER BY id;
+----
+id	body
+1	alpha
+2	bravo
+
+
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'coro_s' ORDER BY indexname;
+----
+indexname
+coro_s_idx
+coro_s_pkey
+
+
+statement count 1
+INSERT INTO coro_s VALUES (3, 'charlie');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+query
+SELECT id FROM coro_s_idx WHERE body = 'charlie';
+----
+id
+3
+
+
+# Another connection reads the old documents through the old index while the
+# replace is open.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+connection s2
+query
+SELECT id FROM coro_s_idx WHERE body = 'bravo';
+----
+id
+2
+
+
+connection s2
+query
+SELECT count(*) AS n FROM coro_s;
+----
+n
+3
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT count(*) AS n FROM coro_s;
+----
+n
+0
+
+
+connection s2
+query
+SELECT count(*) AS n FROM pg_indexes WHERE indexname = 'coro_s_idx';
+----
+n
+0
+
+
+# A trigger on a search table is replaced like any other, and goes with the
+# table when the table is replaced.
+statement ok
+CREATE TRIGGER coro_s_trg AFTER INSERT ON coro_s FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('s_insert', 0);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coro_s_trg AFTER DELETE ON coro_s FOR EACH ROW
+  INSERT INTO coro_audit VALUES ('s_delete', OLD.id);
+
+
+statement count 2
+INSERT INTO coro_s VALUES (1, 'a'), (2, 'b');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+statement count 1
+DELETE FROM coro_s WHERE id = 2;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_s;
+
+
+query
+SELECT tag, a FROM coro_audit ORDER BY tag;
+----
+tag	a
+s_delete	2
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_s (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+
+query
+SELECT count(*) AS n FROM duckdb_triggers()
+WHERE table_name = 'coro_s' AND database_name = current_database();
+----
+n
+0
+
+
+statement ok
+DROP TABLE coro_s;
+
+
+statement ok
+DELETE FROM coro_audit;
+
+
+# --- An inverted index's dictionary is released with the replaced table -----
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY coro_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE coro_inv (id INT PRIMARY KEY, body TEXT);
+
+
+statement count 2
+INSERT INTO coro_inv VALUES (1, 'alpha bravo'), (2, 'charlie delta');
+
+
+statement ok
+CREATE INDEX coro_inv_idx ON coro_inv USING inverted (body coro_dict);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_inv;
+
+
+statement error
+DROP TEXT SEARCH DICTIONARY coro_dict;
+----
+db error: ERROR: Cannot drop entry "coro_dict" because there are entries that depend on it.
+index "coro_inv_idx" depends on tokenizer "coro_dict".
+Use DROP...CASCADE to drop all dependents.
+
+
+# There is no OR REPLACE form for a dictionary, used or not.
+statement error
+CREATE OR REPLACE TEXT SEARCH DICTIONARY coro_dict AS keyword();
+----
+db error: ERROR: syntax error at or near "TEXT"
+
+
+statement error
+CREATE OR REPLACE TEXT SEARCH DICTIONARY coro_unused_dict AS keyword();
+----
+db error: ERROR: syntax error at or near "TEXT"
+
+
+query
+SELECT id FROM coro_inv_idx WHERE body @@ ts_phrase('alpha');
+----
+id
+1
+
+
+# Dropping the dictionary inside a rolled-back replace leaves both in place.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_inv (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY coro_dict;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT dictname FROM pg_ts_dict WHERE dictname = 'coro_dict';
+----
+dictname
+coro_dict
+
+
+statement count 1
+INSERT INTO coro_inv VALUES (3, 'alpha echo');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) coro_inv;
+
+
+query
+SELECT id FROM coro_inv_idx WHERE body @@ ts_phrase('alpha') ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+CREATE OR REPLACE TABLE coro_inv (id INT PRIMARY KEY, body TEXT);
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY coro_dict;
+
+
+query
+SELECT count(*) AS n FROM pg_ts_dict WHERE dictname = 'coro_dict';
+----
+n
+0
+
+
+statement ok
+DROP TABLE coro_inv;
+
+
+# --- OR REPLACE MACRO / FUNCTION --------------------------------------------
+
+statement ok
+CREATE MACRO coro_m(x) AS x + 1;
+
+
+statement ok
+CREATE MACRO coro_m_outer(x) AS coro_m(x) * 10;
+
+
+statement ok
+CREATE VIEW coro_m_v AS SELECT coro_m(1) AS r;
+
+
+query
+SELECT coro_m_outer(1) AS o, (SELECT r FROM coro_m_v) AS v;
+----
+o	v
+20	2
+
+
+# The macro and the view built on it see the new body.
+statement ok
+CREATE OR REPLACE MACRO coro_m(x) AS x + 100;
+
+
+query
+SELECT coro_m_outer(1) AS o, (SELECT r FROM coro_m_v) AS v;
+----
+o	v
+1010	101
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_m';
+----
+n
+1
+
+
+# A different number of parameters is another overload; the same number
+# replaces that overload, whatever the parameters are called.
+statement ok
+CREATE OR REPLACE MACRO coro_m(x, y) AS x + y;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_m(z) AS z + 1000;
+
+
+query
+SELECT parameters, macro_definition FROM duckdb_functions()
+WHERE function_name = 'coro_m' AND database_name = current_database() ORDER BY parameters;
+----
+parameters	macro_definition
+{x,y}	(x + y)
+{z}	(z + 1000)
+
+
+query
+SELECT coro_m(1) AS one, coro_m(1, 2) AS two, coro_m_outer(1) AS o;
+----
+one	two	o
+1001	3	10010
+
+
+# Several overloads in one statement.
+statement ok
+CREATE OR REPLACE MACRO coro_m(a, b) AS a - b, (a, b, c) AS a + b + c;
+
+
+query
+SELECT coro_m(1) AS one, coro_m(5, 1) AS two, coro_m(1, 2, 3) AS three;
+----
+one	two	three
+1001	4	6
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_m';
+----
+n
+3
+
+
+# A replaced default parameter value is the one used.
+statement ok
+CREATE MACRO coro_m_dflt(a, b := 10) AS a + b;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_m_dflt(a, b := 20) AS a + b;
+
+
+query
+SELECT coro_m_dflt(1) AS r;
+----
+r
+21
+
+
+statement ok
+DROP MACRO coro_m_dflt;
+
+
+# The view still depends on the replaced macro.
+statement ok
+DROP MACRO coro_m_outer;
+
+
+statement error
+DROP MACRO coro_m;
+----
+db error: ERROR: Cannot drop entry "coro_m" because there are entries that depend on it.
+view "coro_m_v" depends on macro function "coro_m".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP VIEW coro_m_v;
+
+
+statement ok
+DROP MACRO coro_m;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_m';
+----
+n
+0
+
+
+# Table macros: a view over one reads the new body.
+statement ok
+CREATE MACRO coro_tm(n) AS TABLE SELECT range AS i FROM range(n);
+
+
+statement ok
+CREATE VIEW coro_tm_v AS SELECT i FROM coro_tm(3);
+
+
+statement ok
+CREATE MACRO coro_tm_outer() AS TABLE SELECT sum(i) AS s FROM coro_tm(3);
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_tm(n) AS TABLE SELECT range * 10 AS i FROM range(n);
+
+
+query
+SELECT i FROM coro_tm_v ORDER BY i;
+----
+i
+0
+10
+20
+
+
+query
+SELECT s FROM coro_tm_outer();
+----
+s
+30
+
+
+statement ok
+DROP MACRO TABLE coro_tm_outer;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_tm';
+----
+n
+1
+
+
+statement ok
+DROP VIEW coro_tm_v;
+
+
+statement ok
+DROP MACRO TABLE coro_tm;
+
+
+# A column DEFAULT and a generated column read the macro when they are
+# evaluated, so both follow the new body.
+statement ok
+CREATE MACRO coro_mdef() AS 7;
+
+
+statement ok
+CREATE MACRO coro_mgen(x) AS x * 2;
+
+
+statement ok
+CREATE TABLE coro_mt (a INT DEFAULT coro_mdef(), b INT, g INT GENERATED ALWAYS AS (coro_mgen(b)));
+
+
+statement count 1
+INSERT INTO coro_mt (b) VALUES (1);
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mdef() AS 70;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mgen(x) AS x * 3;
+
+
+statement count 1
+INSERT INTO coro_mt (b) VALUES (2);
+
+
+query
+SELECT a, b, g FROM coro_mt ORDER BY b;
+----
+a	b	g
+7	1	3
+70	2	6
+
+
+statement error
+DROP MACRO coro_mdef;
+----
+db error: ERROR: Cannot drop entry "coro_mdef" because there are entries that depend on it.
+table "coro_mt" depends on macro function "coro_mdef".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP TABLE coro_mt;
+
+
+statement ok
+DROP MACRO coro_mdef;
+
+
+statement ok
+DROP MACRO coro_mgen;
+
+
+# A CHECK constraint calling a macro checks new rows with the new body and
+# leaves the rows already there alone.
+statement ok
+CREATE MACRO coro_mchk(x) AS x > 0;
+
+
+statement ok
+CREATE TABLE coro_mchk_t (a INT CHECK (coro_mchk(a)));
+
+
+statement count 1
+INSERT INTO coro_mchk_t VALUES (1);
+
+
+statement error
+INSERT INTO coro_mchk_t VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "coro_mchk_t" with expression CHECK(coro_mchk(a))
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mchk(x) AS x > -5;
+
+
+statement count 1
+INSERT INTO coro_mchk_t VALUES (-1);
+
+
+statement error
+INSERT INTO coro_mchk_t VALUES (-10);
+----
+db error: ERROR: CHECK constraint failed on table "coro_mchk_t" with expression CHECK(coro_mchk(a))
+
+
+query
+SELECT a FROM coro_mchk_t ORDER BY a;
+----
+a
+-1
+1
+
+
+statement error
+DROP MACRO coro_mchk;
+----
+db error: ERROR: Cannot drop entry "coro_mchk" because there are entries that depend on it.
+table "coro_mchk_t" depends on macro function "coro_mchk".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP TABLE coro_mchk_t;
+
+
+statement ok
+DROP MACRO coro_mchk;
+
+
+# PostgreSQL function syntax with an unchanged signature replaces the body in
+# place: one function, and the view on it reads the new body and still
+# depends on it.
+statement ok
+CREATE FUNCTION coro_pgf(n INT) RETURNS INT LANGUAGE sql AS $$ SELECT n + 1 $$;
+
+
+statement ok
+CREATE VIEW coro_pgf_v AS SELECT coro_pgf(1) AS r;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION coro_pgf(n INT) RETURNS INT LANGUAGE sql AS $$ SELECT n + 100 $$;
+
+
+query
+SELECT r, pg_typeof(r) AS t FROM coro_pgf_v;
+----
+r	t
+101	integer
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_pgf';
+----
+n
+1
+
+
+statement error
+DROP FUNCTION coro_pgf;
+----
+db error: ERROR: Cannot drop entry "coro_pgf" because there are entries that depend on it.
+view "coro_pgf_v" depends on macro function "coro_pgf".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE FUNCTION coro_pgf(n INT) RETURNS INT LANGUAGE sql AS $$ SELECT n + 200 $$;
+
+
+query
+SELECT r FROM coro_pgf_v;
+----
+r
+201
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT r FROM coro_pgf_v;
+----
+r
+101
+
+
+statement ok
+DROP VIEW coro_pgf_v;
+
+
+statement ok
+DROP FUNCTION coro_pgf;
+
+
+# In a schema other than the current one, the replace resolves the same way as
+# the create: explicitly qualified, or through the first search_path schema.
+statement ok
+CREATE MACRO coro_sch.coro_sm(x) AS x + 1;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_sch.coro_sm(x) AS x + 2;
+
+
+statement ok
+SET search_path = coro_sch;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_sm(x) AS x + 3;
+
+
+statement ok
+RESET search_path;
+
+
+query
+SELECT schema_name, coro_sch.coro_sm(0) AS r FROM duckdb_functions()
+WHERE function_name = 'coro_sm' AND database_name = current_database();
+----
+schema_name	r
+coro_sch	3
+
+
+statement ok
+DROP MACRO coro_sch.coro_sm;
+
+
+# --- OR REPLACE MACRO inside a transaction ----------------------------------
+
+statement ok
+CREATE MACRO coro_mx(x) AS x + 1;
+
+
+# Replaced twice and rolled back: the committed body is back.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 2;
+
+
+query
+SELECT coro_mx(0) AS r;
+----
+r
+2
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 3;
+
+
+query
+SELECT coro_mx(0) AS r;
+----
+r
+3
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT coro_mx(0) AS r;
+----
+r
+1
+
+
+# Replaced then dropped, rolled back.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 2;
+
+
+statement ok
+DROP MACRO coro_mx;
+
+
+query
+SELECT count(*) AS n FROM duckdb_functions()
+WHERE function_name = 'coro_mx' AND database_name = current_database();
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT coro_mx(0) AS r;
+----
+r
+1
+
+
+# An overload added in a rolled-back transaction is gone with it.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x, y) AS x * y;
+
+
+query
+SELECT coro_mx(2, 3) AS r;
+----
+r
+6
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_mx';
+----
+n
+1
+
+
+# Replaced twice and committed: the last body wins and there is one entry.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 2;
+
+
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 3;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT coro_mx(0) AS r;
+----
+r
+3
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname = 'coro_mx';
+----
+n
+1
+
+
+# Another connection keeps the committed body until the COMMIT, and cannot
+# replace the macro behind the open one.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 50;
+
+
+connection s1
+query
+SELECT coro_mx(0) AS r;
+----
+r
+50
+
+
+connection s2
+query
+SELECT coro_mx(0) AS r;
+----
+r
+3
+
+
+connection s2
+statement error
+CREATE OR REPLACE MACRO coro_mx(x) AS x + 60;
+----
+db error: ERROR: Catalog write-write conflict on alter with "coro_mx"
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT coro_mx(0) AS r;
+----
+r
+50
+
+
+statement ok
+DROP MACRO coro_mx;
+
+
+# --- OR REPLACE SEQUENCE ----------------------------------------------------
+
+statement ok
+CREATE SEQUENCE coro_seq START 10;
+
+
+query
+SELECT nextval('coro_seq') AS a, nextval('coro_seq') AS b;
+----
+a	b
+10	11
+
+
+# The replacement starts over.
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq START 10;
+
+
+query
+SELECT nextval('coro_seq') AS a;
+----
+a
+10
+
+
+query
+SELECT currval('coro_seq') AS c;
+----
+c
+10
+
+
+# New options apply; currval knows nothing of the new sequence yet.
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq START 100 INCREMENT 5;
+
+
+statement error
+SELECT currval('coro_seq');
+----
+db error: ERROR: currval: sequence is not yet defined in this session
+
+
+query
+SELECT nextval('coro_seq') AS a, nextval('coro_seq') AS b;
+----
+a	b
+100	105
+
+
+query
+SELECT start_value, increment_by FROM pg_sequences WHERE sequencename = 'coro_seq';
+----
+start_value	increment_by
+100	5
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'coro_seq';
+----
+n
+1
+
+
+# A column default using it refuses the replace; the default keeps counting on
+# the old sequence.
+statement ok
+CREATE TABLE coro_seq_t (id INT DEFAULT nextval('coro_seq'), v TEXT);
+
+
+statement error
+CREATE OR REPLACE SEQUENCE coro_seq START 1;
+----
+db error: ERROR: Cannot drop entry "coro_seq" because there are entries that depend on it.
+table "coro_seq_t" depends on sequence "coro_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement count 1
+INSERT INTO coro_seq_t (v) VALUES ('a');
+
+
+query
+SELECT id, v FROM coro_seq_t;
+----
+id	v
+110	a
+
+
+statement ok
+DROP TABLE coro_seq_t;
+
+
+# So does a macro calling nextval() on it.
+statement ok
+CREATE MACRO coro_seq_next() AS nextval('coro_seq');
+
+
+statement error
+CREATE OR REPLACE SEQUENCE coro_seq START 1;
+----
+db error: ERROR: Cannot drop entry "coro_seq" because there are entries that depend on it.
+macro function "coro_seq_next" depends on sequence "coro_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT coro_seq_next() AS n;
+----
+n
+115
+
+
+statement ok
+DROP MACRO coro_seq_next;
+
+
+statement ok
+DROP SEQUENCE coro_seq;
+
+
+# The sequence of a SERIAL column belongs to its table and is not replaced.
+statement ok
+CREATE TABLE coro_seq_ser (id SERIAL, v TEXT);
+
+
+statement count 1
+INSERT INTO coro_seq_ser (v) VALUES ('a');
+
+
+statement error
+CREATE OR REPLACE SEQUENCE coro_seq_ser_id_seq START 100;
+----
+db error: ERROR: Cannot drop entry "coro_seq_ser_id_seq" because there are entries that depend on it.
+table "coro_seq_ser" depends on sequence "coro_seq_ser_id_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement count 1
+INSERT INTO coro_seq_ser (v) VALUES ('b');
+
+
+query
+SELECT id, v FROM coro_seq_ser ORDER BY id;
+----
+id	v
+1	a
+2	b
+
+
+statement ok
+DROP TABLE coro_seq_ser;
+
+
+# Replaced then dropped, committed: nothing is left under the name.
+statement ok
+CREATE SEQUENCE coro_seq_gone;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq_gone START 5;
+
+
+query
+SELECT nextval('coro_seq_gone') AS n;
+----
+n
+5
+
+
+statement ok
+DROP SEQUENCE coro_seq_gone;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'coro_seq_gone';
+----
+n
+0
+
+
+# Rolled back, the replace brings back the old sequence where it stood.
+statement ok
+CREATE SEQUENCE coro_seq_tx START 1;
+
+
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+1
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq_tx START 50;
+
+
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+50
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+2
+
+
+# Replaced twice and committed: the last definition wins.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq_tx START 50;
+
+
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+50
+
+
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq_tx START 70;
+
+
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+70
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+71
+
+
+# Another connection keeps drawing from the committed sequence until the
+# replace commits, and cannot replace it behind the open one.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SEQUENCE coro_seq_tx START 500;
+
+
+connection s1
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+500
+
+
+connection s2
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+72
+
+
+connection s2
+statement error
+CREATE OR REPLACE SEQUENCE coro_seq_tx START 900;
+----
+db error: ERROR: Catalog write-write conflict on alter with <slt:ignore>
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT nextval('coro_seq_tx') AS n;
+----
+n
+501
+
+
+connection s2
+query
+SELECT start_value FROM pg_sequences WHERE sequencename = 'coro_seq_tx';
+----
+start_value
+500
+
+
+statement ok
+DROP SEQUENCE coro_seq_tx;
+
+
+# --- OR REPLACE TYPE --------------------------------------------------------
+
+statement ok
+CREATE TYPE coro_mood AS ENUM ('sad', 'ok');
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('sad', 'ok', 'happy');
+
+
+query
+SELECT enumlabel FROM pg_enum e JOIN pg_type t ON e.enumtypid = t.oid
+WHERE t.typname = 'coro_mood' ORDER BY e.enumsortorder;
+----
+enumlabel
+sad
+ok
+happy
+
+
+# Anything built on the type refuses the replace, and the type stays as it was.
+statement ok
+CREATE TABLE coro_mood_t (m coro_mood);
+
+
+statement count 1
+INSERT INTO coro_mood_t VALUES ('happy');
+
+
+statement error
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
+----
+db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
+table "coro_mood_t" depends on type "coro_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT m FROM coro_mood_t;
+----
+m
+happy
+
+
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{sad,ok,happy}
+
+
+statement ok
+DROP TABLE coro_mood_t;
+
+
+statement ok
+CREATE VIEW coro_mood_v AS SELECT 'ok'::coro_mood AS m;
+
+
+statement error
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
+----
+db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
+view "coro_mood_v" depends on type "coro_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT m FROM coro_mood_v;
+----
+m
+ok
+
+
+statement ok
+DROP VIEW coro_mood_v;
+
+
+statement ok
+CREATE MACRO coro_mood_f(x) AS CAST(x AS coro_mood);
+
+
+statement error
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
+----
+db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
+macro function "coro_mood_f" depends on type "coro_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP MACRO coro_mood_f;
+
+
+statement ok
+CREATE TYPE coro_mood_wrap AS STRUCT(m coro_mood);
+
+
+statement error
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y');
+----
+db error: ERROR: Cannot drop entry "coro_mood" because there are entries that depend on it.
+type "coro_mood_wrap" depends on type "coro_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+statement ok
+DROP TYPE coro_mood_wrap;
+
+
+# A type may not be replaced by one built on itself.
+statement error
+CREATE OR REPLACE TYPE coro_mood AS STRUCT(inner_mood coro_mood);
+----
+db error: ERROR: CREATE OR REPLACE is not allowed to depend on itself
+
+
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{sad,ok,happy}
+
+
+# With nothing on it, the type may change kind.
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS STRUCT(a INT);
+
+
+query
+SELECT ({'a': 1}::coro_mood).a AS a;
+----
+a
+1
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS INTEGER;
+
+
+query
+SELECT 5::coro_mood AS v;
+----
+v
+5
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('sad', 'ok');
+
+
+# Rolled back, the replace brings back the old labels, and a table created on
+# the new type in that transaction is gone.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('x', 'y', 'z');
+
+
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{x,y,z}
+
+
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('w');
+
+
+statement ok
+CREATE TABLE coro_mood_t (m coro_mood);
+
+
+statement count 1
+INSERT INTO coro_mood_t VALUES ('w');
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{sad,ok}
+
+
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'coro_mood_t';
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM pg_type WHERE typname = 'coro_mood';
+----
+n
+1
+
+
+# Another connection keeps the old labels until the COMMIT. A dependent it
+# creates meanwhile on the old type makes that COMMIT fail, and the old type
+# stays with its dependent.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('new1', 'new2');
+
+
+connection s2
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{sad,ok}
+
+
+connection s2
+statement ok
+CREATE TABLE coro_mood_t (m coro_mood);
+
+
+connection s1
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "coro_mood" because a dependency was created after the transaction started
+
+
+connection s1
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{sad,ok}
+
+
+statement count 1
+INSERT INTO coro_mood_t VALUES ('ok');
+
+
+statement ok
+DROP TABLE coro_mood_t;
+
+
+# Without the concurrent dependent, the other connection sees the new labels
+# once the replace commits.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TYPE coro_mood AS ENUM ('new1', 'new2');
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT enum_range(NULL::coro_mood) AS r;
+----
+r
+{new1,new2}
+
+
+statement ok
+DROP TYPE coro_mood;
+
+
+# --- OR REPLACE SECRET ------------------------------------------------------
+
+statement ok
+CREATE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k1', SECRET 'coro_s1', REGION 'coro_r1', SCOPE 's3://coro-old-bucket');
+
+
+statement error
+CREATE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k2', SECRET 'coro_s2', SCOPE 's3://coro-objects-bucket');
+----
+db error: ERROR: Temporary secret with name "coro_sec" already exists!
+
+
+statement ok
+CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k2', SECRET 'coro_s2', SCOPE 's3://coro-objects-bucket');
+
+
+query
+SELECT name, type, scope, secret_string LIKE '%key_id=coro_k2%' AS new_key,
+       secret_string LIKE '%coro_r1%' AS old_region
+FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+name	type	scope	new_key	old_region
+coro_sec	s3	{s3://coro-objects-bucket}	t	f
+
+
+query
+SELECT which_secret('s3://coro-objects-bucket/f.parquet', 's3') AS s;
+----
+s
+coro_sec
+
+
+# The replacement may be of another secret type.
+statement ok
+CREATE OR REPLACE SECRET coro_sec (TYPE gcs, KEY_ID 'coro_k3', SECRET 'coro_s3', SCOPE 'gcs://coro-objects-bucket');
+
+
+query
+SELECT name, type FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+name	type
+coro_sec	gcs
+
+
+# Rolled back, the replace brings back the old secret.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k4', SECRET 'coro_s4', SCOPE 's3://coro-objects-bucket');
+
+
+query
+SELECT type FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+type
+s3
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT name, type FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+name	type
+coro_sec	gcs
+
+
+# Replaced then dropped, rolled back.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k5', SECRET 'coro_s5', SCOPE 's3://coro-objects-bucket');
+
+
+statement ok
+DROP SECRET coro_sec;
+
+
+query
+SELECT count(*) AS n FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT name, type, secret_string LIKE '%key_id=coro_k3%' AS committed_key
+FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+name	type	committed_key
+coro_sec	gcs	t
+
+
+# Another connection keeps the committed secret until the COMMIT, and cannot
+# replace it behind the open one.
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k6', SECRET 'coro_s6', SCOPE 's3://coro-objects-bucket');
+
+
+connection s2
+query
+SELECT type FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+type
+gcs
+
+
+connection s2
+statement error
+CREATE OR REPLACE SECRET coro_sec (TYPE s3, KEY_ID 'coro_k7', SECRET 'coro_s7', SCOPE 's3://coro-objects-bucket');
+----
+db error: ERROR: Catalog write-write conflict on alter with "coro_sec"
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT type, secret_string LIKE '%key_id=coro_k6%' AS committed_key
+FROM duckdb_secrets() WHERE name = 'coro_sec';
+----
+type	committed_key
+s3	t
+
+
+statement ok
+DROP SECRET coro_sec;
+
+
+# --- OR REPLACE TRIGGER -----------------------------------------------------
+
+statement ok
+CREATE TABLE coro_trg_t (id INT, v TEXT);
+
+
+statement ok
+CREATE TRIGGER coro_trg AFTER INSERT ON coro_trg_t FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('old', 0);
+
+
+statement count 1
+INSERT INTO coro_trg_t VALUES (1, 'a');
+
+
+# The new body fires and the old one does not.
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('new', 0);
+
+
+statement count 1
+INSERT INTO coro_trg_t VALUES (2, 'b');
+
+
+query
+SELECT tag, count(*) AS n FROM coro_audit GROUP BY tag ORDER BY tag;
+----
+tag	n
+new	1
+old	1
+
+
+query
+SELECT trigger_name, event_manipulation, for_each FROM duckdb_triggers()
+WHERE table_name = 'coro_trg_t' AND database_name = current_database();
+----
+trigger_name	event_manipulation	for_each
+coro_trg	INSERT	STATEMENT
+
+
+# The replacement may change the event and the granularity.
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER DELETE ON coro_trg_t FOR EACH ROW
+  INSERT INTO coro_audit VALUES ('del', OLD.id);
+
+
+statement ok
+DELETE FROM coro_audit;
+
+
+statement count 1
+INSERT INTO coro_trg_t VALUES (3, 'c');
+
+
+statement count 1
+DELETE FROM coro_trg_t WHERE id = 1;
+
+
+query
+SELECT tag, a FROM coro_audit ORDER BY tag;
+----
+tag	a
+del	1
+
+
+query
+SELECT trigger_name, event_manipulation, for_each FROM duckdb_triggers()
+WHERE table_name = 'coro_trg_t' AND database_name = current_database();
+----
+trigger_name	event_manipulation	for_each
+coro_trg	DELETE	ROW
+
+
+# Trigger names belong to their table: the same name on another table is a
+# separate trigger.
+statement ok
+CREATE TABLE coro_trg_t2 (id INT);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t2 FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('t2', 0);
+
+
+query
+SELECT table_name, event_manipulation FROM duckdb_triggers()
+WHERE trigger_name = 'coro_trg' AND database_name = current_database() ORDER BY table_name;
+----
+table_name	event_manipulation
+coro_trg_t	DELETE
+coro_trg_t2	INSERT
+
+
+# Rolled back, the replace brings back the old trigger, and what the new one
+# wrote in that transaction is gone.
+statement ok
+DELETE FROM coro_audit;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('txn', 0);
+
+
+statement count 1
+INSERT INTO coro_trg_t VALUES (10, 'x');
+
+
+query
+SELECT tag FROM coro_audit;
+----
+tag
+txn
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT event_manipulation, for_each FROM duckdb_triggers()
+WHERE table_name = 'coro_trg_t' AND database_name = current_database();
+----
+event_manipulation	for_each
+DELETE	ROW
+
+
+statement count 1
+INSERT INTO coro_trg_t VALUES (11, 'y');
+
+
+statement count 1
+DELETE FROM coro_trg_t WHERE id = 11;
+
+
+query
+SELECT tag, a FROM coro_audit ORDER BY tag;
+----
+tag	a
+del	11
+
+
+# Replaced twice then dropped, rolled back.
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('a', 1);
+
+
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('b', 2);
+
+
+statement ok
+DROP TRIGGER coro_trg ON coro_trg_t;
+
+
+query
+SELECT count(*) AS n FROM duckdb_triggers()
+WHERE table_name = 'coro_trg_t' AND database_name = current_database();
+----
+n
+0
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT table_name, event_manipulation FROM duckdb_triggers()
+WHERE trigger_name = 'coro_trg' AND database_name = current_database() ORDER BY table_name;
+----
+table_name	event_manipulation
+coro_trg_t	DELETE
+coro_trg_t2	INSERT
+
+
+# Another connection's writes fire the committed trigger until the replace
+# commits.
+statement ok
+DELETE FROM coro_audit;
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t2 FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('t2_new', 0);
+
+
+connection s2
+statement count 1
+INSERT INTO coro_trg_t2 VALUES (1);
+
+
+connection s2
+query
+SELECT tag FROM coro_audit ORDER BY tag;
+----
+tag
+t2
+
+
+# A second replacer and a DROP of the same trigger are refused behind the open
+# replace.
+connection s2
+statement error
+CREATE OR REPLACE TRIGGER coro_trg AFTER INSERT ON coro_trg_t2 FOR EACH STATEMENT
+  INSERT INTO coro_audit VALUES ('t2_other', 0);
+----
+db error: ERROR: Catalog write-write conflict on alter with "Table\0public\0coro_audit\0Trigger\0public\0coro_trg\0coro_trg_t2"
+
+
+connection s2
+statement error
+DROP TRIGGER coro_trg ON coro_trg_t2;
+----
+db error: ERROR: Catalog write-write conflict on alter with "Table\0public\0coro_audit\0Trigger\0public\0coro_trg\0coro_trg_t2"
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+statement count 1
+INSERT INTO coro_trg_t2 VALUES (2);
+
+
+connection s2
+query
+SELECT tag FROM coro_audit ORDER BY tag;
+----
+tag
+t2
+t2_new
+
+
+statement ok
+DROP TABLE coro_trg_t2;
+
+
+statement ok
+DROP TABLE coro_trg_t;
+
+
+# --- OR REPLACE VIEW in transactions and across connections -----------------
+
+statement ok
+CREATE TABLE coro_vt (a INT, b INT);
+
+
+statement count 2
+INSERT INTO coro_vt VALUES (1, 10), (2, 20);
+
+
+statement ok
+CREATE VIEW coro_vv AS SELECT a FROM coro_vt;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW coro_vv AS SELECT a, b FROM coro_vt;
+
+
+query
+SELECT a, b FROM coro_vv ORDER BY a;
+----
+a	b
+1	10
+2	20
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM coro_vv ORDER BY a;
+----
+a
+1
+2
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+CREATE OR REPLACE VIEW coro_vv AS SELECT a, b FROM coro_vt;
+
+
+statement ok
+DROP VIEW coro_vv;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT * FROM coro_vv ORDER BY a;
+----
+a
+1
+2
+
+
+connection s1
+statement ok
+BEGIN;
+
+
+connection s1
+statement ok
+CREATE OR REPLACE VIEW coro_vv AS SELECT a, b FROM coro_vt WHERE a > 1;
+
+
+connection s2
+query
+SELECT * FROM coro_vv ORDER BY a;
+----
+a
+1
+2
+
+
+connection s2
+statement error
+CREATE OR REPLACE VIEW coro_vv AS SELECT a FROM coro_vt WHERE a < 0;
+----
+db error: ERROR: Catalog write-write conflict on alter with "coro_vv"
+
+
+connection s1
+statement ok
+COMMIT;
+
+
+connection s2
+query
+SELECT * FROM coro_vv ORDER BY a;
+----
+a	b
+2	20
+
+
+# A view may be replaced by one that reads itself, as PostgreSQL allows; it
+# only fails when it is read.
+statement ok
+CREATE OR REPLACE VIEW coro_vv AS SELECT a, b FROM coro_vv;
+
+
+statement error
+SELECT * FROM coro_vv;
+----
+db error: ERROR: infinite recursion detected: attempting to recursively bind view "coro_vv"
+
+
+statement ok
+DROP VIEW coro_vv;
+
+
+statement ok
+DROP TABLE coro_vt;
+
+
+# --- OR REPLACE SCHEMA ------------------------------------------------------
+
+# An empty schema is replaced; one with objects in it refuses.
+statement ok
+CREATE TABLE coro_sch.coro_in_sch (a INT);
+
+
+statement count 1
+INSERT INTO coro_sch.coro_in_sch VALUES (1);
+
+
+statement error
+CREATE OR REPLACE SCHEMA coro_sch;
+----
+db error: ERROR: Cannot drop entry "coro_sch" because there are entries that depend on it.
+table "coro_in_sch" depends on schema "coro_sch".
+Use DROP...CASCADE to drop all dependents.
+
+
+query
+SELECT a FROM coro_sch.coro_in_sch;
+----
+a
+1
+
+
+# Emptied and replaced inside a transaction that is rolled back, the schema
+# has its table and rows back and nothing created in the replacement.
+statement ok
+BEGIN;
+
+
+statement ok
+DROP TABLE coro_sch.coro_in_sch;
+
+
+statement ok
+CREATE OR REPLACE SCHEMA coro_sch;
+
+
+statement ok
+CREATE TABLE coro_sch.coro_in_sch2 (b INT);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT a FROM coro_sch.coro_in_sch;
+----
+a
+1
+
+
+query
+SELECT c.relname FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+WHERE n.nspname = 'coro_sch' ORDER BY c.relname;
+----
+relname
+coro_in_sch
+
+
+statement ok
+DROP TABLE coro_sch.coro_in_sch;
+
+
+statement ok
+CREATE OR REPLACE SCHEMA coro_sch;
+
+
+query
+SELECT count(*) AS n FROM pg_namespace WHERE nspname = 'coro_sch';
+----
+n
+1
+
+
+statement ok
+CREATE OR REPLACE SCHEMA coro_sch2;
+
+
+query
+SELECT nspname FROM pg_namespace WHERE nspname LIKE 'coro_sch%' ORDER BY nspname;
+----
+nspname
+coro_sch
+coro_sch2
+
+
+statement ok
+DROP SCHEMA coro_sch2;
+
+
+statement ok
+DROP SCHEMA coro_sch;
+
+
+statement ok
+DROP TABLE coro_audit;
+
+
+statement ok
+DROP ROLE coro_reader;

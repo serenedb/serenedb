@@ -148,6 +148,13 @@ struct EmitKSlotOffs {
   Offs offs;
 };
 
+struct EmitKSlotPosOffs {
+  uint32_t begin;
+  uint32_t end;
+  uint32_t pos;
+  Offs offs;
+};
+
 struct EmitRun {
   uint32_t begin;
   uint32_t end;
@@ -164,6 +171,42 @@ struct EmitRunEnds {
 
 template<typename T>
 concept EmitTag = std::is_integral_v<T> || std::is_same_v<T, Offs>;
+
+class ArenaTerm final : util::Noncopyable {
+ public:
+  ArenaTerm(duckdb::ArenaAllocator& arena, size_t capacity)
+    : _arena{arena},
+      _capacity{std::max(capacity, kTermViewSlack)},
+      _data{arena.Allocate(_capacity)} {}
+
+  byte_type* Data() const noexcept { return _data; }
+  size_t Capacity() const noexcept { return _capacity; }
+
+  void Grow(size_t needed) {
+    const auto capacity = std::max(needed, 2 * _capacity);
+    _data = _arena.Reallocate(_data, _capacity, capacity);
+    _capacity = capacity;
+  }
+
+  duckdb::string_t Finish(size_t size) {
+    SDB_ASSERT(size <= _capacity);
+    const auto* chars = reinterpret_cast<const char*>(_data);
+    if (size <= duckdb::string_t::INLINE_LENGTH) {
+      const auto term =
+        MakeTermView(chars, static_cast<uint32_t>(size), chars + _capacity);
+      _arena.ShrinkHead(_capacity);
+      return term;
+    }
+    const auto term = MakeTermViewPadded(_data, static_cast<uint32_t>(size));
+    _arena.ShrinkHead(_capacity - std::max(size, kTermViewSlack));
+    return term;
+  }
+
+ private:
+  duckdb::ArenaAllocator& _arena;
+  size_t _capacity;
+  byte_type* _data;
+};
 
 class TokenSink final : util::Noncopyable {
  public:
@@ -182,6 +225,11 @@ class TokenSink final : util::Noncopyable {
     SDB_ASSERT(_batch.count == 0 && _nruns == 0);
     return std::exchange(_consumer, &consumer);
   }
+
+  RejectSink* BindRejects(RejectSink* rejects) noexcept {
+    return std::exchange(_rejects, rejects);
+  }
+  RejectSink* Rejects() const noexcept { return _rejects; }
 
   void BeginValue(doc_id_t doc, uint32_t value_size) noexcept {
     _doc = doc;
@@ -216,6 +264,13 @@ class TokenSink final : util::Noncopyable {
   void RewindValue() noexcept {
     SDB_ASSERT(_run_start != kOutsideValue);
     _batch.count = _run_start;
+  }
+
+  void RejectValue() {
+    RewindValue();
+    if (_rejects) {
+      _rejects->OnReject(_doc);
+    }
   }
 
   std::span<const DocRun> Runs() const noexcept { return {_runs, _nruns}; }
@@ -359,6 +414,14 @@ class TokenSink final : util::Noncopyable {
       _arena.ShrinkHead(std::max(size, kTermViewSlack) -
                         std::max<size_t>(n, kTermViewSlack));
     }
+    FillLanes<L>(i, rest...);
+  }
+
+  template<TokenLayout L, typename Build, EmitTag... Rest>
+  IRS_FORCE_INLINE void EmitGrowable(size_t size, Build build, Rest... rest) {
+    const auto i = Next();
+    ArenaTerm term{_arena, size};
+    _batch.terms[i] = term.Finish(build(term));
     FillLanes<L>(i, rest...);
   }
 
@@ -643,6 +706,7 @@ class TokenSink final : util::Noncopyable {
   duckdb::ArenaAllocator _arena;
   TokenConsumer* _consumer = &Noop();
   StoreSink* _store_consumer = nullptr;
+  RejectSink* _rejects = nullptr;
   doc_id_t _doc = 0;
   uint32_t _value_size = 0;
   uint32_t _nruns = 0;

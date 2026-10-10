@@ -55,8 +55,11 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_databases"},
   std::string_view{"duckdb_dependencies"},
   std::string_view{"duckdb_eviction_queues"},
+  std::string_view{"duckdb_extension_repositories"},
   std::string_view{"duckdb_extensions"},
   std::string_view{"duckdb_external_file_cache"},
+  std::string_view{"duckdb_external_resource_types"},
+  std::string_view{"duckdb_external_resources"},
   std::string_view{"duckdb_functions"},
   std::string_view{"duckdb_indexes"},
   std::string_view{"duckdb_keywords"},
@@ -66,6 +69,7 @@ constexpr std::array kTableFunctions{
   std::string_view{"duckdb_optimizers"},
   std::string_view{"duckdb_prepared_statements"},
   std::string_view{"duckdb_schemas"},
+  std::string_view{"duckdb_secret_type_parameters"},
   std::string_view{"duckdb_secret_types"},
   std::string_view{"duckdb_secrets"},
   std::string_view{"duckdb_sequences"},
@@ -151,8 +155,7 @@ void AliasScalarFunctions(duckdb::ExtensionLoader& loader) {
   }
 }
 
-void AliasTableMacros(duckdb::ExtensionLoader& loader,
-                      duckdb::ParserOptions options) {
+void AliasTableMacros(duckdb::ExtensionLoader& loader) {
   for (const auto& macro : kTableMacros) {
     const std::string name = AliasNameFor(macro.source);
     const std::string parameter{macro.parameter};
@@ -165,14 +168,15 @@ void AliasTableMacros(duckdb::ExtensionLoader& loader,
       definition.parameters[0] = parameter.c_str();
     }
 
-    auto info = duckdb::DefaultTableFunctionGenerator::CreateTableMacroInfo(
-      definition, options);
+    auto info =
+      duckdb::DefaultTableFunctionGenerator::CreateTableMacroInfo(definition);
     info->on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
     loader.RegisterFunction(*info);
   }
 }
 
-void AliasViews(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
+void AliasViews(duckdb::DatabaseInstance& db) {
+  auto parser = duckdb::Parser::GetBuiltinParser();
   auto& system_catalog = duckdb::Catalog::GetSystemCatalog(db);
   auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
   for (const auto name : kViews) {
@@ -204,11 +208,8 @@ void RegisterDuckDBAliases(duckdb::DatabaseInstance& db) {
   AliasTableFunctions(loader);
   AliasScalarFunctions(loader);
 
-  duckdb::ParserOptions parser_options;
-  parser_options.parser_cache = &db.GetParserCache();
-  duckdb::Parser parser{parser_options};
-  AliasTableMacros(loader, parser_options);
-  AliasViews(db, parser);
+  AliasTableMacros(loader);
+  AliasViews(db);
 }
 
 }  // namespace sdb::connector

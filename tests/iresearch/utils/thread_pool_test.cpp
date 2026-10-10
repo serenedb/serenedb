@@ -202,7 +202,8 @@ TEST(thread_pool_test, test_max_threads_mt) {
   pool.run(std::move(task1));
   pool.run(std::move(task2));
   pool.run(std::move(task3));
-  ASSERT_EQ(3, pool.tasks_pending() + pool.tasks_active());
+  const auto [active, pending, threads] = pool.stats();
+  ASSERT_EQ(3, active + pending);
   int try_count{100};
   while (try_count-- && count.load(std::memory_order_relaxed) < 2) {
     std::this_thread::sleep_for(100ms);  // assume threads start within 100msec

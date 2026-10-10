@@ -29,6 +29,7 @@
 #include "iresearch/analysis/text/segment/options.hpp"
 #include "iresearch/analysis/text/sz/stringzilla.hpp"
 #include "iresearch/analysis/text/words/ascii.hpp"
+#include "iresearch/analysis/text/words/split_by_non_alpha.hpp"
 #include "iresearch/analysis/text/words/unicode.hpp"
 #include "iresearch/analysis/token_sink.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
@@ -55,25 +56,27 @@ bool AcceptBytes(std::string_view bytes) noexcept {
     if constexpr (Ascii) {
       return absl::c_any_of(bytes, absl::ascii_isgraph);
     } else {
-      return AnyOfChar32(
-        bytes, [](uint32_t c) { return !utf8_utils::CharIsWhiteSpace(c); });
+      const auto lead = static_cast<uint8_t>(bytes.front());
+      if (lead < 0x80
+            ? lead > ' ' && lead != 0x7F
+            : lead < 0xC0 || (lead > 0xC2 && (lead < 0xE1 || lead > 0xE3))) {
+        return true;
+      }
+      return AnyOfChar32(bytes, [](uint32_t c) {
+        return c > ' ' && c != 0x7F && !utf8_utils::CharIsWhiteSpace(c);
+      });
     }
   } else if constexpr (A == Accept::AlphaNumeric) {
     if constexpr (Ascii) {
       return absl::c_any_of(bytes, absl::ascii_isalnum);
     } else {
-      return AnyOfChar32(bytes, [](uint32_t c) {
-        const auto g = utf8_utils::CharPrimaryCategory(c);
-        return g == 'L' || g == 'N';
-      });
+      return AnyOfChar32(bytes, words::detail::IsLetterCodePoint<true>);
     }
   } else {
     if constexpr (Ascii) {
       return absl::c_any_of(bytes, absl::ascii_isalpha);
     } else {
-      return AnyOfChar32(bytes, [](uint32_t c) {
-        return utf8_utils::CharPrimaryCategory(c) == 'L';
-      });
+      return AnyOfChar32(bytes, words::detail::IsLetterCodePoint<false>);
     }
   }
 }
@@ -201,6 +204,26 @@ IRS_NO_INLINE void SentenceFillValue(TokenSink& sink, duckdb::string_t value) {
     EmitTrimmedSegment<Layout, C, A, Ascii>(
       sink, data, n, static_cast<uint32_t>(begin), static_cast<uint32_t>(end));
   });
+}
+
+template<TokenLayout Layout, Case C, Accept A, bool Ascii>
+IRS_NO_INLINE void GraphemeFillValue(TokenSink& sink, duckdb::string_t value) {
+  const char* data = value.GetData();
+  const uint32_t n = value.GetSize();
+  if constexpr (Ascii) {
+    for (uint32_t i = 0; i != n; ++i) {
+      if (static_cast<uint8_t>(data[i]) > ' ') {
+        EmitAccepted<Layout, C, A, true>(sink, data, n, i, i + 1);
+      }
+    }
+  } else {
+    ForEachSzMatch(
+      sz::GraphemesFor(data, n), data, n, [&](size_t begin, size_t end) {
+        EmitTrimmedSegment<Layout, C, A, false>(sink, data, n,
+                                                static_cast<uint32_t>(begin),
+                                                static_cast<uint32_t>(end));
+      });
+  }
 }
 
 template<TokenLayout Layout, Case C, Accept A, bool Paragraph, bool Ascii>

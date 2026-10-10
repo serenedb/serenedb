@@ -108,9 +108,10 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       extract ? spec.extract_type->id() : reader->Type().id();
     const bool list_like = type_id == duckdb::LogicalTypeId::LIST ||
                            type_id == duckdb::LogicalTypeId::MAP;
-    const bool nested = extract != nullptr || list_like ||
+    const bool nested = spec.row_gather || extract != nullptr || list_like ||
                         type_id == duckdb::LogicalTypeId::ARRAY ||
                         type_id == duckdb::LogicalTypeId::STRUCT ||
+                        type_id == duckdb::LogicalTypeId::TUPLE ||
                         type_id == duckdb::LogicalTypeId::UNION ||
                         type_id == duckdb::LogicalTypeId::VARIANT;
     _cols.push_back(Col{
@@ -122,6 +123,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .null_check = spec.null_check,
       .list_like = list_like,
       .nested = nested,
+      .row_gather = spec.row_gather,
       .state = &states.State(context, *spec.filter),
       .scan = reader->InitScan(ctx),
       .extract_path = spec.extract_path,
@@ -129,6 +131,15 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .extract = std::move(extract),
     });
   }
+}
+
+const irs::ColumnReader* ColFilterChain::WindowColumn() const noexcept {
+  for (const auto& c : _cols) {
+    if (!c.row_gather) {
+      return c.reader;
+    }
+  }
+  return nullptr;
 }
 
 bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
@@ -216,14 +227,27 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
       // segment machinery does not apply. Decode the current survivors through
       // the virtual gather the materialization path uses, narrow on the
       // compact vector, and map the surviving positions back to span offsets.
+      auto gather_span = span;
+      if (f.row_gather) {
+        const auto rows = f.reader->RowCount();
+        while (survivors != 0 &&
+               anchor + sel.get_index(survivors - 1) >= rows) {
+          --survivors;
+        }
+        if (survivors == 0) {
+          break;
+        }
+        gather_span = sel.get_index(survivors - 1) + 1;
+      }
       auto& scratch = f.scratch->Reset();
       if (f.list_like) {
         duckdb::ListVector::SetListSize(scratch, 0);
       }
       if (f.extract) {
         f.extract->MaterializeSelected(anchor, sel, survivors, scratch);
-      } else if (span <= STANDARD_VECTOR_SIZE) {
-        f.reader->GatherDense(f.scan, anchor, sel, survivors, span, scratch);
+      } else if (gather_span <= STANDARD_VECTOR_SIZE) {
+        f.reader->GatherDense(f.scan, anchor, sel, survivors, gather_span,
+                              scratch);
       } else {
         f.reader->GatherScatter(f.scan, anchor, sel, survivors, scratch, 0);
       }
@@ -264,13 +288,16 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
     _sel_data =
       duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   }
+  const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
   duckdb::idx_t i = 0;
   while (i < n) {
     // Group the ascending docs that fall in one columnstore block: zonemap
     // and the codec filter both work per block.
     const uint64_t anchor = docs[i] - irs::doc_limits::min();
-    const uint64_t rg_end = _cols.front().reader->RowGroupEnd(anchor);
+    const uint64_t rg_end = window_col != nullptr
+                              ? window_col->RowGroupEnd(anchor)
+                              : std::numeric_limits<uint64_t>::max();
     duckdb::idx_t j = i;
     while (j < n && (docs[j] - irs::doc_limits::min()) < rg_end &&
            (docs[j] - irs::doc_limits::min()) - anchor < STANDARD_VECTOR_SIZE) {
@@ -312,8 +339,8 @@ bool ColFilterChain::AdmitRow(uint64_t row) {
   SDB_ASSERT(_col_reader != nullptr);
   for (auto& f : _cols) {
     if (!f.point) {
-      f.point =
-        std::make_unique<irs::ColumnReader::PointReader>(*_col_reader, *f.reader);
+      f.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
+                                                                 *f.reader);
       f.point_scratch =
         std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
       f.point_heap =
@@ -356,7 +383,7 @@ duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
     _sel_data =
       duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   }
-  const auto* const reader = _cols.front().reader;
+  const auto* const window_col = WindowColumn();
   duckdb::idx_t w = 0;
   uint64_t word = 0;
   // A word is cleared as it is loaded: what a run has consumed is never read
@@ -403,7 +430,9 @@ duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
       continue;
     }
     const uint64_t limit =
-      reader->RowGroupEnd(anchor) + irs::doc_limits::min() - base;
+      window_col != nullptr
+        ? window_col->RowGroupEnd(anchor) + irs::doc_limits::min() - base
+        : std::numeric_limits<uint64_t>::max();
     _sel.Initialize(_sel_data);
     duckdb::idx_t run = 0;
     uint64_t last = off;

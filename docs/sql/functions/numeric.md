@@ -18,7 +18,7 @@ The table below shows the available mathematical operators for [numeric types](.
 | `+`      | Addition                  | `2 + 3`    | `5`    |
 | `-`      | Subtraction               | `2 - 3`    | `-1`   |
 | `*`      | Multiplication            | `2 * 3`    | `6`    |
-| `/`      | Float division            | `5 / 2`    | `2.5`  |
+| `/`      | Division                  | `5 / 2`    | `2`    |
 | `//`     | Division                  | `5 // 2`   | `2`    |
 | `%`      | Modulo (remainder)        | `5 % 4`    | `1`    |
 | `**`     | Exponent                  | `3 ** 4`   | `81`   |
@@ -36,7 +36,9 @@ The table below shows the available mathematical operators for [numeric types](.
 
 There are two division operators: `/` and `//`.
 They are equivalent when at least one of the operands is a `FLOAT` or a `DOUBLE`.
-When both operands are integers, `/` performs floating points division (`5 / 2 = 2.5`) while `//` performs integer division (`5 // 2 = 2`).
+When both operands are integers, `//` performs integer division (`5 // 2 = 2`) and `/` follows the [`integer_division`](../../configuration/overview.md) setting: a server truncates like PostgreSQL (`5 / 2 = 2`), while `serened shell` divides as floats (`5 / 2 = 2.5`). Write `5 / 2.0` for a fractional result on both. Integer division or modulo by zero fails with a `Division by zero` error. To return `NULL` instead, wrap the expression in `TRY(...)`, or run `SET error_on_division_by_zero = false` to return `NULL` for all divisions by zero:
+
+<SqlLogicTest id="sql/functions/numeric/division_by_zero" />
 
 ### Supported Types
 
@@ -105,18 +107,21 @@ The table below shows the available mathematical functions.
 | [`sqrt(x)`](#sqrtx)                                                    | Returns the square root of the number.                                                                                                                                                         |
 | [`subtract(x, y)`](#subtractx-y)                                       | Alias for `x - y`.                                                                                                                                                                             |
 | [`tan(x)`](#tanx)                                                      | Computes the tangent of `x`.                                                                                                                                                                   |
+| [`to_hex(x)`](#to_hexx)                                                | Converts the integer `x` to lowercase hexadecimal, as PostgreSQL does.                                                                                                                         |
 | [`trunc(x)`](#truncx)                                                  | Truncates the number.                                                                                                                                                                          |
 | [`xor(x, y)`](#xorx-y)                                                 | Bitwise XOR.                                                                                                                                                                                   |
 
 #### `@(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Absolute value. Parentheses are optional if `x` is a column name. |
 | :--- | :--- |
 | **Example** | `@(-17.4)` |
 | **Result** | `17.4` |
 | **Alias** | `abs` |
+
+</div>
 
 #### `abs(x)`
 
@@ -384,12 +389,14 @@ Converts degrees to radians.
 
 #### `random()`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Returns a random number `x` in the range `0.0 <= x < 1.0`. |
 | :--- | :--- |
 | **Example** | `random()` |
 | **Result** | various |
+
+</div>
 
 #### `round_even(v NUMERIC, s INTEGER)`
 
@@ -411,11 +418,13 @@ Round to `s` decimal places. Values `s < 0` are allowed.
 
 #### `setseed(x)`
 
-<div class="nostroke_table"></div>
+<div className="docs-table-properties">
 
 | **Description** | Sets the seed to be used for the random function. |
 | :--- | :--- |
 | **Example** | `setseed(0.42)` |
+
+</div>
 
 #### `sign(x)`
 
@@ -452,6 +461,12 @@ Alias for `x - y`.
 Computes the tangent of `x`.
 
 <SqlLogicTest id="sql/functions/numeric/tan" />
+
+#### `to_hex(x)`
+
+Converts the `integer` or `bigint` `x` to lowercase hexadecimal, as PostgreSQL does. A negative value is shown in the two's complement of its own width: `to_hex(-1)` is `ffffffff`, `to_hex(-1::BIGINT)` is `ffffffffffffffff`. For a string or blob, `to_hex` is an alias of [`hex`](../../sql/functions/text.md#hexstring).
+
+<SqlLogicTest id="sql/functions/numeric/to_hex" />
 
 #### `trunc(x)`
 

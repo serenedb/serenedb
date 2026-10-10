@@ -25,15 +25,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/typedefs.hpp>
 #include <filesystem>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
-
-#include "catalog/identifiers/object_id.h"
 
 namespace duckdb {
 
@@ -58,55 +56,61 @@ class SearchDbWal {
   };
 
   // One iresearch segment flushed and fsynced before the commit record was
-  // written, so its rows are never written twice. The same pair iresearch's own
-  // index meta keeps per segment (index_meta_writer.hpp): the meta file holds
-  // every other field behind its own checksum. Ordering against the deletes
+  // written, so its rows are never written twice. Ordering against the deletes
   // around it comes from the op manifest, so no tick is recorded.
   struct SegmentRef {
     std::string meta_file;
-    std::string codec;
   };
 
+  // One op of a shard section. The record stores them in issue order, so
+  // position IS the ordering -- no watermark needed. Rows name a band range of
+  // the section's collection, which lets one buffer back several ops.
   struct Op {
-    // INLINE only: one entry per inserted Sink chunk, in append order.
+    enum class Kind : uint8_t {
+      kTruncate = 3,
+      kSegments = 4,
+      kRows = 5,
+      kDelete = 6,
+    };
+
+    Kind kind = Kind::kRows;
+    uint32_t first_band = 0;
+    uint32_t last_band = 0;
+    std::span<const int64_t> delete_rows;
+    std::span<const SegmentRef> segments;
+  };
+
+  // One transaction's contribution for a single search shard: the rows it
+  // buffered, plus the ops that put them in order with everything else.
+  struct ShardSection {
+    duckdb::idx_t table_id;
     const duckdb::ColumnDataCollection* inline_data = nullptr;
     std::span<const InlinePk> inline_pks;
-    // SEGMENT: iresearch segments already flushed + fsynced for this op.
-    std::span<const SegmentRef> segments;
-    // DELETE: the encoded PK byte strings to remove (iresearch PK terms).
-    std::span<const std::string> delete_pks;
-
-    bool truncate = false;
-  };
-
-  // One transaction's contribution for a single search shard
-  struct ShardSection {
-    ObjectId table_id;
     std::span<const Op> ops;
   };
 
   using ReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id, uint64_t pk_base,
-                            duckdb::DataChunk& chunk) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
+                            uint64_t pk_base, duckdb::DataChunk& chunk) const>;
 
-  // Invoked once per DELETE op, in manifest order, with the encoded PK byte
-  // strings to remove (views into the record buffer, valid for the call only).
+  // Invoked once per DELETE op, in record order, with the rowids to remove
+  // (a view into the record buffer, valid for the call only).
   using DeleteReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id,
-                            std::span<const std::string_view> pks) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id,
+                            std::span<const int64_t> rows) const>;
 
   // Invoked once per recorded segment, in manifest order. `tick` is the
   // record's own, for the caller's high-water mark -- the tick to adopt at
   // lives in the replay transaction's space (see RunSearchTableRecovery).
   using AdoptReplayCallback = absl::AnyInvocable<void(
-    uint64_t tick, ObjectId table_id, const SegmentRef& ref) const>;
+    uint64_t tick, duckdb::idx_t table_id, const SegmentRef& ref) const>;
 
   using TruncateReplayCallback =
-    absl::AnyInvocable<void(uint64_t tick, ObjectId table_id) const>;
+    absl::AnyInvocable<void(uint64_t tick, duckdb::idx_t table_id) const>;
 
-  using ShardExistsFn = absl::AnyInvocable<bool(ObjectId table_id) const>;
+  using ShardExistsFn = absl::AnyInvocable<bool(duckdb::idx_t table_id) const>;
   using ShardCommittedFn =
-    absl::AnyInvocable<uint64_t(ObjectId table_id) const>;
+    absl::AnyInvocable<uint64_t(duckdb::idx_t table_id) const>;
 
   // Default central-segment seal threshold (16MB as common standart like
   // postgres or duckdb)
@@ -123,15 +127,18 @@ class SearchDbWal {
     return _tick.load(std::memory_order_relaxed);
   }
 
-  void RegisterShard(ObjectId table_id, uint64_t committed_tick);
-  void OnShardCommit(ObjectId table_id, uint64_t committed_tick);
-  void DeregisterShard(ObjectId table_id);
+  void RegisterShard(duckdb::idx_t table_id, uint64_t committed_tick);
+  void OnShardCommit(duckdb::idx_t table_id, uint64_t committed_tick);
+  void DeregisterShard(duckdb::idx_t table_id);
 
   // Reserves `tick_span` consecutive ticks under the append lock and writes one
   // record at the top of that band; returns the record tick (== base +
   // tick_span).
   uint64_t AppendCommit(std::span<const ShardSection> sections,
                         uint64_t tick_span);
+  uint64_t AppendCommit(std::span<const ShardSection> sections,
+                        uint64_t tick_span,
+                        absl::AnyInvocable<void(uint64_t) noexcept> on_durable);
   uint64_t Recover(const ShardExistsFn& exists_of,
                    const ShardCommittedFn& committed_of,
                    const ReplayCallback& insert_cb,
@@ -154,17 +161,28 @@ class SearchDbWal {
   irs::containers::FlatHashMap<uint64_t, uint64_t> _committed;
 
   void EnsureActiveSegmentLocked(uint64_t first_tick);
-  void WriteFrameLocked(const uint8_t* payload, uint64_t payload_size);
+  void WriteFrameLocked(const uint8_t* frame, uint64_t frame_size);
   uint64_t MinCommittedTick();
   void RunGc();
 };
 
-// Re-slice an inline collection by its recorded per-Sink-chunk `segments`,
-// invoking `emit(slice, base)` once per segment with that chunk's rows + base.
+// Re-slice an inline collection by its recorded per-Sink-chunk bands, invoking
+// `emit(slice, base)` once per band with that chunk's rows + rowid base. The
+// ranged overload emits only bands [first_band, last_band), skipping the rows
+// the earlier bands hold -- what lets one collection back several record ops.
 void VisitInlineSegments(
+  const duckdb::ColumnDataCollection& cdc,
+  std::span<const SearchDbWal::InlinePk> segments, size_t first_band,
+  size_t last_band,
+  const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
+    emit);
+
+inline void VisitInlineSegments(
   const duckdb::ColumnDataCollection& cdc,
   std::span<const SearchDbWal::InlinePk> segments,
   const absl::AnyInvocable<void(duckdb::DataChunk&, uint64_t base) const>&
-    emit);
+    emit) {
+  VisitInlineSegments(cdc, segments, 0, segments.size(), emit);
+}
 
 }  // namespace sdb::search

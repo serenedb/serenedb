@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <memory>
 #include <string>
 #include <utility>
@@ -29,6 +30,7 @@
 #include <yaclib/lazy/make.hpp>
 
 #include "network/http/router.h"
+#include "network/http/routes.h"
 
 using namespace sdb;
 using namespace sdb::network;
@@ -132,4 +134,58 @@ TEST(NetworkRouter, MethodAndPathMismatch) {
             nullptr);
   EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/my-index/_count", request),
             nullptr);
+}
+
+TEST(NetworkRouter, UrlPatternSyntax) {
+  HttpRouter router;
+  router.Add(HttpMethod::Get, "/_doc/:id(\\d+)",
+             std::make_unique<NamedHandler>("numeric"));
+  router.Add(HttpMethod::Get, "/:index/_stats{/:metric}?",
+             std::make_unique<NamedHandler>("stats"));
+
+  HttpRequest request;
+  const auto* numeric =
+    MatchRoute(router, HttpMethod::Get, "/_doc/42", request);
+  ASSERT_NE(numeric, nullptr);
+  EXPECT_EQ(request.Param("id"), "42");
+  EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/_doc/abc", request), nullptr);
+
+  const auto* all =
+    MatchRoute(router, HttpMethod::Get, "/books/_stats", request);
+  ASSERT_NE(all, nullptr);
+  EXPECT_EQ(request.Param("index"), "books");
+  EXPECT_EQ(request.Param("metric"), "");
+  const auto* one =
+    MatchRoute(router, HttpMethod::Get, "/books/_stats/docs", request);
+  ASSERT_NE(one, nullptr);
+  EXPECT_EQ(request.Param("metric"), "docs");
+}
+
+TEST(NetworkRouter, RouteTableIsFilteredByApi) {
+  for (const auto& route : http::Routes()) {
+    HttpRouter router;
+    router.Add(route.method, route.pattern, route.make());
+  }
+
+  HttpRouter otel;
+  const std::array otel_only{HttpApi::Otel};
+  http::AddRoutes(otel, otel_only);
+  HttpRequest request;
+  request.method = HttpMethod::Post;
+  request.target = "/v1/logs";
+  EXPECT_NE(otel.Match(request), nullptr);
+  request.target = "/_mcp";
+  EXPECT_EQ(otel.Match(request), nullptr);
+  request.target = "/_bulk";
+  EXPECT_EQ(otel.Match(request), nullptr);
+
+  HttpRouter both;
+  const std::array es_and_mcp{HttpApi::Es, HttpApi::Mcp};
+  http::AddRoutes(both, es_and_mcp);
+  request.method = HttpMethod::Put;
+  request.target = "/_mcp";
+  EXPECT_NE(both.Match(request), nullptr);
+  request.target = "/my-index";
+  EXPECT_NE(both.Match(request), nullptr);
+  EXPECT_EQ(request.Param("index"), "my-index");
 }

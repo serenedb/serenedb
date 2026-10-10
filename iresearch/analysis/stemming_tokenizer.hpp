@@ -20,13 +20,11 @@
 
 #pragma once
 
-#include <unicode/locid.h>
-
 #include <limits>
 
 #include "iresearch/analysis/process_tokens.hpp"
 #include "iresearch/analysis/text/dict/stem_cache.hpp"
-#include "iresearch/utils/icu_locale_serde.hpp"
+#include "iresearch/utils/locale_serde.hpp"
 #include "iresearch/utils/snowball_stemmer.hpp"
 #include "tokenizer.hpp"
 
@@ -42,7 +40,7 @@ class StemmingTokenizer final : public TypedTokenizer<StemmingTokenizer>,
  public:
   struct Options {
     using Owner = StemmingTokenizer;
-    icu::Locale locale = irs::MakeBogusLocale();
+    duckdb::text::Locale locale;
   };
   static ptr Make(Options opts);
 

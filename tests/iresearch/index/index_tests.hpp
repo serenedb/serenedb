@@ -32,6 +32,7 @@
 
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
+#include "postings_cursor.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
 
@@ -166,48 +167,18 @@ struct CallbackDirectory : DirectoryMock {
   AfterCallback after;
 };
 
-struct FormatInfo {
-  constexpr FormatInfo(const char* codec = "") noexcept : codec(codec) {}
-
-  const char* codec;
-};
-
-typedef std::tuple<tests::dir_param_f, FormatInfo> index_test_context;
+typedef std::tuple<tests::dir_param_f> index_test_context;
 
 void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
 
 // A posting list is written before anything is deleted, so a reader walking
 // one sees documents the segment no longer has. Only a plan knows about the
 // segment's mask, and a test that drives the postings directly builds none.
-class MaskedPostings : public irs::TermPostings {
- public:
-  MaskedPostings(irs::TermPostings::ptr&& postings,
-                 const irs::DocumentMask& mask) noexcept
-    : _postings{std::move(postings)}, _mask{&mask} {}
-
-  irs::doc_id_t Next() final {
-    do {
-      _doc = _postings->Next();
-    } while (!irs::doc_limits::eof(_doc) && _mask->contains(_doc));
-    return _doc;
-  }
-
-  uint32_t GetFreq() const final { return _postings->GetFreq(); }
-
-  irs::PosAttr* Positions() noexcept final { return _postings->Positions(); }
-
- private:
-  irs::TermPostings::ptr _postings;
-  const irs::DocumentMask* _mask;
-};
-
-inline irs::TermPostings::ptr MaskPostings(const irs::SubReader& segment,
-                                           irs::TermPostings::ptr&& postings) {
-  const auto* mask = segment.docs_mask();
-  if (mask == nullptr || mask->empty()) {
-    return std::move(postings);
-  }
-  return irs::memory::make_managed<MaskedPostings>(std::move(postings), *mask);
+inline std::unique_ptr<PostingsCursor> MaskPostings(
+  const irs::SubReader& segment, irs::TermPostings::ptr&& postings,
+  irs::IndexFeatures features = irs::IndexFeatures::None) {
+  return std::make_unique<PostingsCursor>(std::move(postings), features,
+                                          segment.MaskedDocs());
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {
@@ -218,44 +189,37 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
  protected:
   std::shared_ptr<irs::Directory> get_directory(const TestBase& ctx) const;
 
-  irs::Format::ptr get_codec() const;
-
   irs::Directory& dir() const { return *_dir; }
-  irs::Format::ptr codec() const { return _codec; }
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
-  void sort(const irs::Comparer& comparator) {
-    for (auto& segment : _index) {
-      segment.sort(comparator);
-    }
-  }
-
   irs::IndexWriter::ptr open_writer(
     irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, _codec, mode, EnsureWriterDb(options));
+    irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
+    return irs::IndexWriter::Make(dir, mode,
+                                  EnsureWriterDb(std::move(options)));
   }
 
   irs::IndexWriter::ptr open_writer(
     irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, _codec, mode, EnsureWriterDb(options));
+    irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
+    return irs::IndexWriter::Make(*_dir, mode,
+                                  EnsureWriterDb(std::move(options)));
   }
 
   irs::DirectoryReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
-    return irs::DirectoryReader{*_dir, _codec, options};
+    return irs::DirectoryReader{*_dir, options};
   }
 
   void AssertSnapshotEquality(const irs::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
-                    irs::automaton_table_matcher* matcher = nullptr) const {
+                    const irs::RegexpAcceptor* acceptor = nullptr) const {
     tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       matcher);
+                       acceptor);
   }
 
   void SetUp() final {
@@ -264,15 +228,10 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
     // set directory
     _dir = get_directory(*this);
     ASSERT_NE(nullptr, _dir);
-
-    // set codec
-    _codec = get_codec();
-    ASSERT_NE(nullptr, _codec);
   }
 
   void TearDown() final {
     _dir = nullptr;
-    _codec = nullptr;
     TestBase::TearDown();
     irs::timer_utils::InitStats();  // disable profile state tracking
   }
@@ -296,19 +255,18 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void add_segments(irs::IndexWriter& writer,
                     std::vector<DocGeneratorBase::ptr>& gens);
 
-  void add_segment(
-    tests::DocGeneratorBase& gen, irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& opts = CsDefaultWriterOptions(),
-    const StoreHook& store = {});
+  void add_segment(tests::DocGeneratorBase& gen,
+                   irs::OpenMode mode = irs::kOmCreate,
+                   irs::IndexWriterOptions opts = CsDefaultWriterOptions(),
+                   const StoreHook& store = {});
   void add_segment_batched(
     tests::DocGeneratorBase& gen, size_t batch_size,
     irs::OpenMode mode = irs::kOmCreate,
-    const irs::IndexWriterOptions& opts = CsDefaultWriterOptions());
+    irs::IndexWriterOptions opts = CsDefaultWriterOptions());
 
  private:
   index_t _index;
   std::shared_ptr<irs::Directory> _dir;
-  irs::Format::ptr _codec;
 };
 
 }  // namespace tests

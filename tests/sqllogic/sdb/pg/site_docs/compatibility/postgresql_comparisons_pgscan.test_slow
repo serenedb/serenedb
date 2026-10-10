@@ -117,9 +117,8 @@ HINT:  No operator matches the given name and argument types. You might need to 
 statement error
 CALL postgres_execute('pg_${__DATABASE__}', 'CREATE TABLE mytable (v mytype)');
 ----
-db error: ERROR: Failed to execute query "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ;
-CREATE TABLE mytable (v mytype)": ERROR:  type "mytype" does not exist
-LINE 2: CREATE TABLE mytable (v mytype)
+db error: ERROR: Failed to execute query "<slt:ignore>CREATE TABLE mytable (v mytype)": ERROR:  type "mytype" does not exist
+LINE <slt:ignore>: CREATE TABLE mytable (v mytype)
                                 ^
 
 

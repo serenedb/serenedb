@@ -18,16 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_format.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/formats/formats.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
 #include "tokenizer_fuzz_corpus.hpp"
@@ -145,11 +146,11 @@ void CollectKeys(const SubReader& segment, std::map<doc_id_t, size_t>& out) {
     const auto value = terms->value();
     const std::string key{reinterpret_cast<const char*>(value.data()),
                           value.size()};
-    auto docs = terms->postings(IndexFeatures::Freq);
+    auto docs = ::tests::Docs(terms->postings(IndexFeatures::Freq));
     ASSERT_TRUE(docs);
     size_t seen = 0;
     for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
-      if (mask != nullptr && mask->contains(doc)) {
+      if (mask != nullptr && mask->Contains(doc)) {
         continue;
       }
       ASSERT_TRUE(
@@ -195,14 +196,14 @@ void CollectField(const SubReader& segment, const FieldPlan& field,
     has_previous = true;
     ++nterms;
 
-    auto docs = terms->postings(field.features);
+    auto docs = ::tests::Docs(terms->postings(field.features), field.features);
     ASSERT_TRUE(docs);
     auto* positions = docs->Positions();
     ASSERT_EQ(want_pos, positions != nullptr) << "term=" << term;
     size_t docs_seen = 0;
 
     for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
-      if (mask != nullptr && mask->contains(doc)) {
+      if (mask != nullptr && mask->Contains(doc)) {
         if (positions != nullptr) {
           while (positions->next()) {
           }
@@ -240,7 +241,7 @@ void CollectField(const SubReader& segment, const FieldPlan& field,
         (*exact)[term].push_back(std::move(entry));
       }
     }
-    if ((nterms % 37) == 1 && (mask == nullptr || mask->empty())) {
+    if ((nterms % 37) == 1 && (mask == nullptr || mask->Empty())) {
       const auto meta = reader->Lookup(to_bytes(term));
       ASSERT_EQ(docs_seen, meta.docs_count)
         << "Lookup disagrees with the postings for " << Describe(term);
@@ -287,10 +288,6 @@ class StoreCollector final : public StoreSink {
 
 class IndexUnderTest {
  public:
-  IndexUnderTest() : _codec{formats::Get("1_5simd")} {}
-
-  bool valid() const noexcept { return _codec != nullptr; }
-  const Format::ptr& codec() const noexcept { return _codec; }
   MemoryDirectory& dir() noexcept { return _dir; }
 
   std::shared_ptr<IndexWriter> Open() {
@@ -298,16 +295,15 @@ class IndexUnderTest {
     options.norm_column_id = [](field_id id) -> field_id {
       return static_cast<field_id>(id + 1000);
     };
-    return IndexWriter::Make(_dir, _codec, kOmCreate, std::move(options));
+    return IndexWriter::Make(_dir, kOmCreate, std::move(options));
   }
 
   DirectoryReader Read() {
-    return DirectoryReader(_dir, _codec, irs::tests::DefaultReaderOptions());
+    return DirectoryReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
  private:
   MemoryDirectory _dir;
-  Format::ptr _codec;
 };
 
 void WriteBlock(IndexWriter::Transaction& trx,
@@ -554,7 +550,6 @@ void BuildIndex(const Spec& spec, std::span<const FieldPlan> plan,
 void CheckInversion(const Spec& spec, std::span<const std::string> values,
                     bool exact, bool consolidate) {
   IndexUnderTest index;
-  ASSERT_TRUE(index.valid());
   auto reference = Make(spec);
   ASSERT_NE(nullptr, reference);
   const auto plan = PlanFor(reference->Traits());
@@ -750,7 +745,6 @@ TEST(TokenizerInversion, MultiValueDocuments) {
       const auto plan = PlanFor(traits);
 
       IndexUnderTest index;
-      ASSERT_TRUE(index.valid());
       {
         auto writer = index.Open();
         ASSERT_NE(nullptr, writer);
@@ -812,7 +806,6 @@ TEST(TokenizerInversion, StoredBlobsReachTheSink) {
     const auto keys = MakeKeys(values.size());
 
     IndexUnderTest index;
-    ASSERT_TRUE(index.valid());
     StoreCollector store;
     doc_id_t first_doc = doc_limits::invalid();
     {
@@ -884,7 +877,6 @@ TEST(TokenizerInversion, SurvivesDeletesAndUpdates) {
     }
 
     IndexUnderTest index;
-    ASSERT_TRUE(index.valid());
     auto writer = index.Open();
     ASSERT_NE(nullptr, writer);
     auto tokenizer = Make(*spec);
@@ -965,31 +957,26 @@ TEST(TokenizerInversion, SurvivesConsolidation) {
   }
 }
 
-TEST(TokenizerInversionLoad, ManyDocuments) {
-  const auto budget = EnvU64("TOKENIZER_INVERSION_LOAD_BYTES", 32ull << 20);
-  const auto seconds =
-    static_cast<double>(EnvU64("TOKENIZER_INVERSION_LOAD_SECONDS", 0));
-  const auto seed = Seed() ^ 0x1E7E12ull;
-  const auto start = Clock::now();
+class TokenizerInversionLoad : public testing::TestWithParam<const Spec*> {};
 
-  for (const auto* spec : SelectedFamilies()) {
-    if (seconds > 0.0 && Seconds(start) >= seconds) {
-      break;
-    }
-    SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
-    const auto spec_budget = budget / std::max<uint32_t>(1, spec->cost);
-    size_t bytes = 0;
-    const auto values = GenerateCorpus(*spec, seed, spec_budget, bytes);
-    const auto spec_start = Clock::now();
-    ASSERT_NO_FATAL_FAILURE(
-      CheckInversion(*spec, values, /*exact=*/false, /*consolidate=*/false));
-    std::printf("[ INVERTED ] %-42s %6zu MiB  %8zu docs  %6.1fs\n",
-                spec->name.c_str(), bytes >> 20, values.size(),
-                Seconds(spec_start));
-  }
+TEST_P(TokenizerInversionLoad, ManyDocuments) {
+  const auto* spec = GetParam();
+  const auto budget = EnvU64("TOKENIZER_INVERSION_LOAD_BYTES", 32ull << 20);
+  const auto seed = Seed() ^ 0x1E7E12ull;
+
+  SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
+  const auto spec_budget = budget / std::max<uint32_t>(1, spec->cost);
+  size_t bytes = 0;
+  const auto values = GenerateCorpus(*spec, seed, spec_budget, bytes);
+  const auto start = Clock::now();
+  ASSERT_NO_FATAL_FAILURE(
+    CheckInversion(*spec, values, /*exact=*/false, /*consolidate=*/false));
+  absl::PrintF("[ INVERTED ] %-42s %6d MiB  %8d docs  %6.1fs\n", spec->name,
+               bytes >> 20, values.size(), Seconds(start));
 }
 
-TEST(TokenizerInversionLoad, ConcurrentWriters) {
+TEST_P(TokenizerInversionLoad, ConcurrentWriters) {
+  const auto* spec = GetParam();
   const auto threads = static_cast<size_t>(
     EnvU64("TOKENIZER_INVERSION_THREADS",
            std::max<unsigned>(2, std::thread::hardware_concurrency() / 2)));
@@ -997,85 +984,87 @@ TEST(TokenizerInversionLoad, ConcurrentWriters) {
     static_cast<size_t>(EnvU64("TOKENIZER_INVERSION_CONCURRENT_DOCS", 2048));
   const auto seed = Seed() ^ 0xC0C0ull;
 
-  for (const auto* spec : SelectedFamilies()) {
-    SCOPED_TRACE(testing::Message() << spec->name << " threads=" << threads);
-    const auto per_thread = std::max<size_t>(
-      32, ValueBudget(*spec, docs) / std::max<size_t>(1, threads));
-    const auto total = per_thread * threads;
-    const auto values = SpecCorpus(*spec, seed, total);
-    const auto trimmed =
-      std::span{values}.first(std::min(total, values.size()));
-    const auto keys = MakeKeys(trimmed.size());
+  SCOPED_TRACE(testing::Message() << spec->name << " threads=" << threads);
+  const auto per_thread = std::max<size_t>(
+    32, ValueBudget(*spec, docs) / std::max<size_t>(1, threads));
+  const auto total = per_thread * threads;
+  const auto values = SpecCorpus(*spec, seed, total);
+  const auto trimmed = std::span{values}.first(std::min(total, values.size()));
+  const auto keys = MakeKeys(trimmed.size());
 
-    auto reference = Make(*spec);
-    ASSERT_NE(nullptr, reference);
-    const auto plan = PlanFor(reference->Traits());
+  auto reference = Make(*spec);
+  ASSERT_NE(nullptr, reference);
+  const auto plan = PlanFor(reference->Traits());
 
-    IndexUnderTest index;
-    ASSERT_TRUE(index.valid());
-    auto writer = index.Open();
-    ASSERT_NE(nullptr, writer);
+  IndexUnderTest index;
+  auto writer = index.Open();
+  ASSERT_NE(nullptr, writer);
 
-    std::atomic<size_t> failures{0};
-    std::mutex report_mutex;
-    std::string first_error;
-    std::vector<std::thread> pool;
-    const auto stride = (trimmed.size() + threads - 1) / threads;
-    for (size_t t = 0; t < threads; ++t) {
-      pool.emplace_back([&, t] {
-        auto tokenizer = Make(*spec);
-        if (!tokenizer) {
+  std::atomic<size_t> failures{0};
+  std::mutex report_mutex;
+  std::string first_error;
+  std::vector<std::thread> pool;
+  const auto stride = (trimmed.size() + threads - 1) / threads;
+  for (size_t t = 0; t < threads; ++t) {
+    pool.emplace_back([&, t] {
+      auto tokenizer = Make(*spec);
+      if (!tokenizer) {
+        ++failures;
+        return;
+      }
+      const auto traits = tokenizer->Traits();
+      const auto begin = std::min(t * stride, trimmed.size());
+      const auto end = std::min(begin + stride, trimmed.size());
+      auto trx = writer->GetBatch();
+      for (size_t base = begin; base < end; base += kInsertBlock) {
+        const auto n = std::min<size_t>(kInsertBlock, end - base);
+        std::string error;
+        WriteBlock(trx, *tokenizer, traits, plan,
+                   std::span{keys}.subspan(base, n), trimmed.subspan(base, n),
+                   error);
+        if (!error.empty()) {
+          std::lock_guard lock{report_mutex};
+          if (first_error.empty()) {
+            first_error = error;
+          }
           ++failures;
           return;
         }
-        const auto traits = tokenizer->Traits();
-        const auto begin = std::min(t * stride, trimmed.size());
-        const auto end = std::min(begin + stride, trimmed.size());
-        auto trx = writer->GetBatch();
-        for (size_t base = begin; base < end; base += kInsertBlock) {
-          const auto n = std::min<size_t>(kInsertBlock, end - base);
-          std::string error;
-          WriteBlock(trx, *tokenizer, traits, plan,
-                     std::span{keys}.subspan(base, n), trimmed.subspan(base, n),
-                     error);
-          if (!error.empty()) {
-            std::lock_guard lock{report_mutex};
-            if (first_error.empty()) {
-              first_error = error;
-            }
-            ++failures;
-            return;
-          }
+      }
+      if (!trx.Commit()) {
+        std::lock_guard lock{report_mutex};
+        if (first_error.empty()) {
+          first_error = "concurrent commit failed";
         }
-        if (!trx.Commit()) {
-          std::lock_guard lock{report_mutex};
-          if (first_error.empty()) {
-            first_error = "concurrent commit failed";
-          }
-          ++failures;
-        }
-      });
-    }
-    for (auto& thread : pool) {
-      thread.join();
-    }
-    ASSERT_EQ(0u, failures.load()) << spec->name << ": " << first_error;
-    ASSERT_TRUE(writer->RefreshCommit());
+        ++failures;
+      }
+    });
+  }
+  for (auto& thread : pool) {
+    thread.join();
+  }
+  ASSERT_EQ(0u, failures.load()) << spec->name << ": " << first_error;
+  ASSERT_TRUE(writer->RefreshCommit());
 
-    const auto analysed = AnalyseForPlan(*spec, plan, trimmed);
-    std::map<std::string, PostingsDigest> want;
-    for (const auto& field : plan) {
-      FoldExpectedField(analysed.at(LayoutFromFeatures(field.features)), field,
-                        want[field.name]);
-    }
-    Verification got;
-    ASSERT_NO_FATAL_FAILURE(ReadIndex(index, plan, got, nullptr));
-    ASSERT_EQ(trimmed.size(), got.docs);
-    for (const auto& field : plan) {
-      SCOPED_TRACE(testing::Message() << "field=" << field.name);
-      ASSERT_EQ(want[field.name], got.by_field[field.name])
-        << "expected " << want[field.name].Describe() << "\n     got "
-        << got.by_field[field.name].Describe();
-    }
+  const auto analysed = AnalyseForPlan(*spec, plan, trimmed);
+  std::map<std::string, PostingsDigest> want;
+  for (const auto& field : plan) {
+    FoldExpectedField(analysed.at(LayoutFromFeatures(field.features)), field,
+                      want[field.name]);
+  }
+  Verification got;
+  ASSERT_NO_FATAL_FAILURE(ReadIndex(index, plan, got, nullptr));
+  ASSERT_EQ(trimmed.size(), got.docs);
+  for (const auto& field : plan) {
+    SCOPED_TRACE(testing::Message() << "field=" << field.name);
+    ASSERT_EQ(want[field.name], got.by_field[field.name])
+      << "expected " << want[field.name].Describe() << "\n     got "
+      << got.by_field[field.name].Describe();
   }
 }
+
+INSTANTIATE_TEST_SUITE_P(Families, TokenizerInversionLoad,
+                         testing::ValuesIn(SelectedFamilies()),
+                         [](const testing::TestParamInfo<const Spec*>& info) {
+                           return std::string{Family(*info.param)};
+                         });

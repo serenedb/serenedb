@@ -31,6 +31,18 @@
 namespace sdb::connector {
 namespace {
 
+uint32_t GetMinMatchArg(const duckdb::Expression& arg,
+                        std::string_view syntax_hint) {
+  int64_t m;
+  GetIntArg(arg, m, {"ts_any min_match", syntax_hint});
+  if (m < 1) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("ts_any min_match must be >= 1, got ", m),
+                    ERR_HINT(syntax_hint));
+  }
+  return static_cast<uint32_t>(m);
+}
+
 bool IsTokenizeListCall(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
     return false;
@@ -52,16 +64,12 @@ void FromTokenizeListInAnyAllOf(
     "Example: ts_any(ts_tokenize(['quick', 'brown'])). Tokenises each list "
     "element through the column analyzer.";
   SDB_ASSERT(is_any || outer.GetChildren().size() == 1);
-  std::optional<size_t> min_match;
+  uint32_t min_match = 0;
   if (is_any && outer.GetChildren().size() == 2) {
-    int64_t m;
-    GetIntArg(*outer.GetChildren()[1], m, {"ts_any min_match", kSyntaxHint});
-    if (m < 1) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_any min_match must be >= 1, got ", m),
-                      ERR_HINT(kSyntaxHint));
-    }
-    min_match = static_cast<size_t>(m);
+    min_match = GetMinMatchArg(*outer.GetChildren()[1], kSyntaxHint);
+  }
+  if (const auto value_min_match = is_any ? TakeMinMatch(ctx) : 0) {
+    min_match = value_min_match;
   }
 
   SDB_ASSERT(tokenize_call.GetChildren().size() >= 1 &&
@@ -120,9 +128,9 @@ void FromTokenizeListInAnyAllOf(
                             "column"),
                     ERR_HINT(kSyntaxHint));
   }
-  std::vector<irs::bstring> tokens;
+  TokenGroups groups;
   irs::ValueAnalyzer value_analyzer;
-  irs::ValueTokens value_tokens;
+  irs::ValueTokens<irs::TokenLayout::TermsPos> value_tokens{analyzer->Traits()};
   const auto& elems = ListOrArrayChildren(*list_const);
   for (const auto& elem : elems) {
     if (elem.IsNull()) {
@@ -139,7 +147,7 @@ void FromTokenizeListInAnyAllOf(
     auto raw = duckdb::StringValue::Get(elem);
     if (use_identity) {
       auto bytes = irs::ViewCast<irs::byte_type>(std::string_view{raw});
-      tokens.emplace_back(bytes.begin(), bytes.end());
+      groups.emplace_back().emplace_back(bytes.begin(), bytes.end());
       continue;
     }
     if (!value_analyzer.Analyze(*analyzer, raw, value_tokens)) {
@@ -148,40 +156,20 @@ void FromTokenizeListInAnyAllOf(
         ERR_MSG("Failed to analyse '", raw, "'"),
         ERR_HINT("The selected analyzer rejected this list element."));
     }
-    for (const auto& t : value_tokens.terms()) {
-      tokens.emplace_back(irs::AsBytesView(t));
-    }
+    AppendTokenGroups(value_tokens.terms(), value_tokens.pos(), groups);
   }
 
-  if (tokens.empty()) {
+  if (groups.empty()) {
     AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
     return;
   }
 
-  const auto field =
-    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR);
-
-  // Single-token short-circuit -> one term clause.
-  if (tokens.size() == 1) {
-    AddTerm(MaybeNegated(parent, ctx, column_info), field, tokens[0], ctx.boost,
-            LeafScorer(column_info));
-    return;
-  }
-
-  // Aggregate as one term-set node with the min_match policy:
-  //   ts_any without min_match -> 1
-  //   ts_any(min_match=N) -> N (capped at tokens.size())
-  //   ts_all -> tokens.size()
-  size_t min_match_value = 1;
-  if (!is_any) {
-    min_match_value = tokens.size();
-  } else if (min_match) {
-    min_match_value = std::min<size_t>(*min_match, tokens.size());
-  }
-  auto& node = AddTermSet(MaybeNegated(parent, ctx, column_info), field, tokens,
-                          min_match_value);
-  node.SetBoost(ctx.boost);
-  node.SetScorer(LeafScorer(column_info));
+  const size_t min_match_value =
+    is_any ? std::max<size_t>(min_match, 1) : groups.size();
+  AddTokenGroups(
+    MaybeNegated(parent, ctx, column_info),
+    PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR), groups,
+    min_match_value, ctx.boost, LeafScorer(column_info));
 }
 
 }  // namespace
@@ -190,7 +178,7 @@ void ExtractAnyAllOfArgs(
   const duckdb::BoundFunctionExpression& func, bool is_any,
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
-  std::optional<size_t>& min_match) {
+  uint32_t& min_match) {
   static constexpr std::string_view kSyntaxHint =
     "Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).";
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
@@ -240,14 +228,7 @@ void ExtractAnyAllOfArgs(
   }
 
   if (func.GetChildren().size() == 2) {
-    int64_t m;
-    GetIntArg(*func.GetChildren()[1], m, {"ts_any min_match", kSyntaxHint});
-    if (m < 1) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_any min_match must be >= 1, got ", m),
-                      ERR_HINT(kSyntaxHint));
-    }
-    min_match = static_cast<size_t>(m);
+    min_match = GetMinMatchArg(*func.GetChildren()[1], kSyntaxHint);
   }
 
   if (args.empty()) {
@@ -256,10 +237,10 @@ void ExtractAnyAllOfArgs(
                                    : "ts_all requires at least one argument"),
                     ERR_HINT(kSyntaxHint));
   }
-  if (min_match && *min_match > args.size()) {
+  if (min_match > args.size()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_any min_match (", *min_match,
+      ERR_MSG("ts_any min_match (", min_match,
               ") exceeds number of arguments (", args.size(), ")"),
       ERR_HINT(kSyntaxHint));
   }
@@ -281,10 +262,18 @@ void FromAnyAllOf(BoolTarget parent, const FilterContext& ctx,
   }
   std::vector<const duckdb::Expression*> args;
   std::vector<duckdb::unique_ptr<duckdb::Expression>> synthesised;
-  std::optional<size_t> min_match;
+  uint32_t min_match = 0;
   ExtractAnyAllOfArgs(func, is_any, args, synthesised, min_match);
+  if (const auto value_min_match = is_any ? TakeMinMatch(ctx) : 0) {
+    min_match = value_min_match;
+    if (min_match > args.size()) {
+      ThrowMinMatchAboveBranches(
+        min_match, args.size(),
+        "K must be between 1 and the number of ts_any elements.");
+    }
+  }
 
-  auto sub_ctx = ctx;
+  auto sub_ctx = ctx.WithoutMinMatch();
   sub_ctx.boost = irs::kNoBoost;
   sub_ctx.negated = false;
 
@@ -295,7 +284,7 @@ void FromAnyAllOf(BoolTarget parent, const FilterContext& ctx,
     BuildTSQuery(group, sub_ctx, column_info, *arg);
   }
   if (is_any) {
-    SetMinMatch(*group.node, min_match.value_or(1));
+    SetMinMatch(*group.node, std::max(min_match, uint32_t{1}));
   }
 }
 

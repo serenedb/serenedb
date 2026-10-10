@@ -19,18 +19,17 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include "pg/pg_catalog/pg_attribute.h"
 
+#include <deque>
+#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/parser/constraints/list.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/down_cast.hpp>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/entry.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/entry/duckdb_table_entry.h"
-#include "catalog/identifiers/object_id.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/schema.h"
+#include "connector/primary_key.h"
 #include "pg/pg_catalog/fwd.h"
 #include "pg/pg_types.h"
 #include "pg/system_catalog.h"
@@ -54,7 +53,7 @@ struct PgTypePhysicalInfo {
   PgAttribute::Attstorage attstorage;
 };
 
-PgTypePhysicalInfo GetPhysicalInfo(int32_t type_oid) {
+PgTypePhysicalInfo GetPhysicalInfo(uint64_t type_oid) {
   switch (type_oid) {
     case PgTypeOID::kBool:
       return {1, true, PgType::Typalign::Char, PgAttribute::Attstorage::Plain};
@@ -92,7 +91,7 @@ PgTypePhysicalInfo GetPhysicalInfo(int32_t type_oid) {
   }
 }
 
-Oid GetCollationForType(int32_t type_oid) {
+Oid GetCollationForType(uint64_t type_oid) {
   switch (type_oid) {
     case PgTypeOID::kText:
     case PgTypeOID::kChar:
@@ -102,7 +101,8 @@ Oid GetCollationForType(int32_t type_oid) {
   }
 }
 
-void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
+void EmitColumnsForTable(const duckdb::TableCatalogEntry& table,
+                         duckdb::ClientContext& context,
                          std::vector<PgAttribute>& values) {
   const auto& columns = table.GetColumns();
 
@@ -115,7 +115,7 @@ void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
         constraint->Cast<duckdb::NotNullConstraint>().index.index);
     }
   }
-  for (const auto key_column : table.GetPKColumnIndexes()) {
+  for (const auto key_column : connector::primary_key::KeyColumns(table)) {
     notnull_cols.insert(key_column.index);
   }
 
@@ -131,7 +131,7 @@ void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
     }
 
     PgAttribute row{
-      .attrelid = catalog::IdOf(table).id(),
+      .attrelid = table.oid,
       .attname = col.Name().GetIdentifierName(),
       .atttypid = type_oid,
       .attlen = phys.attlen,
@@ -153,28 +153,30 @@ void EmitColumnsForTable(const catalog::SereneDBTableEntry& table,
       .attislocal = true,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
-      .attacl = {table.GetColumnAcl(ObjectId{col.CatalogOid()})},
+      .attacl = {col.Acl()},
     };
     values.push_back(std::move(row));
   }
 }
 
-void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
-                               std::vector<PgAttribute>& values) {
-  auto row_type = table.RowType();
-  if (row_type.id() != duckdb::LogicalTypeId::STRUCT) {
+void EmitStructColumns(Oid relid, const duckdb::LogicalType& row_type,
+                       duckdb::ClientContext& context,
+                       std::deque<std::string>& field_names,
+                       std::vector<PgAttribute>& values) {
+  if (!duckdb::StructType::IsStruct(row_type)) {
     return;
   }
-  auto& children = duckdb::StructType::GetChildTypes(row_type);
-
+  const auto& children = duckdb::StructType::GetChildTypes(row_type);
   for (size_t i = 0; i < children.size(); ++i) {
     auto& child_type = children[i].second;
     auto type_oid = Type2Oid(child_type);
     auto phys = GetPhysicalInfo(type_oid);
-
     PgAttribute row{
-      .attrelid = table.Id().id(),
-      .attname = children[i].first.GetIdentifierName(),
+      .attrelid = relid,
+      .attname =
+        row_type.id() == duckdb::LogicalTypeId::TUPLE
+          ? field_names.emplace_back(duckdb::TupleType::GetChildName(i))
+          : children[i].first.GetIdentifierName(),
       .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
@@ -194,29 +196,25 @@ void EmitColumnsForSystemTable(const catalog::VirtualTable& table,
       .attinhcount = 0,
       .attcollation = GetCollationForType(type_oid),
     };
-    values.push_back(std::move(row));
+    values.emplace_back(std::move(row));
   }
 }
 
-// Emit pg_attribute rows for composite (record) types so that drivers can
-// introspect the field list via the standard `attrelid = $oid` lookup. The
-// synthetic relid we use is the type's own OID (matching what pg_type.typrelid
-// reports).
-void EmitColumnsForCompositeType(const duckdb::TypeCatalogEntry& type,
-                                 std::vector<PgAttribute>& values) {
-  if (type.user_type.id() != duckdb::LogicalTypeId::STRUCT) {
+void EmitColumnsForView(duckdb::ViewCatalogEntry& view,
+                        duckdb::ClientContext& context,
+                        std::deque<std::string>& names,
+                        std::vector<PgAttribute>& values) {
+  const auto columns = GetViewColumns(context, view);
+  if (!columns.info) {
     return;
   }
-  const auto& children = duckdb::StructType::GetChildTypes(type.user_type);
-  const auto type_oid = type.oid;
-  for (size_t i = 0; i < children.size(); ++i) {
-    auto& child_type = children[i].second;
-    auto type_id = Type2Oid(child_type);
-    auto phys = GetPhysicalInfo(type_id);
-    PgAttribute row{
-      .attrelid = type_oid,
-      .attname = children[i].first.GetIdentifierName(),
-      .atttypid = type_id,
+  for (size_t i = 0; i < columns.names.size(); ++i) {
+    auto type_oid = Type2Oid(columns.info->types[i]);
+    auto phys = GetPhysicalInfo(type_oid);
+    values.push_back(PgAttribute{
+      .attrelid = view.oid,
+      .attname = names.emplace_back(columns.names[i].GetIdentifierName()),
+      .atttypid = type_oid,
       .attlen = phys.attlen,
       .attnum = static_cast<int16_t>(i + 1),
       .atttypmod = -1,
@@ -233,33 +231,40 @@ void EmitColumnsForCompositeType(const duckdb::TypeCatalogEntry& type,
       .attisdropped = false,
       .attislocal = true,
       .attinhcount = 0,
-      .attcollation = GetCollationForType(type_id),
-    };
-    values.push_back(std::move(row));
+      .attcollation = GetCollationForType(type_oid),
+    });
   }
 }
 
 }  // namespace
 
 template<>
-catalog::MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
+MaterializedData SystemTableSnapshot<PgAttribute>::GetTableData() {
   std::vector<PgAttribute> values;
+  std::deque<std::string> field_names;
 
-  catalog::VisitTableEntries(_config.GetClientContext(), GetDatabaseId(),
-                             [&](const catalog::SereneDBSchemaEntry&,
-                                 const catalog::SereneDBTableEntry& table) {
-                               EmitColumnsForTable(table, values);
-                             });
-  catalog::Visit<catalog::SereneDBTypeEntry>(
-    &_config.GetClientContext(), GetDatabaseId(),
-    [&](const duckdb::TypeCatalogEntry& type) {
-      EmitColumnsForCompositeType(type, values);
+  auto& context = _context;
+  VisitEntries<duckdb::TableCatalogEntry>(
+    context, GetDatabase(), [&](const duckdb::TableCatalogEntry& table) {
+      EmitColumnsForTable(table, context, values);
+    });
+  VisitEntries<duckdb::ViewCatalogEntry>(
+    context, GetDatabase(), [&](duckdb::ViewCatalogEntry& view) {
+      EmitColumnsForView(view, context, field_names, values);
+    });
+  // Emit pg_attribute rows for composite (record) types so that drivers can
+  // introspect the field list via the standard `attrelid = $oid` lookup. The
+  // synthetic relid is the type's own OID (matching what pg_type.typrelid
+  // reports).
+  VisitEntries<duckdb::TypeCatalogEntry>(
+    context, GetDatabase(), [&](const duckdb::TypeCatalogEntry& type) {
+      EmitStructColumns(type.oid, type.user_type, context, field_names, values);
     });
 
-  VisitSystemTables(
-    [&](const catalog::VirtualTable& table, Oid /*schema_oid*/) {
-      EmitColumnsForSystemTable(table, values);
-    });
+  VisitSystemTables([&](const VirtualTable& table, Oid /*schema_oid*/) {
+    EmitStructColumns(table.Id(), table.RowType(), context, field_names,
+                      values);
+  });
 
   auto result = CreateColumns<PgAttribute>(values.size());
 

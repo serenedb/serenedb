@@ -25,11 +25,15 @@
 
 #include <fcntl.h>  // open/_wopen
 
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <span>
 
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -158,9 +162,72 @@ void HintWriteback(void* fd, uint64_t offset, size_t size) noexcept;
 
 inline constexpr size_t kPage = 4 * 1024;
 inline constexpr size_t kMaxReadahead = 2 * 1024 * 1024;
+inline constexpr size_t kPrefetchChunk = 128 * 1024;
 
 void Prefetch(const void* addr, size_t size) noexcept;
+void Prefetch(int fd, uint64_t offset, uint64_t size) noexcept;
 bool IsResident(const void* addr, size_t size) noexcept;
+size_t Residency(const void* addr, size_t size,
+                 std::span<unsigned char> pages) noexcept;
+uint32_t ResidencyEpoch() noexcept;
+void InvalidateResidency() noexcept;
+void SyncResidency() noexcept;
+void PollResidency() noexcept;
+
+class ResidencyMap {
+ public:
+  void Reset(size_t pages);
+
+  bool Valid(uint32_t epoch) const noexcept {
+    return _epoch.load(std::memory_order_acquire) == epoch;
+  }
+
+  bool Adopt(uint32_t epoch) const noexcept;
+
+  bool Test(size_t page) const noexcept {
+    SDB_ASSERT(page < _pages);
+    return ((_bits[page / kBits].load(std::memory_order_relaxed) >>
+             (page % kBits)) &
+            1) != 0;
+  }
+
+  bool Test(size_t first, size_t last) const noexcept {
+    SDB_ASSERT(first <= last && last < _pages);
+    for (auto w = first / kBits, end = last / kBits; w <= end; ++w) {
+      const auto mask = Mask(w, first, last);
+      if ((_bits[w].load(std::memory_order_relaxed) & mask) != mask) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void Set(size_t first, size_t last) const noexcept {
+    SDB_ASSERT(first <= last && last < _pages);
+    for (auto w = first / kBits, end = last / kBits; w <= end; ++w) {
+      const auto mask = Mask(w, first, last);
+      if ((_bits[w].load(std::memory_order_relaxed) & mask) != mask) {
+        _bits[w].fetch_or(mask, std::memory_order_relaxed);
+      }
+    }
+  }
+
+  void Set(size_t page) const noexcept { Set(page, page); }
+
+ private:
+  static constexpr size_t kBits = 64;
+  static constexpr uint32_t kClearing = std::numeric_limits<uint32_t>::max();
+
+  static uint64_t Mask(size_t word, size_t first, size_t last) noexcept {
+    const auto lo = word == first / kBits ? first % kBits : 0;
+    const auto hi = word == last / kBits ? last % kBits : kBits - 1;
+    return (~uint64_t{0} >> (kBits - 1 - hi + lo)) << lo;
+  }
+
+  std::unique_ptr<std::atomic<uint64_t>[]> _bits;
+  size_t _pages = 0;
+  mutable std::atomic<uint32_t> _epoch{0};
+};
 
 IRS_FORCE_INLINE inline bool Write(void* fd, const void* buf, size_t size) {
   return Fwrite(fd, buf, size) == size;

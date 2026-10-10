@@ -50,9 +50,9 @@ class ExactScanner {
       auto node = inner->PlanFill({}, ScoreMergeType::Noop);
       SDB_ASSERT(node);
       if (auto* folded = node->Folded(); folded != nullptr) {
-        _set.emplace(std::move(*folded), nullptr);
+        _set.emplace(std::move(*folded), fill::DocsMask{nullptr});
       } else {
-        _set.emplace(std::move(node), rows, nullptr);
+        _set.emplace(std::move(node), rows, fill::DocsMask{nullptr});
       }
     }
   }

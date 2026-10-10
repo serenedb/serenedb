@@ -1,25 +1,3 @@
-# Where the Boost.Geometry backend answers differently from PostGIS. Three
-# gaps, each with a one-line reason:
-#
-# 1. Mixed dimensions in ST_Union / ST_SymDifference are refused.
-#    Why: combining a point with a polygon produces a GEOMETRYCOLLECTION, and
-#    Boost.Geometry has no operation that emits one. Refusing beats guessing.
-#    ST_Intersection and ST_Difference are unaffected -- their result never
-#    needs a collection.
-#
-# 2. Z and M are dropped from every returned geometry.
-#    Why: Boost.Geometry's overlay is strictly 2D. PostGIS carries Z through and
-#    even interpolates it, so ST_Intersection of two 3D lines keeps a Z there
-#    and loses it here.
-#
-# 3. GEOMETRYCOLLECTION arguments are refused by every predicate except
-#    ST_Intersects and ST_Disjoint.
-#    Why: a collection's answer is not the OR of its parts' answers, and the
-#    engine offers no way to compute the real one.
-#
-# THIS FILE REQUIRES SPATIAL_USE_BOOST. Under the GEOS backend all three cases
-# answer instead of erroring, so it belongs in the change that flips the switch.
-
 # --- 1. mixed-dimension set operations ---
 
 statement error
@@ -90,3 +68,27 @@ SELECT ST_Intersects('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY, 'GEOMETRYCOLLEC
 ----
 intersects	disjoint
 t	t
+
+
+statement error
+SELECT ST_Intersection('POLYGON((0 0,10 0,5 5,10 10,0 10,5 5,0 0))'::GEOMETRY, 'POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY);
+----
+db error: ERROR: Input polygon is not valid (ST_IsValid returns false)
+
+
+statement error
+SELECT ST_Union('POLYGON((0 0,10 10,10 0,0 10,0 0))'::GEOMETRY, 'POLYGON((20 20,30 20,30 30,20 30,20 20))'::GEOMETRY);
+----
+db error: ERROR: Input polygon is not valid (ST_IsValid returns false)
+
+
+statement error
+SELECT ST_Union_Agg(g) FROM (VALUES ('POLYGON((0 0,4 0,4 4,0 4,0 0))'::GEOMETRY), ('POLYGON((0 0,10 10,10 0,0 10,0 0))'::GEOMETRY)) t(g);
+----
+db error: ERROR: Input polygon is not valid (ST_IsValid returns false)
+
+
+statement error
+SELECT ST_Intersection_Agg(g) FROM (VALUES ('POLYGON((0 0,10 10,10 0,0 10,0 0))'::GEOMETRY)) t(g);
+----
+db error: ERROR: Input polygon is not valid (ST_IsValid returns false)

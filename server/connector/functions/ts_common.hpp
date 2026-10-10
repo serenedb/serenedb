@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <duckdb/planner/column_binding_map.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -40,13 +42,18 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/wildcard_utils.hpp>
 #include <magic_enum/magic_enum.hpp>
+#include <utility>
 
-#include "catalog/tokenizer.h"
 #include "connector/common.h"
 #include "connector/functions/ts_query_codec.h"
 #include "connector/search_filter_builder.hpp"
+#include "connector/term_dict.h"
 
-namespace sdb::catalog {}  // namespace sdb::catalog
+namespace irs::analysis {
+
+class ShingleTokenizer;
+
+}  // namespace irs::analysis
 namespace sdb::connector {
 
 struct FilterContext {
@@ -63,6 +70,7 @@ struct FilterContext {
   uint32_t levenshtein_max_terms = 50;
   FilterScorers* scorer_sink = nullptr;
   WideRanges wide_ranges = WideRanges::Build;
+  uint32_t* min_match = nullptr;
 
   FilterContext WithTokenizer(irs::analysis::Tokenizer& tokenizer) const {
     return {
@@ -79,44 +87,29 @@ struct FilterContext {
       .levenshtein_max_terms = levenshtein_max_terms,
       .scorer_sink = scorer_sink,
       .wide_ranges = wide_ranges,
+      .min_match = min_match,
     };
   }
 
   FilterContext WithBoost(irs::score_t factor) const {
-    return {
-      .negated = negated,
-      .boost = boost * factor,
-      .slop = slop,
-      .column_getter = column_getter,
-      .expr_getter = expr_getter,
-      .column_cache = column_cache,
-      .expr_cache = expr_cache,
-      .identity = identity,
-      .tokenizer = tokenizer,
-      .client_context = client_context,
-      .levenshtein_max_terms = levenshtein_max_terms,
-      .scorer_sink = scorer_sink,
-      .wide_ranges = wide_ranges,
-    };
+    auto out = *this;
+    out.boost = boost * factor;
+    return out;
   }
 
   FilterContext WithSlop(irs::PosAttr::value_t value) const {
-    return {
-      .negated = negated,
-      .boost = boost,
-      .slop = value,
-      .column_getter = column_getter,
-      .expr_getter = expr_getter,
-      .column_cache = column_cache,
-      .expr_cache = expr_cache,
-      .identity = identity,
-      .tokenizer = tokenizer,
-      .client_context = client_context,
-      .levenshtein_max_terms = levenshtein_max_terms,
-      .scorer_sink = scorer_sink,
-      .wide_ranges = wide_ranges,
-    };
+    auto out = *this;
+    out.slop = value;
+    return out;
   }
+
+  FilterContext WithMinMatch(uint32_t* pending) const {
+    auto out = *this;
+    out.min_match = pending;
+    return out;
+  }
+
+  FilterContext WithoutMinMatch() const { return WithMinMatch(nullptr); }
 
   FilterContext Claimed() const {
     FilterContext ctx = *this;
@@ -124,6 +117,21 @@ struct FilterContext {
     return ctx;
   }
 };
+
+inline uint32_t TakeMinMatch(const FilterContext& ctx) {
+  if (!ctx.min_match) {
+    return 0;
+  }
+  return std::exchange(*ctx.min_match, 0);
+}
+
+void RecordWrittenMinMatchBranches(duckdb::Expression& expr);
+
+uint32_t WrittenMinMatchBranches(const duckdb::BoundFunctionExpression& cast);
+
+[[noreturn]] void ThrowMinMatchAboveBranches(uint32_t min_match,
+                                             size_t branches,
+                                             std::string_view hint);
 
 inline BoolTarget MaybeNegated(BoolTarget parent, const FilterContext& ctx,
                                const SearchColumnInfo& info) {
@@ -189,11 +197,11 @@ void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 template<typename F>
 void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
                       F&& f) {
-  switch (catalog::term_dict::Classify(type_id)) {
-    case catalog::term_dict::Kind::NumericI32:
+  switch (term_dict::Classify(type_id)) {
+    case term_dict::Kind::NumericI32:
       f(value.GetValue<int32_t>());
       break;
-    case catalog::term_dict::Kind::NumericI64:
+    case term_dict::Kind::NumericI64:
       if (type_id == duckdb::LogicalTypeId::TIME_TZ) {
         f(TimeTzIndexTerm(value.GetValueUnsafe<int64_t>()));
       } else if (value.type().InternalType() == duckdb::PhysicalType::INT64) {
@@ -202,10 +210,10 @@ void WithNumericValue(duckdb::LogicalTypeId type_id, const duckdb::Value& value,
         f(value.GetValue<int64_t>());
       }
       break;
-    case catalog::term_dict::Kind::NumericF32:
+    case term_dict::Kind::NumericF32:
       f(value.GetValue<float>());
       break;
-    case catalog::term_dict::Kind::NumericF64:
+    case term_dict::Kind::NumericF64:
       f(value.GetValue<double>());
       break;
     default:
@@ -231,6 +239,16 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
 void BuildFtsTokens(BoolTarget parent, const FilterContext& ctx,
                     const SearchColumnInfo& column_info, std::string_view text,
                     bool require_all);
+void BuildFtsWord(BoolTarget parent, const FilterContext& ctx,
+                  const SearchColumnInfo& column_info, std::string_view text);
+
+using TokenGroups = std::vector<std::vector<irs::bstring>>;
+
+void AppendTokenGroups(std::span<const duckdb::string_t> terms,
+                       std::span<const uint32_t> pos, TokenGroups& groups);
+void AddTokenGroups(BoolTarget parent, irs::field_id field, TokenGroups& groups,
+                    size_t min_match, irs::score_t boost,
+                    const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
                                               const duckdb::Expression& expr);
@@ -263,6 +281,12 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out,
                                size_t max_terms);
 
+struct RegexpArgs {
+  std::string pattern;
+  irs::RegexpSyntax syntax = irs::RegexpSyntax::Perl;
+};
+RegexpArgs ParseRegexpArgs(const duckdb::BoundFunctionExpression& func);
+
 // ts_any/ts_all arg unpacker: handles single TSQUERY, TSQUERY[]
 // (extracts elements), and the optional min_should_match suffix.
 // `synthesised` collects any temporary expressions the unpacker
@@ -271,7 +295,7 @@ void ExtractAnyAllOfArgs(
   const duckdb::BoundFunctionExpression& func, bool is_any,
   std::vector<const duckdb::Expression*>& args,
   std::vector<duckdb::unique_ptr<duckdb::Expression>>& synthesised,
-  std::optional<size_t>& min_match);
+  uint32_t& min_match);
 
 // Phrase-sequence representation, shared between FromTSQueryPhraseSeq
 // (the `##` operator) and tsquery_phrase
@@ -290,6 +314,15 @@ void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
 void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
 void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
+
+irs::analysis::ShingleTokenizer* ShingleOf(const SearchColumnInfo& column_info);
+irs::analysis::ShingleTokenizer* QueryShingle(
+  const FilterContext& ctx, const SearchColumnInfo& column_info);
+irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,
+                                         const SearchColumnInfo& column_info);
+void PlanShinglePhrases(
+  irs::Filter& root,
+  absl::FunctionRef<const SearchColumnInfo*(irs::field_id)> column_of);
 
 enum class TSQueryOp {
   Unknown,
@@ -329,5 +362,10 @@ std::optional<int64_t> TryGetSlopModifier(const duckdb::LogicalType& type);
 std::optional<std::string> TryGetScoreModifier(const duckdb::LogicalType& type);
 std::optional<TSQueryMerge> TryGetMergeModifier(
   const duckdb::LogicalType& type);
+std::optional<uint32_t> TryGetMinMatchModifier(const duckdb::LogicalType& type);
+
+bool HasGroupModifier(const duckdb::LogicalType& type);
+
+const duckdb::Expression& PeelGroupModifiers(const duckdb::Expression& expr);
 
 }  // namespace sdb::connector

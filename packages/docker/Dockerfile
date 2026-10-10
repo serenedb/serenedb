@@ -9,6 +9,9 @@ LABEL org.opencontainers.image.vendor="SereneDB GmbH"
 ARG TARGETARCH
 COPY install-${TARGETARCH}.tar.gz /tmp/install.tar.gz
 
+ARG UID=999
+ARG GID=999
+
 # All setup in single layer to minimize image size
 RUN \
   # Extract pre-built binaries (strip top-level dir name from tarball)
@@ -21,8 +24,8 @@ RUN \
   apt-get update && \
   apt-get install -y --no-install-recommends numactl postgresql-client ca-certificates && \
   # Create non-root user for running serened
-  groupadd -r serenedb && \
-  useradd -r -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin serenedb && \
+  groupadd -r -g "$GID" serenedb && \
+  useradd -r -u "$UID" -g serenedb -d /var/lib/serenedb -s /usr/sbin/nologin serenedb && \
   # Create data directory (775 + group 0 for OpenShift compatibility)
   install -o serenedb -g 0 -m 775 -d /var/lib/serenedb && \
   # TODO: add /docker-entrypoint-initdb.d for PostgreSQL-style init scripts (.sh/.sql)
@@ -45,6 +48,6 @@ EXPOSE 7890
 
 COPY entrypoint.sh /entrypoint.sh
 
-USER serenedb
+USER $UID:$GID
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["serened"]

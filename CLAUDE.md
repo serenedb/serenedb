@@ -14,6 +14,26 @@ C++ style. This file only flags traps that aren't in there.
 page in the same change, following the **Documentation** section of
 `CONTRIBUTING.md`, and say in your summary which page you added or updated.
 
+## Formatting
+
+serenedb's own code and the DuckDB family are never formatted by hand: run the
+tools below and commit what they produce. Other submodules have no formatter
+set up; there, match the surrounding code by hand, and never run a formatter
+over their files.
+
+- serenedb's own code: `.clang-format` through pre-commit (see `CONTRIBUTING.md`).
+- The DuckDB family (the duckdb submodules, `database-connector`,
+  `duckdb_clickhouse`): `scripts/duckdb_family.sh`, which runs DuckDB's own
+  format.py, generators and Makefile targets with their pinned tools; `--help`
+  describes every mode. Never run a generator, format.py or clang-format there
+  by hand.
+  - `format` before every commit, and `format --check --range <a>..<b> <dir>`
+    before pushing a series: every commit, merges included, formatted on its
+    own.
+  - `regen` builds the duckdb fork's `regen:` commit, a DuckDB update's one or
+    a pull request's own, with DuckDB's generators in DuckDB's order;
+    `regen --check` proves it is current.
+
 ## Before writing tests
 
 - Sqllogic: read a sibling `.test` first. Control directives, retry patterns,

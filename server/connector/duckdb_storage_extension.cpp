@@ -20,34 +20,42 @@
 
 #include "connector/duckdb_storage_extension.h"
 
+#include <absl/container/flat_hash_map.h>
+
+#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
+#include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
+#include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/storage_extension.hpp>
 #include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/storage/table/data_table_info.hpp>
+#include <duckdb/storage/table/index_entry.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <memory>
+#include <vector>
 
-#include "catalog/ddl/catalog.h"
-#include "catalog/ddl/duckdb_catalog.h"
-#include "catalog/entry/duckdb_object_entry.h"
-#include "catalog/entry/duckdb_schema_entry.h"
-#include "catalog/foreign_server.h"
-#include "catalog/log/data_store.h"
-#include "catalog/log/store.h"
-#include "catalog/read/duckdb_catalog_sets.h"
-#include "catalog/schema.h"
+#include "catalog/boot.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/foreign_server.h"
 #include "connector/duckdb_client_state.h"
-#include "connector/duckdb_transaction.h"
+#include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
-#include "connector/optimizer/rbac.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
 #include "pg/connection_context.h"
+#include "pg/pg_types.h"
 #include "pg/sql_utils.h"
+#include "search/inverted_index_storage.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
@@ -58,165 +66,150 @@ duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
-  // The attach carries the database's ObjectId, not a file. Resolving it to
-  // the database's own duckdb file is what gives the attachment a real
-  // SingleFileStorageManager: its own storage, its own data WAL, its own
-  // checkpoint. AttachedDatabase reads info.path after this returns.
-  const auto open = [&db, &info, &options](ObjectId database_id,
-                                           ObjectId public_schema_id,
-                                           catalog::Permissions owner) {
-    info.path = catalog::CatalogStore::DatabaseFilePath(database_id);
-    // Every serenedb on-disk format sits behind our storage version, so a
-    // duckdb-version database is unaffected by anything we change.
-    options.options.emplace("storage_version", duckdb::Value{"serenedb_v1"});
-    return duckdb::make_uniq<catalog::SereneDBCatalog>(
-      db, database_id, public_schema_id, std::move(owner));
-  };
-
-  if (info.path.empty()) {
-    // CREATE DATABASE: create new database in SereneDB catalog
-    auto state = context.registered_state->Get<SereneDBClientState>(
-      kSereneDBClientStateKey);
-    const auto ax =
-      state
-        ? catalog::ActingAs(state->GetConnectionContext().GetRoleId(), context)
-        : catalog::NoAccessCheck(context);
-    const bool if_not_exists =
-      info.on_conflict != duckdb::OnCreateConflict::ERROR_ON_CONFLICT;
-    // The public schema's id and owner come back rather than the schema: the
-    // catalog this call is about to build is what makes it.
-    auto [public_schema_id, public_schema_owner] =
-      catalog::GetCatalog().CreateDatabase(
-        ax,
-        duckdb::make_uniq<catalog::CreateDatabaseInfo>(ObjectId{}, name,
-                                                       ObjectId{}),
-        ax.role, if_not_exists);
-    const auto database_id = catalog::FindDatabaseId(&context, name);
-    if (!database_id.isSet()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("database \"", name, "\" not found after creation"));
+  if (!info.path.empty() &&
+      (info.path != IN_MEMORY_PATH || options.original_path)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("cannot attach \"", info.path,
+              "\" as a SereneDB database: a SereneDB database is created "
+              "with CREATE DATABASE"));
+  }
+  if (info.on_conflict == duckdb::OnCreateConflict::ERROR_ON_CONFLICT &&
+      duckdb::DatabaseManager::Get(context).GetDatabase(info.name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                    ERR_MSG("database \"", info.name.GetIdentifierName(),
+                            "\" already exists"));
+  }
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
+  auto entry = cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+                 .GetEntry(transaction, info.name);
+  if (!entry) {
+    duckdb::CreateDatabaseInfo database;
+    database.SetName(info.name);
+    for (const auto* key : {"block_size", "row_group_size"}) {
+      if (auto option = options.options.find(key);
+          option != options.options.end()) {
+        database.options.emplace(key, option->second);
+      }
     }
-    return open(database_id, public_schema_id, std::move(public_schema_owner));
+    auto* connection = GetSereneDBContextPtr(context);
+    database.permissions.owner =
+      connection ? connection->GetRoleId() : pg::kRootUser;
+    entry = cluster.CreateDatabase(transaction, database);
+    SDB_IF_FAILURE("unable_to_create") {
+      THROW_SQL_ERROR(ERR_MSG("internal error"));
+    }
   }
-
-  // ATTACH with path = open existing database by ObjectId
-  uint64_t id = 0;
-  if (!absl::SimpleAtoi(info.path, &id)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("database \"", name, "\" not found"));
+  db.oid = entry->oid;
+  const auto& directory =
+    entry->Cast<catalog::DatabaseCatalogEntry>().Directory();
+  if (info.path.empty()) {
+    info.path = directory->DataFile();
   }
-  auto database = catalog::FindDatabase(nullptr, ObjectId{id});
-  if (!database) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("database \"", name, "\" not found"));
-  }
-  return open(catalog::IdOf(*database), database->PublicSchemaId(),
-              database->permissions);
+  db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
+    std::shared_ptr<duckdb::StorageExtensionInfo>{directory}});
+  // Every serenedb on-disk format sits behind our storage version, so a
+  // duckdb-version database is unaffected by anything we change.
+  catalog::RequestSereneDBStorageVersion(options);
+  return duckdb::make_uniq<catalog::SereneDBCatalog>(db, directory);
 }
 
 duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo> storage_info,
   duckdb::AttachedDatabase& db, duckdb::Catalog& catalog) {
-  return duckdb::make_uniq<SereneDBTransactionManager>(db);
+  return duckdb::make_uniq<duckdb::DuckTransactionManager>(db);
 }
+
+std::vector<std::shared_ptr<search::InvertedIndexStorage>> BoundStorages(
+  duckdb::AttachedDatabase& db) {
+  std::vector<std::shared_ptr<search::InvertedIndexStorage>> storages;
+  if (!InvertedStoreIndex::AnyBound()) {
+    return storages;
+  }
+  db.GetCatalog().Cast<duckdb::DuckCatalog>().ScanSchemas(
+    [&](duckdb::SchemaCatalogEntry& schema) {
+      schema.Scan(
+        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
+          if (entry.type != duckdb::CatalogType::TABLE_ENTRY ||
+              !entry.Cast<duckdb::TableCatalogEntry>().IsDuckTable()) {
+            return;
+          }
+          auto& indexes = entry.Cast<duckdb::DuckTableEntry>()
+                            .GetStorage()
+                            .GetDataTableInfo()
+                            ->GetIndexes();
+          for (auto index : indexes.IndexEntries()) {
+            if (index->GetBindState() == duckdb::IndexBindState::BOUND &&
+                index->GetIndexType() == InvertedStoreIndex::kTypeName) {
+              const auto handle = index->GetReadHandle<InvertedStoreIndex>();
+              storages.push_back(handle->Storage());
+            }
+          }
+        });
+    });
+  return storages;
+}
+
+class SereneDBStorageExtension final : public duckdb::StorageExtension {
+ public:
+  void OnCheckpointBeforeHeader(duckdb::AttachedDatabase& db,
+                                duckdb::CheckpointOptions) final {
+    const auto iteration =
+      db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
+    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
+    for (auto& storage : BoundStorages(db)) {
+      storage->PrepareCheckpoint(iteration);
+      saves.push_back(storage);
+    }
+    duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
+    if (saves.empty()) {
+      _saves.erase(db.oid);
+    } else {
+      _saves[db.oid] = std::move(saves);
+    }
+  }
+
+  void OnCheckpointEnd(duckdb::AttachedDatabase& db,
+                       duckdb::CheckpointOptions) final {
+    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
+    {
+      duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
+      const auto it = _saves.find(db.oid);
+      if (it == _saves.end()) {
+        return;
+      }
+      saves = std::move(it->second);
+      _saves.erase(it);
+    }
+    for (const auto& save : saves) {
+      if (const auto storage = save.lock()) {
+        storage->FinishCheckpoint();
+      }
+    }
+  }
+
+ private:
+  duckdb::mutex _saves_mutex;
+  absl::flat_hash_map<duckdb::idx_t,
+                      std::vector<std::weak_ptr<search::InvertedIndexStorage>>>
+    _saves;
+};
 
 }  // namespace
 
-void AttachDatabaseCatalog(ObjectId id, std::string_view name) {
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  if (manager.GetDatabase(duckdb::Identifier{name})) {
-    // A later version of the same database record -- an owner or ACL change.
-    return;
-  }
-  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
-  auto& context = *conn->context;
-  duckdb::AttachInfo info;
-  info.name = duckdb::Identifier{name};
-  info.path = std::to_string(id.id());
-  info.options.emplace(
-    "type", duckdb::Value{std::string{catalog::kSereneDBCatalogType}});
-  duckdb::AttachOptions options{info.options, duckdb::AccessMode::READ_WRITE};
-  options.defer_storage_load = true;
-  conn->BeginTransaction();
-  try {
-    duckdb::DatabaseManager::Get(context).AttachDatabase(context, info,
-                                                         options);
-  } catch (...) {
-    conn->Rollback();
-    throw;
-  }
-  conn->Commit();
-}
-
-void DiscardDatabaseAttachment(std::string_view name) {
-  auto& manager =
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
-  auto attached = manager.DetachInternal(duckdb::Identifier{name});
-  if (!attached) {
-    return;
-  }
-  catalog::DataStore::ForgetDatabase(
-    attached->GetCatalog().Cast<catalog::SereneDBCatalog>().GetDatabaseId());
-  // The detach takes the name out of the database manager, so nothing new
-  // reaches this database. What is already in flight holds it, and closing it
-  // under a statement takes the storage out from under an entry that statement
-  // is reading -- so the close waits for the last reference, exactly as
-  // duckdb's own DETACH does.
-  duckdb::AttachedDatabase::InvokeCloseIfLastReference(
-    attached, duckdb::DatabaseCloseAction::SKIP_CHECKPOINT);
-}
-
-void LoadDatabaseStorage(std::string_view name) {
-  auto conn = irs::DuckDBEngine::Instance().CreateConnection();
-  auto& context = *conn->context;
-  // Inside a transaction, exactly as the ATTACH statement that would otherwise
-  // have run this: the load rebuilds the storage of every table it reads back,
-  // and reaching an attachment at all goes through the meta transaction.
-  bool repaired = false;
-  duckdb::optional_ptr<duckdb::AttachedDatabase> database;
-  conn->BeginTransaction();
-  try {
-    if (auto attached = duckdb::DatabaseManager::Get(context).GetDatabase(
-          context, duckdb::Identifier{name})) {
-      attached->InitializeStorage(context);
-      attached->FinalizeLoad(context);
-      database = attached.get();
-      repaired = attached->GetCatalog()
-                   .Cast<catalog::SereneDBCatalog>()
-                   .FinishStorageReplay(context);
-    }
-  } catch (...) {
-    conn->Rollback();
-    throw;
-  }
-  conn->Commit();
-  if (repaired) {
-    // The rows the boot moved live nowhere but memory until the file is told:
-    // the next one would read the shape this one repaired and replay the WAL of
-    // a database that has since moved on from it.
-    duckdb::CheckpointOptions options;
-    options.action = duckdb::CheckpointAction::ALWAYS_CHECKPOINT;
-    database->GetStorageManager().CreateCheckpoint(duckdb::QueryContext{},
-                                                   options);
-  }
-}
-
-SereneDBStorageExtension::SereneDBStorageExtension() {
-  attach = AttachSereneDB;
-  create_transaction_manager = CreateTransactionManager;
-}
-
-void RegisterSereneDBStorage(duckdb::DBConfig& config) {
-  auto ext = duckdb::make_shared_ptr<SereneDBStorageExtension>();
-  duckdb::StorageExtension::Register(config, "serenedb", std::move(ext));
+void RegisterSereneDBStorage(
+  duckdb::DBConfig& config, duckdb::shared_ptr<catalog::DataDirectory> layout) {
+  auto extension = duckdb::make_shared_ptr<SereneDBStorageExtension>();
+  extension->attach = AttachSereneDB;
+  extension->create_transaction_manager = CreateTransactionManager;
+  extension->storage_info = std::move(layout);
+  duckdb::StorageExtension::Register(config, "serenedb", std::move(extension));
 }
 
 void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
   optimizer::RegisterWrapUnsupportedTypesExtension(db);
   optimizer::RegisterIResearchPlanOptimizer(db);
-  optimizer::RegisterRbacAccessCheck(db);
 }
 
 }  // namespace sdb::connector

@@ -100,3 +100,30 @@ ORDER BY id;
 ----
 id	body
 3	quick red fox
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body FROM notes_idx
+WHERE body @@ 'ts_phrase(''brown fox'') || ts_phrase(''lazy dog'')'
+ORDER BY id;
+----
+id	body
+1	quick brown fox
+2	lazy dog sleeps
+
+statement ok
+PREPARE notes_search AS SELECT id, body FROM notes_idx WHERE body @@ $1::TSQUERY ORDER BY id;
+
+query
+EXECUTE notes_search('''quick red fox''::min_match(3)');
+----
+id	body
+3	quick red fox
+
+# DOCS_TEST_END
+
+statement ok
+DEALLOCATE notes_search;

@@ -27,8 +27,6 @@
 #include <string>
 #include <vector>
 
-#include "catalog/identifiers/object_id.h"
-
 namespace duckdb {
 
 class ClientContext;
@@ -37,7 +35,7 @@ class ClientContext;
 namespace sdb::pg {
 
 struct BuiltinFunction {
-  ObjectId oid;
+  duckdb::idx_t oid;
   std::string name;
   duckdb::CatalogType kind = duckdb::CatalogType::INVALID;
   duckdb::LogicalType return_type;
@@ -49,5 +47,7 @@ struct BuiltinFunction {
 void VisitBuiltinFunctions(
   duckdb::ClientContext& context,
   absl::FunctionRef<void(const BuiltinFunction&)> visitor);
+
+duckdb::idx_t BuiltinTypeOid(const duckdb::LogicalType& type);
 
 }  // namespace sdb::pg

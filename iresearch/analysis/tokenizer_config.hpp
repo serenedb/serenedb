@@ -28,7 +28,9 @@
 #include "classification_tokenizer.hpp"
 #include "collation_tokenizer.hpp"
 #include "delimited_tokenizer.hpp"
+#include "filter_tokens_tokenizer.hpp"
 #include "geo_tokenizer.hpp"
+#include "html_strip_tokenizer.hpp"
 #include "icu_text_tokenizer.hpp"
 #include "iresearch/analysis/keyword_tokenizer.hpp"
 #include "iresearch/utils/serializer.hpp"
@@ -72,19 +74,10 @@ struct TokenizerConfig {
     GeoJsonTokenizer::Options, WildcardTokenizer::Options,
     PipelineTokenizer::Options, UnionTokenizer::Options,
     SparseNGramTokenizer::Options, SplitByNonAlphaTokenizer::Options,
-    SqlTokenizer::Options, ShingleTokenizer::Options, IcuTextTokenizer::Options>
+    SqlTokenizer::Options, ShingleTokenizer::Options, IcuTextTokenizer::Options,
+    HtmlStripTokenizer::Options, FilterTokensTokenizer::Options>
     config;
 };
-
-template<typename Context>
-void SerdeWrite(Context ctx, const TokenizerConfig& cfg) {
-  irs::utils::WriteTupleOrObject(ctx, cfg.config);
-}
-
-template<typename Context>
-void SerdeRead(Context ctx, TokenizerConfig& cfg) {
-  irs::utils::ReadTupleOrObject(ctx, cfg.config);
-}
 
 TokenizerConfig Clone(const TokenizerConfig& cfg);
 
@@ -125,9 +118,7 @@ inline TokenizerConfig Clone(const TokenizerConfig& cfg) {
         copy.output_unigrams = opts.output_unigrams;
         copy.fallback_unigrams = opts.fallback_unigrams;
         copy.token_separator = opts.token_separator;
-        copy.filler_token = opts.filler_token;
         copy.frequent_words = opts.frequent_words;
-        copy.store_tokens = opts.store_tokens;
         copy.base_analyzer = detail::CloneChild(opts.base_analyzer);
         out.config = std::move(copy);
       } else {

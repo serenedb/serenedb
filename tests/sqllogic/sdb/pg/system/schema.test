@@ -1,7 +1,7 @@
 statement error
 DROP SCHEMA information_schema;
 ----
-db error: ERROR: cannot drop schema information_schema because it is required by the database system
+db error: ERROR: Cannot drop entry "information_schema" because it is an internal system entry
 
 
 

@@ -49,8 +49,6 @@
 namespace irs {
 namespace {
 
-constexpr auto kStorageVersion = duckdb::StorageVersion::SERENEDB_V1;
-
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
                     const uint8_t* bytes, IndexOutput& out,
                     std::vector<ColumnBlockMeta>& sink) {
@@ -150,7 +148,10 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
   std::vector<duckdb::reference<const duckdb::CompressionFunction>> candidates =
     config.GetCompressionFunctions(codec_type.InternalType());
 
-  auto forced_method = forced;
+  auto forced_method =
+    forced != duckdb::CompressionType::COMPRESSION_AUTO
+      ? forced
+      : duckdb::Settings::Get<duckdb::ForceCompressionSetting>(config);
   if (forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     const bool available = std::ranges::any_of(
       candidates, [&](const auto& f) { return f.get().type == forced_method; });
@@ -165,7 +166,8 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
     }
   }
 
-  duckdb::CompressionAnalyzeContext actx{ctx, db, kStorageVersion};
+  duckdb::CompressionAnalyzeContext actx{
+    ctx, db, duckdb::StorageVersion::SERENEDB_LATEST};
   std::vector<duckdb::unique_ptr<duckdb::AnalyzeState>> states(
     candidates.size());
   for (size_t i = 0; i < candidates.size(); ++i) {
@@ -285,7 +287,7 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   duckdb::ColumnDataCheckpointData ckp{
     codec_type,
     db,
-    kStorageVersion,
+    duckdb::StorageVersion::SERENEDB_LATEST,
     overflow_writer,
     stream_writer,
     std::move(flush_fn),
@@ -527,7 +529,7 @@ void ColumnWriter::SealColumn(const duckdb::LogicalType& type,
     SealVariant(type, chunks, row_count, skip_validity, forced, meta);
     return;
   }
-  if (type.id() == duckdb::LogicalTypeId::STRUCT ||
+  if (duckdb::StructType::IsStruct(type) ||
       type.id() == duckdb::LogicalTypeId::UNION) {
     SealStruct(type, chunks, row_count, skip_validity, forced, meta);
     return;

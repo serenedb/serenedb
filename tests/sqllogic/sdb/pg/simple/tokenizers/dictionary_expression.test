@@ -476,7 +476,7 @@ CREATE TEXT SEARCH DICTIONARY <name> AS <analyzer> [WITH (frequency, position, n
 split_text(case := 'none', break := 'alpha')
   as a function: split_text(value, case := 'none', break := 'alpha')
   case   Text case conversion: none, lower, upper
-  break  Token boundary detection mode: all, graphic, alpha, sentence, line, paragraph
+  break  Token boundary detection mode: all, graphic, alpha, grapheme, sentence, line, paragraph
 
 generate_ngrams(min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')
   as a function: generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')
@@ -495,7 +495,7 @@ find_nearest_words(model_location := '', top_k := 1)
 
 stem_words(locale := '')
   as a function: stem_words(value, locale := '')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
 
 remove_stopwords(stopwords := [], stopwords_path := '', hex := false)
   as a function: remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)
@@ -511,7 +511,7 @@ classify_text(model_location := '', top_k := 1, threshold := 0)
 
 collate_tokens(locale := '')
   as a function: collate_tokens(value, locale := '')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
 
 split_text_csv(delimiter)
   as a function: split_text_csv(value, delimiter)
@@ -527,19 +527,20 @@ generate_wildcard_ngrams(<analyzer>, ngram_size := 3)
 
 normalize_tokens(locale := '', case := 'none', accent := true, form := 'nfc')
   as a function: normalize_tokens(value, locale := '', case := 'none', accent := true, form := 'nfc')
-  locale  ICU locale for case conversion; omit for locale-independent simple case
-  case    Text case conversion: none, lower, upper
+  locale  Locale for case conversion; omit for locale-independent simple case
+  case    Text case conversion: none, lower, upper, fold
   accent  Preserve accent marks
-  form    Unicode normalization form: nfc, nfkc
+  form    Unicode normalization form: nfc, nfd, nfkc, nfkd, nfkc_cf
 
 split_text_icu(locale, break := 'alpha')
   as a function: split_text_icu(value, locale, break := 'alpha')
-  locale  ICU locale string (e.g. en_US.UTF-8)
+  locale  Locale identifier (e.g. en_US.UTF-8)
   break   Token boundary detection mode: all, graphic, alpha, sentence
 
-split_by_non_alpha(case := 'none')
-  as a function: split_by_non_alpha(value, case := 'none')
-  case  Text case conversion: none, lower, upper
+split_by_non_alpha(case := 'none', break := 'ascii')
+  as a function: split_by_non_alpha(value, case := 'none', break := 'ascii')
+  case   Text case conversion: none, lower, upper
+  break  Token boundary mode: ascii, ascii_bytes, alnum, letters, whitespace
 
 <analyzer> | <analyzer>
   chain: each stage re-analyzes the tokens of the previous one
@@ -581,15 +582,13 @@ encode_geojson(type := 'shape', coding := 'source', max_cells := 20, min_level :
 
 keyword()
 
-generate_shingles(<analyzer>, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')
-  as a function: generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, store_tokens := true, frequent_words := [], filler_token := '', token_separator := ' ')
+generate_shingles(<analyzer>, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')
+  as a function: generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')
   min_gram           Minimum shingle (word n-gram) size (minimum 2)
   max_gram           Maximum shingle (word n-gram) size (>= min_gram)
   output_unigrams    Index individual tokens alongside the shingles
   fallback_unigrams  Index unigrams only when the input is too short to form a shingle
-  store_tokens       Persist the per-document token stream (verification source for phrases longer than max_gram). When false the index stores terms only
   frequent_words     Frequent words (typically stopwords): a list of strings, or a comma-separated string of double-quoted words. When non-empty, shingles of min_gram stay dense while wider sizes are indexed only for spans containing one of these words (adaptive width escalation)
-  filler_token       Token standing in for positions the base analyzer removed (e.g. stopwords) in the stored token stream; never indexed as a term. Default '_'
   token_separator    String written between the words of a shingle; an empty value concatenates them
 
 expand_solr_synonyms(synonyms)
@@ -600,10 +599,22 @@ expand_wordnet_synonyms(synonyms)
   as a function: expand_wordnet_synonyms(value, synonyms)
   synonyms  Inline WordNet Prolog database content: one `s(synset,w_num,'word',ss_type,sense_number,tag_count).` record per line
 
-generate_sparse_ngrams(max_ngram_length := 16, covering := false)
-  as a function: generate_sparse_ngrams(value, max_ngram_length := 16, covering := false)
-  max_ngram_length  Maximum emitted n-gram length (minimum 3)
-  covering          Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+generate_sparse_ngrams(max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)
+  as a function: generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)
+  max_ngram_length   Maximum emitted n-gram length (minimum 3)
+  covering           Emit the minimal covering n-gram chain (query side) instead of all sparse n-grams (index side)
+  min_ngram_length   Minimum n-gram length (minimum 3); boundaries are chosen over hashes of (min_ngram_length - 1)-character windows
+  min_cutoff_length  Drop n-grams shorter than this; 0 keeps every n-gram
+
+strip_html(join_inline_tags := false)
+  as a function: strip_html(value, join_inline_tags := false)
+  join_inline_tags  Keep a word whole across inline tags such as <b>, <i> and <span> instead of splitting the text at them
+
+filter_tokens(lambda x: <predicate>, min_length := 0, max_length := 0)
+  as a function: filter_tokens(value, min_length := 0, max_length := 0) or filter_tokens(value, lambda x: <predicate>)
+  predicate   Keep only the tokens for which this lambda returns true, as in lambda x: x NOT LIKE 'http%'
+  min_length  Drop tokens shorter than this many characters
+  max_length  Drop tokens longer than this many characters; 0 means no limit
 
 <function>(<arguments>)
   an SQL stage: the value is passed as the first argument, so lower() folds case and string_split(',') fans a value out into tokens
@@ -653,7 +664,7 @@ CREATE TEXT SEARCH DICTIONARY bad_no_input AS upper('x');
 ----
 db error: ERROR: sql: No function matches the given name and argument types 'upper(VARCHAR, STRING_LITERAL)'. You might need to add explicit type casts.
 	Candidate functions:
-	upper(col0 VARCHAR) -> VARCHAR
+	upper(string VARCHAR) -> VARCHAR
 
 
 # A name close to a template is reported as a template typo; a distant one is
@@ -710,6 +721,9 @@ CREATE TEXT SEARCH DICTIONARY bad_option AS split_text(cas := 'lower');
 
 statement error required option "delimiter" not given
 CREATE TEXT SEARCH DICTIONARY bad_required AS split_text_csv();
+
+statement error required parameter "delimiters" was not found
+CREATE TEXT SEARCH DICTIONARY repro_delims_null AS split_by_delimiters(NULL);
 
 statement error requires a nested analyzer as its first argument
 CREATE TEXT SEARCH DICTIONARY bad_shingle AS generate_shingles(2, 3);

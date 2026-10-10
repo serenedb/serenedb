@@ -1,0 +1,85 @@
+control substitution on
+
+statement ok
+CREATE DATABASE ckpt_discard;
+
+
+statement ok
+CREATE TABLE ckpt_discard.public.docs (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX docs_idx ON ckpt_discard.public.docs USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ckpt_discard.public.docs SELECT i, 'base' FROM range(0, 1000) r(i);
+
+
+statement ok
+CHECKPOINT ckpt_discard;
+
+
+connection reader
+statement ok
+BEGIN;
+
+
+connection reader
+query
+SELECT count(*) AS n FROM ckpt_discard.public.docs;
+----
+n
+1000
+
+
+connection default
+statement ok
+INSERT INTO ckpt_discard.public.docs VALUES (1000, 'base');
+
+
+statement ok
+SET debug_checkpoint_sleep_ms = 4000;
+
+
+statement ok
+SET sdb_faults = 'crash_after_index_checkpoint_prepare';
+
+
+connection checkpointer
+statement async error connection closed
+CHECKPOINT ckpt_discard;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT ckpt_discard%';
+----
+n
+1
+
+
+connection writer
+statement ok
+INSERT INTO ckpt_discard.public.docs SELECT i, 'during' FROM range(2000, 2100) r(i);
+
+
+connection checkpointer
+wait
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM ckpt_discard.public.docs;
+----
+n
+1101
+
+
+connection after_crash
+query
+SELECT (SELECT count(*) FROM ckpt_discard.public.docs_idx) AS docs, (SELECT count(*) FROM ckpt_discard.public.docs_idx WHERE body @@ 'during') AS during, (SELECT count(*) FROM ckpt_discard.public.docs_idx WHERE body @@ 'base') AS base;
+----
+docs	during	base
+1101	100	1001

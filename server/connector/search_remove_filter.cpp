@@ -29,10 +29,6 @@
 namespace sdb::connector {
 namespace {
 
-bool Masked(const irs::DocumentMask* segment_mask, irs::doc_id_t doc) noexcept {
-  return segment_mask != nullptr && segment_mask->contains(doc);
-}
-
 // A removal is asked for a document stream and for nothing else -- the index
 // writer drives `PlanLeadDocs` and applies its own accumulating mask to what
 // comes back. So this is the one plan it has; the other nine say that this
@@ -92,8 +88,8 @@ irs::QueryBuilder::ptr SearchRemoveFilter::PrepareSegment(
 
 irs::lead::Node::ptr SearchRemoveFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
-  _segment_mask = segment.docs_mask();
-  _pending_mask = pending;
+  _segment_mask = segment.MaskedDocs();
+  _pending_mask = irs::DocumentMask::Iterator{pending};
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _pos = 0;
@@ -136,8 +132,8 @@ irs::doc_id_t SearchRemoveFilter::Next() {
 
     auto doc = irs::doc_limits::eof();
     auto acceptor = [&](irs::doc_id_t found_doc) {
-      if (Masked(_segment_mask, found_doc) ||
-          Masked(_pending_mask, found_doc)) {
+      if (_segment_mask.Contains(found_doc) ||
+          _pending_mask.Contains(found_doc)) {
         return true;  // skip deleted, including by this batch's earlier queries
       }
       // found alive document with this PK
@@ -190,12 +186,14 @@ irs::QueryBuilder::ptr SearchRemovePrefixFilter::PrepareSegment(
 
 irs::lead::Node::ptr SearchRemovePrefixFilter::MakeLead(
   const irs::SubReader& segment, const irs::DocumentMask* pending) const {
-  _segment_mask = segment.docs_mask();
-  _pending_mask = pending;
+  _segment_mask = segment.MaskedDocs();
+  _pending_mask = irs::DocumentMask::Iterator{pending};
   _pk_field = segment.field(_pk_field_id);
   SDB_ASSERT(_pk_field);
   _terms.reset();
   _postings.reset();
+  _docs_at = 0;
+  _docs_size = 0;
   _pos = 0;
   _resume_row = std::numeric_limits<int64_t>::min();
   auto& self = const_cast<SearchRemovePrefixFilter&>(*this);
@@ -207,11 +205,15 @@ irs::doc_id_t SearchRemovePrefixFilter::Next() {
   while (true) {
     if (_postings) {
       while (true) {
-        const auto doc = _postings->Next();
-        if (irs::doc_limits::eof(doc)) {
-          break;
+        if (_docs_at == _docs_size) {
+          _docs_size = _postings->NextDocs(_docs.data(), nullptr);
+          _docs_at = 0;
+          if (_docs_size == 0) {
+            break;
+          }
         }
-        if (Masked(_segment_mask, doc) || Masked(_pending_mask, doc)) {
+        const auto doc = _docs[_docs_at++];
+        if (_segment_mask.Contains(doc) || _pending_mask.Contains(doc)) {
           continue;
         }
         return _doc = doc;

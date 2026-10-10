@@ -137,7 +137,7 @@ struct TsDictSpec {
 // A column a deferred conjunct references, by the scan column it resolved to
 // at plan time; its search info is resolved again at execution.
 struct DeferredColumn {
-  catalog::ColumnId column;
+  ColumnId column;
   bool column_stored = false;
 };
 

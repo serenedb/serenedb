@@ -113,7 +113,7 @@ inline connector::SearchColumnInfo MakeSearchColumnInfo(
   };
 }
 
-using BindingColumnId = absl::AnyInvocable<catalog::ColumnId(
+using BindingColumnId = absl::AnyInvocable<connector::ColumnId(
   const duckdb::BoundColumnRefExpression&) const>;
 
 struct SearchGetters {

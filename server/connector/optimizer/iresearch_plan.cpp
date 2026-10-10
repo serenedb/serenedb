@@ -479,7 +479,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
   };
 
   const BindingColumnId column_id =
-    [&](const duckdb::BoundColumnRefExpression& ref) -> catalog::ColumnId {
+    [&](const duckdb::BoundColumnRefExpression& ref) -> connector::ColumnId {
     return ResolveColumnId(ref.Binding(), bind_data, get);
   };
 
@@ -1288,7 +1288,6 @@ bool ClaimSearchConjuncts(
   auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
     getters;
   (void)column_id;
-  auto& scan = bind_data;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
@@ -1453,11 +1452,10 @@ duckdb::Value ShapeValue(const duckdb::LogicalType& type) {
     default:
       break;
   }
-  duckdb::Value out;
   for (const char* text : {"2000-01-01 00:00:00", "1"}) {
-    if (duckdb::Value{text}.DefaultTryCastAs(type, out, nullptr) &&
-        !out.IsNull()) {
-      return out;
+    if (auto out = duckdb::Value{text}.DefaultTryCastAs(type);
+        out && !out->IsNull()) {
+      return *out;
     }
   }
   return duckdb::Value{type};
@@ -1486,10 +1484,11 @@ bool IsPlainInteger(const duckdb::LogicalType& type) {
 
 const duckdb::BoundColumnRefExpression* CastOfIntegerColumn(
   const duckdb::Expression& expr) {
-  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CAST) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
     return nullptr;
   }
-  const auto& child = expr.Cast<duckdb::BoundCastExpression>().Child();
+  const auto& child = duckdb::BoundCastExpression::Child(
+    expr.Cast<duckdb::BoundFunctionExpression>());
   if (child.GetExpressionClass() != duckdb::ExpressionClass::BOUND_COLUMN_REF ||
       !IsPlainInteger(child.GetReturnType()) ||
       !IsPlainInteger(expr.GetReturnType())) {
@@ -1510,9 +1509,8 @@ duckdb::unique_ptr<duckdb::Expression> CompareIntegerColumn(
       with, col.Copy(),
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(constant)));
   };
-  duckdb::Value fitted;
-  if (value.DefaultTryCastAs(type, fitted, nullptr) && !fitted.IsNull()) {
-    return compare(op, std::move(fitted));
+  if (auto fitted = value.DefaultTryCastAs(type); fitted && !fitted->IsNull()) {
+    return compare(op, std::move(*fitted));
   }
   // Out of the column's range: above it when positive (every plain integer
   // type holds zero), below it otherwise.
@@ -1644,7 +1642,7 @@ duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
 
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
   duckdb::ClientContext& context, const connector::ScanBindData& scan,
-  catalog::ColumnId col_id, bool column_stored) {
+  connector::ColumnId col_id, bool column_stored) {
   auto type = scan.ColumnTypeById(col_id);
   if (type.id() == duckdb::LogicalTypeId::INVALID) {
     return std::nullopt;

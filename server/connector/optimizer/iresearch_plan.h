@@ -60,6 +60,6 @@ duckdb::unique_ptr<duckdb::Expression> NormalizeClaimShape(
 // the way the plan-time claim resolved it, for a deferred claim.
 std::optional<connector::SearchColumnInfo> ResolveSearchColumnById(
   duckdb::ClientContext& context, const connector::ScanBindData& scan,
-  catalog::ColumnId col_id, bool column_stored);
+  connector::ColumnId col_id, bool column_stored);
 
 }  // namespace sdb::optimizer

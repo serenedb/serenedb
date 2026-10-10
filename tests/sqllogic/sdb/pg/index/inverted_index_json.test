@@ -660,6 +660,37 @@ SELECT id FROM json_text_idx WHERE (content->'v') @@ ts_phrase('quick brown fox'
 id
 2
 
+statement ok
+CREATE TEXT SEARCH DICTIONARY en_text_nopos AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency);
+
+statement ok
+CREATE INDEX json_text_stored_idx ON json_text USING inverted(
+    id, (content->'v') en_text_nopos, (content->'v') included());
+
+statement ok
+VACUUM (REFRESH_TABLE) json_text;
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ websearch_to_tsquery('quick-brown');
+----
+id
+2
+
+statement error
+SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ ts_phrase('quick brown fox');
+----
+db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v')::BLOB @@ websearch_to_tsquery('quick-brown');
+----
+id
+2
+
 
 
 # --- Same expression listed twice with different tokenizers is rejected.

@@ -199,6 +199,17 @@ TEST(WildcardNGramFilterOptionsTest, equality_different_has_pos) {
   EXPECT_FALSE(a == b);
 }
 
+TEST(WildcardNGramFilterOptionsTest, equality_different_gram_size) {
+  irs::analysis::WildcardTokenizer trigrams{nullptr, 3};
+  irs::analysis::WildcardTokenizer pentagrams{nullptr, 5};
+
+  irs::ByWildcardNGramOptions a{"foo%bar", trigrams, true};
+  irs::ByWildcardNGramOptions b{"foo%bar", pentagrams, true};
+  ASSERT_EQ(a.pattern, b.pattern);
+  ASSERT_NE(a.query, b.query);
+  EXPECT_FALSE(a == b);
+}
+
 TEST(WildcardNGramFilterOptionsTest, one_null_matcher) {
   // One options has a matcher (because of '_'), the other doesn't
   // (pure prefix) -- they must not be equal.

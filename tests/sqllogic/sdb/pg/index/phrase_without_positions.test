@@ -1126,6 +1126,73 @@ id	h
 5	quick brown cat <b>brown fox</b>
 
 statement ok
+CREATE INDEX pwp_kw_idx ON pwp_docs USING inverted (id, body) INCLUDE (body)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pwp_stop AS split_text(case := 'lower') | remove_stopwords(['the']) WITH (frequency)
+
+statement ok
+CREATE INDEX pwp_stop_idx ON pwp_docs USING inverted (id, body pwp_stop)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_docs
+
+query
+SELECT id FROM pwp_kw_idx WHERE body @@ websearch_to_tsquery('"quick brown dog"') ORDER BY id
+----
+id
+2
+
+statement error
+SELECT id FROM pwp_kw_idx WHERE body @@ ts_phrase('quick', 'brown')
+----
+db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+
+
+query
+SELECT id FROM pwp_stop_idx WHERE body @@ to_tsquery('"the" OR lazy') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM pwp_stop_idx WHERE body @@ to_tsquery('"the"') ORDER BY id
+----
+id
+
+query
+SELECT id FROM pwp_pos_idx WHERE id @@ websearch_to_tsquery('3')
+----
+id
+3
+
+statement ok
+CREATE TABLE pwp_blobs (id INTEGER PRIMARY KEY, body BLOB)
+
+statement ok
+INSERT INTO pwp_blobs SELECT id, body::BLOB FROM pwp_docs
+
+statement ok
+CREATE INDEX pwp_blobs_idx ON pwp_blobs USING inverted (id, body pwp_words_pos)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_blobs
+
+query
+SELECT id FROM pwp_blobs_idx WHERE body @@ websearch_to_tsquery('quick-brown') ORDER BY id
+----
+id
+1
+2
+5
+7
+8
+
+statement ok
+DROP TABLE pwp_blobs
+
+statement ok
 CREATE TABLE pwp_search (id BIGINT PRIMARY KEY, body TEXT, tags TEXT[])
   WITH (storage='search', compaction_interval=0)
 
@@ -1343,6 +1410,142 @@ DROP TABLE pwp_search
 
 statement ok
 DROP TABLE pwp_docs
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pwp_stop
+
+statement ok
+CREATE TABLE pwp_empty (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX pwp_empty_idx ON pwp_empty USING inverted (id, body pwp_words) INCLUDE (body)
+
+query
+SELECT id FROM pwp_empty_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+
+statement ok
+INSERT INTO pwp_empty VALUES (1, 'quick brown fox'), (2, 'brown quick')
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_empty
+
+query
+SELECT id FROM pwp_empty_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+
+statement ok
+DROP TABLE pwp_empty
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pwp_cov_synonyms AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency)
+
+statement ok
+CREATE TABLE pwp_cov (id INTEGER PRIMARY KEY, body VARCHAR, val INTEGER)
+
+statement ok
+INSERT INTO pwp_cov VALUES
+    (1, 'a red car here', 10),
+    (2, 'red paint on a car', 20),
+    (3, 'the red automobile', 30),
+    (4, 'red auto car red car', 40)
+
+statement ok
+CREATE INDEX pwp_cov_idx ON pwp_cov USING inverted (id, body pwp_cov_synonyms) INCLUDE (body, val)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_cov
+
+query
+SELECT count(*) FROM pwp_cov_idx WHERE body @@ to_tsquery('"red aut*"~2') AND val >= 20
+----
+count
+2
+
+query
+SELECT id FROM pwp_cov_idx WHERE body @@ ts_phrase('red car') AND val = 30
+ORDER BY BM25(pwp_cov_idx.tableoid) DESC LIMIT 1
+----
+id
+3
+
+query
+SELECT id FROM pwp_cov_idx WHERE body @@ to_tsquery('"red aut*"~2') AND val = 30
+ORDER BY constant(pwp_cov_idx.tableoid, 2.0) DESC LIMIT 1
+----
+id
+3
+
+statement ok
+DROP TABLE pwp_cov
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pwp_cov_synonyms
+
+statement ok
+CREATE TABLE pwp_cov_arr (id INTEGER PRIMARY KEY, tags VARCHAR[2])
+
+statement ok
+INSERT INTO pwp_cov_arr VALUES
+    (1, ['quick brown fox', 'lazy dog']),
+    (2, ['brown quick', 'fox brown']),
+    (3, [NULL, 'a quick brown']),
+    (4, ['quick', 'fox']),
+    (5, NULL)
+
+statement ok
+CREATE INDEX pwp_cov_arr_idx ON pwp_cov_arr USING inverted (id, tags pwp_words) INCLUDE (tags)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_cov_arr
+
+query
+SELECT id FROM pwp_cov_arr_idx WHERE tags @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM pwp_cov_arr_idx
+WHERE tags @@ ts_phrase('quick brown') OR tags @@ ts_phrase('lazy dog') ORDER BY id
+----
+id
+1
+3
+
+statement ok
+DROP TABLE pwp_cov_arr
+
+statement ok
+CREATE TABLE pwp_cov_long (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+INSERT INTO pwp_cov_long VALUES
+    (1, 'quick brown ' || repeat('lorem ', 300)),
+    (2, repeat('lorem ', 300) || 'quick brown'),
+    (3, 'quick ' || repeat('lorem ', 300) || 'brown')
+
+statement ok
+CREATE INDEX pwp_cov_long_idx ON pwp_cov_long USING inverted (id, body pwp_words) INCLUDE (body)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_cov_long
+
+query
+SELECT id FROM pwp_cov_long_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+2
+
+statement ok
+DROP TABLE pwp_cov_long
 
 statement ok
 DROP TEXT SEARCH DICTIONARY pwp_words_pos

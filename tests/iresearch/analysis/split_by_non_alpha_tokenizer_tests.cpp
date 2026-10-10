@@ -134,6 +134,43 @@ Runs AlnumRuns(std::string_view v) {
   return out;
 }
 
+template<bool Wide>
+Runs PolledNonSpaceRuns(std::string_view v, size_t stop_at, size_t& polls) {
+  Runs out;
+  auto on_block = [](size_t, irs::analysis::classify::Block) {};
+  auto on_run = [&](size_t begin, size_t end) { out.emplace_back(begin, end); };
+  auto poll = [&] { return ++polls != stop_at; };
+  const auto* data = reinterpret_cast<const irs::byte_type*>(v.data());
+  if constexpr (Wide) {
+#if defined(__x86_64__)
+    irs::analysis::words::ForEachNonSpaceRunWide<false>(data, v.size(),
+                                                        on_block, on_run, poll);
+#endif
+  } else {
+    irs::analysis::words::ForEachNonSpaceRun<false>(data, v.size(), on_block,
+                                                    on_run, poll);
+  }
+  return out;
+}
+
+template<bool Wide, bool Letters>
+Runs PolledAlnumRuns(std::string_view v, size_t stop_at, size_t& polls) {
+  Runs out;
+  auto on_run = [&](size_t begin, size_t end) { out.emplace_back(begin, end); };
+  auto poll = [&] { return ++polls != stop_at; };
+  const auto* data = reinterpret_cast<const irs::byte_type*>(v.data());
+  if constexpr (Wide) {
+#if defined(__x86_64__)
+    irs::analysis::words::ForEachAlnumRunWide<Letters>(data, v.size(), on_run,
+                                                       poll);
+#endif
+  } else {
+    irs::analysis::words::ForEachAlnumRun<Letters>(data, v.size(), on_run,
+                                                   poll);
+  }
+  return out;
+}
+
 bool HasWideKernels() {
 #if defined(__x86_64__)
   return irs::analysis::classify::HasAvx512Bw();
@@ -975,4 +1012,51 @@ TEST(split_by_non_alpha_test, runs_oracle_all_sizes) {
       ASSERT_EQ(ReferenceRuns(v), SplitRuns(v));
     }
   }
+}
+
+TEST(split_by_non_alpha_test, polled_runs_stop_at_a_prefix) {
+  std::string value;
+  for (int i = 0; i != 400; ++i) {
+    value += "w\xC3\xA9rd ab12\xC2\xA0x_y, ";
+  }
+  const auto check = [&](auto full, auto polled) {
+    const Runs all = full();
+    size_t polls = 0;
+    EXPECT_EQ(polled(0, polls), all);
+    ASSERT_GT(polls, 3U);
+    for (const size_t stop_at : {size_t{1}, size_t{2}, polls / 2}) {
+      size_t calls = 0;
+      const Runs part = polled(stop_at, calls);
+      EXPECT_EQ(calls, stop_at);
+      ASSERT_LT(part.size(), all.size());
+      EXPECT_TRUE(std::equal(part.begin(), part.end(), all.begin()));
+    }
+  };
+  check([&] { return NonSpaceRuns<false>(value); },
+        [&](size_t stop_at, size_t& polls) {
+          return PolledNonSpaceRuns<false>(value, stop_at, polls);
+        });
+  check([&] { return AlnumRuns<false, false>(value); },
+        [&](size_t stop_at, size_t& polls) {
+          return PolledAlnumRuns<false, false>(value, stop_at, polls);
+        });
+  check([&] { return AlnumRuns<false, true>(value); },
+        [&](size_t stop_at, size_t& polls) {
+          return PolledAlnumRuns<false, true>(value, stop_at, polls);
+        });
+  if (!HasWideKernels()) {
+    return;
+  }
+  check([&] { return NonSpaceRuns<true>(value); },
+        [&](size_t stop_at, size_t& polls) {
+          return PolledNonSpaceRuns<true>(value, stop_at, polls);
+        });
+  check([&] { return AlnumRuns<true, false>(value); },
+        [&](size_t stop_at, size_t& polls) {
+          return PolledAlnumRuns<true, false>(value, stop_at, polls);
+        });
+  check([&] { return AlnumRuns<true, true>(value); },
+        [&](size_t stop_at, size_t& polls) {
+          return PolledAlnumRuns<true, true>(value, stop_at, polls);
+        });
 }

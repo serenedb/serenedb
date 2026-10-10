@@ -29,6 +29,7 @@
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/logical_operator.hpp>
 #include <duckdb/planner/operator/logical_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
@@ -40,6 +41,7 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
+#include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -67,6 +69,7 @@
 #include "connector/column_id.h"
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
+#include "connector/scan/deferred_check.h"
 #include "connector/search_filter_builder.hpp"
 #include "gtest/gtest.h"
 #include "query/config.h"
@@ -7465,6 +7468,24 @@ TEST_F(SearchFilterBuilderTest, test_TSQueryValue_SizeCapFallback) {
   AddTermFilter<std::string_view>(expected, 1, std::string_view{text});
   AssertFilter(expected, "SELECT * FROM foo WHERE b @@ " + SqlQuoted(text),
                columns, true);
+}
+
+TEST(DeferredCheckTest, wildcard_check_copies_and_compares) {
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  auto wildcard = std::make_unique<irs::ByWildcardNGram>();
+  *wildcard->mutable_field_id() = 2;
+  *wildcard->mutable_options() =
+    irs::ByWildcardNGramOptions{"foo%bar", analyzer, false};
+  wildcard->mutable_options()->store_field_id = 1;
+  ASSERT_NE(nullptr, wildcard->options().matcher);
+  irs::Filter::ptr filter = std::move(wildcard);
+  const irs::DirectoryReader reader;
+  const auto check = sdb::connector::DeferWildcard(
+    filter, {.reader = reader, .scorer = nullptr});
+  ASSERT_TRUE(check.has_value());
+  const auto& original = check->check->Cast<duckdb::ExpressionFilter>();
+  const auto copy = original.Copy();
+  EXPECT_TRUE(copy->Equals(original));
 }
 
 }  // namespace

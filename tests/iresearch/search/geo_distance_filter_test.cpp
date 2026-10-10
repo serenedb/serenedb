@@ -269,7 +269,12 @@ TEST(GeoDistanceFilterTest, plan_kinds) {
   options.range.max_type = BoundType::Inclusive;
   EXPECT_EQ(Kind::Empty, PlanGeo(options)->kind);
 
+  options.range.max = 0.;
+  options.range.max_type = BoundType::Exclusive;
+  EXPECT_EQ(Kind::Empty, PlanGeo(options)->kind);
+
   options.range.max = 1000.;
+  options.range.max_type = BoundType::Inclusive;
   const auto within = PlanGeo(options);
   EXPECT_EQ(Kind::Cells, within->kind);
   EXPECT_FALSE(within->terms.empty());

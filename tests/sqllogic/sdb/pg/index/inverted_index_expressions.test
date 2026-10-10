@@ -1650,6 +1650,71 @@ SELECT count(*) AS c FROM inc_e_read_idx WHERE lower(title) = lower('NEW YORK');
 c
 2
 
+query
+SELECT upper(s.l) AS u FROM (SELECT id, lower(title) AS l FROM inc_e_read_idx) s ORDER BY s.id;
+----
+u
+NEW YORK
+BERLIN
+NEWARK
+ABC
+NEW YORK
+
+query
+SELECT s.id, upper(t.title) AS u FROM inc_e_read_idx s JOIN inc_e_read t ON s.id = t.id ORDER BY s.id;
+----
+id	u
+1	NEW YORK
+2	BERLIN
+3	NEWARK
+4	ABC
+5	NEW YORK
+
+query
+SELECT s.id, lower(p.title) AS l FROM inc_e_read_idx s JOIN inc_e_read_plain p ON s.id = p.id ORDER BY s.id;
+----
+id	l
+1	new york
+2	berlin
+3	newark
+4	abc
+5	new york
+
+query
+SELECT tableoid::regclass::text AS r FROM inc_e_read_idx WHERE id = 1;
+----
+r
+inc_e_read
+
+statement ok
+PREPARE inc_e_read_by_title AS SELECT id FROM inc_e_read_idx WHERE lower(title) = $1 ORDER BY id;
+
+query
+EXECUTE inc_e_read_by_title('new york');
+----
+id
+1
+5
+
+statement ok
+DEALLOCATE inc_e_read_by_title;
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+query
+SELECT id, lower('ABC') AS k FROM inc_e_read_idx ORDER BY id;
+----
+id	k
+1	abc
+2	abc
+3	abc
+4	abc
+5	abc
+
+statement ok
+RESET disabled_optimizers;
+
 
 statement error
 CREATE INDEX inc_e_read_dup ON inc_e_read USING inverted(
@@ -1773,6 +1838,12 @@ QUERY PLAN
 │ ~1 row                            │
 ╰───────────────────────────────────╯
 
+query
+SELECT ts::TIMETZ AS t FROM inc_e_tz_idx;
+----
+t
+08:30:00+09
+
 statement ok
 RESET TimeZone;
 
@@ -1813,6 +1884,31 @@ id
 
 statement ok
 RESET bytea_output;
+
+query
+SELECT b::BIT AS bits FROM inc_e_bytea_idx;
+----
+bits
+011000010110001001100011
+
+statement ok
+CREATE TABLE inc_e_dict(id INT PRIMARY KEY, cat VARCHAR, title VARCHAR);
+
+statement ok
+CREATE INDEX inc_e_dict_idx ON inc_e_dict USING inverted(
+    id, cat verbatim_dict, (lower(title)) included());
+
+statement ok
+INSERT INTO inc_e_dict VALUES (1, 'red', 'New York'), (2, 'blue', 'Boston'), (3, 'red', 'NEWARK');
+
+statement ok
+VACUUM (REFRESH_TABLE) inc_e_dict;
+
+query
+SELECT min(cat) AS mn, max(cat) AS mx FROM inc_e_dict_idx;
+----
+mn	mx
+blue	red
 
 # --- Geo predicates on an indexed expression.
 

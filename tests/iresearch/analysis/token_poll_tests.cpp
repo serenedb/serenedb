@@ -103,6 +103,20 @@ class Collect final : public irs::TokenConsumer {
   uint32_t _taken = 0;
 };
 
+class FailOnMarker final : public irs::analysis::TypedTokenizer<FailOnMarker> {
+ public:
+  irs::TokenTraits Traits() const noexcept final { return {}; }
+
+  template<irs::TokenLayout Layout>
+  bool DoFill(const duckdb::string_t& raw, irs::TokenSink& sink) {
+    if (std::string_view{raw.GetData(), raw.GetSize()} == "FAIL") {
+      return false;
+    }
+    sink.Emit<Layout>(raw);
+    return true;
+  }
+};
+
 struct Run {
   std::optional<std::vector<Token>> tokens;
   size_t peeks = 0;
@@ -287,6 +301,19 @@ std::vector<Fixture> Fixtures() {
         return Pipeline(std::move(stages));
       },
       false);
+    out.emplace_back(
+      Name("expander_pipeline", {static_cast<int>(head)}),
+      [make = heads[head]] {
+        std::vector<TokenizerConfig> stages;
+        stages.emplace_back(make());
+        stages.emplace_back(NGramTokenizer::Options{
+          .min_gram = 2, .max_gram = 3, .preserve_original = false});
+        auto filters = Filters(1);
+        stages.insert(stages.end(), std::make_move_iterator(filters.begin()),
+                      std::make_move_iterator(filters.end()));
+        return Pipeline(std::move(stages));
+      },
+      false);
   }
   out.emplace_back(
     "sentence_pipeline",
@@ -340,6 +367,29 @@ std::vector<std::string> Corpus() {
       }
       out.emplace_back(std::move(value));
     }
+  }
+  const std::string_view ascii_words[] = {
+    "the",
+    "of",
+    "United",
+    "STATES",
+    "a",
+    "x1",
+    "42",
+    "can't",
+    "e-mail",
+    "ab12cd",
+    "Mixed",
+    "z",
+    "verylongwordthatcrossesblockboundaries"};
+  const std::string_view ascii_gaps[] = {" ", ", ", "  \t", ".", "!? ", "\n"};
+  for (size_t n : {200, 1500}) {
+    std::string value;
+    for (size_t i = 0; i != n; ++i) {
+      value += ascii_words[rng() % std::size(ascii_words)];
+      value += ascii_gaps[rng() % std::size(ascii_gaps)];
+    }
+    out.emplace_back(std::move(value));
   }
   return out;
 }
@@ -451,6 +501,72 @@ TEST(token_poll_test, cjk_scan_stops_early) {
     EXPECT_TRUE(std::equal(got.tokens->begin(), got.tokens->end(),
                            expected.tokens->begin()));
   }
+}
+
+TEST(token_poll_test, failed_scan_rejects_the_value) {
+  std::vector<Tokenizer::ptr> stages;
+  stages.emplace_back(std::make_unique<FailOnMarker>());
+  stages.emplace_back(CreateTokenizer(
+    TokenizerConfig{NormalizingTokenizer::Options{
+      .locale = duckdb::text::Locale::FromName("en"), .accent = false}},
+    tests::Cache()));
+  const auto pipeline = std::make_unique<PipelineTokenizer>(std::move(stages));
+  FailOnMarker front;
+  for (Tokenizer* tokenizer : {static_cast<Tokenizer*>(pipeline.get()),
+                               static_cast<Tokenizer*>(&front)}) {
+    EXPECT_FALSE(Scan(*tokenizer, "FAIL", 1).tokens);
+    const auto got = Scan(*tokenizer, "Word", 1);
+    ASSERT_TRUE(got.tokens);
+    EXPECT_EQ(*got.tokens, *Fill(*tokenizer, "Word").tokens);
+    EXPECT_FALSE(Scan(*tokenizer, "FAIL", 1).tokens);
+  }
+}
+
+TEST(token_poll_test, scan_rebinds_a_sink_bound_for_another_fill) {
+  auto stages = Filters(1);
+  stages.insert(
+    stages.begin(),
+    Split(SplitByNonAlphaTokenizer::Options::Chars::Ascii, irs::Case::Lower));
+  const auto pipeline = Pipeline(std::move(stages));
+  const std::string value =
+    Repeat("Quick Brown Foxes jumped over lazy dogs. ", 40);
+  const auto filled = Fill(*pipeline, value);
+  ASSERT_TRUE(filled.tokens);
+  std::vector<std::string> expected;
+  for (const auto& token : *filled.tokens) {
+    expected.emplace_back(token.term);
+  }
+
+  std::vector<std::string> terms;
+  tests::FnTokenSink sink{
+    irs::TokenLayout::TermsPos, [&](irs::TokenBatch& batch, irs::DocRuns) {
+      for (uint32_t i = 0; i != batch.count; ++i) {
+        terms.emplace_back(batch.terms[i].GetData(), batch.terms[i].GetSize());
+      }
+    }};
+  struct Continue {
+    bool Peek(irs::TokenBatch&) { return true; }
+  } consumer;
+  const auto scan = [&] {
+    terms.clear();
+    irs::TokenPoll poll{sink.writer, consumer};
+    EXPECT_TRUE(pipeline->Scan(tests::ToStringT(value), sink.writer, poll, {}));
+    sink.writer.Finish();
+    return terms;
+  };
+
+  ASSERT_TRUE(pipeline->Fill(tests::ToStringT(value), sink.writer,
+                             {.layout = irs::TokenLayout::Terms}));
+  sink.writer.Finish();
+  EXPECT_EQ(scan(), expected);
+
+  const duckdb::string_t column[] = {tests::ToStringT(value)};
+  tests::FillColumn(*pipeline, column, irs::doc_limits::min(), sink.writer,
+                    irs::TokenLayout::TermsPos);
+  sink.writer.Finish();
+  EXPECT_EQ(scan(), expected);
+
+  EXPECT_EQ(scan(), expected);
 }
 
 }  // namespace

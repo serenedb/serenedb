@@ -366,10 +366,6 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropDatabase(transaction, info);
-  auto& context = transaction.GetContext();
-  duckdb::DatabaseManager::Get(context).DetachDatabase(
-    context, info.GetQualifiedName().Name(),
-    duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context) {

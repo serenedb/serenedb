@@ -124,6 +124,65 @@ pk
 111
 
 statement ok
+CREATE TABLE axn (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX axn_idx ON axn
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'));
+
+statement ok
+CREATE TABLE axr (pk INTEGER PRIMARY KEY, emb FLOAT[4]);
+
+statement ok
+CREATE INDEX axr_idx ON axr
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO axn
+  SELECT i, [i, 1, 2, 3]::FLOAT[4] FROM range(0, 50, 5) t(i)
+  UNION ALL SELECT i, NULL::FLOAT[4] FROM range(50) t(i) WHERE i % 5 <> 0
+  ORDER BY 1;
+
+statement ok
+INSERT INTO axr SELECT * FROM axn;
+
+statement ok
+VACUUM (REFRESH_TABLE) axn;
+
+statement ok
+VACUUM (REFRESH_TABLE) axr;
+
+query
+SELECT pk FROM axn_idx ORDER BY emb <-> [0, 1, 2, 3]::FLOAT[4] LIMIT 20;
+----
+pk
+0
+5
+10
+15
+20
+25
+30
+35
+40
+45
+
+query
+SELECT pk FROM axr_idx ORDER BY emb <-> [0, 1, 2, 3]::FLOAT[4] LIMIT 20;
+----
+pk
+0
+5
+10
+15
+20
+25
+30
+35
+40
+45
+
+statement ok
 RESET sdb_ann_force_exact;
 
 statement error invalid value for parameter "sdb_ann_oversample"

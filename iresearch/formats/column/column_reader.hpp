@@ -271,6 +271,8 @@ class ColumnReader {
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset);
 
+    bool ValidRow(uint64_t row, duckdb::Vector& scratch);
+
    protected:
     struct OpenBlock {
       std::unique_ptr<duckdb::ColumnSegment> segment;

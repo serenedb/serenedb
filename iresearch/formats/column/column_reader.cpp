@@ -816,4 +816,21 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
+bool ColumnReader::PointReader::ValidRow(uint64_t row,
+                                         duckdb::Vector& scratch) {
+  if (row >= _reader->RowCount()) {
+    return false;
+  }
+  const auto* validity = _reader->_validity.get();
+  if (!validity) {
+    return true;
+  }
+  duckdb::FlatVector::ValidityMutable(scratch).SetValid(0);
+  auto& block = Block(_validity_blocks, *validity, _validity_window, row);
+  block.segment->FetchRow(
+    block.state, static_cast<duckdb::row_t>(row - _validity_window.begin),
+    scratch, 0);
+  return duckdb::FlatVector::Validity(scratch).RowIsValid(0);
+}
+
 }  // namespace irs

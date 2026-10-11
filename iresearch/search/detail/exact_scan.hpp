@@ -55,6 +55,10 @@ class ExactScanner {
         _set.emplace(std::move(node), rows, fill::DocsMask{nullptr});
       }
     }
+    if (const auto& column = query.Column();
+        column.HasValidity() && column.MergedStatistics().CanHaveNull()) {
+      _validity.emplace(query.Columns(), column);
+    }
   }
 
   // The window the following runs answer for, as the root is given it: `max`
@@ -67,6 +71,47 @@ class ExactScanner {
   // The next run of docs and their distances ("larger = nearer"); 0 at the
   // end of the window.
   uint32_t Next(doc_id_t* docs, score_t* dists) {
+    const auto n = NextDocs(docs);
+    if (n != 0) {
+      Distances({docs, n}, dists);
+    }
+    return n;
+  }
+
+  uint32_t NextDocs(doc_id_t* docs) {
+    for (;;) {
+      auto n = Collect(docs);
+      if (n == 0 || !_validity) {
+        return n;
+      }
+      uint32_t kept = 0;
+      for (uint32_t i = 0; i < n; ++i) {
+        if (_validity->reader.ValidRow(
+              static_cast<uint64_t>(docs[i]) - doc_limits::min(),
+              _validity->scratch)) {
+          docs[kept++] = docs[i];
+        }
+      }
+      if (kept != 0) {
+        return kept;
+      }
+    }
+  }
+
+  void Distances(std::span<const doc_id_t> docs, score_t* dists) {
+    _reader.ComputeDistances(docs, {dists, docs.size()});
+  }
+
+ private:
+  struct Validity {
+    Validity(const ColReader& columns, const ColumnReader& column)
+      : reader{columns, column} {}
+
+    ColumnReader::PointReader reader;
+    duckdb::Vector scratch{duckdb::LogicalType::BOOLEAN, 1};
+  };
+
+  uint32_t Collect(doc_id_t* docs) {
     uint32_t n = 0;
     if (_set) {
       for (auto doc = _set->Probe(_doc);
@@ -80,15 +125,12 @@ class ExactScanner {
         docs[n++] = _doc;
       }
     }
-    if (n != 0) {
-      _reader.ComputeDistances({docs, n}, {dists, n});
-    }
     return n;
   }
 
- private:
   RawVectorReader _reader;
   std::optional<LazyBitset> _set;
+  std::optional<Validity> _validity;
   doc_id_t _doc;
   doc_id_t _end;
   doc_id_t _last;

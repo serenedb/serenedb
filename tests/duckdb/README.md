@@ -188,6 +188,8 @@ A suite with a `config/<suite>.json` runs with it as DuckDB's `--test-config`,
 listing the tests we skip and why. Everything not on that list is a live regression gate on
 the fork -- if a test starts failing, the fork broke it.
 
+A sanitizer or Debug build (`SDB_SANITIZE` set, or `CMAKE_BUILD_TYPE=Debug`) also runs with [config/slow_build.json](config/slow_build.json). It sets `TEST_MAX_EXECUTION_TIME`, the limit of the tests that stop a runaway query with `SET max_execution_time={TEST_MAX_EXECUTION_TIME}` (declared with `test-env` and its normal default), to 300 seconds.
+
 The skips fall into a few kinds, and the `reason` on every entry says which:
 
 - **Deliberate SereneDB behaviour.** `LOAD`/`INSTALL` are unsupported (extensions

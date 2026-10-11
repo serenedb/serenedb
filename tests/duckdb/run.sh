@@ -497,6 +497,9 @@ done
 
 log="$REPORTS_DIR/duckdb.log"
 args=(--test-dir "${SUITE_DIR[core]}")
+if grep -qsE '^(SDB_SANITIZE:STRING=.+|CMAKE_BUILD_TYPE:STRING=Debug)$' "$WORKSPACE/$BUILD_DIR/CMakeCache.txt"; then
+	args+=(--test-config "$SCRIPT_DIR/config/slow_build.json")
+fi
 filters=()
 serial_filters=()
 for suite in $unittest_suites; do

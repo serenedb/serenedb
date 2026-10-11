@@ -216,18 +216,30 @@ elseif(SDB_USE_PGO)
 endif()
 
 if(USE_COVERAGE STREQUAL "SourceBased")
-    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
-    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_compile_options(
+        -fprofile-instr-generate
+        -fcoverage-mapping
+        -fprofile-update=atomic
+        -Wno-pass-failed
+    )
+    add_link_options(
+        -fprofile-instr-generate
+        -fcoverage-mapping
+        -fprofile-update=atomic
+    )
 elseif(USE_COVERAGE STREQUAL "SourceBasedMCDC")
     add_compile_options(
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
+        -fprofile-update=atomic
+        -Wno-pass-failed
     )
     add_link_options(
         -fprofile-instr-generate
         -fcoverage-mapping
         -fcoverage-mcdc
+        -fprofile-update=atomic
     )
 elseif(USE_COVERAGE STREQUAL "GCOV")
     add_compile_options(--coverage)

@@ -324,6 +324,8 @@ Blobs stored in catalog entries (tokenizer configs, the inverted index payload) 
 
 A commit logs each search table it changed into its database's write-ahead log, inside the same commit as the rest of the transaction: `USE_TABLE` with the table's oid and the commit's `tick`, then the changes in the order they were made. `ADOPT_SEGMENTS` names the meta files of segments flushed and fsynced before the commit, `INSERT_TUPLE` carries the rows still buffered and, in its `row_start` field (id 16486), the generated key of its first row, one `DELETE_TUPLE` per removing statement carries the generated keys it removed, and `TRUNCATE_TABLE` empties the table. Replay applies a table's entries only when their `tick` is above the one its last refresh made durable, and a checkpoint refreshes every search table before it drops the log.
 
+A transaction whose buffered rows for a table exceed 4 MiB at commit writes them as a segment before the commit instead of inline, so `ADOPT_SEGMENTS` carries them. The entries after `USE_TABLE` are serialized before the commit takes DuckDB's commit lock, straight into one buffer (`WALEntryBuffer`); under the lock the commit only reserves the `tick`, writes `USE_TABLE` and appends that buffer (`WriteAheadLog::WriteEntries`).
+
 An autocommit `TRUNCATE` that clears the index holds the database's shared checkpoint lock from before its entry is written until the index is cleared, because nothing else makes a checkpoint's refresh wait for the clear: without it, a checkpoint could drop the entry first and a crash would bring the rows back.
 
 ## VSCode Setup

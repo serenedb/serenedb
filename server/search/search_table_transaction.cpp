@@ -48,6 +48,16 @@
 namespace sdb::search {
 namespace {
 
+constexpr uint64_t kWalInlineMaxBytes = uint64_t{4} << 20;
+
+uint64_t SerializedSizeHint(const LocalTableChangesEntry& changes) {
+  uint64_t size = changes.BufferedBytes();
+  for (const auto& op : changes.ops) {
+    size += op.delete_rows.size() * sizeof(int64_t);
+  }
+  return size;
+}
+
 // Width of this shard's iresearch tick band: sum-over-trxs(GetQueries()+1), so
 // each trx gets a tick strictly above its predecessor (iresearch's <= removal
 // rule). Pure inserts have GetQueries()==0 -> one tick per trx.
@@ -91,7 +101,35 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
  public:
   SearchTableLogWriter(SearchShardWrites& writes,
                        LocalTableChangesEntry& changes)
-    : _writes{writes}, _changes{changes} {
+    : _writes{writes},
+      _changes{changes},
+      _entries{writes.table->catalog.GetAttached(),
+               SerializedSizeHint(changes)} {
+    if (!_changes.segments.empty()) {
+      // Everything promoted sits ahead of what is left inline: a removal in
+      // this record names rows committed before the transaction, never these.
+      _entries.WriteAdoptSegments(duckdb::vector<std::string>(
+        _changes.segments.begin(), _changes.segments.end()));
+    }
+    _changes.Visit(
+      0,
+      [&](duckdb::DataChunk& rows, uint64_t pk_base) {
+        _entries.WriteInsert(rows, pk_base);
+      },
+      [&](LocalTableChangesEntry::Op& op) {
+        if (op.IsTruncate()) {
+          _entries.WriteTruncateTable();
+          return;
+        }
+        duckdb::DataChunk rows;
+        rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
+        rows.data[0].Reference(duckdb::Vector(
+          duckdb::LogicalType::ROW_TYPE,
+          duckdb::data_ptr_cast(op.delete_rows.data()), op.delete_rows.size()));
+        rows.SetChildCardinality(op.delete_rows.size());
+        _entries.WriteDelete(rows);
+      });
+    _changes.ClearBufferedRows();
     if (_changes.ClearsShard()) {
       _checkpoint_lock =
         duckdb::DuckTransactionManager::Get(writes.table->catalog.GetAttached())
@@ -108,30 +146,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
     _tick = TickDomain::Instance().Next(ShardTickSpan(_writes) +
                                         (_changes.ClearsShard() ? 1 : 0));
     wal.WriteSetTable(*_writes.table, _tick);
-    if (!_changes.segments.empty()) {
-      // Everything promoted sits ahead of what is left inline: a removal in
-      // this record names rows committed before the transaction, never these.
-      wal.WriteAdoptSegments(duckdb::vector<std::string>(
-        _changes.segments.begin(), _changes.segments.end()));
-    }
-    _changes.Visit(
-      0,
-      [&](duckdb::DataChunk& rows, uint64_t pk_base) {
-        wal.WriteInsert(rows, pk_base);
-      },
-      [&](LocalTableChangesEntry::Op& op) {
-        if (op.IsTruncate()) {
-          wal.WriteTruncateTable();
-          return;
-        }
-        duckdb::DataChunk rows;
-        rows.InitializeEmpty({duckdb::LogicalType::ROW_TYPE});
-        rows.data[0].Reference(duckdb::Vector(
-          duckdb::LogicalType::ROW_TYPE,
-          duckdb::data_ptr_cast(op.delete_rows.data()), op.delete_rows.size()));
-        rows.SetChildCardinality(op.delete_rows.size());
-        wal.WriteDelete(rows);
-      });
+    wal.WriteEntries(_entries);
   }
 
   void OnDurable() noexcept final {
@@ -178,6 +193,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
  private:
   SearchShardWrites& _writes;
   LocalTableChangesEntry& _changes;
+  duckdb::WALEntryBuffer _entries;
   duckdb::unique_ptr<duckdb::StorageLockKey> _checkpoint_lock;
   uint64_t _tick = 0;
 };
@@ -375,6 +391,10 @@ void SearchTableTransaction::FlushPending(duckdb::ClientContext& context) {
       // segments the record names, so nothing is left to carry inline.
       ReplayBuffer(*w.shard, entry, *w.buffer_trx, context);
       entry.ClearBufferedRows();
+      continue;
+    }
+    if (entry.BufferedBytes() > kWalInlineMaxBytes) {
+      FlushBuffer(w.shard, context);
       continue;
     }
     // Never overran: a pooled transaction keeps the freelist coalescing that

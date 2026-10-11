@@ -1,4 +1,6 @@
 //! Spec loader mirrors tests/drivers/harness/spec_loader.py.
+pub mod target;
+
 use serde::Deserialize;
 use std::env;
 use std::path::PathBuf;

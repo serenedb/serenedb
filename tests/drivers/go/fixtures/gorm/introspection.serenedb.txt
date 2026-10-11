@@ -1,0 +1,44 @@
+tables [companies employee_languages employees languages profiles]
+table companies exists true
+  column id int8 (bigint) pk true auto false length 64/true decimal 64,0/true nullable false unique false default "nextval('companies_id_seq')"/true comment "" scan int64
+  column name text (text) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable true unique false default ""/false comment "" scan string
+  column founded timestamptz (timestamp with time zone) pk false auto false length 64/true decimal 6,0/true nullable true unique false default ""/false comment "" scan time.Time
+  column budget numeric (numeric(12,2)) pk false auto false length 0/false decimal 12,2/true nullable true unique false default "0"/true comment "" scan float64
+  index idx_companies_name [name] pk false unique true option ""
+table employees exists true
+  column id int8 (bigint) pk true auto false length 64/true decimal 64,0/true nullable false unique false default "nextval('employees_id_seq')"/true comment "" scan int64
+  column company_id int8 (bigint) pk false auto false length 64/true decimal 64,0/true nullable true unique false default ""/false comment "" scan int64
+  column name text (text) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable false unique false default ""/false comment "" scan string
+  column email text (text) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable true unique false default ""/false comment "" scan string
+  column salary numeric (numeric(10,2)) pk false auto false length 0/false decimal 10,2/true nullable true unique false default ""/false comment "" scan float64
+  column active bool (boolean) pk false auto false length 8/true decimal 0,0/false nullable true unique false default "true"/true comment "" scan bool
+  column birth_date date (date) pk false auto false length 32/true decimal 0,0/true nullable true unique false default ""/false comment "" scan time.Time
+  column photo bytea (bytea) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable true unique false default ""/false comment "" scan []uint8
+  column level int2 (smallint) pk false auto false length 16/true decimal 16,0/true nullable true unique false default ""/false comment "" scan int16
+  column created_at timestamptz (timestamp with time zone) pk false auto false length 64/true decimal 6,0/true nullable true unique false default ""/false comment "" scan time.Time
+  column updated_at timestamptz (timestamp with time zone) pk false auto false length 64/true decimal 6,0/true nullable true unique false default ""/false comment "" scan time.Time
+  column deleted_at timestamptz (timestamp with time zone) pk false auto false length 64/true decimal 6,0/true nullable true unique false default ""/false comment "" scan time.Time
+  index idx_employee_email [email] pk false unique true option ""
+  index idx_employees_company_id [company_id] pk false unique false option ""
+  index idx_employees_deleted_at [deleted_at] pk false unique false option ""
+table languages exists true
+  column id int8 (bigint) pk true auto false length 64/true decimal 64,0/true nullable false unique false default "nextval('languages_id_seq')"/true comment "" scan int64
+  column code text (text) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable true unique false default ""/false comment "" scan string
+  index idx_languages_code [code] pk false unique true option ""
+table profiles exists true
+  column id int8 (bigint) pk true auto false length 64/true decimal 64,0/true nullable false unique false default "nextval('profiles_id_seq')"/true comment "" scan int64
+  column employee_id int8 (bigint) pk false auto false length 64/true decimal 64,0/true nullable true unique false default ""/false comment "" scan int64
+  column bio text (text) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable true unique false default ""/false comment "" scan string
+  column settings text (text) pk false auto false length 9223372036854775807/true decimal 0,0/false nullable true unique false default ""/false comment "user settings" scan string
+  index idx_profiles_employee_id [employee_id] pk false unique true option ""
+table employee_languages exists true
+  column employee_id int8 (bigint) pk true auto false length 64/true decimal 64,0/true nullable false unique false default ""/false comment "" scan int64
+  column language_id int8 (bigint) pk true auto false length 64/true decimal 64,0/true nullable false unique false default ""/false comment "" scan int64
+constraint *drivers.Employee fk_companies_employees true
+constraint *drivers.Employee level_non_negative true
+constraint *drivers.Employee Company false
+constraint *drivers.Profile fk_employees_profile true
+constraint *drivers.Language idx_languages_code false
+index idx_employee_email true
+column employees.email true
+type aliases [integer]

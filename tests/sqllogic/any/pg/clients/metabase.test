@@ -1,0 +1,484 @@
+statement ok
+DROP ROLE IF EXISTS cq_metabase_reader
+
+
+statement ok
+CREATE ROLE cq_metabase_reader
+
+
+statement ok
+CREATE SCHEMA shop
+
+
+statement ok
+CREATE TYPE shop.mood AS ENUM ('sad', 'ok', 'happy')
+
+
+statement ok
+CREATE SEQUENCE shop.ticket_seq START 100 INCREMENT 5
+
+
+statement ok
+CREATE TABLE shop.customers (
+  id serial PRIMARY KEY,
+  email varchar(100) NOT NULL UNIQUE,
+  name text NOT NULL,
+  active boolean DEFAULT true,
+  mood shop.mood DEFAULT 'ok',
+  created timestamptz DEFAULT now()
+)
+
+
+statement ok
+CREATE TABLE shop.orders (
+  id bigserial PRIMARY KEY,
+  customer_id integer NOT NULL REFERENCES shop.customers (id),
+  amount numeric(10,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  status varchar(20) DEFAULT 'new',
+  note text,
+  ticket bigint DEFAULT nextval('shop.ticket_seq'),
+  CONSTRAINT orders_status_check CHECK (status IN ('new', 'paid', 'shipped'))
+)
+
+
+statement ok
+CREATE TABLE shop.order_items (
+  order_id bigint REFERENCES shop.orders (id),
+  line integer,
+  sku varchar(30) NOT NULL,
+  qty integer NOT NULL CHECK (qty > 0),
+  price numeric(12,4),
+  PRIMARY KEY (order_id, line)
+)
+
+
+statement ok
+CREATE INDEX orders_customer_idx ON shop.orders (customer_id)
+
+
+statement ok
+CREATE UNIQUE INDEX customers_name_email_idx ON shop.customers (name, email)
+
+
+statement ok
+CREATE VIEW shop.order_totals AS SELECT o.customer_id, sum(o.amount) AS total, count(*) AS n FROM shop.orders o GROUP BY o.customer_id
+
+
+statement ok
+CREATE FUNCTION shop.add_one(i integer) RETURNS integer LANGUAGE sql AS $$ SELECT i + 1 $$
+
+
+skipif serenedb
+statement ok
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+onlyif serenedb
+statement error Adding\ comments\ to\ schemas\ is\ not\ implemented
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+statement ok
+COMMENT ON TABLE shop.customers IS 'Customer master'
+
+
+statement ok
+COMMENT ON COLUMN shop.customers.email IS 'Login email'
+
+
+statement ok
+COMMENT ON VIEW shop.order_totals IS 'Totals per customer'
+
+
+statement ok
+COMMENT ON FUNCTION shop.add_one IS 'Adds one'
+
+
+statement ok
+COMMENT ON INDEX shop.orders_customer_idx IS 'Orders by customer'
+
+
+statement ok
+COMMENT ON SEQUENCE shop.ticket_seq IS 'Ticket numbers'
+
+
+statement ok
+COMMENT ON TYPE shop.mood IS 'Mood enum'
+
+
+skipif serenedb
+statement ok
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+onlyif serenedb
+statement error syntax\ error\ at\ or\ near\ "CONSTRAINT"
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+statement ok
+GRANT USAGE ON SCHEMA shop TO cq_metabase_reader
+
+
+statement ok
+GRANT SELECT ON shop.customers TO cq_metabase_reader
+
+
+statement ok
+GRANT SELECT, INSERT ON shop.orders TO cq_metabase_reader
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION shop.add_one(integer) TO cq_metabase_reader
+
+
+statement ok
+INSERT INTO shop.customers (email, name) VALUES ('a@x', 'Ann'), ('b@x', 'Bob')
+
+
+statement ok
+INSERT INTO shop.orders (customer_id, amount, status) VALUES (1, 10.5, 'paid'), (1, 3, 'new'), (2, 7.25, 'shipped')
+
+
+statement ok
+INSERT INTO shop.order_items VALUES (1, 1, 'SKU-1', 2, 5.25), (1, 2, 'SKU-2', 1, 0)
+
+
+query
+SELECT nspname, typname FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE t.oid IN (SELECT DISTINCT enumtypid FROM pg_enum e)
+----
+nspname	typname
+shop	mood
+
+
+query
+SELECT schema, name, type, description, estimated_row_count IS NULL OR estimated_row_count > 0 AS row_count_ok
+FROM (SELECT "n"."nspname" AS "schema", "c"."relname" AS "name", CASE "c"."relkind" WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'PARTITIONED TABLE' WHEN 'v' THEN 'VIEW' WHEN 'f' THEN 'FOREIGN TABLE' WHEN 'm' THEN 'MATERIALIZED VIEW' ELSE NULL END AS "type", "d"."description" AS "description", NULLIF("stat"."n_live_tup", 0) AS "estimated_row_count" FROM "pg_catalog"."pg_class" AS "c" INNER JOIN "pg_catalog"."pg_namespace" AS "n" ON "c"."relnamespace" = "n"."oid" LEFT JOIN "pg_catalog"."pg_description" AS "d" ON ("c"."oid" = "d"."objoid") AND ("d"."objsubid" = 0) AND ("d"."classoid" = 'pg_class'::regclass) LEFT JOIN "pg_stat_user_tables" AS "stat" ON ("n"."nspname" = "stat"."schemaname") AND ("c"."relname" = "stat"."relname") WHERE ("c"."relnamespace" = "n"."oid") AND ("n"."nspname" !~ '^pg_') AND ("n"."nspname" <> 'information_schema') AND c.relkind in ('r', 'p', 'v', 'f', 'm') AND ("n"."nspname" IN ('shop')) ORDER BY "type" ASC, "schema" ASC, "name" ASC) q
+ORDER BY type::text COLLATE "C", name::text COLLATE "C"
+----
+schema	name	type	description	row_count_ok
+shop	customers	TABLE	Customer master	t
+shop	order_items	TABLE	NULL	t
+shop	orders	TABLE	NULL	t
+shop	order_totals	VIEW	Totals per customer	t
+
+
+query
+SELECT schema, name, type, description
+FROM (SELECT "n"."nspname" AS "schema", "c"."relname" AS "name", CASE "c"."relkind" WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'PARTITIONED TABLE' WHEN 'v' THEN 'VIEW' WHEN 'f' THEN 'FOREIGN TABLE' WHEN 'm' THEN 'MATERIALIZED VIEW' ELSE NULL END AS "type", "d"."description" AS "description", NULLIF("stat"."n_live_tup", 0) AS "estimated_row_count" FROM "pg_catalog"."pg_class" AS "c" INNER JOIN "pg_catalog"."pg_namespace" AS "n" ON "c"."relnamespace" = "n"."oid" LEFT JOIN "pg_catalog"."pg_description" AS "d" ON ("c"."oid" = "d"."objoid") AND ("d"."objsubid" = 0) AND ("d"."classoid" = 'pg_class'::regclass) LEFT JOIN "pg_stat_user_tables" AS "stat" ON ("n"."nspname" = "stat"."schemaname") AND ("c"."relname" = "stat"."relname") WHERE ("c"."relnamespace" = "n"."oid") AND ("n"."nspname" !~ '^pg_') AND ("n"."nspname" <> 'information_schema') AND c.relkind in ('r', 'p', 'v', 'f', 'm') AND ("n"."nspname" IN ('shop')) AND ("c"."relname" IN ('orders')) ORDER BY "type" ASC, "schema" ASC, "name" ASC) q
+----
+schema	name	type	description
+shop	orders	TABLE	NULL
+
+
+skipif serenedb
+query
+SELECT "name", "database-type", "database-position", "table-schema", "table-name", "pk?", "field-comment", "database-required", "database-default", "database-is-auto-increment", "database-is-generated", "database-is-nullable"
+FROM (SELECT "c"."column_name" AS "name", CASE WHEN "c"."udt_schema" IN ('public', 'pg_catalog') THEN FORMAT('%s', "c"."udt_name") ELSE FORMAT('"%s"."%s"', "c"."udt_schema", "c"."udt_name") END AS "database-type", "c"."ordinal_position" - 1 AS "database-position", "c"."table_schema" AS "table-schema", "c"."table_name" AS "table-name", "pk"."column_name" IS NOT NULL AS "pk?", COL_DESCRIPTION(CAST(CAST(FORMAT('%I.%I', CAST("c"."table_schema" AS TEXT), CAST("c"."table_name" AS TEXT)) AS REGCLASS) AS OID), "c"."ordinal_position") AS "field-comment", (("column_default" IS NULL) OR (LOWER("column_default") = 'null')) AND ("is_nullable" = 'NO') AND NOT ((("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO')) AS "database-required", "column_default" AS "database-default", (("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO') AS "database-is-auto-increment", "is_generated" = 'ALWAYS' AS "database-is-generated", "is_nullable" = 'YES' AS "database-is-nullable" FROM "information_schema"."columns" AS "c" LEFT JOIN (SELECT "tc"."table_schema", "tc"."table_name", "kc"."column_name" FROM "information_schema"."table_constraints" AS "tc" INNER JOIN "information_schema"."key_column_usage" AS "kc" ON ("tc"."constraint_name" = "kc"."constraint_name") AND ("tc"."table_schema" = "kc"."table_schema") AND ("tc"."table_name" = "kc"."table_name") WHERE "tc"."constraint_type" = 'PRIMARY KEY') AS "pk" ON ("c"."table_schema" = "pk"."table_schema") AND ("c"."table_name" = "pk"."table_name") AND ("c"."column_name" = "pk"."column_name") WHERE c.table_schema !~ '^information_schema|catalog_history|pg_' AND ("c"."table_schema" IN ('shop')) UNION ALL SELECT "pa"."attname" AS "name", CASE WHEN "ptn"."nspname" IN ('public', 'pg_catalog') THEN FORMAT('%s', "pt"."typname") ELSE FORMAT('"%s"."%s"', "ptn"."nspname", "pt"."typname") END AS "database-type", "pa"."attnum" - 1 AS "database-position", "pn"."nspname" AS "table-schema", "pc"."relname" AS "table-name", FALSE AS "pk?", NULL AS "field-comment", FALSE AS "database-required", NULL AS "database-default", FALSE AS "database-is-auto-increment", FALSE AS "database-is-generated", FALSE AS "database-is-nullable" FROM "pg_catalog"."pg_class" AS "pc" INNER JOIN "pg_catalog"."pg_namespace" AS "pn" ON "pn"."oid" = "pc"."relnamespace" INNER JOIN "pg_catalog"."pg_attribute" AS "pa" ON "pa"."attrelid" = "pc"."oid" INNER JOIN "pg_catalog"."pg_type" AS "pt" ON "pt"."oid" = "pa"."atttypid" INNER JOIN "pg_catalog"."pg_namespace" AS "ptn" ON "ptn"."oid" = "pt"."typnamespace" WHERE ("pc"."relkind" = 'm') AND ("pa"."attnum" >= 1) AND ("pn"."nspname" IN ('shop')) ORDER BY "table-schema" ASC, "table-name" ASC, "database-position" ASC) q
+ORDER BY "table-name"::text COLLATE "C", "database-position"
+----
+name	database-type	database-position	table-schema	table-name	pk?	field-comment	database-required	database-default	database-is-auto-increment	database-is-generated	database-is-nullable
+id	int4	0	shop	customers	t	NULL	f	nextval('shop.customers_id_seq'::regclass)	t	f	f
+email	varchar	1	shop	customers	f	Login email	t	NULL	f	f	f
+name	text	2	shop	customers	f	NULL	t	NULL	f	f	f
+active	bool	3	shop	customers	f	NULL	f	true	f	f	t
+mood	"shop"."mood"	4	shop	customers	f	NULL	f	'ok'::shop.mood	f	f	t
+created	timestamptz	5	shop	customers	f	NULL	f	now()	f	f	t
+order_id	int8	0	shop	order_items	t	NULL	t	NULL	f	f	f
+line	int4	1	shop	order_items	t	NULL	t	NULL	f	f	f
+sku	varchar	2	shop	order_items	f	NULL	t	NULL	f	f	f
+qty	int4	3	shop	order_items	f	NULL	t	NULL	f	f	f
+price	numeric	4	shop	order_items	f	NULL	f	NULL	f	f	t
+customer_id	int4	0	shop	order_totals	f	NULL	f	NULL	f	f	t
+total	numeric	1	shop	order_totals	f	NULL	f	NULL	f	f	t
+n	int8	2	shop	order_totals	f	NULL	f	NULL	f	f	t
+id	int8	0	shop	orders	t	NULL	f	nextval('shop.orders_id_seq'::regclass)	t	f	f
+customer_id	int4	1	shop	orders	f	NULL	t	NULL	f	f	f
+amount	numeric	2	shop	orders	f	NULL	f	0	f	f	f
+status	varchar	3	shop	orders	f	NULL	f	'new'::character varying	f	f	t
+note	text	4	shop	orders	f	NULL	f	NULL	f	f	t
+ticket	int8	5	shop	orders	f	NULL	f	nextval('shop.ticket_seq'::regclass)	t	f	t
+
+
+onlyif serenedb
+query
+SELECT "name", "database-type", "database-position", "table-schema", "table-name", "pk?", "field-comment", "database-required", "database-default", "database-is-auto-increment", "database-is-generated", "database-is-nullable"
+FROM (SELECT "c"."column_name" AS "name", CASE WHEN "c"."udt_schema" IN ('public', 'pg_catalog') THEN FORMAT('%s', "c"."udt_name") ELSE FORMAT('"%s"."%s"', "c"."udt_schema", "c"."udt_name") END AS "database-type", "c"."ordinal_position" - 1 AS "database-position", "c"."table_schema" AS "table-schema", "c"."table_name" AS "table-name", "pk"."column_name" IS NOT NULL AS "pk?", COL_DESCRIPTION(CAST(CAST(FORMAT('%I.%I', CAST("c"."table_schema" AS TEXT), CAST("c"."table_name" AS TEXT)) AS REGCLASS) AS OID), "c"."ordinal_position") AS "field-comment", (("column_default" IS NULL) OR (LOWER("column_default") = 'null')) AND ("is_nullable" = 'NO') AND NOT ((("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO')) AS "database-required", "column_default" AS "database-default", (("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO') AS "database-is-auto-increment", "is_generated" = 'ALWAYS' AS "database-is-generated", "is_nullable" = 'YES' AS "database-is-nullable" FROM "information_schema"."columns" AS "c" LEFT JOIN (SELECT "tc"."table_schema", "tc"."table_name", "kc"."column_name" FROM "information_schema"."table_constraints" AS "tc" INNER JOIN "information_schema"."key_column_usage" AS "kc" ON ("tc"."constraint_name" = "kc"."constraint_name") AND ("tc"."table_schema" = "kc"."table_schema") AND ("tc"."table_name" = "kc"."table_name") WHERE "tc"."constraint_type" = 'PRIMARY KEY') AS "pk" ON ("c"."table_schema" = "pk"."table_schema") AND ("c"."table_name" = "pk"."table_name") AND ("c"."column_name" = "pk"."column_name") WHERE c.table_schema !~ '^information_schema|catalog_history|pg_' AND ("c"."table_schema" IN ('shop')) UNION ALL SELECT "pa"."attname" AS "name", CASE WHEN "ptn"."nspname" IN ('public', 'pg_catalog') THEN FORMAT('%s', "pt"."typname") ELSE FORMAT('"%s"."%s"', "ptn"."nspname", "pt"."typname") END AS "database-type", "pa"."attnum" - 1 AS "database-position", "pn"."nspname" AS "table-schema", "pc"."relname" AS "table-name", FALSE AS "pk?", NULL AS "field-comment", FALSE AS "database-required", NULL AS "database-default", FALSE AS "database-is-auto-increment", FALSE AS "database-is-generated", FALSE AS "database-is-nullable" FROM "pg_catalog"."pg_class" AS "pc" INNER JOIN "pg_catalog"."pg_namespace" AS "pn" ON "pn"."oid" = "pc"."relnamespace" INNER JOIN "pg_catalog"."pg_attribute" AS "pa" ON "pa"."attrelid" = "pc"."oid" INNER JOIN "pg_catalog"."pg_type" AS "pt" ON "pt"."oid" = "pa"."atttypid" INNER JOIN "pg_catalog"."pg_namespace" AS "ptn" ON "ptn"."oid" = "pt"."typnamespace" WHERE ("pc"."relkind" = 'm') AND ("pa"."attnum" >= 1) AND ("pn"."nspname" IN ('shop')) ORDER BY "table-schema" ASC, "table-name" ASC, "database-position" ASC) q
+ORDER BY "table-name"::text COLLATE "C", "database-position"
+----
+name	database-type	database-position	table-schema	table-name	pk?	field-comment	database-required	database-default	database-is-auto-increment	database-is-generated	database-is-nullable
+id	int4	0	shop	customers	t	NULL	f	nextval('customers_id_seq')	t	f	f
+email	text	1	shop	customers	f	Login email	t	NULL	f	f	f
+name	text	2	shop	customers	f	NULL	t	NULL	f	f	f
+active	bool	3	shop	customers	f	NULL	f	true	f	f	t
+mood	"shop"."mood"	4	shop	customers	f	NULL	f	'ok'	f	f	t
+created	timestamptz	5	shop	customers	f	NULL	f	now()	f	f	t
+order_id	int8	0	shop	order_items	t	NULL	t	NULL	f	f	f
+line	int4	1	shop	order_items	t	NULL	t	NULL	f	f	f
+sku	text	2	shop	order_items	f	NULL	t	NULL	f	f	f
+qty	int4	3	shop	order_items	f	NULL	t	NULL	f	f	f
+price	numeric	4	shop	order_items	f	NULL	f	NULL	f	f	t
+customer_id	int4	0	shop	order_totals	f	NULL	f	NULL	f	f	t
+total	numeric	1	shop	order_totals	f	NULL	f	NULL	f	f	t
+n	int8	2	shop	order_totals	f	NULL	f	NULL	f	f	t
+id	int8	0	shop	orders	t	NULL	f	nextval('orders_id_seq')	t	f	f
+customer_id	int4	1	shop	orders	f	NULL	t	NULL	f	f	f
+amount	numeric	2	shop	orders	f	NULL	f	0	f	f	f
+status	text	3	shop	orders	f	NULL	f	'new'	f	f	t
+note	text	4	shop	orders	f	NULL	f	NULL	f	f	t
+ticket	int8	5	shop	orders	f	NULL	f	nextval('shop.ticket_seq')	t	f	t
+
+
+skipif serenedb
+query
+SELECT "name", "database-type", "database-position", "pk?", "database-required", "database-default", "database-is-auto-increment"
+FROM (SELECT "c"."column_name" AS "name", CASE WHEN "c"."udt_schema" IN ('public', 'pg_catalog') THEN FORMAT('%s', "c"."udt_name") ELSE FORMAT('"%s"."%s"', "c"."udt_schema", "c"."udt_name") END AS "database-type", "c"."ordinal_position" - 1 AS "database-position", "c"."table_schema" AS "table-schema", "c"."table_name" AS "table-name", "pk"."column_name" IS NOT NULL AS "pk?", COL_DESCRIPTION(CAST(CAST(FORMAT('%I.%I', CAST("c"."table_schema" AS TEXT), CAST("c"."table_name" AS TEXT)) AS REGCLASS) AS OID), "c"."ordinal_position") AS "field-comment", (("column_default" IS NULL) OR (LOWER("column_default") = 'null')) AND ("is_nullable" = 'NO') AND NOT ((("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO')) AS "database-required", "column_default" AS "database-default", (("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO') AS "database-is-auto-increment", "is_generated" = 'ALWAYS' AS "database-is-generated", "is_nullable" = 'YES' AS "database-is-nullable" FROM "information_schema"."columns" AS "c" LEFT JOIN (SELECT "tc"."table_schema", "tc"."table_name", "kc"."column_name" FROM "information_schema"."table_constraints" AS "tc" INNER JOIN "information_schema"."key_column_usage" AS "kc" ON ("tc"."constraint_name" = "kc"."constraint_name") AND ("tc"."table_schema" = "kc"."table_schema") AND ("tc"."table_name" = "kc"."table_name") WHERE "tc"."constraint_type" = 'PRIMARY KEY') AS "pk" ON ("c"."table_schema" = "pk"."table_schema") AND ("c"."table_name" = "pk"."table_name") AND ("c"."column_name" = "pk"."column_name") WHERE c.table_schema !~ '^information_schema|catalog_history|pg_' AND ("c"."table_schema" IN ('shop')) AND ("c"."table_name" IN ('orders')) UNION ALL SELECT "pa"."attname" AS "name", CASE WHEN "ptn"."nspname" IN ('public', 'pg_catalog') THEN FORMAT('%s', "pt"."typname") ELSE FORMAT('"%s"."%s"', "ptn"."nspname", "pt"."typname") END AS "database-type", "pa"."attnum" - 1 AS "database-position", "pn"."nspname" AS "table-schema", "pc"."relname" AS "table-name", FALSE AS "pk?", NULL AS "field-comment", FALSE AS "database-required", NULL AS "database-default", FALSE AS "database-is-auto-increment", FALSE AS "database-is-generated", FALSE AS "database-is-nullable" FROM "pg_catalog"."pg_class" AS "pc" INNER JOIN "pg_catalog"."pg_namespace" AS "pn" ON "pn"."oid" = "pc"."relnamespace" INNER JOIN "pg_catalog"."pg_attribute" AS "pa" ON "pa"."attrelid" = "pc"."oid" INNER JOIN "pg_catalog"."pg_type" AS "pt" ON "pt"."oid" = "pa"."atttypid" INNER JOIN "pg_catalog"."pg_namespace" AS "ptn" ON "ptn"."oid" = "pt"."typnamespace" WHERE ("pc"."relkind" = 'm') AND ("pa"."attnum" >= 1) AND ("pn"."nspname" IN ('shop')) AND ("pc"."relname" IN ('orders')) ORDER BY "table-schema" ASC, "table-name" ASC, "database-position" ASC) q
+ORDER BY "database-position"
+----
+name	database-type	database-position	pk?	database-required	database-default	database-is-auto-increment
+id	int8	0	t	f	nextval('shop.orders_id_seq'::regclass)	t
+customer_id	int4	1	f	t	NULL	f
+amount	numeric	2	f	f	0	f
+status	varchar	3	f	f	'new'::character varying	f
+note	text	4	f	f	NULL	f
+ticket	int8	5	f	f	nextval('shop.ticket_seq'::regclass)	t
+
+
+onlyif serenedb
+query
+SELECT "name", "database-type", "database-position", "pk?", "database-required", "database-default", "database-is-auto-increment"
+FROM (SELECT "c"."column_name" AS "name", CASE WHEN "c"."udt_schema" IN ('public', 'pg_catalog') THEN FORMAT('%s', "c"."udt_name") ELSE FORMAT('"%s"."%s"', "c"."udt_schema", "c"."udt_name") END AS "database-type", "c"."ordinal_position" - 1 AS "database-position", "c"."table_schema" AS "table-schema", "c"."table_name" AS "table-name", "pk"."column_name" IS NOT NULL AS "pk?", COL_DESCRIPTION(CAST(CAST(FORMAT('%I.%I', CAST("c"."table_schema" AS TEXT), CAST("c"."table_name" AS TEXT)) AS REGCLASS) AS OID), "c"."ordinal_position") AS "field-comment", (("column_default" IS NULL) OR (LOWER("column_default") = 'null')) AND ("is_nullable" = 'NO') AND NOT ((("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO')) AS "database-required", "column_default" AS "database-default", (("column_default" IS NOT NULL) AND ("column_default" LIKE '%nextval(%')) OR ("is_identity" <> 'NO') AS "database-is-auto-increment", "is_generated" = 'ALWAYS' AS "database-is-generated", "is_nullable" = 'YES' AS "database-is-nullable" FROM "information_schema"."columns" AS "c" LEFT JOIN (SELECT "tc"."table_schema", "tc"."table_name", "kc"."column_name" FROM "information_schema"."table_constraints" AS "tc" INNER JOIN "information_schema"."key_column_usage" AS "kc" ON ("tc"."constraint_name" = "kc"."constraint_name") AND ("tc"."table_schema" = "kc"."table_schema") AND ("tc"."table_name" = "kc"."table_name") WHERE "tc"."constraint_type" = 'PRIMARY KEY') AS "pk" ON ("c"."table_schema" = "pk"."table_schema") AND ("c"."table_name" = "pk"."table_name") AND ("c"."column_name" = "pk"."column_name") WHERE c.table_schema !~ '^information_schema|catalog_history|pg_' AND ("c"."table_schema" IN ('shop')) AND ("c"."table_name" IN ('orders')) UNION ALL SELECT "pa"."attname" AS "name", CASE WHEN "ptn"."nspname" IN ('public', 'pg_catalog') THEN FORMAT('%s', "pt"."typname") ELSE FORMAT('"%s"."%s"', "ptn"."nspname", "pt"."typname") END AS "database-type", "pa"."attnum" - 1 AS "database-position", "pn"."nspname" AS "table-schema", "pc"."relname" AS "table-name", FALSE AS "pk?", NULL AS "field-comment", FALSE AS "database-required", NULL AS "database-default", FALSE AS "database-is-auto-increment", FALSE AS "database-is-generated", FALSE AS "database-is-nullable" FROM "pg_catalog"."pg_class" AS "pc" INNER JOIN "pg_catalog"."pg_namespace" AS "pn" ON "pn"."oid" = "pc"."relnamespace" INNER JOIN "pg_catalog"."pg_attribute" AS "pa" ON "pa"."attrelid" = "pc"."oid" INNER JOIN "pg_catalog"."pg_type" AS "pt" ON "pt"."oid" = "pa"."atttypid" INNER JOIN "pg_catalog"."pg_namespace" AS "ptn" ON "ptn"."oid" = "pt"."typnamespace" WHERE ("pc"."relkind" = 'm') AND ("pa"."attnum" >= 1) AND ("pn"."nspname" IN ('shop')) AND ("pc"."relname" IN ('orders')) ORDER BY "table-schema" ASC, "table-name" ASC, "database-position" ASC) q
+ORDER BY "database-position"
+----
+name	database-type	database-position	pk?	database-required	database-default	database-is-auto-increment
+id	int8	0	t	f	nextval('orders_id_seq')	t
+customer_id	int4	1	f	t	NULL	f
+amount	numeric	2	f	f	0	f
+status	text	3	f	f	'new'	f
+note	text	4	f	f	NULL	f
+ticket	int8	5	f	f	nextval('shop.ticket_seq')	t
+
+
+query
+SELECT *
+FROM (SELECT "fk_ns"."nspname" AS "fk-table-schema", "fk_table"."relname" AS "fk-table-name", "fk_column"."attname" AS "fk-column-name", "pk_ns"."nspname" AS "pk-table-schema", "pk_table"."relname" AS "pk-table-name", "pk_column"."attname" AS "pk-column-name" FROM "pg_constraint" AS "c" INNER JOIN "pg_class" AS "fk_table" ON "c"."conrelid" = "fk_table"."oid" INNER JOIN "pg_namespace" AS "fk_ns" ON "c"."connamespace" = "fk_ns"."oid" INNER JOIN "pg_attribute" AS "fk_column" ON "c"."conrelid" = "fk_column"."attrelid" INNER JOIN "pg_class" AS "pk_table" ON "c"."confrelid" = "pk_table"."oid" INNER JOIN "pg_namespace" AS "pk_ns" ON "pk_table"."relnamespace" = "pk_ns"."oid" INNER JOIN "pg_attribute" AS "pk_column" ON "c"."confrelid" = "pk_column"."attrelid" WHERE fk_ns.nspname !~ '^information_schema|catalog_history|pg_' AND ("c"."contype" = 'f'::char) AND ("fk_column"."attnum" = ANY(c.conkey)) AND ("pk_column"."attnum" = ANY(c.confkey)) AND ("fk_ns"."nspname" IN ('shop')) ORDER BY "fk-table-schema" ASC, "fk-table-name" ASC) q
+ORDER BY "fk-table-name"::text COLLATE "C", "fk-column-name"::text COLLATE "C"
+----
+fk-table-schema	fk-table-name	fk-column-name	pk-table-schema	pk-table-name	pk-column-name
+shop	order_items	order_id	shop	orders	id
+shop	orders	customer_id	shop	customers	id
+
+
+query
+SELECT *
+FROM (SELECT "tmp"."table-schema", "tmp"."table-name", TRIM(BOTH '"' FROM PG_CATALOG.PG_GET_INDEXDEF("tmp"."ci_oid", "tmp"."pos", FALSE)) AS "field-name" FROM (SELECT "n"."nspname" AS "table-schema", "ct"."relname" AS "table-name", "ci"."oid" AS "ci_oid", (INFORMATION_SCHEMA._PG_EXPANDARRAY("i"."indkey"))."n" AS "pos" FROM "pg_catalog"."pg_class" AS "ct" INNER JOIN "pg_catalog"."pg_namespace" AS "n" ON "ct"."relnamespace" = "n"."oid" INNER JOIN "pg_catalog"."pg_index" AS "i" ON "ct"."oid" = "i"."indrelid" INNER JOIN "pg_catalog"."pg_class" AS "ci" ON "ci"."oid" = "i"."indexrelid" WHERE (PG_CATALOG.PG_GET_EXPR("i"."indpred", "i"."indrelid") IS NULL) AND n.nspname !~ '^information_schema|catalog_history|pg_' AND ("n"."nspname" IN ('shop'))) AS "tmp" WHERE "tmp"."pos" = 1) q
+ORDER BY "table-name"::text COLLATE "C", "field-name"::text COLLATE "C"
+----
+table-schema	table-name	field-name
+shop	customers	email
+shop	customers	id
+shop	customers	name
+shop	order_items	order_id
+shop	orders	customer_id
+shop	orders	id
+
+
+query
+SELECT "schema", "table", "update", "select", "insert", "delete"
+FROM (with table_privileges as (
+ select
+   NULL as role,
+   t.schemaname as schema,
+   t.objectname as table,
+   pg_catalog.has_any_column_privilege(current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'update') as update,
+   pg_catalog.has_any_column_privilege(current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'select') as select,
+   pg_catalog.has_any_column_privilege(current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'insert') as insert,
+   pg_catalog.has_table_privilege(     current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'delete') as delete
+ from (
+   select schemaname, tablename as objectname from pg_catalog.pg_tables
+   union
+   select schemaname, viewname as objectname from pg_catalog.pg_views
+   union
+   select schemaname, matviewname as objectname from pg_catalog.pg_matviews
+ ) t
+ where t.schemaname !~ '^pg_'
+   and t.schemaname <> 'information_schema'
+   and pg_catalog.has_schema_privilege(current_user, t.schemaname, 'usage')
+)
+select t.*
+from table_privileges t) q
+WHERE "schema" = 'shop'
+ORDER BY "table"::text COLLATE "C"
+----
+schema	table	update	select	insert	delete
+shop	customers	t	t	t	t
+shop	order_items	t	t	t	t
+shop	order_totals	t	t	t	t
+shop	orders	t	t	t	t
+
+
+skipif serenedb
+query
+SELECT i.relname                              AS index_name,
+                 am.amname                              AS access_method,
+                 ix.indisunique                         AS is_unique,
+                 ix.indisprimary                        AS is_primary,
+                 ix.indisvalid                          AS is_valid,
+                 pg_get_expr(ix.indpred, ix.indrelid)   AS partial_predicate,
+                 pg_get_indexdef(ix.indexrelid)         AS definition,
+                 ARRAY(SELECT COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.ord::int, true))
+                       FROM unnest(ix.indkey[0:ix.indnkeyatts - 1]) WITH ORDINALITY AS k(attnum, ord)
+                       LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+                       ORDER BY k.ord)                  AS key_columns,
+                 ARRAY(SELECT a.attname
+                       FROM unnest(ix.indkey[ix.indnkeyatts : ix.indnatts - 1]) WITH ORDINALITY AS k(attnum, ord)
+                       LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+                       ORDER BY k.ord)                  AS include_columns
+          FROM pg_index ix
+          JOIN pg_class     c  ON c.oid  = ix.indrelid
+          JOIN pg_class     i  ON i.oid  = ix.indexrelid
+          JOIN pg_namespace n  ON n.oid  = c.relnamespace
+          JOIN pg_am        am ON am.oid = i.relam
+          WHERE n.nspname = COALESCE('shop', current_schema()) AND c.relname = 'orders'
+          ORDER BY i.relname
+----
+index_name	access_method	is_unique	is_primary	is_valid	partial_predicate	definition	key_columns	include_columns
+orders_customer_idx	btree	f	f	t	NULL	CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)	{customer_id}	{}
+orders_pkey	btree	t	t	t	NULL	CREATE UNIQUE INDEX orders_pkey ON shop.orders USING btree (id)	{id}	{}
+
+
+onlyif serenedb
+query
+SELECT i.relname                              AS index_name,
+                 am.amname                              AS access_method,
+                 ix.indisunique                         AS is_unique,
+                 ix.indisprimary                        AS is_primary,
+                 ix.indisvalid                          AS is_valid,
+                 pg_get_expr(ix.indpred, ix.indrelid)   AS partial_predicate,
+                 pg_get_indexdef(ix.indexrelid)         AS definition,
+                 ARRAY(SELECT COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.ord::int, true))
+                       FROM unnest(ix.indkey[0:ix.indnkeyatts - 1]) WITH ORDINALITY AS k(attnum, ord)
+                       LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+                       ORDER BY k.ord)                  AS key_columns,
+                 ARRAY(SELECT a.attname
+                       FROM unnest(ix.indkey[ix.indnkeyatts : ix.indnatts - 1]) WITH ORDINALITY AS k(attnum, ord)
+                       LEFT JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = k.attnum
+                       ORDER BY k.ord)                  AS include_columns
+          FROM pg_index ix
+          JOIN pg_class     c  ON c.oid  = ix.indrelid
+          JOIN pg_class     i  ON i.oid  = ix.indexrelid
+          JOIN pg_namespace n  ON n.oid  = c.relnamespace
+          JOIN pg_am        am ON am.oid = i.relam
+          WHERE n.nspname = COALESCE('shop', current_schema()) AND c.relname = 'orders'
+          ORDER BY i.relname
+----
+index_name	access_method	is_unique	is_primary	is_valid	partial_predicate	definition	key_columns	include_columns
+orders_customer_idx	secondary	f	f	t	NULL	CREATE INDEX orders_customer_idx ON shop.orders USING secondary (customer_id)	{}	{}
+orders_pkey	secondary	t	t	t	NULL	CREATE UNIQUE INDEX orders_pkey ON shop.orders USING secondary (id)	{}	{}
+
+
+query
+SELECT TRUE AS "_" FROM "shop"."orders" WHERE 1 <> 1 LIMIT 0
+----
+_
+
+
+statement ok
+show timezone;
+
+
+query
+SELECT quote_ident('cq_metabase_reader');
+----
+quote_ident
+cq_metabase_reader
+
+
+query
+SELECT quote_ident('Mixed Case');
+----
+quote_ident
+"Mixed Case"
+
+
+statement ok
+SET ROLE cq_metabase_reader;
+
+
+query
+SELECT "schema", "table", "update", "select", "insert", "delete"
+FROM (with table_privileges as (
+ select
+   NULL as role,
+   t.schemaname as schema,
+   t.objectname as table,
+   pg_catalog.has_any_column_privilege(current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'update') as update,
+   pg_catalog.has_any_column_privilege(current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'select') as select,
+   pg_catalog.has_any_column_privilege(current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'insert') as insert,
+   pg_catalog.has_table_privilege(     current_user, '"' || replace(t.schemaname, '"', '""') || '"' || '.' || '"' || replace(t.objectname, '"', '""') || '"',  'delete') as delete
+ from (
+   select schemaname, tablename as objectname from pg_catalog.pg_tables
+   union
+   select schemaname, viewname as objectname from pg_catalog.pg_views
+   union
+   select schemaname, matviewname as objectname from pg_catalog.pg_matviews
+ ) t
+ where t.schemaname !~ '^pg_'
+   and t.schemaname <> 'information_schema'
+   and pg_catalog.has_schema_privilege(current_user, t.schemaname, 'usage')
+)
+select t.*
+from table_privileges t) q
+WHERE "schema" = 'shop'
+ORDER BY "table"::text COLLATE "C"
+----
+schema	table	update	select	insert	delete
+shop	customers	f	t	f	f
+shop	order_items	f	f	f	f
+shop	order_totals	f	f	f	f
+shop	orders	f	t	t	f
+
+
+query
+SELECT TRUE AS "_" FROM "shop"."orders" WHERE 1 <> 1 LIMIT 0
+----
+_
+
+
+query error permission\ denied\ for\ table\ order_items
+SELECT TRUE AS "_" FROM "shop"."order_items" WHERE 1 <> 1 LIMIT 0
+
+
+statement ok
+SET ROLE NONE;
+
+
+statement ok
+SET SESSION TIMEZONE TO 'UTC';
+
+
+query
+SELECT current_setting('TimeZone')
+----
+current_setting
+UTC
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION shop.add_one(integer) FROM cq_metabase_reader
+
+
+statement ok
+REVOKE SELECT, INSERT ON shop.orders FROM cq_metabase_reader
+
+
+statement ok
+REVOKE SELECT ON shop.customers FROM cq_metabase_reader
+
+
+statement ok
+REVOKE USAGE ON SCHEMA shop FROM cq_metabase_reader
+
+
+statement ok
+DROP ROLE cq_metabase_reader

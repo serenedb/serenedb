@@ -1,0 +1,59 @@
+[
+    [
+        "add column",
+        "ALTER TABLE scratch ADD extra VARCHAR(20) DEFAULT NULL",
+        "ok"
+    ],
+    [
+        "widen integer",
+        "ALTER TABLE scratch ALTER size TYPE BIGINT",
+        "ok"
+    ],
+    [
+        "set default",
+        "ALTER TABLE scratch ALTER size SET DEFAULT 7",
+        "ok"
+    ],
+    [
+        "set not null",
+        "ALTER TABLE scratch ALTER size SET NOT NULL",
+        "ok"
+    ],
+    [
+        "set comment",
+        "COMMENT ON COLUMN scratch.size IS 'how big'",
+        "ok"
+    ],
+    [
+        "rename column",
+        "ALTER TABLE scratch RENAME COLUMN extra TO note",
+        "ok"
+    ],
+    [
+        "add index",
+        "CREATE INDEX scratch_name_idx ON scratch (name)",
+        "ok"
+    ],
+    [
+        "rename index",
+        "ALTER INDEX scratch_name_idx RENAME TO scratch_name_idx2",
+        "ok"
+    ],
+    [
+        "add unique index",
+        "CREATE UNIQUE INDEX scratch_note_uniq ON scratch (note)",
+        "ok"
+    ],
+    [
+        "drop index",
+        "DROP INDEX scratch_name_idx2",
+        "ok"
+    ],
+    [
+        "drop column",
+        "ALTER TABLE scratch DROP size",
+        {
+            "error": "Doctrine\\DBAL\\Exception\\DriverException: An exception occurred while executing a query: SQLSTATE[0A000]: Feature not supported: 7 ERROR:  Cannot drop this column: an index depends on a column after it!"
+        }
+    ]
+]

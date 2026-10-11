@@ -1,6 +1,8 @@
 #!/bin/bash
-# JS driver harness: node-postgres (`pg`) and `postgres.js`. Vitest is the test
-# runner. Reads SDB_DRV_* env from tests/drivers/run.sh.
+# JS driver harness: node-postgres (`pg`), `postgres.js` and the ORM / schema
+# tool suites (Prisma, TypeORM, Sequelize, Knex, Drizzle, Kysely,
+# postgres-meta). Vitest is the test runner. Reads SDB_DRV_* env from
+# tests/drivers/run.sh.
 
 set -u
 
@@ -24,12 +26,16 @@ fi
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
 mkdir -p "$JUNIT"
 
-JUNIT_DIR="$JUNIT" node_modules/.bin/vitest run --reporter=junit \
-	--outputFile="$JUNIT/tests-drivers-js-junit.xml" || exit 1
-
-# postgres.js suite (D3): runs only when the test file is present.
-if [[ -f test/postgres-js.test.js ]]; then
-	JUNIT_DIR="$JUNIT" node_modules/.bin/vitest run --reporter=junit \
-		--outputFile="$JUNIT/tests-drivers-js-postgres-js-junit.xml" \
-		test/postgres-js.test.js || exit 1
-fi
+# One vitest run per suite so JUnit output stays per-suite and a failing
+# suite does not hide the others.
+final=0
+for test_file in test/*.test.js; do
+	name=$(basename "$test_file" .test.js)
+	echo "[js][$name] running"
+	if ! node_modules/.bin/vitest run --reporter=junit \
+		--outputFile="$JUNIT/tests-drivers-js-${name}-junit.xml" \
+		"$test_file"; then
+		final=1
+	fi
+done
+exit "$final"

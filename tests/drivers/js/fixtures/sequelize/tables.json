@@ -1,0 +1,447 @@
+{
+ "guilds": {
+  "columns": {
+   "id": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": "nextval(guilds_id_seq::regclass)",
+    "primaryKey": true,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "name": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "CHARACTER VARYING(40)"
+   }
+  },
+  "indexes": [
+   {
+    "definition": "CREATE UNIQUE INDEX guilds_name_key ON public.guilds USING btree (name)",
+    "fields": [
+     [
+      "name",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "2",
+    "name": "guilds_name_key",
+    "primary": false,
+    "unique": true
+   },
+   {
+    "definition": "CREATE UNIQUE INDEX guilds_pkey ON public.guilds USING btree (id)",
+    "fields": [
+     [
+      "id",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "1",
+    "name": "guilds_pkey",
+    "primary": true,
+    "unique": true
+   }
+  ],
+  "references": []
+ },
+ "hero_guilds": {
+  "columns": {
+   "GuildId": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": true,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "HeroId": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": true,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "version": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": "0",
+    "primaryKey": false,
+    "special": [],
+    "type": "INTEGER"
+   }
+  },
+  "indexes": [
+   {
+    "definition": "CREATE UNIQUE INDEX hero_guilds_pkey ON public.hero_guilds USING btree (\"HeroId\", \"GuildId\")",
+    "fields": [
+     [
+      "HeroId",
+      null,
+      null,
+      null
+     ],
+     [
+      "GuildId",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "2 3",
+    "name": "hero_guilds_pkey",
+    "primary": true,
+    "unique": true
+   }
+  ],
+  "references": [
+   {
+    "columnName": "GuildId",
+    "constraintName": "hero_guilds_GuildId_fkey",
+    "referencedColumnName": "id",
+    "referencedTableName": "guilds"
+   },
+   {
+    "columnName": "HeroId",
+    "constraintName": "hero_guilds_HeroId_fkey",
+    "referencedColumnName": "id",
+    "referencedTableName": "heroes"
+   }
+  ]
+ },
+ "heroes": {
+  "columns": {
+   "active": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": true,
+    "primaryKey": false,
+    "special": [],
+    "type": "BOOLEAN"
+   },
+   "aliases": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "ARRAY"
+   },
+   "born": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "DATE"
+   },
+   "gold": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": "0",
+    "primaryKey": false,
+    "special": [],
+    "type": "BIGINT"
+   },
+   "id": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": "nextval(heroes_id_seq::regclass)",
+    "primaryKey": true,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "level": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": "1",
+    "primaryKey": false,
+    "special": [],
+    "type": "SMALLINT"
+   },
+   "name": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "CHARACTER VARYING(100)"
+   },
+   "portrait": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "BYTEA"
+   },
+   "power": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": "0",
+    "primaryKey": false,
+    "special": [],
+    "type": "NUMERIC"
+   },
+   "rating": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "DOUBLE PRECISION"
+   },
+   "role": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": "carry",
+    "primaryKey": false,
+    "special": [
+     "carry",
+     "support",
+     "offlane"
+    ],
+    "type": "USER-DEFINED"
+   },
+   "title": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "TEXT"
+   },
+   "uid": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "UUID"
+   },
+   "version": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": "0",
+    "primaryKey": false,
+    "special": [],
+    "type": "INTEGER"
+   }
+  },
+  "indexes": [
+   {
+    "definition": "CREATE UNIQUE INDEX heroes_name_key ON public.heroes USING btree (name)",
+    "fields": [
+     [
+      "name",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "2",
+    "name": "heroes_name_key",
+    "primary": false,
+    "unique": true
+   },
+   {
+    "definition": "CREATE UNIQUE INDEX heroes_pkey ON public.heroes USING btree (id)",
+    "fields": [
+     [
+      "id",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "1",
+    "name": "heroes_pkey",
+    "primary": true,
+    "unique": true
+   },
+   {
+    "definition": "CREATE UNIQUE INDEX heroes_uid_key ON public.heroes USING btree (uid)",
+    "fields": [
+     [
+      "uid",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "13",
+    "name": "heroes_uid_key",
+    "primary": false,
+    "unique": true
+   }
+  ],
+  "references": []
+ },
+ "items": {
+  "columns": {
+   "cost": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": "0",
+    "primaryKey": false,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "hero_id": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "id": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": "nextval(items_id_seq::regclass)",
+    "primaryKey": true,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "name": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "CHARACTER VARYING(60)"
+   }
+  },
+  "indexes": [
+   {
+    "definition": "CREATE INDEX items_expensive ON public.items USING btree (cost) WHERE (cost > 3000)",
+    "fields": [
+     [
+      "cost",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "3",
+    "name": "items_expensive",
+    "primary": false,
+    "unique": false
+   },
+   {
+    "definition": "CREATE INDEX items_name_cost ON public.items USING btree (name, cost)",
+    "fields": [
+     [
+      "name",
+      null,
+      null,
+      null
+     ],
+     [
+      "cost",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "2 3",
+    "name": "items_name_cost",
+    "primary": false,
+    "unique": false
+   },
+   {
+    "definition": "CREATE UNIQUE INDEX items_pkey ON public.items USING btree (id)",
+    "fields": [
+     [
+      "id",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "1",
+    "name": "items_pkey",
+    "primary": true,
+    "unique": true
+   }
+  ],
+  "references": [
+   {
+    "columnName": "hero_id",
+    "constraintName": "items_hero_id_fkey",
+    "referencedColumnName": "id",
+    "referencedTableName": "heroes"
+   }
+  ]
+ },
+ "runes": {
+  "columns": {
+   "createdAt": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "TIMESTAMP WITH TIME ZONE"
+   },
+   "deletedAt": {
+    "allowNull": true,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "TIMESTAMP WITH TIME ZONE"
+   },
+   "id": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": "nextval(runes_id_seq::regclass)",
+    "primaryKey": true,
+    "special": [],
+    "type": "INTEGER"
+   },
+   "kind": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "CHARACTER VARYING(20)"
+   },
+   "updatedAt": {
+    "allowNull": false,
+    "comment": null,
+    "defaultValue": null,
+    "primaryKey": false,
+    "special": [],
+    "type": "TIMESTAMP WITH TIME ZONE"
+   }
+  },
+  "indexes": [
+   {
+    "definition": "CREATE UNIQUE INDEX runes_pkey ON public.runes USING btree (id)",
+    "fields": [
+     [
+      "id",
+      null,
+      null,
+      null
+     ]
+    ],
+    "indkey": "1",
+    "name": "runes_pkey",
+    "primary": true,
+    "unique": true
+   }
+  ],
+  "references": []
+ }
+}

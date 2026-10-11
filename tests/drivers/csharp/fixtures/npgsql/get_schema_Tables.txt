@@ -1,0 +1,3 @@
+table_catalog | table_schema | table_name | table_type
+<database> | drv | players | BASE TABLE
+<database> | drv | teams | BASE TABLE

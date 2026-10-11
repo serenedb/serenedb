@@ -1,0 +1,37 @@
+SELECT id, name, founded, budget FROM teams WHERE id = $1
+  column id INT4 nullable None origin Table(TableColumn { table: "teams", name: "id" })
+  column name VARCHAR nullable None origin Table(TableColumn { table: "teams", name: "name" })
+  column founded DATE nullable None origin Table(TableColumn { table: "teams", name: "founded" })
+  column budget NUMERIC nullable None origin Table(TableColumn { table: "teams", name: "budget" })
+  parameters ["INT4"]
+SELECT p.nick, t.name, p.mmr, p.joined FROM players p JOIN teams t ON t.id = p.team_id WHERE p.mmr > $1
+  column nick TEXT nullable None origin Table(TableColumn { table: "players", name: "nick" })
+  column name VARCHAR nullable None origin Table(TableColumn { table: "teams", name: "name" })
+  column mmr INT4 nullable None origin Table(TableColumn { table: "players", name: "mmr" })
+  column joined TIMESTAMPTZ nullable None origin Table(TableColumn { table: "players", name: "joined" })
+  parameters ["INT4"]
+SELECT t.name, p.nick FROM teams t LEFT JOIN players p ON p.team_id = t.id
+  column name VARCHAR nullable None origin Table(TableColumn { table: "teams", name: "name" })
+  column nick TEXT nullable None origin Table(TableColumn { table: "players", name: "nick" })
+  parameters []
+SELECT count(*) AS n, max(mmr) AS best FROM players
+  column n INT8 nullable None origin Expression
+  column best INT4 nullable None origin Expression
+  parameters []
+INSERT INTO teams (name, founded) VALUES ($1, $2) RETURNING id
+  column id INT4 nullable None origin Table(TableColumn { table: "teams", name: "id" })
+  parameters ["VARCHAR", "DATE"]
+UPDATE players SET mmr = mmr + $1 WHERE nick = $2 RETURNING id, mmr
+  column id INT8 nullable None origin Table(TableColumn { table: "players", name: "id" })
+  column mmr INT4 nullable None origin Table(TableColumn { table: "players", name: "mmr" })
+  parameters ["INT4", "TEXT"]
+SELECT $1::text AS a, $2::int8 AS b, now() AS c
+  column a TEXT nullable None origin Expression
+  column b INT8 nullable None origin Expression
+  column c TIMESTAMPTZ nullable None origin Expression
+  parameters ["TEXT", "INT8"]
+SELECT id FROM players WHERE nick = ANY($1)
+  column id INT8 nullable None origin Table(TableColumn { table: "players", name: "id" })
+  parameters ["TEXT[]"]
+DELETE FROM players WHERE id = $1
+  parameters ["INT8"]

@@ -1,0 +1,14 @@
+[
+ {
+  "action": "PERMISSIVE",
+  "check": null,
+  "command": "SELECT",
+  "definition": "true",
+  "name": "players_visible",
+  "roles": [
+   "<role>"
+  ],
+  "schema": "public",
+  "table": "players"
+ }
+]

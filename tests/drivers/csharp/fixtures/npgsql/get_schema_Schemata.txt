@@ -1,0 +1,6 @@
+catalog_name | schema_name | schema_owner
+<database> | drv | postgres
+<database> | information_schema | postgres
+<database> | pg_catalog | postgres
+<database> | pg_toast | postgres
+<database> | public | pg_database_owner

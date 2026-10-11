@@ -34,9 +34,9 @@ async fn smoke_select_one() {
 async fn roundtrip_matrix() {
     let Some(mut c) = connect().await else { return; };
     let schema = spec::schema_name(DRIVER_KEY);
-    sqlx::query(&format!(r#"CREATE SCHEMA IF NOT EXISTS "{schema}""#))
+    sqlx::query(sqlx::AssertSqlSafe(format!(r#"CREATE SCHEMA IF NOT EXISTS "{schema}""#)))
         .execute(&mut c).await.unwrap();
-    sqlx::query(&format!(r#"SET search_path TO "{schema}", public, pg_catalog"#))
+    sqlx::query(sqlx::AssertSqlSafe(format!(r#"SET search_path TO "{schema}", public, pg_catalog"#)))
         .execute(&mut c).await.unwrap();
 
     let cases = spec::cases_for(DRIVER_KEY);
@@ -48,7 +48,7 @@ async fn roundtrip_matrix() {
             None => None,
             Some(s) => {
                 let q = format!("SELECT (($1::text)::{pgname})::text AS v");
-                let row = sqlx::query(q.as_str()).bind(s).fetch_one(&mut c).await.unwrap();
+                let row = sqlx::query(sqlx::AssertSqlSafe(q)).bind(s).fetch_one(&mut c).await.unwrap();
                 row.get(0)
             }
         };
@@ -61,13 +61,13 @@ async fn roundtrip_matrix() {
                         format!("SELECT '{lit}'::{pgname}::text AS v")
                     }
                 };
-                let row = sqlx::query(q.as_str()).fetch_one(&mut c).await.unwrap();
+                let row = sqlx::query(sqlx::AssertSqlSafe(q)).fetch_one(&mut c).await.unwrap();
                 row.get(0)
             }
             "extended-text" | "extended-binary" => {
                 let cast = case.ty.cast_sql().replacen("$1", "$1::text", 1);
                 let q = format!("SELECT ({cast})::text AS v");
-                let row = sqlx::query(q.as_str())
+                let row = sqlx::query(sqlx::AssertSqlSafe(q))
                     .bind(sample_str.as_deref())
                     .fetch_one(&mut c).await.unwrap();
                 row.get(0)

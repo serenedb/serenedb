@@ -1,0 +1,230 @@
+{
+ "model.drv.appended_customers": {
+  "metadata": [
+   "BASE TABLE",
+   "analytics",
+   "appended_customers",
+   null,
+   "postgres"
+  ],
+  "columns": [
+   [
+    1,
+    "id",
+    "integer",
+    null
+   ],
+   [
+    2,
+    "name",
+    "text",
+    null
+   ]
+  ]
+ },
+ "model.drv.recent_customers": {
+  "metadata": [
+   "BASE TABLE",
+   "analytics",
+   "recent_customers",
+   null,
+   "postgres"
+  ],
+  "columns": [
+   [
+    1,
+    "id",
+    "integer",
+    null
+   ],
+   [
+    2,
+    "shout",
+    "text",
+    null
+   ],
+   [
+    3,
+    "signup_date",
+    "date",
+    null
+   ]
+  ]
+ },
+ "model.drv.stg_customers": {
+  "metadata": [
+   "VIEW",
+   "analytics",
+   "stg_customers",
+   null,
+   "postgres"
+  ],
+  "columns": [
+   [
+    1,
+    "id",
+    "integer",
+    null
+   ],
+   [
+    2,
+    "name",
+    "text",
+    null
+   ],
+   [
+    3,
+    "signup_date",
+    "date",
+    null
+   ],
+   [
+    4,
+    "score",
+    "numeric(10,2)",
+    null
+   ],
+   [
+    5,
+    "tier",
+    "text",
+    null
+   ]
+  ]
+ },
+ "model.drv.tier_scores": {
+  "metadata": [
+   "BASE TABLE",
+   "analytics",
+   "tier_scores",
+   null,
+   "postgres"
+  ],
+  "columns": [
+   [
+    1,
+    "tier",
+    "text",
+    null
+   ],
+   [
+    2,
+    "customers",
+    "bigint",
+    null
+   ],
+   [
+    3,
+    "total_score",
+    "numeric",
+    null
+   ],
+   [
+    4,
+    "last_signup",
+    "date",
+    null
+   ]
+  ]
+ },
+ "seed.drv.customers_seed": {
+  "metadata": [
+   "BASE TABLE",
+   "analytics",
+   "customers_seed",
+   null,
+   "postgres"
+  ],
+  "columns": [
+   [
+    1,
+    "id",
+    "integer",
+    null
+   ],
+   [
+    2,
+    "name",
+    "text",
+    null
+   ],
+   [
+    3,
+    "signup_date",
+    "date",
+    null
+   ],
+   [
+    4,
+    "score",
+    "numeric(10,2)",
+    null
+   ],
+   [
+    5,
+    "tier",
+    "text",
+    null
+   ]
+  ]
+ },
+ "snapshot.drv.customers_snapshot": {
+  "metadata": [
+   "BASE TABLE",
+   "snapshots",
+   "customers_snapshot",
+   null,
+   "postgres"
+  ],
+  "columns": [
+   [
+    1,
+    "id",
+    "integer",
+    null
+   ],
+   [
+    2,
+    "name",
+    "text",
+    null
+   ],
+   [
+    3,
+    "score",
+    "numeric(10,2)",
+    null
+   ],
+   [
+    4,
+    "tier",
+    "text",
+    null
+   ],
+   [
+    5,
+    "dbt_scd_id",
+    "text",
+    null
+   ],
+   [
+    6,
+    "dbt_updated_at",
+    "timestamp without time zone",
+    null
+   ],
+   [
+    7,
+    "dbt_valid_from",
+    "timestamp without time zone",
+    null
+   ],
+   [
+    8,
+    "dbt_valid_to",
+    "timestamp without time zone",
+    null
+   ]
+  ]
+ }
+}

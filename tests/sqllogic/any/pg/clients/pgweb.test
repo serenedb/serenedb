@@ -1,0 +1,750 @@
+statement ok
+DROP ROLE IF EXISTS cq_pgweb_reader
+
+
+statement ok
+CREATE ROLE cq_pgweb_reader
+
+
+statement ok
+CREATE SCHEMA shop
+
+
+statement ok
+CREATE TYPE shop.mood AS ENUM ('sad', 'ok', 'happy')
+
+
+statement ok
+CREATE SEQUENCE shop.ticket_seq START 100 INCREMENT 5
+
+
+statement ok
+CREATE TABLE shop.customers (
+  id serial PRIMARY KEY,
+  email varchar(100) NOT NULL UNIQUE,
+  name text NOT NULL,
+  active boolean DEFAULT true,
+  mood shop.mood DEFAULT 'ok',
+  created timestamptz DEFAULT now()
+)
+
+
+statement ok
+CREATE TABLE shop.orders (
+  id bigserial PRIMARY KEY,
+  customer_id integer NOT NULL REFERENCES shop.customers (id),
+  amount numeric(10,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  status varchar(20) DEFAULT 'new',
+  note text,
+  ticket bigint DEFAULT nextval('shop.ticket_seq'),
+  CONSTRAINT orders_status_check CHECK (status IN ('new', 'paid', 'shipped'))
+)
+
+
+statement ok
+CREATE TABLE shop.order_items (
+  order_id bigint REFERENCES shop.orders (id),
+  line integer,
+  sku varchar(30) NOT NULL,
+  qty integer NOT NULL CHECK (qty > 0),
+  price numeric(12,4),
+  PRIMARY KEY (order_id, line)
+)
+
+
+statement ok
+CREATE INDEX orders_customer_idx ON shop.orders (customer_id)
+
+
+statement ok
+CREATE UNIQUE INDEX customers_name_email_idx ON shop.customers (name, email)
+
+
+statement ok
+CREATE VIEW shop.order_totals AS SELECT o.customer_id, sum(o.amount) AS total, count(*) AS n FROM shop.orders o GROUP BY o.customer_id
+
+
+statement ok
+CREATE FUNCTION shop.add_one(i integer) RETURNS integer LANGUAGE sql AS $$ SELECT i + 1 $$
+
+
+skipif serenedb
+statement ok
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+onlyif serenedb
+statement error Adding\ comments\ to\ schemas\ is\ not\ implemented
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+statement ok
+COMMENT ON TABLE shop.customers IS 'Customer master'
+
+
+statement ok
+COMMENT ON COLUMN shop.customers.email IS 'Login email'
+
+
+statement ok
+COMMENT ON VIEW shop.order_totals IS 'Totals per customer'
+
+
+statement ok
+COMMENT ON FUNCTION shop.add_one IS 'Adds one'
+
+
+statement ok
+COMMENT ON INDEX shop.orders_customer_idx IS 'Orders by customer'
+
+
+statement ok
+COMMENT ON SEQUENCE shop.ticket_seq IS 'Ticket numbers'
+
+
+statement ok
+COMMENT ON TYPE shop.mood IS 'Mood enum'
+
+
+skipif serenedb
+statement ok
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+onlyif serenedb
+statement error syntax\ error\ at\ or\ near\ "CONSTRAINT"
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+statement ok
+GRANT USAGE ON SCHEMA shop TO cq_pgweb_reader
+
+
+statement ok
+GRANT SELECT ON shop.customers TO cq_pgweb_reader
+
+
+statement ok
+GRANT SELECT, INSERT ON shop.orders TO cq_pgweb_reader
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION shop.add_one(integer) TO cq_pgweb_reader
+
+
+statement ok
+INSERT INTO shop.customers (email, name) VALUES ('a@x', 'Ann'), ('b@x', 'Bob')
+
+
+statement ok
+INSERT INTO shop.orders (customer_id, amount, status) VALUES (1, 10.5, 'paid'), (1, 3, 'new'), (2, 7.25, 'shipped')
+
+
+statement ok
+INSERT INTO shop.order_items VALUES (1, 1, 'SKU-1', 2, 5.25), (1, 2, 'SKU-2', 1, 0)
+
+
+query
+SELECT split_part(v, ' ', 1) AS product
+FROM (SELECT version()) q(v)
+----
+product
+PostgreSQL
+
+
+skipif serenedb
+query
+SELECT su, cu, db = current_database() AS db_ok, schemas, caddr IS NOT NULL AS caddr_ok, cport > 0 AS cport_ok, saddr IS NOT NULL AS saddr_ok, sport > 0 AS sport_ok, split_part(ver, ' ', 1) AS product
+FROM (SELECT
+  session_user,
+  current_user,
+  current_database(),
+  current_schemas(false),
+  inet_client_addr(),
+  inet_client_port(),
+  inet_server_addr(),
+  inet_server_port(),
+  version()) q(su, cu, db, schemas, caddr, cport, saddr, sport, ver)
+----
+su	cu	db_ok	schemas	caddr_ok	cport_ok	saddr_ok	sport_ok	product
+postgres	postgres	t	{public}	t	t	t	t	PostgreSQL
+
+
+onlyif serenedb
+query
+SELECT su, cu, db = current_database() AS db_ok, schemas, caddr IS NOT NULL AS caddr_ok, cport > 0 AS cport_ok, saddr IS NOT NULL AS saddr_ok, sport > 0 AS sport_ok, split_part(ver, ' ', 1) AS product
+FROM (SELECT
+  session_user,
+  current_user,
+  current_database(),
+  current_schemas(false),
+  inet_client_addr(),
+  inet_client_port(),
+  inet_server_addr(),
+  inet_server_port(),
+  version()) q(su, cu, db, schemas, caddr, cport, saddr, sport, ver)
+----
+su	cu	db_ok	schemas	caddr_ok	cport_ok	saddr_ok	sport_ok	product
+postgres	postgres	t	{public}	f	NULL	f	NULL	PostgreSQL
+
+
+query
+SELECT su, cu, db = current_database() AS db_ok, schemas, split_part(ver, ' ', 1) AS product
+FROM (SELECT
+  session_user,
+  current_user,
+  current_database(),
+  current_schemas(false),
+  version()) q(su, cu, db, schemas, ver)
+----
+su	cu	db_ok	schemas	product
+postgres	postgres	t	{public}	PostgreSQL
+
+
+query
+SELECT bool_or(datname = current_database()) AS lists_current
+FROM (SELECT
+  datname
+FROM
+  pg_database
+WHERE
+  NOT datistemplate
+ORDER BY
+  datname ASC) q
+----
+lists_current
+t
+
+
+query
+SELECT schema_name
+FROM (SELECT
+  schema_name
+FROM
+  information_schema.schemata
+WHERE
+  schema_name NOT IN ('information_schema', 'pg_catalog')
+  AND schema_name !~ '^pg_(toast|temp)'
+ORDER BY
+  schema_name ASC) q
+ORDER BY schema_name::text COLLATE "C"
+----
+schema_name
+public
+shop
+
+
+skipif serenedb
+query
+SELECT schema, name, type, owner, comment
+FROM (WITH all_objects AS (
+  SELECT
+    c.oid,
+    n.nspname AS schema,
+    c.relname AS name,
+    CASE c.relkind
+      WHEN 'r' THEN 'table'
+      WHEN 'v' THEN 'view'
+      WHEN 'm' THEN 'materialized_view'
+      WHEN 'i' THEN 'index'
+      WHEN 'S' THEN 'sequence'
+      WHEN 's' THEN 'special'
+      WHEN 'f' THEN 'foreign_table'
+    END AS type,
+    pg_catalog.pg_get_userbyid(c.relowner) AS owner,
+    pg_catalog.obj_description(c.oid) AS comment
+  FROM
+    pg_catalog.pg_class c
+  LEFT JOIN
+    pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE
+    c.relkind IN ('r','v','m','S','s','')
+    AND n.nspname !~ '^pg_(toast|temp)'
+    AND n.nspname NOT IN ('information_schema', 'pg_catalog')
+    AND has_schema_privilege(n.nspname, 'USAGE')
+  UNION
+  SELECT
+    p.oid,
+    n.nspname AS schema,
+    p.proname AS name,
+    'function' AS function,
+    pg_catalog.pg_get_userbyid(p.proowner) AS owner,
+    NULL AS comment
+  FROM
+    pg_catalog.pg_namespace n
+  JOIN
+    pg_catalog.pg_proc p ON p.pronamespace = n.oid
+  WHERE
+    n.nspname !~ '^pg_(toast|temp)'
+    AND n.nspname NOT IN ('information_schema', 'pg_catalog')
+)
+SELECT * FROM all_objects
+ORDER BY 2, 3) q
+ORDER BY schema::text COLLATE "C", name::text COLLATE "C"
+----
+schema	name	type	owner	comment
+shop	add_one	function	postgres	NULL
+shop	customers	table	postgres	Customer master
+shop	customers_id_seq	sequence	postgres	NULL
+shop	order_items	table	postgres	NULL
+shop	order_totals	view	postgres	Totals per customer
+shop	orders	table	postgres	NULL
+shop	orders_id_seq	sequence	postgres	NULL
+shop	ticket_seq	sequence	postgres	Ticket numbers
+
+
+onlyif serenedb
+query
+SELECT schema, name, type, owner, comment
+FROM (WITH all_objects AS (
+  SELECT
+    c.oid,
+    n.nspname AS schema,
+    c.relname AS name,
+    CASE c.relkind
+      WHEN 'r' THEN 'table'
+      WHEN 'v' THEN 'view'
+      WHEN 'm' THEN 'materialized_view'
+      WHEN 'i' THEN 'index'
+      WHEN 'S' THEN 'sequence'
+      WHEN 's' THEN 'special'
+      WHEN 'f' THEN 'foreign_table'
+    END AS type,
+    pg_catalog.pg_get_userbyid(c.relowner) AS owner,
+    pg_catalog.obj_description(c.oid) AS comment
+  FROM
+    pg_catalog.pg_class c
+  LEFT JOIN
+    pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE
+    c.relkind IN ('r','v','m','S','s','')
+    AND n.nspname !~ '^pg_(toast|temp)'
+    AND n.nspname NOT IN ('information_schema', 'pg_catalog')
+    AND has_schema_privilege(n.nspname, 'USAGE')
+  UNION
+  SELECT
+    p.oid,
+    n.nspname AS schema,
+    p.proname AS name,
+    'function' AS function,
+    pg_catalog.pg_get_userbyid(p.proowner) AS owner,
+    NULL AS comment
+  FROM
+    pg_catalog.pg_namespace n
+  JOIN
+    pg_catalog.pg_proc p ON p.pronamespace = n.oid
+  WHERE
+    n.nspname !~ '^pg_(toast|temp)'
+    AND n.nspname NOT IN ('information_schema', 'pg_catalog')
+)
+SELECT * FROM all_objects
+ORDER BY 2, 3) q
+ORDER BY schema::text COLLATE "C", name::text COLLATE "C"
+----
+schema	name	type	owner	comment
+shop	add_one	function	postgres	NULL
+shop	customers	table	postgres	Customer master
+shop	customers_id_seq	sequence	unknown (OID=0)	NULL
+shop	order_items	table	postgres	NULL
+shop	order_totals	view	postgres	Totals per customer
+shop	orders	table	postgres	NULL
+shop	orders_id_seq	sequence	unknown (OID=0)	NULL
+shop	ticket_seq	sequence	postgres	Ticket numbers
+
+
+skipif serenedb
+query
+SELECT *
+FROM (SELECT
+  column_name,
+  data_type,
+  is_nullable,
+  character_maximum_length,
+  character_set_catalog,
+  column_default,
+  pg_catalog.col_description(('"' || 'shop'::text || '"."' || 'orders'::text || '"')::regclass::oid, ordinal_position) as comment
+FROM
+  information_schema.columns
+WHERE
+  table_schema = 'shop'
+  AND table_name = 'orders') q
+ORDER BY column_name::text COLLATE "C"
+----
+column_name	data_type	is_nullable	character_maximum_length	character_set_catalog	column_default	comment
+amount	numeric	NO	NULL	NULL	0	NULL
+customer_id	integer	NO	NULL	NULL	NULL	NULL
+id	bigint	NO	NULL	NULL	nextval('shop.orders_id_seq'::regclass)	NULL
+note	text	YES	NULL	NULL	NULL	NULL
+status	character varying	YES	20	NULL	'new'::character varying	NULL
+ticket	bigint	YES	NULL	NULL	nextval('shop.ticket_seq'::regclass)	NULL
+
+
+onlyif serenedb
+query
+SELECT *
+FROM (SELECT
+  column_name,
+  data_type,
+  is_nullable,
+  character_maximum_length,
+  character_set_catalog,
+  column_default,
+  pg_catalog.col_description(('"' || 'shop'::text || '"."' || 'orders'::text || '"')::regclass::oid, ordinal_position) as comment
+FROM
+  information_schema.columns
+WHERE
+  table_schema = 'shop'
+  AND table_name = 'orders') q
+ORDER BY column_name::text COLLATE "C"
+----
+column_name	data_type	is_nullable	character_maximum_length	character_set_catalog	column_default	comment
+amount	numeric	NO	NULL	NULL	0	NULL
+customer_id	integer	NO	NULL	NULL	NULL	NULL
+id	bigint	NO	NULL	NULL	nextval('orders_id_seq')	NULL
+note	text	YES	NULL	NULL	NULL	NULL
+status	text	YES	NULL	NULL	'new'	NULL
+ticket	bigint	YES	NULL	NULL	nextval('shop.ticket_seq')	NULL
+
+
+skipif serenedb
+query
+SELECT *
+FROM (SELECT
+  column_name,
+  data_type,
+  is_nullable,
+  character_maximum_length,
+  character_set_catalog,
+  column_default,
+  pg_catalog.col_description(('"' || 'shop'::text || '"."' || 'customers'::text || '"')::regclass::oid, ordinal_position) as comment
+FROM
+  information_schema.columns
+WHERE
+  table_schema = 'shop'
+  AND table_name = 'customers') q
+ORDER BY column_name::text COLLATE "C"
+----
+column_name	data_type	is_nullable	character_maximum_length	character_set_catalog	column_default	comment
+active	boolean	YES	NULL	NULL	true	NULL
+created	timestamp with time zone	YES	NULL	NULL	now()	NULL
+email	character varying	NO	100	NULL	NULL	Login email
+id	integer	NO	NULL	NULL	nextval('shop.customers_id_seq'::regclass)	NULL
+mood	USER-DEFINED	YES	NULL	NULL	'ok'::shop.mood	NULL
+name	text	NO	NULL	NULL	NULL	NULL
+
+
+onlyif serenedb
+query
+SELECT *
+FROM (SELECT
+  column_name,
+  data_type,
+  is_nullable,
+  character_maximum_length,
+  character_set_catalog,
+  column_default,
+  pg_catalog.col_description(('"' || 'shop'::text || '"."' || 'customers'::text || '"')::regclass::oid, ordinal_position) as comment
+FROM
+  information_schema.columns
+WHERE
+  table_schema = 'shop'
+  AND table_name = 'customers') q
+ORDER BY column_name::text COLLATE "C"
+----
+column_name	data_type	is_nullable	character_maximum_length	character_set_catalog	column_default	comment
+active	boolean	YES	NULL	NULL	true	NULL
+created	timestamp with time zone	YES	NULL	NULL	now()	NULL
+email	text	NO	NULL	NULL	NULL	Login email
+id	integer	NO	NULL	NULL	nextval('customers_id_seq')	NULL
+mood	USER-DEFINED	YES	NULL	NULL	'ok'	NULL
+name	text	NO	NULL	NULL	NULL	NULL
+
+
+query
+SELECT *
+FROM (SELECT
+  attname AS column_name,
+  atttypid::regtype AS data_type,
+  (CASE WHEN attnotnull IS TRUE THEN 'NO' ELSE 'YES' END) AS is_nullable,
+  NULL AS character_maximum_length,
+  NULL AS character_set_catalog,
+  NULL AS column_default
+FROM
+  pg_attribute
+WHERE
+  attrelid = 'shop.order_totals'::regclass
+  AND attnum > 0
+  AND NOT attisdropped) q
+ORDER BY column_name::text COLLATE "C"
+----
+column_name	data_type	is_nullable	character_maximum_length	character_set_catalog	column_default
+customer_id	integer	YES	NULL	NULL	NULL
+n	bigint	YES	NULL	NULL	NULL
+total	numeric	YES	NULL	NULL	NULL
+
+
+skipif serenedb
+query
+SELECT proname, pronamespace::regnamespace::text AS schema, pg_get_userbyid(proowner) AS owner, functiondef
+FROM (SELECT
+  p.oid,
+  p.proname,
+  p.pronamespace,
+  p.proowner,
+  pg_get_functiondef(oid) AS functiondef
+FROM
+  pg_catalog.pg_proc p
+WHERE
+  oid = 'shop.add_one(integer)'::regprocedure::oid::oid) q
+----
+proname	schema	owner	functiondef
+add_one	shop	postgres	CREATE OR REPLACE FUNCTION shop.add_one(i integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT i + 1 $function$\n
+
+
+onlyif serenedb
+query
+SELECT proname, pronamespace::regnamespace::text AS schema, pg_get_userbyid(proowner) AS owner, functiondef
+FROM (SELECT
+  p.oid,
+  p.proname,
+  p.pronamespace,
+  p.proowner,
+  pg_get_functiondef(oid) AS functiondef
+FROM
+  pg_catalog.pg_proc p
+WHERE
+  oid = 'shop.add_one(integer)'::regprocedure::oid::oid) q
+----
+proname	schema	owner	functiondef
+add_one	shop	postgres	CREATE OR REPLACE FUNCTION shop.add_one(i integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$(SELECT (i + 1) LIMIT 1)$function$\n
+
+
+query
+SELECT reltuples >= -1 AS ok
+FROM (SELECT
+  reltuples
+FROM
+  pg_class
+WHERE
+  oid = ('"' || 'shop'::text || '"."' || 'orders'::text || '"')::regclass) q
+----
+ok
+t
+
+
+query
+SELECT data_size IS NOT NULL AS data_ok, index_size IS NOT NULL AS index_ok, total_size IS NOT NULL AS total_ok, rows_count >= -1 AS rows_ok
+FROM (SELECT
+  pg_size_pretty(pg_table_size('"shop"."orders"')) AS data_size,
+  pg_size_pretty(pg_indexes_size('"shop"."orders"')) AS index_size,
+  pg_size_pretty(pg_total_relation_size('"shop"."orders"')) AS total_size,
+  (SELECT reltuples FROM pg_class WHERE oid = '"shop"."orders"'::regclass) AS rows_count) q
+----
+data_ok	index_ok	total_ok	rows_ok
+t	t	t	t
+
+
+skipif serenedb
+query
+SELECT index_name, index_size IS NOT NULL AS sized, index_definition
+FROM (SELECT
+  indexname AS index_name,
+  pg_size_pretty(pg_table_size(('"' || schemaname || '"."' || indexname || '"')::regclass)) AS index_size,
+  indexdef AS index_definition
+FROM
+  pg_indexes
+WHERE
+  schemaname = 'shop'
+  AND tablename = 'orders') q
+ORDER BY index_name::text COLLATE "C"
+----
+index_name	sized	index_definition
+orders_customer_idx	t	CREATE INDEX orders_customer_idx ON shop.orders USING btree (customer_id)
+orders_pkey	t	CREATE UNIQUE INDEX orders_pkey ON shop.orders USING btree (id)
+
+
+onlyif serenedb
+query
+SELECT index_name, index_size IS NOT NULL AS sized, index_definition
+FROM (SELECT
+  indexname AS index_name,
+  pg_size_pretty(pg_table_size(('"' || schemaname || '"."' || indexname || '"')::regclass)) AS index_size,
+  indexdef AS index_definition
+FROM
+  pg_indexes
+WHERE
+  schemaname = 'shop'
+  AND tablename = 'orders') q
+ORDER BY index_name::text COLLATE "C"
+----
+index_name	sized	index_definition
+orders_customer_idx	t	CREATE INDEX orders_customer_idx ON shop.orders USING secondary (customer_id)
+orders_pkey	t	CREATE UNIQUE INDEX orders_pkey ON shop.orders USING secondary (id)
+
+
+skipif serenedb
+query
+SELECT name, definition
+FROM (SELECT
+  conname AS name,
+  pg_get_constraintdef(c.oid, true) AS definition
+FROM
+  pg_constraint c
+JOIN
+  pg_namespace n ON n.oid = c.connamespace
+JOIN
+  pg_class cl ON cl.oid = c.conrelid
+WHERE
+  n.nspname = 'shop'
+  AND relname = 'orders'
+  AND contype != 'n'
+ORDER BY
+  contype DESC) q
+ORDER BY name::text COLLATE "C"
+----
+name	definition
+orders_amount_check	CHECK (amount >= 0::numeric)
+orders_customer_id_fkey	FOREIGN KEY (customer_id) REFERENCES shop.customers(id)
+orders_pkey	PRIMARY KEY (id)
+orders_status_check	CHECK (status::text = ANY (ARRAY['new'::character varying, 'paid'::character varying, 'shipped'::character varying]::text[]))
+
+
+onlyif serenedb
+query
+SELECT name, definition
+FROM (SELECT
+  conname AS name,
+  pg_get_constraintdef(c.oid, true) AS definition
+FROM
+  pg_constraint c
+JOIN
+  pg_namespace n ON n.oid = c.connamespace
+JOIN
+  pg_class cl ON cl.oid = c.conrelid
+WHERE
+  n.nspname = 'shop'
+  AND relname = 'orders'
+  AND contype != 'n'
+ORDER BY
+  contype DESC) q
+ORDER BY name::text COLLATE "C"
+----
+name	definition
+orders_amount_check	CHECK ((amount >= 0))
+orders_customer_id_fkey	FOREIGN KEY (customer_id) REFERENCES shop.customers(id)
+orders_pkey	PRIMARY KEY (id)
+orders_status_check	CHECK ((status IN ('new', 'paid', 'shipped')))
+
+
+query
+SELECT schema_name, table_name, total_size IS NOT NULL AS sized, estimated_rows IS NOT NULL OR estimated_rows_count < 0 AS rows_ok, indexes_count, columns_count
+FROM (WITH columns_counts AS (
+  SELECT table_schema, table_name, COUNT(1) AS num
+  FROM information_schema.columns
+  GROUP BY table_schema, table_name
+),
+indexes_counts AS (
+  SELECT schemaname, tablename, COUNT(1) AS num
+  FROM pg_indexes
+  GROUP BY schemaname, tablename
+)
+SELECT
+  tables.schemaname AS schema_name,
+  tables.relname AS table_name,
+  pg_size_pretty(pg_total_relation_size(tables.relid)) AS total_size,
+  pg_size_pretty(pg_table_size(tables.relid)) AS data_size,
+  pg_size_pretty(pg_indexes_size(tables.relid)) AS index_size,
+  pg_class.reltuples AS estimated_rows_count,
+  CASE
+    WHEN pg_class.reltuples >= 0 AND pg_class.reltuples < 1000
+      THEN pg_class.reltuples::text
+    WHEN pg_class.reltuples >= 1000 AND pg_class.reltuples < 1000000
+      THEN ROUND((pg_class.reltuples / 1000))::text || 'K'
+    WHEN pg_class.reltuples >= 1000000
+      THEN ROUND(pg_class.reltuples / 1000000)::text || 'M'
+  END AS estimated_rows,
+  CASE
+    WHEN pg_class.reltuples > 1000
+      THEN ROUND(pg_indexes_size(tables.relid)::numeric / pg_table_size(tables.relid), 2)
+  END AS index_to_data_ratio,
+  indexes_counts.num AS indexes_count,
+  columns_counts.num AS columns_count
+FROM
+  pg_catalog.pg_statio_user_tables AS tables
+LEFT JOIN pg_class
+  ON pg_class.oid = tables.relid
+LEFT JOIN indexes_counts
+  ON indexes_counts.schemaname = tables.schemaname
+  AND indexes_counts.tablename = tables.relname
+LEFT JOIN columns_counts
+  ON columns_counts.table_schema = tables.schemaname
+  AND columns_counts.table_name = tables.relname
+ORDER BY
+  pg_total_relation_size(tables.relid) DESC,
+  pg_table_size(tables.relid) DESC) q
+WHERE schema_name = 'shop'
+ORDER BY table_name::text COLLATE "C"
+----
+schema_name	table_name	sized	rows_ok	indexes_count	columns_count
+shop	customers	t	t	3	6
+shop	order_items	t	t	1	5
+shop	orders	t	t	2	6
+
+
+query
+SELECT count(*) > 100 AS many
+FROM (SELECT * FROM pg_settings) q
+----
+many
+t
+
+
+query
+SELECT bool_or(pid = pg_backend_pid()) AS sees_itself
+FROM (SELECT * FROM pg_stat_activity WHERE datname = current_database()) q
+----
+sees_itself
+t
+
+
+query
+SELECT * FROM "shop"."orders" ORDER BY "id" ASC LIMIT 100
+----
+id	customer_id	amount	status	note	ticket
+1	1	10.50	paid	NULL	100
+2	1	3.00	new	NULL	105
+3	2	7.25	shipped	NULL	110
+
+
+query
+SELECT * FROM "shop"."orders" WHERE amount > 5 ORDER BY "amount" DESC LIMIT 100 OFFSET 1
+----
+id	customer_id	amount	status	note	ticket
+3	2	7.25	shipped	NULL	110
+
+
+query
+SELECT current_user, current_database() = current_database() AS same
+----
+current_user	same
+postgres	t
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION shop.add_one(integer) FROM cq_pgweb_reader
+
+
+statement ok
+REVOKE SELECT, INSERT ON shop.orders FROM cq_pgweb_reader
+
+
+statement ok
+REVOKE SELECT ON shop.customers FROM cq_pgweb_reader
+
+
+statement ok
+REVOKE USAGE ON SCHEMA shop FROM cq_pgweb_reader
+
+
+statement ok
+DROP ROLE cq_pgweb_reader

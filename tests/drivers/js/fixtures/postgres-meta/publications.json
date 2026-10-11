@@ -1,0 +1,16 @@
+[
+ {
+  "name": "<database>_pub",
+  "owner": "postgres",
+  "publish_delete": true,
+  "publish_insert": true,
+  "publish_truncate": true,
+  "publish_update": true,
+  "tables": [
+   {
+    "name": "teams",
+    "schema": "public"
+   }
+  ]
+ }
+]

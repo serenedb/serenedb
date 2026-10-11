@@ -36,9 +36,7 @@ checkout): repeat an empty or short first answer before trusting it. No LSP
 tool means the plugin is missing
 (`claude plugin install clangd-lsp@claude-plugins-official`); an LSP error that
 the server can't start means `clangd` itself is missing. Install what is
-missing, or ask the user to. clangd reads `compile_commands.json` from the
-checkout root or `build/`; with another build dir, run
-`ln -s <build dir>/compile_commands.json .` once.
+missing, or ask the user to. clangd reads `build/compile_commands.json`.
 
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team. What every contributor needs goes into

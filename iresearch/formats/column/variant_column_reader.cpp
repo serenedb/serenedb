@@ -79,7 +79,9 @@ void VariantColumnReader::NewOutputVector(ScanState& s) const {
   for (size_t i = 0; i < s.variant->rgs.size(); ++i) {
     auto& vs = s.variant->rgs[i];
     if (_variant_offsets[i + 1] <= s.variant->cursor) {
-      vs = {};
+      vs.unshredded.reset();
+      vs.shredded.reset();
+      vs.intermediate.reset();
       continue;
     }
     if (vs.unshredded) {
@@ -87,9 +89,6 @@ void VariantColumnReader::NewOutputVector(ScanState& s) const {
     }
     if (vs.shredded) {
       ResetOutput(*_variant_rgs[i].shredded, *vs.shredded);
-    }
-    if (vs.leaf && vs.leaf_reader) {
-      ResetOutput(*vs.leaf_reader, *vs.leaf);
     }
   }
 }

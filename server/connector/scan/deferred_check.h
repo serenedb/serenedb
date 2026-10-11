@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/table_filter.hpp>
@@ -28,6 +30,7 @@
 #include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace sdb::connector {
@@ -40,6 +43,26 @@ struct DeferredCheck {
   duckdb::LogicalType type;
   std::shared_ptr<const duckdb::TableFilter> check;
 };
+
+template<typename T>
+struct SharedCheckBind final : duckdb::FunctionData {
+  explicit SharedCheckBind(std::shared_ptr<const T> data)
+    : data{std::move(data)} {}
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<SharedCheckBind>(data);
+  }
+
+  bool Equals(const duckdb::FunctionData& other) const final {
+    return data == other.Cast<SharedCheckBind>().data;
+  }
+
+  std::shared_ptr<const T> data;
+};
+
+using MakeCheckBind =
+  absl::FunctionRef<duckdb::unique_ptr<duckdb::FunctionData>(
+    std::shared_ptr<const irs::Filter>)>;
 
 struct DeferContext {
   const irs::IndexReader& reader;
@@ -58,7 +81,7 @@ std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
 DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
                     irs::field_id column, const duckdb::LogicalType& type,
                     std::string_view name, duckdb::scalar_function_t function,
-                    duckdb::unique_ptr<duckdb::FunctionData> bind,
+                    MakeCheckBind bind,
                     duckdb::init_local_state_t init = nullptr);
 
 std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
@@ -69,8 +92,5 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
 
 std::optional<DeferredCheck> DeferGeo(irs::Filter::ptr& filter,
                                       const DeferContext& ctx);
-
-std::optional<DeferredCheck> DeferGeoDistance(irs::Filter::ptr& filter,
-                                              const DeferContext& ctx);
 
 }  // namespace sdb::connector

@@ -35,26 +35,22 @@
 namespace sdb::connector {
 namespace {
 
-struct PhraseCheckBind final : duckdb::FunctionData {
-  PhraseCheckBind(std::shared_ptr<const irs::CompiledPhrase> compiled,
-                  std::shared_ptr<const irs::PhraseTokens> tokens)
-    : compiled{std::move(compiled)}, tokens{std::move(tokens)} {}
+struct PhraseCheckData {
+  PhraseCheckData(std::shared_ptr<const irs::PhraseTokens> tokens,
+                  const irs::ByPhraseOptions& checked,
+                  irs::bytes_view word_separator,
+                  std::span<const irs::PhraseWordStat> words)
+    : tokens{std::move(tokens)}, compiled{checked, word_separator, words} {}
 
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<PhraseCheckBind>(compiled, tokens);
-  }
-
-  bool Equals(const duckdb::FunctionData& other) const final {
-    return compiled == other.Cast<PhraseCheckBind>().compiled;
-  }
-
-  std::shared_ptr<const irs::CompiledPhrase> compiled;
   std::shared_ptr<const irs::PhraseTokens> tokens;
+  irs::CompiledPhrase compiled;
 };
 
+using PhraseCheckBind = SharedCheckBind<PhraseCheckData>;
+
 struct PhraseCheckState final : duckdb::FunctionLocalState {
-  explicit PhraseCheckState(const PhraseCheckBind& bind)
-    : check{*bind.compiled, *bind.tokens, false} {}
+  explicit PhraseCheckState(const PhraseCheckData& data)
+    : check{data.compiled, *data.tokens, false} {}
 
   irs::PhraseCheck check;
 };
@@ -63,7 +59,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitPhraseCheck(
   duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
   duckdb::FunctionData* bind_data) {
   return duckdb::make_uniq<PhraseCheckState>(
-    bind_data->Cast<PhraseCheckBind>());
+    *bind_data->Cast<PhraseCheckBind>().data);
 }
 
 void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -108,13 +104,16 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   if (!index) {
     return std::nullopt;
   }
-  auto compiled = std::make_shared<const irs::CompiledPhrase>(
-    checked, options.word_separator(),
+  auto data = std::make_shared<const PhraseCheckData>(
+    tokens, checked, options.word_separator(),
     irs::PhraseWordStats(checked, ctx.reader, phrase.field_id()));
-  return Split(filter, std::move(index), tokens->text, *type,
-               "sdb_phrase_check", CheckPhrase,
-               duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),
-               InitPhraseCheck);
+  return Split(
+    filter, std::move(index), tokens->text, *type, "sdb_phrase_check",
+    CheckPhrase,
+    [&](std::shared_ptr<const irs::Filter>) {
+      return duckdb::make_uniq<PhraseCheckBind>(std::move(data));
+    },
+    InitPhraseCheck);
 }
 
 }  // namespace sdb::connector

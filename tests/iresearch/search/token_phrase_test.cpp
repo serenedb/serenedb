@@ -684,6 +684,23 @@ TEST(PhraseCheckTest, anchor_carries_long_terms_across_batches) {
   }
 }
 
+TEST(PhraseCheckTest, json_values_check_the_text_of_strings) {
+  const std::span<const std::vector<irs::bstring>> expanded;
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  auto tokens = TextOf<DenseWords>();
+  tokens.json = true;
+  irs::PhraseCheck check{compiled, tokens, true};
+  irs::PhraseVerdict verdict;
+  EXPECT_TRUE(CheckText(check, R"("quick brown")", verdict));
+  EXPECT_TRUE(CheckText(check, R"("the quick brown fox")", verdict));
+  EXPECT_TRUE(
+    CheckText(check, std::string_view{"\0\"quick brown\"", 14}, verdict));
+  EXPECT_FALSE(CheckText(check, "quick brown", verdict));
+  EXPECT_FALSE(CheckText(check, "42", verdict));
+  EXPECT_FALSE(CheckText(check, "true", verdict));
+  EXPECT_FALSE(CheckText(check, "null", verdict));
+}
+
 TEST(PhraseCheckTest, array_rows_skip_null_rows_and_elements) {
   const auto type = duckdb::LogicalType::ARRAY(duckdb::LogicalType::VARCHAR, 2);
   duckdb::DataChunk chunk;
@@ -1163,6 +1180,26 @@ TEST(TokenPhraseIndexTest, long_documents_agree_with_positions) {
   PushTerm(interval, "b", 1, 6);
   PushTerm(interval, "c", 1, 6);
   ExpectLikePositions<DenseWords>(index, interval);
+}
+
+TEST(TokenPhraseIndexTest, early_stopping_scans_agree_with_positions) {
+  constexpr std::string_view kWords[] = {"x", "x", "x", "a", "b", "c", "the"};
+  std::mt19937 rng{23};
+  std::vector<std::string> docs;
+  for (size_t i = 0; i != 60; ++i) {
+    docs.push_back(RandomText(rng, kWords, 100 + rng() % 1500));
+  }
+  const Index index{
+    docs, std::type_identity<ProgressWords>{}, {.segment_docs = 16}};
+  for (size_t i = 0; i != 60; ++i) {
+    const auto phrase = RandomPhrase(rng, kWords);
+    SCOPED_TRACE(i);
+    ExpectLikePositions<ProgressWords>(index, phrase);
+  }
+  for (const auto* text : {"a b", "a b c", "the a", "c x a"}) {
+    SCOPED_TRACE(text);
+    ExpectLikePositions<ProgressWords>(index, Phrase(text));
+  }
 }
 
 TEST(TokenPhraseIndexTest, conjunctions_seek_into_checked_batches) {

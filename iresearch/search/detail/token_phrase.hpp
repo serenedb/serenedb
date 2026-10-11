@@ -52,13 +52,14 @@ struct PhraseTokens {
   field_id text = field_limits::invalid();
   Factory tokenizer;
   std::optional<ByPhraseOptions> spec;
+  bool json = false;
 
   const ByPhraseOptions& Check(const ByPhraseOptions& phrase) const noexcept {
     return spec ? *spec : phrase;
   }
 
   bool operator==(const PhraseTokens& rhs) const noexcept {
-    return text == rhs.text && spec == rhs.spec;
+    return text == rhs.text && spec == rhs.spec && json == rhs.json;
   }
 };
 
@@ -187,17 +188,25 @@ struct CompiledPhrase {
   void PickAnchor(std::span<const PhraseWordStat> words);
 };
 
+struct JsonText;
+
 class RowValues {
  public:
+  explicit RowValues(bool json);
+  ~RowValues();
+
   void Bind(duckdb::Vector& values, duckdb::idx_t count);
   std::span<const duckdb::string_t> At(duckdb::idx_t row);
 
  private:
+  std::span<const duckdb::string_t> Values(duckdb::idx_t row);
+
   duckdb::UnifiedVectorFormat _format;
   duckdb::UnifiedVectorFormat _children;
   duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
   uint64_t _array_size = 0;
   std::vector<duckdb::string_t> _values;
+  std::unique_ptr<JsonText> _json;
 };
 
 class PhraseCheck final : public TokenConsumer {

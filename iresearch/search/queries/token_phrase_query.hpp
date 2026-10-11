@@ -39,7 +39,9 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
                    std::shared_ptr<const PhraseTokens> tokens,
                    const ColumnReader& column, const ByPhraseOptions& phrase,
                    std::span<const std::vector<bstring>> expanded,
-                   std::span<const PhraseWordStat> words, score_t boost)
+                   std::span<const PhraseWordStat> words,
+                   std::span<const PostingMeta* const> word_metas,
+                   score_t boost)
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
       _approx{std::move(approx)},
       _reader{&reader},
@@ -51,13 +53,10 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
     _postings = _approx->Postings();
     _leaves = _approx->Leaves();
     if (const auto& anchor = _compiled.anchor;
-        anchor && !_tokens->spec &&
+        anchor && anchor->slot < word_metas.size() &&
+        word_metas[anchor->slot] && word_metas[anchor->slot]->docs_count != 0 &&
         FeaturesHaveFreq(reader.meta().index_features)) {
-      const auto meta =
-        reader.Lookup(AsBytesView(*_compiled.slots[anchor->slot].word));
-      if (meta.docs_count != 0) {
-        _anchor = meta;
-      }
+      _anchor = *word_metas[anchor->slot];
     }
   }
 

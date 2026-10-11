@@ -52,11 +52,9 @@ std::optional<DeferredCheck> Defer(irs::Filter::ptr& filter,
   if (type == irs::Type<irs::ByPhrase>::id()) {
     return DeferPhrase(filter, ctx);
   }
-  if (type == irs::Type<irs::GeoFilter>::id()) {
+  if (type == irs::Type<irs::GeoFilter>::id() ||
+      type == irs::Type<irs::GeoDistanceFilter>::id()) {
     return DeferGeo(filter, ctx);
-  }
-  if (type == irs::Type<irs::GeoDistanceFilter>::id()) {
-    return DeferGeoDistance(filter, ctx);
   }
   return std::nullopt;
 }
@@ -86,8 +84,8 @@ std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
 DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
                     irs::field_id column, const duckdb::LogicalType& type,
                     std::string_view name, duckdb::scalar_function_t function,
-                    duckdb::unique_ptr<duckdb::FunctionData> bind,
-                    duckdb::init_local_state_t init) {
+                    MakeCheckBind bind, duckdb::init_local_state_t init) {
+  std::shared_ptr<const irs::Filter> source = std::move(filter);
   duckdb::ScalarFunction fn(duckdb::Identifier{name}, {type},
                             duckdb::LogicalType::BOOLEAN, std::move(function));
   fn.SetInitStateCallback(init);
@@ -95,9 +93,9 @@ DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
   children.push_back(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL));
   auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction(fn), std::move(children), std::move(bind));
+    duckdb::BoundScalarFunction(fn), std::move(children), bind(source));
   DeferredCheck check{
-    .source = std::move(filter),
+    .source = std::move(source),
     .column = column,
     .type = type,
     .check = std::make_shared<const duckdb::ExpressionFilter>(std::move(expr))};

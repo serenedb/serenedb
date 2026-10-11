@@ -776,6 +776,13 @@ db error: ERROR: Index keys cannot contain expressions with side effects.
 
 
 statement error
+CREATE INDEX bad_inc_set_config ON bad USING inverted(
+    id, (set_config('application_name', a::VARCHAR, true)) included());
+----
+db error: ERROR: Index keys cannot contain expressions with side effects.
+
+
+statement error
 CREATE INDEX bad_inc_agg ON bad USING inverted(id, (count(*)) included());
 ----
 db error: ERROR: aggregate functions are not allowed in index expressions
@@ -2294,3 +2301,83 @@ CREATE TABLE geo_expr_ok(id INT PRIMARY KEY, raw VARCHAR);
 statement ok
 CREATE INDEX geo_expr_ok_idx ON geo_expr_ok USING inverted(
     id, (raw::JSON) geo_expr_dict);
+
+statement ok
+CREATE TABLE oj_p(id INT PRIMARY KEY);
+
+statement ok
+CREATE TABLE oj_d(id INT PRIMARY KEY, title VARCHAR);
+
+statement ok
+CREATE INDEX oj_d_idx ON oj_d USING inverted(id, (coalesce(title, '')) included());
+
+statement ok
+INSERT INTO oj_p VALUES (1), (2), (3);
+
+statement ok
+INSERT INTO oj_d VALUES (1, 'hello'), (3, NULL), (4, 'orphan');
+
+statement ok
+VACUUM (REFRESH_TABLE) oj_d;
+
+query
+SELECT p.id, '[' || coalesce(d.title, '') || ']' AS t FROM oj_p p LEFT JOIN oj_d_idx d ON p.id = d.id ORDER BY p.id;
+----
+id	t
+1	[hello]
+2	[]
+3	[]
+
+query
+SELECT p.id FROM oj_p p LEFT JOIN oj_d_idx d ON p.id = d.id WHERE coalesce(d.title, '') = '' ORDER BY p.id;
+----
+id
+2
+3
+
+query
+SELECT p.id, '[' || coalesce(d.title, '') || ']' AS t FROM oj_d_idx d RIGHT JOIN oj_p p ON p.id = d.id ORDER BY p.id;
+----
+id	t
+1	[hello]
+2	[]
+3	[]
+
+query
+SELECT p.id, d.id AS did, '[' || coalesce(d.title, '') || ']' AS t FROM oj_p p FULL JOIN oj_d_idx d ON p.id = d.id ORDER BY coalesce(p.id, d.id);
+----
+id	did	t
+1	1	[hello]
+2	NULL	[]
+3	3	[]
+NULL	4	[orphan]
+
+query
+SELECT '[' || coalesce(d.title, '') || ']' AS t, count(*) AS c FROM oj_p p LEFT JOIN oj_d_idx d ON p.id = d.id GROUP BY 1 ORDER BY 1;
+----
+t	c
+[]	2
+[hello]	1
+
+query
+SELECT p.id, count(*) OVER (PARTITION BY coalesce(d.title, '')) AS c FROM oj_p p LEFT JOIN oj_d_idx d ON p.id = d.id ORDER BY p.id;
+----
+id	c
+1	1
+2	2
+3	2
+
+query
+SELECT p.id, '[' || coalesce(d.title, '') || ']' AS t FROM oj_p p JOIN oj_d_idx d ON p.id = d.id ORDER BY p.id;
+----
+id	t
+1	[hello]
+3	[]
+
+query
+SELECT p.id, '[' || coalesce(x.t, '-') || ']' AS t FROM oj_p p LEFT JOIN (SELECT id, coalesce(title, '') AS t FROM oj_d_idx) x ON p.id = x.id ORDER BY p.id;
+----
+id	t
+1	[hello]
+2	[-]
+3	[]

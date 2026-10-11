@@ -363,6 +363,47 @@ irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
   return it == keys.end() ? irs::field_limits::invalid() : it->field_id;
 }
 
+irs::field_id InvertedIndexConfig::FindTermFieldByExpression(
+  std::string_view normalized) const noexcept {
+  auto found = irs::field_limits::invalid();
+  if (normalized.empty()) {
+    return found;
+  }
+  for (const auto& key : keys) {
+    if (key.normalized_expression != normalized) {
+      continue;
+    }
+    const auto* entry = FindEntry(key.field_id);
+    if (!entry || !entry->IsTermDict()) {
+      continue;
+    }
+    if (entry->IsStored()) {
+      return key.field_id;
+    }
+    if (!irs::field_limits::valid(found)) {
+      found = key.field_id;
+    }
+  }
+  return found;
+}
+
+irs::field_id InvertedIndexConfig::FindStoredFieldByExpression(
+  std::string_view normalized) const noexcept {
+  if (normalized.empty()) {
+    return irs::field_limits::invalid();
+  }
+  for (const auto& key : keys) {
+    if (key.normalized_expression != normalized) {
+      continue;
+    }
+    if (const auto* entry = FindEntry(key.field_id);
+        entry && entry->IsStored()) {
+      return key.field_id;
+    }
+  }
+  return irs::field_limits::invalid();
+}
+
 bool InvertedIndexConfig::FirstKeyOf(size_t key) const noexcept {
   return absl::c_none_of(std::span{keys}.first(key),
                          [&](const InvertedIndexKey& earlier) {

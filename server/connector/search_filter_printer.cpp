@@ -209,8 +209,12 @@ struct PhrasePartVisitor : util::Noncopyable {
   std::string* out;
 };
 
-std::string_view GeoVerify(const GeoFilterOptionsBase& options) {
-  return field_limits::valid(options.store_field_id) ? "inline" : "false";
+template<typename Options>
+std::string_view GeoVerify(const Options& options) {
+  return field_limits::valid(options.store_field_id) &&
+             PlanGeo(options)->kind == GeoPlan::Kind::Cells
+           ? "inline"
+           : "false";
 }
 
 std::string_view GeoFilterTypeName(GeoFilterType type) {

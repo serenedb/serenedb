@@ -34,26 +34,16 @@
 namespace sdb::connector {
 namespace {
 
-struct GeoCheckBind final : duckdb::FunctionData {
-  GeoCheckBind(const irs::Filter& source, irs::GeoParser parser,
-               irs::GeoAcceptor acceptor)
-    : source{&source}, parser{std::move(parser)}, acceptor{acceptor} {}
-
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<GeoCheckBind>(*source, parser, acceptor);
-  }
-
-  bool Equals(const duckdb::FunctionData& other) const final {
-    return source == other.Cast<GeoCheckBind>().source;
-  }
-
-  const irs::Filter* source;
+struct GeoCheckData {
+  std::shared_ptr<const irs::Filter> source;
   irs::GeoParser parser;
   irs::GeoAcceptor acceptor;
 };
 
+using GeoCheckBind = SharedCheckBind<GeoCheckData>;
+
 struct GeoCheckState final : duckdb::FunctionLocalState {
-  explicit GeoCheckState(const GeoCheckBind& bind) : parser{bind.parser} {
+  explicit GeoCheckState(const GeoCheckData& data) : parser{data.parser} {
     std::visit([&](const auto& p) { irs::SeedShape(p, shape); }, parser);
   }
 
@@ -64,14 +54,16 @@ struct GeoCheckState final : duckdb::FunctionLocalState {
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitGeoCheck(
   duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
   duckdb::FunctionData* bind_data) {
-  return duckdb::make_uniq<GeoCheckState>(bind_data->Cast<GeoCheckBind>());
+  return duckdb::make_uniq<GeoCheckState>(
+    *bind_data->Cast<GeoCheckBind>().data);
 }
 
 void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
               duckdb::Vector& result) {
-  const auto& bind = state.expr.Cast<duckdb::BoundFunctionExpression>()
-                       .BindInfo()
-                       ->Cast<GeoCheckBind>();
+  const auto& data = *state.expr.Cast<duckdb::BoundFunctionExpression>()
+                        .BindInfo()
+                        ->Cast<GeoCheckBind>()
+                        .data;
   auto& local = duckdb::ExecuteFunctionState::GetFunctionState(state)
                   ->Cast<GeoCheckState>();
   std::visit(
@@ -85,7 +77,7 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
             local.shape, acceptor);
         });
     },
-    local.parser, bind.acceptor);
+    local.parser, data.acceptor);
 }
 
 template<typename GeoFilter>
@@ -104,22 +96,24 @@ std::optional<DeferredCheck> DeferGeoOf(irs::Filter::ptr& filter,
   auto index = std::make_unique<GeoFilter>(geo);
   index->mutable_options()->store_field_id = irs::field_limits::invalid();
   index->mutable_options()->plan = plan;
-  return Split(filter, std::move(index), options.store_field_id, *type,
-               "sdb_geo_check", CheckGeo,
-               duckdb::make_uniq<GeoCheckBind>(geo, irs::ParserOf(options),
-                                               plan->acceptor),
-               InitGeoCheck);
+  return Split(
+    filter, std::move(index), options.store_field_id, *type, "sdb_geo_check",
+    CheckGeo,
+    [&](std::shared_ptr<const irs::Filter> source) {
+      return duckdb::make_uniq<GeoCheckBind>(
+        std::make_shared<const GeoCheckData>(GeoCheckData{
+          std::move(source), irs::ParserOf(options), plan->acceptor}));
+    },
+    InitGeoCheck);
 }
 
 }  // namespace
 
 std::optional<DeferredCheck> DeferGeo(irs::Filter::ptr& filter,
                                       const DeferContext& ctx) {
-  return DeferGeoOf<irs::GeoFilter>(filter, ctx);
-}
-
-std::optional<DeferredCheck> DeferGeoDistance(irs::Filter::ptr& filter,
-                                              const DeferContext& ctx) {
+  if (filter->type() == irs::Type<irs::GeoFilter>::id()) {
+    return DeferGeoOf<irs::GeoFilter>(filter, ctx);
+  }
   return DeferGeoOf<irs::GeoDistanceFilter>(filter, ctx);
 }
 

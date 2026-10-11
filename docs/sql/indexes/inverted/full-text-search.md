@@ -89,6 +89,8 @@ The index stays smaller without `position`, but a phrase reads more data: the fe
 
 Without `position` and without the column's text, a phrase of two or more words fails with `ts_phrase on a column without positions needs the column's text in the index`.
 
+A JSON-typed expression such as `(content->'v')` works the same way when listed a second time with `included()`: the check reads the stored JSON value and, like the index, analyzes the text of a JSON string, so `USING inverted (id, (content->'v') words, (content->'v') included())` answers phrases without `position`. A number, a boolean or `null` has no text and never matches a phrase.
+
 ## Prefix, wildcard and regex
 
 [`ts_starts_with`](../../functions/search/full-text.md#ts_starts_with) matches any token with the given prefix:

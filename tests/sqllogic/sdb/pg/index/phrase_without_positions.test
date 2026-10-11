@@ -78,6 +78,41 @@ QUERY PLAN
 ╰──────────────────────────────────────────╯
 
 query
+SELECT id FROM pwp_text_idx WHERE tableoid @@ to_tsquery('body:"quick brown"') ORDER BY id
+----
+id
+1
+2
+5
+7
+8
+
+query
+SELECT id FROM pwp_pos_idx WHERE tableoid @@ to_tsquery('body:"quick brown"') ORDER BY id
+----
+id
+1
+2
+5
+7
+8
+
+query
+SELECT id FROM pwp_text_idx WHERE tableoid @@ to_tsquery('body:"brown fox" OR body:"fox quick"') ORDER BY id
+----
+id
+1
+3
+5
+
+statement error
+SELECT id FROM pwp_bare_idx WHERE tableoid @@ to_tsquery('body:"quick brown"')
+----
+db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
+HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or search for single words.
+
+
+query
 EXPLAIN SELECT id FROM pwp_text_idx
 WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown')
 ----
@@ -1248,6 +1283,19 @@ id
 1
 3
 
+query
+SELECT id FROM pwp_search WHERE upper(body) @@ ts_phrase('QUICK BROWN') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id, upper(body) AS u FROM pwp_search WHERE upper(body) @@ ts_phrase('QUICK', 0, 'FOX') ORDER BY id
+----
+id	u
+2	QUICK FOX BROWN
+
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY pwp_synonyms AS
@@ -1546,6 +1594,72 @@ id
 
 statement ok
 DROP TABLE pwp_cov_long
+
+statement ok
+CREATE TABLE pwp_lists (id INTEGER PRIMARY KEY, tags VARCHAR[])
+
+statement ok
+INSERT INTO pwp_lists VALUES
+    (1, ['quick brown', 'fox']),
+    (2, ['brown', 'quick fox']),
+    (3, [NULL, 'quick brown fox', '']),
+    (4, ['fox quick', 'brown']),
+    (5, NULL),
+    (6, [])
+
+statement ok
+CREATE INDEX pwp_lists_text ON pwp_lists USING inverted (id, tags pwp_words) INCLUDE (tags)
+
+statement ok
+CREATE INDEX pwp_lists_pos ON pwp_lists USING inverted (id, tags pwp_words_pos)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_lists
+
+query
+SELECT id FROM pwp_lists_text WHERE tags @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM pwp_lists_pos WHERE tags @@ ts_phrase('quick brown fox') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM pwp_lists_text WHERE tags @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM pwp_lists_pos WHERE tags @@ ts_phrase('quick brown') ORDER BY id
+----
+id
+1
+3
+4
+
+query
+SELECT id FROM pwp_lists_text WHERE tags @@ ts_phrase('brown quick') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM pwp_lists_pos WHERE tags @@ ts_phrase('brown quick') ORDER BY id
+----
+id
+2
+
+statement ok
+DROP TABLE pwp_lists
 
 statement ok
 DROP TEXT SEARCH DICTIONARY pwp_words_pos

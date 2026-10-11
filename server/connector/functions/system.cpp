@@ -1908,12 +1908,16 @@ void RegisterPgSystemFunctions(duckdb::DatabaseInstance& db) {
   }
 
   // set_config(name, value, is_local) -> text
-  loader.RegisterFunction(duckdb::ScalarFunction{
-    "set_config",
-    {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-     duckdb::LogicalType::BOOLEAN},
-    duckdb::LogicalType::VARCHAR,
-    SetConfigFunction});
+  {
+    duckdb::ScalarFunction func{
+      "set_config",
+      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
+       duckdb::LogicalType::BOOLEAN},
+      duckdb::LogicalType::VARCHAR,
+      SetConfigFunction};
+    func.SetStability(duckdb::FunctionStability::VOLATILE);
+    loader.RegisterFunction(func);
+  }
 
   // search_path_canonical() -> text
   loader.RegisterFunction(duckdb::ScalarFunction{"search_path_canonical",

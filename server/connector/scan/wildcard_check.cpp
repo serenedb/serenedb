@@ -31,25 +31,12 @@
 namespace sdb::connector {
 namespace {
 
-struct WildcardCheckBind final : duckdb::FunctionData {
-  explicit WildcardCheckBind(std::shared_ptr<const re2::RE2> matcher)
-    : matcher{std::move(matcher)} {}
-
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<WildcardCheckBind>(matcher);
-  }
-
-  bool Equals(const duckdb::FunctionData& other) const final {
-    return matcher == other.Cast<WildcardCheckBind>().matcher;
-  }
-
-  std::shared_ptr<const re2::RE2> matcher;
-};
+using WildcardCheckBind = SharedCheckBind<re2::RE2>;
 
 void CheckWildcard(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
   const auto& func = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto& matcher = *func.BindInfo()->Cast<WildcardCheckBind>().matcher;
+  const auto& matcher = *func.BindInfo()->Cast<WildcardCheckBind>().data;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
     args.data[0], result, args.size(), [&](duckdb::string_t terms) {
       return irs::MatchStoredTerms(
@@ -71,7 +58,9 @@ std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
   index->mutable_options()->matcher = nullptr;
   return Split(filter, std::move(index), options.store_field_id,
                duckdb::LogicalType::BLOB, "sdb_wildcard_check", CheckWildcard,
-               duckdb::make_uniq<WildcardCheckBind>(options.matcher));
+               [&](std::shared_ptr<const irs::Filter>) {
+                 return duckdb::make_uniq<WildcardCheckBind>(options.matcher);
+               });
 }
 
 }  // namespace sdb::connector

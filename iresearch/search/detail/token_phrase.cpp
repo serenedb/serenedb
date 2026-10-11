@@ -21,6 +21,7 @@
 #include "iresearch/search/detail/token_phrase.hpp"
 
 #include <absl/algorithm/container.h>
+#include <simdjson.h>
 
 #include <algorithm>
 #include <cstring>
@@ -28,6 +29,7 @@
 #include <duckdb/common/vector/list_vector.hpp>
 #include <limits>
 #include <numeric>
+#include <string>
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
@@ -413,8 +415,59 @@ void PhraseCheck::PositionsMatch::Reset(size_t n) {
 PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
                          const PhraseTokens& tokens, bool count)
   : _tokenizer{tokens.tokenizer()},
+    _rows{tokens.json},
     _state{.phrase = &phrase, .count = count},
     _dense{!_tokenizer->Traits().explicit_pos} {}
+
+struct JsonText {
+  std::span<const duckdb::string_t> Decode(
+    std::span<const duckdb::string_t> values);
+
+  simdjson::ondemand::parser parser;
+  std::string buffer;
+  std::string text;
+  std::vector<duckdb::string_t> strings;
+};
+
+std::span<const duckdb::string_t> JsonText::Decode(
+  std::span<const duckdb::string_t> values) {
+  size_t size = 0;
+  for (const auto& value : values) {
+    size += value.GetSize();
+  }
+  text.clear();
+  text.reserve(size);
+  strings.clear();
+  for (const auto& value : values) {
+    std::string_view json{value.GetData(), value.GetSize()};
+    if (json.starts_with('\0')) {
+      json.remove_prefix(1);
+    }
+    if (json.empty()) {
+      continue;
+    }
+    buffer.assign(json);
+    buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+    simdjson::ondemand::document doc;
+    std::string_view string;
+    if (parser
+            .iterate(simdjson::padded_string_view{buffer.data(), json.size(),
+                                                  buffer.size()})
+            .get(doc) != simdjson::SUCCESS ||
+        doc.get_string().get(string) != simdjson::SUCCESS) {
+      continue;
+    }
+    const auto* data = text.data() + text.size();
+    text.append(string);
+    strings.emplace_back(data, static_cast<uint32_t>(string.size()));
+  }
+  return strings;
+}
+
+RowValues::RowValues(bool json)
+  : _json{json ? std::make_unique<JsonText>() : nullptr} {}
+
+RowValues::~RowValues() = default;
 
 void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   const auto& type = values.GetType();
@@ -431,6 +484,11 @@ void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
 }
 
 std::span<const duckdb::string_t> RowValues::At(duckdb::idx_t row) {
+  const auto values = Values(row);
+  return _json ? _json->Decode(values) : values;
+}
+
+std::span<const duckdb::string_t> RowValues::Values(duckdb::idx_t row) {
   const auto idx = _format.sel->get_index(row);
   if (!_format.validity.RowIsValid(idx)) {
     return {};

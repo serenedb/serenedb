@@ -1,0 +1,294 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY pj_pos AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pj_nopos AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency);
+
+statement ok
+CREATE TABLE pj (id INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+INSERT INTO pj VALUES
+    (1, '{"title":"the quick brown fox","meta":{"note":"the fox jumps over the lazy dog"}}'::json),
+    (2, '{"title":"quick fox brown","meta":{"note":"a lazy old dog"}}'::json),
+    (3, '{"title":"a quick red fox","meta":{"note":"the dog sleeps"}}'::json),
+    (4, '{"title":null,"meta":{}}'::json),
+    (5, '{"title":42}'::json),
+    (6, '{"other":"quick brown"}'::json);
+
+statement ok
+CREATE INDEX pj_pos_idx ON pj USING inverted(
+    id, (doc->'title') pj_pos, (doc->'meta'->>'note') pj_pos);
+
+statement ok
+CREATE INDEX pj_text_idx ON pj USING inverted(
+    id,
+    (doc->>'title') pj_nopos, (doc->>'title') included(),
+    (doc->'meta'->>'note') pj_nopos, (doc->'meta'->>'note') included());
+
+statement ok
+CREATE INDEX pj_json_idx ON pj USING inverted(
+    id, (doc->'title') pj_nopos, (doc->'title') included());
+
+statement ok
+VACUUM (REFRESH_TABLE) pj;
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox');
+----
+id
+1
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick brown fox');
+----
+id
+1
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick', 1, 'fox') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick', 1, 'fox') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox', slop := 2) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick brown fox', slop := 2) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'meta'->>'note') @@ ts_phrase('lazy', [0, 1], 'dog') ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->'meta'->>'note') @@ ts_phrase('lazy', [0, 1], 'dog') ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ phraseto_tsquery('quick brown');
+----
+id
+1
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ websearch_to_tsquery('quick-brown');
+----
+id
+1
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ to_tsquery('"quick brown"');
+----
+id
+1
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick brown') AND (doc->'meta'->>'note') @@ ts_phrase('lazy dog');
+----
+id
+1
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('fox brown') OR (doc->'meta'->>'note') @@ ts_phrase('dog sleeps') ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ to_tsquery('"quick brown"') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ phraseto_tsquery('quick brown') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick', 1, 'fox') ORDER BY id;
+----
+id
+1
+3
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox', slop := 2) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick') ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ websearch_to_tsquery('quick-brown') ORDER BY id;
+----
+id
+1
+
+statement ok
+INSERT INTO pj VALUES
+    (7, '{"title":"brown fox and a quick dog","meta":{"note":"lazy, the dog"}}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) pj;
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick', [0, 3], 'dog') ORDER BY id;
+----
+id
+7
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick', [0, 3], 'dog') ORDER BY id;
+----
+id
+7
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick', [0, 3], 'dog') ORDER BY id;
+----
+id
+7
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->'meta'->>'note') @@ ts_phrase('lazy dog') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('brown fox') ORDER BY id;
+----
+id
+1
+7
+
+query
+SELECT count(*) AS c FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick fox');
+----
+c
+1
+
+statement ok
+INSERT INTO pj VALUES
+    (8, '{"title":"the \"quick\" brown fox"}'::json),
+    (9, '{"title":"quick brown"}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) pj;
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+8
+9
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+8
+9
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick brown') ORDER BY id;
+----
+id
+1
+8
+9
+
+query
+SELECT id, (BM25(pj_json_idx.tableoid) > 0)::INTEGER AS scored
+FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick brown') ORDER BY id;
+----
+id	scored
+1	1
+8	1
+9	1
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('42') ORDER BY id;
+----
+id
+
+
+statement ok
+CREATE TABLE pj_tags (id INTEGER PRIMARY KEY, doc JSON);
+
+statement ok
+CREATE INDEX pj_tags_idx ON pj_tags USING inverted(
+    id, (doc->'tags'->>0) pj_nopos, (doc->'tags'->>0) included());
+
+statement ok
+INSERT INTO pj_tags VALUES
+    (1, '{"tags":["red fox den","quick"]}'::json),
+    (2, '{"tags":["fox red","red fox"]}'::json),
+    (3, '{"tags":[]}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) pj_tags;
+
+query
+SELECT id FROM pj_tags_idx WHERE (doc->'tags'->>0) @@ ts_phrase('red fox') ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM pj_tags_idx WHERE (doc->'tags'->>0) @@ ts_phrase('fox', 0, 'red') ORDER BY id;
+----
+id
+2

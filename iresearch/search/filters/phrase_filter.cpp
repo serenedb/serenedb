@@ -486,12 +486,12 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   const auto& tokens = options.tokens();
   auto sub = ctx;
   sub.collector = nullptr;
-  BooleanBuilder builder{segment,        ctx.memory,           0,
-                         kNoBoost,       ScoreMergeType::Noop, nullptr,
-                         ctx.needs_terms};
+  BooleanBuilder builder{segment, ctx.memory, 0, kNoBoost,
+                         ScoreMergeType::Noop};
   SDB_ASSERT(state.Slots() == options.size());
   containers::FlatHashSet<bytes_view> words;
   std::vector<PhraseWordStat> stats(tokens->spec ? 0 : options.size());
+  std::vector<const PostingMeta*> word_metas(stats.size());
   size_t slot = 0;
   for (const auto& info : options) {
     const auto begin = state.offsets[slot];
@@ -501,6 +501,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
       if (word && !tokens->spec) {
         const auto& meta = state.metas[begin];
         stats[slot - 1] = {.docs = meta.docs_count, .freq = meta.freq};
+        word_metas[slot - 1] = &meta;
       }
       if (!word || words.emplace(word->term).second) {
         builder.AddTerm(&reader, state.metas[begin], kNoBoost, Occur::Must, {});
@@ -528,7 +529,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
     tokens->Check(options),
     tokens->spec ? std::span<const std::vector<bstring>>{spec_terms}
                  : std::span<const std::vector<bstring>>{part_terms},
-    stats, ctx.boost);
+    stats, word_metas, ctx.boost);
   query->SetStats(ctx.Record());
   return query;
 }

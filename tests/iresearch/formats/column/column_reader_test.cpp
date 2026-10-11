@@ -2403,6 +2403,44 @@ TEST_F(ColumnReaderTest, VariantExtractPathMixedShredding) {
   ExpectVariantValuesEqual(expected, actual);
 }
 
+TEST_F(ColumnReaderTest, VariantGatherKeepsLeafOfPassedRowGroup) {
+  SetShreddingSize(Db(), 120);
+  irs::MemoryDirectory dir{};
+  const std::string prefix(24, 'x');
+  std::vector<duckdb::Value> ignored;
+  WriteVariantViaSql(
+    Db(), dir, "vseg", /*id=*/34,
+    "SELECT {'s': repeat('x', 24) || i::VARCHAR}::VARIANT FROM range(500) t(i)",
+    /*rg_size=*/128, ignored);
+
+  irs::ColReader r{dir, "vseg", Db()};
+  const auto* base = r.Column(34);
+  ASSERT_NE(base, nullptr);
+  const auto& col = static_cast<const irs::VariantColumnReader&>(*base);
+
+  const std::vector<std::string_view> path{"s"};
+  auto state = col.InitScan(r.Ctx());
+  duckdb::LogicalType leaf_type;
+  ASSERT_TRUE(col.CachedUniformShreddedLeaf(state, path, leaf_type));
+  ASSERT_EQ(leaf_type, duckdb::LogicalType::VARCHAR);
+  ASSERT_TRUE(col.RgLeafOk(state, 2));
+  ASSERT_FALSE(col.RgLeafOk(state, 3));
+
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+  const auto [leaf, leaf_scan] = col.ShreddedLeafScan(state, 2, path);
+  irs::column_internal::GatherRows(*leaf, *leaf_scan, irs::IotaRange{0, 128},
+                                   out, 0);
+  duckdb::Vector variant{duckdb::LogicalType::VARIANT(), STANDARD_VECTOR_SIZE};
+  irs::column_internal::GatherRows(col, state, irs::IotaRange{384, 116},
+                                   variant, 0, /*whole_output=*/true);
+
+  ASSERT_NE(state.variant->rgs[2].leaf, nullptr);
+  for (duckdb::idx_t k = 0; k < 128; ++k) {
+    EXPECT_EQ(out.GetValue(k).ToString(), prefix + std::to_string(256 + k))
+      << "row=" << k;
+  }
+}
+
 // Sparse append: values land at non-contiguous start rows; the gaps are
 // null-padded (crossing row-group boundaries), and Commit pads the tail.
 TEST_F(ColumnReaderTest, SparseAppendNullPadding) {

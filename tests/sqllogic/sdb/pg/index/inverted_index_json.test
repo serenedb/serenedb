@@ -678,11 +678,16 @@ SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ websearch_to_tsquery
 id
 2
 
-statement error
+query
 SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ ts_phrase('quick brown fox');
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+id
+2
+
+query
+SELECT id FROM json_text_stored_idx WHERE (content->'v') @@ ts_phrase('brown quick');
+----
+id
 
 
 query

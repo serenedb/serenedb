@@ -522,16 +522,20 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
     ColumnReader::Scan(s, out, span);
     return;
   }
-  const auto& block = _segments[Locate(anchor, s.window).block];
-  const auto bands = column_internal::BandsFor(block.codec->type, _type);
-  const auto permille = hits * 1000;
-  if (column_internal::ScatterWins(bands, block, _type, sel, hits, span)) {
-    column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
-    return;
+  if (anchor < _row_count) {
+    const auto& block = _segments[Locate(anchor, s.window).block];
+    if (column_internal::ScatterWins(
+          column_internal::BandsFor(block.codec->type, _type), block, _type,
+          sel, hits, span)) {
+      column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
+      return;
+    }
   }
   BeginScanVector(s);
   if ((s.window.end - s.window.begin) - s.st.offset_in_column >= span) {
-    if (permille <= bands.native * span &&
+    const auto bands =
+      column_internal::BandsFor(_segments[s.window.block].codec->type, _type);
+    if (hits * 1000 <= bands.native * span &&
         _segments[s.window.block].codec->select != nullptr) {
       const bool self_valid = _segments[s.window.block].codec->validity ==
                               duckdb::CompressionValidity::NO_VALIDITY_REQUIRED;

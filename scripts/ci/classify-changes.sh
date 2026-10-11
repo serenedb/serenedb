@@ -45,12 +45,19 @@ declare -A SUITE_OF_DIR=(
 	[openssl-cmake]="httpfs azure iceberg postgres_scanner"
 )
 
-iresearch=false other_tp=false
+iresearch=false other_tp=false re2=false
 declare -A suite_hit=()
 declare -a pg_files=()
 
 while IFS= read -r f; do
 	[[ -z "$f" ]] && continue
+	case "$f" in
+	third_party/re2 | third_party/re2/* | third_party/abseil-cpp | third_party/abseil-cpp/* | \
+		third_party/googletest | third_party/googletest/* | third_party/simdutf | third_party/simdutf/* | \
+		tests/re2/* | cmake/OptimizeForArchitecture.cmake | scripts/ci/steps/041-ci-in-docker-run-re2-tests.bash)
+		re2=true
+		;;
+	esac
 	case "$f" in
 	iresearch/* | tests/iresearch/* | resources/tests/iresearch/*)
 		iresearch=true
@@ -128,5 +135,6 @@ emit_multiline() {
 }
 emit iresearch "$iresearch"
 emit duckdb_suites "$duckdb_suites"
+emit re2 "$re2"
 [[ -n "$pg_list" ]] && emit_multiline pg_tests "$pg_list"
 exit 0

@@ -16,13 +16,14 @@ hand. Two inputs, both of the same PostgreSQL version:
 
 SereneDB's own choices live in scripts/pg_catalog/config.py (which views are
 native tables), in server/pg/types.cpp (which PostgreSQL types SereneDB
-supports) and in server/pg/catalog/views/overrides/<schema>.<view>.sql (view
-bodies SereneDB rewrites). Those outputs are
+supports) and in server/pg/catalog/views/<schema>/<view>.cpp (view bodies
+SereneDB writes). Those outputs are
 server/pg/catalog/generated/*.gen.inc.
 
 Two outputs come from this repository alone and are written on every run,
 also without --pg: generated/registry.gen.inc, which registers each
-server/pg/catalog/tables/<folder>/<table>.cpp, and the sqllogic test that
+server/pg/catalog/tables/<folder>/<table>.cpp and
+server/pg/catalog/views/<schema>/<view>.cpp, and the sqllogic test that
 checks the claims of docs/compatibility/system-table-compatibility.md.
 --check verifies they are current without writing anything.
 """

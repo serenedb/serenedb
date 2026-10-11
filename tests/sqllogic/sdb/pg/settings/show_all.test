@@ -194,6 +194,7 @@ max_connections	0	Sets the maximum number of concurrent client connections.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_identifier_length	63	Shows the maximum identifier length.
+max_index_keys	32	Shows the maximum number of index keys.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
@@ -549,6 +550,7 @@ max_connections	0	Sets the maximum number of concurrent client connections.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_identifier_length	63	Shows the maximum identifier length.
+max_index_keys	32	Shows the maximum number of index keys.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.

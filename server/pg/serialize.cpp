@@ -68,7 +68,7 @@
 
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
-#include "pg/catalog/functions/reg_types.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
 #include "pg/types.h"
 #include "query/config.h"
@@ -2093,14 +2093,12 @@ void AttachSession(SerializationContext& context) {
   }
 }
 
-template<size_t I = 0, typename Make>
-SerializationFunction VisitRegType(const RegType& reg, Make&& make) {
-  if constexpr (I + 1 < kRegTypes.size()) {
-    if (&reg != &kRegTypes[I]) {
-      return VisitRegType<I + 1>(reg, make);
-    }
-  }
-  return make.template operator()<I>();
+template<RegKind Kind>
+SerializationFunction MakeRegSerializer(VarFormat format,
+                                        SerializationContext& context) {
+  AttachSession(context);
+  return SelectFieldSerializer<RegTextCore<Kind>, RegTextCore<Kind>,
+                               OidBinCore>(format, context);
 }
 
 template<typename TextCore, typename BinaryCore, uint64_t Oid>
@@ -2142,6 +2140,15 @@ SerializationFunction MakeVectorSerializer(VarFormat format,
   return SelectFieldSerializer<Text, TextRec, Binary>(format, context);
 }
 
+template<RegKind Kind, uint64_t Oid>
+SerializationFunction MakeRegArraySerializer(VarFormat format,
+                                             SerializationContext& context,
+                                             ArrayKind kind) {
+  AttachSession(context);
+  return MakeArraySerializer<RegTextCore<Kind>, OidBinCore, Oid>(format,
+                                                                 context, kind);
+}
+
 SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                             VarFormat format,
                                             SerializationContext& context,
@@ -2176,12 +2183,49 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                  IntBinCore<uint32_t, int64_t>, kInt8>(
         format, context, kind);
     case BIGINT: {
-      if (const auto* reg = FindRegType(type)) {
-        AttachSession(context);
-        return VisitRegType(*reg, [&]<size_t I>() {
-          return MakeArraySerializer<RegTextCore<kRegTypes[I].kind>, OidBinCore,
-                                     kRegTypes[I].oid>(format, context, kind);
-        });
+      if (IsRegtype(type)) {
+        return MakeRegArraySerializer<RegKind::Type, kRegtype>(format, context,
+                                                               kind);
+      }
+      if (IsRegclass(type)) {
+        return MakeRegArraySerializer<RegKind::Class, kRegclass>(format,
+                                                                 context, kind);
+      }
+      if (IsRegnamespace(type)) {
+        return MakeRegArraySerializer<RegKind::Namespace, kRegnamespace>(
+          format, context, kind);
+      }
+      if (IsRegproc(type)) {
+        return MakeRegArraySerializer<RegKind::Proc, kRegproc>(format, context,
+                                                               kind);
+      }
+      if (IsRegprocedure(type)) {
+        return MakeRegArraySerializer<RegKind::Procedure, kRegprocedure>(
+          format, context, kind);
+      }
+      if (IsRegoper(type)) {
+        return MakeRegArraySerializer<RegKind::Oper, kRegoper>(format, context,
+                                                               kind);
+      }
+      if (IsRegoperator(type)) {
+        return MakeRegArraySerializer<RegKind::Operator, kRegoperator>(
+          format, context, kind);
+      }
+      if (IsRegrole(type)) {
+        return MakeRegArraySerializer<RegKind::Role, kRegrole>(format, context,
+                                                               kind);
+      }
+      if (IsRegconfig(type)) {
+        return MakeRegArraySerializer<RegKind::Config, kRegconfig>(
+          format, context, kind);
+      }
+      if (IsRegdictionary(type)) {
+        return MakeRegArraySerializer<RegKind::Dictionary, kRegdictionary>(
+          format, context, kind);
+      }
+      if (IsRegcollation(type)) {
+        return MakeRegArraySerializer<RegKind::Collation, kRegcollation>(
+          format, context, kind);
       }
       if (IsOid(type)) {
         return MakeArraySerializer<IntTextCore<int64_t>, OidBinCore, kOid>(
@@ -2434,12 +2478,38 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<IntTextCore<int32_t>, IntTextCore<int32_t>,
                                    IntBinCore<int32_t>>(format, context);
     case BIGINT: {
-      if (const auto* reg = FindRegType(type)) {
-        AttachSession(context);
-        return VisitRegType(*reg, [&]<size_t I>() {
-          using Core = RegTextCore<kRegTypes[I].kind>;
-          return SelectFieldSerializer<Core, Core, OidBinCore>(format, context);
-        });
+      if (IsRegtype(type)) {
+        return MakeRegSerializer<RegKind::Type>(format, context);
+      }
+      if (IsRegclass(type)) {
+        return MakeRegSerializer<RegKind::Class>(format, context);
+      }
+      if (IsRegnamespace(type)) {
+        return MakeRegSerializer<RegKind::Namespace>(format, context);
+      }
+      if (IsRegproc(type)) {
+        return MakeRegSerializer<RegKind::Proc>(format, context);
+      }
+      if (IsRegprocedure(type)) {
+        return MakeRegSerializer<RegKind::Procedure>(format, context);
+      }
+      if (IsRegoper(type)) {
+        return MakeRegSerializer<RegKind::Oper>(format, context);
+      }
+      if (IsRegoperator(type)) {
+        return MakeRegSerializer<RegKind::Operator>(format, context);
+      }
+      if (IsRegrole(type)) {
+        return MakeRegSerializer<RegKind::Role>(format, context);
+      }
+      if (IsRegconfig(type)) {
+        return MakeRegSerializer<RegKind::Config>(format, context);
+      }
+      if (IsRegdictionary(type)) {
+        return MakeRegSerializer<RegKind::Dictionary>(format, context);
+      }
+      if (IsRegcollation(type)) {
+        return MakeRegSerializer<RegKind::Collation>(format, context);
       }
       if (IsOidLike(type)) {
         return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,

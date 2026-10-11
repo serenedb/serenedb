@@ -1,0 +1,57 @@
+statement ok
+CREATE TABLE ixp_lanes (id int PRIMARY KEY, v int, body text)
+
+
+statement ok
+CREATE INDEX ixp_lanes_v ON ixp_lanes (v)
+
+
+query
+SELECT am.amname,
+  pg_indexam_has_property(am.oid, 'can_order') AS can_order,
+  pg_indexam_has_property(am.oid, 'can_unique') AS can_unique,
+  pg_indexam_has_property(am.oid, 'can_multi_col') AS can_multi_col,
+  pg_indexam_has_property(am.oid, 'can_exclude') AS can_exclude,
+  pg_indexam_has_property(am.oid, 'can_include') AS can_include
+FROM pg_am am ORDER BY am.amname
+----
+amname	can_order	can_unique	can_multi_col	can_exclude	can_include
+heap	NULL	NULL	NULL	NULL	NULL
+inverted	f	f	t	f	t
+iresearch	NULL	NULL	NULL	NULL	NULL
+secondary	f	t	t	f	f
+
+
+query
+SELECT c.relname,
+  pg_index_has_property(c.oid, 'clusterable') AS clusterable,
+  pg_index_has_property(c.oid, 'index_scan') AS index_scan,
+  pg_index_has_property(c.oid, 'bitmap_scan') AS bitmap_scan,
+  pg_index_has_property(c.oid, 'backward_scan') AS backward_scan
+FROM pg_class c WHERE c.relname IN ('ixp_lanes_pkey', 'ixp_lanes_v') ORDER BY c.relname
+----
+relname	clusterable	index_scan	bitmap_scan	backward_scan
+ixp_lanes_pkey	f	t	f	f
+ixp_lanes_v	f	t	f	f
+
+
+query
+SELECT p.property, pg_index_column_has_property('ixp_lanes_v'::regclass, 1, p.property) AS holds
+FROM (VALUES ('asc'), ('desc'), ('nulls_first'), ('nulls_last'), ('orderable'), ('distance_orderable'),
+  ('returnable'), ('search_array'), ('search_nulls')) p(property)
+ORDER BY p.property
+----
+property	holds
+asc	NULL
+desc	NULL
+distance_orderable	f
+nulls_first	NULL
+nulls_last	NULL
+orderable	f
+returnable	f
+search_array	f
+search_nulls	f
+
+
+statement ok
+DROP TABLE ixp_lanes

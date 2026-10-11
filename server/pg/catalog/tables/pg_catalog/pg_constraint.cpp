@@ -23,8 +23,6 @@
 #include <duckdb/parser/constraints/list.hpp>
 #include <optional>
 #include <ranges>
-#include <span>
-#include <vector>
 
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
@@ -50,7 +48,6 @@ struct ConstraintRow {
 struct ForeignKeyRow : ConstraintRow {
   mutable std::optional<duckdb::optional_ptr<const duckdb::TableCatalogEntry>>
     target = std::nullopt;
-  mutable std::optional<std::vector<int16_t>> referenced = std::nullopt;
 
   duckdb::optional_ptr<const duckdb::TableCatalogEntry> Target(
     const SystemScan& scan) const {
@@ -60,12 +57,9 @@ struct ForeignKeyRow : ConstraintRow {
     return *target;
   }
 
-  std::span<const int16_t> Referenced(const SystemScan& scan) const {
-    if (!referenced) {
-      referenced = Attnums(Target(scan)->GetColumns(),
-                           As<duckdb::ForeignKeyConstraint>().info.pk_keys);
-    }
-    return *referenced;
+  auto Referenced(const SystemScan& scan) const {
+    return Attnums(Target(scan)->GetColumns(),
+                   As<duckdb::ForeignKeyConstraint>().info.pk_keys);
   }
 };
 
@@ -116,9 +110,8 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
     }),
     Col<"connoinherit">([](const auto&) { return true; }),
     Col<"conkey">([](const ConstraintRow& row) {
-      return Attnums(row.table.GetColumns(),
-                     row.As<duckdb::UniqueConstraint>().GetLogicalIndexes(
-                       row.table.GetColumns()));
+      return KeyAttnums(row.table.GetColumns(),
+                        row.As<duckdb::UniqueConstraint>());
     }));
 
   static constexpr auto kForeignKey = Shape<kSql, const ForeignKeyRow>(
@@ -131,12 +124,12 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
       const auto target = row.Target(scan);
       return target ? target->oid : duckdb::idx_t{0};
     }),
-    Col<"confkey">([](const ForeignKeyRow& row, SystemScan& scan)
-                     -> std::optional<std::span<const int16_t>> {
+    Col<"confkey">([](const ForeignKeyRow& row, SystemScan& scan) {
+      using Referenced = decltype(row.Referenced(scan));
       if (!row.Target(scan)) {
-        return std::nullopt;
+        return std::optional<Referenced>{};
       }
-      return row.Referenced(scan);
+      return std::optional<Referenced>{row.Referenced(scan)};
     }),
     Col<"conindid">([](const ForeignKeyRow& row, SystemScan& scan) {
       const auto target = row.Target(scan);

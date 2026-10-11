@@ -445,7 +445,7 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   return {};
 }
 
-std::shared_ptr<const CatalogSnapshot> SereneDBCatalog::Snapshot(
+std::shared_ptr<const CatalogSnapshot> SnapshotCatalog::Snapshot(
   duckdb::ClientContext& context, duckdb::CatalogSet& set) {
   const auto version = GetCatalogVersion(context).GetIndex();
   if (version >= duckdb::TRANSACTION_ID_START) {

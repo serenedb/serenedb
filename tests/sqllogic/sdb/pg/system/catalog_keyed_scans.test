@@ -1244,6 +1244,28 @@ pudgevis_dismember
 pudgevis_hook
 
 
+query
+WITH pushed AS (SELECT a.attrelid, a.attnum, a.attname FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid WHERE c.relnamespace = 'pg_catalog'::regnamespace),
+     whole AS (SELECT a.attrelid, a.attnum, a.attname FROM (SELECT * FROM pg_attribute LIMIT 100000000) a JOIN pg_class c ON a.attrelid = c.oid WHERE c.relnamespace = 'pg_catalog'::regnamespace)
+SELECT (SELECT count(*) FROM pushed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM pushed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM pushed)) AS diff;
+----
+found	diff
+t	0
+
+
+query
+WITH pushed AS (SELECT a.attrelid, a.attnum, a.attname FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid WHERE c.relnamespace = 'pg_catalog'::regnamespace AND a.attnum < 1000),
+     whole AS (SELECT a.attrelid, a.attnum, a.attname FROM (SELECT * FROM pg_attribute LIMIT 100000000) a JOIN pg_class c ON a.attrelid = c.oid WHERE c.relnamespace = 'pg_catalog'::regnamespace AND a.attnum < 1000)
+SELECT (SELECT count(*) FROM pushed) > 0 AS found,
+       (SELECT count(*) FROM (SELECT * FROM pushed EXCEPT ALL SELECT * FROM whole))
+     + (SELECT count(*) FROM (SELECT * FROM whole EXCEPT ALL SELECT * FROM pushed)) AS diff;
+----
+found	diff
+t	0
+
+
 statement ok
 DROP TABLE public.pudgevis_hook
 

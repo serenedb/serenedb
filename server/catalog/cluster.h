@@ -37,16 +37,17 @@
 
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "catalog/snapshot.h"
 
 namespace sdb::catalog {
 
-class ClusterCatalog final : public duckdb::DuckCatalog {
+class ClusterCatalog final : public SnapshotCatalog {
  public:
   static constexpr const char* kStorageType = "sdb_cluster";
   static constexpr const char* kDatabaseName = "sdb_cluster";
 
   explicit ClusterCatalog(duckdb::AttachedDatabase& db)
-    : duckdb::DuckCatalog{db, true} {}
+    : SnapshotCatalog{db, true} {}
 
   std::string GetCatalogType() final { return kStorageType; }
   duckdb::idx_t DefaultSchemaOid() const final;

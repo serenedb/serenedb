@@ -48,7 +48,7 @@ std::string QuoteIdentifier(std::string_view ident);
 
 std::string MacroBody(const duckdb::MacroFunction& macro);
 
-std::string MacroParameterName(const duckdb::MacroFunction& macro,
-                               duckdb::idx_t index);
+std::string_view MacroParameterName(const duckdb::MacroFunction& macro,
+                                    duckdb::idx_t index);
 
 }  // namespace sdb::pg

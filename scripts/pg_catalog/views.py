@@ -1,10 +1,7 @@
-import os
 import re
 
-from . import config
-from .common import CATALOG_DIR, SUPERUSER_ONLY_SQL, cpp_bool
-
-OVERRIDES_DIR = os.path.join(CATALOG_DIR, 'views', 'overrides')
+from . import config, relations
+from .common import SUPERUSER_ONLY_SQL, cpp_bool
 
 VIEW_OIDS_SQL = f"""
 SELECT n.nspname, c.relname, c.oid::int8, {SUPERUSER_ONLY_SQL}
@@ -64,14 +61,6 @@ def qualify(sql, names):
     return sql
 
 
-def override(schema, name):
-    path = os.path.join(OVERRIDES_DIR, f'{schema}.{name}.sql')
-    if not os.path.exists(path):
-        return None
-    with open(path) as source:
-        return source.read().rstrip('\n')
-
-
 def entry(schema, name, oid, superuser, body):
     lines = dedent(body)
     sql = '\n'.join([lines[0]] + ['      ' + l if l else '' for l in lines[1:]])
@@ -85,19 +74,20 @@ def generate(gen):
     pg = list(views(gen.source('src/backend/catalog/system_views.sql')))
     info = list(views(gen.source('src/backend/catalog/information_schema.sql')))
     info_names = {name for name, _ in info if not name.startswith('_pg_')}
-    out, used = [], set()
+    out, defined = [], set(config.SDB_VIEWS)
     for schema, items in (('pg_catalog', pg), ('information_schema', info)):
         for name, body in items:
             if (schema, name) in config.NATIVE_VIEWS:
                 continue
-            custom = override(schema, name)
-            if custom is not None:
-                used.add(f'{schema}.{name}.sql')
-                body = custom
-            elif schema == 'information_schema':
+            defined.add((schema, name))
+            if schema == 'information_schema':
                 body = qualify(body, info_names)
             out.append(entry(schema, name, *oids[(schema, name)], body))
-    stale = sorted(set(os.listdir(OVERRIDES_DIR)) - used)
-    if stale:
-        raise SystemExit(f'overrides for views PostgreSQL does not have: {stale}')
+    out += [f'{{"{schema}", "{name}", kMinSystem + {oid}, false, {{}}}},'
+            for (schema, name), oid in config.SDB_VIEWS.items()]
+    files = set(relations.view_files())
+    if stale := sorted(files - defined):
+        raise SystemExit(f'view files for views PostgreSQL does not have: {stale}')
+    if missing := sorted(set(config.SDB_VIEWS) - files):
+        raise SystemExit(f'SereneDB views without a file: {missing}')
     gen.write('system_views.gen.inc', out)

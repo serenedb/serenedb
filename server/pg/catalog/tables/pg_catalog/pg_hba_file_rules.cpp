@@ -38,7 +38,8 @@ class PgHbaFileRules final : public SystemTableScan<kPgHbaFileRulesSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
-  static constexpr std::tuple kSources{ArraySource<HbaRule>{&LoadHbaRules, {}}};
+  static constexpr std::tuple kSources{
+    ArraySource<HbaRule>{&LoadHbaRules, {}, {}}};
 
   static constexpr auto kRule = Shape<kSql, const HbaRule>(
     Col<"rule_number">(&HbaRule::rule_number),

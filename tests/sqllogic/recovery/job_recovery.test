@@ -80,7 +80,7 @@ cp $__TEST_DIR__/jrec_glob/f1.parquet $__TEST_DIR__/jrec_glob/f2.parquet
 connection r1
 query ok retry 80 backoff 250ms
 SELECT job_name, schedule, suspended, regexp_replace(body, '[0-9]+', 'N', 'g') AS body
-FROM duckdb_jobs() WHERE starts_with(job_name, 'jrec_') ORDER BY job_name;
+FROM sdb_jobs() WHERE starts_with(job_name, 'jrec_') ORDER BY job_name;
 ----
 job_name	schedule	suspended	body
 jrec_babsky_job	AFTER INTERVAL '02:00:00'	f	INSERT INTO jrec_ticks (VALUES ('babsky', N))
@@ -112,7 +112,7 @@ count
 
 connection r1
 query
-SELECT next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'jrec_parked';
+SELECT next_run IS NULL AS idle FROM sdb_jobs() WHERE job_name = 'jrec_parked';
 ----
 idle
 t
@@ -153,7 +153,7 @@ ALTER JOB jrec_every SUSPEND;
 
 connection r1
 query ok retry 80 backoff 250ms
-SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_every';
+SELECT running FROM sdb_jobs() WHERE job_name = 'jrec_every';
 ----
 running
 f
@@ -171,7 +171,7 @@ CREATE JOB jrec_midrun EVERY 1 SECOND AS INSERT INTO jrec_crash SELECT 1 WHERE s
 
 connection r1
 query ok retry 80 backoff 250ms
-SELECT running, run_count FROM duckdb_jobs() WHERE job_name = 'jrec_midrun';
+SELECT running, run_count FROM sdb_jobs() WHERE job_name = 'jrec_midrun';
 ----
 running	run_count
 t	0
@@ -204,7 +204,7 @@ t
 
 connection r2
 query
-SELECT failure_count FROM duckdb_jobs() WHERE job_name = 'jrec_midrun';
+SELECT failure_count FROM sdb_jobs() WHERE job_name = 'jrec_midrun';
 ----
 failure_count
 0
@@ -217,7 +217,7 @@ ALTER JOB jrec_midrun SUSPEND;
 
 connection r2
 query ok retry 80 backoff 250ms
-SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_midrun';
+SELECT running FROM sdb_jobs() WHERE job_name = 'jrec_midrun';
 ----
 running
 f
@@ -235,7 +235,7 @@ CREATE JOB jrec_doomed EVERY 1 SECOND AS INSERT INTO jrec_dropped SELECT 1 WHERE
 
 connection r2
 query ok retry 80 backoff 250ms
-SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_doomed';
+SELECT running FROM sdb_jobs() WHERE job_name = 'jrec_doomed';
 ----
 running
 t
@@ -248,7 +248,7 @@ DROP JOB jrec_doomed;
 
 connection r2
 query ok retry 80 backoff 250ms
-SELECT success, error FROM duckdb_job_runs() WHERE job_name = 'jrec_doomed';
+SELECT success, error FROM sdb_job_runs() WHERE job_name = 'jrec_doomed';
 ----
 success	error
 f	Interrupted!
@@ -274,7 +274,7 @@ CREATE JOB jrec_slow EVERY 1 SECOND AS INSERT INTO jrec_backlog SELECT 1 WHERE s
 
 connection r2
 query ok retry 80 backoff 250ms
-SELECT running FROM duckdb_jobs() WHERE job_name = 'jrec_slow';
+SELECT running FROM sdb_jobs() WHERE job_name = 'jrec_slow';
 ----
 running
 t
@@ -300,7 +300,7 @@ ALTER JOB jrec_slow SUSPEND;
 
 connection r2
 query ok retry 80 backoff 250ms
-SELECT running, run_count FROM duckdb_jobs() WHERE job_name = 'jrec_slow';
+SELECT running, run_count FROM sdb_jobs() WHERE job_name = 'jrec_slow';
 ----
 running	run_count
 f	1
@@ -346,7 +346,7 @@ DROP VIEW jrec_v CASCADE;
 
 connection r2
 query
-SELECT count(*) FROM duckdb_jobs() WHERE starts_with(job_name, 'jrec_');
+SELECT count(*) FROM sdb_jobs() WHERE starts_with(job_name, 'jrec_');
 ----
 count
 0

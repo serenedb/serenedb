@@ -71,7 +71,7 @@ DROP JOB IF EXISTS jrp_clickclack CASCADE;
 
 
 query
-SELECT job_name, schedule, suspended, body FROM duckdb_jobs() WHERE starts_with(job_name, 'jrp_') ORDER BY job_name;
+SELECT job_name, schedule, suspended, body FROM sdb_jobs() WHERE starts_with(job_name, 'jrp_') ORDER BY job_name;
 ----
 job_name	schedule	suspended	body
 jrp_arelav	AFTER INTERVAL '01:30:00' RANDOMIZE FOR INTERVAL '00:10:00'	t	SELECT 3

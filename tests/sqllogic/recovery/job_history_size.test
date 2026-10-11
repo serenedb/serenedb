@@ -38,7 +38,7 @@ EXECUTE JOB jhs_tick;
 
 connection default
 query
-SELECT job_name, count(*) FROM duckdb_job_runs() GROUP BY job_name;
+SELECT job_name, count(*) FROM sdb_job_runs() GROUP BY job_name;
 ----
 job_name	count
 jhs_tick	2
@@ -51,7 +51,7 @@ SET GLOBAL sdb_job_history_size = 1;
 
 connection default
 query
-SELECT count(*) FROM duckdb_job_runs();
+SELECT count(*) FROM sdb_job_runs();
 ----
 count
 1
@@ -69,7 +69,7 @@ EXECUTE JOB jhs_tick;
 
 connection other
 query
-SELECT count(*) FROM duckdb_job_runs();
+SELECT count(*) FROM sdb_job_runs();
 ----
 count
 0
@@ -100,7 +100,7 @@ sdb_job_history_size
 
 connection default
 query
-SELECT count(*) FROM duckdb_job_runs();
+SELECT count(*) FROM sdb_job_runs();
 ----
 count
 2

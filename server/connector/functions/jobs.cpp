@@ -270,9 +270,9 @@ void ExecuteJobExecute(duckdb::ClientContext& context,
 void RegisterJobFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   loader.RegisterFunction(
-    duckdb::TableFunction{"duckdb_jobs", {}, JobsExecute, JobsBind, JobsInit});
+    duckdb::TableFunction{"sdb_jobs", {}, JobsExecute, JobsBind, JobsInit});
   loader.RegisterFunction(duckdb::TableFunction{
-    "duckdb_job_runs", {}, JobRunsExecute, JobRunsBind, JobRunsInit});
+    "sdb_job_runs", {}, JobRunsExecute, JobRunsBind, JobRunsInit});
   loader.RegisterFunction(duckdb::TableFunction{"execute_job",
                                                 {duckdb::LogicalType::VARCHAR},
                                                 ExecuteJobExecute,

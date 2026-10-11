@@ -58,7 +58,7 @@ CREATE JOB doc_backoff AFTER 30 SECONDS AS SELECT 1;
 
 query
 SELECT job_name, schedule_kind, schedule
-FROM duckdb_jobs() WHERE job_name IN ('doc_every_15m', 'doc_monthly', 'doc_backoff')
+FROM sdb_jobs() WHERE job_name IN ('doc_every_15m', 'doc_monthly', 'doc_backoff')
 ORDER BY job_name;
 ----
 job_name	schedule_kind	schedule
@@ -74,7 +74,7 @@ statement ok
 ALTER JOB doc_rollup SUSPEND;
 
 query
-SELECT suspended, next_run IS NULL AS idle FROM duckdb_jobs() WHERE job_name = 'doc_rollup';
+SELECT suspended, next_run IS NULL AS idle FROM sdb_jobs() WHERE job_name = 'doc_rollup';
 ----
 suspended	idle
 t	t
@@ -89,7 +89,7 @@ statement ok
 ALTER JOB doc_rollup RENAME TO doc_rollup_6h;
 
 query
-SELECT job_name, schedule, suspended FROM duckdb_jobs() WHERE job_name = 'doc_rollup_6h';
+SELECT job_name, schedule, suspended FROM sdb_jobs() WHERE job_name = 'doc_rollup_6h';
 ----
 job_name	schedule	suspended
 doc_rollup_6h	EVERY INTERVAL '06:00:00'	f
@@ -112,14 +112,14 @@ db error: ERROR: Could not convert string 'not a number' to INT64<slt:ignore>
 
 query
 SELECT job_name, run_count, failure_count, last_status
-FROM duckdb_jobs() WHERE job_name IN ('doc_rollup_6h', 'doc_broken') ORDER BY job_name;
+FROM sdb_jobs() WHERE job_name IN ('doc_rollup_6h', 'doc_broken') ORDER BY job_name;
 ----
 job_name	run_count	failure_count	last_status
 doc_broken	1	1	failed
 doc_rollup_6h	1	0	success
 
 query
-SELECT DISTINCT job_name, trigger, success FROM duckdb_job_runs()
+SELECT DISTINCT job_name, trigger, success FROM sdb_job_runs()
 WHERE job_name IN ('doc_rollup', 'doc_broken') ORDER BY job_name;
 ----
 job_name	trigger	success
@@ -212,7 +212,7 @@ statement ok
 CREATE JOB doc_ping EVERY 1 MINUTE CONCURRENT AS SELECT 1;
 
 query
-SELECT schedule FROM duckdb_jobs() WHERE job_name = 'doc_ping';
+SELECT schedule FROM sdb_jobs() WHERE job_name = 'doc_ping';
 ----
 schedule
 EVERY INTERVAL '00:01:00' CONCURRENT
@@ -221,7 +221,7 @@ statement ok
 ALTER JOB doc_ping SET SCHEDULE EVERY 1 MINUTE;
 
 query
-SELECT schedule FROM duckdb_jobs() WHERE job_name = 'doc_ping';
+SELECT schedule FROM sdb_jobs() WHERE job_name = 'doc_ping';
 ----
 schedule
 EVERY INTERVAL '00:01:00'

@@ -66,7 +66,7 @@ count
 
 connection default
 query
-SELECT job_name, run_count, failure_count FROM duckdb_jobs()
+SELECT job_name, run_count, failure_count FROM sdb_jobs()
 WHERE starts_with(job_name, 'jmd_') ORDER BY job_name;
 ----
 job_name	run_count	failure_count

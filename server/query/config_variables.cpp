@@ -893,7 +893,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_job_history_size",
       {
         LogicalTypeId::UBIGINT,
-        "Number of recent job runs, across all jobs, that duckdb_job_runs() "
+        "Number of recent job runs, across all jobs, that sdb_job_runs() "
         "returns; the oldest run is dropped first. 0 keeps none. Default "
         "1024. Server-global.",
         [] {

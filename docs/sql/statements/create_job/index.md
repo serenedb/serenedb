@@ -35,7 +35,7 @@ EXECUTE JOB name
 DROP JOB [ IF EXISTS ] name [ CASCADE | RESTRICT ]
 ```
 
-`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is any single statement except a transaction statement; it cannot use parameters. It is parsed when the job is created, stored as normalized SQL text (the `body` column of `duckdb_jobs()`), and bound again on every run, so it always sees the current definition of the objects it references.
+`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is any single statement except a transaction statement; it cannot use parameters. It is parsed when the job is created, stored as normalized SQL text (the `body` column of `sdb_jobs()`), and bound again on every run, so it always sees the current definition of the objects it references.
 
 `EXECUTE JOB name` is shorthand for `CALL execute_job('name')`.
 
@@ -86,7 +86,7 @@ A body can run another job with `EXECUTE JOB`: that job runs in a session of its
 
 ## Monitoring
 
-`duckdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `duckdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts.
+`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_004" />
 

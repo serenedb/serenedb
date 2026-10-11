@@ -50,16 +50,16 @@ std::vector<PhraseWordStat> PhraseWordStats(
     return words;
   }
   words.resize(phrase.size());
-  auto* stat = words.data();
-  for (const auto& info : phrase) {
-    if (const auto* word = std::get_if<ByTermOptions>(&info.part)) {
-      for (const auto* reader : readers) {
+  for (const auto* reader : readers) {
+    auto* stat = words.data();
+    for (const auto& info : phrase) {
+      if (const auto* word = std::get_if<ByTermOptions>(&info.part)) {
         const auto meta = reader->Lookup(word->term);
         stat->docs += meta.docs_count;
         stat->freq += meta.freq;
       }
+      ++stat;
     }
-    ++stat;
   }
   return words;
 }

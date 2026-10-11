@@ -444,6 +444,52 @@ TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
   EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
 }
 
+TEST(MergeColumnsTest, EachColumnEndsBeforeTheNextOneStarts) {
+  constexpr uint32_t kRowGroup = 128;
+  irs::MemoryDirectory dir;
+  auto writer = MakeWriter(dir, PlainColumns);
+  Generator gen{79};
+  size_t next_id = 0;
+  SegmentShape shape;
+  shape.docs = 150;
+  shape.null_ratio = 0.1;
+  shape.columns = {0, 1, 2, 3, 4};
+  WriteSegment(*writer, gen, shape, next_id);
+  WriteSegment(*writer, gen, shape, next_id);
+  const auto reader = writer->GetSnapshot();
+  const auto inputs = Segments(reader);
+  ASSERT_EQ(2, inputs.size());
+
+  irs::FunctionFieldOptions field_options{
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(), kRowGroup};
+  irs::MemoryDirectory out;
+  const auto merged = RunMerge(out, inputs, &field_options);
+  ASSERT_TRUE(merged.flushed);
+  EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
+
+  std::vector<std::pair<uint64_t, irs::field_id>> blocks;
+  for (const auto& column : merged.reader->GetColReader()->Columns()) {
+    EXPECT_GE(column->DataBlocks().size(), 3U) << "column " << column->Id();
+    for (const auto& block : column->DataBlocks()) {
+      if (block.byte_size != 0) {
+        blocks.emplace_back(block.file_offset, column->Id());
+      }
+    }
+  }
+  std::ranges::sort(blocks);
+  std::vector<irs::field_id> finished;
+  for (size_t i = 1; i < blocks.size(); ++i) {
+    const auto previous = blocks[i - 1].second;
+    const auto current = blocks[i].second;
+    if (current == previous) {
+      continue;
+    }
+    finished.emplace_back(previous);
+    EXPECT_EQ(0, std::ranges::count(finished, current))
+      << "column " << current << " has blocks after other columns";
+  }
+}
+
 std::string LogLine(size_t g) {
   static constexpr std::string_view kVerbs[] = {
     "handled request", "rejected payment", "retried connection",

@@ -2797,7 +2797,7 @@ TEST_F(ColumnReaderTest, SparseAppendNullPadding) {
       cwA.Append(r.start, v, r.count);
     }
     // Typed columns don't auto-pad at Commit (matches the old engine: only norm
-    // columns do); the caller pads the tail, exactly like MergeInto.
+    // columns do); the caller pads the tail.
     cwA.PadNullsTo(kTotal);
     w.Commit(kTotal);
   }

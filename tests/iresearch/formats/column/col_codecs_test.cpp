@@ -1008,9 +1008,9 @@ TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
   EXPECT_GT(top(text), 1) << ::testing::PrintToString(text);
 }
 
-TEST_F(ColCodecsTest, AutoPicksColumnstoreLeaves) {
+const std::set<duckdb::CompressionType>& ColumnstoreLeaves() {
   using duckdb::CompressionType;
-  const std::set<CompressionType> leaves{
+  static const std::set<CompressionType> leaves{
     CompressionType::COMPRESSION_LZ4,
     CompressionType::COMPRESSION_DICT_LZ4,
     CompressionType::COMPRESSION_COL_FSST,
@@ -1020,6 +1020,12 @@ TEST_F(ColCodecsTest, AutoPicksColumnstoreLeaves) {
     CompressionType::COMPRESSION_ZXC,
     CompressionType::COMPRESSION_DICT_ZXC,
     CompressionType::COMPRESSION_UNCOMPRESSED};
+  return leaves;
+}
+
+TEST_F(ColCodecsTest, AutoPicksColumnstoreLeaves) {
+  using duckdb::CompressionType;
+  const auto& leaves = ColumnstoreLeaves();
   struct Corpus {
     const char* name;
     const Value* value;
@@ -1042,6 +1048,38 @@ TEST_F(ColCodecsTest, AutoPicksColumnstoreLeaves) {
       EXPECT_TRUE(leaves.contains(block.codec->type))
         << corpus.name << " "
         << duckdb::CompressionTypeToString(block.codec->type);
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, TransactionalCodecsLeaveTextToTheColumnstore) {
+  using duckdb::CompressionType;
+  struct Corpus {
+    const char* name;
+    const Value* value;
+    uint64_t rows;
+  };
+  const Corpus corpora[] = {
+    {"low-cardinality", &kLowCardinalityWithNulls, 30000},
+    {"long-text", &kLongTextWithNulls, 3000},
+  };
+  for (const auto forced : {CompressionType::COMPRESSION_DICTIONARY,
+                            CompressionType::COMPRESSION_RLE,
+                            CompressionType::COMPRESSION_BITPACKING}) {
+    for (const auto& corpus : corpora) {
+      SCOPED_TRACE(absl::StrCat(duckdb::CompressionTypeToString(forced), " ",
+                                corpus.name));
+      irs::MemoryDirectory dir{};
+      Write(dir, forced, {}, corpus.rows, 16384, *corpus.value);
+      Verify(dir, CompressionType::COMPRESSION_AUTO, corpus.rows,
+             *corpus.value);
+      irs::ColReader r{dir, std::string{kSeg}, Db()};
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (const auto& block : col->DataBlocks()) {
+        EXPECT_TRUE(ColumnstoreLeaves().contains(block.codec->type))
+          << duckdb::CompressionTypeToString(block.codec->type);
+      }
     }
   }
 }

@@ -141,11 +141,11 @@ bool RemoveFromSegment(DocumentMask& deleted_docs,
 
 bool RemapRemoval(DocumentMask& docs_mask, const DocRemoval& removal,
                   std::span<const SubReader* const> candidates,
-                  const MergeWriter& merger,
+                  const MergeDocMap& doc_map,
                   const DocRemovalResolver& removals) {
   bool modified = false;
   for (size_t i = 0; i < candidates.size(); ++i) {
-    const auto& remap = merger[i].remap;
+    const auto& remap = doc_map[i].remap;
     for (const auto doc : removals.PositionalDocs(removal, *candidates[i])) {
       if (!remap.IsMasked(doc)) {
         modified |= docs_mask.Add(remap.Remap(doc));
@@ -271,7 +271,7 @@ MapCandidatesResult MapCandidates(CandidatesMapping& candidates_mapping,
 }
 
 bool MapRemovals(const CandidatesMapping& candidates_mapping,
-                 const MergeWriter& merger, DocumentMask& docs_mask) {
+                 const MergeDocMap& doc_map, DocumentMask& docs_mask) {
   for (auto& mapping : candidates_mapping) {
     const auto& segment_mapping = mapping.second;
     const auto* new_segment = segment_mapping.new_segment;
@@ -281,7 +281,7 @@ bool MapRemovals(const CandidatesMapping& candidates_mapping,
     const auto& old_meta = segment_mapping.old.segment->Meta();
 
     if (new_meta.version != old_meta.version) {
-      const auto& merge_ctx = merger[segment_mapping.old.index];
+      const auto& merge_ctx = doc_map[segment_mapping.old.index];
       auto merged_itr = merge_ctx.reader->docs_iterator();
       auto current_itr = new_segment->docs_iterator();
 
@@ -574,7 +574,7 @@ AddIncomingResult AddIncoming(
 
     const CompactionView candidates{incoming.compaction_ctx.candidates};
 
-    const auto pending_compaction = incoming.compaction_ctx.merger.has_value();
+    const auto pending_compaction = incoming.compaction_ctx.pending.has_value();
 
     if (pending_compaction) {
       // Pending compaction request
@@ -595,7 +595,7 @@ AddIncomingResult AddIncoming(
 
       // Have some changes, apply removals
       if (has_removals) {
-        if (!MapRemovals(mappings, *incoming.compaction_ctx.merger,
+        if (!MapRemovals(mappings, *incoming.compaction_ctx.pending,
                          docs_mask)) {
           // Compacted segment has docs missing from 'segments'
           SDB_WARN(IRESEARCH, "Failed to finish merge for segment '", meta.name,
@@ -628,10 +628,10 @@ AddIncomingResult AddIncoming(
           // FIXME(gnusi): optimize PK queries
           docs_mask_modified |=
             RemoveFromSegment(docs_mask, *query, *reader, removals);
-          if (query->removal && incoming.compaction_ctx.remap) {
+          if (query->removal && incoming.compaction_ctx.published) {
             docs_mask_modified |= RemapRemoval(
               docs_mask, *query->removal, incoming.compaction_ctx.candidates,
-              *incoming.compaction_ctx.remap, removals);
+              *incoming.compaction_ctx.published, removals);
           }
         }
       }
@@ -1614,7 +1614,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
       std::move(candidates),        // compaction context candidates
       std::move(pending_reader),    // compacted reader
       std::move(committed_reader),  // compaction context meta
-      std::move(merger));
+      std::move(merger).TakeDocMap());
     SDB_TRACE(IRESEARCH, "Compaction id='", run_id,
               "' successfully finished: pending");
     result.error = CompactionError::Pending;
@@ -1640,7 +1640,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     // handle removals if something changed
     if (has_removals) {
       DocumentMask docs_mask;
-      if (!MapRemovals(mappings, merger, docs_mask)) {
+      if (!MapRemovals(mappings, merger.DocMap(), docs_mask)) {
         // compacted segment has docs missing from
         // current_committed_meta->segments()
         SDB_DEBUG(IRESEARCH, "Failed to finish compaction id='", run_id,
@@ -1679,7 +1679,8 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
     std::move(pending_reader),   // compacted reader
     std::move(committed_reader)  // compaction context meta
   );
-  pending_segment.compaction_ctx.remap.emplace(std::move(merger));
+  pending_segment.compaction_ctx.published.emplace(
+    std::move(merger).TakeDocMap());
   // noexcept part: mask compacted segments
   for (const auto* candidate : pending_segment.compaction_ctx.candidates) {
     segment_mask.emplace(candidate->Meta().name);
@@ -2061,7 +2062,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
       }
     }
     for (const auto& incoming : ctx->incoming) {
-      if (incoming.compaction_ctx.remap) {
+      if (incoming.compaction_ctx.published) {
         live.insert(live.end(), incoming.compaction_ctx.candidates.begin(),
                     incoming.compaction_ctx.candidates.end());
       }

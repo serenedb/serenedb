@@ -29,6 +29,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/col_block_sink.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -81,11 +82,10 @@ class ColWriter final {
 
   bool ComputeAnn(const AnnBuildEnv* env);
   bool ComputeAnn(const AnnBuildEnv* env, absl::FunctionRef<bool()> progress);
+  bool ComputeAnn(field_id column, ColReader& reader, const AnnBuildEnv* env,
+                  absl::FunctionRef<bool()> progress);
 
   void Rollback() noexcept;
-
-  WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
-  IndexOutput& Out() const noexcept { return *_out; }
 
  private:
   struct AnnEntry {
@@ -110,6 +110,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   IndexOutput::ptr _out;
+  std::unique_ptr<ColBlockSink> _blocks;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;

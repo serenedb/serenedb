@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
+#include <memory>
 #include <span>
 
 #include "iresearch/index/column_info.hpp"
@@ -31,6 +32,7 @@
 namespace irs {
 
 struct SubReader;
+struct DocRemap;
 
 class ColReader;
 class ColWriter;
@@ -39,10 +41,26 @@ struct MergeSource {
   const SubReader* reader;
   const ColReader* col_reader;
   uint64_t alive_count;
+  const DocRemap* remap = nullptr;
 };
 
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               absl::FunctionRef<bool()> progress);
+class ColumnMerger {
+ public:
+  ColumnMerger(std::span<const MergeSource> sources,
+               const IndexFieldOptions* field_options);
+  ~ColumnMerger();
+
+  ColumnMerger(const ColumnMerger&) = delete;
+  ColumnMerger& operator=(const ColumnMerger&) = delete;
+
+  std::span<const field_id> Columns() const noexcept;
+
+  bool Merge(field_id column, ColWriter& output,
+             absl::FunctionRef<bool()> progress);
+
+ private:
+  struct State;
+  std::unique_ptr<State> _state;
+};
 
 }  // namespace irs

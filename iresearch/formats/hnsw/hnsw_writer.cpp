@@ -38,6 +38,7 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_output.hpp"
@@ -102,7 +103,7 @@ struct HnswRawDist {
 struct MergeDonor {
   const HnswIndex* index = nullptr;
   const SubReader* reader = nullptr;
-  uint64_t out_base = 0;
+  const DocRemap* remap = nullptr;
   uint64_t alive = 0;
 };
 
@@ -111,20 +112,18 @@ inline constexpr double kHnswMaxMissingRatio = 0.3;
 MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
                           uint32_t d, VectorMetric metric, uint32_t m) {
   MergeDonor best;
-  uint64_t out_base = 0;
   for (const auto& src : sources) {
-    const uint64_t base = out_base;
-    out_base += src.alive_count;
-    if (src.reader == nullptr || src.alive_count <= best.alive) {
+    if (src.alive_count <= best.alive) {
       continue;
     }
+    SDB_ASSERT(src.reader && src.remap);
     const auto* ann = src.reader->Ann(column);
-    if (ann == nullptr || ann->Kind() != AnnKind::Hnsw || ann->Empty()) {
+    if (ann == nullptr || ann->Kind() != AnnKind::Hnsw) {
       continue;
     }
     const auto& hnsw = irs::utils::downCast<const HnswIndex>(*ann);
     const auto& header = hnsw.Header();
-    if (header.d != d || header.metric != metric || header.rows == 0) {
+    if (header.d != d || header.metric != metric) {
       continue;
     }
     const double missing = 1.0 - static_cast<double>(src.alive_count) /
@@ -134,12 +133,12 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
     }
     best = MergeDonor{.index = &hnsw,
                       .reader = src.reader,
-                      .out_base = base,
+                      .remap = src.remap,
                       .alive = src.alive_count};
   }
   if (best.index != nullptr) {
     auto data = best.index->Load(*best.reader);
-    if (!data || data->graph.Empty() || data->graph.M() != m) {
+    if (!data || data->graph.M() != m) {
       return {};
     }
   }
@@ -696,20 +695,22 @@ bool BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   const auto rows = valid.size();
 
   std::vector<uint32_t> remap(src_rows, kHnswInvalidNode);
-  uint64_t rank = 0;
-  auto it_mask = donor.reader->MaskedDocs();
+  std::vector<uint8_t> from_donor(rows, 0);
+  uint64_t mapped = 0;
   for (size_t r = 0; r < src_rows; ++r) {
     const auto doc = static_cast<doc_id_t>(r) + doc_limits::min();
-    if (it_mask.Contains(doc)) {
+    if (donor.remap->IsMasked(doc)) {
       continue;
     }
-    if (donor.out_base + rank >= rows) {
+    const uint64_t node = donor.remap->Remap(doc) - doc_limits::min();
+    if (node >= rows) {
       return false;
     }
-    remap[r] = static_cast<uint32_t>(donor.out_base + rank);
-    ++rank;
+    remap[r] = static_cast<uint32_t>(node);
+    from_donor[node] = 1;
+    ++mapped;
   }
-  if (rank != donor.alive) {
+  if (mapped != donor.alive) {
     return false;
   }
 
@@ -721,9 +722,8 @@ bool BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
       graph.SetLevel(remap[r], src_graph.LevelOf(static_cast<uint32_t>(r)));
     }
   }
-  const auto donor_end = donor.out_base + donor.alive;
   for (size_t i = 0; i < rows; ++i) {
-    if (i >= donor.out_base && i < donor_end) {
+    if (from_donor[i] != 0) {
       continue;
     }
     if (valid[i] != 0) {
@@ -762,9 +762,8 @@ bool BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
           lost = true;
           continue;
         }
-        if (k < out.size()) {
-          out[k++] = mapped;
-        }
+        SDB_ASSERT(k < out.size());
+        out[k++] = mapped;
       }
       for (size_t j = k; j < out.size(); ++j) {
         out[j] = kHnswInvalidNode;
@@ -782,7 +781,7 @@ bool BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   uint32_t delta_entry = kHnswInvalidNode;
   uint32_t delta_levels = entry_level;
   for (size_t i = 0; i < rows; ++i) {
-    if ((i >= donor.out_base && i < donor_end) || valid[i] == 0) {
+    if (from_donor[i] != 0 || valid[i] == 0) {
       continue;
     }
     const auto node = static_cast<uint32_t>(i);
@@ -817,7 +816,7 @@ bool BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   std::vector<uint32_t> nodes;
   nodes.reserve(rows);
   for (size_t i = 0; i < rows; ++i) {
-    if ((i >= donor.out_base && i < donor_end) || valid[i] == 0 ||
+    if (from_donor[i] != 0 || valid[i] == 0 ||
         static_cast<uint32_t>(i) == delta_entry) {
       continue;
     }

@@ -28,7 +28,7 @@
 #include <limits>
 #include <span>
 
-#include "iresearch/store/data_output.hpp"
+#include "iresearch/formats/column/col_block_sink.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -83,8 +83,8 @@ NormLayout PickNormLayout(const NormStats& stats) noexcept {
 }
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   IndexOutput& out)
-  : _id{id}, _out{&out}, _row_group_size{row_group_size} {}
+                                   ColBlockSink& blocks)
+  : _id{id}, _blocks{&blocks}, _row_group_size{row_group_size} {}
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
                                    Open open)
@@ -149,14 +149,14 @@ void NormColumnWriter::CloseRegion() {
 
 void NormColumnWriter::Begin(const NormLayout& layout, uint64_t rows,
                              uint32_t max) {
-  if (layout.bits != 0 && _out == nullptr) {
-    _out = &_open();
+  if (layout.bits != 0 && _blocks == nullptr) {
+    _blocks = &_open();
   }
   _open_region = true;
   _region = {};
   _region.bits = static_cast<uint8_t>(layout.bits);
   _region.value = layout.value;
-  _region.file_offset = layout.bits == 0 ? 0 : _out->Position();
+  _region.file_offset = layout.bits == 0 ? 0 : _blocks->Position();
   if (layout.exceptions != 0) {
     _region.shift = PickShift(rows, layout.exceptions);
     _region.exception_bytes =
@@ -210,7 +210,8 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
         absl::little_endian::Store32(out + i * 4, v);
       }
     }
-    _out->WriteData(_staging.data(), _staging.size());
+    _blocks->Append(
+      {reinterpret_cast<const char*>(_staging.data()), _staging.size()});
   }
 }
 
@@ -247,25 +248,36 @@ void NormColumnWriter::End() {
                "norm column ", _id, " has ", exceptions, " exceptions");
     region.exceptions = static_cast<uint32_t>(exceptions);
     region.overflow = static_cast<uint32_t>(_overflow_rows.size());
-    region.table_offset = _out->Position();
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
+    _staging.resize(
+      (_bases.size() + _overflow_rows.size() + _overflow_values.size() + 1) *
+        sizeof(uint32_t) +
+      _direct.size() * region.exception_bytes);
+    auto* at = _staging.data();
+    const auto put32 = [&at](uint32_t v) {
+      absl::little_endian::Store32(at, v);
+      at += sizeof(uint32_t);
+    };
     for (const auto base : _bases) {
-      _out->WriteU32(base);
+      put32(base);
     }
     for (const auto row : _overflow_rows) {
-      _out->WriteU32(row);
+      put32(row);
     }
     for (const auto v : _overflow_values) {
-      _out->WriteU32(v);
+      put32(v);
     }
     for (const auto v : _direct) {
       if (region.exception_bytes == 2) {
-        _out->WriteU16(static_cast<uint16_t>(v));
+        absl::little_endian::Store16(at, static_cast<uint16_t>(v));
+        at += sizeof(uint16_t);
       } else {
-        _out->WriteU32(v);
+        put32(v);
       }
     }
-    _out->WriteU32(0);
+    put32(0);
+    region.table_offset = _blocks->Append(
+      {reinterpret_cast<const char*>(_staging.data()), _staging.size()});
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);

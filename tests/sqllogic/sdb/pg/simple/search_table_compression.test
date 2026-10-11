@@ -1,3 +1,5 @@
+# exclusive
+
 statement ok
 CREATE TABLE search_declared (a INTEGER PRIMARY KEY, v_uncompressed TEXT USING COMPRESSION uncompressed, v_zstd TEXT USING COMPRESSION zstd, v_dict_fsst TEXT USING COMPRESSION dict_fsst, v_rle INTEGER USING COMPRESSION rle, v_bitpacking INTEGER USING COMPRESSION bitpacking, v_alp DOUBLE USING COMPRESSION alp, v_alprd DOUBLE USING COMPRESSION alprd, v_roaring BOOLEAN USING COMPRESSION roaring)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
@@ -297,6 +299,35 @@ db error: ERROR: Column "v": compression 'dict_lz4' is only available on search 
 
 
 statement ok
+SET GLOBAL force_compression = 'dictionary';
+
+statement ok
+CREATE TABLE search_forced_dictionary (a INTEGER PRIMARY KEY, v TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO search_forced_dictionary SELECT a, 'v' || (a % 7) FROM range(5000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) search_forced_dictionary;
+
+statement ok
+RESET GLOBAL force_compression;
+
+query
+SELECT count(*) FROM pragma_storage_info('search_forced_dictionary') WHERE column_name = 'v' AND segment_type <> 'VALIDITY' AND compression = 'Dictionary';
+----
+count
+0
+
+query
+SELECT count(*) FROM search_forced_dictionary WHERE v IS DISTINCT FROM 'v' || (a % 7);
+----
+count
+0
+
+
+statement ok
 CREATE TABLE search_col_levels (a INTEGER PRIMARY KEY, v_zstd9 TEXT USING COMPRESSION dict_zstd(compression_level = 9), v_zxc5 TEXT USING COMPRESSION zxc(compression_level = 5), v_lz4 TEXT USING COMPRESSION dict_lz4)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
@@ -357,6 +388,9 @@ DROP TABLE search_forced_zstd;
 
 statement ok
 DROP TABLE search_forced_dict_fsst;
+
+statement ok
+DROP TABLE search_forced_dictionary;
 
 statement ok
 DROP TABLE search_forced_rle;

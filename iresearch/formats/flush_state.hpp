@@ -35,9 +35,6 @@ struct NormProvider;
 
 struct FlushState {
   Directory* const dir{};
-  // In-flight norm reader source (SegmentWriter during initial flush,
-  // null during merge). Posting writers consult it to read per-doc norms
-  // for score bounds while the segment is still being written.
   const NormProvider* norms{};
   const std::string_view name;  // segment name
   ScorerPtr scorer = nullptr;

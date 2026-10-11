@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/merge.hpp"
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
@@ -161,38 +162,10 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
 
 }  // namespace
 
-bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
-               const IndexFieldOptions* field_options,
-               absl::FunctionRef<bool()> progress) {
-  std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
-  absl::flat_hash_set<field_id> seen_ids;
-  for (const auto& s : sources) {
-    if (!s.col_reader) {
-      continue;
-    }
-    for (const auto& col : s.col_reader->Columns()) {
-      if (seen_ids.insert(col->Id()).second) {
-        ordered_cols.emplace_back(col->Id(), col.get());
-      }
-    }
-  }
-  if (ordered_cols.empty()) {
-    return true;
-  }
-
-  std::vector<std::shared_ptr<ReadContext>> source_ctxs(sources.size());
-  for (size_t i = 0; i < sources.size(); ++i) {
-    if (sources[i].col_reader) {
-      source_ctxs[i] = std::make_shared<ReadContext>(*sources[i].col_reader);
-    }
-  }
-
-  HyperLogLogMerger hyperloglog;
-  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
-    kept_cache(sources.size());
-  auto kept_for = [&](size_t si, DocumentMask::Iterator& it_mask,
-                      uint64_t pos) -> const std::vector<duckdb::sel_t>& {
+struct ColumnMerger::State {
+  const std::vector<duckdb::sel_t>& KeptFor(size_t si,
+                                            DocumentMask::Iterator& it_mask,
+                                            uint64_t pos) {
     auto& windows = kept_cache[si];
     const size_t w = pos / STANDARD_VECTOR_SIZE;
     if (windows.size() <= w) {
@@ -210,112 +183,167 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       }
     }
     return *slot;
-  };
-  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
-  if (field_options) {
-    row_group_size = field_options->row_group_size;
   }
-  for (const auto& [field_id_v, first_col] : ordered_cols) {
-    const auto opts = field_options
-                        ? field_options->GetColumnOptions(field_id_v)
-                        : ColumnOptions{};
-    const auto codec_params =
-      field_options ? field_options->CodecParams(opts) : ColCodecParams{};
 
-    auto& cw =
-      output.OpenColumn(field_id_v, first_col->Type(), opts.skip_validity,
-                        row_group_size, opts.compression, false, codec_params);
-    if (opts.ann_info) {
-      output.AttachAnn(field_id_v, *opts.ann_info).SetMergeSources(sources);
+  std::span<const MergeSource> sources;
+  const IndexFieldOptions* field_options = nullptr;
+  uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  std::vector<field_id> ids;
+  absl::flat_hash_map<field_id, const ColumnReader*> first_by_id;
+  std::vector<std::shared_ptr<ReadContext>> source_ctxs;
+  HyperLogLogMerger hyperloglog;
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  std::vector<std::vector<std::optional<std::vector<duckdb::sel_t>>>>
+    kept_cache;
+};
+
+ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
+                           const IndexFieldOptions* field_options)
+  : _state{std::make_unique<State>()} {
+  auto& state = *_state;
+  state.sources = sources;
+  state.field_options = field_options;
+  if (field_options) {
+    state.row_group_size = field_options->row_group_size;
+  }
+  for (const auto& s : sources) {
+    if (!s.col_reader) {
+      continue;
     }
-
-    if (opts.hyperloglog) {
-      hyperloglog.Begin();
-    }
-
-    if (cw.TrainsDictionary()) {
-      SampleDictionary(sources, field_id_v, source_ctxs, cw);
-    }
-
-    ColumnReader::VectorScratch batch_scratch{first_col->Type()};
-
-    uint64_t out_doc = 0;
-    for (size_t si = 0; si < sources.size(); ++si) {
-      const auto& s = sources[si];
-      const auto* src = s.col_reader;
-      const uint64_t source_target = out_doc + s.alive_count;
-      if (!src) {
-        out_doc = source_target;
-        continue;
+    for (const auto& col : s.col_reader->Columns()) {
+      if (state.first_by_id.emplace(col->Id(), col.get()).second) {
+        state.ids.emplace_back(col->Id());
       }
-      const auto* col = src->Column(field_id_v);
-      if (!col) {
-        out_doc = source_target;
-        continue;
+    }
+  }
+  if (state.ids.empty()) {
+    return;
+  }
+  state.source_ctxs.resize(sources.size());
+  for (size_t i = 0; i < sources.size(); ++i) {
+    if (sources[i].col_reader) {
+      state.source_ctxs[i] =
+        std::make_shared<ReadContext>(*sources[i].col_reader);
+    }
+  }
+  state.kept_cache.resize(sources.size());
+}
+
+ColumnMerger::~ColumnMerger() = default;
+
+std::span<const field_id> ColumnMerger::Columns() const noexcept {
+  return _state->ids;
+}
+
+bool ColumnMerger::Merge(field_id column, ColWriter& output,
+                         absl::FunctionRef<bool()> progress) {
+  auto& shared = *_state;
+  const auto first = shared.first_by_id.find(column);
+  SDB_ASSERT(first != shared.first_by_id.end());
+  const auto* first_col = first->second;
+  const auto sources = shared.sources;
+  const auto* field_options = shared.field_options;
+  auto& hyperloglog = shared.hyperloglog;
+  auto& sel = shared.sel;
+  const auto opts =
+    field_options ? field_options->GetColumnOptions(column) : ColumnOptions{};
+  const auto codec_params =
+    field_options ? field_options->CodecParams(opts) : ColCodecParams{};
+
+  auto& cw = output.OpenColumn(column, first_col->Type(), opts.skip_validity,
+                               shared.row_group_size, opts.compression, false,
+                               codec_params);
+  if (opts.ann_info) {
+    output.AttachAnn(column, *opts.ann_info).SetMergeSources(sources);
+  }
+
+  if (opts.hyperloglog) {
+    hyperloglog.Begin();
+  }
+
+  if (cw.TrainsDictionary()) {
+    SampleDictionary(sources, column, shared.source_ctxs, cw);
+  }
+
+  ColumnReader::VectorScratch batch_scratch{first_col->Type()};
+
+  uint64_t out_doc = 0;
+  for (size_t si = 0; si < sources.size(); ++si) {
+    const auto& s = sources[si];
+    const auto* src = s.col_reader;
+    const uint64_t source_target = out_doc + s.alive_count;
+    if (!src) {
+      out_doc = source_target;
+      continue;
+    }
+    const auto* col = src->Column(column);
+    if (!col) {
+      out_doc = source_target;
+      continue;
+    }
+    SDB_ASSERT(col->Type() == first_col->Type(),
+               "schema evolution between merge sources not supported");
+    const bool has_mask = HasRemovals(s.reader->Meta());
+    auto it_mask = s.reader->MaskedDocs();
+
+    const bool stored_hll =
+      opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
+
+    auto state = col->InitScan(shared.source_ctxs[si]);
+    cw.PadNullsTo(out_doc);
+    const auto total = col->RowCount();
+    uint64_t pos = 0;
+    while (pos < total) {
+      if (!progress()) {
+        return false;
       }
-      SDB_ASSERT(col->Type() == first_col->Type(),
-                 "schema evolution between merge sources not supported");
-      const bool has_mask = HasRemovals(s.reader->Meta());
-      auto it_mask = s.reader->MaskedDocs();
+      const auto take =
+        std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
 
-      const bool stored_hll =
-        opts.hyperloglog && !has_mask && hyperloglog.MergeStored(*col);
-
-      auto state = col->InitScan(source_ctxs[si]);
-      cw.PadNullsTo(out_doc);
-      const auto total = col->RowCount();
-      uint64_t pos = 0;
-      while (pos < total) {
-        if (!progress()) {
-          return false;
+      if (!has_mask) {
+        auto& batch = batch_scratch.Reset();
+        col->Scan(state, batch, take);
+        cw.Append(batch, take);
+        if (opts.hyperloglog && !stored_hll) {
+          hyperloglog.MergeValues(batch, take);
         }
-        const auto take =
-          std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
-
-        if (!has_mask) {
+        out_doc += take;
+      } else {
+        const auto& kept_idx = shared.KeptFor(si, it_mask, pos);
+        duckdb::idx_t kept = 0;
+        for (const auto i : kept_idx) {
+          if (i >= take) {
+            break;
+          }
+          sel.set_index(kept++, i);
+        }
+        if (kept == 0) {
+          col->Skip(state, take);
+        } else {
           auto& batch = batch_scratch.Reset();
           col->Scan(state, batch, take);
-          cw.Append(batch, take);
-          if (opts.hyperloglog && !stored_hll) {
-            hyperloglog.MergeValues(batch, take);
+          duckdb::Vector selected{batch, sel, kept};
+          cw.Append(out_doc, selected, kept);
+          if (opts.hyperloglog) {
+            hyperloglog.MergeValues(selected, kept);
           }
-          out_doc += take;
-        } else {
-          const auto& kept_idx = kept_for(si, it_mask, pos);
-          duckdb::idx_t kept = 0;
-          for (const auto i : kept_idx) {
-            if (i >= take) {
-              break;
-            }
-            sel.set_index(kept++, i);
-          }
-          if (kept == 0) {
-            col->Skip(state, take);
-          } else {
-            auto& batch = batch_scratch.Reset();
-            col->Scan(state, batch, take);
-            duckdb::Vector selected{batch, sel, kept};
-            cw.Append(out_doc, selected, kept);
-            if (opts.hyperloglog) {
-              hyperloglog.MergeValues(selected, kept);
-            }
-            out_doc += kept;
-          }
+          out_doc += kept;
         }
-        pos += take;
       }
-      if (out_doc < source_target) {
-        cw.PadNullsTo(source_target);
-        out_doc = source_target;
-      }
+      pos += take;
     }
-
-    cw.PadNullsTo(out_doc);
-
-    if (opts.hyperloglog) {
-      cw.SetHyperLogLog(hyperloglog.Take());
+    if (out_doc < source_target) {
+      cw.PadNullsTo(source_target);
+      out_doc = source_target;
     }
   }
+
+  cw.PadNullsTo(out_doc);
+
+  if (opts.hyperloglog) {
+    cw.SetHyperLogLog(hyperloglog.Take());
+  }
+  cw.Finish();
   return true;
 }
 

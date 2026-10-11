@@ -31,6 +31,7 @@
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <iresearch/formats/column/col_block_sink.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
@@ -502,7 +503,8 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   irs::NormColumnMeta meta;
   {
     irs::MemoryIndexOutput out{written};
-    irs::NormColumnWriter writer{1, kRows, out};
+    irs::ColBlockSink blocks{out};
+    irs::NormColumnWriter writer{1, kRows, blocks};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }

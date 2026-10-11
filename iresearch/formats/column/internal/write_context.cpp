@@ -23,36 +23,31 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/storage/block.hpp>
-#include <limits>
 
-#include "iresearch/types.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 
-WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
-  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE}, _out{&out} {}
+WriteContext::WriteContext(duckdb::DatabaseInstance& db, ColBlockSink& blocks)
+  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
+    _blocks{&blocks} {}
 
 WriteContext::~WriteContext() = default;
 
 void WriteContext::WriteString(
   duckdb::UncompressedStringSegmentState& /*state*/, duckdb::string_t string,
   duckdb::block_id_t& result_block, int32_t& result_offset) {
-  result_block = static_cast<duckdb::block_id_t>(_out->Position());
+  result_block = static_cast<duckdb::block_id_t>(
+    _blocks->AppendString({string.GetData(), string.GetSize()}));
   result_offset = 0;
-  const auto len = string.GetSize();
-  SDB_ENSURE(len <= std::numeric_limits<uint32_t>::max(),
-             "string too long for overflow format");
-  _out->WriteU32(len);
-  _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), len);
 }
 
 duckdb::idx_t WriteContext::Position() const {
-  return static_cast<duckdb::idx_t>(_out->Position());
+  return static_cast<duckdb::idx_t>(_blocks->Position());
 }
 
 void WriteContext::Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
-  _out->WriteData(reinterpret_cast<const byte_type*>(data), size);
+  _blocks->Append({reinterpret_cast<const char*>(data), size});
 }
 
 duckdb::block_id_t WriteContext::GetFreeBlockId() {

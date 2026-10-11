@@ -48,7 +48,7 @@ struct WriteChunk {
 
 class ColumnWriter final {
  public:
-  ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
+  ColumnWriter(WriteContext& ctx, field_id id, duckdb::LogicalType type,
                bool skip_validity, uint32_t row_group_size,
                duckdb::CompressionType forced, bool hyperloglog,
                ColCodecParams codec_params);
@@ -77,6 +77,8 @@ class ColumnWriter final {
   }
 
   void PadNullsTo(uint64_t target_row);
+
+  void Finish();
 
   void SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll);
 
@@ -168,10 +170,9 @@ class ColumnWriter final {
                   uint64_t row_count, bool skip_validity,
                   duckdb::CompressionType forced, ColumnMeta& meta);
 
-  WriteContext& WriteCtx() const noexcept;
-  IndexOutput& Out() const noexcept;
+  WriteContext& WriteCtx() const noexcept { return *_ctx; }
 
-  ColWriter* _owner;
+  WriteContext* _ctx;
   field_id _id;
   duckdb::LogicalType _type;
   bool _skip_validity = false;

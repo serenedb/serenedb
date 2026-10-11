@@ -26,12 +26,14 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -155,6 +157,69 @@ TEST(MergeGoldenTest, MergedContentMatchesTheRecording) {
                    static_cast<unsigned long long>(content));
     }
     EXPECT_EQ(golden.content, content);
+  }
+}
+
+uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs) {
+  irs::FunctionFieldOptions field_options{
+    SketchedColumns, irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE};
+  const irs::BM25 bm25;
+  irs::SegmentMeta meta;
+  const irs::SegmentWriterOptions options{
+    .scorer = &bm25,
+    .db = &irs::DuckDBEngine::Instance().instance(),
+    .field_options = &field_options,
+  };
+  irs::MemoryDirectory out;
+  irs::MergeWriter merger{out, options};
+  merger.Reset(inputs.begin(), inputs.end());
+  EXPECT_TRUE(irs::GetReady(merger.Flush(meta)));
+  std::vector<std::string> files(meta.files.begin(), meta.files.end());
+  std::ranges::sort(files);
+  std::string bytes;
+  for (const auto& file : files) {
+    if (file.ends_with(".col")) {
+      continue;
+    }
+    auto in = out.open(file, irs::IOAdvice::NORMAL);
+    EXPECT_NE(nullptr, in) << file;
+    const auto at = bytes.size();
+    bytes.resize(at + in->Length());
+    in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + at),
+                 in->Length());
+  }
+  return Fnv1a(bytes);
+}
+
+constexpr GoldenCase kScoredGoldenCases[] = {
+  {101, 0x7d9691f0c359aee2ULL},
+  {202, 0x60ee40816515879eULL},
+  {303, 0xb7941593cf9a1028ULL},
+  {404, 0x153b93fc28a41527ULL},
+};
+
+TEST(MergeGoldenTest, ScoredMergeBytesMatchTheRecording) {
+  const bool print = std::getenv("SDB_PRINT_MERGE_GOLDEN") != nullptr;
+  for (const auto& golden : kScoredGoldenCases) {
+    SCOPED_TRACE(golden.seed);
+    Generator gen{golden.seed};
+    irs::MemoryDirectory dir;
+    auto writer = MakeWriter(dir);
+    size_t next_id = 0;
+    for (size_t s = 0; s != 4; ++s) {
+      WriteSegment(*writer, gen, RandomShape(gen), next_id);
+    }
+    const auto reader = writer->GetSnapshot();
+    const auto inputs = Segments(reader);
+    ASSERT_FALSE(inputs.empty());
+    const auto bytes = ScoredMergeBytes(inputs);
+    if (print) {
+      std::fprintf(stderr, "  {%llu, 0x%016llxULL},\n",
+                   static_cast<unsigned long long>(golden.seed),
+                   static_cast<unsigned long long>(bytes));
+    }
+    EXPECT_EQ(golden.content, bytes);
   }
 }
 

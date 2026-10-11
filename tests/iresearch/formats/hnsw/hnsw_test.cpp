@@ -27,14 +27,19 @@
 #include <exception>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
+#include <iresearch/formats/hnsw/hnsw_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge_writer.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <mutex>
 #include <random>
@@ -56,10 +61,11 @@ inline constexpr uint32_t kDim = 8;
 
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
                                           irs::VectorQuantization quant,
-                                          uint32_t nb_bits = 0) {
+                                          uint32_t nb_bits = 0,
+                                          uint32_t m = 8) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric, quant,
-                         nb_bits](irs::field_id id) -> irs::ColumnOptions {
+  opts.column_options = [metric, quant, nb_bits,
+                         m](irs::field_id id) -> irs::ColumnOptions {
     irs::ColumnOptions col;
     if (id == kVec) {
       col.ann_info = irs::AnnInfo{
@@ -69,7 +75,7 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
         .d = kDim,
         .metric = metric,
         .quant = {.kind = quant, .nb_bits = nb_bits},
-        .m = 8,
+        .m = m,
         .ef_construction = 64,
       };
     }
@@ -104,6 +110,17 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc,
   std::ranges::copy(vec, data);
   duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
   duckdb::FlatVector::ValidityMutable(child).SetAllValid(kDim);
+  duckdb::FlatVector::SetSize(v, 1);
+  cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
+            /*count=*/1);
+}
+
+void WriteNullVectorAt(irs::ColWriter& cs, irs::doc_id_t doc) {
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+  auto& cw = cs.OpenColumn(kVec, vtype);
+  duckdb::Vector v{vtype, 1};
+  duckdb::FlatVector::ValidityMutable(v).SetInvalid(0);
   duckdb::FlatVector::SetSize(v, 1);
   cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
             /*count=*/1);
@@ -639,6 +656,20 @@ class HnswParallelBuildTest : public ::testing::TestWithParam<HnswQuant> {
     }
     return static_cast<double>(matched) / static_cast<double>(total);
   }
+
+  static std::shared_ptr<const irs::HnswData> Graph(
+    const irs::SubReader& segment) {
+    const auto* ann = segment.Ann(kVec);
+    EXPECT_NE(nullptr, ann);
+    EXPECT_EQ(irs::AnnKind::Hnsw, ann->Kind());
+    return irs::utils::downCast<const irs::HnswIndex>(*ann).Load(segment);
+  }
+
+  static void CompactAll(irs::IndexWriter& writer) {
+    ASSERT_TRUE(writer.Compact(
+      irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+    writer.RefreshCommit();
+  }
 };
 
 TEST_P(HnswParallelBuildTest, FlushFansOutAndKeepsRecall) {
@@ -697,6 +728,246 @@ TEST_P(HnswParallelBuildTest, MergeInsertsTheDeltaInParallel) {
   EXPECT_GE(env.Runs(), 1U);
   EXPECT_EQ(0U, env.Held());
   EXPECT_GE(Recall(merged, vecs), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, MergeKeepsNullRowsOutOfTheGraph) {
+  constexpr size_t kBig = 1500;
+  constexpr size_t kSmall = 600;
+  constexpr size_t kNullEvery = 7;
+  const auto vecs = MakeVectors(kBig + kSmall, 59);
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  Insert(*writer, vecs, 0, kBig, kNullEvery);
+  Insert(*writer, vecs, kBig, kBig + kSmall, kNullEvery);
+  ASSERT_EQ(2U, writer->GetSnapshot().size());
+  CompactAll(*writer);
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged.size());
+  const auto data = Graph(merged[0]);
+  ASSERT_NE(nullptr, data);
+  for (size_t i = 0; i < vecs.size(); ++i) {
+    EXPECT_EQ(i % kNullEvery != 3,
+              data->graph.LevelOf(static_cast<uint32_t>(i)) != 0)
+      << i;
+  }
+  EXPECT_GE(Recall(merged, vecs, kNullEvery), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, ManySmallInputsMoveTheMergedEntryPoint) {
+  constexpr size_t kDonor = 120;
+  constexpr size_t kInputs = 24;
+  constexpr size_t kPerInput = 110;
+  const auto vecs = MakeVectors(kDonor + kInputs * kPerInput, 67);
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  Insert(*writer, vecs, 0, kDonor);
+  for (size_t i = 0; i < kInputs; ++i) {
+    Insert(*writer, vecs, kDonor + i * kPerInput, kDonor + (i + 1) * kPerInput);
+  }
+  const auto inputs = writer->GetSnapshot();
+  ASSERT_EQ(kInputs + 1, inputs.size());
+  ASSERT_EQ(kDonor, inputs[0].docs_count());
+  const auto donor = Graph(inputs[0]);
+  ASSERT_NE(nullptr, donor);
+  const auto donor_top = donor->graph.LevelOf(donor->graph.EntryPoint());
+  CompactAll(*writer);
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged.size());
+  const auto data = Graph(merged[0]);
+  ASSERT_NE(nullptr, data);
+  EXPECT_GT(data->graph.LevelOf(data->graph.EntryPoint()), donor_top);
+  EXPECT_GE(Recall(merged, vecs), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, MergeRebuildsGraphsOfOtherIndexOptions) {
+  constexpr size_t kBig = 900;
+  constexpr size_t kSmall = 500;
+  const auto vecs = MakeVectors(kBig + kSmall, 71);
+  const std::vector<bool> all(vecs.size(), true);
+  struct Case {
+    std::string_view name;
+    irs::VectorMetric metric;
+    uint32_t m;
+  };
+  for (const auto& [name, metric, m] :
+       {Case{"metric", irs::VectorMetric::Cosine, 8}, Case{"m", kMetric, 16}}) {
+    SCOPED_TRACE(name);
+    irs::MemoryDirectory dir;
+    {
+      auto writer =
+        irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+      Insert(*writer, vecs, 0, kBig);
+      Insert(*writer, vecs, kBig, kBig + kSmall);
+    }
+    auto writer = irs::IndexWriter::Make(
+      dir, irs::kOmAppend,
+      MakeWriterOptions(metric, Quant(), GetParam().nb_bits, m));
+    ASSERT_EQ(2U, writer->GetSnapshot().size());
+    CompactAll(*writer);
+    const auto merged = writer->GetSnapshot();
+    ASSERT_EQ(1U, merged.size());
+    const auto data = Graph(merged[0]);
+    ASSERT_NE(nullptr, data);
+    EXPECT_EQ(m, data->graph.M());
+    EXPECT_EQ(metric,
+              irs::utils::downCast<const irs::HnswIndex>(*merged[0].Ann(kVec))
+                .Header()
+                .metric);
+    EXPECT_GE(Recall(merged, vecs, all, metric), RecallFloor());
+  }
+}
+
+irs::IndexWriterOptions IvfWriterOptions() {
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.column_options = [](irs::field_id id) -> irs::ColumnOptions {
+    irs::ColumnOptions col;
+    if (id == kVec) {
+      col.ann_info = irs::AnnInfo{
+        .kind = irs::AnnKind::Ivf,
+        .centroids_id = kVec,
+        .postings_id = kVec,
+        .d = kDim,
+        .metric = irs::VectorMetric::L2Sqr,
+        .quant = {.kind = irs::VectorQuantization::SQ8},
+        .sample_factor = 0.5f,
+        .posting_size = 64,
+      };
+    }
+    return col;
+  };
+  return opts;
+}
+
+TEST_P(HnswParallelBuildTest, MergeSkipsInputsWithoutAGraphToReuse) {
+  constexpr size_t kBig = 900;
+  constexpr size_t kSmall = 500;
+  const auto vecs = MakeVectors(kBig + kSmall, 73);
+  enum class Big {
+    NoColumn,
+    NullVectors,
+    Ivf,
+  };
+  for (const auto big : {Big::NoColumn, Big::NullVectors, Big::Ivf}) {
+    SCOPED_TRACE(static_cast<int>(big));
+    irs::MemoryDirectory dir;
+    {
+      auto writer = irs::IndexWriter::Make(
+        dir, irs::kOmCreate,
+        big == Big::Ivf ? IvfWriterOptions() : Options(nullptr));
+      auto trx = writer->GetBatch();
+      for (size_t i = 0; i < kBig; ++i) {
+        auto doc = trx.Insert();
+        tests::StringField row{"row", std::to_string(i)};
+        row.id = kRowField;
+        tests::InsertField(doc, row);
+        if (big == Big::NullVectors) {
+          WriteNullVectorAt(*doc.GetColWriter(), doc.DocId());
+        } else if (big == Big::Ivf) {
+          WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[i]);
+        }
+      }
+      trx.Commit();
+      writer->RefreshCommit();
+    }
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmAppend, Options(nullptr));
+    Insert(*writer, vecs, kBig, kBig + kSmall);
+    ASSERT_EQ(2U, writer->GetSnapshot().size());
+    CompactAll(*writer);
+    const auto merged = writer->GetSnapshot();
+    ASSERT_EQ(1U, merged.size());
+    std::vector<bool> present(vecs.size(), true);
+    if (big != Big::Ivf) {
+      std::fill_n(present.begin(), kBig, false);
+    }
+    const auto data = Graph(merged[0]);
+    ASSERT_NE(nullptr, data);
+    for (size_t i = 0; i < vecs.size(); ++i) {
+      EXPECT_EQ(present[i], data->graph.LevelOf(static_cast<uint32_t>(i)) != 0)
+        << i;
+    }
+    EXPECT_GE(Recall(merged, vecs, present, kMetric), RecallFloor());
+  }
+}
+
+class WithoutAnnInput final : public irs::SubReader {
+ public:
+  explicit WithoutAnnInput(const irs::SubReader& segment) noexcept
+    : _segment{segment} {}
+
+  uint64_t CountMappedMemory() const final { return 0; }
+
+  const irs::SegmentInfo& Meta() const final { return _segment.Meta(); }
+
+  const irs::DocumentMask* docs_mask() const final {
+    return _segment.docs_mask();
+  }
+
+  irs::lead::Node::ptr docs_iterator() const final {
+    return _segment.docs_iterator();
+  }
+
+  std::span<const irs::field_id> field_ids() const final {
+    return _segment.field_ids();
+  }
+
+  const irs::TermReader* field(irs::field_id id) const final {
+    return _segment.field(id);
+  }
+
+  irs::NormReader::ptr norms(irs::field_id id) const final {
+    return _segment.norms(id);
+  }
+
+  const irs::ColReader* GetColReader() const final {
+    return _segment.GetColReader();
+  }
+
+  const irs::ColumnReader* Column(irs::field_id id) const final {
+    return _segment.Column(id);
+  }
+
+  const irs::AnnIndex* Ann(irs::field_id id) const final {
+    return _segment.Ann(id);
+  }
+
+ private:
+  const irs::SubReader& _segment;
+};
+
+TEST_P(HnswParallelBuildTest, MergeRebuildsWhenTheDonorGraphCannotBeRead) {
+  constexpr size_t kBig = 900;
+  constexpr size_t kSmall = 500;
+  const auto vecs = MakeVectors(kBig + kSmall, 79);
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  Insert(*writer, vecs, 0, kBig);
+  Insert(*writer, vecs, kBig, kBig + kSmall);
+  const auto inputs = writer->GetSnapshot();
+  ASSERT_EQ(2U, inputs.size());
+  const WithoutAnnInput unreadable{inputs[0]};
+  const irs::SubReader* segments[] = {&unreadable, &inputs[1]};
+
+  irs::FunctionFieldOptions field_options{
+    Options(nullptr).column_options, irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE};
+  const irs::SegmentWriterOptions options{
+    .db = &irs::DuckDBEngine::Instance().instance(),
+    .field_options = &field_options,
+  };
+  irs::SegmentMeta meta;
+  irs::MemoryDirectory out;
+  irs::MergeWriter merger{out, options};
+  merger.Reset(std::begin(segments), std::end(segments));
+  ASSERT_TRUE(irs::GetReady(merger.Flush(meta)));
+  const auto merged =
+    irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, merged);
+  ASSERT_EQ(vecs.size(), merged->docs_count());
+  const auto data = Graph(*merged);
+  ASSERT_NE(nullptr, data);
+  for (size_t i = 0; i < vecs.size(); ++i) {
+    EXPECT_NE(0U, data->graph.LevelOf(static_cast<uint32_t>(i))) << i;
+  }
 }
 
 TEST_P(HnswParallelBuildTest, GrantOfOneBuildsSerially) {
@@ -810,17 +1081,6 @@ TEST_P(HnswParallelBuildTest, WorkerErrorFailsTheMerge) {
   writer->RefreshCommit();
   EXPECT_EQ(1U, writer->GetSnapshot().size());
   EXPECT_GE(Recall(writer->GetSnapshot(), vecs), RecallFloor());
-}
-
-void WriteNullVectorAt(irs::ColWriter& cs, irs::doc_id_t doc) {
-  const auto vtype =
-    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
-  auto& cw = cs.OpenColumn(kVec, vtype);
-  duckdb::Vector v{vtype, 1};
-  duckdb::FlatVector::ValidityMutable(v).SetInvalid(0);
-  duckdb::FlatVector::SetSize(v, 1);
-  cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
-            /*count=*/1);
 }
 
 TEST_P(HnswParallelBuildTest, LeadingNullRowsStayOutOfTheQuantizer) {

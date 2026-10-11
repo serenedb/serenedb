@@ -332,7 +332,11 @@ TEST_P(MergeWriterTestCase, MergeReportsStepTimes) {
   for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
     const auto id = static_cast<irs::MergeStep>(step);
     SCOPED_TRACE(irs::MergeStepName(id));
-    EXPECT_GT(profile.Nanos(id), 0);
+    if (id == irs::MergeStep::Norms || id == irs::MergeStep::Columns) {
+      EXPECT_EQ(0, profile.Nanos(id));
+    } else {
+      EXPECT_GT(profile.Nanos(id), 0);
+    }
     sum += profile.Nanos(id);
   }
   EXPECT_EQ(sum, profile.TotalNanos());

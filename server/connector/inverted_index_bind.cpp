@@ -152,9 +152,6 @@ uint32_t ParsePositiveUintOption(std::string_view kind,
 }
 
 // Parse a user-supplied compression name into a duckdb::CompressionType.
-// "auto" is the writer default (analyze tournament). Other names map
-// 1:1 to duckdb codecs; the writer throws at flush time if the named
-// codec doesn't accept the column's physical type.
 duckdb::CompressionType ParseCompressionName(duckdb::ClientContext& context,
                                              std::string_view column_name,
                                              std::string_view name) {

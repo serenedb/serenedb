@@ -99,7 +99,8 @@ void ColWriter::EnsureOut() {
     throw IoError{
       absl::StrCat("col writer: cannot create .col file: ", _filename)};
   }
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
+  _blocks = std::make_unique<ColBlockSink>(*_out);
+  _write_ctx = std::make_unique<WriteContext>(*_db, *_blocks);
 }
 
 bool ColWriter::Empty() const noexcept {
@@ -130,7 +131,7 @@ ColumnWriter& ColWriter::OpenColumnInternal(
     return existing;
   }
   EnsureOut();
-  auto col = std::make_unique<ColumnWriter>(*this, id, std::move(type),
+  auto col = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
                                             skip_validity, row_group_size,
                                             forced, hyperloglog, codec_params);
   auto* ptr = col.get();
@@ -170,9 +171,9 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> IndexOutput& {
+    id, row_group_size, [this]() -> ColBlockSink& {
       EnsureOut();
-      return *_out;
+      return *_blocks;
     }));
   _norm_by_id.emplace(id, &writer);
   return writer;
@@ -280,7 +281,7 @@ bool ColWriter::Commit(uint64_t target_row,
     if (!progress()) {
       return false;
     }
-    cw->SealRowGroup();
+    cw->Finish();
   }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     if (!_columns.empty()) {
@@ -318,15 +319,24 @@ bool ColWriter::ComputeAnn(const AnnBuildEnv* env,
     if (!progress()) {
       return false;
     }
-    const auto* col = reader.Column(entry->column_id);
-    if (!col) {
-      continue;
-    }
-    if (!entry->writer->Compute(reader, *col, reader.Ctx(), env, progress)) {
+    if (!ComputeAnn(entry->column_id, reader, env, progress)) {
       return false;
     }
   }
   return true;
+}
+
+bool ColWriter::ComputeAnn(field_id column, ColReader& reader,
+                           const AnnBuildEnv* env,
+                           absl::FunctionRef<bool()> progress) {
+  SDB_ASSERT(_committed);
+  const auto it = _ann_by_id.find(column);
+  SDB_ASSERT(it != _ann_by_id.end());
+  const auto* col = reader.Column(column);
+  if (!col) {
+    return true;
+  }
+  return it->second->writer->Compute(reader, *col, reader.Ctx(), env, progress);
 }
 
 }  // namespace irs

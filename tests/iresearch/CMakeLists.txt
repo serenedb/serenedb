@@ -57,6 +57,7 @@ set(iresearch-tests_sources
     ./analysis/sql_tokenizer_tests.cpp
     ./analysis/sql_tokenizer_fuzz_tests.cpp
     ./analysis/wildcard_tokenizer_tests.cpp
+    ./formats/column/col_block_sink_test.cpp
     ./formats/column/col_codecs_test.cpp
     ./formats/column/col_numeric_codec_test.cpp
     ./formats/column/column_reader_test.cpp
@@ -88,8 +89,10 @@ set(iresearch-tests_sources
     ./index/field_meta_test.cpp
     ./index/inverter_oracle_test.cpp
     ./index/inverter_tests.cpp
+    ./index/merge/input_norms_tests.cpp
     ./index/merge/merge_characterization_tests.cpp
     ./index/merge/merge_oracle_tests.cpp
+    ./index/merge/merge_plan_tests.cpp
     ./index/merge/support/segment_dump.cpp
     ./index/merge/support/segment_gen.cpp
     ./index/merge_writer_tests.cpp

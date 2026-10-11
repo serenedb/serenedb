@@ -58,6 +58,7 @@ class DatabaseInstance;
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -509,8 +510,8 @@ class IndexWriter : private util::Noncopyable {
   struct CompactionContext : util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
-    std::optional<MergeWriter> merger;
-    std::optional<MergeWriter> remap;
+    std::optional<MergeDocMap> pending;
+    std::optional<MergeDocMap> published;
   };
 
   static_assert(std::is_nothrow_move_constructible_v<CompactionContext>);
@@ -521,14 +522,14 @@ class IndexWriter : private util::Noncopyable {
       Compaction&& compaction_candidates,
       std::shared_ptr<const SegmentReaderImpl>&& reader,
       std::shared_ptr<const DirectoryReaderImpl>&& compaction_reader,
-      MergeWriter&& merger) noexcept
+      MergeDocMap&& pending) noexcept
       : tick{tick},
         segment{std::move(segment)},
         refs{std::move(refs)},
         reader{std::move(reader)},
         compaction_ctx{.compaction_reader = std::move(compaction_reader),
                        .candidates = std::move(compaction_candidates),
-                       .merger = std::move(merger)} {}
+                       .pending = std::move(pending)} {}
 
     IncomingSegment(
       IndexSegment&& segment, uint64_t tick, FileRefs&& refs,

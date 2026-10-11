@@ -30,7 +30,7 @@
 
 namespace irs {
 
-class IndexOutput;
+class ColBlockSink;
 
 inline constexpr uint32_t kNormCodes = 16;
 inline constexpr uint32_t kNormDirect = kNormCodes - 1;
@@ -103,9 +103,9 @@ inline uint64_t NormTableSize(const NormRegionMeta& region) noexcept {
 
 class NormColumnWriter final {
  public:
-  using Open = std::function<IndexOutput&()>;
+  using Open = std::function<ColBlockSink&()>;
 
-  NormColumnWriter(field_id id, uint32_t row_group_size, IndexOutput& out);
+  NormColumnWriter(field_id id, uint32_t row_group_size, ColBlockSink& blocks);
 
   NormColumnWriter(field_id id, uint32_t row_group_size, Open open);
 
@@ -142,7 +142,7 @@ class NormColumnWriter final {
   void End();
 
   field_id _id;
-  IndexOutput* _out = nullptr;
+  ColBlockSink* _blocks = nullptr;
   Open _open;
   uint32_t _row_group_size;
   NormColumnMeta _meta;

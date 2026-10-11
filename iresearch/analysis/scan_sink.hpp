@@ -51,14 +51,13 @@ class ScanSink final : public TokenSink {
 
   IRS_NO_INLINE bool Report() {
     _stride = std::min(2 * _stride, kMaxStride);
-    bool go;
-    if (_outer == nullptr) {
-      go = ReportProgress();
-    } else {
-      Flush();
-      go = _outer->Progress()();
+    if (!_outer) {
+      _mark = Buffered();
+      return ReportProgress();
     }
-    _mark = Buffered();
+    Flush();
+    const bool go = _outer->Progress()();
+    _mark = 0;
     return go;
   }
 

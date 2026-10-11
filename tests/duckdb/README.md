@@ -44,7 +44,9 @@ tests and keeps that many copies of itself running, one test file each,
 database spills under the scratch dir; a database file keeps its `<db>.tmp`).
 The `postgres_scanner` suite is the exception: its files share the fixture's
 `postgresscanner` database and reuse table names, so it runs as a second,
-sequential `unittest` call.
+sequential `unittest` call. The core tests that check wall-clock windows around
+their sleeps (`CORE_SERIAL_TESTS` in `run.sh`) run in that call too: next to the
+parallel files' load, a commit's fsync can stall the schedule past the window.
 
 The log lands in `out/test-results/duckdb.log` (override with `REPORTS_DIR`). In CI
 the run comes from `048-ci-in-docker-run-duckdb-tests.bash` via

@@ -65,6 +65,11 @@ declare -A SUITE_DIR=(
 	[interop]="$SCRIPT_DIR/interop"
 )
 SUITE_ORDER=(core cpp avro azure httpfs iceberg inet markdown postgres_scanner spatial interop)
+CORE_SERIAL_TESTS=(
+	test/sql/storage/concurrent_checkpoint_append_before_snapshot.test_slow
+	test/sql/storage/concurrent_checkpoint_index_in_memory.test_slow
+	test/sql/storage/concurrent_checkpoint_writes_mid_write.test_slow
+)
 
 # suite name -> Catch2 name filter. Core's tests register relative to --test-dir
 # (so "test/..."), while extension tests come from LoadedExtensionTestPaths() and
@@ -507,6 +512,13 @@ for suite in $unittest_suites; do
 	[[ -f "$config" ]] && args+=(--test-config "$config")
 	if [[ "$suite" == "postgres_scanner" ]]; then
 		serial_filters+=("$(suite_filter "$suite")")
+	elif [[ "$suite" == "core" ]]; then
+		core_filter="\"$(suite_filter "$suite")\""
+		for test in "${CORE_SERIAL_TESTS[@]}"; do
+			core_filter+=" ~\"$test\""
+			serial_filters+=("\"$test\"")
+		done
+		filters+=("$core_filter")
 	elif [[ "$suite" == "iceberg" ]]; then
 		filters+=("\"$(suite_filter "$suite")\" ~\"$ICEBERG_DIR/test/sql/local/catalog_*\"")
 	elif [[ "$suite" == "httpfs" ]]; then

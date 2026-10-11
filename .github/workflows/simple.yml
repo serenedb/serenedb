@@ -17,3 +17,5 @@ jobs:
     - uses: actions/setup-python@v6
     # No floating v3 tag -- only specific versions published
     - uses: pre-commit/action@v3.0.1
+      env:
+        GITHUB_TOKEN: ${{ github.token }}

@@ -20,6 +20,18 @@ summary which page you added or updated.
 memory are claims. Read the implementation and its callers before relying on
 them.
 
+- Before filing an issue or writing a fix, check that it isn't already there:
+search open and recently closed issues and PRs (`gh search issues`,
+`gh pr list --search`). The same problem already filed: add your findings to
+that issue instead of opening another. A PR already fixes it: link the PR
+instead of fixing it again. Only related: go ahead, mention the related issue in
+yours and leave a cross-reference on it.
+
+- A bug rarely comes alone. When you find one, look for the same mistake
+elsewhere -- the other callers, the sibling functions and types, the same
+pattern in other files -- and fix the whole family in one change, with a test
+for each, or file the ones that don't belong in it.
+
 - Never present an estimated or remembered number as measured: measure it or
 say it is unknown.
 

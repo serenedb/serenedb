@@ -31,10 +31,14 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <random>
+#include <span>
+#include <string>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/doc_generator.hpp"
 #include "index/merge/support/segment_gen.hpp"
+#include "insert_field.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -48,11 +52,41 @@ struct InputShape {
   bool has_norm_field;
 };
 
+void WriteNormedDocs(irs::IndexWriter& writer,
+                     std::span<const std::string> texts) {
+  auto trx = writer.GetBatch();
+  for (const auto& text : texts) {
+    auto doc = trx.Insert();
+    tests::TextField<std::string> normed{"normed", text, false,
+                                         irs::IndexFeatures::Norm};
+    normed.id = kNormField;
+    tests::InsertField(doc, normed);
+  }
+  trx.Commit();
+  ASSERT_TRUE(writer.RefreshCommit());
+}
+
+std::vector<std::string> RandomTexts(Generator& gen, size_t count,
+                                     size_t max_words) {
+  std::vector<std::string> texts;
+  texts.reserve(count);
+  for (size_t i = 0; i != count; ++i) {
+    texts.push_back(gen.Text(max_words));
+  }
+  return texts;
+}
+
+irs::field_id NormColumnOf(const irs::SubReader& segment) {
+  const auto* field = segment.field(kNormField);
+  return field == nullptr ? irs::field_limits::invalid() : field->meta().norm;
+}
+
 class InputNormsTest : public ::testing::Test {
  protected:
   void SetUp() final {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
+    options.row_group_size = kRegionRows;
     _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
     Generator gen{17};
     size_t next_id = 0;
@@ -66,9 +100,17 @@ class InputNormsTest : public ::testing::Test {
       shape.has_norm_field = has_norm_field;
       WriteSegment(*_writer, gen, shape, next_id);
     }
+    WriteNormedDocs(*_writer,
+                    std::vector<std::string>(300, "alpha beta gamma"));
+    auto escaped = RandomTexts(gen, 300, 5);
+    escaped[10].clear();
+    for (size_t i = 0; i != 300; ++i) {
+      escaped[10] += i == 0 ? "alpha" : " alpha";
+    }
+    WriteNormedDocs(*_writer, escaped);
     _reader = _writer->GetSnapshot();
     _inputs = Segments(_reader);
-    ASSERT_EQ(5, _inputs.size());
+    ASSERT_EQ(7, _inputs.size());
 
     auto meta = _reader.Meta().index_meta.segments[3].meta;
     irs::DocumentMask all;
@@ -135,6 +177,8 @@ class InputNormsTest : public ::testing::Test {
   irs::doc_id_t Docs() const {
     return static_cast<irs::doc_id_t>(_merged->docs_count());
   }
+
+  static constexpr uint32_t kRegionRows = 256;
 
   irs::MemoryDirectory _dir;
   irs::MemoryDirectory _out;
@@ -222,6 +266,112 @@ TEST_F(InputNormsTest, SparseRunsReadTheMergedValues) {
     expected->Get(docs, want);
     actual->Get(docs, got);
     EXPECT_EQ(want, got) << round;
+  }
+  actual->Get(std::span<const irs::doc_id_t>{}, std::span<uint32_t>{});
+}
+
+TEST_F(InputNormsTest, RunsJumpingOverInputsReadTheMergedValues) {
+  const auto provider = MakeProvider();
+  auto expected = _merged->norms(_column);
+  auto actual = provider->norms(_column);
+  const std::array<irs::doc_id_t, 4> docs{irs::doc_limits::min(), Docs() / 3,
+                                          2 * Docs() / 3, Docs()};
+  std::array<uint32_t, 4> want{};
+  std::array<uint32_t, 4> got{};
+  expected->Get(docs, want);
+  actual->Get(docs, got);
+  EXPECT_EQ(want, got);
+  EXPECT_EQ(expected->Get(irs::doc_limits::min()),
+            actual->Get(irs::doc_limits::min()));
+}
+
+TEST_F(InputNormsTest, InputsCoverEveryRegionShape) {
+  size_t multi_region = 0;
+  bool constant = false;
+  bool escaped = false;
+  for (const auto* input : _inputs) {
+    const auto id = NormColumnOf(*input);
+    if (!irs::field_limits::valid(id)) {
+      continue;
+    }
+    const auto* column = input->GetColReader()->NormColumn(id);
+    ASSERT_NE(nullptr, column);
+    multi_region += column->RegionCount() > 1;
+    for (size_t r = 0; r != column->RegionCount(); ++r) {
+      constant |= column->Region(r).bits == 0;
+      escaped |= column->Region(r).exceptions;
+    }
+  }
+  EXPECT_GE(multi_region, 4);
+  EXPECT_TRUE(constant);
+  EXPECT_TRUE(escaped);
+}
+
+TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
+  irs::MemoryDirectory dir;
+  auto options = irs::tests::DefaultWriterOptions();
+  options.column_options = PlainColumns;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  Generator gen{29};
+  constexpr size_t kDocs = 20000;
+  for (size_t s = 0; s != 2; ++s) {
+    WriteNormedDocs(*writer, RandomTexts(gen, kDocs, 20));
+  }
+  const auto reader = writer->GetSnapshot();
+  const auto inputs = Segments(reader);
+  ASSERT_EQ(2, inputs.size());
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto* input : inputs) {
+    doc_map.emplace_back(input, irs::IResourceManager::gNoop);
+  }
+  irs::FunctionFieldOptions field_options{
+    PlainColumns, irs::tests::MakeNormColumnIdProvider(),
+    DEFAULT_ROW_GROUP_SIZE};
+  irs::SegmentMeta meta;
+  irs::MemoryDirectory out;
+  irs::MergePlan plan{out,
+                      doc_map,
+                      meta,
+                      nullptr,
+                      irs::DuckDBEngine::Instance().instance(),
+                      &field_options,
+                      {},
+                      nullptr};
+  ASSERT_TRUE(plan.Prepare());
+  ASSERT_TRUE(irs::RunSerially(plan));
+  const auto merged =
+    irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, merged);
+  const auto column = NormColumnOf(*merged);
+  ASSERT_TRUE(irs::field_limits::valid(column));
+
+  std::vector<irs::MergeSource> sources;
+  for (const auto& input : doc_map) {
+    sources.push_back(irs::MergeSource{
+      .reader = input.reader,
+      .col_reader = input.reader->GetColReader(),
+      .alive_count = input.reader->live_docs_count(),
+      .remap = &input.remap,
+    });
+  }
+  irs::InputNormProvider provider{sources, irs::IResourceManager::gNoop};
+  const auto* merged_column = merged->GetColReader()->NormColumn(column);
+  ASSERT_NE(nullptr, merged_column);
+  provider.AddField(column, kNormField, merged_column->Sum(),
+                    merged_column->NonZeroCount());
+  auto expected = merged->norms(column);
+  auto actual = provider.norms(column);
+  std::array<irs::doc_id_t, irs::kPostingBlock> docs;
+  std::array<uint32_t, irs::kPostingBlock> want;
+  std::array<uint32_t, irs::kPostingBlock> got;
+  for (const irs::doc_id_t step : {1, 70, 150}) {
+    for (size_t k = 0; k != docs.size(); ++k) {
+      docs[k] = static_cast<irs::doc_id_t>(irs::doc_limits::min() + k * step);
+    }
+    ASSERT_LE(docs.back(), merged->docs_count());
+    expected->GetPostingBlock(docs, want);
+    actual->GetPostingBlock(docs, got);
+    EXPECT_EQ(want, got) << step;
   }
 }
 

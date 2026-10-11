@@ -21,6 +21,7 @@
 #include "iresearch/index/merge/input_norms.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 #include "iresearch/formats/norm_reader_impl.hpp"
@@ -35,75 +36,206 @@ namespace {
 
 using Input = InputNormProvider::Input;
 
+constexpr uint64_t kNormAheadBytes = 16 * 1024;
+
 class InputNormReader : public NormReader {
  public:
   InputNormReader(std::span<const Input> inputs,
-                  std::vector<NormReader::ptr> readers, score_t avg) noexcept
-    : _inputs{inputs}, _readers{std::move(readers)}, _avg{avg} {}
+                  std::vector<const NormColumnReader*> columns, score_t avg)
+    : _inputs{inputs},
+      _columns{std::move(columns)},
+      _regions(_columns.size(), nullptr),
+      _avg{avg} {
+    for (size_t i = 0; i != _inputs.size(); ++i) {
+      const auto& input = _inputs[i];
+      if (input.first == input.end) {
+        continue;
+      }
+      NormRegion whole;
+      whole.first_doc = input.first;
+      whole.end_doc = input.end;
+      if (!_columns[i]) {
+        _pieces.emplace_back(whole);
+        continue;
+      }
+      if (!input.docs.empty()) {
+        _pieces.emplace_back(whole, i);
+        continue;
+      }
+      SDB_ASSERT(_columns[i]->RowCount() == input.end - input.first);
+      const auto shift = input.first - doc_limits::min();
+      for (size_t r = 0; r != _columns[i]->RegionCount(); ++r) {
+        auto& region = _pieces.emplace_back(_columns[i]->Region(r)).region;
+        region.base -= uint64_t{shift} * (region.bits / 8);
+        region.first_doc += shift;
+        region.end_doc += shift;
+      }
+    }
+  }
 
   void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
-    SDB_ASSERT(docs.size() <= values.size());
-    for (size_t at = 0; at != docs.size();) {
-      const auto i = Find(docs[at]);
-      const auto& input = _inputs[i];
-      size_t end = at + 1;
-      while (end != docs.size() && docs[end] < input.end) {
-        ++end;
-      }
-      const auto out = values.subspan(at, end - at);
-      if (!_readers[i]) {
-        std::ranges::fill(out, 0);
-      } else {
-        _docs.resize(out.size());
-        for (size_t k = 0; k != out.size(); ++k) {
-          _docs[k] = Source(input, docs[at + k]);
-        }
-        _readers[i]->Get(_docs, out);
-      }
-      at = end;
-    }
+    GetRuns<false>(docs, values);
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
                      std::span<uint32_t, kScoreBlock> values) final {
-    Get(std::span<const doc_id_t>{docs}, std::span<uint32_t>{values});
+    GetRuns<false>(docs, values);
   }
 
   void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
                        std::span<uint32_t, kPostingBlock> values) final {
-    Get(std::span<const doc_id_t>{docs}, std::span<uint32_t>{values});
+    GetRuns<true>(docs, values);
   }
 
   uint32_t Get(doc_id_t doc) final {
-    const auto i = Find(doc);
-    if (!_readers[i]) {
-      return 0;
+    const auto& piece = _pieces[Find(doc)];
+    if (piece.input == kDirect) {
+      return ReadOne(piece.region, doc);
     }
-    return _readers[i]->Get(Source(_inputs[i], doc));
+    const auto& input = _inputs[piece.input];
+    const auto source = input.docs[doc - input.first];
+    return ReadOne(RegionOf(piece.input, source), source);
   }
 
   score_t GetAvg() const noexcept final { return _avg; }
 
  private:
-  size_t Find(doc_id_t doc) const noexcept {
-    const auto it = std::ranges::upper_bound(_inputs, doc, {}, &Input::first);
-    SDB_ASSERT(it != _inputs.begin());
-    const auto i = static_cast<size_t>(it - _inputs.begin()) - 1;
-    SDB_ASSERT(doc < _inputs[i].end);
-    return i;
+  static constexpr size_t kDirect = std::numeric_limits<size_t>::max();
+
+  struct Piece {
+    NormRegion region;
+    size_t input = kDirect;
+  };
+
+  template<bool Prefetch>
+  void GetRuns(std::span<const doc_id_t> docs, std::span<uint32_t> values) {
+    SDB_ASSERT(docs.size() <= values.size());
+    if (docs.empty()) {
+      return;
+    }
+    auto p = Find(docs.front());
+    for (size_t at = 0;;) {
+      const auto& piece = _pieces[p];
+      const auto run = docs.subspan(at);
+      const auto n = RunLength(run, piece.region.end_doc);
+      if (piece.input == kDirect) {
+        Read<Prefetch>(piece.region, run.first(n), values.data() + at);
+      } else {
+        ReadTranslated<Prefetch>(piece.input, run.first(n), values.data() + at);
+      }
+      at += n;
+      if (at == docs.size()) {
+        break;
+      }
+      p = Next(p, docs[at]);
+    }
+    _last = p;
   }
 
-  static doc_id_t Source(const Input& input, doc_id_t doc) noexcept {
-    if (input.docs.empty()) {
-      return doc - input.first + doc_limits::min();
+  template<bool Prefetch>
+  static void Read(const NormRegion& region, std::span<const doc_id_t> docs,
+                   uint32_t* values) {
+    ReadNormSlots(region, docs.data(), values, docs.size());
+    if (region.exceptions) {
+      PatchNormSlots(region, docs.data(), values, docs.size());
     }
-    return input.docs[doc - input.first];
+    if constexpr (Prefetch) {
+      PrefetchAfter(region, docs);
+    }
+  }
+
+  template<bool Prefetch>
+  void ReadTranslated(size_t i, std::span<const doc_id_t> docs,
+                      uint32_t* values) {
+    const auto& input = _inputs[i];
+    if (_docs.size() < docs.size()) {
+      _docs.resize(docs.size());
+    }
+    for (size_t k = 0; k != docs.size(); ++k) {
+      _docs[k] = input.docs[docs[k] - input.first];
+    }
+    const std::span<const doc_id_t> sources{_docs.data(), docs.size()};
+    for (size_t at = 0; at != sources.size();) {
+      const auto& region = RegionOf(i, sources[at]);
+      const auto run = sources.subspan(at);
+      const auto n = RunLength(run, region.end_doc);
+      Read<Prefetch>(region, run.first(n), values + at);
+      at += n;
+    }
+  }
+
+  static uint32_t ReadOne(const NormRegion& region, doc_id_t doc) {
+    const auto value = region.Slot(doc);
+    return region.exceptions && value >= region.first_code
+             ? region.Exception(doc, value)
+             : value;
+  }
+
+  static void PrefetchAfter(const NormRegion& region,
+                            std::span<const doc_id_t> docs) noexcept {
+    const uint64_t bytes = region.bits / 8;
+    const auto span = uint64_t{docs.back() - docs.front()} * bytes;
+    if (bytes == 0 || span > kNormAheadBytes) {
+      return;
+    }
+    const auto* last = region.base + uint64_t{docs.back()} * bytes;
+    for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
+         offset += ABSL_CACHELINE_SIZE) {
+      __builtin_prefetch(last + offset);
+    }
+  }
+
+  static size_t RunLength(std::span<const doc_id_t> docs,
+                          doc_id_t end) noexcept {
+    SDB_ASSERT(docs.front() < end);
+    if (docs.back() < end) {
+      return docs.size();
+    }
+    size_t n = 1;
+    while (docs[n] < end) {
+      ++n;
+    }
+    return n;
+  }
+
+  const NormRegion& RegionOf(size_t i, doc_id_t source) noexcept {
+    const auto* region = _regions[i];
+    if (region == nullptr || source < region->first_doc ||
+        source >= region->end_doc) {
+      region = &_columns[i]->Locate(source);
+      _regions[i] = region;
+    }
+    return *region;
+  }
+
+  size_t Find(doc_id_t doc) noexcept {
+    if (const auto& last = _pieces[_last].region;
+        doc < last.first_doc || doc >= last.end_doc) {
+      _last = Search(doc);
+    }
+    return _last;
+  }
+
+  size_t Next(size_t p, doc_id_t doc) const noexcept {
+    SDB_ASSERT(p + 1 < _pieces.size());
+    return doc < _pieces[p + 1].region.end_doc ? p + 1 : Search(doc);
+  }
+
+  size_t Search(doc_id_t doc) const noexcept {
+    const auto it = std::ranges::upper_bound(
+      _pieces, doc, {},
+      [](const Piece& piece) { return piece.region.end_doc; });
+    SDB_ASSERT(it != _pieces.end());
+    return static_cast<size_t>(it - _pieces.begin());
   }
 
   std::span<const Input> _inputs;
-  std::vector<NormReader::ptr> _readers;
+  std::vector<const NormColumnReader*> _columns;
+  std::vector<const NormRegion*> _regions;
   score_t _avg;
+  std::vector<Piece> _pieces;
   std::vector<doc_id_t> _docs;
+  size_t _last = 0;
 };
 
 }  // namespace
@@ -155,14 +287,12 @@ NormReader::ptr InputNormProvider::norms(field_id column) const {
     return {};
   }
   absl::call_once(_mapped, [this] { MapDocs(); });
-  std::vector<NormReader::ptr> readers;
-  readers.reserve(_inputs.size());
+  std::vector<const NormColumnReader*> columns;
+  columns.reserve(_inputs.size());
   for (const auto& input : _inputs) {
-    const auto* norms = SourceNormColumn(*input.source, it->second.field);
-    readers.emplace_back(norms ? MakePersistedNormReader(*norms)
-                               : NormReader::ptr{});
+    columns.emplace_back(SourceNormColumn(*input.source, it->second.field));
   }
-  return memory::make_managed<InputNormReader>(_inputs, std::move(readers),
+  return memory::make_managed<InputNormReader>(_inputs, std::move(columns),
                                                it->second.avg);
 }
 

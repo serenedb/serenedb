@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <core_functions/array_kernels.hpp>
 #include <cstring>
 #include <functional>
 #include <iostream>
@@ -1915,3 +1916,166 @@ INSTANTIATE_TEST_SUITE_P(
                     CodeQuant{VectorQuantization::TQ, 2, 0.7f, 0.85, 6},
                     CodeQuant{VectorQuantization::TQ, 3, 0.7f, 0.85, 6}),
   CodeQuantName);
+
+namespace {
+
+struct BoundCase {
+  VectorQuantization quant;
+  VectorMetric metric;
+};
+
+std::string BoundCaseName(const ::testing::TestParamInfo<BoundCase>& info) {
+  std::string name =
+    info.param.quant == VectorQuantization::USQ8 ? "usq8" : "sq8";
+  switch (info.param.metric) {
+    case VectorMetric::L2Sqr:
+      return name + "_l2";
+    case VectorMetric::InnerProduct:
+      return name + "_ip";
+    default:
+      return name + "_cosine";
+  }
+}
+
+float ExactScore(VectorMetric metric, const float* q, const float* x,
+                 uint32_t d) {
+  float out = 0.f;
+  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric M>() {
+    out = ComputeDistance<M>(q, x, static_cast<uint16_t>(d));
+  });
+  return out;
+}
+
+std::vector<float> Normalized(std::span<const float> v) {
+  std::vector<float> out(v.size());
+  duckdb::L2NormalizeOp::Operation(v.data(), out.data(), v.size());
+  return out;
+}
+
+class code_bound_test : public ::testing::TestWithParam<BoundCase> {};
+
+}  // namespace
+
+TEST_P(code_bound_test, bounds_hold_every_stored_vector) {
+  const auto [quant, metric] = GetParam();
+  const bool cosine = metric == VectorMetric::Cosine;
+  for (const uint32_t d : {7U, 64U, 129U, 1024U}) {
+    constexpr size_t kRows = 600;
+    auto raw = MakeSpread(d, kRows, d * 31 + 7);
+    std::mt19937 rng{d};
+    std::uniform_real_distribution<float> offset{-3.f, 3.f};
+    for (size_t i = 0; i < kRows; ++i) {
+      const float shift = offset(rng);
+      for (uint32_t j = 0; j < d; ++j) {
+        raw[i * d + j] = raw[i * d + j] * (1.f + j % 5) + shift;
+      }
+    }
+    for (uint32_t j = 0; j < d; ++j) {
+      raw[j] = 40.f;
+      raw[d + j] = -40.f;
+    }
+    auto points = raw;
+    if (cosine) {
+      for (size_t i = 0; i < kRows; ++i) {
+        duckdb::L2NormalizeOp::Operation(points.data() + i * d,
+                                         points.data() + i * d, d);
+      }
+    }
+    const auto f =
+      BuildCodes(quant, d, 0, EffectiveQuantMetric(metric), points, kRows, {});
+    ASSERT_EQ(f.record_size, d);
+    std::vector<uint32_t> ids(kRows);
+    for (size_t i = 0; i < kRows; ++i) {
+      ids[i] = static_cast<uint32_t>(i);
+    }
+    const auto queries = MakeSpread(d, 16, d * 17 + 3);
+    for (size_t qi = 0; qi < 16; ++qi) {
+      std::vector<float> query(queries.begin() + qi * d,
+                               queries.begin() + (qi + 1) * d);
+      for (uint32_t j = 0; j < d; ++j) {
+        query[j] = query[j] * (qi % 3 == 0 ? 25.f : 1.f) + (qi % 2 ? 2.f : 0.f);
+      }
+      const auto keyed = cosine ? Normalized(query) : query;
+      const auto bound = f.stats->MakeCodeBound(keyed, metric);
+      ASSERT_NE(bound, nullptr);
+      std::vector<score_t> approx(kRows);
+      std::vector<score_t> lower(kRows);
+      std::vector<score_t> upper(kRows);
+      bound->Score(f.codes.data(), f.record_size, ids, approx.data());
+      bound->Bounds(approx, lower.data(), upper.data());
+      for (size_t i = 0; i < kRows; ++i) {
+        const auto exact =
+          ExactScore(metric, query.data(), raw.data() + i * d, d);
+        ASSERT_LE(lower[i], exact) << "d=" << d << " query " << qi << " row "
+                                   << i << " approx " << approx[i];
+        ASSERT_GE(upper[i], exact) << "d=" << d << " query " << qi << " row "
+                                   << i << " approx " << approx[i];
+      }
+    }
+  }
+}
+
+TEST_P(code_bound_test, constant_rows_bound_to_their_score) {
+  const auto [quant, metric] = GetParam();
+  constexpr uint32_t kDim = 33;
+  constexpr size_t kRows = 8;
+  std::vector<float> points(kRows * kDim, 0.25f);
+  auto encoded = points;
+  if (metric == VectorMetric::Cosine) {
+    for (size_t i = 0; i < kRows; ++i) {
+      duckdb::L2NormalizeOp::Operation(encoded.data() + i * kDim,
+                                       encoded.data() + i * kDim, kDim);
+    }
+  }
+  const auto f = BuildCodes(quant, kDim, 0, EffectiveQuantMetric(metric),
+                            encoded, kRows, {});
+  std::vector<float> query(kDim);
+  for (uint32_t j = 0; j < kDim; ++j) {
+    query[j] = 0.1f * static_cast<float>(j) - 1.f;
+  }
+  const auto keyed = metric == VectorMetric::Cosine ? Normalized(query) : query;
+  const auto bound = f.stats->MakeCodeBound(keyed, metric);
+  ASSERT_NE(bound, nullptr);
+  std::vector<uint32_t> ids(kRows, 0);
+  for (size_t i = 0; i < kRows; ++i) {
+    ids[i] = static_cast<uint32_t>(i);
+  }
+  std::vector<score_t> approx(kRows);
+  std::vector<score_t> lower(kRows);
+  std::vector<score_t> upper(kRows);
+  bound->Score(f.codes.data(), f.record_size, ids, approx.data());
+  bound->Bounds(approx, lower.data(), upper.data());
+  const auto exact = ExactScore(metric, query.data(), points.data(), kDim);
+  for (size_t i = 0; i < kRows; ++i) {
+    EXPECT_LE(lower[i], exact);
+    EXPECT_GE(upper[i], exact);
+    EXPECT_LT(upper[i] - lower[i], 1e-3f * (1.f + std::fabs(exact)));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  quants, code_bound_test,
+  ::testing::Values(
+    BoundCase{VectorQuantization::USQ8, VectorMetric::L2Sqr},
+    BoundCase{VectorQuantization::USQ8, VectorMetric::InnerProduct},
+    BoundCase{VectorQuantization::USQ8, VectorMetric::Cosine},
+    BoundCase{VectorQuantization::SQ8, VectorMetric::L2Sqr},
+    BoundCase{VectorQuantization::SQ8, VectorMetric::InnerProduct},
+    BoundCase{VectorQuantization::SQ8, VectorMetric::Cosine}),
+  BoundCaseName);
+
+TEST(code_bound_test, only_byte_scalar_codes_are_bounded) {
+  constexpr uint32_t kDim = 16;
+  constexpr size_t kRows = 64;
+  const auto points = MakeSpread(kDim, kRows, 5);
+  const std::vector<float> query(kDim, 0.5f);
+  for (const auto quant : {VectorQuantization::SQ4, VectorQuantization::USQ4}) {
+    const auto f =
+      BuildCodes(quant, kDim, 0, VectorMetric::L2Sqr, points, kRows, {});
+    EXPECT_EQ(f.stats->MakeCodeBound(query, VectorMetric::L2Sqr), nullptr);
+  }
+  const auto f = BuildCodes(VectorQuantization::USQ8, kDim, 0,
+                            VectorMetric::L2Sqr, points, kRows, {});
+  EXPECT_EQ(f.stats->MakeCodeBound(query, VectorMetric::L1), nullptr);
+  EXPECT_NE(f.stats->MakeCodeBound(query, VectorMetric::L2Sqr), nullptr);
+}

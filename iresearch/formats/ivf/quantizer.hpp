@@ -127,6 +127,17 @@ class QuantizerCodebook
   virtual std::unique_ptr<QuantizerReader> MakeReader() const = 0;
 };
 
+class QuantizerCodeBound {
+ public:
+  virtual ~QuantizerCodeBound() = default;
+
+  virtual void Score(const byte_type* base, uint32_t record_size,
+                     std::span<const uint32_t> ids, score_t* out) const = 0;
+
+  virtual void Bounds(std::span<const score_t> scores, score_t* lower,
+                      score_t* upper) const noexcept = 0;
+};
+
 // Query-independent, deserialized quantizer statistics. Parsed once from the
 // on-disk stats blob and shared across queries; binds a query into a
 // QuantizerCodebook via MakeCodebook.
@@ -136,6 +147,11 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
   virtual VectorQuantization Kind() const noexcept = 0;
   virtual std::shared_ptr<const QuantizerCodebook> MakeCodebook(
     std::span<const float> query) const = 0;
+
+  virtual std::shared_ptr<const QuantizerCodeBound> MakeCodeBound(
+    std::span<const float> /*query*/, VectorMetric /*metric*/) const {
+    return nullptr;
+  }
 };
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {

@@ -656,6 +656,107 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
   std::vector<uint8_t> _codes;
 };
 
+class ScalarQuantizerCodeBound final : public QuantizerCodeBound {
+ public:
+  ScalarQuantizerCodeBound(const faiss::ScalarQuantizer& sq,
+                           std::span<const float> query, VectorMetric metric)
+    : _l2{metric == VectorMetric::L2Sqr} {
+    faiss::scalar_quantizer::sq8_batch_train(sq, query.data(), _l2, _weights);
+    _weights.uq.clear();
+    const size_t d = sq.d;
+    const bool uniform =
+      sq.qtype == faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform;
+    const float* vmin = sq.trained.data();
+    const float* vdiff = sq.trained.data() + (uniform ? 1 : d);
+    const size_t stride = uniform ? 0 : 1;
+    double coded = std::abs(static_cast<double>(_weights.bias));
+    double stored = 0;
+    double error = 0;
+    double radius = 0;
+    for (size_t i = 0; i < d; ++i) {
+      const double lo = vmin[i * stride];
+      const double span = vdiff[i * stride];
+      const double half = span / 510 + 3 * kUnit * span;
+      coded += 255 * std::abs(static_cast<double>(_weights.a[i]));
+      if (_l2) {
+        coded += span * span;
+        radius += half * half;
+      } else {
+        const double q = std::abs(static_cast<double>(query[i]));
+        stored += q * (std::max(std::abs(lo), std::abs(lo + span)) + half);
+        error += q * half;
+      }
+    }
+    if (_l2) {
+      _round = Gamma(d + 4) * coded;
+      _radius = std::sqrt(radius);
+      _relative = Gamma(d + 4);
+      return;
+    }
+    _margin = error + Gamma(d + 4) * coded + Gamma(d + 2) * stored;
+    if (metric == VectorMetric::Cosine) {
+      _margin += 2 * Gamma(d + 4) * stored + 3 * Gamma(2 * d + 8);
+    }
+  }
+
+  void Score(const byte_type* base, uint32_t record_size,
+             std::span<const uint32_t> ids, score_t* out) const final {
+    faiss::scalar_quantizer::sq8_batch_score_n(
+      _weights,
+      [&](size_t j) {
+        return base + static_cast<size_t>(ids[j]) * record_size;
+      },
+      ids.size(), out, 0);
+  }
+
+  void Bounds(std::span<const score_t> scores, score_t* lower,
+              score_t* upper) const noexcept final {
+    for (size_t i = 0; i < scores.size(); ++i) {
+      const double s = scores[i];
+      if (std::isnan(s)) {
+        lower[i] = -std::numeric_limits<score_t>::infinity();
+        upper[i] = std::numeric_limits<score_t>::infinity();
+        continue;
+      }
+      if (!_l2) {
+        lower[i] = Down(s - _margin);
+        upper[i] = Up(s + _margin);
+        continue;
+      }
+      const double near =
+        std::max(0.0, std::sqrt(std::max(0.0, -s - _round)) - _radius);
+      const double far = std::sqrt(std::max(0.0, -s + _round)) + _radius;
+      lower[i] = Down(-(far * far) * (1 + _relative));
+      upper[i] = Up(-(near * near) * (1 - _relative));
+    }
+  }
+
+ private:
+  static constexpr double kUnit = std::numeric_limits<float>::epsilon() / 2;
+
+  static double Gamma(size_t n) noexcept {
+    const double nu = static_cast<double>(n) * kUnit;
+    return nu / (1 - nu);
+  }
+
+  static score_t Down(double v) noexcept {
+    return std::nextafter(static_cast<score_t>(v),
+                          -std::numeric_limits<score_t>::infinity());
+  }
+
+  static score_t Up(double v) noexcept {
+    return std::nextafter(static_cast<score_t>(v),
+                          std::numeric_limits<score_t>::infinity());
+  }
+
+  faiss::scalar_quantizer::SQ8BatchWeights _weights;
+  double _margin = 0;
+  double _round = 0;
+  double _radius = 0;
+  double _relative = 0;
+  bool _l2;
+};
+
 template<VectorMetric M>
 class ScalarQuantizerStats final : public QuantizerStats {
  public:
@@ -672,6 +773,20 @@ class ScalarQuantizerStats final : public QuantizerStats {
 
   std::shared_ptr<const QuantizerCodebook> MakeCodebook(
     std::span<const float> query) const final;
+
+  std::shared_ptr<const QuantizerCodeBound> MakeCodeBound(
+    std::span<const float> query, VectorMetric metric) const final {
+    const auto qt = _sq.qtype;
+    if ((qt != faiss::ScalarQuantizer::QuantizerType::QT_8bit &&
+         qt != faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform) ||
+        _sq.code_size != _sq.d || query.size() != _sq.d ||
+        (metric != VectorMetric::L2Sqr &&
+         metric != VectorMetric::InnerProduct &&
+         metric != VectorMetric::Cosine)) {
+      return nullptr;
+    }
+    return std::make_shared<const ScalarQuantizerCodeBound>(_sq, query, metric);
+  }
 
   const faiss::ScalarQuantizer& Sq() const noexcept { return _sq; }
 

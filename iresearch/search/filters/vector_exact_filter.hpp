@@ -36,6 +36,7 @@ struct ByVectorExactOptions {
   using FilterType = ByVectorExact;
 
   std::vector<float> query;
+  field_id centroids_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
   std::shared_ptr<const Filter> inner;
 

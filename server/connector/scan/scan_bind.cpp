@@ -687,6 +687,7 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
     *f->mutable_field_id() = vs.field_id;
     auto* o = f->mutable_options();
     o->query = vs.query_vector;
+    o->centroids_id = vs.centroids_id;
     o->metric = vs.metric;
     o->inner = std::move(inner);
     return f;

@@ -203,6 +203,8 @@ class HnswGraph {
 
   uint32_t LevelOf(uint32_t node) const noexcept { return _levels[node]; }
 
+  std::span<const uint8_t> Levels() const noexcept { return _levels; }
+
   std::span<const uint32_t> Neighbors(uint32_t node,
                                       uint32_t level) const noexcept {
     const auto width = level == 0 ? _m0 : _m;

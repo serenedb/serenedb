@@ -26,6 +26,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 
 namespace irs {
@@ -39,11 +40,13 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   ExactVectorQuery(const SubReader& segment, const ColumnReader& column,
                    const ColReader& columns, std::vector<float> query,
                    VectorMetric metric, score_t boost,
-                   QueryBuilder::ptr&& inner = nullptr)
+                   QueryBuilder::ptr&& inner = nullptr,
+                   AnnExactCodes codes = {})
     : QueryBuilderImpl{segment},
       _column{&column},
       _columns{&columns},
       _inner{std::move(inner)},
+      _codes{std::move(codes)},
       _query{std::move(query)},
       _metric{metric},
       _boost{boost} {}
@@ -53,6 +56,7 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   std::span<const float> Query() const noexcept { return _query; }
   VectorMetric Metric() const noexcept { return _metric; }
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
+  const AnnExactCodes& Codes() const noexcept { return _codes; }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
@@ -62,6 +66,7 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   const ColumnReader* _column;
   const ColReader* _columns;
   QueryBuilder::ptr _inner;
+  AnnExactCodes _codes;
   std::vector<float> _query;
   VectorMetric _metric;
   score_t _boost;

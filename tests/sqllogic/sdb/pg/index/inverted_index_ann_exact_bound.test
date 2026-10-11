@@ -1,0 +1,233 @@
+control substitution on
+
+statement ok
+CREATE TABLE ebl (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+
+statement ok
+CREATE INDEX ebl_idx ON ebl
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'usq8'))
+  INCLUDE (tag) WITH (compaction_interval = 0);
+
+statement ok
+CREATE TABLE ebi (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+
+statement ok
+CREATE INDEX ebi_idx ON ebi
+  USING inverted(pk, emb hnsw (metric = 'ip', quant = 'usq8'))
+  INCLUDE (tag) WITH (compaction_interval = 0);
+
+statement ok
+CREATE TABLE ebc (pk INTEGER PRIMARY KEY, emb FLOAT[16], tag INTEGER);
+
+statement ok
+CREATE INDEX ebc_idx ON ebc
+  USING inverted(pk, emb hnsw (metric = 'cosine', quant = 'sq8'))
+  INCLUDE (tag) WITH (compaction_interval = 0);
+
+statement ok
+CREATE TABLE eb_src AS SELECT i AS pk,
+  list_transform(range(16), j -> CASE WHEN i % 10 = 0
+    THEN (1 + (((i * 1103515245 + j * 12345 + 6789) % 1000003)::DOUBLE
+               / 1000003 - 0.5) * 0.02)::FLOAT
+    ELSE ((((i * 1103515245 + j * 12345 + 6789) % 1000003)::DOUBLE
+           / 1000003 - 0.5) * 4)::FLOAT END)::FLOAT[16] AS emb,
+  i % 7 AS tag
+  FROM range(4000) t(i);
+
+statement ok
+INSERT INTO ebl SELECT * FROM eb_src WHERE pk < 2000;
+
+statement ok
+INSERT INTO ebi SELECT * FROM eb_src WHERE pk < 2000;
+
+statement ok
+INSERT INTO ebc SELECT * FROM eb_src WHERE pk < 2000;
+
+statement ok
+VACUUM (REFRESH_TABLE) ebl;
+
+statement ok
+VACUUM (REFRESH_TABLE) ebi;
+
+statement ok
+VACUUM (REFRESH_TABLE) ebc;
+
+statement ok
+INSERT INTO ebl SELECT * FROM eb_src WHERE pk >= 2000;
+
+statement ok
+INSERT INTO ebi SELECT * FROM eb_src WHERE pk >= 2000;
+
+statement ok
+INSERT INTO ebc SELECT * FROM eb_src WHERE pk >= 2000;
+
+statement ok
+INSERT INTO ebl VALUES (5000, NULL, 3);
+
+statement ok
+INSERT INTO ebi VALUES (5000, NULL, 3);
+
+statement ok
+INSERT INTO ebc VALUES (5000, NULL, 3);
+
+statement ok
+VACUUM (REFRESH_TABLE) ebl;
+
+statement ok
+VACUUM (REFRESH_TABLE) ebi;
+
+statement ok
+VACUUM (REFRESH_TABLE) ebc;
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+WITH w AS (SELECT pk FROM ebl_idx
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10),
+     p AS (SELECT pk FROM ebl
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebl_idx
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 50),
+     p AS (SELECT pk FROM ebl
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 50)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebl_idx WHERE pk >= 1000
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10),
+     p AS (SELECT pk FROM ebl WHERE pk >= 1000
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebl_idx WHERE tag = 3
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10),
+     p AS (SELECT pk FROM ebl WHERE tag = 3
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebi_idx
+           ORDER BY emb <#> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10),
+     p AS (SELECT pk FROM ebi
+           ORDER BY emb <#> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebi_idx WHERE tag = 3
+           ORDER BY emb <#> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 50),
+     p AS (SELECT pk FROM ebi WHERE tag = 3
+           ORDER BY emb <#> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 50)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebc_idx
+           ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
+           LIMIT 10),
+     p AS (SELECT pk FROM ebc
+           ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+WITH w AS (SELECT pk FROM ebc_idx WHERE pk < 3000
+           ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
+           LIMIT 50),
+     p AS (SELECT pk FROM ebc WHERE pk < 3000
+           ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
+           LIMIT 50)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+statement ok
+DELETE FROM ebl WHERE pk % 20 = 0;
+
+statement ok
+VACUUM (REFRESH_TABLE) ebl;
+
+query
+WITH w AS (SELECT pk FROM ebl_idx
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10),
+     p AS (SELECT pk FROM ebl
+           ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+           LIMIT 10)
+SELECT COUNT(*) FROM ((SELECT * FROM w EXCEPT SELECT * FROM p)
+                      UNION ALL (SELECT * FROM p EXCEPT SELECT * FROM w)) d;
+----
+count
+0
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM ebl_idx
+  ORDER BY emb <-> list_transform(range(16), j -> (1 + cos(j::DOUBLE) * 0.002)::FLOAT)::FLOAT[16]
+  LIMIT 10) w WHERE pk % 20 = 0 OR pk = 5000;
+----
+count
+0
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM ebi_idx
+  ORDER BY emb <#> list_transform(range(16), j -> 100::FLOAT)::FLOAT[16]
+  LIMIT 10) w WHERE pk = 5000;
+----
+count
+0
+
+query
+SELECT COUNT(*) FROM (SELECT pk FROM ebc_idx WHERE tag = 3
+  ORDER BY emb <=> list_transform(range(16), j -> (CASE WHEN j < 8 THEN 1.5 ELSE 0.5 END)::FLOAT)::FLOAT[16]
+  LIMIT 10) w WHERE pk = 5000;
+----
+count
+0
+
+statement ok
+RESET sdb_ann_force_exact;

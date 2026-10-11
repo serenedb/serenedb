@@ -36,10 +36,10 @@
 namespace irs {
 namespace {
 
-std::vector<float> NormalizedQuery(const VectorFilterOptions& opts,
-                                   uint32_t d) {
-  std::vector<float> q{opts.query.begin(), opts.query.end()};
-  if (opts.metric == VectorMetric::Cosine) {
+std::vector<float> NormalizedQuery(std::span<const float> query,
+                                   VectorMetric metric, uint32_t d) {
+  std::vector<float> q{query.begin(), query.end()};
+  if (metric == VectorMetric::Cosine) {
     std::vector<float> normalized(q.size());
     duckdb::L2NormalizeOp::Operation(q.data(), normalized.data(), d);
     q = std::move(normalized);
@@ -119,7 +119,7 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
-  auto query = NormalizedQuery(opts, _header.d);
+  auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
   auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
@@ -150,7 +150,7 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
-  auto query = NormalizedQuery(opts, _header.d);
+  auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
   auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   const bool angular = opts.metric == VectorMetric::InnerProduct ||
@@ -166,6 +166,31 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
     static_cast<size_t>(_header.rows), inclusive, ctx.boost, std::move(inner));
   built->SetStats(ctx.Record());
   return built;
+}
+
+AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
+                                      std::span<const float> query,
+                                      VectorMetric metric) const {
+  if (Empty() || query.size() != _header.d ||
+      (metric == VectorMetric::Cosine) !=
+        (_header.metric == VectorMetric::Cosine)) {
+    return {};
+  }
+  auto data = Load(segment);
+  if (!data || !data->stats || data->codes.empty()) {
+    return {};
+  }
+  auto bound = data->stats->MakeCodeBound(
+    NormalizedQuery(query, metric, _header.d), metric);
+  if (!bound) {
+    return {};
+  }
+  AnnExactCodes codes{.bound = std::move(bound),
+                      .codes = data->codes.data(),
+                      .levels = data->graph.Levels(),
+                      .record_size = _header.record_size};
+  codes.owner = std::move(data);
+  return codes;
 }
 
 }  // namespace irs

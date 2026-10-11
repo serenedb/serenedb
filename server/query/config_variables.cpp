@@ -764,10 +764,12 @@ constexpr std::pair<std::string_view, VariableDescription>
       "sdb_ann_force_exact",
       {
         LogicalTypeId::BOOLEAN,
-        "When true, a vector search (ORDER BY <distance> LIMIT k) scores every "
-        "row from its stored vector instead of walking the ANN index: the "
-        "exact answer, at the cost of a full scan, split across the scan's "
-        "workers. Default false, which leaves the choice to the engine.",
+        "When true, a vector search (ORDER BY <distance> LIMIT k) returns the "
+        "exact answer instead of walking the ANN index, split across the "
+        "scan's workers. Every row with a vector is considered; where an hnsw "
+        "index stores 8-bit codes, a row's stored vector is read only if its "
+        "code leaves it a chance at the top k. Default false, which leaves the "
+        "choice to the engine.",
         [] { return duckdb::Value::BOOLEAN(false); },
         [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
       },

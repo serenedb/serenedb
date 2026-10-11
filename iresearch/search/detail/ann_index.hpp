@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
@@ -31,6 +32,16 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
+
+class QuantizerCodeBound;
+
+struct AnnExactCodes {
+  std::shared_ptr<const void> owner;
+  std::shared_ptr<const QuantizerCodeBound> bound;
+  const byte_type* codes = nullptr;
+  std::span<const uint8_t> levels;
+  uint32_t record_size = 0;
+};
 
 struct VectorFilterOptions {
   std::vector<float> query;
@@ -76,6 +87,12 @@ struct AnnIndex {
                                          const VectorFilterOptions& opts,
                                          float radius, bool inclusive,
                                          uint32_t effort) const = 0;
+
+  virtual AnnExactCodes PrepareExact(const SubReader& /*segment*/,
+                                     std::span<const float> /*query*/,
+                                     VectorMetric /*metric*/) const {
+    return {};
+  }
 };
 
 inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,

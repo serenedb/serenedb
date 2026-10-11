@@ -40,9 +40,13 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
     return QueryBuilder::Empty();
   }
+  AnnExactCodes codes;
+  if (const auto* ann = segment.Ann(opts.centroids_id); ann != nullptr) {
+    codes = ann->PrepareExact(segment, opts.query, opts.metric);
+  }
   auto built = memory::make_tracked<ExactVectorQuery>(
     ctx.memory, segment, *column, *columns, opts.query, opts.metric,
-    ctx.boost * GetBoost(), std::move(inner));
+    ctx.boost * GetBoost(), std::move(inner), std::move(codes));
   built->SetStats(ctx.Record());
   return built;
 }

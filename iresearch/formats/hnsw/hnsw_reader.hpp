@@ -80,6 +80,10 @@ class HnswIndex final : public AnnIndex {
                                  const VectorFilterOptions& opts, float radius,
                                  bool inclusive, uint32_t effort) const final;
 
+  AnnExactCodes PrepareExact(const SubReader& segment,
+                             std::span<const float> query,
+                             VectorMetric metric) const final;
+
   static HnswHeader ReadHeader(IndexInput& in);
 
   std::shared_ptr<const HnswData> Load(const SubReader& segment) const;

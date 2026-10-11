@@ -1,0 +1,62 @@
+<?xml version="1.1" encoding="UTF-8" standalone="no"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog" xmlns:ext="http://www.liquibase.org/xml/ns/dbchangelog-ext" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog-ext http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-ext.xsd http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <changeSet author="drivers" id="generated-1">
+        <createSequence cacheSize="1" cycle="false" dataType="bigint" incrementBy="1" maxValue="9223372036854775807" minValue="1" sequenceName="hero_seq" startValue="100"/>
+    </changeSet>
+    <changeSet author="drivers" id="generated-2">
+        <createTable remarks="factions" tableName="guild">
+            <column name="id" type="INTEGER">
+                <constraints nullable="false" primaryKey="true" primaryKeyName="guild_pk"/>
+            </column>
+            <column name="name" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="founded" type="date"/>
+        </createTable>
+    </changeSet>
+    <changeSet author="drivers" id="generated-3">
+        <createTable tableName="hero">
+            <column autoIncrement="true" name="id" type="BIGINT">
+                <constraints nullable="false" primaryKey="true" primaryKeyName="hero_pk"/>
+            </column>
+            <column name="guild_id" type="INTEGER"/>
+            <column name="name" remarks="hero name" type="TEXT">
+                <constraints nullable="false"/>
+            </column>
+            <column defaultValueNumeric="1" name="level" type="SMALLINT"/>
+            <column defaultValueNumeric="0" name="gold" type="numeric(12, 2)"/>
+            <column defaultValueComputed="now()" name="created" type="TIMESTAMP WITH TIME ZONE"/>
+            <column defaultValue="nobody" name="title" type="TEXT"/>
+        </createTable>
+    </changeSet>
+    <changeSet author="drivers" id="generated-4">
+        <createTable tableName="item">
+            <column name="id" type="INTEGER">
+                <constraints nullable="false" primaryKey="true" primaryKeyName="item_pkey"/>
+            </column>
+            <column name="hero_id" type="BIGINT">
+                <constraints nullable="false"/>
+            </column>
+            <column name="price" type="INTEGER">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+    </changeSet>
+    <changeSet author="drivers" id="generated-5">
+        <addUniqueConstraint columnNames="name" constraintName="guild_name_uk" tableName="guild"/>
+    </changeSet>
+    <changeSet author="drivers" id="generated-6">
+        <createIndex indexName="hero_name_idx" tableName="hero" using="secondary">
+            <column name="name"/>
+        </createIndex>
+    </changeSet>
+    <changeSet author="drivers" id="generated-7">
+        <addForeignKeyConstraint baseColumnNames="guild_id" baseTableName="hero" constraintName="hero_guild_fk" deferrable="false" initiallyDeferred="false" onDelete="NO ACTION" onUpdate="NO ACTION" referencedColumnNames="id" referencedTableName="guild" validate="true"/>
+    </changeSet>
+    <changeSet author="drivers" id="generated-8">
+        <addForeignKeyConstraint baseColumnNames="hero_id" baseTableName="item" constraintName="item_hero_fk" deferrable="false" initiallyDeferred="false" onDelete="NO ACTION" onUpdate="NO ACTION" referencedColumnNames="id" referencedTableName="hero" validate="true"/>
+    </changeSet>
+    <changeSet author="drivers" id="generated-9">
+        <createView fullDefinition="false" viewName="hero_view">SELECT h."name", g."name" AS guild FROM (hero AS h INNER JOIN guild AS g ON ((g.id = h.guild_id)));</createView>
+    </changeSet>
+</databaseChangeLog>

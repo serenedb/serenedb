@@ -1,0 +1,803 @@
+{
+  "tables": [
+    "ar_internal_metadata",
+    "authors",
+    "books",
+    "books_tags",
+    "reviews",
+    "schema_migrations",
+    "shelves",
+    "tags"
+  ],
+  "views": [
+    "author_names"
+  ],
+  "enum_types": [
+    [
+      "mood",
+      [
+        "calm",
+        "angry"
+      ]
+    ]
+  ],
+  "schema_names": [
+    "public"
+  ],
+  "extensions": [
+
+  ],
+  "authors": {
+    "comment": "writers",
+    "primary_keys": [
+      "id"
+    ],
+    "pk_and_sequence": [
+      "id",
+      "public.authors_id_seq"
+    ],
+    "columns": [
+      [
+        "id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        "nextval('authors_id_seq')",
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "name",
+        "text",
+        "text",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "email",
+        "text",
+        "text",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "bio",
+        "text",
+        "text",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "about",
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "born",
+        "date",
+        "date",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "rank",
+        "smallint",
+        "integer",
+        true,
+        null,
+        null,
+        2,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "royalty",
+        "numeric(8,2)",
+        "decimal",
+        true,
+        "0.0",
+        null,
+        null,
+        8,
+        2,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "active",
+        "boolean",
+        "boolean",
+        false,
+        "true",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "mood",
+        "mood",
+        "enum",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "created_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "updated_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ]
+    ],
+    "indexes": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types '+(STRUCT(generate_subscripts BIGINT), INTEGER_LITERAL)'. You might need to add explicit type casts."
+    },
+    "foreign_keys": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    },
+    "check_constraints": [
+      [
+        "authors_rank_nonneg",
+        "(rank >= 0)",
+        true
+      ]
+    ],
+    "unique_constraints": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    }
+  },
+  "books": {
+    "comment": null,
+    "primary_keys": [
+      "id"
+    ],
+    "pk_and_sequence": [
+      "id",
+      "public.books_id_seq"
+    ],
+    "columns": [
+      [
+        "id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        "nextval('books_id_seq')",
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "author_id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        null,
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "title",
+        "text",
+        "text",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "pages",
+        "integer",
+        "integer",
+        false,
+        "0",
+        null,
+        4,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "rating",
+        "real",
+        "float",
+        true,
+        null,
+        null,
+        24,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "published_at",
+        "timestamp without time zone",
+        "datetime",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "cover",
+        "bytea",
+        "binary",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "uid",
+        "uuid",
+        "uuid",
+        false,
+        null,
+        "gen_random_uuid()",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "keywords",
+        "text",
+        "text",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        true
+      ],
+      [
+        "lock_version",
+        "integer",
+        "integer",
+        false,
+        "0",
+        null,
+        4,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "reviews_count",
+        "integer",
+        "integer",
+        false,
+        "0",
+        null,
+        4,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "created_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "updated_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ]
+    ],
+    "indexes": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types '+(STRUCT(generate_subscripts BIGINT), INTEGER_LITERAL)'. You might need to add explicit type casts."
+    },
+    "foreign_keys": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    },
+    "check_constraints": [
+      [
+        "books_pages_nonneg",
+        "(pages >= 0)",
+        true
+      ]
+    ],
+    "unique_constraints": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    }
+  },
+  "books_tags": {
+    "comment": null,
+    "primary_keys": [
+
+    ],
+    "pk_and_sequence": null,
+    "columns": [
+      [
+        "book_id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        null,
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "tag_id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        null,
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ]
+    ],
+    "indexes": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types '+(STRUCT(generate_subscripts BIGINT), INTEGER_LITERAL)'. You might need to add explicit type casts."
+    },
+    "foreign_keys": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    },
+    "check_constraints": [
+
+    ],
+    "unique_constraints": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    }
+  },
+  "reviews": {
+    "comment": null,
+    "primary_keys": [
+      "id"
+    ],
+    "pk_and_sequence": [
+      "id",
+      "public.reviews_id_seq"
+    ],
+    "columns": [
+      [
+        "id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        "nextval('reviews_id_seq')",
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "book_id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        null,
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "stars",
+        "smallint",
+        "integer",
+        false,
+        null,
+        null,
+        2,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "opened_at",
+        "time without time zone",
+        "time",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "likes",
+        "bigint",
+        "integer",
+        false,
+        "0",
+        null,
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "created_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "updated_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ]
+    ],
+    "indexes": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types '+(STRUCT(generate_subscripts BIGINT), INTEGER_LITERAL)'. You might need to add explicit type casts."
+    },
+    "foreign_keys": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    },
+    "check_constraints": [
+
+    ],
+    "unique_constraints": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    }
+  },
+  "shelves": {
+    "comment": null,
+    "primary_keys": [
+      "id"
+    ],
+    "pk_and_sequence": [
+      "id",
+      "public.shelves_id_seq"
+    ],
+    "columns": [
+      [
+        "id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        "nextval('shelves_id_seq')",
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "label",
+        "text",
+        "text",
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "created_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "updated_at",
+        "timestamp without time zone",
+        "datetime",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ]
+    ],
+    "indexes": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types '+(STRUCT(generate_subscripts BIGINT), INTEGER_LITERAL)'. You might need to add explicit type casts."
+    },
+    "foreign_keys": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    },
+    "check_constraints": [
+
+    ],
+    "unique_constraints": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    }
+  },
+  "tags": {
+    "comment": null,
+    "primary_keys": [
+      "id"
+    ],
+    "pk_and_sequence": [
+      "id",
+      "public.tags_id_seq"
+    ],
+    "columns": [
+      [
+        "id",
+        "bigint",
+        "integer",
+        false,
+        null,
+        "nextval('tags_id_seq')",
+        8,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ],
+      [
+        "label",
+        "text",
+        "text",
+        false,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        false
+      ]
+    ],
+    "indexes": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types '+(STRUCT(generate_subscripts BIGINT), INTEGER_LITERAL)'. You might need to add explicit type casts."
+    },
+    "foreign_keys": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    },
+    "check_constraints": [
+
+    ],
+    "unique_constraints": {
+      "error": "ActiveRecord::StatementInvalid: PG::UndefinedFunction: ERROR:  No function matches the given name and argument types 'array_extract(SMALLINT[], STRUCT(generate_subscripts BIGINT))'. You might need to add explicit type casts."
+    }
+  }
+}

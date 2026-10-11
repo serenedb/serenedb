@@ -1,0 +1,59 @@
+default schema public
+collation 
+sequence public.blog_numbers bigint start 1000 increment 5 min  max 2147483647 cyclic 
+table public.Blogs comment blogs we follow
+  column Id integer nullable False default nextval('Blogs_Id_seq') computed  stored  generated  comment  collation 
+  column Name text nullable False default  computed  stored  generated  comment  collation 
+  column Url text nullable True default  computed  stored  generated  comment home page collation 
+  column CreatedAt timestamp with time zone nullable False default now() computed  stored  generated  comment  collation 
+  column Active boolean nullable False default true computed  stored  generated  comment  collation 
+  column OrderNumber integer nullable False default nextval('blog_numbers') computed  stored  generated  comment  collation 
+  column Revision integer nullable False default  computed  stored  generated  comment  collation 
+  primary key PK_Blogs (Id)
+  index IX_Blogs_Name unique True (Name) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary
+table public.Comments comment 
+  column Id bigint nullable False default nextval('Comments_Id_seq') computed  stored  generated  comment  collation 
+  column PostId bigint nullable False default  computed  stored  generated  comment  collation 
+  column Body text nullable False default  computed  stored  generated  comment  collation 
+  column At timestamp with time zone nullable False default  computed  stored  generated  comment  collation 
+  primary key PK_Comments (Id)
+  index IX_Comments_PostId_At unique False (PostId, At) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary
+  foreign key FK_Comments_Posts_PostId (PostId) references public.Posts (Id) on delete NoAction
+table public.Posts comment 
+  column Id bigint nullable False default nextval('Posts_Id_seq') computed  stored  generated  comment  collation 
+  column BlogId integer nullable False default  computed  stored  generated  comment  collation 
+  column Title text nullable False default  computed  stored  generated  comment  collation 
+  column Content text nullable True default  computed  stored  generated  comment  collation 
+  column Rating numeric(5,2) nullable False default  computed  stored  generated  comment  collation 
+  column Published boolean nullable False default  computed  stored  generated  comment  collation 
+  column PublishedOn date nullable True default  computed  stored  generated  comment  collation 
+  column PublishedAt time without time zone nullable True default  computed  stored  generated  comment  collation 
+  column ReadingTime interval nullable False default  computed  stored  generated  comment  collation 
+  column ExternalId uuid nullable False default  computed  stored  generated  comment  collation 
+  column Thumbnail bytea nullable True default  computed  stored  generated  comment  collation 
+  column Score double precision nullable True default  computed  stored  generated  comment  collation 
+  column Priority smallint nullable False default  computed  stored  generated  comment  collation 
+  primary key PK_Posts (Id)
+  index IX_Posts_BlogId_Published unique False (BlogId, Published) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary
+  index IX_Posts_ExternalId unique True (ExternalId) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary
+  index IX_Posts_Score unique False (Score) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary
+  foreign key FK_Posts_Blogs_BlogId (BlogId) references public.Blogs (Id) on delete NoAction
+table public.PostTag comment 
+  column PostsId bigint nullable False default  computed  stored  generated  comment  collation 
+  column TagsId integer nullable False default  computed  stored  generated  comment  collation 
+  primary key PK_PostTag (PostsId, TagsId)
+  index IX_PostTag_TagsId unique False (TagsId) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary
+  foreign key FK_PostTag_Posts_PostsId (PostsId) references public.Posts (Id) on delete NoAction
+  foreign key FK_PostTag_Tags_TagsId (TagsId) references public.Tags (Id) on delete NoAction
+table public.Tags comment 
+  column Id integer nullable False default nextval('Tags_Id_seq') computed  stored  generated  comment  collation 
+  column Label text nullable False default  computed  stored  generated  comment  collation 
+  primary key PK_Tags (Id)
+  index IX_Tags_Label unique True (Label) descending [] filter 
+    annotation Npgsql:IndexMethod = secondary

@@ -3,7 +3,9 @@
   "type": "project",
   "require-dev": {
     "phpunit/phpunit": "^10.5",
-    "symfony/yaml": "^6.4"
+    "symfony/yaml": "^6.4",
+    "doctrine/dbal": "^4.5",
+    "illuminate/database": "^13.35"
   },
   "autoload": {
     "psr-4": {

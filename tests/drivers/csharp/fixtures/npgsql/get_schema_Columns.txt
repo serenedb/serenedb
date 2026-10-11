@@ -1,0 +1,12 @@
+table_catalog | table_schema | table_name | column_name | ordinal_position | column_default | is_nullable | data_type | character_maximum_length | character_octet_length | numeric_precision | numeric_precision_radix | numeric_scale | datetime_precision | character_set_catalog | character_set_schema | character_set_name | collation_catalog
+<database> | drv | active_players | mmr | 2 | NULL | YES | integer | NULL | NULL | 32 | 2 | 0 | NULL | NULL | NULL | NULL | NULL
+<database> | drv | active_players | nick | 1 | NULL | YES | text | NULL | 1073741824 | NULL | NULL | NULL | NULL | NULL | NULL | NULL | NULL
+<database> | drv | players | active | 5 | true | YES | boolean | NULL | NULL | NULL | NULL | NULL | NULL | NULL | NULL | NULL | NULL
+<database> | drv | players | id | 1 | nextval('drv.players_id_seq'::regclass) | NO | bigint | NULL | NULL | 64 | 2 | 0 | NULL | NULL | NULL | NULL | NULL
+<database> | drv | players | mmr | 4 | NULL | YES | integer | NULL | NULL | 32 | 2 | 0 | NULL | NULL | NULL | NULL | NULL
+<database> | drv | players | nick | 3 | NULL | NO | text | NULL | 1073741824 | NULL | NULL | NULL | NULL | NULL | NULL | NULL | NULL
+<database> | drv | players | team_id | 2 | NULL | NO | integer | NULL | NULL | 32 | 2 | 0 | NULL | NULL | NULL | NULL | NULL
+<database> | drv | teams | budget | 4 | 0 | YES | numeric | NULL | NULL | 12 | 10 | 2 | NULL | NULL | NULL | NULL | NULL
+<database> | drv | teams | founded | 3 | NULL | YES | date | NULL | NULL | NULL | NULL | NULL | 0 | NULL | NULL | NULL | NULL
+<database> | drv | teams | id | 1 | nextval('drv.teams_id_seq'::regclass) | NO | integer | NULL | NULL | 32 | 2 | 0 | NULL | NULL | NULL | NULL | NULL
+<database> | drv | teams | name | 2 | NULL | NO | character varying | 40 | 160 | NULL | NULL | NULL | NULL | NULL | NULL | NULL | NULL

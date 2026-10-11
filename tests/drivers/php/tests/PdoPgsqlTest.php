@@ -6,9 +6,12 @@ namespace Serenedb\Drivers\Tests;
 use PDO;
 use PHPUnit\Framework\TestCase;
 use Serenedb\Drivers\Spec;
+use Serenedb\Drivers\TargetAssertions;
 
 final class PdoPgsqlTest extends TestCase
 {
+    use TargetAssertions;
+
     private const DRIVER_KEY = 'php_pdo';
     private static ?PDO $pdo = null;
     private static string $schema = '';
@@ -47,6 +50,26 @@ final class PdoPgsqlTest extends TestCase
     {
         $r = self::$pdo->query('SHOW server_version')->fetch(PDO::FETCH_ASSOC);
         $this->assertNotEmpty(array_values($r)[0]);
+    }
+
+    public function testStatementFreedInsideTransaction(): void
+    {
+        self::$pdo->exec('CREATE TABLE freed_stmt (v text)');
+        try {
+            $this->xfailOnSereneDB('SQL DEALLOCATE cannot see statements prepared through the protocol, ' .
+                'pdo_pgsql deallocates a freed statement with it, SereneDB aborts the transaction and COMMIT ' .
+                'silently rolls back', function () {
+                    self::$pdo->beginTransaction();
+                    $stmt = self::$pdo->prepare('INSERT INTO freed_stmt VALUES (?)');
+                    $stmt->execute(['kept']);
+                    $stmt = null;
+                    self::$pdo->commit();
+                    $this->assertSame(['kept'], self::$pdo->query('SELECT v FROM freed_stmt')
+                        ->fetchAll(PDO::FETCH_COLUMN));
+                });
+        } finally {
+            self::$pdo->exec('DROP TABLE freed_stmt');
+        }
     }
 
     public static function casesProvider(): \Generator

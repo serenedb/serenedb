@@ -1,0 +1,2 @@
+database_name | owner | encoding
+<database> | postgres | UTF8

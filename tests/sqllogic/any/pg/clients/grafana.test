@@ -1,0 +1,655 @@
+statement ok
+DROP ROLE IF EXISTS cq_grafana_reader
+
+
+statement ok
+CREATE ROLE cq_grafana_reader
+
+
+statement ok
+CREATE SCHEMA shop
+
+
+statement ok
+CREATE TYPE shop.mood AS ENUM ('sad', 'ok', 'happy')
+
+
+statement ok
+CREATE SEQUENCE shop.ticket_seq START 100 INCREMENT 5
+
+
+statement ok
+CREATE TABLE shop.customers (
+  id serial PRIMARY KEY,
+  email varchar(100) NOT NULL UNIQUE,
+  name text NOT NULL,
+  active boolean DEFAULT true,
+  mood shop.mood DEFAULT 'ok',
+  created timestamptz DEFAULT now()
+)
+
+
+statement ok
+CREATE TABLE shop.orders (
+  id bigserial PRIMARY KEY,
+  customer_id integer NOT NULL REFERENCES shop.customers (id),
+  amount numeric(10,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  status varchar(20) DEFAULT 'new',
+  note text,
+  ticket bigint DEFAULT nextval('shop.ticket_seq'),
+  CONSTRAINT orders_status_check CHECK (status IN ('new', 'paid', 'shipped'))
+)
+
+
+statement ok
+CREATE TABLE shop.order_items (
+  order_id bigint REFERENCES shop.orders (id),
+  line integer,
+  sku varchar(30) NOT NULL,
+  qty integer NOT NULL CHECK (qty > 0),
+  price numeric(12,4),
+  PRIMARY KEY (order_id, line)
+)
+
+
+statement ok
+CREATE INDEX orders_customer_idx ON shop.orders (customer_id)
+
+
+statement ok
+CREATE UNIQUE INDEX customers_name_email_idx ON shop.customers (name, email)
+
+
+statement ok
+CREATE VIEW shop.order_totals AS SELECT o.customer_id, sum(o.amount) AS total, count(*) AS n FROM shop.orders o GROUP BY o.customer_id
+
+
+statement ok
+CREATE FUNCTION shop.add_one(i integer) RETURNS integer LANGUAGE sql AS $$ SELECT i + 1 $$
+
+
+skipif serenedb
+statement ok
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+onlyif serenedb
+statement error Adding\ comments\ to\ schemas\ is\ not\ implemented
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+statement ok
+COMMENT ON TABLE shop.customers IS 'Customer master'
+
+
+statement ok
+COMMENT ON COLUMN shop.customers.email IS 'Login email'
+
+
+statement ok
+COMMENT ON VIEW shop.order_totals IS 'Totals per customer'
+
+
+statement ok
+COMMENT ON FUNCTION shop.add_one IS 'Adds one'
+
+
+statement ok
+COMMENT ON INDEX shop.orders_customer_idx IS 'Orders by customer'
+
+
+statement ok
+COMMENT ON SEQUENCE shop.ticket_seq IS 'Ticket numbers'
+
+
+statement ok
+COMMENT ON TYPE shop.mood IS 'Mood enum'
+
+
+skipif serenedb
+statement ok
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+onlyif serenedb
+statement error syntax\ error\ at\ or\ near\ "CONSTRAINT"
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+statement ok
+GRANT USAGE ON SCHEMA shop TO cq_grafana_reader
+
+
+statement ok
+GRANT SELECT ON shop.customers TO cq_grafana_reader
+
+
+statement ok
+GRANT SELECT, INSERT ON shop.orders TO cq_grafana_reader
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION shop.add_one(integer) TO cq_grafana_reader
+
+
+statement ok
+INSERT INTO shop.customers (email, name) VALUES ('a@x', 'Ann'), ('b@x', 'Bob')
+
+
+statement ok
+INSERT INTO shop.orders (customer_id, amount, status) VALUES (1, 10.5, 'paid'), (1, 3, 'new'), (2, 7.25, 'shipped')
+
+
+statement ok
+INSERT INTO shop.order_items VALUES (1, 1, 'SKU-1', 2, 5.25), (1, 2, 'SKU-2', 1, 0)
+
+
+query
+SELECT version / 100 AS major
+FROM (SELECT current_setting('server_version_num')::int/100 as version) q
+----
+major
+18
+
+
+query
+SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'
+----
+extversion
+
+
+skipif serenedb
+query
+SELECT "table"
+FROM (SELECT
+    CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      THEN quote_ident(table_name)
+      ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)
+    END AS "table"
+    FROM information_schema.tables
+    WHERE quote_ident(table_schema) NOT IN ('information_schema',
+                             'pg_catalog',
+                             '_timescaledb_cache',
+                             '_timescaledb_catalog',
+                             '_timescaledb_internal',
+                             '_timescaledb_config',
+                             'timescaledb_information',
+                             'timescaledb_experimental')
+    ORDER BY CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          ) THEN 0 ELSE 1 END, 1) q
+ORDER BY "table"::text COLLATE "C"
+----
+table
+shop.customers
+shop.order_items
+shop.order_totals
+shop.orders
+
+
+onlyif serenedb
+query error struct_extract\ with\ an\ integer\ key\ can\ only\ be\ used\ on\ unnamed\ structs,\ use\ a\ string\ key\ instead
+SELECT "table"
+FROM (SELECT
+    CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      THEN quote_ident(table_name)
+      ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)
+    END AS "table"
+    FROM information_schema.tables
+    WHERE quote_ident(table_schema) NOT IN ('information_schema',
+                             'pg_catalog',
+                             '_timescaledb_cache',
+                             '_timescaledb_catalog',
+                             '_timescaledb_internal',
+                             '_timescaledb_config',
+                             'timescaledb_information',
+                             'timescaledb_experimental')
+    ORDER BY CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          ) THEN 0 ELSE 1 END, 1) q
+ORDER BY "table"::text COLLATE "C"
+
+
+skipif serenedb
+query
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('shop.orders'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('shop.orders'))[1]
+          AND quote_ident(table_name) = (parse_ident('shop.orders'))[2]
+        ELSE quote_ident(table_name) = 'shop.orders'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+----
+column	type
+amount	numeric
+customer_id	integer
+id	bigint
+note	text
+status	character varying
+ticket	bigint
+
+
+onlyif serenedb
+query error Scalar\ Function\ with\ name\ parse_ident\ does\ not\ exist!
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('shop.orders'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('shop.orders'))[1]
+          AND quote_ident(table_name) = (parse_ident('shop.orders'))[2]
+        ELSE quote_ident(table_name) = 'shop.orders'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+
+
+skipif serenedb
+query
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('shop.customers'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('shop.customers'))[1]
+          AND quote_ident(table_name) = (parse_ident('shop.customers'))[2]
+        ELSE quote_ident(table_name) = 'shop.customers'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+----
+column	type
+active	boolean
+created	timestamp with time zone
+email	character varying
+id	integer
+mood	USER-DEFINED
+name	text
+
+
+onlyif serenedb
+query error Scalar\ Function\ with\ name\ parse_ident\ does\ not\ exist!
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('shop.customers'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('shop.customers'))[1]
+          AND quote_ident(table_name) = (parse_ident('shop.customers'))[2]
+        ELSE quote_ident(table_name) = 'shop.customers'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+
+
+skipif serenedb
+query
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('customers'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('customers'))[1]
+          AND quote_ident(table_name) = (parse_ident('customers'))[2]
+        ELSE quote_ident(table_name) = 'customers'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+----
+column	type
+
+
+onlyif serenedb
+query error Scalar\ Function\ with\ name\ parse_ident\ does\ not\ exist!
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('customers'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('customers'))[1]
+          AND quote_ident(table_name) = (parse_ident('customers'))[2]
+        ELSE quote_ident(table_name) = 'customers'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+
+
+statement ok
+SET search_path TO shop, public
+
+
+skipif serenedb
+query
+SELECT "table"
+FROM (SELECT
+    CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      THEN quote_ident(table_name)
+      ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)
+    END AS "table"
+    FROM information_schema.tables
+    WHERE quote_ident(table_schema) NOT IN ('information_schema',
+                             'pg_catalog',
+                             '_timescaledb_cache',
+                             '_timescaledb_catalog',
+                             '_timescaledb_internal',
+                             '_timescaledb_config',
+                             'timescaledb_information',
+                             'timescaledb_experimental')
+    ORDER BY CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          ) THEN 0 ELSE 1 END, 1) q
+ORDER BY "table"::text COLLATE "C"
+----
+table
+customers
+order_items
+order_totals
+orders
+
+
+onlyif serenedb
+query error struct_extract\ with\ an\ integer\ key\ can\ only\ be\ used\ on\ unnamed\ structs,\ use\ a\ string\ key\ instead
+SELECT "table"
+FROM (SELECT
+    CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      THEN quote_ident(table_name)
+      ELSE quote_ident(table_schema) || '.' || quote_ident(table_name)
+    END AS "table"
+    FROM information_schema.tables
+    WHERE quote_ident(table_schema) NOT IN ('information_schema',
+                             'pg_catalog',
+                             '_timescaledb_cache',
+                             '_timescaledb_catalog',
+                             '_timescaledb_internal',
+                             '_timescaledb_config',
+                             'timescaledb_information',
+                             'timescaledb_experimental')
+    ORDER BY CASE WHEN 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          ) THEN 0 ELSE 1 END, 1) q
+ORDER BY "table"::text COLLATE "C"
+
+
+skipif serenedb
+query
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('order_items'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('order_items'))[1]
+          AND quote_ident(table_name) = (parse_ident('order_items'))[2]
+        ELSE quote_ident(table_name) = 'order_items'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+----
+column	type
+line	integer
+order_id	bigint
+price	numeric
+qty	integer
+sku	character varying
+
+
+onlyif serenedb
+query error Scalar\ Function\ with\ name\ parse_ident\ does\ not\ exist!
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('order_items'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('order_items'))[1]
+          AND quote_ident(table_name) = (parse_ident('order_items'))[2]
+        ELSE quote_ident(table_name) = 'order_items'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+
+
+skipif serenedb
+query
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('order_totals'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('order_totals'))[1]
+          AND quote_ident(table_name) = (parse_ident('order_totals'))[2]
+        ELSE quote_ident(table_name) = 'order_totals'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+----
+column	type
+customer_id	integer
+n	bigint
+total	numeric
+
+
+onlyif serenedb
+query error Scalar\ Function\ with\ name\ parse_ident\ does\ not\ exist!
+SELECT "column", "type"
+FROM (SELECT quote_ident(column_name) AS "column", data_type AS "type"
+    FROM information_schema.columns
+    WHERE
+      CASE WHEN array_length(parse_ident('order_totals'),1) = 2
+        THEN quote_ident(table_schema) = (parse_ident('order_totals'))[1]
+          AND quote_ident(table_name) = (parse_ident('order_totals'))[2]
+        ELSE quote_ident(table_name) = 'order_totals'
+          AND 
+          quote_ident(table_schema) IN (
+          SELECT
+            CASE WHEN trim(s[i]) = '"$user"' THEN user ELSE trim(s[i]) END
+          FROM
+            generate_series(
+              array_lower(string_to_array(current_setting('search_path'),','),1),
+              array_upper(string_to_array(current_setting('search_path'),','),1)
+            ) as i,
+            string_to_array(current_setting('search_path'),',') s
+          )
+      END) q
+ORDER BY "column"::text COLLATE "C"
+
+
+statement ok
+RESET search_path
+
+
+skipif serenedb
+query
+SELECT parse_ident('shop.orders'), parse_ident('"Mixed"."Case Name"'), array_length(parse_ident('a.b.c'), 1)
+----
+parse_ident	parse_ident	array_length
+{shop,orders}	{Mixed,"Case Name"}	3
+
+
+onlyif serenedb
+query error Scalar\ Function\ with\ name\ parse_ident\ does\ not\ exist!
+SELECT parse_ident('shop.orders'), parse_ident('"Mixed"."Case Name"'), array_length(parse_ident('a.b.c'), 1)
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION shop.add_one(integer) FROM cq_grafana_reader
+
+
+statement ok
+REVOKE SELECT, INSERT ON shop.orders FROM cq_grafana_reader
+
+
+statement ok
+REVOKE SELECT ON shop.customers FROM cq_grafana_reader
+
+
+statement ok
+REVOKE USAGE ON SCHEMA shop FROM cq_grafana_reader
+
+
+statement ok
+DROP ROLE cq_grafana_reader

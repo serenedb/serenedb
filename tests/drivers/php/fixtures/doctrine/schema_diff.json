@@ -1,0 +1,4 @@
+[
+    "DROP INDEX notes_code_partial",
+    "CREATE INDEX notes_code_partial ON notes (code) WHERE code IS NOT NULL"
+]

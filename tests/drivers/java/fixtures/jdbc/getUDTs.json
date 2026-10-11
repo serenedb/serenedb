@@ -1,0 +1,13 @@
+{
+ "columns": ["type_cat", "type_schem", "type_name", "class_name", "data_type", "remarks", "base_type"],
+ "rows": [
+  [null, "app", "author", null, 2002, null, null],
+  [null, "app", "book", null, 2002, null, null],
+  [null, "app", "category", null, 2002, null, null],
+  [null, "app", "cheap_books", null, 2002, null, null],
+  [null, "app", "edition", null, 2002, null, null],
+  [null, "app", "edition_note", null, 2002, null, null],
+  [null, "app", "measure", null, 2002, null, null],
+  [null, "app", "pair", null, 2002, null, null]
+ ]
+}

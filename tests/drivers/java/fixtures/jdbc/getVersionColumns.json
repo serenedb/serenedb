@@ -1,0 +1,11 @@
+{
+ "columns": ["SCOPE", "COLUMN_NAME", "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "PSEUDO_COLUMN"],
+ "rows": [
+  [null, "ctid", 1111, "tid", null, null, null, 2],
+  [null, "ctid", 1111, "tid", null, null, null, 2],
+  [null, "ctid", 1111, "tid", null, null, null, 2],
+  [null, "ctid", 1111, "tid", null, null, null, 2],
+  [null, "ctid", 1111, "tid", null, null, null, 2],
+  [null, "ctid", 1111, "tid", null, null, null, 2]
+ ]
+}

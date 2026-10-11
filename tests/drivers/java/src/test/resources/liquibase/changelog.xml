@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd"
+        logicalFilePath="liquibase/changelog.xml">
+
+    <changeSet id="1" author="drivers">
+        <createSequence sequenceName="hero_seq" startValue="100" incrementBy="1"/>
+        <createTable tableName="guild" remarks="factions">
+            <column name="id" type="INTEGER">
+                <constraints primaryKey="true" primaryKeyName="guild_pk"/>
+            </column>
+            <column name="name" type="VARCHAR(50)">
+                <constraints nullable="false" unique="true" uniqueConstraintName="guild_name_uk"/>
+            </column>
+            <column name="founded" type="DATE"/>
+        </createTable>
+        <createTable tableName="hero">
+            <column name="id" type="BIGINT" defaultValueComputed="nextval('hero_seq')">
+                <constraints primaryKey="true" primaryKeyName="hero_pk"/>
+            </column>
+            <column name="guild_id" type="INTEGER">
+                <constraints foreignKeyName="hero_guild_fk" references="guild(id)"/>
+            </column>
+            <column name="name" type="VARCHAR(100)" remarks="hero name">
+                <constraints nullable="false"/>
+            </column>
+            <column name="level" type="SMALLINT" defaultValueNumeric="1"/>
+            <column name="gold" type="NUMERIC(12, 2)" defaultValueNumeric="0"/>
+            <column name="created" type="TIMESTAMP WITH TIME ZONE" defaultValueComputed="now()"/>
+        </createTable>
+        <createIndex tableName="hero" indexName="hero_name_idx">
+            <column name="name"/>
+        </createIndex>
+    </changeSet>
+
+    <changeSet id="2" author="drivers">
+        <insert tableName="guild">
+            <column name="id" valueNumeric="1"/>
+            <column name="name" value="Radiant"/>
+            <column name="founded" valueDate="2003-01-01"/>
+        </insert>
+        <insert tableName="guild">
+            <column name="id" valueNumeric="2"/>
+            <column name="name" value="Dire"/>
+        </insert>
+        <insert tableName="hero">
+            <column name="guild_id" valueNumeric="2"/>
+            <column name="name" value="Pudge"/>
+            <column name="level" valueNumeric="25"/>
+            <column name="gold" valueNumeric="3000.50"/>
+        </insert>
+        <rollback>
+            <delete tableName="hero"/>
+            <delete tableName="guild"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="3" author="drivers">
+        <tagDatabase tag="seeded"/>
+    </changeSet>
+
+    <changeSet id="4" author="drivers">
+        <addColumn tableName="hero">
+            <column name="title" type="TEXT"/>
+        </addColumn>
+        <createView viewName="hero_view">SELECT h.name, g.name AS guild FROM hero h JOIN guild g ON g.id = h.guild_id</createView>
+        <sql>UPDATE hero SET title = 'Butcher' WHERE name = 'Pudge'</sql>
+        <rollback>
+            <dropView viewName="hero_view"/>
+            <dropColumn tableName="hero" columnName="title"/>
+        </rollback>
+    </changeSet>
+
+    <changeSet id="5" author="drivers">
+        <createTable tableName="item">
+            <column name="id" type="INTEGER">
+                <constraints primaryKey="true"/>
+            </column>
+            <column name="hero_id" type="BIGINT">
+                <constraints nullable="false" foreignKeyName="item_hero_fk" references="hero(id)"/>
+            </column>
+            <column name="cost" type="INTEGER"/>
+        </createTable>
+        <renameColumn tableName="item" oldColumnName="cost" newColumnName="price" columnDataType="INTEGER"/>
+        <addDefaultValue tableName="hero" columnName="title" defaultValue="nobody"/>
+        <addNotNullConstraint tableName="item" columnName="price" defaultNullValue="0"/>
+    </changeSet>
+</databaseChangeLog>

@@ -1,0 +1,26 @@
+version: 2
+models:
+  - name: stg_customers
+    description: customers from the seed
+    columns:
+      - name: id
+        description: customer id
+        data_tests: [unique, not_null]
+      - name: tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [gold, silver, bronze]
+  - name: tier_scores
+    description: totals per tier
+    columns:
+      - name: tier
+        data_tests: [unique]
+  - name: recent_customers
+    columns:
+      - name: id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: id

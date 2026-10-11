@@ -1,0 +1,1014 @@
+statement ok
+DROP ROLE IF EXISTS cq_beekeeper_reader
+
+
+statement ok
+CREATE ROLE cq_beekeeper_reader
+
+
+statement ok
+CREATE SCHEMA shop
+
+
+statement ok
+CREATE TYPE shop.mood AS ENUM ('sad', 'ok', 'happy')
+
+
+statement ok
+CREATE SEQUENCE shop.ticket_seq START 100 INCREMENT 5
+
+
+statement ok
+CREATE TABLE shop.customers (
+  id serial PRIMARY KEY,
+  email varchar(100) NOT NULL UNIQUE,
+  name text NOT NULL,
+  active boolean DEFAULT true,
+  mood shop.mood DEFAULT 'ok',
+  created timestamptz DEFAULT now()
+)
+
+
+statement ok
+CREATE TABLE shop.orders (
+  id bigserial PRIMARY KEY,
+  customer_id integer NOT NULL REFERENCES shop.customers (id),
+  amount numeric(10,2) NOT NULL DEFAULT 0 CHECK (amount >= 0),
+  status varchar(20) DEFAULT 'new',
+  note text,
+  ticket bigint DEFAULT nextval('shop.ticket_seq'),
+  CONSTRAINT orders_status_check CHECK (status IN ('new', 'paid', 'shipped'))
+)
+
+
+statement ok
+CREATE TABLE shop.order_items (
+  order_id bigint REFERENCES shop.orders (id),
+  line integer,
+  sku varchar(30) NOT NULL,
+  qty integer NOT NULL CHECK (qty > 0),
+  price numeric(12,4),
+  PRIMARY KEY (order_id, line)
+)
+
+
+statement ok
+CREATE INDEX orders_customer_idx ON shop.orders (customer_id)
+
+
+statement ok
+CREATE UNIQUE INDEX customers_name_email_idx ON shop.customers (name, email)
+
+
+statement ok
+CREATE VIEW shop.order_totals AS SELECT o.customer_id, sum(o.amount) AS total, count(*) AS n FROM shop.orders o GROUP BY o.customer_id
+
+
+statement ok
+CREATE FUNCTION shop.add_one(i integer) RETURNS integer LANGUAGE sql AS $$ SELECT i + 1 $$
+
+
+skipif serenedb
+statement ok
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+onlyif serenedb
+statement error Adding\ comments\ to\ schemas\ is\ not\ implemented
+COMMENT ON SCHEMA shop IS 'Shop data'
+
+
+statement ok
+COMMENT ON TABLE shop.customers IS 'Customer master'
+
+
+statement ok
+COMMENT ON COLUMN shop.customers.email IS 'Login email'
+
+
+statement ok
+COMMENT ON VIEW shop.order_totals IS 'Totals per customer'
+
+
+statement ok
+COMMENT ON FUNCTION shop.add_one IS 'Adds one'
+
+
+statement ok
+COMMENT ON INDEX shop.orders_customer_idx IS 'Orders by customer'
+
+
+statement ok
+COMMENT ON SEQUENCE shop.ticket_seq IS 'Ticket numbers'
+
+
+statement ok
+COMMENT ON TYPE shop.mood IS 'Mood enum'
+
+
+skipif serenedb
+statement ok
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+onlyif serenedb
+statement error syntax\ error\ at\ or\ near\ "CONSTRAINT"
+COMMENT ON CONSTRAINT orders_status_check ON shop.orders IS 'Known statuses'
+
+
+statement ok
+GRANT USAGE ON SCHEMA shop TO cq_beekeeper_reader
+
+
+statement ok
+GRANT SELECT ON shop.customers TO cq_beekeeper_reader
+
+
+statement ok
+GRANT SELECT, INSERT ON shop.orders TO cq_beekeeper_reader
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION shop.add_one(integer) TO cq_beekeeper_reader
+
+
+statement ok
+INSERT INTO shop.customers (email, name) VALUES ('a@x', 'Ann'), ('b@x', 'Bob')
+
+
+statement ok
+INSERT INTO shop.orders (customer_id, amount, status) VALUES (1, 10.5, 'paid'), (1, 3, 'new'), (2, 7.25, 'shipped')
+
+
+statement ok
+INSERT INTO shop.order_items VALUES (1, 1, 'SKU-1', 2, 5.25), (1, 2, 'SKU-2', 1, 0)
+
+
+query
+SELECT schema, name, tabletype::text, parenttype::text
+FROM (SELECT
+  t.table_schema as schema,
+  t.table_name as name,
+    pc.relkind as tabletype,
+    parent_pc.relkind as parenttype
+  FROM information_schema.tables AS t
+  JOIN pg_class AS pc
+    ON t.table_name = pc.relname AND quote_ident(t.table_schema) = pc.relnamespace::regnamespace::text
+  LEFT OUTER JOIN pg_inherits AS i
+    ON pc.oid = i.inhrelid
+  LEFT OUTER JOIN pg_class AS parent_pc
+    ON parent_pc.oid = i.inhparent
+  WHERE t.table_type NOT LIKE '%VIEW%'
+AND "table_schema" = 'shop'
+ORDER BY t.table_schema, t.table_name) q
+ORDER BY name::text COLLATE "C"
+----
+schema	name	tabletype	parenttype
+shop	customers	r	NULL
+shop	order_items	r	NULL
+shop	orders	r	NULL
+
+
+query
+SELECT schema, name
+FROM (SELECT
+  table_schema as schema,
+  table_name as name
+FROM information_schema.views
+  WHERE "table_schema" = 'shop'
+ORDER BY table_schema, table_name) q
+----
+schema	name
+shop	order_totals
+
+
+query
+SELECT id = name || '_' || oid AS id_matches_oid, routine_schema, name, routine_type, data_type
+FROM (SELECT
+  r.specific_name as id,
+  r.routine_schema as routine_schema,
+  r.routine_name as name,
+  r.routine_type as routine_type,
+  r.data_type as data_type,
+  p.oid::text as oid
+FROM INFORMATION_SCHEMA.ROUTINES r
+LEFT JOIN pg_catalog.pg_proc p
+  ON r.specific_name::text = p.proname || '_' || p.oid::text
+where r.routine_schema not in ('sys', 'information_schema',
+                               'pg_catalog', 'performance_schema')
+  AND "r"."routine_schema" = 'shop'
+ORDER BY routine_schema, routine_name) q
+----
+id_matches_oid	routine_schema	name	routine_type	data_type
+t	shop	add_one	FUNCTION	integer
+
+
+query
+SELECT routine_schema, parameter_name, char_length, data_type
+FROM (select
+  r.routine_schema as routine_schema,
+  r.specific_name as specific_name,
+  p.parameter_name as parameter_name,
+  p.character_maximum_length as char_length,
+    p.data_type as data_type
+from information_schema.routines r
+  left join information_schema.parameters p
+on p.specific_schema = r.routine_schema
+  and p.specific_name = r.specific_name
+where r.routine_schema not in ('sys', 'information_schema',
+  'pg_catalog', 'performance_schema')
+  AND "r"."routine_schema" = 'shop'
+  AND p.parameter_mode = 'IN'
+order by r.routine_schema,
+  r.specific_name,
+  p.ordinal_position) q
+----
+routine_schema	parameter_name	char_length	data_type
+shop	i	NULL	integer
+
+
+skipif serenedb
+query
+SELECT s.nspname, t.relname, a.attname,
+       pg_catalog.format_type(a.atttypid, a.atttypmod) as data_type,
+       a.attnotnull
+FROM pg_attribute a
+       JOIN pg_class t on a.attrelid = t.oid
+       JOIN pg_namespace s on t.relnamespace = s.oid
+WHERE a.attnum > 0
+  AND NOT a.attisdropped
+  AND s.nspname = 'shop' AND t.relname = 'order_totals'
+ORDER BY a.attnum
+----
+nspname	relname	attname	data_type	attnotnull
+shop	order_totals	customer_id	integer	f
+shop	order_totals	total	numeric	f
+shop	order_totals	n	bigint	f
+
+
+onlyif serenedb
+query
+SELECT s.nspname, t.relname, a.attname,
+       pg_catalog.format_type(a.atttypid, a.atttypmod) as data_type,
+       a.attnotnull
+FROM pg_attribute a
+       JOIN pg_class t on a.attrelid = t.oid
+       JOIN pg_namespace s on t.relnamespace = s.oid
+WHERE a.attnum > 0
+  AND NOT a.attisdropped
+  AND s.nspname = 'shop' AND t.relname = 'order_totals'
+ORDER BY a.attnum
+----
+nspname	relname	attname	data_type	attnotnull
+shop	order_totals	customer_id	integer	f
+shop	order_totals	total	numeric(38,2)	f
+shop	order_totals	n	bigint	f
+
+
+skipif serenedb
+query
+SELECT
+  table_schema,
+  table_name,
+  column_name,
+  is_nullable,
+  is_generated,
+    ordinal_position,
+  column_default,
+  CASE
+    WHEN character_maximum_length is not null  and udt_name != 'text'
+      THEN udt_name || '(' || character_maximum_length::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is not null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ',' || numeric_scale::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ')'
+    WHEN datetime_precision is not null AND udt_name != 'date' THEN
+      udt_name || '(' || datetime_precision::varchar(255) || ')'
+    ELSE udt_name
+END as data_type,
+  udt_schema,
+  CASE
+    WHEN data_type = 'ARRAY' THEN 'YES'
+    ELSE 'NO'
+END as is_array,
+  pg_catalog.col_description(format('%I.%I', table_schema, table_name)::regclass::oid, ordinal_position) as column_comment
+FROM information_schema.columns
+WHERE table_schema = 'shop' AND table_name = 'orders'
+ORDER BY table_schema, table_name, ordinal_position
+----
+table_schema	table_name	column_name	is_nullable	is_generated	ordinal_position	column_default	data_type	udt_schema	is_array	column_comment
+shop	orders	id	NO	NEVER	1	nextval('shop.orders_id_seq'::regclass)	int8(64,0)	pg_catalog	NO	NULL
+shop	orders	customer_id	NO	NEVER	2	NULL	int4(32,0)	pg_catalog	NO	NULL
+shop	orders	amount	NO	NEVER	3	0	numeric(10,2)	pg_catalog	NO	NULL
+shop	orders	status	YES	NEVER	4	'new'::character varying	varchar(20)	pg_catalog	NO	NULL
+shop	orders	note	YES	NEVER	5	NULL	text	pg_catalog	NO	NULL
+shop	orders	ticket	YES	NEVER	6	nextval('shop.ticket_seq'::regclass)	int8(64,0)	pg_catalog	NO	NULL
+
+
+onlyif serenedb
+query
+SELECT
+  table_schema,
+  table_name,
+  column_name,
+  is_nullable,
+  is_generated,
+    ordinal_position,
+  column_default,
+  CASE
+    WHEN character_maximum_length is not null  and udt_name != 'text'
+      THEN udt_name || '(' || character_maximum_length::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is not null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ',' || numeric_scale::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ')'
+    WHEN datetime_precision is not null AND udt_name != 'date' THEN
+      udt_name || '(' || datetime_precision::varchar(255) || ')'
+    ELSE udt_name
+END as data_type,
+  udt_schema,
+  CASE
+    WHEN data_type = 'ARRAY' THEN 'YES'
+    ELSE 'NO'
+END as is_array,
+  pg_catalog.col_description(format('%I.%I', table_schema, table_name)::regclass::oid, ordinal_position) as column_comment
+FROM information_schema.columns
+WHERE table_schema = 'shop' AND table_name = 'orders'
+ORDER BY table_schema, table_name, ordinal_position
+----
+table_schema	table_name	column_name	is_nullable	is_generated	ordinal_position	column_default	data_type	udt_schema	is_array	column_comment
+shop	orders	id	NO	NEVER	1	nextval('orders_id_seq')	int8(64,0)	pg_catalog	NO	NULL
+shop	orders	customer_id	NO	NEVER	2	NULL	int4(32,0)	pg_catalog	NO	NULL
+shop	orders	amount	NO	NEVER	3	0	numeric(10,2)	pg_catalog	NO	NULL
+shop	orders	status	YES	NEVER	4	'new'	text	pg_catalog	NO	NULL
+shop	orders	note	YES	NEVER	5	NULL	text	pg_catalog	NO	NULL
+shop	orders	ticket	YES	NEVER	6	nextval('shop.ticket_seq')	int8(64,0)	pg_catalog	NO	NULL
+
+
+skipif serenedb
+query
+SELECT
+  table_schema,
+  table_name,
+  column_name,
+  is_nullable,
+  is_generated,
+    ordinal_position,
+  column_default,
+  CASE
+    WHEN character_maximum_length is not null  and udt_name != 'text'
+      THEN udt_name || '(' || character_maximum_length::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is not null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ',' || numeric_scale::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ')'
+    WHEN datetime_precision is not null AND udt_name != 'date' THEN
+      udt_name || '(' || datetime_precision::varchar(255) || ')'
+    ELSE udt_name
+END as data_type,
+  udt_schema,
+  CASE
+    WHEN data_type = 'ARRAY' THEN 'YES'
+    ELSE 'NO'
+END as is_array,
+  pg_catalog.col_description(format('%I.%I', table_schema, table_name)::regclass::oid, ordinal_position) as column_comment
+FROM information_schema.columns
+WHERE table_schema = 'shop' AND table_name = 'customers'
+ORDER BY table_schema, table_name, ordinal_position
+----
+table_schema	table_name	column_name	is_nullable	is_generated	ordinal_position	column_default	data_type	udt_schema	is_array	column_comment
+shop	customers	id	NO	NEVER	1	nextval('shop.customers_id_seq'::regclass)	int4(32,0)	pg_catalog	NO	NULL
+shop	customers	email	NO	NEVER	2	NULL	varchar(100)	pg_catalog	NO	Login email
+shop	customers	name	NO	NEVER	3	NULL	text	pg_catalog	NO	NULL
+shop	customers	active	YES	NEVER	4	true	bool	pg_catalog	NO	NULL
+shop	customers	mood	YES	NEVER	5	'ok'::shop.mood	mood	shop	NO	NULL
+shop	customers	created	YES	NEVER	6	now()	timestamptz(6)	pg_catalog	NO	NULL
+
+
+onlyif serenedb
+query
+SELECT
+  table_schema,
+  table_name,
+  column_name,
+  is_nullable,
+  is_generated,
+    ordinal_position,
+  column_default,
+  CASE
+    WHEN character_maximum_length is not null  and udt_name != 'text'
+      THEN udt_name || '(' || character_maximum_length::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is not null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ',' || numeric_scale::varchar(255) || ')'
+    WHEN numeric_precision is not null and numeric_scale is null
+      THEN udt_name || '(' || numeric_precision::varchar(255) || ')'
+    WHEN datetime_precision is not null AND udt_name != 'date' THEN
+      udt_name || '(' || datetime_precision::varchar(255) || ')'
+    ELSE udt_name
+END as data_type,
+  udt_schema,
+  CASE
+    WHEN data_type = 'ARRAY' THEN 'YES'
+    ELSE 'NO'
+END as is_array,
+  pg_catalog.col_description(format('%I.%I', table_schema, table_name)::regclass::oid, ordinal_position) as column_comment
+FROM information_schema.columns
+WHERE table_schema = 'shop' AND table_name = 'customers'
+ORDER BY table_schema, table_name, ordinal_position
+----
+table_schema	table_name	column_name	is_nullable	is_generated	ordinal_position	column_default	data_type	udt_schema	is_array	column_comment
+shop	customers	id	NO	NEVER	1	nextval('customers_id_seq')	int4(32,0)	pg_catalog	NO	NULL
+shop	customers	email	NO	NEVER	2	NULL	text	pg_catalog	NO	Login email
+shop	customers	name	NO	NEVER	3	NULL	text	pg_catalog	NO	NULL
+shop	customers	active	YES	NEVER	4	true	bool	pg_catalog	NO	NULL
+shop	customers	mood	YES	NEVER	5	'ok'	mood	shop	NO	NULL
+shop	customers	created	YES	NEVER	6	now()	timestamptz(6)	pg_catalog	NO	NULL
+
+
+query
+SELECT n.nspname AS schema, t.typname AS typename, e.enumlabel AS label
+FROM pg_enum e
+JOIN pg_type t ON t.oid = e.enumtypid
+JOIN pg_namespace n ON n.oid = t.typnamespace
+WHERE t.oid IN (
+     SELECT COALESCE(NULLIF(et.typelem, 0), et.oid)
+     FROM pg_attribute a
+     JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace cn ON cn.oid = c.relnamespace
+     JOIN pg_type et ON et.oid = a.atttypid
+     WHERE c.relname = 'customers' AND cn.nspname = 'shop'
+       AND a.attnum > 0 AND NOT a.attisdropped
+   )
+ORDER BY n.nspname, t.typname, e.enumsortorder
+----
+schema	typename	label
+shop	mood	sad
+shop	mood	ok
+shop	mood	happy
+
+
+query
+SELECT
+  trigger_name,
+  action_timing as timing,
+  event_manipulation as manipulation,
+  action_statement as action,
+  action_condition as condition
+FROM information_schema.triggers
+WHERE event_object_schema = 'shop'
+  AND event_object_table = 'orders'
+----
+trigger_name	timing	manipulation	action	condition
+
+
+skipif serenedb
+query
+SELECT indexname, index_order, indisunique, indisprimary, indnullsnotdistinct, index_column, ascending
+FROM (SELECT (SELECT relname FROM pg_class c WHERE c.oid = i.indexrelid) as indexname,
+       k.i AS index_order,
+       i.indexrelid as id,
+       i.indisunique,
+       i.indisprimary,
+       i.indnullsnotdistinct,
+  coalesce(a.attname, pg_get_indexdef(i.indexrelid, k.i, false)) AS index_column,
+  i.indoption[k.i - 1] = 0 AS ascending
+FROM pg_index i
+  CROSS JOIN LATERAL (SELECT unnest(i.indkey), generate_subscripts(i.indkey, 1) + 1) AS k(attnum, i)
+  LEFT JOIN pg_attribute AS a
+ON i.indrelid = a.attrelid AND k.attnum = a.attnum
+  JOIN pg_class t on t.oid = i.indrelid
+  JOIN pg_namespace c on c.oid = t.relnamespace
+WHERE
+  c.nspname = 'shop' AND
+  t.relname = 'customers') q
+ORDER BY indexname::text COLLATE "C", index_order
+----
+indexname	index_order	indisunique	indisprimary	indnullsnotdistinct	index_column	ascending
+customers_email_key	1	t	f	f	email	t
+customers_name_email_idx	1	t	f	f	name	t
+customers_name_email_idx	2	t	f	f	email	t
+customers_pkey	1	t	t	f	id	t
+
+
+onlyif serenedb
+query
+SELECT indexname, index_order, indisunique, indisprimary, indnullsnotdistinct, index_column, ascending
+FROM (SELECT (SELECT relname FROM pg_class c WHERE c.oid = i.indexrelid) as indexname,
+       k.i AS index_order,
+       i.indexrelid as id,
+       i.indisunique,
+       i.indisprimary,
+       i.indnullsnotdistinct,
+  coalesce(a.attname, pg_get_indexdef(i.indexrelid, k.i, false)) AS index_column,
+  i.indoption[k.i - 1] = 0 AS ascending
+FROM pg_index i
+  CROSS JOIN LATERAL (SELECT unnest(i.indkey), generate_subscripts(i.indkey, 1) + 1) AS k(attnum, i)
+  LEFT JOIN pg_attribute AS a
+ON i.indrelid = a.attrelid AND k.attnum = a.attnum
+  JOIN pg_class t on t.oid = i.indrelid
+  JOIN pg_namespace c on c.oid = t.relnamespace
+WHERE
+  c.nspname = 'shop' AND
+  t.relname = 'customers') q
+ORDER BY indexname::text COLLATE "C", index_order
+----
+indexname	index_order	indisunique	indisprimary	indnullsnotdistinct	index_column	ascending
+customers_email_key	2	t	f	f	email	t
+customers_name_email_idx	2	t	f	f	name	t
+customers_name_email_idx	3	t	f	f	email	t
+customers_pkey	2	t	t	f	id	t
+
+
+skipif serenedb
+query
+SELECT schema_name
+FROM information_schema.schemata
+ORDER BY schema_name
+----
+schema_name
+information_schema
+pg_catalog
+pg_toast
+public
+shop
+
+
+onlyif serenedb
+query
+SELECT schema_name
+FROM information_schema.schemata
+ORDER BY schema_name
+----
+schema_name
+information_schema
+pg_catalog
+public
+shop
+
+
+query
+SELECT ctu.table_name AS referenced_table_name
+FROM information_schema.table_constraints AS tc
+       JOIN information_schema.constraint_table_usage AS ctu
+            ON ctu.constraint_name = tc.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = 'order_items'
+  AND tc.table_schema = 'shop'
+----
+referenced_table_name
+orders
+
+
+skipif serenedb
+query
+SELECT
+  c.conname AS constraint_name,
+  a.attname AS column_name,
+  n.nspname AS from_schema,
+  t.relname AS from_table,
+  af.attname AS to_column,
+  tf.relname AS to_table,
+  nf.nspname AS to_schema,
+  CASE c.confupdtype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confupdtype::text
+  END AS update_rule,
+  CASE c.confdeltype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  pos AS ordinal_position
+FROM
+  pg_constraint c
+  JOIN pg_class t ON c.conrelid = t.oid
+  JOIN pg_namespace n ON t.relnamespace = n.oid
+  JOIN generate_subscripts(c.conkey, 1) pos ON true
+  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[pos]
+  JOIN pg_class tf ON c.confrelid = tf.oid
+  JOIN pg_namespace nf ON tf.relnamespace = nf.oid
+  JOIN pg_attribute af ON af.attrelid = tf.oid AND af.attnum = c.confkey[pos]
+WHERE
+  c.contype = 'f'
+  AND n.nspname = 'shop'
+  AND t.relname = 'order_items'
+ORDER BY
+  c.conname,
+  pos
+----
+constraint_name	column_name	from_schema	from_table	to_column	to_table	to_schema	update_rule	delete_rule	ordinal_position
+order_items_order_id_fkey	order_id	shop	order_items	id	orders	shop	NO ACTION	NO ACTION	1
+
+
+onlyif serenedb
+query error No\ function\ matches\ the\ given\ name\ and\ argument\ types\ 'array_extract\(SMALLINT\[\],\ STRUCT\(generate_subscripts\ BIGINT\)\)'\.\ Y
+SELECT
+  c.conname AS constraint_name,
+  a.attname AS column_name,
+  n.nspname AS from_schema,
+  t.relname AS from_table,
+  af.attname AS to_column,
+  tf.relname AS to_table,
+  nf.nspname AS to_schema,
+  CASE c.confupdtype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confupdtype::text
+  END AS update_rule,
+  CASE c.confdeltype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  pos AS ordinal_position
+FROM
+  pg_constraint c
+  JOIN pg_class t ON c.conrelid = t.oid
+  JOIN pg_namespace n ON t.relnamespace = n.oid
+  JOIN generate_subscripts(c.conkey, 1) pos ON true
+  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[pos]
+  JOIN pg_class tf ON c.confrelid = tf.oid
+  JOIN pg_namespace nf ON tf.relnamespace = nf.oid
+  JOIN pg_attribute af ON af.attrelid = tf.oid AND af.attnum = c.confkey[pos]
+WHERE
+  c.contype = 'f'
+  AND n.nspname = 'shop'
+  AND t.relname = 'order_items'
+ORDER BY
+  c.conname,
+  pos
+
+
+skipif serenedb
+query
+SELECT
+  c.conname AS constraint_name,
+  a.attname AS from_column,
+  n.nspname AS from_schema,
+  t.relname AS from_table,
+  af.attname AS to_column,
+  tf.relname AS to_table,
+  nf.nspname AS to_schema,
+  CASE c.confupdtype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confupdtype::text
+  END AS update_rule,
+  CASE c.confdeltype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  pos AS ordinal_position
+FROM
+  pg_constraint c
+  JOIN pg_class t ON c.conrelid = t.oid
+  JOIN pg_namespace n ON t.relnamespace = n.oid
+  JOIN generate_subscripts(c.conkey, 1) pos ON true
+  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[pos]
+  JOIN pg_class tf ON c.confrelid = tf.oid
+  JOIN pg_namespace nf ON tf.relnamespace = nf.oid
+  JOIN pg_attribute af ON af.attrelid = tf.oid AND af.attnum = c.confkey[pos]
+WHERE
+  c.contype = 'f'
+  AND nf.nspname = 'shop'
+  AND tf.relname = 'orders'
+ORDER BY
+  c.conname,
+  pos
+----
+constraint_name	from_column	from_schema	from_table	to_column	to_table	to_schema	update_rule	delete_rule	ordinal_position
+order_items_order_id_fkey	order_id	shop	order_items	id	orders	shop	NO ACTION	NO ACTION	1
+
+
+onlyif serenedb
+query error No\ function\ matches\ the\ given\ name\ and\ argument\ types\ 'array_extract\(SMALLINT\[\],\ STRUCT\(generate_subscripts\ BIGINT\)\)'\.\ Y
+SELECT
+  c.conname AS constraint_name,
+  a.attname AS from_column,
+  n.nspname AS from_schema,
+  t.relname AS from_table,
+  af.attname AS to_column,
+  tf.relname AS to_table,
+  nf.nspname AS to_schema,
+  CASE c.confupdtype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confupdtype::text
+  END AS update_rule,
+  CASE c.confdeltype::text
+    WHEN 'a' THEN 'NO ACTION'
+    WHEN 'r' THEN 'RESTRICT'
+    WHEN 'c' THEN 'CASCADE'
+    WHEN 'n' THEN 'SET NULL'
+    WHEN 'd' THEN 'SET DEFAULT'
+    ELSE c.confdeltype::text
+  END AS delete_rule,
+  pos AS ordinal_position
+FROM
+  pg_constraint c
+  JOIN pg_class t ON c.conrelid = t.oid
+  JOIN pg_namespace n ON t.relnamespace = n.oid
+  JOIN generate_subscripts(c.conkey, 1) pos ON true
+  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[pos]
+  JOIN pg_class tf ON c.confrelid = tf.oid
+  JOIN pg_namespace nf ON tf.relnamespace = nf.oid
+  JOIN pg_attribute af ON af.attrelid = tf.oid AND af.attnum = c.confkey[pos]
+WHERE
+  c.contype = 'f'
+  AND nf.nspname = 'shop'
+  AND tf.relname = 'orders'
+ORDER BY
+  c.conname,
+  pos
+
+
+query
+SELECT bool_or(datname = current_database()) AS lists_current
+FROM (SELECT datname
+FROM pg_database
+WHERE datistemplate = false
+ORDER BY datname) q
+----
+lists_current
+t
+
+
+query
+SELECT index_size >= 0 AS index_ok, table_size >= 0 AS table_ok, description
+FROM (SELECT pg_indexes_size('"shop"."customers"') as index_size,pg_relation_size('"shop"."customers"') as table_size,obj_description('"shop"."customers"'::regclass) as description) q
+----
+index_ok	table_ok	description
+t	t	Customer master
+
+
+query
+select tableowner from pg_catalog.pg_tables where tablename = 'orders' and schemaname = 'shop'
+----
+tableowner
+postgres
+
+
+skipif serenedb
+query
+SELECT
+'CREATE TABLE ' || quote_ident(tabdef.schema_name) || '.' || quote_ident(tabdef.table_name) || E' (\n' ||
+array_to_string(
+  array_agg(
+    '  ' || quote_ident(tabdef.column_name) || ' ' ||
+    case when tabdef.def_val like 'nextval(%_seq%' then
+      case when tabdef.type = 'integer' then 'serial'
+          when tabdef.type = 'smallint' then 'smallserial'
+          when tabdef.type = 'bigint' then 'bigserial'
+          else tabdef.type end
+    else
+      tabdef.type
+    end || ' ' ||
+    tabdef.not_null ||
+    CASE WHEN tabdef.def_val IS NOT NULL
+              AND NOT (tabdef.def_val like 'nextval(%_seq%'
+                      AND (tabdef.type = 'integer' OR tabdef.type = 'smallint' OR tabdef.type = 'bigint'))
+        THEN ' DEFAULT ' || tabdef.def_val
+    ELSE '' END ||
+    CASE WHEN tabdef.identity IS NOT NULL THEN ' ' || tabdef.identity ELSE '' END
+    ORDER BY tabdef.column_idx ASC
+  )
+  , E',\n'
+) || E'\n);\n' ||
+CASE WHEN tc.constraint_name IS NULL THEN ''
+    ELSE E'\nALTER TABLE ' || quote_ident(tabdef.schema_name) || '.' || quote_ident(tabdef.table_name) ||
+    ' ADD CONSTRAINT ' || quote_ident(tc.constraint_name)  ||
+    ' PRIMARY KEY ' || '(' || substring(constr.column_name from 0 for char_length(constr.column_name)-1) || ')'
+END AS createtable
+FROM
+( SELECT
+  c.relname AS table_name,
+  a.attname AS column_name,
+  a.attnum AS column_idx,
+  pg_catalog.format_type(a.atttypid, a.atttypmod) AS type,
+  CASE
+    WHEN a.attnotnull OR a.attidentity != '' THEN 'NOT NULL'
+  ELSE 'NULL'
+  END AS not_null,
+  CASE WHEN a.atthasdef THEN pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) ELSE null END AS def_val,
+  CASE WHEN a.attidentity = 'a' THEN 'GENERATED ALWAYS AS IDENTITY' when a.attidentity = 'd' THEN 'GENERATED BY DEFAULT AS IDENTITY' ELSE null END AS identity,
+  n.nspname as schema_name
+FROM pg_class c
+JOIN pg_namespace n ON (n.oid = c.relnamespace)
+JOIN pg_attribute a ON (a.attnum > 0 AND a.attrelid = c.oid)
+JOIN pg_type t ON (a.atttypid = t.oid)
+LEFT JOIN pg_attrdef ad ON (a.attrelid = ad.adrelid AND a.attnum = ad.adnum)
+WHERE c.relname = 'orders'
+AND n.nspname = 'shop'
+ORDER BY a.attnum DESC
+) AS tabdef
+LEFT JOIN information_schema.table_constraints tc
+ON  tc.table_name       = tabdef.table_name
+AND tc.table_schema     = tabdef.schema_name
+AND tc.constraint_Type  = 'PRIMARY KEY'
+LEFT JOIN LATERAL (
+SELECT column_name || ', ' AS column_name
+FROM   information_schema.key_column_usage kcu
+WHERE  kcu.constraint_name = tc.constraint_name
+AND kcu.table_name = tabdef.table_name
+AND kcu.table_schema = tabdef.schema_name
+ORDER BY ordinal_position
+) AS constr ON true
+GROUP BY tabdef.schema_name, tabdef.table_name, tc.constraint_name, constr.column_name
+----
+createtable
+CREATE TABLE shop.orders (\n  id bigserial NOT NULL,\n  customer_id integer NOT NULL,\n  amount numeric(10,2) NOT NULL DEFAULT 0,\n  status character varying(20) NULL DEFAULT 'new'::character varying,\n  note text NULL,\n  ticket bigserial NULL\n);\n\nALTER TABLE shop.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id)
+
+
+onlyif serenedb
+query
+SELECT
+'CREATE TABLE ' || quote_ident(tabdef.schema_name) || '.' || quote_ident(tabdef.table_name) || E' (\n' ||
+array_to_string(
+  array_agg(
+    '  ' || quote_ident(tabdef.column_name) || ' ' ||
+    case when tabdef.def_val like 'nextval(%_seq%' then
+      case when tabdef.type = 'integer' then 'serial'
+          when tabdef.type = 'smallint' then 'smallserial'
+          when tabdef.type = 'bigint' then 'bigserial'
+          else tabdef.type end
+    else
+      tabdef.type
+    end || ' ' ||
+    tabdef.not_null ||
+    CASE WHEN tabdef.def_val IS NOT NULL
+              AND NOT (tabdef.def_val like 'nextval(%_seq%'
+                      AND (tabdef.type = 'integer' OR tabdef.type = 'smallint' OR tabdef.type = 'bigint'))
+        THEN ' DEFAULT ' || tabdef.def_val
+    ELSE '' END ||
+    CASE WHEN tabdef.identity IS NOT NULL THEN ' ' || tabdef.identity ELSE '' END
+    ORDER BY tabdef.column_idx ASC
+  )
+  , E',\n'
+) || E'\n);\n' ||
+CASE WHEN tc.constraint_name IS NULL THEN ''
+    ELSE E'\nALTER TABLE ' || quote_ident(tabdef.schema_name) || '.' || quote_ident(tabdef.table_name) ||
+    ' ADD CONSTRAINT ' || quote_ident(tc.constraint_name)  ||
+    ' PRIMARY KEY ' || '(' || substring(constr.column_name from 0 for char_length(constr.column_name)-1) || ')'
+END AS createtable
+FROM
+( SELECT
+  c.relname AS table_name,
+  a.attname AS column_name,
+  a.attnum AS column_idx,
+  pg_catalog.format_type(a.atttypid, a.atttypmod) AS type,
+  CASE
+    WHEN a.attnotnull OR a.attidentity != '' THEN 'NOT NULL'
+  ELSE 'NULL'
+  END AS not_null,
+  CASE WHEN a.atthasdef THEN pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) ELSE null END AS def_val,
+  CASE WHEN a.attidentity = 'a' THEN 'GENERATED ALWAYS AS IDENTITY' when a.attidentity = 'd' THEN 'GENERATED BY DEFAULT AS IDENTITY' ELSE null END AS identity,
+  n.nspname as schema_name
+FROM pg_class c
+JOIN pg_namespace n ON (n.oid = c.relnamespace)
+JOIN pg_attribute a ON (a.attnum > 0 AND a.attrelid = c.oid)
+JOIN pg_type t ON (a.atttypid = t.oid)
+LEFT JOIN pg_attrdef ad ON (a.attrelid = ad.adrelid AND a.attnum = ad.adnum)
+WHERE c.relname = 'orders'
+AND n.nspname = 'shop'
+ORDER BY a.attnum DESC
+) AS tabdef
+LEFT JOIN information_schema.table_constraints tc
+ON  tc.table_name       = tabdef.table_name
+AND tc.table_schema     = tabdef.schema_name
+AND tc.constraint_Type  = 'PRIMARY KEY'
+LEFT JOIN LATERAL (
+SELECT column_name || ', ' AS column_name
+FROM   information_schema.key_column_usage kcu
+WHERE  kcu.constraint_name = tc.constraint_name
+AND kcu.table_name = tabdef.table_name
+AND kcu.table_schema = tabdef.schema_name
+ORDER BY ordinal_position
+) AS constr ON true
+GROUP BY tabdef.schema_name, tabdef.table_name, tc.constraint_name, constr.column_name
+----
+createtable
+CREATE TABLE shop.orders (\n  id bigserial NOT NULL,\n  customer_id integer NOT NULL,\n  amount numeric(10,2) NOT NULL DEFAULT 0,\n  status text NULL DEFAULT 'new',\n  note text NULL,\n  ticket bigserial NULL\n);\n\nALTER TABLE shop.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id)
+
+
+skipif serenedb
+query
+SELECT pg_get_viewdef('"shop"."order_totals"'::regclass, true)
+----
+pg_get_viewdef
+ SELECT customer_id,\n    sum(amount) AS total,\n    count(*) AS n\n   FROM shop.orders o\n  GROUP BY customer_id;
+
+
+onlyif serenedb
+query
+SELECT pg_get_viewdef('"shop"."order_totals"'::regclass, true)
+----
+pg_get_viewdef
+SELECT o.customer_id, sum(o.amount) AS total, count_star() AS n FROM shop.orders AS o GROUP BY o.customer_id;
+
+
+skipif serenedb
+query
+SELECT pg_get_functiondef(p.oid)
+FROM pg_proc p
+       LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE proname = 'add_one'
+  AND n.nspname = 'shop'
+----
+pg_get_functiondef
+CREATE OR REPLACE FUNCTION shop.add_one(i integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$ SELECT i + 1 $function$\n
+
+
+onlyif serenedb
+query
+SELECT pg_get_functiondef(p.oid)
+FROM pg_proc p
+       LEFT JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE proname = 'add_one'
+  AND n.nspname = 'shop'
+----
+pg_get_functiondef
+CREATE OR REPLACE FUNCTION shop.add_one(i integer)\n RETURNS integer\n LANGUAGE sql\nAS $function$(SELECT (i + 1) LIMIT 1)$function$\n
+
+
+query
+SELECT table_name
+FROM (SELECT quote_ident(table_name) as table_name
+FROM information_schema.tables
+WHERE table_schema = 'shop'
+  AND table_type NOT LIKE '%VIEW%') q
+ORDER BY table_name::text COLLATE "C"
+----
+table_name
+customers
+order_items
+orders
+
+
+query
+SELECT
+  schemaname as schema,
+  matviewname as name
+FROM pg_matviews
+  WHERE "schemaname" = 'shop'
+order by schemaname, matviewname
+----
+schema	name
+
+
+query
+SELECT
+  a.attname as column_name,
+  format_type(a.atttypid, a.atttypmod) AS data_type,
+  a.attnum as position
+FROM   pg_index i
+  JOIN   pg_attribute a ON a.attrelid = i.indrelid
+  AND a.attnum = ANY(i.indkey)
+WHERE  i.indrelid = '"shop"."order_items"'::regclass
+  AND    i.indisprimary
+ORDER BY a.attnum
+----
+column_name	data_type	position
+order_id	bigint	1
+line	integer	2
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION shop.add_one(integer) FROM cq_beekeeper_reader
+
+
+statement ok
+REVOKE SELECT, INSERT ON shop.orders FROM cq_beekeeper_reader
+
+
+statement ok
+REVOKE SELECT ON shop.customers FROM cq_beekeeper_reader
+
+
+statement ok
+REVOKE USAGE ON SCHEMA shop FROM cq_beekeeper_reader
+
+
+statement ok
+DROP ROLE cq_beekeeper_reader

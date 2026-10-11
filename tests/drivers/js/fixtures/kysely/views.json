@@ -1,0 +1,33 @@
+[
+ {
+  "columns": [
+   {
+    "dataType": "varchar",
+    "dataTypeSchema": "pg_catalog",
+    "hasDefaultValue": false,
+    "isAutoIncrementing": false,
+    "isNullable": true,
+    "name": "hero"
+   },
+   {
+    "dataType": "varchar",
+    "dataTypeSchema": "pg_catalog",
+    "hasDefaultValue": false,
+    "isAutoIncrementing": false,
+    "isNullable": true,
+    "name": "item"
+   },
+   {
+    "dataType": "int4",
+    "dataTypeSchema": "pg_catalog",
+    "hasDefaultValue": false,
+    "isAutoIncrementing": false,
+    "isNullable": true,
+    "name": "cost"
+   }
+  ],
+  "isView": true,
+  "name": "hero_items",
+  "schema": "public"
+ }
+]

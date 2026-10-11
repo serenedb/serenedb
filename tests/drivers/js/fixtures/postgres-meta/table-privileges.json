@@ -1,0 +1,173 @@
+[
+ {
+  "kind": "table",
+  "name": "players",
+  "privileges": [
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "DELETE"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "INSERT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "MAINTAIN"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "REFERENCES"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "SELECT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "TRIGGER"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "TRUNCATE"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "UPDATE"
+   }
+  ],
+  "schema": "public"
+ },
+ {
+  "kind": "view",
+  "name": "team_rosters",
+  "privileges": [
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "DELETE"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "INSERT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "MAINTAIN"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "REFERENCES"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "SELECT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "TRIGGER"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "TRUNCATE"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "UPDATE"
+   }
+  ],
+  "schema": "public"
+ },
+ {
+  "kind": "table",
+  "name": "teams",
+  "privileges": [
+   {
+    "grantee": "<role>",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "SELECT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "DELETE"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "INSERT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "MAINTAIN"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "REFERENCES"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "SELECT"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "TRIGGER"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "TRUNCATE"
+   },
+   {
+    "grantee": "postgres",
+    "grantor": "postgres",
+    "is_grantable": false,
+    "privilege_type": "UPDATE"
+   }
+  ],
+  "schema": "public"
+ }
+]

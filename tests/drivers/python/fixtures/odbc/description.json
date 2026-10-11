@@ -1,0 +1,38 @@
+[
+ [
+  "id",
+  "<class 'int'>",
+  "None",
+  "10",
+  "10",
+  "0",
+  "False"
+ ],
+ [
+  "name",
+  "<class 'str'>",
+  "None",
+  "100",
+  "100",
+  "0",
+  "False"
+ ],
+ [
+  "score",
+  "<class 'decimal.Decimal'>",
+  "None",
+  "10",
+  "10",
+  "2",
+  "True"
+ ],
+ [
+  "created",
+  "<class 'datetime.datetime'>",
+  "None",
+  "26",
+  "26",
+  "6",
+  "True"
+ ]
+]

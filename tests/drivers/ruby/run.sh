@@ -1,5 +1,5 @@
 #!/bin/bash
-# Ruby / pg (ruby-pg) driver harness.
+# Ruby harness: ruby-pg type matrix, then the ActiveRecord and Sequel suites.
 
 set -u
 
@@ -10,12 +10,21 @@ if ! command -v ruby >/dev/null 2>&1; then
 	echo "[ruby] ruby not found" >&2
 	exit 1
 fi
-if ! ruby -e 'require "pg"; require "yaml"' 2>/dev/null; then
-	echo "[ruby] the pg gem is missing; gem install pg" >&2
-	exit 1
-fi
+for lib in pg yaml active_record sequel minitest; do
+	if ! ruby -e "require '$lib'" 2>/dev/null; then
+		echo "[ruby] $lib is missing; install the gems of $SCRIPT_DIR/Gemfile.lock" >&2
+		exit 1
+	fi
+done
 
 JUNIT="${SDB_DRV_JUNIT:-./out/drivers-tests}"
 mkdir -p "$JUNIT"
+export SDB_DRV_JUNIT="$JUNIT"
 
-ruby harness.rb "$JUNIT/tests-drivers-ruby-junit.xml"
+final=0
+ruby harness.rb "$JUNIT/tests-drivers-ruby-junit.xml" || final=1
+for suite in activerecord_test sequel_test; do
+	echo "[ruby][$suite] running"
+	ruby "$suite.rb" || final=1
+done
+exit "$final"

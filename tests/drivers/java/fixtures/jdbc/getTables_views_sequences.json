@@ -1,0 +1,9 @@
+{
+ "columns": ["TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "TABLE_TYPE", "REMARKS", "TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "SELF_REFERENCING_COL_NAME", "REF_GENERATION"],
+ "rows": [
+  [null, "app", "book_id_seq", "SEQUENCE", null, "", "", "", "", ""],
+  [null, "app", "counter_seq", "SEQUENCE", "counts", "", "", "", "", ""],
+  [null, "app", "pair", "TYPE", null, "", "", "", "", ""],
+  [null, "app", "cheap_books", "VIEW", "under ten", "", "", "", "", ""]
+ ]
+}

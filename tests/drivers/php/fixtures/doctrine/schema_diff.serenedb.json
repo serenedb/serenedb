@@ -1,0 +1,7 @@
+[
+    "ALTER TABLE tags ALTER label TYPE VARCHAR(50)",
+    "DROP INDEX notes_code_partial",
+    "ALTER TABLE notes ALTER attz TYPE TIMESTAMP(0) WITH TIME ZONE",
+    "ALTER TABLE notes ALTER code TYPE CHAR(3)",
+    "CREATE INDEX notes_code_partial ON notes (code) WHERE code IS NOT NULL"
+]

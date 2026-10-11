@@ -1,0 +1,8 @@
+line 51: ERROR:  syntax error at or near "(" at character 30
+line 390: ERROR:  Unknown index type: btree
+line 397: ERROR:  Unknown index type: btree
+line 404: ERROR:  Unknown index type: btree
+line 411: ERROR:  Unknown index type: btree
+line 419: ERROR:  No support for adding FOREIGN_KEY constraints with ALTER TABLE
+line 427: ERROR:  No support for adding FOREIGN_KEY constraints with ALTER TABLE
+line 435: ERROR:  No support for adding FOREIGN_KEY constraints with ALTER TABLE

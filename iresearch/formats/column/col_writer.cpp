@@ -27,8 +27,6 @@
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
 #include <utility>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
 
 #include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -251,7 +249,7 @@ bool ColWriter::Commit(uint64_t target_row) {
   return Commit(target_row, kNoCancel);
 }
 
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env) {
+bool ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   return ComputeAnn(env, kNoCancel);
 }
 
@@ -310,23 +308,25 @@ bool ColWriter::Commit(uint64_t target_row,
   return true;
 }
 
-yaclib::Task<bool> ColWriter::ComputeAnn(const AnnBuildEnv* env,
-                                         absl::FunctionRef<bool()> progress) {
+bool ColWriter::ComputeAnn(const AnnBuildEnv* env,
+                           absl::FunctionRef<bool()> progress) {
   if (!_committed || _ann_writers.empty()) {
-    co_return true;
+    return true;
   }
   ColReader reader{*_dir, _segment_name, *_db};
   for (auto& entry : _ann_writers) {
     if (!progress()) {
-      co_return false;
+      return false;
     }
     const auto* col = reader.Column(entry->column_id);
     if (!col) {
       continue;
     }
-    co_await entry->writer->Compute(*col, reader.Ctx(), env);
+    if (!entry->writer->Compute(reader, *col, reader.Ctx(), env, progress)) {
+      return false;
+    }
   }
-  co_return true;
+  return true;
 }
 
 }  // namespace irs

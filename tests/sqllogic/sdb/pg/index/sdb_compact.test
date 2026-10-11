@@ -1,0 +1,788 @@
+# CALL sdb_compact merges segments of a search table or an inverted index on
+# demand, EXPLAIN shows what it would merge, sdb_segments lists the segments and
+# sdb_merge_history keeps finished merges. Background compaction is off for the
+# tables that get merged here, so every merge in this file comes from
+# sdb_compact or VACUUM.
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true}
+
+
+statement ok
+CREATE TABLE sdbc (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sdbc SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc
+
+
+statement ok
+INSERT INTO sdbc SELECT i, 'fox cat' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc
+
+
+statement ok
+INSERT INTO sdbc SELECT i, 'owl dog' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc
+
+
+statement ok
+INSERT INTO sdbc SELECT i, 'owl cat' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(live_docs) AS live,
+       sum(deleted_docs) AS deleted, bool_and(bytes > 0) AS sized,
+       bool_and(rowid_min <= rowid_max) AS rowids
+FROM sdb_segments('sdbc')
+----
+segments	docs	live	deleted	sized	rowids
+4	400	400	0	t	t
+
+
+query
+EXPLAIN CALL sdb_compact('sdbc', mode := 'compact', target_segments := 2)
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ──────────────────────╮
+│ Table: public.sdbc                     │
+│ Mode: compact                          │
+│ Segments: 4                            │
+│ Merges: 2                              │
+│ Merge 1:                               │
+│ 2 segments -> 1, compact to 2 segments │
+│ Merge 1 Inputs: _1, _3                 │
+│ Merge 1 Docs:                          │
+│ 200 (200 live), rowid 1..300           │
+│ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                       │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field              │
+│ Merge 2:                               │
+│ 2 segments -> 1, compact to 2 segments │
+│ Merge 2 Inputs: _2, _4                 │
+│ Merge 2 Docs:                          │
+│ 200 (200 live), rowid 101..400         │
+│ Merge 2 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 2 Columns:                       │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 2 Postings: 1 field              │
+╰────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('sdbc')
+----
+segments
+4
+
+
+query
+SELECT merge, outcome, len(inputs) AS inputs, input_docs, input_live_docs,
+       output_docs, output IS NOT NULL AS has_output, total_ms >= 0 AS timed,
+       error
+FROM sdb_compact('sdbc', mode := 'compact', target_segments := 2)
+ORDER BY merge
+----
+merge	outcome	inputs	input_docs	input_live_docs	output_docs	has_output	timed	error
+1	merged	2	200	200	200	t	t	NULL
+2	merged	2	200	200	200	t	t	NULL
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sdbc')
+----
+segments	docs
+2	400
+
+
+query
+SELECT count(*) AS hits FROM sdbc WHERE body LIKE '%dog%'
+----
+hits
+200
+
+
+query
+SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
+       finished >= started AS ordered, error
+FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
+ORDER BY merge_id
+----
+origin	outcome	inputs	input_docs	output_docs	ordered	error
+sql	merged	2	200	200	t	NULL
+sql	merged	2	200	200	t	NULL
+
+
+query
+SELECT merge, outcome FROM sdb_compact('sdbc', mode := 'compact', target_segments := 2)
+----
+merge	outcome
+
+
+query
+SELECT segment FROM sdb_segments('sdbc') ORDER BY segment
+----
+segment
+_5
+_6
+
+
+query
+SELECT outcome, input_docs, output_docs, output
+FROM sdb_compact('sdbc', mode := 'segments', segments := ['_5', '_6'])
+----
+outcome	input_docs	output_docs	output
+merged	400	400	_7
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sdbc')
+----
+segments	docs
+1	400
+
+
+statement ok
+DELETE FROM sdbc WHERE id <= 50
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc
+
+
+query
+SELECT sum(docs) AS docs, sum(deleted_docs) AS deleted FROM sdb_segments('sdbc')
+----
+docs	deleted
+400	50
+
+
+query
+SELECT merge, outcome
+FROM sdb_compact('sdbc', mode := 'compact', target_segments := NULL)
+----
+merge	outcome
+
+
+query
+SELECT outcome, input_docs, input_live_docs, output_docs
+FROM sdb_compact('sdbc', mode := 'segments', segments := ['_7', NULL])
+----
+outcome	input_docs	input_live_docs	output_docs
+merged	400	350	350
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs, sum(deleted_docs) AS deleted
+FROM sdb_segments('sdbc')
+----
+segments	docs	deleted
+1	350	0
+
+
+statement ok
+INSERT INTO sdbc SELECT i, 'fox owl' FROM generate_series(1001, 1100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc
+
+
+query
+EXPLAIN ANALYZE CALL sdb_compact('sdbc', mode := 'compact')
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ EXTENSION ───────────────────────────╮
+│ Table: public.sdbc                    │
+│ Mode: compact                         │
+│ Segments: 2                           │
+│ Merges: 1                             │
+│ Merge 1:                              │
+│ 2 segments -> 1, compact to 1 segment │
+│ Merge 1 Inputs: _9, _10               │
+│ Merge 1 Docs:                         │
+│ 450 (450 live), rowid 51..500         │
+│ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                      │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field             │
+│ Actual Outcome: merged 1              │
+│ Actual Written: <slt:ignore>│
+│ Actual Prepare: 0.0 ms                │
+│ Actual Norms: 0.0 ms                  │
+│ Actual Columns: 0.0 ms                │
+│ Actual Columns Commit: 0.0 ms         │
+│ Actual ANN: 0.0 ms                    │
+│ Actual Postings: 0.0 ms               │
+│ Actual Commit: 0.0 ms                 │
+│ Actual Total: 0.0 ms                  │
+│ 1 row                             0µs │
+╰───────────────────────────────────────╯
+
+
+statement ok
+SELECT * FROM sdb_compact('sdbc', mode := NULL)
+
+
+query
+SELECT count(*) AS hits FROM sdbc WHERE body LIKE '%fox%'
+----
+hits
+250
+
+
+statement error
+SELECT * FROM sdb_compact(NULL)
+----
+db error: ERROR: sdb_compact requires a relation name
+
+
+statement error
+SELECT * FROM sdb_segments(NULL)
+----
+db error: ERROR: sdb_segments requires a relation name
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc', mode := 'sideways')
+----
+db error: ERROR: unknown sdb_compact mode "sideways": expected background, compact or segments
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc', mode := 'segments')
+----
+db error: ERROR: sdb_compact mode segments requires segments
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc', segments := ['_1'])
+----
+db error: ERROR: sdb_compact segments requires mode segments
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc', target_segments := 2)
+----
+db error: ERROR: sdb_compact target_segments requires mode compact
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc', mode := 'compact', target_segments := 0)
+----
+db error: ERROR: sdb_compact target_segments must be positive
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc', mode := 'segments', segments := ['_nope'])
+----
+db error: ERROR: segment(s) _nope not found in public.sdbc
+
+
+statement error
+SELECT * FROM sdb_segments('sdbc_missing')
+----
+db error: ERROR: relation "sdbc_missing" does not exist
+
+
+statement ok
+CREATE TABLE sdbc_plain (id INT)
+
+
+statement error
+SELECT * FROM sdb_segments('sdbc_plain')
+----
+db error: ERROR: "sdbc_plain" is not a search table or an inverted index
+
+
+statement ok
+CREATE TABLE sdbc_src (id INT, body TEXT)
+
+
+statement ok
+CREATE INDEX sdbc_idx ON sdbc_src USING inverted(body)
+WITH (refresh_interval = 0, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sdbc_src SELECT i, 'fox dog' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_src
+
+
+statement ok
+INSERT INTO sdbc_src SELECT i, 'fox cat' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_src
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sdbc_idx')
+----
+segments	docs
+2	200
+
+
+query
+SELECT outcome, input_docs, output_docs
+FROM sdb_compact('sdbc_idx', mode := 'compact')
+----
+outcome	input_docs	output_docs
+merged	200	200
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sdbc_idx')
+----
+segments	docs
+1	200
+
+
+query
+SELECT origin, outcome, input_docs
+FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc_idx')
+----
+origin	outcome	input_docs
+sql	merged	200
+
+
+# The planner keeps a group of one segment without deletes as it is, merges a
+# listed segment only when there is something to merge, and leaves a segment
+# out of a background round when the tier policy picks nothing.
+
+statement ok
+CREATE TABLE sdbc_plan (id BIGINT PRIMARY KEY, vec FLOAT[3], body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+CREATE INDEX sdbc_plan_hnsw ON sdbc_plan
+USING inverted (vec hnsw(metric='l2', quant='none'))
+
+
+statement ok
+INSERT INTO sdbc_plan
+SELECT i, [i::FLOAT, 1::FLOAT, 2::FLOAT]::FLOAT[3], 'fox'
+FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_plan
+
+
+statement ok
+INSERT INTO sdbc_plan
+SELECT i, [i::FLOAT, 2::FLOAT, 3::FLOAT]::FLOAT[3], 'owl'
+FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_plan
+
+
+statement ok
+INSERT INTO sdbc_plan
+SELECT i, [i::FLOAT, 3::FLOAT, 4::FLOAT]::FLOAT[3], 'cat'
+FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_plan
+
+
+query
+EXPLAIN CALL sdb_compact('sdbc_plan', mode := 'compact', target_segments := 2)
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ───────────────────────╮
+│ Table: public.sdbc_plan                 │
+│ Mode: compact                           │
+│ Segments: 3                             │
+│ Merges: 1                               │
+│ Merge 1:                                │
+│ 2 segments -> 1, compact to 2 segments  │
+│ Merge 1 Inputs: _1, _3                  │
+│ Merge 1 Docs:                           │
+│ 200 (200 live), rowid 1..300            │
+│ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                        │
+│ 4, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field               │
+│ Merge 1 ANN: 1 column                   │
+│ Not Merged:                             │
+│ _2 (alone in its group without deletes) │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT outcome, input_docs, output
+FROM sdb_compact('sdbc_plan', mode := 'compact', target_segments := 2)
+----
+outcome	input_docs	output
+merged	200	_4
+
+
+query
+SELECT segment, docs FROM sdb_segments('sdbc_plan') ORDER BY segment
+----
+segment	docs
+_2	100
+_4	200
+
+
+query
+SELECT count(*) AS merges
+FROM sdb_compact('sdbc_plan', mode := 'segments', segments := ['_2'])
+----
+merges
+0
+
+
+query
+SELECT outcome FROM sdb_compact('sdbc_plan', mode := 'compact', target_segments := 1)
+----
+outcome
+merged
+
+
+query
+SELECT count(*) AS merges FROM sdb_compact('sdbc_plan')
+----
+merges
+0
+
+
+query
+EXPLAIN ANALYZE CALL sdb_compact('sdbc_plan')
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ EXTENSION ─────────────────────────────────────────────────╮
+│ Table: public.sdbc_plan                                     │
+│ Mode: background                                            │
+│ Segments: 1                                                 │
+│ Merges: 0                                                   │
+│ Not Merged:                                                 │
+│ _5 (not selected by the tier policy)                        │
+│ Notes:                                                      │
+│ background compaction is disabled (compaction_interval = 0) │
+│ Actual Outcome: nothing ran                                 │
+│ Actual Written: 0 bytes                                     │
+│ Actual Prepare: 0.0 ms                                      │
+│ Actual Norms: 0.0 ms                                        │
+│ Actual Columns: 0.0 ms                                      │
+│ Actual Columns Commit: 0.0 ms                               │
+│ Actual ANN: 0.0 ms                                          │
+│ Actual Postings: 0.0 ms                                     │
+│ Actual Commit: 0.0 ms                                       │
+│ Actual Total: 0.0 ms                                        │
+│ 0 rows                                                  0µs │
+╰─────────────────────────────────────────────────────────────╯
+
+
+statement ok
+DROP TABLE sdbc_plan
+
+
+statement ok
+CREATE TABLE sdbc_many (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (1, 'a')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (2, 'b')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (3, 'c')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (4, 'd')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (5, 'e')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (6, 'f')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (7, 'g')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (8, 'h')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+statement ok
+INSERT INTO sdbc_many VALUES (9, 'i')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_many
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('sdbc_many')
+----
+segments
+9
+
+
+query
+EXPLAIN CALL sdb_compact('sdbc_many', mode := 'compact')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ───────────────────────╮
+│ Table: public.sdbc_many                 │
+│ Mode: compact                           │
+│ Segments: 9                             │
+│ Merges: 1                               │
+│ Merge 1:                                │
+│ 9 segments -> 1, compact to 1 segment   │
+│ Merge 1 Inputs:                         │
+│ _1, _2, _3, _4, _5, _6, _7, _8, +1 more │
+│ Merge 1 Docs: 9 (9 live), rowid 1..9    │
+│ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                        │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field               │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT outcome, input_docs FROM sdb_compact('sdbc_many', mode := 'compact')
+----
+outcome	input_docs
+merged	9
+
+
+statement ok
+DROP TABLE sdbc_many
+
+
+# A group of one segment is merged when it has deletes.
+
+statement ok
+CREATE TABLE sdbc_live (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sdbc_live SELECT i, 'fox' FROM generate_series(1, 30) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_live
+
+
+statement ok
+INSERT INTO sdbc_live SELECT i, 'owl' FROM generate_series(31, 60) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_live
+
+
+statement ok
+INSERT INTO sdbc_live SELECT i, 'cat' FROM generate_series(61, 90) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_live
+
+
+statement ok
+DELETE FROM sdbc_live WHERE id BETWEEN 31 AND 35
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_live
+
+
+query
+EXPLAIN CALL sdb_compact('sdbc_live', mode := 'compact', target_segments := 2)
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ────────────────────────╮
+│ Table: public.sdbc_live                  │
+│ Mode: compact                            │
+│ Segments: 3                              │
+│ Merges: 2                                │
+│ Merge 1:                                 │
+│ 2 segments -> 1, compact to 2 segments   │
+│ Merge 1 Inputs: _1, _3                   │
+│ Merge 1 Docs: 60 (60 live), rowid 1..90  │
+│ Merge 1 Bytes: <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                         │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field                │
+│ Merge 2:                                 │
+│ 1 segment -> 1, compact to 2 segments    │
+│ Merge 2 Inputs: _2                       │
+│ Merge 2 Docs: 30 (25 live), rowid 31..60 │
+│ Merge 2 Bytes:                           │
+│ <slt:ignore> -> est <slt:ignore>│
+│ Merge 2 Columns:                         │
+│ 3, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 2 Postings: 1 field                │
+╰──────────────────────────────────────────╯
+
+
+query
+SELECT outcome, input_docs, input_live_docs
+FROM sdb_compact('sdbc_live', mode := 'compact', target_segments := 2)
+ORDER BY input_docs
+----
+outcome	input_docs	input_live_docs
+merged	30	25
+merged	60	60
+
+
+query
+SELECT outcome, input_docs, output_docs FROM sdb_compact('sdbc_live')
+----
+outcome	input_docs	output_docs
+merged	85	85
+
+
+statement ok
+INSERT INTO sdbc_live SELECT i, 'elk' FROM generate_series(91, 120) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_live
+
+
+statement ok
+SET profiling_renderer_settings = {'expand_all': true}
+
+
+statement ok
+EXPLAIN ANALYZE CALL sdb_compact('sdbc_live')
+
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true}
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('sdbc_live')
+----
+segments	docs
+1	115
+
+
+statement ok
+DROP TABLE sdbc_live
+
+
+# Planning with compaction enabled skips the "compaction is off" note.
+
+statement ok
+CREATE TABLE sdbc_on (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 3600000)
+
+
+statement ok
+INSERT INTO sdbc_on VALUES (1, 'fox')
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_on
+
+
+query
+EXPLAIN CALL sdb_compact('sdbc_on')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ────────────────────╮
+│ Table: public.sdbc_on                │
+│ Mode: background                     │
+│ Segments: 1                          │
+│ Merges: 0                            │
+│ Not Merged:                          │
+│ _1 (not selected by the tier policy) │
+╰──────────────────────────────────────╯
+
+
+statement ok
+DROP TABLE sdbc_on
+
+
+statement ok
+DROP TABLE sdbc
+
+
+statement ok
+DROP TABLE sdbc_src
+
+
+statement ok
+DROP TABLE sdbc_plain

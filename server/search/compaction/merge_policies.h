@@ -1,0 +1,45 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <iresearch/index/column_info.hpp>
+#include <iresearch/index/index_writer.hpp>
+#include <memory>
+
+#include "search/maintenance.h"
+
+namespace sdb::search {
+
+class InvertedIndexStorage;
+class SearchTable;
+
+irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings, bool small);
+
+struct CompactionOptions {
+  bool alive = false;
+  std::shared_ptr<const irs::IndexFieldOptions> keepalive;
+  const irs::IndexFieldOptions* field_options = nullptr;
+};
+
+CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx);
+CompactionOptions PinCompactionOptions(SearchTable& table);
+
+}  // namespace sdb::search

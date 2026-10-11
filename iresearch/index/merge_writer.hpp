@@ -31,6 +31,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/merge_profile.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -106,6 +107,8 @@ class MergeWriter : public util::Noncopyable {
     return _readers[i];
   }
 
+  const MergeProfile& Profile() const noexcept { return _profile; }
+
  private:
   Directory& _dir;
   ManagedVector<ReaderCtx> _readers;
@@ -113,6 +116,7 @@ class MergeWriter : public util::Noncopyable {
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
+  MergeProfile _profile;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

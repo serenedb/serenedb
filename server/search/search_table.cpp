@@ -148,6 +148,7 @@ void SearchTable::OpenWriter(bool in_memory) {
            : irs::OpenMode::kOmCreate;
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
   // references, so Make() must not unlink them; FinishRecovery cleans up once
@@ -379,25 +380,33 @@ void SearchTable::RemoveIndexConfig(duckdb::idx_t index_oid) {
 auto SearchTable::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  MergeOrigin origin, irs::CompactionResult* outcome)
   -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
+  MergeRecorder recorder{GetTableId(), origin};
+  const auto recorded = recorder.Wrap(policy);
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    const auto res =
-      co_await _writer->CompactAsync(policy, field_options, progress, env);
+    auto res =
+      co_await _writer->CompactAsync(recorded, field_options, progress, env);
     if (!res) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));
     } else {
       empty_compaction = (res.size == 0);  // nothing merged -> idle round
     }
+    if (outcome) {
+      *outcome = res;
+    }
+    recorder.Finish(std::move(res));
   } catch (const std::exception& e) {
     result = absl::InternalError(absl::StrCat(
       "consolidation failed for search table ", GetTableId(), ": ", e.what()));
+    recorder.Fail(e.what());
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -464,7 +473,8 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      CompactUnsafe(bucket, kProgress, empty, field_options.get());
+      CompactUnsafe(bucket, kProgress, empty, field_options.get(),
+                    MergeOrigin::Vacuum);
       merged |= !empty;
     }
     SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");

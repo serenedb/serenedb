@@ -86,3 +86,64 @@ ALTER TABLE my_events RESET (compaction_interval);
 
 statement ok
 ALTER INDEX logs_idx RESET (compaction_interval);
+
+# DOCS_TEST: example_007
+
+statement ok
+CREATE TABLE my_metrics (id INTEGER PRIMARY KEY, msg VARCHAR)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO my_metrics VALUES (1, 'cpu high');
+
+statement ok
+VACUUM (REFRESH_TABLE) my_metrics;
+
+statement ok
+INSERT INTO my_metrics VALUES (2, 'disk low');
+
+statement ok
+VACUUM (REFRESH_TABLE) my_metrics;
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('my_metrics');
+----
+segments	docs
+2	2
+
+query
+EXPLAIN CALL sdb_compact('my_metrics', mode := 'compact', target_segments := 1);
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ─────────────────────╮
+│ Table: public.my_metrics              │
+│ Mode: compact                         │
+│ Segments: 2                           │
+│ Merges: 1                             │
+│ Merge 1:                              │
+│ 2 segments -> 1, compact to 1 segment │
+│ Merge 1 Inputs: _1, _2                │
+│ Merge 1 Docs: 2 (2 live), rowid 1..2  │
+│ Merge 1 Bytes:                        │
+│ <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                      │
+│ 3, <slt:ignore>, largest msg <slt:ignore>│
+│ Merge 1 Postings: 1 field             │
+╰───────────────────────────────────────╯
+
+query
+SELECT outcome, input_docs, output_docs
+FROM sdb_compact('my_metrics', mode := 'compact', target_segments := 1);
+----
+outcome	input_docs	output_docs
+merged	2	2
+
+query
+SELECT origin, outcome, input_docs
+FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'my_metrics');
+----
+origin	outcome	input_docs
+sql	merged	2

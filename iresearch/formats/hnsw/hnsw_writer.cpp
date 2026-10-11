@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
-#include <absl/cleanup/cleanup.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -31,11 +29,8 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <optional>
-#include <yaclib/async/run.hpp>
-#include <yaclib/async/wait.hpp>
-#include <yaclib/coro/await.hpp>
-#include <yaclib/coro/future.hpp>
 
+#include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -254,94 +249,114 @@ uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
 }
 
 inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
+inline constexpr uint64_t kHnswEncodeChunk = 16 * STANDARD_VECTOR_SIZE;
 
-bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
-                  uint32_t d, bool normalize, QuantizerWriter& qw,
-                  byte_type* codes, uint32_t record_size,
-                  std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want = can_fan_out
-                      ? static_cast<uint32_t>(std::clamp<uint64_t>(
-                          rows / kHnswMinRowsPerEncoder, 1, kHnswMaxWorkers))
-                      : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
+class HnswBuildStop {
+ public:
+  explicit HnswBuildStop(absl::FunctionRef<bool()> progress) noexcept
+    : _progress{progress} {}
+
+  bool Check(uint32_t worker) {
+    if (worker == 0 && !_progress()) {
+      _stopped.store(true, std::memory_order_relaxed);
     }
-  };
+    return _stopped.load(std::memory_order_relaxed);
+  }
+
+  bool Stopped() const noexcept {
+    return _stopped.load(std::memory_order_relaxed);
+  }
+
+ private:
+  absl::FunctionRef<bool()> _progress;
+  std::atomic_bool _stopped{false};
+};
+
+struct HnswEncoder {
+  std::unique_ptr<ReadContext> ctx;
+  std::unique_ptr<ColumnReader::VectorScratch> scratch;
+  ColumnReader::ScanState scan;
+  QuantizerWriter* writer = nullptr;
+  std::vector<float> owned;
+  uint64_t next = 0;
+  uint64_t end = 0;
+};
+
+bool EncodeColumn(const ColReader& reader, const ColumnReader& col,
+                  uint64_t rows, uint32_t d, bool normalize,
+                  QuantizerWriter& qw, byte_type* codes, uint32_t record_size,
+                  std::vector<uint8_t>& valid, const AnnBuildEnv* env,
+                  HnswBuildStop& stop) {
+  const AnnWorkers workers{
+    env, static_cast<uint32_t>(std::clamp<uint64_t>(
+           rows / kHnswMinRowsPerEncoder, 1, kHnswMaxWorkers))};
 
   std::vector<std::unique_ptr<QuantizerWriter>> spare;
-  for (uint32_t i = 1; i < workers; ++i) {
+  for (uint32_t i = 1; i < workers.Count(); ++i) {
     auto clone = qw.CloneForEncode();
     if (!clone) {
       break;
     }
     spare.push_back(std::move(clone));
   }
-  const size_t parts = spare.size() + 1;
+  std::vector<HnswEncoder> encoders(spare.size() + 1);
+  for (size_t w = 0; w < encoders.size(); ++w) {
+    encoders[w].writer = w == 0 ? &qw : spare[w - 1].get();
+  }
 
-  std::vector<float> owned;
-  std::vector<yaclib::FutureOn<>> runs;
-  runs.reserve(spare.size());
-  ColumnReader::VectorScratch scratch{col.Type()};
-  auto scan = col.InitScan(ctx);
-  std::atomic<bool> ok{true};
-
-  for (uint64_t done = 0; done < rows;) {
+  std::atomic<uint64_t> cursor{0};
+  std::atomic_bool ok{true};
+  workers.Run([&](uint32_t w) {
+    if (w >= encoders.size() || stop.Check(w) ||
+        !ok.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    auto& enc = encoders[w];
+    if (enc.next == enc.end) {
+      const auto begin =
+        cursor.fetch_add(kHnswEncodeChunk, std::memory_order_relaxed);
+      if (begin >= rows) {
+        return false;
+      }
+      if (!enc.ctx) {
+        enc.ctx = std::make_unique<ReadContext>(reader);
+        enc.scratch = std::make_unique<ColumnReader::VectorScratch>(col.Type());
+      }
+      enc.scan = col.InitScan(*enc.ctx);
+      col.Skip(enc.scan, begin);
+      enc.next = begin;
+      enc.end = std::min(rows, begin + kHnswEncodeChunk);
+    }
     const auto take = static_cast<duckdb::idx_t>(
-      std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - done));
-    auto& batch = scratch.Reset();
-    col.Scan(scan, batch, take);
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, enc.end - enc.next));
+    auto& batch = enc.scratch->Reset();
+    col.Scan(enc.scan, batch, take);
     const auto& mask = duckdb::FlatVector::Validity(batch);
-    auto* src =
+    const auto* src =
       duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
     const float* vecs = src;
     if (normalize) {
-      owned.assign(src, src + static_cast<size_t>(take) * d);
-      vecs = owned.data();
+      enc.owned.assign(src, src + static_cast<size_t>(take) * d);
+      for (duckdb::idx_t i = 0; i < take; ++i) {
+        float* v = enc.owned.data() + i * size_t{d};
+        duckdb::L2NormalizeOp::Operation(v, v, d);
+      }
+      vecs = enc.owned.data();
     }
     for (duckdb::idx_t i = 0; i < take; ++i) {
       if (!mask.RowIsValid(i)) {
-        valid[done + i] = 0;
+        valid[enc.next + i] = 0;
       }
     }
-
-    const size_t n = take;
-    const auto run_part = [&](size_t w) {
-      const size_t lo = n * w / parts;
-      const size_t hi = n * (w + 1) / parts;
-      if (lo >= hi) {
-        return;
-      }
-      if (normalize) {
-        for (size_t i = lo; i < hi; ++i) {
-          float* v = owned.data() + i * size_t{d};
-          duckdb::L2NormalizeOp::Operation(v, v, d);
-        }
-      }
-      auto& writer = w == 0 ? qw : *spare[w - 1];
-      if (!writer.EncodeInto(codes + (done + lo) * size_t{record_size},
-                             vecs + lo * size_t{d}, hi - lo)) {
-        ok.store(false, std::memory_order_relaxed);
-      }
-    };
-
-    runs.clear();
-    for (size_t w = 1; w < parts; ++w) {
-      runs.push_back(
-        yaclib::Run(*env->executor, [&run_part, w] { run_part(w); }));
-    }
-    run_part(0);
-    if (!runs.empty()) {
-      yaclib::Wait(runs.begin(), runs.end());
-    }
-    if (!ok.load(std::memory_order_relaxed)) {
+    if (!enc.writer->EncodeInto(codes + enc.next * size_t{record_size}, vecs,
+                                take)) {
+      ok.store(false, std::memory_order_relaxed);
       return false;
     }
-    done += take;
-  }
-  return true;
+    enc.next += take;
+    return true;
+  });
+  return ok.load(std::memory_order_relaxed);
 }
 
 template<VectorMetric M>
@@ -514,19 +529,21 @@ struct HnswInsertJob {
     _cursor.store(0, std::memory_order_relaxed);
   }
 
-  void RunWorker(size_t worker) noexcept {
+  bool Step(size_t worker) {
+    const auto begin = _cursor.fetch_add(kHnswInsertGranule);
+    if (begin >= _nodes.size()) {
+      return false;
+    }
     auto& scratch = _scratch[worker];
     auto& dist = _dists[worker];
-    for (auto begin = _cursor.fetch_add(kHnswInsertGranule);
-         begin < _nodes.size(); begin = _cursor.fetch_add(kHnswInsertGranule)) {
-      const auto end = std::min(begin + kHnswInsertGranule, _nodes.size());
-      for (auto i = begin; i < end; ++i) {
-        const auto node = _nodes[i];
-        SDB_ASSERT(_graph.LevelOf(node) <= _graph.LevelOf(_graph.EntryPoint()));
-        dist.SetQuery(node);
-        HnswInsert(_graph, node, dist, _ef, scratch, _sync);
-      }
+    const auto end = std::min(begin + kHnswInsertGranule, _nodes.size());
+    for (auto i = begin; i < end; ++i) {
+      const auto node = _nodes[i];
+      SDB_ASSERT(_graph.LevelOf(node) <= _graph.LevelOf(_graph.EntryPoint()));
+      dist.SetQuery(node);
+      HnswInsert(_graph, node, dist, _ef, scratch, _sync);
     }
+    return true;
   }
 
  private:
@@ -581,58 +598,46 @@ std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
   return nodes;
 }
 
-template<typename Factory>
-auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
-                 std::span<const uint32_t> nodes, size_t rows, uint32_t warmup,
-                 const AnnBuildEnv* env) -> yaclib::Future<> {
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want =
-    can_fan_out ? static_cast<uint32_t>(std::clamp<size_t>(
-                    nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))
-                : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
-    }
-  };
-  const uint32_t helpers = workers - 1;
+uint32_t WantInsertWorkers(size_t nodes) noexcept {
+  return static_cast<uint32_t>(
+    std::clamp<size_t>(nodes / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers));
+}
 
-  const size_t serial =
-    helpers == 0 ? nodes.size() : std::min<size_t>(nodes.size(), warmup);
+template<typename Factory>
+void InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
+                 std::span<const uint32_t> nodes, size_t rows, uint32_t warmup,
+                 const AnnBuildEnv* env, HnswBuildStop& stop) {
+  const AnnWorkers workers{env, WantInsertWorkers(nodes.size())};
+  const size_t serial = workers.Count() == 1
+                          ? nodes.size()
+                          : std::min<size_t>(nodes.size(), warmup);
   {
     auto dist = factory.Make();
     HnswBuildScratch scratch;
     scratch.search.visited.Reset(rows);
     for (size_t i = 0; i < serial; ++i) {
+      if (i % kHnswInsertGranule == 0 && stop.Check(0)) {
+        return;
+      }
       dist.SetQuery(nodes[i]);
       HnswInsert(graph, nodes[i], dist, ef, scratch);
     }
   }
   if (serial == nodes.size()) {
-    co_return {};
+    return;
   }
 
-  HnswInsertJob<Factory> job{graph,   factory, ef, nodes.subspan(serial),
-                             workers, rows};
-  std::vector<yaclib::FutureOn<>> runs;
-  runs.reserve(helpers);
-  for (uint32_t i = 0; i < helpers; ++i) {
-    runs.push_back(yaclib::Run(
-      *env->executor, [&job, w = size_t{i} + 1] { job.RunWorker(w); }));
-  }
-  job.RunWorker(0);
-  co_await yaclib::Await(runs.begin(), runs.end());
-  job.RunWorker(0);
-  co_return {};
+  HnswInsertJob<Factory> job{
+    graph, factory, ef, nodes.subspan(serial), workers.Count(), rows};
+  workers.Run([&](uint32_t w) { return !stop.Check(w) && job.Step(w); });
 }
 
 template<typename Factory>
-auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
+bool BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
                          std::span<const uint8_t> valid, uint32_t m,
                          uint32_t ef_construction, uint64_t seed,
-                         const MergeDonor& donor, const AnnBuildEnv* env)
-  -> yaclib::Future<bool> {
+                         const MergeDonor& donor, const AnnBuildEnv* env,
+                         HnswBuildStop& stop) {
   auto data = donor.index->Load(*donor.reader);
   SDB_ASSERT(data);
   const auto& src_graph = data->graph;
@@ -648,13 +653,13 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
       continue;
     }
     if (donor.out_base + rank >= rows) {
-      co_return false;
+      return false;
     }
     remap[r] = static_cast<uint32_t>(donor.out_base + rank);
     ++rank;
   }
   if (rank != donor.alive) {
-    co_return false;
+    return false;
   }
 
   graph.Reset(rows, m);
@@ -719,7 +724,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
     }
   }
   if (entry == kHnswInvalidNode) {
-    co_return false;
+    return false;
   }
   graph.SetEntryPoint(entry);
 
@@ -742,7 +747,11 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   HealScratch heal;
   heal.seen.Reset(rows);
   heal.walked.Reset(src_rows);
-  for (const auto& [src_node, node, level] : to_heal) {
+  for (size_t i = 0; i < to_heal.size(); ++i) {
+    if (i % kHnswInsertGranule == 0 && stop.Check(0)) {
+      return true;
+    }
+    const auto& [src_node, node, level] = to_heal[i];
     dist.SetQuery(node);
     HealNode(graph, src_graph, remap, dist, src_node, node, level, scratch,
              heal);
@@ -764,23 +773,22 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
     nodes.push_back(static_cast<uint32_t>(i));
   }
 
-  co_await InsertNodes(graph, factory, ef_construction, nodes, rows,
-                       /*warmup=*/0, env);
-  co_return true;
+  InsertNodes(graph, factory, ef_construction, nodes, rows, /*warmup=*/0, env,
+              stop);
+  return true;
 }
 
 template<typename Factory>
-auto BuildGraph(HnswGraphWriter& graph, const Factory& factory,
+void BuildGraph(HnswGraphWriter& graph, const Factory& factory,
                 std::span<const uint8_t> valid, uint32_t m,
-                uint32_t ef_construction, uint64_t seed, const AnnBuildEnv* env)
-  -> yaclib::Future<> {
+                uint32_t ef_construction, uint64_t seed, const AnnBuildEnv* env,
+                HnswBuildStop& stop) {
   const auto nodes = SeedGraph(graph, valid, m, seed);
   if (graph.Empty()) {
-    co_return {};
+    return;
   }
-  co_await InsertNodes(graph, factory, ef_construction, nodes, valid.size(),
-                       std::max(kHnswSerialWarmup, ef_construction), env);
-  co_return {};
+  InsertNodes(graph, factory, ef_construction, nodes, valid.size(),
+              std::max(kHnswSerialWarmup, ef_construction), env, stop);
 }
 
 struct HnswOriginals {
@@ -796,46 +804,28 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
                         std::span<const uint8_t> valid, uint32_t m,
                         uint32_t ef_construction, uint64_t seed,
                         const AnnBuildEnv* env, const HnswOriginals& src,
-                        uint32_t d) {
+                        uint32_t d, HnswBuildStop& stop) {
   const auto rows = valid.size();
   const auto nodes = SeedGraph(graph, valid, m, seed);
   if (nodes.empty()) {
     return;
   }
 
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want =
-    can_fan_out ? static_cast<uint32_t>(std::clamp<size_t>(
-                    nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))
-                : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
-    }
-  };
+  const AnnWorkers workers{env, WantInsertWorkers(nodes.size())};
+  HnswInsertJob<Factory> job{graph, factory,         ef_construction,
+                             {},    workers.Count(), rows};
 
-  HnswInsertJob<Factory> job{graph, factory, ef_construction,
-                             {},    workers, rows};
-
-  std::vector<yaclib::FutureOn<>> runs;
-  auto run_span = [&](std::span<const uint32_t> span, uint32_t par) {
+  auto run_span = [&](std::span<const uint32_t> span, bool parallel) {
     if (span.empty()) {
       return;
     }
     job.Restart(span);
-    if (par <= 1) {
-      job.RunWorker(0);
+    if (parallel) {
+      workers.Run([&](uint32_t w) { return !stop.Check(w) && job.Step(w); });
       return;
     }
-    runs.clear();
-    runs.reserve(par - 1);
-    for (uint32_t i = 1; i < par; ++i) {
-      runs.push_back(yaclib::Run(*env->executor,
-                                 [&job, w = size_t{i}] { job.RunWorker(w); }));
+    while (!stop.Check(0) && job.Step(0)) {
     }
-    job.RunWorker(0);
-    yaclib::Wait(runs.begin(), runs.end());
   };
 
   std::vector<float> window;
@@ -857,16 +847,19 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     std::span<const uint32_t> span{nodes.data() + begin, next - begin};
     if (warmed < warmup) {
       const auto take = std::min<size_t>(span.size(), warmup - warmed);
-      run_span(span.first(take), 1);
+      run_span(span.first(take), false);
       warmed += take;
       span = span.subspan(take);
     }
-    run_span(span, workers);
+    run_span(span, true);
   };
 
   ScanVectors(*src.col, *src.ctx, rows, d, src.normalize, batch_buf,
               [&](const float* src_rows, size_t n, uint64_t first,
                   const duckdb::ValidityMask&) {
+                if (stop.Stopped()) {
+                  return;
+                }
                 if (window.empty()) {
                   win_first = static_cast<uint32_t>(first);
                 }
@@ -884,22 +877,21 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
 }
 
 template<typename Factory>
-auto BuildDispatch(HnswGraphWriter& graph, const Factory& factory,
+void BuildDispatch(HnswGraphWriter& graph, const Factory& factory,
                    std::span<const uint8_t> valid, uint32_t m, uint32_t ef,
                    uint64_t seed, const MergeDonor& donor,
-                   const AnnBuildEnv* env, const HnswOriginals& src, uint32_t d)
-  -> yaclib::Future<> {
+                   const AnnBuildEnv* env, const HnswOriginals& src, uint32_t d,
+                   HnswBuildStop& stop) {
   if (donor.index != nullptr &&
-      co_await BuildGraphFromMerge(graph, factory, valid, m, ef, seed, donor,
-                                   env)) {
-    co_return {};
+      BuildGraphFromMerge(graph, factory, valid, m, ef, seed, donor, env,
+                          stop)) {
+    return;
   }
   if (src.col != nullptr) {
-    BuildGraphStreamed(graph, factory, valid, m, ef, seed, env, src, d);
-    co_return {};
+    BuildGraphStreamed(graph, factory, valid, m, ef, seed, env, src, d, stop);
+    return;
   }
-  co_await BuildGraph(graph, factory, valid, m, ef, seed, env);
-  co_return {};
+  BuildGraph(graph, factory, valid, m, ef, seed, env, stop);
 }
 
 }  // namespace
@@ -908,15 +900,17 @@ HnswWriter::HnswWriter(AnnInfo info) : _info{std::move(info)} {}
 
 HnswWriter::~HnswWriter() = default;
 
-yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
-                                   const AnnBuildEnv* env) {
+bool HnswWriter::Compute(const ColReader& reader, const ColumnReader& col,
+                         ReadContext& ctx, const AnnBuildEnv* env,
+                         absl::FunctionRef<bool()> progress) {
   _d = static_cast<uint32_t>(col.ArraySize());
   _rows = col.RowCount();
   SDB_ASSERT(_d != 0);
   if (_rows == 0) {
-    co_return {};
+    return true;
   }
 
+  HnswBuildStop stop{progress};
   std::vector<uint8_t> valid(_rows, 1);
   std::vector<float> batch_buf;
   const bool normalize = _info.metric == VectorMetric::Cosine;
@@ -983,8 +977,11 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
 
   if (encoding) {
-    encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
-                            _record_size, valid, env);
+    encoding = EncodeColumn(reader, col, _rows, _d, normalize, *_qw,
+                            _codes.data(), _record_size, valid, env, stop);
+    if (stop.Stopped()) {
+      return false;
+    }
   } else {
     ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
                 [&](const float* rows, size_t n, uint64_t first,
@@ -1038,9 +1035,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     }
     const HnswOriginals originals{
       .col = &col, .ctx = &ctx, .normalize = normalize};
-    co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
-                           env, originals, _d);
-    co_return {};
+    BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor, env,
+                  originals, _d, stop);
+    return !stop.Stopped();
   }
 
   SDB_ENSURE(
@@ -1051,16 +1048,13 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     "raw-float build of ",
     _rows, " x ", _d, " vectors");
 
-  yaclib::Future<> built;
   ResolveEnum<VectorMetric>(
     EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
       HnswRawDistFactory<M> factory{.base = _vectors.data(), .d = _d};
-      built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
-                            donor, env, HnswOriginals{}, _d);
+      BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor, env,
+                    HnswOriginals{}, _d, stop);
     });
-  SDB_ASSERT(built.Valid());
-  co_await std::move(built);
-  co_return {};
+  return !stop.Stopped();
 }
 
 void HnswWriter::Flush() {

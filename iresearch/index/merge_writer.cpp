@@ -30,7 +30,6 @@
 #include <optional>
 #include <span>
 #include <vector>
-#include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/analysis/token_attributes.hpp"
@@ -114,8 +113,6 @@ class CompoundPostings : public TermPostings {
   }
 
   void Clear() noexcept { _iterators.clear(); }
-
-  size_t Size() const noexcept { return _iterators.size(); }
 
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
@@ -271,10 +268,8 @@ void CompoundTermIterator::Add(const TermReader& reader,
                                const DocRemap& remap) {
   auto it = reader.iterator();
   SDB_ASSERT(it);
-  if (it) [[likely]] {
-    _term_iterator_mask.emplace_back(_term_iterators.size());
-    _term_iterators.emplace_back(std::move(it), &remap);
-  }
+  _term_iterator_mask.emplace_back(_term_iterators.size());
+  _term_iterators.emplace_back(std::move(it), &remap);
 }
 
 bool CompoundTermIterator::next() {
@@ -338,9 +333,7 @@ TermPostings::ptr CompoundTermIterator::postings(
       auto it = term_itr.it->ReusePostings(Meta().index_features,
                                            std::move(term_itr.postings));
       SDB_ASSERT(it);
-      if (it) [[likely]] {
-        itrs.emplace_back(std::move(it), term_itr.remap, itr_id);
-      }
+      itrs.emplace_back(std::move(it), term_itr.remap, itr_id);
     }
   };
 
@@ -361,7 +354,6 @@ class CompoundFieldIterator final : public BasicTermReader {
 
   void Add(const SubReader& reader, const DocRemap& remap);
   bool Next();
-  size_t Size() const noexcept { return _field_iterators.size(); }
 
   const FieldMeta& Meta() const noexcept {
     SDB_ASSERT(_current_meta);
@@ -435,10 +427,7 @@ bool CompoundFieldIterator::Next() {
       continue;
     }
     const auto* field_terms = field_itr.reader->field(id);
-    if (!field_terms) {
-      ++field_itr.pos;
-      continue;
-    }
+    SDB_ASSERT(field_terms);
     if (field_limits::valid(_current_id) && id < _current_id) {
       _field_iterator_mask.clear();
     }
@@ -468,13 +457,11 @@ TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
   return memory::to_managed<TermOnlyIterator>(_term_itr);
 }
 
-bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
+void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader) {
   for (auto id : reader.field_ids()) {
     const auto* term_reader = reader.field(id);
-    if (!term_reader) {
-      continue;
-    }
+    SDB_ASSERT(term_reader);
     const auto& field_meta = term_reader->meta();
     const auto [field_meta_it, is_new] =
       field_meta_map.emplace(id, field_meta.index_features);
@@ -483,7 +470,6 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
     }
     index_features |= field_meta.index_features;
   }
-  return true;
 }
 
 doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
@@ -632,9 +618,7 @@ struct MergedNormProvider final : public NormProvider {
   const ColReader* reader = nullptr;
 
   NormReader::ptr norms(field_id id) const final {
-    if (reader == nullptr) {
-      return {};
-    }
+    SDB_ASSERT(reader);
     const auto* col = reader->NormColumn(id);
     if (col == nullptr) {
       return {};
@@ -725,9 +709,7 @@ bool ComputeDocMappingsAndFieldMeta(
     if (!doc_limits::valid(base_id)) {
       return false;
     }
-    if (!ComputeFieldMeta(field_meta_map, index_features, reader)) {
-      return false;
-    }
+    ComputeFieldMeta(field_meta_map, index_features, reader);
     fields_itr.Add(reader, reader_ctx.remap);
   }
   segment.docs_count = base_id - doc_limits::min();
@@ -776,6 +758,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
 
   const auto& progress_callback = progress ? progress : kProgressNoop;
   TrackingDirectory track_dir{_dir};
+  _profile = {};
+  MergeStepClock clock{_profile};
 
   FieldMetaMapT field_meta_map;
   CompoundFieldIterator fields_itr{_readers.size(), progress_callback};
@@ -794,18 +778,20 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
                 _field_options);
   SDB_ASSERT(col_writer);
+  clock.Lap(MergeStep::Prepare);
 
   const auto merged_norm_ids =
     MergeNorms(*col_writer, sources, field_meta_map, _field_options);
+  clock.Lap(MergeStep::Norms);
 
   if (!progress_callback()) {
     co_return false;
   }
 
-  if (!sources.empty() &&
-      !MergeInto(sources, *col_writer, _field_options, progress_callback)) {
+  if (!MergeInto(sources, *col_writer, _field_options, progress_callback)) {
     co_return false;
   }
+  clock.Lap(MergeStep::Columns);
 
   if (!progress_callback()) {
     co_return false;
@@ -819,7 +805,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {
     co_return false;
   }
-  if (!co_await col_writer->ComputeAnn(env, progress_callback)) {
+  clock.Lap(MergeStep::ColumnsCommit);
+  if (!col_writer->ComputeAnn(env, progress_callback)) {
     co_return false;
   }
   auto ann_writers = col_writer->TakeAnnWriters();
@@ -833,6 +820,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   for (const auto* reader : cluster_readers) {
     index_features |= reader->properties().index_features;
   }
+  clock.Lap(MergeStep::Ann);
 
   if (!progress_callback()) {
     co_return false;
@@ -852,11 +840,10 @@ auto MergeWriter::Flush(SegmentMeta& segment,
                    cluster_readers)) {
     co_return false;
   }
+  clock.Lap(MergeStep::Postings);
 
   for (const auto& w : ann_writers) {
-    if (w) {
-      w->Flush();
-    }
+    w->Flush();
   }
 
   idx.Commit();
@@ -866,6 +853,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   segment.files = track_dir.FlushTracked(segment.byte_size);
+  clock.Lap(MergeStep::Commit);
   if (segment.live_docs_count == 0) {
     co_return false;
   }

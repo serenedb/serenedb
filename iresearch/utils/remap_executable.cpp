@@ -41,11 +41,11 @@
 #define IRS_REMAP_HAS_FEATURE(x) 0
 #endif
 
-#if defined(__linux__) && defined(__x86_64__) && defined(__SSE2__) && \
-  defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) &&                \
-  !defined(__SANITIZE_THREAD__) &&                                    \
-  !IRS_REMAP_HAS_FEATURE(address_sanitizer) &&                        \
-  !IRS_REMAP_HAS_FEATURE(thread_sanitizer) &&                         \
+#if defined(__linux__) && defined(__x86_64__) && defined(__SSE2__) &&         \
+  defined(NDEBUG) && !defined(__SANITIZE_ADDRESS__) &&                        \
+  !defined(__SANITIZE_THREAD__) && !defined(__LLVM_INSTR_PROFILE_GENERATE) && \
+  !IRS_REMAP_HAS_FEATURE(address_sanitizer) &&                                \
+  !IRS_REMAP_HAS_FEATURE(thread_sanitizer) &&                                 \
   !IRS_REMAP_HAS_FEATURE(memory_sanitizer)
 #define IRS_REMAP_EXECUTABLE 1
 #include <emmintrin.h>

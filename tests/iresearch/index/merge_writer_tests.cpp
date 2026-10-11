@@ -21,6 +21,8 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/compression_function.hpp>
@@ -39,6 +41,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <limits>
 #include <random>
 #include <unordered_map>
 #include <unordered_set>
@@ -296,6 +299,94 @@ TEST_P(MergeWriterTestCase, test_merge_writer_add_segments) {
     ASSERT_EQ(33, segment->field(kSameId)->docs_count());
     ASSERT_EQ(13, segment->field(kDuplicatedId)->docs_count());
   }
+}
+
+TEST_P(MergeWriterTestCase, MergeReportsStepTimes) {
+  irs::MemoryDirectory data_dir;
+  {
+    tests::JsonDocGenerator gen(TestBase::resource("simple_sequential_33.json"),
+                                &tests::GenericJsonFieldFactory);
+    auto writer = irs::IndexWriter::Make(data_dir, irs::kOmCreate,
+                                         irs::tests::DefaultWriterOptions());
+    for (size_t i = 0; i < 4; ++i) {
+      const auto* doc = gen.next();
+      ASSERT_NE(nullptr, doc);
+      ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+      writer->RefreshCommit();
+    }
+  }
+  auto reader =
+    irs::DirectoryReader(data_dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(4, reader.size());
+
+  irs::MemoryDirectory dir;
+  irs::SegmentMeta segment;
+  const irs::SegmentWriterOptions options{
+    .db = &::irs::DuckDBEngine::Instance().instance()};
+  irs::MergeWriter writer(dir, options);
+  writer.Reset(reader.begin(), reader.end());
+  ASSERT_TRUE(irs::GetReady(writer.Flush(segment)));
+
+  const auto& profile = writer.Profile();
+  uint64_t sum = 0;
+  for (size_t step = 0; step < irs::kMergeStepCount; ++step) {
+    const auto id = static_cast<irs::MergeStep>(step);
+    SCOPED_TRACE(irs::MergeStepName(id));
+    EXPECT_GT(profile.Nanos(id), 0);
+    sum += profile.Nanos(id);
+  }
+  EXPECT_EQ(sum, profile.TotalNanos());
+}
+
+TEST_P(MergeWriterTestCase, CompactReportsMergeStats) {
+  irs::MemoryDirectory dir;
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential_33.json"),
+                              &tests::GenericJsonFieldFactory);
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
+                                       irs::tests::DefaultWriterOptions());
+  for (size_t i = 0; i < 3; ++i) {
+    const auto* doc = gen.next();
+    ASSERT_NE(nullptr, doc);
+    ASSERT_TRUE(Insert(*writer, doc->indexed.begin(), doc->indexed.end()));
+    writer->RefreshCommit();
+  }
+  const auto before = writer->GetSnapshot();
+  ASSERT_EQ(3, before.size());
+  uint64_t bytes = 0;
+  for (const auto& segment : before) {
+    bytes += segment.Meta().byte_size;
+  }
+
+  const auto result = writer->Compact(irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()}));
+  ASSERT_TRUE(result);
+  EXPECT_EQ(3, result.size);
+  const auto& stats = result.stats;
+  ASSERT_EQ(3, stats.inputs.size());
+  for (const auto& segment : before) {
+    EXPECT_TRUE(absl::c_linear_search(stats.inputs, segment.Meta().name));
+  }
+  EXPECT_EQ(3, stats.input_docs);
+  EXPECT_EQ(3, stats.input_live_docs);
+  EXPECT_EQ(bytes, stats.input_bytes);
+  EXPECT_FALSE(stats.output.empty());
+  EXPECT_EQ(3, stats.output_docs);
+  EXPECT_GT(stats.output_bytes, 0);
+  EXPECT_GT(stats.profile.TotalNanos(), 0);
+
+  writer->RefreshCommit();
+  const auto after = writer->GetSnapshot();
+  ASSERT_EQ(1, after.size());
+  EXPECT_EQ(stats.output, after[0].Meta().name);
+  EXPECT_EQ(stats.output_bytes, after[0].Meta().byte_size);
+
+  const auto nothing = writer->Compact(irs::index_utils::MakePolicy(
+    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()}));
+  ASSERT_TRUE(nothing);
+  EXPECT_EQ(0, nothing.size);
+  EXPECT_TRUE(nothing.stats.inputs.empty());
+  EXPECT_TRUE(nothing.stats.output.empty());
+  EXPECT_EQ(0, nothing.stats.profile.TotalNanos());
 }
 
 TEST_P(MergeWriterTestCase, test_merge_writer_flush_progress) {

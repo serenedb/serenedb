@@ -23,14 +23,51 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
-#include <yaclib/exe/executor.hpp>
 
 namespace irs {
 
-struct AnnBuildEnv {
-  yaclib::IExecutor* executor = nullptr;
-  absl::FunctionRef<uint32_t(uint32_t)> acquire;
-  absl::FunctionRef<void(uint32_t)> release;
+class AnnBuildEnv {
+ public:
+  using Step = absl::FunctionRef<bool(uint32_t)>;
+
+  virtual ~AnnBuildEnv() = default;
+
+  virtual uint32_t Acquire(uint32_t want) const noexcept = 0;
+
+  virtual void Release(uint32_t workers) const noexcept = 0;
+
+  virtual void Run(uint32_t workers, Step step) const = 0;
+};
+
+class AnnWorkers {
+ public:
+  AnnWorkers(const AnnBuildEnv* env, uint32_t want) noexcept
+    : _env{want > 1 ? env : nullptr},
+      _count{_env != nullptr ? _env->Acquire(want) : 1} {}
+
+  ~AnnWorkers() {
+    if (_env != nullptr) {
+      _env->Release(_count);
+    }
+  }
+
+  AnnWorkers(const AnnWorkers&) = delete;
+  AnnWorkers& operator=(const AnnWorkers&) = delete;
+
+  uint32_t Count() const noexcept { return _count; }
+
+  void Run(AnnBuildEnv::Step step) const {
+    if (_count > 1) {
+      _env->Run(_count, step);
+      return;
+    }
+    while (step(0)) {
+    }
+  }
+
+ private:
+  const AnnBuildEnv* _env;
+  uint32_t _count;
 };
 
 }  // namespace irs

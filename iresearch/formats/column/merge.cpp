@@ -103,15 +103,14 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
       continue;
     }
     const auto* col = sources[si].col_reader->Column(id);
-    if (!col || col->RowCount() == 0) {
+    if (!col) {
       continue;
     }
+    SDB_ASSERT(col->RowCount() != 0);
     ranges.push_back({si, col, col->RowCount()});
     total += col->RowCount();
   }
-  if (total == 0) {
-    return;
-  }
+  SDB_ASSERT(total != 0);
   absl::flat_hash_set<uint64_t> seen;
   std::string window;
   size_t r = 0;
@@ -164,7 +163,7 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
 
 bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
                const IndexFieldOptions* field_options,
-               const std::function<bool()>& progress) {
+               absl::FunctionRef<bool()> progress) {
   std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
   absl::flat_hash_set<field_id> seen_ids;
   for (const auto& s : sources) {
@@ -267,7 +266,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
       const auto total = col->RowCount();
       uint64_t pos = 0;
       while (pos < total) {
-        if (progress && !progress()) {
+        if (!progress()) {
           return false;
         }
         const auto take =

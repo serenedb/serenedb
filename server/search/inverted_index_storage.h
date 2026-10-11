@@ -45,6 +45,7 @@
 #include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
+#include "search/compaction/merge_registry.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
@@ -161,16 +162,18 @@ class InvertedIndexStorage final
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options) {
+                               const irs::IndexFieldOptions* field_options,
+                               MergeOrigin origin) {
     return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, nullptr));
+                                            field_options, nullptr, origin));
   }
 
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env)
+                          const irs::AnnBuildEnv* env, MergeOrigin origin,
+                          irs::CompactionResult* outcome = nullptr)
     -> yaclib::Future<ResultWithTime>;
 
   ResultWithTime RefreshUnsafe(bool wait,
@@ -280,7 +283,8 @@ class InvertedIndexStorage final
                          const irs::MergeWriter::FlushProgress& progress,
                          bool& empty_compaction,
                          const irs::IndexFieldOptions* field_options,
-                         const irs::AnnBuildEnv* env)
+                         const irs::AnnBuildEnv* env, MergeOrigin origin,
+                         irs::CompactionResult* outcome)
     -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,

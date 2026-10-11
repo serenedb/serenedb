@@ -28,7 +28,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <yaclib/async/future.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
@@ -43,9 +42,9 @@
 
 namespace irs {
 
+class AnnBuildEnv;
 class AnnWriter;
 class IdxWriter;
-struct AnnBuildEnv;
 
 class ColWriter final {
  public:
@@ -80,9 +79,8 @@ class ColWriter final {
   bool Commit(uint64_t target_row);
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
 
-  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env);
-  yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env,
-                                absl::FunctionRef<bool()> progress);
+  bool ComputeAnn(const AnnBuildEnv* env);
+  bool ComputeAnn(const AnnBuildEnv* env, absl::FunctionRef<bool()> progress);
 
   void Rollback() noexcept;
 

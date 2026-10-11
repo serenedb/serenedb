@@ -1537,6 +1537,13 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   // do lock-free merge
 
   CompactionResult result{candidates.size(), CompactionError::Fail};
+  result.stats.inputs.reserve(candidates.size());
+  for (const auto* candidate : candidates) {
+    result.stats.inputs.emplace_back(candidate->Meta().name);
+    result.stats.input_docs += candidate->docs_count();
+    result.stats.input_live_docs += candidate->live_docs_count();
+    result.stats.input_bytes += candidate->Meta().byte_size;
+  }
 
   IndexSegment compaction_segment;
   compaction_segment.meta.version = 0;  // Reset version for new segment
@@ -1549,10 +1556,16 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   merger.Reset(candidates.begin(), candidates.end());
 
   // We do not persist segment meta since some removals may come later
-  if (!(co_await merger.Flush(compaction_segment.meta, progress, env))) {
+  const bool flushed =
+    co_await merger.Flush(compaction_segment.meta, progress, env);
+  result.stats.profile = merger.Profile();
+  if (!flushed) {
     // Nothing to compact or compaction failure
     co_return result;
   }
+  result.stats.output = compaction_segment.meta.name;
+  result.stats.output_docs = compaction_segment.meta.docs_count;
+  result.stats.output_bytes = compaction_segment.meta.byte_size;
 
   auto opts = committed_reader->Options();
   auto pending_reader =

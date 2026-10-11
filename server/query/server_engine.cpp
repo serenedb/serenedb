@@ -50,6 +50,8 @@
 #include "connector/functions/math.h"
 #include "connector/functions/otel.h"
 #include "connector/functions/ruleutils.h"
+#include "connector/functions/sdb_compact.h"
+#include "connector/functions/sdb_segments.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/functions/system.h"
@@ -343,6 +345,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterDuckDBAliases(db);
 
   connector::RegisterVacuumFunction(db);
+
+  connector::RegisterSdbCompactFunction(db);
+
+  connector::RegisterSdbSegmentsFunction(db);
 
   connector::RegisterReindexFunction(db);
 

@@ -263,6 +263,73 @@ TEST(CompactionTierTest, EmptyMeta) {
   ASSERT_TRUE(candidates.empty());
 }
 
+TEST(CompactionTierTest, TooFewLeftAfterDroppingLargeSegments) {
+  irs::IndexMeta meta;
+  AddSegment(meta, "0", 100, 100, 600);
+  AddSegment(meta, "1", 100, 100, 700);
+  AddSegment(meta, "2", 100, 50, 100);
+  IndexReaderMock reader{meta};
+
+  irs::index_utils::CompactionTier options;
+  options.floor_segment_bytes = 1;
+  options.max_segments = 10;
+  options.min_segments = 2;
+  options.max_segments_bytes = 1000;
+
+  irs::CompactingSegments compacting_segments;
+  auto policy = irs::index_utils::MakePolicy(options);
+  irs::Compaction candidates;
+  policy(candidates, reader, compacting_segments);
+  ASSERT_TRUE(candidates.empty());
+}
+
+TEST(CompactionPoliciesTest, SegmentsUnderCompactionAreNeverPicked) {
+  irs::IndexMeta meta;
+  AddSegment(meta, "busy", 10, 10, 1);
+  AddSegment(meta, "empty", 10, 0, 1);
+  AddSegment(meta, "full", 10, 10, 100);
+  IndexReaderMock reader{meta};
+  const irs::CompactingSegments compacting_segments{"busy"};
+  const irs::CompactionPolicy policies[] = {
+    irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionBytes{.threshold = 1}),
+    irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionBytesAccum{.threshold = 1}),
+    irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionDocsLive{.threshold = 0.1f}),
+    irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionDocsFill{.threshold = 0.1f}),
+  };
+  for (size_t p = 0; p != std::size(policies); ++p) {
+    irs::Compaction candidates;
+    policies[p](candidates, reader, compacting_segments);
+    EXPECT_FALSE(candidates.empty()) << "policy " << p;
+    for (const auto* candidate : candidates) {
+      EXPECT_NE("busy", candidate->Meta().name) << "policy " << p;
+    }
+  }
+}
+
+TEST(CompactionPoliciesTest, FullyDeletedSegmentsArePicked) {
+  irs::IndexMeta meta;
+  AddSegment(meta, "empty", 10, 0, 1);
+  AddSegment(meta, "full", 10, 10, 100);
+  IndexReaderMock reader{meta};
+  const irs::CompactingSegments compacting_segments;
+  const irs::CompactionPolicy policies[] = {
+    irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionDocsLive{.threshold = 0.1f}),
+    irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionDocsFill{.threshold = 0.1f}),
+  };
+  for (size_t p = 0; p != std::size(policies); ++p) {
+    irs::Compaction candidates;
+    policies[p](candidates, reader, compacting_segments);
+    ASSERT_EQ(1U, candidates.size()) << "policy " << p;
+    EXPECT_EQ("empty", candidates.front()->Meta().name) << "policy " << p;
+  }
+}
+
 TEST(CompactionTierTest, EmptyCompactingSegment) {
   irs::IndexMeta meta;
   AddSegment(meta, "empty", 1, 0, 1);

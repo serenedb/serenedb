@@ -50,10 +50,12 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "search/compaction/merge_registry.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 #include "search/store_stats.h"
 #include "search/writer_generations.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 
@@ -186,15 +188,18 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   ResultWithTime CompactUnsafe(const irs::CompactionPolicy& policy,
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
-                               const irs::IndexFieldOptions* field_options) {
+                               const irs::IndexFieldOptions* field_options,
+                               MergeOrigin origin) {
     return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
-                                            field_options, nullptr));
+                                            field_options, &AnnBuildEnv(),
+                                            origin));
   }
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
-                          const irs::AnnBuildEnv* env)
+                          const irs::AnnBuildEnv* env, MergeOrigin origin,
+                          irs::CompactionResult* outcome = nullptr)
     -> yaclib::Future<ResultWithTime>;
   ResultWithTime CleanupUnsafe();
 

@@ -47,6 +47,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
+#include "search/compaction/merge_policies.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/lifecycle.h"
@@ -82,63 +83,6 @@ Clock::duration ToDuration(size_t msec) noexcept {
 
 bool ShouldStop() noexcept {
   return lifecycle::IsStopping() || GetSearchEngine().IsStopping();
-}
-
-// Background compaction policy (the TieredMergePolicy analog), built per
-// target from its WITH-configured settings. `small` reduces the merge byte
-// budget when the global slot gate is nearly full so the pool keeps draining
-// under occupancy backpressure.
-irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
-                                     bool small) {
-  irs::index_utils::CompactionTier tier;
-  tier.max_segments = settings.compaction_max_segments;
-  tier.max_segments_bytes = settings.compaction_max_segments_bytes;
-  tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
-  if (small) {
-    tier.max_segments_bytes =
-      std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
-  }
-  return irs::index_utils::MakePolicy(tier);
-}
-
-// Per-storage source of the merge's field options, pinned for the merge's
-// lifetime -- the only part of the background loops that differs by storage
-// type (see the PinCompactionOptions overloads below).
-struct CompactionOptions {
-  bool alive = false;
-  // Pins the options for the whole merge.
-  std::shared_ptr<const irs::IndexFieldOptions> keepalive;
-  const irs::IndexFieldOptions* field_options = nullptr;
-};
-
-CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {
-  // Cloned for this merge: the merge encodes against what it took for its
-  // whole length, and an ALTER writes a new configuration rather than mutating
-  // this one, while a DROP destroys the bound index but not this clone.
-  auto& db = irs::DuckDBEngine::Instance().instance();
-  for (auto& attached : duckdb::DatabaseManager::Get(db).GetDatabases()) {
-    if (attached->oid != idx.GetDatabaseId()) {
-      continue;
-    }
-    const auto entry =
-      attached->GetCatalog()
-        .Cast<catalog::SereneDBCatalog>()
-        .FindIn<catalog::InvertedIndexEntry>(nullptr, idx.GetId());
-    if (!entry) {
-      break;
-    }
-    std::shared_ptr<const irs::IndexFieldOptions> options = entry->Config();
-    const auto* raw = options.get();
-    return {
-      .alive = true, .keepalive = std::move(options), .field_options = raw};
-  }
-  return {};
-}
-
-CompactionOptions PinCompactionOptions(SearchTable& table) {
-  std::shared_ptr<const irs::IndexFieldOptions> options = table.Config();
-  const auto* raw = options.get();
-  return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
 template<class Storage>
@@ -202,7 +146,8 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
 
   bool empty_compaction = false;
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
-    policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv());
+    policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv(),
+    MergeOrigin::Background);
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");

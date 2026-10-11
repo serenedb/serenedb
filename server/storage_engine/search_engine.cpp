@@ -39,6 +39,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
+#include "search/ann_build_pool.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_recovery.h"
 #include "search/task.h"
@@ -66,14 +67,14 @@ uint32_t SearchEngine::MaxAnnBuildWorkers() noexcept {
 }
 
 const irs::AnnBuildEnv& AnnBuildEnv() {
-  static const irs::AnnBuildEnv env{
-    .executor = &BackgroundScheduler::instance().annExecutor(),
-    .acquire = AnnAcquireWorkers,
-    .release = AnnReleaseWorkers};
-  return env;
+  static const auto* const kEnv =
+    new AnnBuildPool{BackgroundScheduler::instance().annExecutor(),
+                     AnnAcquireWorkers, AnnReleaseWorkers};
+  return *kEnv;
 }
 
 void SearchEngine::start() {
+  AnnBuildEnv();
   StartInvertedIndexTasks();
   if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
     RunSearchTableRecovery();

@@ -51,6 +51,8 @@ add_executable(
     connector/search_row_removal_test.cpp
     connector/ts_query_codec_test.cpp
     connector/writer_generations_test.cpp
+    search/ann_build_pool_test.cpp
+    search/compaction/merge_registry_test.cpp
 )
 
 target_link_libraries(

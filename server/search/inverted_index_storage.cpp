@@ -386,11 +386,12 @@ absl::Status InvertedIndexStorage::CleanupUnsafeImpl() {
 auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  MergeOrigin origin, irs::CompactionResult* outcome)
   -> yaclib::Future<ResultWithTime> {
   auto begin = std::chrono::steady_clock::now();
   auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
-                                           field_options, env);
+                                           field_options, env, origin, outcome);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -418,29 +419,40 @@ ResultWithTime InvertedIndexStorage::RefreshUnsafe(
 auto InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
-  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
+  const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
+  MergeOrigin origin, irs::CompactionResult* outcome)
   -> yaclib::Future<absl::Status> {
   empty_compaction = false;
+  MergeRecorder recorder{GetId(), origin};
+  const auto recorded = recorder.Wrap(policy);
 
   try {
-    const auto res =
-      co_await _writer->CompactAsync(policy, field_options, progress, env);
-    if (res.error == irs::CompactionError::Fail) {
+    auto res =
+      co_await _writer->CompactAsync(recorded, field_options, progress, env);
+    const auto error = res.error;
+    const auto size = res.size;
+    if (outcome) {
+      *outcome = res;
+    }
+    recorder.Finish(std::move(res));
+    if (error == irs::CompactionError::Fail) {
       co_return absl::InternalError(absl::StrCat(
         "failure while executing compaction policy on Search index '", GetId(),
         "'"));
     }
-    if (res.error == irs::CompactionError::Busy) {
+    if (error == irs::CompactionError::Busy) {
       co_return absl::OkStatus();
     }
 
-    empty_compaction = (res.size == 0);
+    empty_compaction = (size == 0);
   } catch (const std::exception& e) {
+    recorder.Fail(e.what());
     co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
                    GetId(), "': ", e.what()));
   } catch (...) {
+    recorder.Fail("unknown exception");
     co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",

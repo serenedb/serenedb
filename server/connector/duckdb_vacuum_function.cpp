@@ -52,6 +52,7 @@
 #include "query/config.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::connector {
 namespace {
@@ -262,7 +263,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
       engine.ReleaseCompaction();
     }
   };
-  const irs::AnnBuildEnv* env_ptr = slot ? &search::AnnBuildEnv() : nullptr;
+  const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
 
   inverted.Refresh();
   for (size_t pass = 0; pass < 8; ++pass) {
@@ -270,7 +271,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
     const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-      kPolicy, tick, empty_compaction, &field_options, env_ptr));
+      kPolicy, tick, empty_compaction, &field_options, env_ptr,
+      search::MergeOrigin::Vacuum));
     if (!res.ok()) {
       context.InterruptCheck();
       THROW_SQL_ERROR(

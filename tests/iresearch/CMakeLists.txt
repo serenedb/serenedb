@@ -88,6 +88,10 @@ set(iresearch-tests_sources
     ./index/field_meta_test.cpp
     ./index/inverter_oracle_test.cpp
     ./index/inverter_tests.cpp
+    ./index/merge/merge_characterization_tests.cpp
+    ./index/merge/merge_oracle_tests.cpp
+    ./index/merge/support/segment_dump.cpp
+    ./index/merge/support/segment_gen.cpp
     ./index/merge_writer_tests.cpp
     ./index/segment_writer_tests.cpp
     ./index/sorted_index_tests.cpp

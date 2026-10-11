@@ -107,6 +107,7 @@
 #include "pg/pg_catalog/pg_type.h"
 #include "pg/pg_catalog/pg_user_mapping.h"
 #include "pg/pg_catalog/sdb_progress.h"
+#include "pg/sdb_catalog/sdb_merges.h"
 #include "pg/sdb_catalog/sdb_metrics.h"
 #include "pg/sdb_catalog/sdb_settings.h"
 #include "pg/system_functions.h"
@@ -216,6 +217,8 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<PgUserMapping>>(),
   MakeTable<SystemTable<SdbMetrics>>(),
   MakeTable<SystemTable<SdbSettings>>(),
+  MakeTable<SystemTable<SdbMerges>>(),
+  MakeTable<SystemTable<SdbMergeHistory>>(),
 };
 
 const PgSystemSchema kInformationSchema{

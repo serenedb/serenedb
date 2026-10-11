@@ -1,6 +1,10 @@
 target_sources(
     sereneserver
     PRIVATE
+        ann_build_pool.cpp
+        compaction/merge_planner.cpp
+        compaction/merge_policies.cpp
+        compaction/merge_registry.cpp
         inverted_index_storage.cpp
         store_stats.cpp
         search_analyzer_impl.cpp

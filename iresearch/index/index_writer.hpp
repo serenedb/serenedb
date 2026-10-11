@@ -100,6 +100,8 @@ struct CompactionResult {
 
   CompactionError error{CompactionError::Fail};
 
+  MergeStats stats{};
+
   operator bool() const noexcept { return error != CompactionError::Fail; }
 };
 

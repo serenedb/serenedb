@@ -50,8 +50,9 @@ class HnswWriter final : public AnnWriter {
     _merge_sources = sources;
   }
 
-  yaclib::Task<> Compute(const ColumnReader& col, ReadContext& ctx,
-                         const AnnBuildEnv* env) final;
+  bool Compute(const ColReader& reader, const ColumnReader& col,
+               ReadContext& ctx, const AnnBuildEnv* env,
+               absl::FunctionRef<bool()> progress) final;
 
   void Flush() final;
 

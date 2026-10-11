@@ -105,10 +105,8 @@ double CompactionScore(const CompactionCandidate& compaction,
   // 4. prefer smaller compactions
   // 5. prefer compactions which clean removals
 
+  SDB_ASSERT(compaction.count != 0);
   switch (compaction.count) {
-    case 0:
-      // empty compaction makes not sense
-      return 0;
     case 1: {
       auto& meta = *compaction.segments.first->meta;
 

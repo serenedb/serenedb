@@ -1,0 +1,25 @@
+# Lines the merge coverage gate accepts as uncovered: path:line or path:first-last, then the reason.
+iresearch/index/merge_writer.cpp:227-230 CompoundTermIterator::GetMutable exists for the Attribute interface; merges read attributes only through get()
+iresearch/index/merge_writer.cpp:570 the fallback message inside SDB_ENSURE; the refusal itself is covered by MergeCharacterizationTest.InvalidNormColumnIdIsRefused
+iresearch/index/merge_writer.cpp:324 only zero-doc terms give the shared empty postings, and only IVF cluster fields have them, which a merge rebuilds or drops before their terms are read
+iresearch/formats/hnsw/hnsw_writer.cpp:351-355 HNSW encodes only with row-major SQ8, SQ4 and TQ writers, whose EncodeInto always succeeds
+iresearch/formats/hnsw/hnsw_writer.cpp:655-663 the donor's live docs always map inside the output and match its live count
+iresearch/formats/hnsw/hnsw_writer.cpp:726-728 a donor is picked only with live docs, so its remapped graph keeps an entry point
+iresearch/formats/hnsw/hnsw_writer.cpp:909-911 a vector column exists only with rows
+server/search/compaction/merge_planner.cpp:104-105 the tier policy offers a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
+server/search/compaction/merge_planner.cpp:173 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:181 the return after an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:201-205 every search-table and index segment carries the generated row key with its range
+server/search/compaction/merge_planner.cpp:212-214 every planned merge has documents
+server/search/compaction/merge_planner.cpp:223 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_policies.cpp:67-69 the index was dropped while its compaction options were being pinned
+server/connector/functions/sdb_segments.cpp:77-78 every search-table and index segment carries the generated row key with its range
+server/connector/segment_rewrite/segment_rewrite_job.cpp:65-75 every search-table and index segment carries the generated row key with its range
+server/connector/segment_rewrite/segment_rewrite_job.cpp:97-101 every segment has the generated row key column, so a merge has columns
+server/connector/segment_rewrite/segment_rewrite_job.cpp:126 the return after an exhaustive switch over irs::MergeStep
+server/search/compaction/merge_registry.cpp:37 the implicit default of an exhaustive switch over MergeOrigin
+server/search/compaction/merge_registry.cpp:45 the return after an exhaustive switch over MergeOrigin
+server/search/compaction/merge_registry.cpp:49 the implicit default of an exhaustive switch over MergeOutcome
+server/search/compaction/merge_registry.cpp:63 the return after an exhaustive switch over MergeOutcome
+server/search/compaction/merge_registry.cpp:67 the implicit default of an exhaustive switch over irs::CompactionError
+server/search/compaction/merge_registry.cpp:77 the return after an exhaustive switch over irs::CompactionError

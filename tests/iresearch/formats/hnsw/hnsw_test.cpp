@@ -19,22 +19,33 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <exception>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <mutex>
 #include <random>
+#include <stdexcept>
+#include <thread>
 #include <tuple>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/doc_generator.hpp"
+#include "insert_field.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
 
@@ -452,6 +463,432 @@ INSTANTIATE_TEST_SUITE_P(
                       HnswQuant{irs::VectorQuantization::TQ, 4, 0.7},
                       HnswQuant{irs::VectorQuantization::TQ, 2, 0.5},
                       HnswQuant{irs::VectorQuantization::TQ, 3, 0.5})));
+
+inline constexpr uint32_t kMaxTestWorkers = 8;
+
+class ThreadEnv final : public irs::AnnBuildEnv {
+ public:
+  explicit ThreadEnv(uint32_t max_workers, uint32_t failing_worker = 0) noexcept
+    : _max{max_workers}, _failing_worker{failing_worker} {}
+
+  uint32_t Acquire(uint32_t want) const noexcept final {
+    const auto grant = std::clamp(want, 1U, _max);
+    _held.fetch_add(grant);
+    return grant;
+  }
+
+  void Release(uint32_t workers) const noexcept final {
+    _held.fetch_sub(workers);
+  }
+
+  void Run(uint32_t workers, Step step) const final {
+    EXPECT_GT(workers, 1U);
+    EXPECT_LE(workers, _max);
+    _runs.fetch_add(1);
+    std::mutex mutex;
+    std::exception_ptr error;
+    auto body = [&](uint32_t w) {
+      try {
+        while (step(w)) {
+          _steps[w].fetch_add(1);
+          if (_failing_worker != 0 && w == _failing_worker) {
+            throw std::runtime_error{"injected ann worker failure"};
+          }
+        }
+      } catch (...) {
+        std::lock_guard lock{mutex};
+        if (!error) {
+          error = std::current_exception();
+        }
+      }
+    };
+    std::vector<std::thread> helpers;
+    helpers.reserve(workers - 1);
+    for (uint32_t w = 1; w < workers; ++w) {
+      helpers.emplace_back(body, w);
+    }
+    body(0);
+    for (auto& helper : helpers) {
+      helper.join();
+    }
+    if (error) {
+      std::rethrow_exception(error);
+    }
+  }
+
+  uint32_t Held() const noexcept { return _held.load(); }
+  uint32_t Runs() const noexcept { return _runs.load(); }
+  uint64_t HelperSteps() const noexcept {
+    uint64_t total = 0;
+    for (uint32_t w = 1; w < kMaxTestWorkers; ++w) {
+      total += _steps[w].load();
+    }
+    return total;
+  }
+
+ private:
+  uint32_t _max;
+  uint32_t _failing_worker;
+  mutable std::atomic<uint32_t> _held{0};
+  mutable std::atomic<uint32_t> _runs{0};
+  mutable std::array<std::atomic<uint64_t>, kMaxTestWorkers> _steps{};
+};
+
+class HnswParallelBuildTest : public ::testing::TestWithParam<HnswQuant> {
+ protected:
+  static constexpr auto kMetric = irs::VectorMetric::L2Sqr;
+  static constexpr irs::field_id kRowField = 2;
+
+  irs::VectorQuantization Quant() const { return GetParam().kind; }
+  double RecallFloor() const { return GetParam().recall_floor; }
+
+  irs::IndexWriterOptions Options(const irs::AnnBuildEnv* env) const {
+    auto opts = MakeWriterOptions(kMetric, Quant(), GetParam().nb_bits);
+    opts.ann_env = env;
+    return opts;
+  }
+
+  size_t FlushRows() const {
+    return Quant() == irs::VectorQuantization::None ? 8192 : 66000;
+  }
+
+  static void InsertRows(irs::IndexWriter& writer,
+                         const std::vector<std::vector<float>>& vecs,
+                         size_t begin, size_t end) {
+    auto trx = writer.GetBatch();
+    for (size_t i = begin; i < end; ++i) {
+      auto doc = trx.Insert();
+      tests::StringField row{"row", std::to_string(i)};
+      row.id = kRowField;
+      tests::InsertField(doc, row);
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[i]);
+    }
+    trx.Commit();
+    writer.RefreshCommit();
+  }
+
+  static void RemoveRows(irs::IndexWriter& writer, size_t begin, size_t end,
+                         size_t every) {
+    auto trx = writer.GetBatch();
+    for (size_t i = begin; i < end; i += every) {
+      auto filter = std::make_unique<irs::ByTerm>();
+      *filter->mutable_field_id() = kRowField;
+      const auto term = std::to_string(i);
+      filter->mutable_options()->term =
+        irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{term})};
+      trx.Remove(irs::Filter::ptr{std::move(filter)});
+    }
+    trx.Commit();
+    writer.RefreshCommit();
+  }
+
+  static void Insert(irs::IndexWriter& writer,
+                     const std::vector<std::vector<float>>& vecs, size_t begin,
+                     size_t end, size_t null_every = 0) {
+    auto trx = writer.GetBatch();
+    for (size_t i = begin; i < end; ++i) {
+      auto doc = trx.Insert();
+      if (null_every != 0 && i % null_every == 3) {
+        continue;
+      }
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[i]);
+    }
+    trx.Commit();
+    writer.RefreshCommit();
+  }
+
+  double Recall(const irs::DirectoryReader& reader,
+                const std::vector<std::vector<float>>& vecs,
+                size_t null_every = 0) const {
+    EXPECT_EQ(1U, reader.size()) << "recall maps docs of one segment";
+    std::vector<std::vector<float>> present;
+    std::vector<irs::doc_id_t> docs;
+    for (size_t i = 0; i < vecs.size(); ++i) {
+      if (null_every != 0 && i % null_every == 3) {
+        continue;
+      }
+      present.push_back(vecs[i]);
+      docs.push_back(static_cast<irs::doc_id_t>(i) + irs::doc_limits::min());
+    }
+    size_t total = 0;
+    size_t matched = 0;
+    for (const auto& q : MakeVectors(20, 4711)) {
+      auto filter = MakeKnnFilter(q, kMetric, Quant(), 128);
+      const auto got = RunKnn(reader, filter);
+      for (const auto doc : got) {
+        const auto row = doc - irs::doc_limits::min();
+        EXPECT_FALSE(null_every != 0 && row % null_every == 3)
+          << "null row " << row << " came back from the graph";
+      }
+      for (const auto idx : BruteForceTopK(present, q, kMetric, 10)) {
+        ++total;
+        const auto want = docs[idx - irs::doc_limits::min()];
+        matched += std::ranges::find(got, want) != got.end() ? 1 : 0;
+      }
+    }
+    return static_cast<double>(matched) / static_cast<double>(total);
+  }
+};
+
+TEST_P(HnswParallelBuildTest, FlushFansOutAndKeepsRecall) {
+  const auto vecs = MakeVectors(FlushRows(), 97);
+  const ThreadEnv env{4};
+
+  irs::MemoryDirectory parallel_dir;
+  auto parallel =
+    irs::IndexWriter::Make(parallel_dir, irs::kOmCreate, Options(&env));
+  Insert(*parallel, vecs, 0, vecs.size());
+  EXPECT_GE(env.Runs(), 1U);
+  EXPECT_GT(env.HelperSteps(), 0U);
+  EXPECT_EQ(0U, env.Held());
+
+  irs::MemoryDirectory serial_dir;
+  auto serial =
+    irs::IndexWriter::Make(serial_dir, irs::kOmCreate, Options(nullptr));
+  Insert(*serial, vecs, 0, vecs.size());
+
+  const auto parallel_recall = Recall(parallel->GetSnapshot(), vecs);
+  const auto serial_recall = Recall(serial->GetSnapshot(), vecs);
+  EXPECT_GE(parallel_recall, RecallFloor());
+  EXPECT_GE(parallel_recall, serial_recall - 0.05)
+    << "parallel " << parallel_recall << " serial " << serial_recall;
+}
+
+TEST_P(HnswParallelBuildTest, NullRowsStayOutOfTheGraph) {
+  const auto vecs = MakeVectors(FlushRows(), 31);
+  const ThreadEnv env{4};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(&env));
+  Insert(*writer, vecs, 0, vecs.size(), /*null_every=*/7);
+  EXPECT_GE(env.Runs(), 1U);
+  EXPECT_GE(Recall(writer->GetSnapshot(), vecs, /*null_every=*/7),
+            RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, MergeInsertsTheDeltaInParallel) {
+  constexpr size_t kBig = 12000;
+  constexpr size_t kSmall = 4000;
+  const auto vecs = MakeVectors(kBig + kSmall, 53);
+  const ThreadEnv env{4};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  Insert(*writer, vecs, 0, kBig);
+  Insert(*writer, vecs, kBig, kBig + kSmall);
+  ASSERT_EQ(2U, writer->GetSnapshot().size());
+
+  const auto result = irs::GetReady(writer->CompactAsync(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()), nullptr,
+    {}, &env));
+  ASSERT_TRUE(result);
+  writer->RefreshCommit();
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged.size());
+  EXPECT_GE(env.Runs(), 1U);
+  EXPECT_EQ(0U, env.Held());
+  EXPECT_GE(Recall(merged, vecs), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, GrantOfOneBuildsSerially) {
+  const auto vecs = MakeVectors(FlushRows(), 7);
+  const ThreadEnv env{1};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(&env));
+  Insert(*writer, vecs, 0, vecs.size());
+  EXPECT_EQ(0U, env.Runs());
+  EXPECT_EQ(0U, env.Held());
+  EXPECT_GE(Recall(writer->GetSnapshot(), vecs), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, CancelledMergeKeepsTheInputs) {
+  constexpr size_t kRows = 6000;
+  const auto vecs = MakeVectors(kRows, 3);
+  const ThreadEnv env{4};
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+  auto make = [&](irs::Directory& dir) {
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+    Insert(*writer, vecs, 0, kRows / 2);
+    Insert(*writer, vecs, kRows / 2, kRows);
+    return writer;
+  };
+
+  size_t before_run = 0;
+  {
+    irs::MemoryDirectory dir;
+    auto writer = make(dir);
+    const auto runs = env.Runs();
+    const irs::MergeWriter::FlushProgress count = [&] {
+      before_run += env.Runs() == runs ? 1 : 0;
+      return true;
+    };
+    ASSERT_TRUE(
+      irs::GetReady(writer->CompactAsync(policy, nullptr, count, &env)));
+    ASSERT_GT(env.Runs(), runs);
+  }
+  ASSERT_GT(before_run, 2U);
+
+  irs::MemoryDirectory dir;
+  auto writer = make(dir);
+  auto expect_cancelled = [&](const irs::MergeWriter::FlushProgress& progress) {
+    EXPECT_FALSE(
+      irs::GetReady(writer->CompactAsync(policy, nullptr, progress, &env)));
+    EXPECT_EQ(0U, env.Held());
+    writer->RefreshCommit();
+    EXPECT_EQ(2U, writer->GetSnapshot().size());
+  };
+  for (size_t stop_at = 1; stop_at <= before_run; ++stop_at) {
+    SCOPED_TRACE(stop_at);
+    size_t calls = 0;
+    expect_cancelled([&] { return ++calls < stop_at; });
+  }
+  {
+    SCOPED_TRACE("inside the parallel insert");
+    const auto runs = env.Runs();
+    expect_cancelled([&] { return env.Runs() == runs; });
+    EXPECT_GT(env.Runs(), runs);
+  }
+  ASSERT_TRUE(irs::GetReady(writer->CompactAsync(policy, nullptr, {}, &env)));
+  writer->RefreshCommit();
+  ASSERT_EQ(1U, writer->GetSnapshot().size());
+  EXPECT_GE(Recall(writer->GetSnapshot(), vecs), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, CancelledStreamedMergeKeepsTheInputs) {
+  if (Quant() == irs::VectorQuantization::None) {
+    GTEST_SKIP() << "only quantized graphs stream the originals";
+  }
+  constexpr size_t kRows = 80000;
+  const auto vecs = MakeVectors(kRows, 5);
+  const ThreadEnv env{4};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  InsertRows(*writer, vecs, 0, kRows / 2);
+  InsertRows(*writer, vecs, kRows / 2, kRows);
+  RemoveRows(*writer, 0, kRows, 2);
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+  const auto runs = env.Runs();
+  EXPECT_FALSE(irs::GetReady(writer->CompactAsync(
+    policy, nullptr, [&] { return env.Runs() == runs; }, &env)));
+  EXPECT_GT(env.Runs(), runs);
+  EXPECT_EQ(0U, env.Held());
+  writer->RefreshCommit();
+  EXPECT_EQ(2U, writer->GetSnapshot().size());
+}
+
+TEST_P(HnswParallelBuildTest, WorkerErrorFailsTheMerge) {
+  constexpr size_t kRows = 6000;
+  const auto vecs = MakeVectors(kRows, 5);
+  const ThreadEnv failing{4, /*failing_worker=*/1};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  Insert(*writer, vecs, 0, kRows / 2);
+  Insert(*writer, vecs, kRows / 2, kRows);
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+
+  EXPECT_THROW(
+    irs::GetReady(writer->CompactAsync(policy, nullptr, {}, &failing)),
+    std::runtime_error);
+  EXPECT_EQ(0U, failing.Held());
+  writer->RefreshCommit();
+  EXPECT_EQ(2U, writer->GetSnapshot().size());
+
+  const ThreadEnv env{4};
+  ASSERT_TRUE(irs::GetReady(writer->CompactAsync(policy, nullptr, {}, &env)));
+  writer->RefreshCommit();
+  EXPECT_EQ(1U, writer->GetSnapshot().size());
+  EXPECT_GE(Recall(writer->GetSnapshot(), vecs), RecallFloor());
+}
+
+void WriteNullVectorAt(irs::ColWriter& cs, irs::doc_id_t doc) {
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+  auto& cw = cs.OpenColumn(kVec, vtype);
+  duckdb::Vector v{vtype, 1};
+  duckdb::FlatVector::ValidityMutable(v).SetInvalid(0);
+  duckdb::FlatVector::SetSize(v, 1);
+  cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
+            /*count=*/1);
+}
+
+TEST_P(HnswParallelBuildTest, AllNullColumnBuildsNoGraph) {
+  const ThreadEnv env{4};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(&env));
+  for (size_t segment = 0; segment != 2; ++segment) {
+    auto trx = writer->GetBatch();
+    for (size_t i = 0; i != 300; ++i) {
+      auto doc = trx.Insert();
+      WriteNullVectorAt(*doc.GetColWriter(), doc.DocId());
+    }
+    trx.Commit();
+    writer->RefreshCommit();
+  }
+  ASSERT_EQ(2U, writer->GetSnapshot().size());
+  ASSERT_TRUE(irs::GetReady(writer->CompactAsync(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()), nullptr,
+    {}, &env)));
+  writer->RefreshCommit();
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged.size());
+  const auto* ann = (*merged)[0].Ann(kVec);
+  EXPECT_TRUE(ann == nullptr || ann->Empty());
+  auto filter = MakeKnnFilter(MakeVectors(1, 9).front(), kMetric, Quant(), 64);
+  EXPECT_TRUE(RunKnn(merged, filter).empty());
+}
+
+TEST_P(HnswParallelBuildTest, SerialMergeStopsAtEveryProgressCall) {
+  constexpr size_t kDonorRows = 2000;
+  constexpr size_t kRows = 3000;
+  const auto vecs = MakeVectors(kRows, 11);
+  const auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount());
+  for (const size_t delete_every : {50, 2}) {
+    SCOPED_TRACE(delete_every);
+    auto make = [&](irs::Directory& dir) {
+      auto writer =
+        irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+      InsertRows(*writer, vecs, 0, kDonorRows);
+      InsertRows(*writer, vecs, kDonorRows, kRows);
+      RemoveRows(*writer, 0, kDonorRows, delete_every);
+      return writer;
+    };
+    size_t total = 0;
+    {
+      irs::MemoryDirectory dir;
+      auto writer = make(dir);
+      const irs::MergeWriter::FlushProgress count = [&] {
+        return ++total != 0;
+      };
+      ASSERT_TRUE(
+        irs::GetReady(writer->CompactAsync(policy, nullptr, count, nullptr)));
+    }
+    irs::MemoryDirectory dir;
+    auto writer = make(dir);
+    for (size_t stop_at = 1; stop_at <= total; ++stop_at) {
+      SCOPED_TRACE(stop_at);
+      size_t calls = 0;
+      const irs::MergeWriter::FlushProgress progress = [&] {
+        return ++calls < stop_at;
+      };
+      EXPECT_FALSE(irs::GetReady(
+        writer->CompactAsync(policy, nullptr, progress, nullptr)));
+      writer->RefreshCommit();
+      ASSERT_EQ(2U, writer->GetSnapshot().size());
+    }
+    ASSERT_TRUE(
+      irs::GetReady(writer->CompactAsync(policy, nullptr, {}, nullptr)));
+    writer->RefreshCommit();
+    ASSERT_EQ(1U, writer->GetSnapshot().size());
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  quant, HnswParallelBuildTest,
+  ::testing::Values(HnswQuant{irs::VectorQuantization::None, 0, 0.9},
+                    HnswQuant{irs::VectorQuantization::SQ8, 0, 0.9},
+                    HnswQuant{irs::VectorQuantization::TQ, 4, 0.7}));
 
 }  // namespace
 namespace {

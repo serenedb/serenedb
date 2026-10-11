@@ -29,7 +29,9 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -310,6 +312,16 @@ class ColFilterChain {
   duckdb::idx_t WalkMask(irs::doc_id_t base, uint64_t* mask,
                          duckdb::idx_t words);
 
+  struct DenseRange {
+    duckdb::PhysicalType type = duckdb::PhysicalType::INVALID;
+    int64_t lo = std::numeric_limits<int64_t>::min();
+    int64_t hi = std::numeric_limits<int64_t>::max();
+  };
+
+  template<bool Keep>
+  duckdb::idx_t DenseMask(irs::doc_id_t base, uint64_t* mask,
+                          duckdb::idx_t words);
+
   struct Row {
     duckdb::TableFilterState* state = nullptr;
     duckdb::DataChunk* chunk = nullptr;
@@ -326,6 +338,7 @@ class ColFilterChain {
 
   std::vector<Col> _cols;
   std::vector<Row> _rows;
+  std::optional<DenseRange> _dense;
   duckdb::SelectionVector _row_sel{STANDARD_VECTOR_SIZE};
   // FilterDocs' block-run selection. FilterSelection repoints `_sel` to a
   // buffer sized to the entering survivor count, so every block rebinds it to

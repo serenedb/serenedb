@@ -198,7 +198,6 @@ void CheckTokens(const SearchColumnInfo& column_info,
   }
   auto tokens = std::make_shared<irs::PhraseTokens>();
   tokens->text = column_info.text;
-  tokens->json = column_info.logical_type.IsJSONType();
   tokens->tokenizer =
     [source = column_info.tokenizer.analyzer.get_deleter().tokenizer,
      context = &context, words] -> std::shared_ptr<irs::analysis::Tokenizer> {

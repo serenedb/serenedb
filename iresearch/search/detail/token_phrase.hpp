@@ -52,14 +52,13 @@ struct PhraseTokens {
   field_id text = field_limits::invalid();
   Factory tokenizer;
   std::optional<ByPhraseOptions> spec;
-  bool json = false;
 
   const ByPhraseOptions& Check(const ByPhraseOptions& phrase) const noexcept {
     return spec ? *spec : phrase;
   }
 
   bool operator==(const PhraseTokens& rhs) const noexcept {
-    return text == rhs.text && spec == rhs.spec && json == rhs.json;
+    return text == rhs.text && spec == rhs.spec;
   }
 };
 
@@ -192,7 +191,6 @@ class JsonLeafReader;
 
 class RowValues {
  public:
-  explicit RowValues(bool json);
   ~RowValues();
 
   void Bind(duckdb::Vector& values, duckdb::idx_t count);

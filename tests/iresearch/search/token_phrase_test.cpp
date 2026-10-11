@@ -240,10 +240,10 @@ irs::PhraseTokens TextOf() {
 }
 
 bool CheckText(irs::PhraseCheck& check, std::string_view text,
-               irs::PhraseVerdict& verdict) {
+               irs::PhraseVerdict& verdict,
+               const duckdb::LogicalType& type = duckdb::LogicalType::VARCHAR) {
   duckdb::DataChunk chunk;
-  chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
-                   {duckdb::LogicalType::VARCHAR});
+  chunk.Initialize(duckdb::Allocator::DefaultAllocator(), {type});
   chunk.SetChildCardinality(1);
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(chunk.data[0])[0] = {
     text.data(), static_cast<uint32_t>(text.size())};
@@ -687,19 +687,72 @@ TEST(PhraseCheckTest, anchor_carries_long_terms_across_batches) {
 TEST(PhraseCheckTest, json_values_check_the_text_of_strings) {
   const std::span<const std::vector<irs::bstring>> expanded;
   const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
-  auto tokens = TextOf<DenseWords>();
-  tokens.json = true;
-  irs::PhraseCheck check{compiled, tokens, true};
+  irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
   irs::PhraseVerdict verdict;
-  EXPECT_TRUE(CheckText(check, R"("quick brown")", verdict));
-  EXPECT_TRUE(CheckText(check, R"("the quick brown fox")", verdict));
-  EXPECT_TRUE(CheckText(check, " \"quick brown\"\n", verdict));
-  EXPECT_TRUE(CheckText(check, "\"quick\\u0020brown\"", verdict));
-  EXPECT_FALSE(CheckText(check, R"(["quick brown"])", verdict));
-  EXPECT_FALSE(CheckText(check, "quick brown", verdict));
-  EXPECT_FALSE(CheckText(check, "42", verdict));
-  EXPECT_FALSE(CheckText(check, "true", verdict));
-  EXPECT_FALSE(CheckText(check, "null", verdict));
+  const auto json = duckdb::LogicalType::JSON();
+  EXPECT_TRUE(CheckText(check, R"("quick brown")", verdict, json));
+  EXPECT_TRUE(CheckText(check, R"("the quick brown fox")", verdict, json));
+  EXPECT_TRUE(CheckText(check, " \"quick brown\"\n", verdict, json));
+  EXPECT_TRUE(CheckText(check, "\"quick\\u0020brown\"", verdict, json));
+  EXPECT_FALSE(CheckText(check, R"(["quick brown"])", verdict, json));
+  EXPECT_FALSE(CheckText(check, "quick brown", verdict, json));
+  EXPECT_FALSE(CheckText(check, "42", verdict, json));
+  EXPECT_FALSE(CheckText(check, "true", verdict, json));
+  EXPECT_FALSE(CheckText(check, "null", verdict, json));
+}
+
+TEST(PhraseCheckTest, only_json_typed_values_are_decoded) {
+  const std::span<const std::vector<irs::bstring>> expanded;
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  const auto tokens = TextOf<DenseWords>();
+  irs::PhraseCheck text{compiled, tokens, true};
+  irs::PhraseCheck json{compiled, tokens, true};
+  irs::PhraseVerdict verdict;
+  for (const std::string_view value :
+       {R"("quick brown")", "\"quick\\u0020brown\"", " \"quick brown\" "}) {
+    EXPECT_FALSE(CheckText(text, value, verdict)) << value;
+    EXPECT_TRUE(CheckText(json, value, verdict, duckdb::LogicalType::JSON()))
+      << value;
+  }
+  EXPECT_TRUE(CheckText(text, "quick brown", verdict));
+  EXPECT_FALSE(
+    CheckText(json, "quick brown", verdict, duckdb::LogicalType::JSON()));
+}
+
+TEST(PhraseCheckTest, json_rows_of_every_kind) {
+  constexpr std::string_view kRows[] = {
+    R"("a quick brown")",
+    "\"quick\\u0020brown\"",
+    " \"quick brown\" ",
+    R"("brown quick")",
+    "42",
+    "true",
+    "null",
+    R"({"t":"quick brown"})",
+    R"(["quick brown"])",
+    R"("quick brown")",
+  };
+  constexpr size_t kSqlNull = 9;
+  constexpr bool kMatches[] = {true,  true,  true,  false, false,
+                               false, false, false, false, false};
+  duckdb::DataChunk chunk;
+  chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
+                   {duckdb::LogicalType::JSON()});
+  chunk.SetChildCardinality(std::size(kRows));
+  auto& rows = chunk.data[0];
+  auto* data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(rows);
+  for (size_t i = 0; i != std::size(kRows); ++i) {
+    data[i] = {kRows[i].data(), static_cast<uint32_t>(kRows[i].size())};
+  }
+  duckdb::FlatVector::ValidityMutable(rows).SetInvalid(kSqlNull);
+  const std::span<const std::vector<irs::bstring>> expanded;
+  const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
+  irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
+  check.Bind(rows, std::size(kRows));
+  irs::PhraseVerdict verdict;
+  for (size_t i = 0; i != std::size(kRows); ++i) {
+    EXPECT_EQ(kMatches[i], check.Check(i, verdict)) << kRows[i];
+  }
 }
 
 TEST(PhraseCheckTest, array_rows_skip_null_rows_and_elements) {

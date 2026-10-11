@@ -414,18 +414,17 @@ void PhraseCheck::PositionsMatch::Reset(size_t n) {
 PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
                          const PhraseTokens& tokens, bool count)
   : _tokenizer{tokens.tokenizer()},
-    _rows{tokens.json},
     _state{.phrase = &phrase, .count = count},
     _dense{!_tokenizer->Traits().explicit_pos} {}
-
-RowValues::RowValues(bool json)
-  : _json{json ? std::make_unique<JsonLeafReader>() : nullptr} {}
 
 RowValues::~RowValues() = default;
 
 void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   const auto& type = values.GetType();
   _type = type.id();
+  if (!_json && type.IsJSONType()) {
+    _json = std::make_unique<JsonLeafReader>();
+  }
   values.ToUnifiedFormat(count, _format);
   if (_type == duckdb::LogicalTypeId::LIST) {
     duckdb::ListVector::GetEntry(values).ToUnifiedFormat(

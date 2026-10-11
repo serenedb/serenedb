@@ -675,6 +675,10 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
       continue;
     }
 
+    if (IsSubsetOf(IndexFeatures::Vec, field_itr.Meta().index_features)) {
+      continue;
+    }
+
     FieldProperties props;
     props.index_features = field_itr.Meta().index_features;
 

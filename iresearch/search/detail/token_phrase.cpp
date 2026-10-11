@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <bit>
 #include <cstring>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -310,14 +309,11 @@ void CompiledPhrase::LayoutAutomaton() {
         for (auto j = prev + slot.offs_min - 1; j + 2 <= bit; ++j) {
           range |= uint64_t{1} << j;
         }
-        layout.extras.push_back({.range = range,
-                                 .bit = uint64_t{1} << bit,
-                                 .index = static_cast<uint32_t>(bit)});
+        layout.extras.push_back({.range = range, .bit = uint64_t{1} << bit});
       }
     }
     slot.bit = uint64_t{1} << bit;
   }
-  layout.length = static_cast<uint32_t>(bit + 1);
   layout.last = uint64_t{1} << bit;
   for (auto& [term, entry] : accept) {
     for (uint32_t i = 0; i != entry.size; ++i) {
@@ -399,15 +395,10 @@ void PhraseCheck::AnchorMatch::Consumed(const TokenBatch& batch,
   }
 }
 
-void PhraseCheck::AutomatonMatch::Reset(const CompiledPhrase::Automaton& layout,
-                                        bool count) {
+void PhraseCheck::AutomatonMatch::Reset() {
   _bits = 0;
   _mask = 0;
   _at = 0;
-  if (count && !layout.extras.empty()) {
-    _counts.assign(layout.length, 0);
-    _sums.assign(layout.extras.size(), 0);
-  }
 }
 
 void PhraseCheck::PositionsMatch::Reset(size_t n) {
@@ -500,8 +491,8 @@ void PhraseCheck::Start(bool anchored) {
   const auto& phrase = *_state.phrase;
   if (anchored) {
     Use<AnchorMatch>().Reset();
-  } else if (phrase.automaton) {
-    Use<AutomatonMatch>().Reset(*phrase.automaton, _state.count);
+  } else if (phrase.automaton && !_state.count) {
+    Use<AutomatonMatch>().Reset();
   } else {
     Use<PositionsMatch>().Reset(phrase.slots.size());
   }
@@ -719,36 +710,11 @@ void PhraseCheck::AutomatonMatch::Step(uint64_t mask, State& state) {
       next |= extra.bit & mask;
     }
   }
-  if (!state.count || layout.extras.empty()) {
-    _bits = next;
-    if (_bits & layout.last) {
-      ++state.freq;
-      state.done = !state.count;
-    }
-    return;
-  }
-  if ((_bits | next) == 0) {
-    return;
-  }
-  for (size_t x = 0; x != layout.extras.size(); ++x) {
-    uint64_t sum = 0;
-    for (auto r = layout.extras[x].range & _bits; r != 0; r &= r - 1) {
-      sum += _counts[std::countr_zero(r)];
-    }
-    _sums[x] = sum;
-  }
-  for (auto j = layout.length - 1; j != 0; --j) {
-    _counts[j] = (next >> j & 1) ? _counts[j - 1] : 0;
-  }
-  _counts[0] = next & 1;
-  for (size_t x = 0; x != layout.extras.size(); ++x) {
-    const auto& extra = layout.extras[x];
-    if (mask & extra.bit) {
-      _counts[extra.index] += _sums[x];
-    }
-  }
   _bits = next;
-  state.freq += _counts[layout.length - 1];
+  if (_bits & layout.last) {
+    state.freq = 1;
+    state.done = true;
+  }
 }
 
 void PhraseCheck::PositionsMatch::Feed(const TokenBatch& batch, uint32_t from,

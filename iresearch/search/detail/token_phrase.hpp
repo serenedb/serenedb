@@ -114,13 +114,11 @@ struct CompiledPhrase {
     struct Extra {
       uint64_t range = 0;
       uint64_t bit = 0;
-      uint32_t index = 0;
     };
 
     std::vector<Extra> extras;
     uint64_t wild = 0;
     uint64_t last = 0;
-    uint32_t length = 0;
   };
 
   CompiledPhrase(const ByPhraseOptions& phrase,
@@ -279,7 +277,7 @@ class PhraseCheck final : public TokenConsumer {
 
   class AutomatonMatch {
    public:
-    void Reset(const CompiledPhrase::Automaton& layout, bool count);
+    void Reset();
     void Feed(const TokenBatch& batch, uint32_t from, State& state);
     bool Finish(State& state, PhraseVerdict& out);
 
@@ -290,8 +288,6 @@ class PhraseCheck final : public TokenConsumer {
     uint64_t _bits = 0;
     uint64_t _mask = 0;
     uint32_t _at = 0;
-    std::vector<uint64_t> _counts;
-    std::vector<uint64_t> _sums;
   };
 
   class PositionsMatch {

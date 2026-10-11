@@ -433,6 +433,72 @@ void RegisterAll() {
     "the {0,10} the {0,10} the",
     "of {0,5} the {0,5} of {0,5} the",
     "in {0,10} the {0,10} of {0,10} the",
+    "unit* stat*",
+    "th* s*",
+    "th* {0,5} s*",
+    "%tion of*",
+    "is a village in the administrative district of",
+    "according to the united states census bureau",
+    "member of the house of representatives",
+    "the first time in the history of",
+    "he was a member of the",
+    "is a village in the {0,3} district of",
+    "according to the united stat* census bur*",
+    "he was a {0,2} of the",
+    "member of the {0,2} of representatives",
+    "the %ity of california",
+    "in {0,3} the {0,3} of {0,3} the {0,3} of",
+    "the {0,80} of",
+    "states united the of",
+    "th* {0,3} s* {0,3} of*",
+    "%ity of* {0,2} cal*",
+    "this wikipedia article was originally based on published by the state of "
+    "queensland under license accessed on ? on ? the geo coordinates were "
+    "originally computed from the published by the state of queensland under "
+    "license accessed on",
+    "references attribution this wikipedia article was originally based on "
+    "published by the state of queensland under license accessed on",
+    "was part of the {1,3} women s national volleyball team at the fivb "
+    "volleyball women s world championship in {1,2} on club level she played "
+    "with",
+    "women s national volleyball team at the fivb volleyball women s world "
+    "championship in germany on club level she played with",
+    "was an australian rules footballer who played with {1,3} in the victorian "
+    "football league vfl",
+    "is a moth in the autostichidae family it was described by meyrick in it "
+    "is found in",
+    "is a moth of the depressariidae family it is found in {1,3} the wingspan "
+    "is",
+    "is a species of leaf beetle native to the democratic republic of the "
+    "congo observed by",
+    "is a species of leaf beetle native to {1,6} observed by",
+    "has households the effective literacy rate i e the literacy rate of "
+    "population excluding children aged and below is",
+    "literacy rate {0,3} literacy rate",
+    "is a village in the administrative district of gmina {1,3} within {1,3} "
+    "county {1,3} voivodeship in {1,3} poland",
+    "is a village {0,30} gmina {0,30} voivodeship {0,30} poland",
+    "footballer {0,50} victorian football league",
+    "volleyball {0,100} club level",
+    "the {0,200} of",
+    "wikipedia {0,40} queensland {0,40} geo coordinates {0,60} queensland",
+    "was an australian rules footballer {0,80} football league",
+    "women s national volley* team at the fivb volley* women s world "
+    "champion* in {1,2} on club level she play* with",
+    "is a moth in the %idae family it was described by {1,2} in it is found "
+    "in",
+    "is a %oth {0,2} the %idae family it {0,3} found in {1,3} the wingspan is",
+    "was an australian rules foot* who played with {1,3} in the vic* football "
+    "league vfl",
+    "the state of queensland under license accessed on ? on ? the geo "
+    "coordinates {0,5} the {0,3} by the state of queensland",
+    "she was part of the {1,3} women s national {0,2} team at the {0,5} world "
+    "championship in {1,2}",
+    "of the {0,5} of the {0,5} of the {0,5} of the",
+    "nation* volley* team* {0,3} fiv* volley* {0,3} champion* {0,5} club* "
+    "level*",
+    "volley* {0,40} champion* {0,40} club*",
+    "with played she level club on germany in championship world",
   };
   auto& cases = Cases();
   for (size_t d = 0; d < std::size(kDictionaries); ++d) {

@@ -1,6 +1,0 @@
-{
- "defaultValue": "'2'",
- "maxLength": null,
- "nullable": false,
- "type": "bigint"
-}

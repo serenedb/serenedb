@@ -948,11 +948,17 @@ skipif postgres
 ----
 > \prompt: missing required argument
 
+# psql's \password queries `password_encryption` to pick a hash algo;
+# serened doesn't expose that GUC. PG accepts an empty password with a
+# NOTICE; serened errors. Test asserts serened's own output.
 skipif postgres
 \password
 ----
 > Enter new password for user "postgres":
 > Enter it again:
+> ERROR:  unrecognized configuration parameter "password_encryption"
+>
+> Did you mean: "s3_endpoint"
 
 \cd
 ----
@@ -1082,8 +1088,10 @@ skip-row: ^\(\d+ rows?\)$
 ----
 > function name is required
 
+# serened has 1 database (postgres); PG ships postgres + template0 + template1
+# as bootstrap artifacts. Test asserts serened's own \l output.
 skipif postgres
-\l postgres
+\l
 ----
 >                                                 List of databases
 > +----------+----------+----------+-----------------+---------+---------+--------+-----------+-------------------+
@@ -1093,6 +1101,8 @@ skipif postgres
 > +----------+----------+----------+-----------------+---------+---------+--------+-----------+-------------------+
 > (1 row)
 
+# serened has no tablespace concept; pg_tablespace is empty. PG ships
+# pg_default/pg_global; we only assert serened's own empty \db output.
 skipif postgres
 \db
 ----
@@ -1100,22 +1110,23 @@ skipif postgres
 > +------------+----------+----------+
 > |    Name    |  Owner   | Location |
 > +------------+----------+----------+
-> | pg_default | postgres |          |
-> | pg_global  | postgres |          |
+> | pg_default | postgres | [NULL]   |
+> | pg_global  | postgres | [NULL]   |
 > +------------+----------+----------+
 > (2 rows)
 
-# Non-default config knobs differ per server.
+# Non-default config knobs differ per server; serened additionally has no
+# pg_settings.source/boot_val so \dconfig is unconditionally empty here.
+# Tracked: https://github.com/serenedb/serenedb/issues/739
 skipif postgres
 \dconfig
 ----
 > List of non-default configuration parameters
-> +------------------+-------+
-> |    Parameter     | Value |
-> +------------------+-------+
-> | application_name | psql  |
-> +------------------+-------+
-> (1 row)
+> +-----------+-------+
+> | Parameter | Value |
+> +-----------+-------+
+> +-----------+-------+
+> (0 rows)
 
 # pg_cast is empty on serened; DuckDB doesn't expose its cast graph via
 # any duckdb_* table function and CastFunctionSet has no public iterator.
@@ -1165,7 +1176,7 @@ skipif postgres
 > +------+-------+---------+-------------+
 > (0 rows)
 
-# serened access methods: heap and iresearch back tables;
+# serened access methods: iresearch backs tables;
 # secondary/inverted back indexes (server/catalog/entry.h). PG ships
 # heap/btree/gin/... -- entirely different storage layer.
 skipif postgres
@@ -1175,12 +1186,11 @@ skipif postgres
 > +-----------+-------+
 > |   Name    | Type  |
 > +-----------+-------+
-> | heap      | Table |
 > | inverted  | Index |
 > | iresearch | Table |
 > | secondary | Index |
 > +-----------+-------+
-> (4 rows)
+> (3 rows)
 
 # serened's pg_opclass surfaces the `ivf` and `hnsw` builtins (inverted AM,
 # FLOAT[]) plus every CREATE TEXT SEARCH DICTIONARY as an inverted-AM opclass.

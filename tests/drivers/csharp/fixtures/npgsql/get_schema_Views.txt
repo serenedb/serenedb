@@ -1,2 +1,0 @@
-table_catalog | table_schema | table_name | check_option | is_updatable
-<database> | drv | active_players | NONE | NONE

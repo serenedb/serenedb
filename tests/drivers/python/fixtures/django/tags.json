@@ -1,4 +1,0 @@
-[
-  {"model": "django_drv.tag", "pk": 9001, "fields": {"label": "loaded-a"}},
-  {"model": "django_drv.tag", "pk": 9002, "fields": {"label": "loaded-b"}}
-]

@@ -120,9 +120,6 @@ The test tree is split by what runs the test and what it covers:
 - `tests/server/<area>/...`, `tests/iresearch/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
 - `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
-- `tests/drivers/<language>/...` -- drivers, ORMs and tools (Django, SQLAlchemy, Hibernate, Prisma, EF Core, ActiveRecord, pg_dump, pgAdmin, ...) run by `tests/drivers/run.sh`; `tests/sqllogic/any/pg/clients/` replays the catalog queries of GUI and API tools such as DBeaver and Metabase.
-
-Client suites are checked against PostgreSQL 18. Introspection output is compared with a golden written by a run against PostgreSQL with `SDB_DRV_UPDATE_GOLDENS=1`; the same run against SereneDB writes a twin, `<name>.serenedb<ext>`, only where SereneDB's output differs. A SereneDB gap is pinned by a strict expected failure (pytest `xfail(strict=True)`, `xfailOnSereneDB` in the other languages) whose reason cites the issue. It fails once the gap is closed: then delete the marker, and regenerate or delete the twin.
 
 When a change needs a test:
 
@@ -185,10 +182,9 @@ CI never downloads or installs anything while it builds or tests. Toolchains, dr
 packages, language runtimes and test fixtures come from images:
 
 - `scripts/ci/build-ubuntu.Dockerfile` is the build and test image. It installs each driver's
-  dependencies from the manifests in `tests/drivers/` (`requirements.txt`,
-  `pgadmin-requirements.txt` in its own venv, `package-lock.json`, `composer.lock`, `go.sum`,
-  `pom.xml`, `*.csproj`, `Cargo.lock`, `Gemfile.lock`) and turns the package managers offline.
-  Regenerate it with the `build-images` workflow whenever one of those changes.
+  dependencies from the manifests in `tests/drivers/` (`requirements.txt`, `package-lock.json`,
+  `composer.lock`, `go.sum`, `pom.xml`, `*.csproj`, `Cargo.lock`) and turns the package managers
+  offline. Regenerate it with the `build-images` workflow whenever one of those changes.
 - Service fixtures that need content baked in (models, extensions) get their own image, built by
   the same workflow (`tests/sqllogic/fixtures/ollama`).
 - Runners never install a missing dependency or skip a missing toolchain; they fail and name what

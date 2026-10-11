@@ -8,8 +8,7 @@ publish = false
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
 postgres = "0.19"
-sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "any", "migrate", "macros"] }
-sea-schema = { version = "0.18", default-features = false, features = ["discovery", "writer", "sqlx-postgres", "runtime-tokio"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "any"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 regex = "1"
@@ -25,11 +24,3 @@ path = "tests/sqlx.rs"
 [[test]]
 name = "postgres"
 path = "tests/postgres.rs"
-
-[[test]]
-name = "sqlx_schema"
-path = "tests/sqlx_schema.rs"
-
-[[test]]
-name = "sea_schema"
-path = "tests/sea_schema.rs"

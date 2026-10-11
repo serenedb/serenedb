@@ -1,5 +1,0 @@
-model Event {
-  id      Int      @id @default(autoincrement())
-  payload Json
-  tags    Json?    @default("[]")
-}

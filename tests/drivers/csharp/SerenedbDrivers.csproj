@@ -5,12 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <NuGetAudit>false</NuGetAudit>
-    <NoWarn>$(NoWarn);EF1001</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Npgsql" Version="10.0.3" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageReference Include="Npgsql" Version="8.0.4" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">

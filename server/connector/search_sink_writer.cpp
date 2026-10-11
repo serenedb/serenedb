@@ -550,88 +550,60 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
         [&](uint32_t i, uint32_t sel_idx) {
           const irs::doc_id_t doc = first_doc + i;
           bool wrote_string_blob = false;
-          const auto& cell_string =
-            duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-              fmt)[sel_idx];
-          std::string_view json_str = AsView(cell_string);
-          if (!json_str.empty() && json_str.front() == kStringPrefix[0]) {
-            json_str = json_str.substr(1);
-          }
-          if (!json_str.empty()) {
-            _json_buffer.assign(json_str);
-            _json_buffer.append(simdjson::SIMDJSON_PADDING, '\0');
-            simdjson::padded_string_view padded_view{
-              _json_buffer.data(), json_str.size(), _json_buffer.size()};
-            simdjson::ondemand::document json_doc;
-            auto res = _json_parser.iterate(padded_view).get(json_doc);
-            SDB_ASSERT(res == simdjson::SUCCESS);
-            simdjson::ondemand::json_type t{};
-            if (json_doc.type().get(t) == simdjson::SUCCESS) {
-              switch (t) {
-                case simdjson::ondemand::json_type::string: {
-                  auto s = json_doc.get_string();
-                  if (s.error() == simdjson::SUCCESS) {
-                    const std::string_view value = s.value_unsafe();
-                    bool ok = true;
-                    if (jpf.string_field.keyword) {
-                      w.BeginValue(doc, static_cast<uint32_t>(value.size()));
-                      w.Emit<irs::TokenLayout::Terms>(
-                        value.data(), static_cast<uint32_t>(value.size()));
-                      w.EndValue();
-                    } else {
-                      ok = jpf.string_field.string_analyzer->Fill(
-                        duckdb::string_t{value.data(),
-                                         static_cast<uint32_t>(value.size())},
-                        doc, w, {str_layout});
-                    }
-                    if (store_writer) {
-                      if (jpf.string_field.keyword) {
-                        AppendBlobAt(
-                          *store_writer, doc,
-                          duckdb::string_t{
-                            value.data(), static_cast<uint32_t>(value.size())});
-                        wrote_string_blob = true;
-                      } else {
-                        // Store-producing analyzers delivered through OnStore
-                        // above; everyone else falls through to the empty-blob
-                        // backfill.
-                        wrote_string_blob =
-                          ok &&
-                          jpf.string_field.string_analyzer->Traits().store;
-                      }
-                    }
-                  }
-                } break;
-                case simdjson::ondemand::json_type::number: {
-                  double d;
-                  if (json_doc.get_double().get(d) == simdjson::SUCCESS) {
-                    nums[nnums++] = d;
-                    _json_num_docs.push_back(doc);
-                  }
-                } break;
-                case simdjson::ondemand::json_type::boolean: {
-                  bool b;
-                  if (json_doc.get_bool().get(b) == simdjson::SUCCESS) {
-                    _json_bool_terms.push_back(irs::BoolTerm(b));
-                    _json_bool_docs.push_back(doc);
-                  }
-                } break;
-                case simdjson::ondemand::json_type::null:
-                  _null_docs.push_back(doc);
-                  break;
-                case simdjson::ondemand::json_type::object:
-                case simdjson::ondemand::json_type::array:
-                  THROW_SQL_ERROR(
-                    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                    ERR_MSG(
-                      "JSON expression indexed by an inverted index must point "
-                      "to "
-                      "a primitive (string/number/boolean/null) leaf; got an "
-                      "object or array"));
-                default:
-                  break;
+          const auto leaf = _json_reader.Read(
+            AsView(duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+              fmt)[sel_idx]));
+          switch (leaf.kind) {
+            case irs::JsonLeafKind::String: {
+              const std::string_view value = leaf.string;
+              bool ok = true;
+              if (jpf.string_field.keyword) {
+                w.BeginValue(doc, static_cast<uint32_t>(value.size()));
+                w.Emit<irs::TokenLayout::Terms>(
+                  value.data(), static_cast<uint32_t>(value.size()));
+                w.EndValue();
+              } else {
+                ok = jpf.string_field.string_analyzer->Fill(
+                  duckdb::string_t{value.data(),
+                                   static_cast<uint32_t>(value.size())},
+                  doc, w, {str_layout});
               }
-            }
+              if (store_writer) {
+                if (jpf.string_field.keyword) {
+                  AppendBlobAt(
+                    *store_writer, doc,
+                    duckdb::string_t{value.data(),
+                                     static_cast<uint32_t>(value.size())});
+                  wrote_string_blob = true;
+                } else {
+                  // Store-producing analyzers delivered through OnStore
+                  // above; everyone else falls through to the empty-blob
+                  // backfill.
+                  wrote_string_blob =
+                    ok && jpf.string_field.string_analyzer->Traits().store;
+                }
+              }
+            } break;
+            case irs::JsonLeafKind::Number:
+              nums[nnums++] = leaf.number;
+              _json_num_docs.push_back(doc);
+              break;
+            case irs::JsonLeafKind::Bool:
+              _json_bool_terms.push_back(irs::BoolTerm(leaf.boolean));
+              _json_bool_docs.push_back(doc);
+              break;
+            case irs::JsonLeafKind::Null:
+              _null_docs.push_back(doc);
+              break;
+            case irs::JsonLeafKind::Composite:
+              THROW_SQL_ERROR(
+                ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+                ERR_MSG(
+                  "JSON expression indexed by an inverted index must point to "
+                  "a primitive (string/number/boolean/null) leaf; got an "
+                  "object or array"));
+            case irs::JsonLeafKind::None:
+              break;
           }
           if (store_writer && !wrote_string_blob) {
             AppendBlobAt(*store_writer, doc, duckdb::string_t{});

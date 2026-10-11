@@ -259,6 +259,37 @@ id	scored
 8	1
 9	1
 
+statement ok
+INSERT INTO pj VALUES
+    (10, '{"title":"quick\nbrown\tfox"}'::json);
+
+statement ok
+VACUUM (REFRESH_TABLE) pj;
+
+query
+SELECT id FROM pj_pos_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+8
+10
+
+query
+SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+8
+10
+
+query
+SELECT id FROM pj_text_idx WHERE (doc->>'title') @@ ts_phrase('quick brown fox') ORDER BY id;
+----
+id
+1
+8
+10
+
 query
 SELECT id FROM pj_json_idx WHERE (doc->'title') @@ ts_phrase('42') ORDER BY id;
 ----

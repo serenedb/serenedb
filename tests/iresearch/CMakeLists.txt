@@ -143,6 +143,7 @@ set(iresearch-tests_sources
     ./search/score_prune_scoring_test.cpp
     ./utils/async_utils_tests.cpp
     ./utils/wkb_parser_test.cpp
+    ./utils/json_leaf_test.cpp
     ./utils/bitvector_tests.cpp
     ./utils/container_utils_tests.cpp
     ./utils/crc_test.cpp

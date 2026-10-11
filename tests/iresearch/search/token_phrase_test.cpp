@@ -693,8 +693,9 @@ TEST(PhraseCheckTest, json_values_check_the_text_of_strings) {
   irs::PhraseVerdict verdict;
   EXPECT_TRUE(CheckText(check, R"("quick brown")", verdict));
   EXPECT_TRUE(CheckText(check, R"("the quick brown fox")", verdict));
-  EXPECT_TRUE(
-    CheckText(check, std::string_view{"\0\"quick brown\"", 14}, verdict));
+  EXPECT_TRUE(CheckText(check, " \"quick brown\"\n", verdict));
+  EXPECT_TRUE(CheckText(check, "\"quick\\u0020brown\"", verdict));
+  EXPECT_FALSE(CheckText(check, R"(["quick brown"])", verdict));
   EXPECT_FALSE(CheckText(check, "quick brown", verdict));
   EXPECT_FALSE(CheckText(check, "42", verdict));
   EXPECT_FALSE(CheckText(check, "true", verdict));

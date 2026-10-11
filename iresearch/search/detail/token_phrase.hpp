@@ -188,7 +188,7 @@ struct CompiledPhrase {
   void PickAnchor(std::span<const PhraseWordStat> words);
 };
 
-struct JsonText;
+class JsonLeafReader;
 
 class RowValues {
  public:
@@ -206,7 +206,8 @@ class RowValues {
   duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
   uint64_t _array_size = 0;
   std::vector<duckdb::string_t> _values;
-  std::unique_ptr<JsonText> _json;
+  std::unique_ptr<JsonLeafReader> _json;
+  duckdb::string_t _text;
 };
 
 class PhraseCheck final : public TokenConsumer {

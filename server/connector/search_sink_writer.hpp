@@ -22,7 +22,6 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/functional/any_invocable.h>
-#include <simdjson.h>
 
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
@@ -34,10 +33,10 @@
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/json_leaf.hpp>
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
@@ -262,8 +261,7 @@ class SearchSinkInsertBaseImpl {
   PkPolicy _pk_policy;
 
   JsonExpressionFields _json_fields;
-  simdjson::ondemand::parser _json_parser;
-  std::string _json_buffer;
+  irs::JsonLeafReader _json_reader;
 
   class StoreAppender final : public irs::StoreSink {
    public:

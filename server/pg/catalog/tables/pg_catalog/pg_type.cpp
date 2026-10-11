@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include "pg/catalog/builtin/builtin.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/types.h"
@@ -71,6 +72,12 @@ void FindNamed(const SystemRows<BuiltinType>&, const SystemFilter& filter,
 constexpr ArrayKey<BuiltinType> kBuiltinKeys[] = {
   {kPgTypeSql["oid"], SortedBy<BuiltinType, &BuiltinType::oid>},
   {kPgTypeSql["typname"], FindNamed},
+};
+
+constexpr SystemFact kBuiltinFacts[] = {
+  {kPgTypeSql["typnamespace"], kPgCatalogSchema, kPgCatalogSchema},
+  {kPgTypeSql["typnamespace"], kPgInformationSchema, kPgInformationSchema},
+  {kPgTypeSql["oid"], 0, kMaxSystem - 1},
 };
 
 const BuiltinType kComposite = *FindBuiltinType(kPgClassRowtype);
@@ -144,11 +151,19 @@ constexpr std::tuple kUserTypeColumns{
 
 class PgType final : public SystemTableScan<kPgTypeSql> {
  public:
-  using SystemTableScan::SystemTableScan;
+  PgType(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
+    : SystemTableScan{context, input} {
+    if (VisibleOnly()) {
+      _session = MakeSession(&context);
+    }
+  }
 
   static constexpr std::tuple kSources{
-    ArraySource<BuiltinType>{&LoadBuiltinTypes, kBuiltinKeys},
+    ArraySource<BuiltinType>{&LoadBuiltinTypes, kBuiltinKeys, kBuiltinFacts},
     CatalogSource{kTypes, SystemSchemas::Skip, kIndexes}};
+
+  static constexpr SystemVisibility kVisibility{kSql["oid"],
+                                                "pg_type_is_visible"};
 
   static constexpr auto kBuiltinType = Shape<kSql, const BuiltinType>(
     Col<"oid">(&BuiltinType::oid), Col<"typname">(&BuiltinType::name),
@@ -237,20 +252,38 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typelem">(&ArrayType::element),
     Col<"typname">([](const auto& row) { return row.names.Of(row.owner); }));
 
-  void Row(const BuiltinType& type) { Emit<kBuiltinType>(type); }
+  static constexpr SystemTypeShape kTypeShapes[] = {
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kEnumType>::kProvided},
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kStructType>::kProvided},
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kDomainType>::kProvided},
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kArrayType>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kRowType>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kArrayType>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kRowType>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kArrayType>::kProvided},
+  };
+
+  void Row(const BuiltinType& type) {
+    Emit<kBuiltinType>(type, [&] { return Visible(type.oid); });
+  }
 
   void Row(const duckdb::TypeCatalogEntry& entry) {
     const UserType type{entry};
     const auto id = entry.user_type.id();
+    const auto visible = [&] { return Visible(entry.oid); };
+    const auto array_visible = [&] { return Visible(TypeArrayOid(entry.oid)); };
     if (id == duckdb::LogicalTypeId::ENUM) {
-      Emit<kEnumType>(type);
-      Emit<kArrayType>({entry, entry.oid, 'i', nullptr, _arrays});
+      Emit<kEnumType>(type, visible);
+      Emit<kArrayType>({entry, entry.oid, 'i', nullptr, _arrays},
+                       array_visible);
     } else if (duckdb::StructType::IsStruct(id)) {
-      Emit<kStructType>(type);
-      Emit<kArrayType>({entry, entry.oid, kComposite.align, nullptr, _arrays});
+      Emit<kStructType>(type, visible);
+      Emit<kArrayType>({entry, entry.oid, kComposite.align, nullptr, _arrays},
+                       array_visible);
     } else {
-      Emit<kDomainType>(type);
-      Emit<kArrayType>({entry, entry.oid, char{}, &type, _arrays});
+      Emit<kDomainType>(type, visible);
+      Emit<kArrayType>({entry, entry.oid, char{}, &type, _arrays},
+                       array_visible);
     }
   }
 
@@ -258,13 +291,19 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     requires std::is_same_v<Relation, duckdb::TableCatalogEntry> ||
              std::is_same_v<Relation, duckdb::ViewCatalogEntry>
   void Row(const Relation& relation) {
-    Emit<kRowType>(relation);
-    Emit<kArrayType>(
-      {relation, RowTypeOid(relation.oid), kComposite.align, nullptr, _arrays});
+    const auto oid = RowTypeOid(relation.oid);
+    Emit<kRowType>(relation, [&] { return Visible(oid); });
+    Emit<kArrayType>({relation, oid, kComposite.align, nullptr, _arrays},
+                     [&] { return Visible(TypeArrayOid(oid)); });
   }
 
  private:
+  bool Visible(duckdb::idx_t oid) const {
+    return TypeIsVisible(*_session, oid).value_or(false);
+  }
+
   ArrayTypeNames _arrays{*this};
+  std::optional<Session> _session;
 };
 
 }  // namespace

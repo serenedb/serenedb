@@ -127,6 +127,16 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   static constexpr auto kSequenceColumn = Shape<kSql, const Attribute>(
     kAttribute, Col<"attnotnull">([](const auto&) { return true; }));
 
+  static constexpr SystemTypeShape kTypeShapes[] = {
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kTableColumn>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kColumn>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kColumn>::kProvided},
+    {duckdb::CatalogType::INDEX_ENTRY, SystemShapeOf<kColumn>::kProvided},
+    {duckdb::CatalogType::SEQUENCE_ENTRY,
+     SystemShapeOf<kSequenceColumn>::kProvided},
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kColumn>::kProvided},
+  };
+
   void Row(duckdb::TableCatalogEntry& table) {
     _relations.emplace(table.oid, &table);
     if (Allows<"attrelid">(table.oid)) {
@@ -138,9 +148,7 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     }
     for (const auto& key : KeyIndexes(table)) {
       if (Allows<"attrelid">(key.index_oid)) {
-        IndexColumns(key.index_oid, table,
-                     Attnums(table.GetColumns(),
-                             key.GetLogicalIndexes(table.GetColumns())));
+        IndexColumns(key.index_oid, table, KeyAttnums(table.GetColumns(), key));
       }
     }
   }
@@ -165,10 +173,9 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       return;
     }
     const auto it = _relations.find(index.table_oid);
-    auto relation = it != _relations.end()
-                      ? duckdb::optional_ptr<duckdb::CatalogEntry>{it->second}
-                      : index.GetRelation(Transaction());
-    if (relation) {
+    if (auto relation = it != _relations.end()
+                          ? duckdb::optional_ptr<duckdb::CatalogEntry>{it->second}
+                          : FindById(index.table_oid)) {
       IndexColumns(index.oid, *relation,
                    IndexAttnums(Context(), index, *relation));
     }
@@ -207,16 +214,18 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   }
 
  private:
+  template<typename R>
   void IndexColumns(duckdb::idx_t oid, duckdb::CatalogEntry& relation,
-                    std::span<const int16_t> attnums) {
+                    const R& attnums) {
     auto* view = relation.type == duckdb::CatalogType::VIEW_ENTRY
                    ? &relation.Cast<duckdb::ViewCatalogEntry>()
                    : nullptr;
     const auto columns = view ? ViewColumns(Context(), *view) : nullptr;
-    for (size_t i = 0; i < attnums.size(); ++i) {
-      const auto column = static_cast<duckdb::idx_t>(attnums[i] - 1);
-      const auto attnum = static_cast<int16_t>(i + 1);
-      if (attnums[i] == 0) {
+    int16_t attnum = 0;
+    for (const int16_t key : attnums) {
+      ++attnum;
+      const auto column = static_cast<duckdb::idx_t>(key - 1);
+      if (key == 0) {
         Emit<kColumn>({oid, "expr", attnum, duckdb::LogicalType::VARCHAR});
       } else if (view) {
         Emit<kColumn>({oid,

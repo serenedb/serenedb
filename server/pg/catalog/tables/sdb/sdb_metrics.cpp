@@ -111,7 +111,7 @@ class SdbMetrics final : public SystemTableScan<kSdbMetricsSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Metric>{&LoadMetrics, {}},
+    ArraySource<Metric>{&LoadMetrics, {}, {}},
     CatalogSource{kStoreTypes, SystemSchemas::Skip, kStoreIndexes}};
 
   static constexpr auto kMetric = Shape<kSql, const Metric>(

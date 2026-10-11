@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_join.h>
+#include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -49,17 +49,10 @@ constexpr SystemIndex kIndexes[] = {
 struct KeyRow {
   const duckdb::TableCatalogEntry& table;
   const duckdb::UniqueConstraint& key;
-  mutable std::optional<std::vector<int16_t>> attnums = std::nullopt;
 
   const duckdb::CatalogEntry& Relation() const { return table; }
 
-  std::span<const int16_t> Attnums() const {
-    if (!attnums) {
-      attnums = pg::Attnums(table.GetColumns(),
-                            key.GetLogicalIndexes(table.GetColumns()));
-    }
-    return *attnums;
-  }
+  auto Attnums() const { return KeyAttnums(table.GetColumns(), key); }
 
   size_t Keys() const { return Attnums().size(); }
 };
@@ -85,22 +78,22 @@ struct IndexRow {
   }
 };
 
-std::vector<int64_t> Collations(const duckdb::CatalogEntry& relation,
-                                std::span<const int16_t> attnums, size_t keys) {
-  std::vector<int64_t> collations(keys);
-  if (relation.type != duckdb::CatalogType::TABLE_ENTRY) {
-    return collations;
-  }
-  const auto& columns = relation.Cast<duckdb::TableCatalogEntry>().GetColumns();
-  for (size_t i = 0; i < keys; ++i) {
-    if (attnums[i] > 0) {
-      collations[i] =
-        DescribeColumnType(
-          columns.GetColumn(duckdb::LogicalIndex(attnums[i] - 1)).Type())
-          .collation;
-    }
-  }
-  return collations;
+template<typename R>
+auto Collations(const duckdb::CatalogEntry& relation, R attnums, size_t keys) {
+  const auto* table = relation.type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &relation.Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
+  return std::views::iota(size_t{0}, keys) |
+         std::views::transform([table, attnums](size_t i) -> int64_t {
+           if (!table || attnums[i] <= 0) {
+             return 0;
+           }
+           return DescribeColumnType(
+                    table->GetColumns()
+                      .GetColumn(duckdb::LogicalIndex(attnums[i] - 1))
+                      .Type())
+             .collation;
+         });
 }
 
 constexpr std::tuple kIndexColumns{
@@ -141,18 +134,20 @@ class PgIndex final : public SystemTableScan<kPgIndexSql> {
     Col<"indisprimary">([](const auto& row) { return row.index.IsPrimary(); }),
     kIndexColumns,
     Col<"indexprs">([](const auto& row) -> std::optional<std::string> {
-      const auto expressions = IndexExpressions(row.index);
       const auto attnums = row.Attnums();
-      std::vector<std::string> texts;
-      for (size_t i = 0; i < attnums.size(); ++i) {
-        if (attnums[i] == 0) {
-          texts.emplace_back(ExpressionText(*expressions[i]));
-        }
-      }
-      if (texts.empty()) {
+      if (absl::c_none_of(attnums,
+                          [](int16_t attnum) { return attnum == 0; })) {
         return std::nullopt;
       }
-      return absl::StrJoin(texts, ", ");
+      const auto expressions = IndexExpressions(row.index);
+      std::string texts;
+      for (size_t i = 0; i < attnums.size(); ++i) {
+        if (attnums[i] == 0) {
+          absl::StrAppend(&texts, texts.empty() ? "" : ", ",
+                          ExpressionText(*expressions[i]));
+        }
+      }
+      return texts;
     }),
     Col<"indpred">([](const auto& row) -> std::optional<std::string> {
       if (!row.index.where_clause) {
@@ -174,7 +169,7 @@ class PgIndex final : public SystemTableScan<kPgIndexSql> {
     if (!Allows<"indexrelid">(index.oid)) {
       return;
     }
-    if (auto relation = index.GetRelation(Transaction())) {
+    if (auto relation = FindById(index.table_oid)) {
       Emit<kIndex>({index, *relation, Context()});
     }
   }

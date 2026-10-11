@@ -31,7 +31,7 @@ class PgForeignDataWrapper final
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<ForeignDataWrapper>{&LoadStatic<kForeignDataWrappers>, {}}};
+    ArraySource<ForeignDataWrapper>{&LoadStatic<kForeignDataWrappers>, {}, {}}};
 
   static constexpr auto kWrapper = Shape<kSql, const ForeignDataWrapper>(
     Col<"oid">(&ForeignDataWrapper::oid),

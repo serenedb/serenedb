@@ -110,6 +110,7 @@ bool SystemTablePushdownExpression(duckdb::ClientContext&,
   const auto& visibility =
     get.bind_data->Cast<SystemTableBindData>().entry->Table().Visibility();
   return pg::RangeOf(expr).has_value() || pg::BooleanOf(expr).has_value() ||
+         pg::NullCheckOf(expr).has_value() || pg::IsExclusion(expr) ||
          (visibility && pg::IsVisibility(expr, *visibility));
 }
 

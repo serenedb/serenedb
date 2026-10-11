@@ -42,7 +42,7 @@ class PgLanguage final : public SystemTableScan<kPgLanguageSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Language>{&LoadStatic<kLanguages>, {}}};
+    ArraySource<Language>{&LoadStatic<kLanguages>, {}, {}}};
 
   static constexpr auto kLanguage = Shape<kSql, const Language>(
     Col<"oid">(&Language::oid), Col<"lanname">(&Language::name),

@@ -25,6 +25,7 @@
 #include <absl/strings/numbers.h>
 
 #include <algorithm>
+#include <compare>
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -40,12 +41,15 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <limits>
+#include <numeric>
 #include <ranges>
 #include <utf8proc_wrapper.hpp>
 
@@ -203,13 +207,16 @@ template<typename T>
 bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
   using enum duckdb::ExpressionClass;
   if (expr.GetExpressionClass() == BOUND_OPERATOR &&
-      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_IN) {
+      (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_IN ||
+       expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_NOT_IN)) {
     const auto& children =
       expr.Cast<duckdb::BoundOperatorExpression>().GetChildren();
     if (children.empty() ||
         !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
       return false;
     }
+    const bool excluded =
+      expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_NOT_IN;
     std::vector<T> set;
     for (const auto& child : children | std::views::drop(1)) {
       if (child->GetExpressionType() !=
@@ -219,6 +226,9 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       const auto& value =
         child->Cast<duckdb::BoundConstantExpression>().GetValue();
       if (value.IsNull()) {
+        if (excluded) {
+          return false;
+        }
         continue;
       }
       auto constant = Constant<T>(value);
@@ -227,7 +237,13 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       }
       set.emplace_back(std::move(*constant));
     }
-    Intersect(condition.keys, std::move(set));
+    if (excluded) {
+      condition.excluded.insert(condition.excluded.end(),
+                                std::make_move_iterator(set.begin()),
+                                std::make_move_iterator(set.end()));
+    } else {
+      Intersect(condition.keys, std::move(set));
+    }
     return true;
   }
   if (duckdb::BoundComparisonExpression::IsComparison(expr)) {
@@ -257,7 +273,8 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
          expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
       SystemCondition<T> branch;
       if (!Capture(*child, branch) || !branch.keys ||
-          !branch.excluded.empty() || branch.lower || branch.upper) {
+          !branch.excluded.empty() || branch.lower || branch.upper ||
+          branch.null) {
         return false;
       }
       set.insert(set.end(), branch.keys->begin(), branch.keys->end());
@@ -288,6 +305,30 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       return range->exact;
     }
   }
+  if (const auto null = NullCheckOf(expr)) {
+    (*null ? condition.null : condition.not_null) = true;
+    return true;
+  }
+  if (expr.GetExpressionType() == duckdb::ExpressionType::OPERATOR_NOT) {
+    const auto& child =
+      *expr.Cast<duckdb::BoundOperatorExpression>().GetChildren()[0];
+    bool nulls = false;
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundConstantExpression>(
+      child, [&](const duckdb::BoundConstantExpression& constant) {
+        nulls = nulls || constant.GetValue().IsNull();
+      });
+    SystemCondition<T> negated;
+    if (nulls || !Capture(child, negated) || !negated.keys ||
+        !negated.excluded.empty() || negated.lower || negated.upper ||
+        negated.null || negated.not_null) {
+      return false;
+    }
+    condition.excluded.insert(condition.excluded.end(),
+                              std::make_move_iterator(negated.keys->begin()),
+                              std::make_move_iterator(negated.keys->end()));
+    return true;
+  }
   return false;
 }
 
@@ -304,8 +345,12 @@ void Seal(SystemCondition<T>& condition) {
     return;
   }
   std::erase_if(*keys, [&](const T& key) { return !condition.Passes(key); });
-  condition = {
-    .keys = std::move(keys), .excluded = {}, .lower = {}, .upper = {}};
+  condition = {.keys = std::move(keys),
+               .excluded = {},
+               .lower = {},
+               .upper = {},
+               .null = condition.null,
+               .not_null = condition.not_null};
 }
 
 using SystemDataChunk = std::unique_ptr<duckdb::DataChunk>;
@@ -319,7 +364,7 @@ class SystemDataRows final : public SystemScan {
   using SystemScan::SystemScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<SystemDataChunk>{&LoadDataChunks, {}}};
+    ArraySource<SystemDataChunk>{&LoadDataChunks, {}, {}}};
 
   void Row(const SystemDataChunk& chunk) { EmitChunk(*chunk); }
 };
@@ -358,8 +403,13 @@ void PutCell(duckdb::Vector& vector, duckdb::idx_t row, std::string_view cell) {
 
 SystemTable::SystemTable(const SystemSql& sql, SystemScanFunctions functions,
                          std::span<const SystemFact> facts,
-                         std::optional<SystemVisibility> visibility)
-  : _sql{sql}, _functions{functions}, _facts{facts}, _visibility{visibility} {}
+                         std::optional<SystemVisibility> visibility,
+                         std::span<const SystemTypeShape> type_shapes)
+  : _sql{sql},
+    _functions{functions},
+    _facts{facts},
+    _visibility{visibility},
+    _type_shapes{type_shapes} {}
 
 SystemTable::SystemTable(const SystemSql& sql,
                          std::span<const SystemCell> cells)
@@ -489,6 +539,62 @@ bool IsVisibility(const duckdb::Expression& expr,
          duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0]);
 }
 
+std::optional<bool> NullCheckOf(const duckdb::Expression& expr) {
+  const auto type = expr.GetExpressionType();
+  if ((type != duckdb::ExpressionType::OPERATOR_IS_NULL &&
+       type != duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) ||
+      !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(
+        *expr.Cast<duckdb::BoundOperatorExpression>().GetChildren()[0])) {
+    return std::nullopt;
+  }
+  return type == duckdb::ExpressionType::OPERATOR_IS_NULL;
+}
+
+bool IsExclusion(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_OPERATOR) {
+    return false;
+  }
+  const auto type = expr.GetExpressionType();
+  const auto& children =
+    expr.Cast<duckdb::BoundOperatorExpression>().GetChildren();
+  if (type == duckdb::ExpressionType::COMPARE_NOT_IN) {
+    return !children.empty() &&
+           duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0]) &&
+           absl::c_all_of(
+             children | std::views::drop(1),
+             [](const duckdb::unique_ptr<duckdb::Expression>& child) {
+               return child->GetExpressionType() ==
+                        duckdb::ExpressionType::VALUE_CONSTANT &&
+                      !child->Cast<duckdb::BoundConstantExpression>()
+                         .GetValue()
+                         .IsNull();
+             });
+  }
+  if (type != duckdb::ExpressionType::OPERATOR_NOT) {
+    return false;
+  }
+  const auto child = children[0]->GetExpressionType();
+  return child == duckdb::ExpressionType::COMPARE_IN ||
+         child == duckdb::ExpressionType::CONJUNCTION_OR;
+}
+
+std::strong_ordering operator<=>(const SystemConcatText& text,
+                                 std::string_view other) {
+  for (const auto part : text.parts) {
+    const auto common = std::min(part.size(), other.size());
+    if (const auto order = part.substr(0, common) <=> other.substr(0, common);
+        order != 0) {
+      return order;
+    }
+    if (part.size() > other.size()) {
+      return std::strong_ordering::greater;
+    }
+    other.remove_prefix(common);
+  }
+  return other.empty() ? std::strong_ordering::equal
+                       : std::strong_ordering::less;
+}
+
 duckdb::LogicalType SystemRowType(const SystemSql& sql) {
   duckdb::child_list_t<duckdb::LogicalType> children;
   for (const auto& column : sql.columns) {
@@ -505,14 +611,16 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
       connector::BoundSystemTable(input).catalog.Cast<duckdb::DuckCatalog>()},
     _transaction{_database.GetCatalogTransaction(context)},
     _table{connector::BoundSystemTable(input).Table()},
-    _column_ids{input.column_ids},
-    _places(_column_ids.size(), kNowhere) {
+    _column_ids{input.column_ids} {
+  SDB_ASSERT(_column_ids.size() <= _places.size());
+  _places.fill(kNowhere);
   if (input.CanRemoveFilterColumns()) {
     for (size_t i = 0; i < input.projection_ids.size(); ++i) {
       _places[input.projection_ids[i]] = static_cast<uint32_t>(i);
     }
   } else {
-    absl::c_iota(_places, uint32_t{0});
+    std::iota(_places.begin(), _places.begin() + _column_ids.size(),
+              uint32_t{0});
   }
   const auto width = static_cast<uint32_t>(input.CanRemoveFilterColumns()
                                              ? input.projection_ids.size()
@@ -539,7 +647,9 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
                                       .Type();
                  type.IsIntegral() &&
                  duckdb::ExpressionFilter::IsRootOptionalFilter(
-                   entry.Filter())) {
+                   entry.Filter()) &&
+                 !(Filtered(static_cast<uint32_t>(column)) &&
+                   _filters[_filter_index[column]].numbers.keys)) {
         _pruned |= uint64_t{1} << column;
         _prunes.emplace_back(SystemPrune{
           .column = static_cast<uint32_t>(column),
@@ -583,13 +693,13 @@ bool SystemScan::AllowsAbove(uint32_t column, int64_t value) const {
   return value < upper.value && (upper.inclusive || value + 1 < upper.value);
 }
 
-bool SystemScan::Survives(uint32_t column, int64_t value) const {
+bool SystemScan::Survives(uint32_t column, int64_t min, int64_t max) const {
   return absl::c_none_of(_prunes, [&](const SystemPrune& prune) {
     if (prune.column != column) {
       return false;
     }
-    duckdb::NumericStats::SetMin<int64_t>(prune.stats, value);
-    duckdb::NumericStats::SetMax<int64_t>(prune.stats, value);
+    duckdb::NumericStats::SetMin<int64_t>(prune.stats, min);
+    duckdb::NumericStats::SetMax<int64_t>(prune.stats, max);
     const auto result =
       duckdb::ExpressionFilter::GetExpressionFilter(*prune.filter, "SystemScan")
         .CheckStatistics(prune.stats, *prune.state);
@@ -597,6 +707,71 @@ bool SystemScan::Survives(uint32_t column, int64_t value) const {
            result == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL;
   });
 }
+
+bool SystemScan::Possible(std::span<const SystemFact> facts) const {
+  uint64_t constrained = 0;
+  uint64_t possible = 0;
+  for (const auto& fact : facts) {
+    const auto bit = uint64_t{1} << fact.column;
+    constrained |= bit;
+    if (Overlaps(fact)) {
+      possible |= bit;
+    }
+  }
+  return possible == constrained;
+}
+
+bool SystemScan::Overlaps(const SystemFact& fact) const {
+  if (const auto* filter = FilterOf(fact.column)) {
+    const auto& numbers = filter->numbers;
+    if (numbers.null) {
+      return false;
+    }
+    if (numbers.keys) {
+      const auto key = absl::c_lower_bound(*numbers.keys, fact.min);
+      if (key == numbers.keys->end() || fact.max < *key) {
+        return false;
+      }
+    }
+    if (numbers.lower &&
+        (numbers.lower->inclusive ? fact.max < numbers.lower->value
+                                  : fact.max <= numbers.lower->value)) {
+      return false;
+    }
+    if (numbers.upper &&
+        (numbers.upper->inclusive ? numbers.upper->value < fact.min
+                                  : numbers.upper->value <= fact.min)) {
+      return false;
+    }
+    if (fact.min == fact.max &&
+        absl::c_linear_search(numbers.excluded, fact.min)) {
+      return false;
+    }
+  }
+  return ((_pruned >> fact.column) & 1) == 0 ||
+         Survives(fact.column, fact.min, fact.max);
+}
+
+bool SystemScan::AllowsSchema(std::optional<uint32_t> column,
+                              const duckdb::SchemaCatalogEntry& schema) const {
+  if (!column) {
+    return true;
+  }
+  if (_table.Sql().columns[*column].physical == duckdb::PhysicalType::VARCHAR) {
+    return Allows(*column, std::string_view{schema.name.GetIdentifierName()});
+  }
+  return Allows(*column, static_cast<int64_t>(schema.oid));
+}
+
+#ifdef SDB_DEV
+bool SystemScan::Declared(uint64_t provided) const {
+  const auto shapes = _table.TypeShapes();
+  return shapes.empty() || _visiting == duckdb::CatalogType::INVALID ||
+         absl::c_any_of(shapes, [&](const SystemTypeShape& shape) {
+           return shape.type == _visiting && shape.provided == provided;
+         });
+}
+#endif
 
 bool SystemScan::Compile(duckdb::column_t column,
                          const duckdb::TableFilter& filter) {
@@ -617,8 +792,10 @@ bool SystemScan::Compile(duckdb::column_t column,
   SystemFilter compiled;
   bool exact = false;
   bool passes = false;
+  const bool not_null = _table.Sql().columns[column].not_null;
   if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
     exact = Capture(expr, compiled.texts);
+    compiled.texts.not_null = compiled.texts.not_null && !not_null;
     Seal(compiled.texts);
     if (_table.Sql().columns[column].type == kChar) {
       compiled.chars[0] = compiled.texts.Passes(std::string_view{});
@@ -627,13 +804,16 @@ bool SystemScan::Compile(duckdb::column_t column,
         compiled.chars[c] = compiled.texts.Passes(std::string_view{&ch, 1});
       }
     }
-    passes = !fallback.IsNull() && compiled.texts.Passes(std::string_view{
-                                     duckdb::StringValue::Get(fallback)});
+    passes = fallback.IsNull() ? compiled.texts.PassesNull()
+                               : compiled.texts.Passes(std::string_view{
+                                   duckdb::StringValue::Get(fallback)});
   } else if (IsNumber(type)) {
     exact = Capture(expr, compiled.numbers);
+    compiled.numbers.not_null = compiled.numbers.not_null && !not_null;
     Seal(compiled.numbers);
-    passes = !fallback.IsNull() &&
-             compiled.numbers.Passes(fallback.GetValue<int64_t>());
+    passes = fallback.IsNull()
+               ? compiled.numbers.PassesNull()
+               : compiled.numbers.Passes(fallback.GetValue<int64_t>());
   } else {
     return false;
   }
@@ -746,6 +926,20 @@ void SystemScan::PutText(const SystemVector& target, duckdb::idx_t row,
                                                     value.data(), value.size());
 }
 
+void SystemScan::PutConcat(const SystemVector& target, duckdb::idx_t row,
+                           const SystemConcatText& value) {
+  const auto size = absl::c_accumulate(
+    value.parts, size_t{0},
+    [](size_t sum, std::string_view part) { return sum + part.size(); });
+  auto text = duckdb::StringVector::EmptyString(*target.vector, size);
+  auto* out = text.GetDataWriteable();
+  for (const auto part : value.parts) {
+    out = std::ranges::copy(part, out).out;
+  }
+  text.Finalize();
+  Cells<duckdb::string_t>(target)[row] = text;
+}
+
 void SystemScan::PutAcl(const SystemVector& target, duckdb::idx_t row,
                         const duckdb::AclItem& item) {
   _text.clear();
@@ -753,15 +947,26 @@ void SystemScan::PutAcl(const SystemVector& target, duckdb::idx_t row,
   PutText(target, row, _text);
 }
 
-const SystemIndex* SystemScan::Choose(
-  std::span<const SystemIndex> indexes) const {
-  const auto it = absl::c_find_if(indexes, [&](const SystemIndex& index) {
+const SystemIndex* SystemScan::Choose(std::span<const SystemIndex> indexes,
+                                      size_t name_probes) const {
+  const SystemIndex* chosen = nullptr;
+  auto fewest = std::numeric_limits<size_t>::max();
+  for (const auto& index : indexes) {
     const auto* filter = FilterOf(index.column);
-    return (index.lookup == SystemLookup::Object ||
-            index.lookup == SystemLookup::Dependents) &&
-           filter && (filter->numbers.keys || filter->texts.keys);
-  });
-  return it == indexes.end() ? nullptr : &*it;
+    if (!filter || (index.lookup != SystemLookup::Object &&
+                    index.lookup != SystemLookup::Dependents)) {
+      continue;
+    }
+    const auto probes = filter->numbers.keys ? filter->numbers.keys->size()
+                        : filter->texts.keys
+                          ? filter->texts.keys->size() * name_probes
+                          : fewest;
+    if (probes < fewest) {
+      chosen = &index;
+      fewest = probes;
+    }
+  }
+  return chosen;
 }
 
 std::string_view SystemScan::NamePrefix(
@@ -781,19 +986,18 @@ std::string_view SystemScan::NamePrefix(
 
 SystemMembers SystemScan::Resolve(const CatalogSource& source) {
   using enum duckdb::CatalogType;
-  std::vector<duckdb::CatalogType> types{source.types.begin(),
-                                         source.types.end()};
   SystemMembers members;
-  auto& schemas = members.schemas;
+  auto& wanted = members.wanted;
   auto& entries = members.entries;
-  bool scoped = false;
-  const auto scope =
-    [&](duckdb::optional_ptr<duckdb::SchemaCatalogEntry> schema) {
-      if (schema && !absl::c_linear_search(schemas, schema.get())) {
-        schemas.emplace_back(schema.get());
-      }
-    };
+  for (const auto type : source.types) {
+    wanted.set(std::to_underlying(type));
+  }
+  bool numbers = false;
+  bool names = false;
   for (const auto& index : source.indexes) {
+    if (index.lookup == SystemLookup::Namespace) {
+      members.nsp_column = index.column;
+    }
     const auto* filter = FilterOf(index.column);
     if (!filter) {
       continue;
@@ -802,51 +1006,68 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) {
       case SystemLookup::Kind: {
         const bool text = _table.Sql().columns[index.column].physical ==
                           duckdb::PhysicalType::VARCHAR;
-        std::erase_if(types, [&](duckdb::CatalogType type) {
-          return absl::c_none_of(index.kinds, [&](const SystemKindTypes& kind) {
-            return absl::c_linear_search(kind.types, type) &&
-                   (text ? Passes(index.column, static_cast<char>(kind.kind))
-                         : Passes(index.column, kind.kind));
-          });
-        });
+        for (const auto type : source.types) {
+          if (absl::c_none_of(index.kinds, [&](const SystemKindTypes& kind) {
+                return absl::c_linear_search(kind.types, type) &&
+                       (text
+                          ? Passes(index.column, static_cast<char>(kind.kind))
+                          : Passes(index.column, kind.kind));
+              })) {
+            wanted.reset(std::to_underlying(type));
+          }
+        }
         break;
       }
       case SystemLookup::Namespace:
-        if (const auto& names = filter->texts.keys) {
-          scoped = true;
-          for (const auto& name : *names) {
-            scope(FindSchema(name, source.schemas));
-          }
-        }
-        if (const auto& oids = filter->numbers.keys) {
-          scoped = true;
-          for (const auto oid : *oids) {
-            scope(
-              FindNamespace(static_cast<duckdb::idx_t>(oid), source.schemas));
-          }
-        }
         break;
       case SystemLookup::Object:
       case SystemLookup::Dependents:
+        numbers = numbers || filter->numbers.keys.has_value();
+        names = names || filter->texts.keys.has_value();
         break;
     }
   }
-  if (types.empty() || (scoped && schemas.empty())) {
-    schemas.clear();
+  if (_rejecting != 0) {
+    for (const auto type : source.types) {
+      bool declared = false;
+      bool possible = false;
+      for (const auto& shape : _table.TypeShapes()) {
+        if (shape.type == type) {
+          declared = true;
+          possible = possible || (_rejecting & ~shape.provided) == 0;
+        }
+      }
+      if (declared && !possible) {
+        wanted.reset(std::to_underlying(type));
+      }
+    }
+  }
+  if (wanted.none()) {
     return members;
   }
-  const auto* index = Choose(source.indexes);
+  if (names || !numbers) {
+    members.schemas = Schemas(source.schemas);
+  }
+  auto member_types = source.types | kMemberTypes |
+                      std::views::filter([&](duckdb::CatalogType type) {
+                        return wanted.test(std::to_underlying(type));
+                      });
+  const auto scoped = names
+                        ? static_cast<size_t>(absl::c_count_if(
+                            members.schemas,
+                            [&](const duckdb::SchemaCatalogEntry* schema) {
+                              return AllowsSchema(members.nsp_column, *schema);
+                            }))
+                        : size_t{0};
+  const auto* index = Choose(
+    source.indexes,
+    std::max<size_t>(
+      scoped * static_cast<size_t>(std::ranges::distance(member_types)), 1));
   if (!index) {
-    if (!scoped) {
-      schemas = Schemas(source.schemas);
-    }
-    for (const auto type : types) {
-      members.wanted.set(std::to_underlying(type));
-    }
-    if (!schemas.empty()) {
-      auto& sets = schemas.front()->Cast<duckdb::DuckSchemaEntry>();
+    if (!members.schemas.empty()) {
+      auto& sets = members.schemas.front()->Cast<duckdb::DuckSchemaEntry>();
       absl::InlinedVector<const duckdb::CatalogSet*, 8> walked;
-      for (const auto type : types | kMemberTypes) {
+      for (const auto type : member_types) {
         if (const auto* set = &sets.GetCatalogSet(type);
             !absl::c_linear_search(walked, set)) {
           walked.emplace_back(set);
@@ -855,64 +1076,19 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) {
       }
     }
     if (const auto text = NamePrefix(source.indexes);
-        !text.empty() &&
-        !(text.starts_with('_') &&
-          members.wanted.test(std::to_underlying(TYPE_ENTRY)))) {
-      const duckdb::Identifier prefix{std::string{text}};
-      for (auto* schema : schemas) {
-        if (members.wanted.test(std::to_underlying(SCHEMA_ENTRY))) {
-          entries.emplace_back(schema);
-        }
-        AppendMembers(*schema, prefix, members);
-      }
-      schemas.clear();
-      return members;
-    }
-    _indexed_complete =
-      _collect_indexed && members.wanted.test(std::to_underlying(INDEX_ENTRY));
-    _triggered_complete = _collect_triggered &&
-                          members.wanted.test(std::to_underlying(TABLE_ENTRY));
-    for (auto* schema : schemas) {
-      if (_indexed_complete) {
-        auto indexes = MemberSet(*schema, INDEX_ENTRY);
-        std::call_once(indexes.snapshot->indexed_once, [&] {
-          for (auto* entry : indexes.entries) {
-            indexes.snapshot->indexed.insert(
-              entry->Cast<duckdb::IndexCatalogEntry>().table_oid);
-          }
-        });
-        if (!indexes.snapshot->indexed.empty()) {
-          _indexed.emplace_back(std::move(indexes.snapshot));
-        }
-      }
-      if (_triggered_complete) {
-        const auto relations = MemberSet(*schema, TABLE_ENTRY);
-        std::call_once(relations.snapshot->triggers_once, [&] {
-          for (auto* entry : relations.entries) {
-            if (entry->type != TABLE_ENTRY) {
-              continue;
-            }
-            bool triggered = false;
-            entry->Cast<duckdb::TableCatalogEntry>().ScanTriggers(
-              Transaction(), [&](duckdb::CatalogEntry&) { triggered = true; });
-            if (triggered) {
-              relations.snapshot->triggered.emplace_back(entry->oid);
-            }
-          }
-        });
-        _triggered.insert(relations.snapshot->triggered.begin(),
-                          relations.snapshot->triggered.end());
-      }
+        !text.empty() && !(text.starts_with('_') &&
+                           wanted.test(std::to_underlying(TYPE_ENTRY)))) {
+      members.prefix.emplace(SystemPrefix{
+        .lower = duckdb::Identifier{text},
+        .upper =
+          duckdb::Identifier{absl::StrCat(text, std::string_view{"\xff", 1})}});
     }
     return members;
   }
   const auto& filter = *FilterOf(index->column);
-  if (const auto& names = filter.texts.keys) {
-    if (!scoped) {
-      schemas = Schemas(source.schemas);
-    }
-    for (const auto& name : *names) {
-      AppendNamed(name, types, source.schemas, schemas, entries);
+  if (const auto& keys = filter.texts.keys) {
+    for (const auto& name : *keys) {
+      AppendNamed(name, source.types, source.schemas, members);
     }
   }
   if (const auto& oids = filter.numbers.keys) {
@@ -928,7 +1104,7 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) {
         [&](duckdb::CatalogEntry& dependent,
             const duckdb::DependencyDependentFlags&) {
           if (!dependent.internal &&
-              absl::c_linear_search(types, dependent.type)) {
+              wanted.test(std::to_underlying(dependent.type))) {
             entries.emplace_back(&dependent);
           }
         });
@@ -940,12 +1116,13 @@ SystemMembers SystemScan::Resolve(const CatalogSource& source) {
            std::tuple{rhs->type, rhs->oid, rhs};
   });
   entries.erase(std::unique(entries.begin(), entries.end()), entries.end());
-  schemas.clear();
+  members.schemas.clear();
   return members;
 }
 
 SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
-                                duckdb::CatalogType type) const {
+                                duckdb::CatalogType type,
+                                const SystemPrefix* prefix) const {
   auto& set = schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type);
   auto snapshot =
     _database.Cast<catalog::SereneDBCatalog>().Snapshot(_context, set);
@@ -956,8 +1133,20 @@ SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
     });
     snapshot = std::move(scanned);
   }
-  const std::span entries{snapshot->entries};
-  return {std::move(snapshot), entries};
+  std::span<duckdb::CatalogEntry* const> entries{snapshot->entries};
+  if (prefix) {
+    const duckdb::IdentifierCompare compare{
+      schema.ParentCatalog().IsCaseSensitive()};
+    const auto name =
+      [](const duckdb::CatalogEntry* entry) -> const duckdb::Identifier& {
+      return entry->name;
+    };
+    const auto first =
+      std::ranges::lower_bound(entries, prefix->lower, compare, name);
+    entries = {first, std::ranges::upper_bound(first, entries.end(),
+                                               prefix->upper, compare, name)};
+  }
+  return {.snapshot = std::move(snapshot), .found = {}, .entries = entries};
 }
 
 std::span<
@@ -975,17 +1164,17 @@ SystemScan::WalkedSubjects(duckdb::CatalogEntry& entry) const {
       });
     return edges;
   };
-  std::call_once(_walked->subjects_once, [&] {
+  const auto& subjects = _walked->subjects.Get([&](auto& subjects) {
     for (auto* member : _walked->entries) {
       if (auto edges = collect(*member); !edges.empty()) {
-        _walked->subjects.emplace(member, std::move(edges));
+        subjects.emplace(member, std::move(edges));
       }
     }
   });
-  const auto it = _walked->subjects.find(&entry);
+  const auto it = subjects.find(&entry);
   const std::span<
     const std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
-    edges = it == _walked->subjects.end()
+    edges = it == subjects.end()
               ? std::span<const std::pair<duckdb::CatalogEntry*,
                                           duckdb::DependencyDependentFlags>>{}
               : std::span{it->second};
@@ -993,35 +1182,70 @@ SystemScan::WalkedSubjects(duckdb::CatalogEntry& entry) const {
   return edges;
 }
 
-std::optional<bool> SystemScan::KnownIndexed(duckdb::idx_t relation) const {
-  if (!_indexed_complete) {
-    return std::nullopt;
+bool SystemScan::Indexed(duckdb::CatalogEntry& relation) const {
+  if (!_walked) {
+    bool indexed = false;
+    Dependencies().ScanEdges(
+      Transaction(), relation, false,
+      [&](duckdb::CatalogEntry& dependent,
+          const duckdb::DependencyDependentFlags&) {
+        indexed =
+          indexed || dependent.type == duckdb::CatalogType::INDEX_ENTRY;
+      });
+    return indexed;
   }
-  return absl::c_any_of(_indexed, [&](const auto& snapshot) {
-    return snapshot->indexed.contains(relation);
+  const auto& indexed = _walked->indexed.Get([&](auto& indexed) {
+    const auto indexes = MemberSet(relation.ParentSchema(Transaction()),
+                                   duckdb::CatalogType::INDEX_ENTRY, nullptr);
+    for (auto* entry : indexes.entries) {
+      indexed.insert(entry->Cast<duckdb::IndexCatalogEntry>().table_oid);
+    }
   });
+  return !indexed.empty() && indexed.contains(relation.oid);
 }
 
-std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
-  const CatalogSetSource& source) const {
-  duckdb::DuckCatalog& catalog = source.catalog == SystemCatalog::Cluster
-                                   ? catalog::ClusterOf(_context)
-                                   : _database;
+bool SystemScan::Triggered(const duckdb::TableCatalogEntry& table) const {
+  const auto any = [&](const duckdb::TableCatalogEntry& member) {
+    bool triggered = false;
+    member.ScanTriggers(Transaction(),
+                        [&](duckdb::CatalogEntry&) { triggered = true; });
+    return triggered;
+  };
+  if (!_walked) {
+    return any(table);
+  }
+  const auto& triggered = _walked->triggered.Get([&](auto& triggered) {
+    for (auto* entry : _walked->entries) {
+      if (entry->type == duckdb::CatalogType::TABLE_ENTRY &&
+          any(entry->Cast<duckdb::TableCatalogEntry>())) {
+        triggered.insert(entry->oid);
+      }
+    }
+  });
+  return !triggered.empty() && triggered.contains(table.oid);
+}
+
+SystemSet SystemScan::Resolve(const CatalogSetSource& source) const {
+  catalog::SnapshotCatalog& catalog =
+    source.catalog == SystemCatalog::Cluster
+      ? catalog::ClusterOf(_context)
+      : _database.Cast<catalog::SnapshotCatalog>();
   auto& set = catalog.GetCatalogSet(source.type);
   const auto transaction = catalog.GetCatalogTransaction(_context);
-  std::vector<duckdb::CatalogEntry*> entries;
-  const auto* index = Choose(source.indexes);
+  SystemSet result;
+  auto& entries = result.found;
+  const auto* index = Choose(source.indexes, 1);
   if (!index) {
-    const auto append = [&](duckdb::CatalogEntry& entry) {
-      entries.emplace_back(&entry);
-    };
-    if (const auto prefix = NamePrefix(source.indexes); !prefix.empty()) {
-      set.ScanWithPrefix(transaction, append,
-                         duckdb::Identifier{std::string{prefix}});
-    } else {
-      set.Scan(transaction, append);
+    result.snapshot = catalog.Snapshot(_context, set);
+    if (result.snapshot) {
+      result.entries = result.snapshot->entries;
+      return result;
     }
-    return entries;
+    set.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      entries.emplace_back(&entry);
+    });
+    result.entries = entries;
+    return result;
   }
   const auto add = [&](duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
     if (entry && entry->type == source.type) {
@@ -1040,20 +1264,8 @@ std::vector<duckdb::CatalogEntry*> SystemScan::Resolve(
                                            transaction.view));
     }
   }
-  return entries;
-}
-
-duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SystemScan::FindNamespace(
-  duckdb::idx_t oid, SystemSchemas system) const {
-  if (const auto* builtin = FindSystemNamespace(oid)) {
-    return FindSchema(builtin->name, system);
-  }
-  auto entry = FindById(oid);
-  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY ||
-      entry->internal) {
-    return nullptr;
-  }
-  return entry->Cast<duckdb::SchemaCatalogEntry>();
+  result.entries = entries;
+  return result;
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SystemScan::FindSchema(
@@ -1085,33 +1297,6 @@ std::vector<duckdb::SchemaCatalogEntry*> SystemScan::Schemas(
     schemas.emplace_back(&schema.get());
   }
   return schemas;
-}
-
-void SystemScan::AppendMembers(duckdb::SchemaCatalogEntry& schema,
-                               const duckdb::Identifier& prefix,
-                               SystemMembers& members) const {
-  using enum duckdb::CatalogType;
-  auto& sets = schema.Cast<duckdb::DuckSchemaEntry>();
-  const auto* keyed = members.wanted.test(std::to_underlying(INDEX_ENTRY))
-                        ? &sets.GetCatalogSet(TABLE_ENTRY)
-                        : nullptr;
-  const auto append = [&](duckdb::CatalogEntry& entry) {
-    if (members.wanted.test(std::to_underlying(entry.type)) &&
-        (!entry.internal || schema.internal)) {
-      members.entries.emplace_back(&entry);
-    }
-  };
-  for (const auto type : members.sets) {
-    auto& set = sets.GetCatalogSet(type);
-    if (&set == keyed) {
-      const auto walked = MemberSet(schema, type);
-      for (auto* entry : walked.entries) {
-        append(*entry);
-      }
-    } else {
-      set.ScanWithPrefix(Transaction(), append, prefix);
-    }
-  }
 }
 
 void SystemScan::AppendOwned(
@@ -1156,35 +1341,44 @@ void SystemScan::AppendOwned(
   }
 }
 
-void SystemScan::AppendNamed(
-  std::string_view name, std::span<const duckdb::CatalogType> types,
-  SystemSchemas system, std::span<duckdb::SchemaCatalogEntry* const> scopes,
-  std::vector<duckdb::CatalogEntry*>& entries) const {
+void SystemScan::AppendNamed(std::string_view name,
+                             std::span<const duckdb::CatalogType> types,
+                             SystemSchemas system,
+                             SystemMembers& members) const {
   using enum duckdb::CatalogType;
+  const auto& wanted = members.wanted;
+  auto& entries = members.entries;
   const duckdb::Identifier identifier{name};
-  for (auto* schema : scopes) {
+  for (auto* schema : members.schemas) {
+    if (!AllowsSchema(members.nsp_column, *schema)) {
+      continue;
+    }
     const auto found = entries.size();
     for (const auto type : types | kMemberTypes) {
+      if (!wanted.test(std::to_underlying(type))) {
+        continue;
+      }
       if (auto entry = FindMember(Transaction(), *schema, type, identifier);
           entry && entry->type == type &&
           (!entry->internal || schema->internal)) {
         entries.emplace_back(entry.get());
       }
     }
-    if (entries.size() == found && absl::c_linear_search(types, INDEX_ENTRY)) {
+    if (entries.size() == found &&
+        wanted.test(std::to_underlying(INDEX_ENTRY))) {
       if (const auto key = FindKeyIndex(_context, *schema, name);
           key.key_index) {
         entries.emplace_back(key.table);
       }
     }
   }
-  if (absl::c_linear_search(types, SCHEMA_ENTRY)) {
+  if (wanted.test(std::to_underlying(SCHEMA_ENTRY))) {
     if (auto schema = FindSchema(name, system)) {
       entries.emplace_back(schema.get());
     }
   }
-  if (absl::c_linear_search(types, TYPE_ENTRY) && name.starts_with('_')) {
-    AppendNamed(name.substr(1), types, system, scopes, entries);
+  if (wanted.test(std::to_underlying(TYPE_ENTRY)) && name.starts_with('_')) {
+    AppendNamed(name.substr(1), types, system, members);
   }
 }
 

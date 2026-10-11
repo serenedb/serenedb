@@ -243,6 +243,8 @@ std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   auto built = std::make_shared<BuiltinFunctions>();
   built->_version = version;
   built->_functions = CollectBuiltinFunctions(context);
+  SDB_ASSERT(built->_functions.empty() ||
+             built->_functions.back().oid < kMaxSystem);
   for (uint32_t i = 0; i < built->_functions.size(); ++i) {
     built->_by_name[built->_functions[i].name].emplace_back(i);
   }

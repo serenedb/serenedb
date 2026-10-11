@@ -21,9 +21,7 @@
 #include "pg/types.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 
-#include <array>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -31,12 +29,11 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <utility>
 
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
-#include "pg/catalog/functions/format_type.h"
+#include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/lookup.h"
 
 namespace sdb::pg {
@@ -107,46 +104,6 @@ constexpr PgTypeMapping kMappings[] = {
   {kUnion, []() -> duckdb::LogicalType { return duckdb::LogicalType::VARCHAR; }, false},
   {kGeometry, []() -> duckdb::LogicalType { return duckdb::LogicalType::GEOMETRY(); }, false},
 };
-
-constexpr std::pair<TypeId, int32_t> kIdTypes[] = {
-  {TypeId::BOOLEAN, kBool},
-  {TypeId::TINYINT, kInt2},
-  {TypeId::UTINYINT, kInt2},
-  {TypeId::SMALLINT, kInt2},
-  {TypeId::USMALLINT, kInt4},
-  {TypeId::INTEGER, kInt4},
-  {TypeId::UINTEGER, kInt8},
-  {TypeId::BIGINT, kInt8},
-  {TypeId::HUGEINT, kNumeric},
-  {TypeId::UHUGEINT, kNumeric},
-  {TypeId::UBIGINT, kNumeric},
-  {TypeId::BIGNUM, kNumeric},
-  {TypeId::DECIMAL, kNumeric},
-  {TypeId::DATE, kDate},
-  {TypeId::TIME, kTime},
-  {TypeId::TIME_NS, kTime},
-  {TypeId::TIMESTAMP_SEC, kTimestamp},
-  {TypeId::TIMESTAMP_MS, kTimestamp},
-  {TypeId::TIMESTAMP, kTimestamp},
-  {TypeId::TIMESTAMP_NS, kTimestamp},
-  {TypeId::TIMESTAMP_TZ, kTimestamptz},
-  {TypeId::TIMESTAMP_TZ_NS, kTimestamptz},
-  {TypeId::TIME_TZ, kTimetz},
-  {TypeId::FLOAT, kFloat4},
-  {TypeId::DOUBLE, kFloat8},
-  {TypeId::CHAR, kText},
-  {TypeId::VARCHAR, kText},
-  {TypeId::ENUM, kText},
-  {TypeId::BLOB, kBytea},
-  {TypeId::INTERVAL, kInterval},
-  {TypeId::BIT, kVarbit},
-  {TypeId::UUID, kUuid},
-  {TypeId::STRUCT, kRecord},
-  {TypeId::TUPLE, kRecord},
-  {TypeId::GEOMETRY, kGeometry},
-  {TypeId::VARIANT, kVariant},
-  {TypeId::UNION, kUnion},
-};
 // clang-format on
 
 const PgTypeMapping* FindMapping(int32_t oid) {
@@ -154,44 +111,6 @@ const PgTypeMapping* FindMapping(int32_t oid) {
     kMappings,
     [&](const PgTypeMapping& mapping) { return mapping.oid == oid; });
   return it == std::end(kMappings) ? nullptr : it;
-}
-
-const BuiltinType* AliasType(const duckdb::LogicalType& type) {
-  static const auto kAliases = [] {
-    absl::flat_hash_map<std::string, std::pair<TypeId, const BuiltinType*>>
-      aliases;
-    for (const auto& mapping : kMappings) {
-      if (const auto logical = mapping.logical(); logical.HasAlias()) {
-        aliases.try_emplace(logical.GetAlias(), logical.id(),
-                            FindBuiltinType(mapping.oid));
-      }
-    }
-    for (const auto& builtin : BuiltinTypes()) {
-      if (builtin.relid != 0) {
-        aliases.try_emplace(std::string{builtin.name}, TypeId::STRUCT,
-                            &builtin);
-      }
-    }
-    return aliases;
-  }();
-  if (!type.HasAlias()) {
-    return nullptr;
-  }
-  const auto it = kAliases.find(type.GetTypeInfo().alias);
-  return it != kAliases.end() && it->second.first == type.id()
-           ? it->second.second
-           : nullptr;
-}
-
-const BuiltinType* IdType(TypeId id) {
-  static const auto kIds = [] {
-    std::array<const BuiltinType*, 256> ids{};
-    for (const auto& [type, oid] : kIdTypes) {
-      ids[std::to_underlying(type)] = FindBuiltinType(oid);
-    }
-    return ids;
-  }();
-  return kIds[std::to_underlying(id)];
 }
 
 std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
@@ -208,43 +127,232 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
 }
 
 PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
-  const auto id = type.id();
-  const auto* builtin = AliasType(type);
   int32_t typmod = -1;
-  if (!builtin) {
-    if (id == TypeId::LIST) {
-      return Logical2Pg(duckdb::ListType::GetChildType(type), true);
+  const auto make = [&](int32_t oid) -> PgTypeInfo {
+    const auto& builtin = *FindBuiltinType(oid);
+    if (!in_array) {
+      return {static_cast<uint32_t>(builtin.oid), builtin.len, typmod};
     }
-    if (id == TypeId::ARRAY) {
-      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true);
+    if (builtin.array == 0) {
+      return Logical2Pg(duckdb::LogicalType{type.id()}, true);
     }
-    if (id == TypeId::MAP) {
-      return {kRecordArray, -1, -1};
-    }
-    if (id == TypeId::ENUM || id == TypeId::STRUCT || id == TypeId::TUPLE) {
-      if (const auto oid = UserTypeOid(type)) {
-        return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid),
-                static_cast<int16_t>(in_array || id != TypeId::ENUM ? -1 : 4),
-                -1};
+    return {static_cast<uint32_t>(builtin.array), -1, typmod};
+  };
+  switch (type.id()) {
+    using enum TypeId;
+    case BOOLEAN:
+      return make(kBool);
+    case TINYINT:
+    case UTINYINT:
+    case SMALLINT:
+      return make(kInt2);
+    case USMALLINT:
+      return make(kInt4);
+    case INTEGER:
+      if (IsCardinalNumber(type)) {
+        return make(kCardinalNumber);
       }
-    }
-    if (id == TypeId::DECIMAL) {
+      return make(kInt4);
+    case UINTEGER:
+      return make(kInt8);
+    case BIGINT:
+      if (IsOid(type)) {
+        return make(kOid);
+      }
+      if (IsXid(type)) {
+        return make(kXid);
+      }
+      if (IsCid(type)) {
+        return make(kCid);
+      }
+      if (IsTid(type)) {
+        return make(kTid);
+      }
+      if (IsXid8(type)) {
+        return make(kXid8);
+      }
+      if (IsRegproc(type)) {
+        return make(kRegproc);
+      }
+      if (IsRegprocedure(type)) {
+        return make(kRegprocedure);
+      }
+      if (IsRegoper(type)) {
+        return make(kRegoper);
+      }
+      if (IsRegoperator(type)) {
+        return make(kRegoperator);
+      }
+      if (IsRegclass(type)) {
+        return make(kRegclass);
+      }
+      if (IsRegtype(type)) {
+        return make(kRegtype);
+      }
+      if (IsRegrole(type)) {
+        return make(kRegrole);
+      }
+      if (IsRegnamespace(type)) {
+        return make(kRegnamespace);
+      }
+      if (IsRegconfig(type)) {
+        return make(kRegconfig);
+      }
+      if (IsRegdictionary(type)) {
+        return make(kRegdictionary);
+      }
+      if (IsRegcollation(type)) {
+        return make(kRegcollation);
+      }
+      return make(kInt8);
+    case UBIGINT:
+      if (IsPgLsn(type)) {
+        return make(kPgLsn);
+      }
+      return make(kNumeric);
+    case HUGEINT:
+    case UHUGEINT:
+    case BIGNUM:
+      return make(kNumeric);
+    case DECIMAL:
       typmod = NumericTypmod(duckdb::DecimalType::GetWidth(type),
                              duckdb::DecimalType::GetScale(type));
-    }
-    builtin =
-      IdType(connector::IsTSQueryStructType(type) ? TypeId::VARCHAR : id);
+      return make(kNumeric);
+    case DATE:
+      return make(kDate);
+    case TIME:
+    case TIME_NS:
+      return make(kTime);
+    case TIMESTAMP_SEC:
+    case TIMESTAMP_MS:
+    case TIMESTAMP:
+    case TIMESTAMP_NS:
+      return make(kTimestamp);
+    case TIMESTAMP_TZ:
+      if (IsTimeStamp(type)) {
+        return make(kTimeStamp);
+      }
+      return make(kTimestamptz);
+    case TIMESTAMP_TZ_NS:
+      return make(kTimestamptz);
+    case TIME_TZ:
+      return make(kTimetz);
+    case FLOAT:
+      return make(kFloat4);
+    case DOUBLE:
+      return make(kFloat8);
+    case CHAR:
+      return make(kText);
+    case BLOB:
+      return make(kBytea);
+    case INTERVAL:
+      return make(kInterval);
+    case BIT:
+      return make(kVarbit);
+    case UUID:
+      return make(kUuid);
+    case VARCHAR:
+      if (type.IsJSONType()) {
+        return make(kJson);
+      }
+      if (IsName(type)) {
+        return make(kName);
+      }
+      if (IsChar(type)) {
+        return make(kChar);
+      }
+      if (IsAclitem(type)) {
+        return make(kAclitem);
+      }
+      if (IsPgNodeTree(type)) {
+        return make(kPgNodeTree);
+      }
+      if (IsAnyarray(type)) {
+        return make(kAnyarray);
+      }
+      if (IsPgNdistinct(type)) {
+        return make(kPgNdistinct);
+      }
+      if (IsPgDependencies(type)) {
+        return make(kPgDependencies);
+      }
+      if (IsPgMcvList(type)) {
+        return make(kPgMcvList);
+      }
+      if (IsCharacterData(type)) {
+        return make(kCharacterData);
+      }
+      if (IsSqlIdentifier(type)) {
+        return make(kSqlIdentifier);
+      }
+      if (IsYesOrNo(type)) {
+        return make(kYesOrNo);
+      }
+      return make(kText);
+    case ENUM:
+      if (const auto oid = UserTypeOid(type)) {
+        return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid),
+                static_cast<int16_t>(in_array ? -1 : 4), -1};
+      }
+      return make(kText);
+    case STRUCT:
+    case TUPLE:
+      if (IsInet(type)) {
+        return make(kInet);
+      }
+      if (connector::IsTSQueryStructType(type)) {
+        return make(kText);
+      }
+      if (const auto oid = UserTypeOid(type)) {
+        return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid), -1,
+                -1};
+      }
+      for (const auto& schema : kSystemNamespaces) {
+        if (const auto* row = FindBuiltinType(schema.oid, type.GetAlias());
+            row && row->relid != 0) {
+          return make(row->oid);
+        }
+      }
+      return make(kRecord);
+    case MAP:
+      return {kRecordArray, -1, -1};
+    case LIST:
+      if (IsInt2vector(type)) {
+        return make(kInt2Vector);
+      }
+      if (IsOidvector(type)) {
+        return make(kOidvector);
+      }
+      return Logical2Pg(duckdb::ListType::GetChildType(type), true);
+    case ARRAY:
+      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true);
+    case SQLNULL:
+      if (IsVoid(type)) {
+        return make(kVoid);
+      }
+      return {kUnknown, -1, -1};
+    case GEOMETRY:
+      return make(kGeometry);
+    case VARIANT:
+      return make(kVariant);
+    case UNION:
+      return make(kUnion);
+    case INVALID:
+    case UNKNOWN:
+    case ANY:
+    case UNBOUND:
+    case TEMPLATE:
+    case TYPE:
+    case STRING_LITERAL:
+    case INTEGER_LITERAL:
+    case POINTER:
+    case VALIDITY:
+    case TABLE:
+    case LEGACY_AGGREGATE_STATE:
+    case LAMBDA:
+      return {kUnknown, -1, -1};
   }
-  if (!builtin) {
-    return {kUnknown, -1, -1};
-  }
-  if (!in_array) {
-    return {static_cast<uint32_t>(builtin->oid), builtin->len, typmod};
-  }
-  if (builtin->array == 0) {
-    return Logical2Pg(duckdb::LogicalType{id}, true);
-  }
-  return {static_cast<uint32_t>(builtin->array), -1, typmod};
+  return {kUnknown, -1, -1};
 }
 
 }  // namespace
@@ -292,7 +400,18 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
                   ERR_MSG("cache lookup failed for type ", oid));
 }
 
-std::span<const PgTypeMapping> PgTypeMappings() { return kMappings; }
+std::span<const PgTypeMapping> PgTypeMappings() {
+#ifdef SDB_DEV
+  static const bool kRoundTrips =
+    absl::c_all_of(kMappings, [](const PgTypeMapping& mapping) {
+      const auto logical = mapping.logical();
+      const auto* back = FindMapping(static_cast<int32_t>(Type2Oid(logical)));
+      return back && back->logical() == logical;
+    });
+  SDB_ASSERT(kRoundTrips);
+#endif
+  return kMappings;
+}
 
 duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
   if (const auto* mapping = FindMapping(type.oid)) {
@@ -314,7 +433,7 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
   int16_t ndims = 0;
   const auto* element = &type;
   while ((element->id() == TypeId::LIST || element->id() == TypeId::ARRAY) &&
-         !AliasType(*element)) {
+         !IsInt2vector(*element) && !IsOidvector(*element)) {
     ++ndims;
     element = element->id() == TypeId::LIST
                 ? &duckdb::ListType::GetChildType(*element)

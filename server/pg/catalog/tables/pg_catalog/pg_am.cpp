@@ -42,7 +42,8 @@ class PgAm final : public SystemTableScan<kPgAmSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
-  static constexpr std::tuple kSources{ArraySource<Am>{&LoadStatic<kAms>, {}}};
+  static constexpr std::tuple kSources{
+    ArraySource<Am>{&LoadStatic<kAms>, {}, {}}};
 
   static constexpr auto kAm = Shape<kSql, const Am>(
     Col<"oid">(&Am::oid), Col<"amname">(&Am::name),

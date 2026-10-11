@@ -331,7 +331,7 @@ class PgSettings final : public SystemTableScan<kPgSettingsSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<duckdb::Identifier>{&LoadSettings, kKeys}};
+    ArraySource<duckdb::Identifier>{&LoadSettings, kKeys, {}}};
 
   static constexpr auto kGuc = Shape<kSql, const Setting>(
     kSettingColumns, Col<"setting">([](const auto& row) {

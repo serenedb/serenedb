@@ -67,16 +67,15 @@ std::string MacroBody(const duckdb::MacroFunction& macro) {
   return macro.Cast<duckdb::ScalarMacroFunction>().expression->ToString();
 }
 
-std::string MacroParameterName(const duckdb::MacroFunction& macro,
-                               duckdb::idx_t index) {
-  const auto& name = macro.parameters[index]
-                       ->Cast<duckdb::ColumnRefExpression>()
-                       .GetColumnName()
-                       .GetIdentifierName();
-  const bool positional =
-    name.size() > 1 && name.front() == '$' &&
-    absl::c_all_of(std::string_view{name}.substr(1), absl::ascii_isdigit);
-  return positional ? std::string{} : name;
+std::string_view MacroParameterName(const duckdb::MacroFunction& macro,
+                                    duckdb::idx_t index) {
+  const std::string_view name = macro.parameters[index]
+                                  ->Cast<duckdb::ColumnRefExpression>()
+                                  .GetColumnName()
+                                  .GetIdentifierName();
+  const bool positional = name.size() > 1 && name.front() == '$' &&
+                          absl::c_all_of(name.substr(1), absl::ascii_isdigit);
+  return positional ? std::string_view{} : name;
 }
 
 }  // namespace sdb::pg

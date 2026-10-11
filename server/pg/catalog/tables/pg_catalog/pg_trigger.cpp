@@ -116,6 +116,9 @@ class PgTrigger final : public SystemTableScan<kPgTriggerSql> {
   }
 
   void Row(const duckdb::TableCatalogEntry& table) {
+    if (!Triggered(table)) {
+      return;
+    }
     table.ScanTriggers(Transaction(), [&](duckdb::CatalogEntry& trigger) {
       Emit<kTrigger>({table, trigger.Cast<duckdb::TriggerCatalogEntry>()});
     });

@@ -77,7 +77,7 @@ FROM pg_type
 WHERE oid < 16384 AND typtype = 'p'
 ----
 pseudo_types
-_record any anyarray anyenum cstring internal record table_am_handler unknown void
+_record any anyarray anyelement anyenum cstring event_trigger fdw_handler index_am_handler internal language_handler pg_ddl_command record table_am_handler trigger tsm_handler unknown void
 
 
 statement ok

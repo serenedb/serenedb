@@ -126,6 +126,72 @@ ok
 t
 
 
+statement ok
+CREATE INDEX size_test_data_idx ON size_test (data)
+
+
+statement ok
+CREATE SEQUENCE size_test_seq
+
+
+statement ok
+CREATE VIEW size_test_view AS SELECT id FROM size_test
+
+
+query
+SELECT c.relname, pg_relation_size(c.oid) > 0 AS own, pg_table_size(c.oid) > 0 AS tab,
+  pg_indexes_size(c.oid) > 0 AS idx, pg_total_relation_size(c.oid) > 0 AS total
+FROM pg_class c WHERE c.relname IN ('size_test', 'size_test_pkey', 'size_test_data_idx')
+ORDER BY 1;
+----
+relname	own	tab	idx	total
+size_test	t	t	t	t
+size_test_data_idx	t	t	f	t
+size_test_pkey	t	t	f	t
+
+
+query
+SELECT pg_relation_size(c.oid), pg_table_size(c.oid), pg_indexes_size(c.oid),
+  pg_total_relation_size(c.oid)
+FROM pg_class c WHERE c.relname = 'size_test_view';
+----
+pg_relation_size	pg_table_size	pg_indexes_size	pg_total_relation_size
+0	0	0	0
+
+
+query
+SELECT pg_relation_size('size_test_seq'::regclass) >= 0 AS own,
+  pg_indexes_size('size_test_seq'::regclass) AS idx;
+----
+own	idx
+t	0
+
+
+query
+SELECT pg_relation_size('pg_catalog.pg_class'::regclass) >= 0 AS own,
+  pg_total_relation_size('pg_catalog.pg_class'::regclass) >= 0 AS total;
+----
+own	total
+t	t
+
+
+query
+SELECT pg_relation_size(4000000000), pg_table_size(4000000000),
+  pg_indexes_size(4000000000), pg_total_relation_size(4000000000),
+  pg_relation_size(4000000000, 'main');
+----
+pg_relation_size	pg_table_size	pg_indexes_size	pg_total_relation_size	pg_relation_size
+NULL	NULL	NULL	NULL	NULL
+
+
+statement ok
+DROP VIEW size_test_view
+
+
+statement ok
+DROP SEQUENCE size_test_seq
+
+
 # Cleanup
 
 statement ok

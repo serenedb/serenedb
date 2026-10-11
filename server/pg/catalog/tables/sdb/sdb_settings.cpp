@@ -84,7 +84,7 @@ class SdbSettings final : public SystemTableScan<kSdbSettingsSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<const absl::CommandLineFlag*>{&LoadFlags, {}}};
+    ArraySource<const absl::CommandLineFlag*>{&LoadFlags, {}, {}}};
 
   static constexpr auto kFlag = Shape<kSql, const Flag>(
     Col<"name">(

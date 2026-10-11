@@ -3567,6 +3567,7 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 28	xid	pg_catalog	postgres	4	t	b	U	f	t	,	-	-	-	xid[]	xidin	xidout	xidrecv	xidsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 29	cid	pg_catalog	postgres	4	t	b	U	f	t	,	-	-	-	cid[]	cidin	cidout	cidrecv	cidsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 30	oidvector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	oid	oidvector[]	oidvectorin	oidvectorout	oidvectorrecv	oidvectorsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+32	pg_ddl_command	pg_catalog	postgres	8	t	p	P	f	t	,	-	-	-	-	pg_ddl_command_in	pg_ddl_command_out	pg_ddl_command_recv	pg_ddl_command_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 71	pg_type	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_type	-	-	pg_type[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 75	pg_attribute	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_attribute	-	-	pg_attribute[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 81	pg_proc	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_proc	-	-	pg_proc[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
@@ -3580,6 +3581,7 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 271	_xid8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	xid8	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 272	_pg_proc	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_proc	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 273	_pg_class	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_class	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+325	index_am_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	index_am_handler_in	index_am_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 700	float4	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	real[]	float4in	float4out	float4recv	float4send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 701	float8	pg_catalog	postgres	8	t	b	N	t	t	,	-	-	-	double precision[]	float8in	float8out	float8recv	float8send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 705	unknown	pg_catalog	postgres	-2	f	p	X	f	t	,	-	-	-	-	unknownin	unknownout	unknownrecv	unknownsend	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
@@ -3643,14 +3645,19 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 2276	any	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	any_in	any_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2277	anyarray	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anyarray_in	anyarray_out	anyarray_recv	anyarray_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 2278	void	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	void_in	void_out	void_recv	void_send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2279	trigger	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	trigger_in	trigger_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+2280	language_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	language_handler_in	language_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2281	internal	pg_catalog	postgres	8	t	p	P	f	t	,	-	-	-	-	internal_in	internal_out	-	-	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+2283	anyelement	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anyelement_in	anyelement_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2287	_record	pg_catalog	postgres	-1	f	p	P	f	t	,	-	array_subscript_handler	record	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 2842	pg_authid	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_authid	-	-	pg_authid[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 2843	pg_auth_members	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_auth_members	-	-	pg_auth_members[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 2950	uuid	pg_catalog	postgres	16	f	b	U	f	t	,	-	-	-	uuid[]	uuid_in	uuid_out	uuid_recv	uuid_send	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
 2951	_uuid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	uuid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3115	fdw_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	fdw_handler_in	fdw_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 3220	pg_lsn	pg_catalog	postgres	8	t	b	U	f	t	,	-	-	-	pg_lsn[]	pg_lsn_in	pg_lsn_out	pg_lsn_recv	pg_lsn_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 3221	_pg_lsn	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_lsn	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3310	tsm_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	tsm_handler_in	tsm_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 3361	pg_ndistinct	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_ndistinct_in	pg_ndistinct_out	pg_ndistinct_recv	pg_ndistinct_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
 3402	pg_dependencies	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_dependencies_in	pg_dependencies_out	pg_dependencies_recv	pg_dependencies_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
 3500	anyenum	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anyenum_in	anyenum_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
@@ -3660,6 +3667,7 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 3770	_regdictionary	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regdictionary	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 3802	jsonb	pg_catalog	postgres	-1	f	b	U	f	t	,	-	jsonb_subscript_handler	-	jsonb[]	jsonb_in	jsonb_out	jsonb_recv	jsonb_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
 3807	_jsonb	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	jsonb	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3838	event_trigger	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	event_trigger_in	event_trigger_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 4066	pg_shseclabel	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shseclabel	-	-	pg_shseclabel[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 4089	regnamespace	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regnamespace[]	regnamespacein	regnamespaceout	regnamespacerecv	regnamespacesend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 4090	_regnamespace	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regnamespace	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL

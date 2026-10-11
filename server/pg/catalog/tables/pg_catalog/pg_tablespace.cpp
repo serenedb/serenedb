@@ -24,28 +24,20 @@
 namespace sdb::pg {
 namespace {
 
-struct Tablespace {
-  duckdb::idx_t oid;
-  std::string_view name;
-};
-
-constexpr std::array kTablespaces{
-  Tablespace{kPgDefaultTablespace, "pg_default"},
-  Tablespace{kPgGlobalTablespace, "pg_global"},
-};
-
 class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Tablespace>{&LoadStatic<kTablespaces>, {}}};
+    ArraySource<SystemTablespace>{&LoadStatic<kSystemTablespaces>, {}, {}}};
 
-  static constexpr auto kTablespace = Shape<kSql, const Tablespace>(
-    Col<"oid">(&Tablespace::oid), Col<"spcname">(&Tablespace::name),
+  static constexpr auto kTablespace = Shape<kSql, const SystemTablespace>(
+    Col<"oid">(&SystemTablespace::oid), Col<"spcname">(&SystemTablespace::name),
     Col<"spcowner">([](const auto&) { return kRootUser; }));
 
-  void Row(const Tablespace& tablespace) { Emit<kTablespace>(tablespace); }
+  void Row(const SystemTablespace& tablespace) {
+    Emit<kTablespace>(tablespace);
+  }
 };
 
 }  // namespace

@@ -287,3 +287,29 @@ timestamp with time zone[]
 
 statement error
 SELECT 'nonexistent_type'::regtype;
+
+
+query
+SELECT t AS name, t::regtype::oid AS oid
+FROM unnest(ARRAY['trigger', 'event_trigger', 'anyelement', 'fdw_handler', 'index_am_handler',
+  'language_handler', 'table_am_handler', 'tsm_handler', 'pg_ddl_command']) t
+ORDER BY 2;
+----
+name	oid
+pg_ddl_command	32
+table_am_handler	269
+index_am_handler	325
+trigger	2279
+language_handler	2280
+anyelement	2283
+fdw_handler	3115
+tsm_handler	3310
+event_trigger	3838
+
+
+query
+SELECT count(*) > 0 AS non_trigger_functions
+FROM pg_proc p WHERE p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype;
+----
+non_trigger_functions
+t

@@ -34,7 +34,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/pg_logical_types.h"
-#include "pg/catalog/functions/reg_types.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
 #include "pg/serialize.h"
 
@@ -271,11 +271,17 @@ void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
   auto& config = duckdb::DBConfig::GetConfig(db);
   auto& casts = config.GetCastFunctions();
 
-  [&]<size_t... I>(std::index_sequence<I...>) {
-    (RegisterRegCasts<pg::kRegTypes[I].kind>(
-       casts, pg::RegLogicalType(pg::kRegTypes[I])),
-     ...);
-  }(std::make_index_sequence<pg::kRegTypes.size()>{});
+  RegisterRegCasts<pg::RegKind::Proc>(casts, pg::REGPROC());
+  RegisterRegCasts<pg::RegKind::Procedure>(casts, pg::REGPROCEDURE());
+  RegisterRegCasts<pg::RegKind::Oper>(casts, pg::REGOPER());
+  RegisterRegCasts<pg::RegKind::Operator>(casts, pg::REGOPERATOR());
+  RegisterRegCasts<pg::RegKind::Class>(casts, pg::REGCLASS());
+  RegisterRegCasts<pg::RegKind::Type>(casts, pg::REGTYPE());
+  RegisterRegCasts<pg::RegKind::Collation>(casts, pg::REGCOLLATION());
+  RegisterRegCasts<pg::RegKind::Config>(casts, pg::REGCONFIG());
+  RegisterRegCasts<pg::RegKind::Dictionary>(casts, pg::REGDICTIONARY());
+  RegisterRegCasts<pg::RegKind::Role>(casts, pg::REGROLE());
+  RegisterRegCasts<pg::RegKind::Namespace>(casts, pg::REGNAMESPACE());
 
   // VARCHAR -> BLOB / BLOB -> VARCHAR (bytea)
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,

@@ -42,6 +42,7 @@
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/subscription.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/snapshot.h"
 
 namespace duckdb {
 
@@ -63,36 +64,13 @@ void DeclareModified(duckdb::CatalogTransaction transaction,
                      duckdb::DatabaseModificationType type =
                        duckdb::DatabaseModificationType::CREATE_CATALOG_ENTRY);
 
-struct CatalogSnapshot {
-  std::vector<duckdb::CatalogEntry*> entries;
-  mutable std::once_flag keys_once;
-  mutable irs::containers::FlatHashMap<
-    std::string_view,
-    std::pair<duckdb::TableCatalogEntry*, const duckdb::UniqueConstraint*>>
-    keys;
-  mutable std::once_flag triggers_once;
-  mutable std::vector<duckdb::idx_t> triggered;
-  mutable std::once_flag indexed_once;
-  mutable irs::containers::FlatHashSet<duckdb::idx_t> indexed;
-  mutable std::once_flag defaults_once;
-  mutable irs::containers::FlatHashMap<const duckdb::ColumnDefinition*,
-                                       std::string>
-    defaults;
-  mutable std::once_flag subjects_once;
-  mutable irs::containers::FlatHashMap<
-    const duckdb::CatalogEntry*,
-    std::vector<
-      std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>>
-    subjects;
-};
-
-class SereneDBCatalog final : public duckdb::DuckCatalog {
+class SereneDBCatalog final : public SnapshotCatalog {
  public:
   static constexpr const char* kStorageType = "serenedb";
 
   SereneDBCatalog(duckdb::AttachedDatabase& db,
                   std::shared_ptr<DatabaseDirectory> directory)
-    : duckdb::DuckCatalog{db, true}, _directory{std::move(directory)} {}
+    : SnapshotCatalog{db, true}, _directory{std::move(directory)} {}
 
   const std::shared_ptr<DatabaseDirectory>& Directory() const noexcept {
     return _directory;
@@ -171,9 +149,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return entry ? &entry->template Cast<T>() : nullptr;
   }
 
-  std::shared_ptr<const CatalogSnapshot> Snapshot(
-    duckdb::ClientContext& context, duckdb::CatalogSet& set);
-
   duckdb::PhysicalOperator& PlanInsert(
     duckdb::ClientContext& context, duckdb::PhysicalPlanGenerator& planner,
     duckdb::LogicalInsert& op,
@@ -240,11 +215,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
  private:
   std::shared_ptr<DatabaseDirectory> _directory;
   std::atomic_bool _detached{false};
-  absl::Mutex _snapshots_mutex;
-  duckdb::idx_t _snapshots_version = 0;
-  irs::containers::FlatHashMap<const duckdb::CatalogSet*,
-                               std::shared_ptr<const CatalogSnapshot>>
-    _snapshots;
 };
 
 }  // namespace sdb::catalog

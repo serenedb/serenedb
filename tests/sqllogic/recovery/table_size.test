@@ -69,8 +69,11 @@ init_is_empty
 t
 
 
-query error db error: ERROR: relation with OID 101 does not exist
-SELECT pg_relation_size(101, 'init') = 0 AS init_is_empty;
+query
+SELECT pg_relation_size(101, 'init') IS NULL AS missing;
+----
+missing
+t
 
 
 query

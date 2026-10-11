@@ -26,10 +26,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/parsed_data/create_table_info.hpp>
 #include <duckdb/storage/data_table.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/shared.hpp>
@@ -41,7 +38,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
 #include "pg/catalog/builtin/builtin.h"
-#include "pg/catalog/functions/reg_types.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
@@ -71,17 +68,10 @@ constexpr SystemIndex kIndexes[] = {
 
 std::optional<std::vector<std::string>> Reloptions(
   const catalog::SearchTableEntry& table) {
-  const auto info = table.GetInfo();
-  const auto& options = info->Cast<duckdb::CreateTableInfo>().options;
   std::vector<std::string> result;
   for (const auto name : catalog::kSearchTableOptions) {
-    if (const auto it = options.find(name); it != options.end()) {
-      result.emplace_back(
-        absl::StrCat(name, "=",
-                     it->second->Cast<duckdb::ConstantExpression>()
-                       .GetLiteral()
-                       .ToValue()
-                       .ToString()));
+    if (const auto value = table.Option(name); !value.IsNull()) {
+      result.emplace_back(absl::StrCat(name, "=", value.ToString()));
     }
   }
   return NonEmpty(std::move(result));
@@ -107,20 +97,6 @@ uint64_t RelationRowType(const duckdb::CatalogEntry& relation) {
   return relation.internal ? kInvalidOid : RowTypeOid(relation.oid);
 }
 
-bool Indexed(SystemScan& scan, duckdb::CatalogEntry& relation) {
-  if (const auto known = scan.KnownIndexed(relation.oid)) {
-    return *known;
-  }
-  bool indexed = false;
-  scan.Dependencies().ScanEdges(
-    scan.Transaction(), relation, false,
-    [&](duckdb::CatalogEntry& dependent,
-        const duckdb::DependencyDependentFlags&) {
-      indexed = indexed || dependent.type == duckdb::CatalogType::INDEX_ENTRY;
-    });
-  return indexed;
-}
-
 constexpr std::tuple kRelationBase{
   Col<"oid">(&duckdb::CatalogEntry::oid),
   Col<"relname">(&duckdb::CatalogEntry::name),
@@ -136,26 +112,20 @@ struct Ordinary {
   const catalog::SearchTableEntry* search;
 };
 
-struct Index {
-  const duckdb::IndexCatalogEntry& index;
-  const irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t>& owners;
-};
-
 struct KeyIndex {
   const duckdb::TableCatalogEntry& table;
   const duckdb::UniqueConstraint& key;
+};
+
+struct Index {
+  const duckdb::IndexCatalogEntry& index;
+  const irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t>& owners;
 };
 
 class PgClass final : public SystemTableScan<kPgClassSql> {
  public:
   PgClass(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
     : SystemTableScan{context, input} {
-    if (Reads<"relhasindex">()) {
-      CollectIndexed();
-    }
-    if (Reads<"relhastriggers">()) {
-      CollectTriggered();
-    }
     if (VisibleOnly()) {
       _session = MakeSession(&context);
     }
@@ -215,22 +185,15 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
         });
     }),
     Col<"relhasindex">([](const auto& row, SystemScan& scan) {
-      return !KeyIndexes(row.table).empty() || Indexed(scan, row.table);
+      return !KeyIndexes(row.table).empty() || scan.Indexed(row.table);
     }),
     Col<"relhastriggers">([](const auto& row, SystemScan& scan) {
-      if (absl::c_any_of(
-            row.table.GetConstraints(), [](const auto& constraint) {
-              return constraint->type == duckdb::ConstraintType::FOREIGN_KEY;
-            })) {
-        return true;
-      }
-      if (const auto known = scan.KnownTriggered(row.table.oid)) {
-        return *known;
-      }
-      bool triggers = false;
-      row.table.ScanTriggers(scan.Transaction(),
-                             [&](duckdb::CatalogEntry&) { triggers = true; });
-      return triggers;
+      return absl::c_any_of(row.table.GetConstraints(),
+                            [](const auto& constraint) {
+                              return constraint->type ==
+                                     duckdb::ConstraintType::FOREIGN_KEY;
+                            }) ||
+             scan.Triggered(row.table);
     }),
     Col<"reltuples">([](const auto& row) {
       return row.table.IsDuckTable()
@@ -253,7 +216,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relam">([](const auto&) { return kPgAmSecondary; }),
     Col<"reltuples">([](const auto&) { return 0.0F; }),
     Col<"relnatts">([](const auto& row) {
-      return row.key.GetLogicalIndexes(row.table.GetColumns()).size();
+      return KeyAttnums(row.table.GetColumns(), row.key).size();
     }));
 
   static constexpr auto kIndex = Shape<kSql, const Index>(
@@ -283,7 +246,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
           it != row.owners.end()) {
         return it->second;
       }
-      const auto relation = row.index.GetRelation(scan.Transaction());
+      const auto relation = scan.FindById(row.index.table_oid);
       return relation ? relation->permissions.owner
                       : row.index.permissions.owner;
     }));
@@ -296,7 +259,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return columns ? columns->types.size() : 0;
     }),
     Col<"relhasindex">([](auto& view, SystemScan& scan) {
-      return !view.internal && Indexed(scan, view);
+      return !view.internal && scan.Indexed(view);
     }),
     Col<"relacl">(kAcl));
 
@@ -311,6 +274,16 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       Col<"relnatts">([](const auto& type) {
         return duckdb::StructType::GetChildCount(type.user_type);
       }));
+
+  static constexpr SystemTypeShape kTypeShapes[] = {
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kSystem>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kOrdinary>::kProvided},
+    {duckdb::CatalogType::TABLE_ENTRY, SystemShapeOf<kKeyIndex>::kProvided},
+    {duckdb::CatalogType::VIEW_ENTRY, SystemShapeOf<kView>::kProvided},
+    {duckdb::CatalogType::INDEX_ENTRY, SystemShapeOf<kIndex>::kProvided},
+    {duckdb::CatalogType::SEQUENCE_ENTRY, SystemShapeOf<kSequence>::kProvided},
+    {duckdb::CatalogType::TYPE_ENTRY, SystemShapeOf<kComposite>::kProvided},
+  };
 
   void Row(duckdb::TableCatalogEntry& table) {
     if (table.internal) {
@@ -365,8 +338,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   }
 
  private:
-  bool Visible(const duckdb::CatalogEntry& owner,
-               const std::string& name) const {
+  bool Visible(const duckdb::CatalogEntry& owner, std::string_view name) const {
     if (!_session) [[likely]] {
       return true;
     }

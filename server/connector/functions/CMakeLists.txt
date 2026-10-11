@@ -13,7 +13,6 @@ target_sources(
         math.cpp
         otel.cpp
         string.cpp
-        system.cpp
         minhash.cpp
         search.cpp
         tokenizer_functions.cpp

@@ -104,6 +104,16 @@ inline constexpr std::array kSystemNamespaces{
   SystemNamespace{kPgInformationSchema, irs::StaticStrings::kInformationSchema},
 };
 
+struct SystemTablespace {
+  duckdb::idx_t oid;
+  std::string_view name;
+};
+
+inline constexpr std::array kSystemTablespaces{
+  SystemTablespace{kPgDefaultTablespace, "pg_default"},
+  SystemTablespace{kPgGlobalTablespace, "pg_global"},
+};
+
 inline constexpr const SystemNamespace* FindSystemNamespace(duckdb::idx_t oid) {
   for (const auto& schema : kSystemNamespaces) {
     if (schema.oid == oid) {

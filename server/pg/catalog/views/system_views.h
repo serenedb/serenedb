@@ -35,18 +35,14 @@ struct SystemView {
   std::string_view sql;
 };
 
+struct SystemViewSql {
+  std::string_view schema;
+  std::string_view name;
+  std::string_view sql;
+};
+
 inline constexpr SystemView kExternalViews[] = {
 #include "pg/catalog/generated/system_views.gen.inc"
-  {"pg_catalog", "pg_stat_progress_create_table_as", kMinSystem + 403, false,
-   R"(SELECT
-          S.pid AS pid, S.datid AS datid, S.datname AS datname,
-          S.relid AS relid,
-          S.command AS command,
-          S.phase AS phase,
-          S.tuples_processed AS tuples_processed,
-          S.bytes_processed AS bytes_processed,
-          S.tuples_total AS tuples_total
-      FROM sdb_progress S WHERE S.command = 'CREATE TABLE AS')"},
 };
 
 }  // namespace sdb::pg

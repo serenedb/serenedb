@@ -95,6 +95,7 @@ The test tree is split by what runs the test and what it covers:
 - `tests/server/<area>/...`, `tests/iresearch/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
 - `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's, via DuckDB's `unittest` binary. Built only when configured with `-DSDB_BUILD_DUCKDB_UNITTESTS=ON`.
+- `tests/re2/` -- a standalone build of the re2 fork with its own test suites, whose exhaustive and random tests check every matching engine against a backtracking reference. CI runs it when `third_party/re2` or what it builds against changes; add re2 tests to `third_party/re2/re2/testing/`.
 
 When a change needs a test:
 
@@ -130,6 +131,14 @@ C++ unit tests:
 ./build/bin/iresearch-tests "--gtest_filter=*PhraseFilterTestCase*"
 ./build/bin/serenedb-tests "--gtest_filter=*VPackLoadInspectorTest*"
 ./build/bin/serenedb-tests "--gtest_filter=*DataSourceWithSearchTest*"
+```
+
+re2 fork tests (about 3 minutes with all suites in parallel):
+
+```bash
+cmake -S tests/re2 -B build_re2 -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build_re2
+ctest --test-dir build_re2 -j "$(nproc)" --output-on-failure
 ```
 
 ### Testing CI workflows locally

@@ -26,6 +26,11 @@ on:
         type: boolean
         required: false
         default: false
+      RE2:
+        description: "also build + run re2's own test suites (tests/re2)"
+        type: boolean
+        required: false
+        default: false
       DUCKDB_SUITES:
         description: "comma-separated duckdb test suites to build + run (empty = none); see tests/duckdb/run.sh --list"
         type: string
@@ -115,6 +120,11 @@ on:
         default: "dev"
       IRESEARCH:
         description: "also build + run iresearch-tests + iresearch-load"
+        type: boolean
+        required: false
+        default: false
+      RE2:
+        description: "also build + run re2's own test suites (tests/re2)"
         type: boolean
         required: false
         default: false
@@ -231,6 +241,7 @@ jobs:
           esac
 
           echo "RUN_IRESEARCH=${{ inputs.IRESEARCH }}" >> $GITHUB_ENV
+          echo "RUN_RE2=${{ inputs.RE2 }}"             >> $GITHUB_ENV
           echo "DUCKDB_SUITES=${{ inputs.DUCKDB_SUITES }}" >> $GITHUB_ENV
           echo "RUN_SQLITE=${{ inputs.SQLITE }}"       >> $GITHUB_ENV
           echo "RUN_SQLSMITH=${{ inputs.SQLSMITH }}"   >> $GITHUB_ENV

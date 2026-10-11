@@ -95,6 +95,9 @@ run_test_suites() {
 	if [[ "${RUN_IRESEARCH:-false}" == "true" ]]; then
 		run bash "${STEPS}/042-ci-in-docker-run-iresearch-tests.bash"
 	fi
+	if [[ "${RUN_RE2:-false}" == "true" ]]; then
+		run bash "${STEPS}/041-ci-in-docker-run-re2-tests.bash"
+	fi
 	if [[ -n "${DUCKDB_SUITES:-}" ]]; then
 		run bash "${STEPS}/048-ci-in-docker-run-duckdb-tests.bash"
 	fi
@@ -165,6 +168,7 @@ case "$CONFIG" in
 asan | tsan | msan | ubsan)
 	if [[ "${RUN_EXTRA:-false}" != "true" ]]; then
 		RUN_IRESEARCH=false
+		RUN_RE2=false
 		DUCKDB_SUITES=""
 		RUN_SQLITE=false
 		RUN_SQLSMITH=false

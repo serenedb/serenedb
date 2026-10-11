@@ -58,10 +58,21 @@ CREATE INDEX movies_idx ON movies
 Pruning engages only when all of the following hold; otherwise the query still runs correctly, just without the optimization:
 
 - the query is `ORDER BY <scorer>(idx.tableoid) DESC` with a `LIMIT`;
-- the scorer **matches the one named in `optimize_top_k` exactly** (a different scorer falls back to a full scan);
-- the filter is a single term or an `OR` of terms (not a phrase, `AND` or `NOT`).
+- the scorer can use the score bounds the index stores (see the table below);
+- the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms, one or more terms with `AND NOT` exclusions (`a AND NOT b`), one required term with optional terms that only add to the score (`to_tsquery('+fox quick')`), or a phrase without slop. An `AND` that also holds `OR`s of terms is pruned when enough rows match for pruning to pay off. A phrase with slop or with several terms at one position (such as synonyms), an `OR` with a phrase or an `AND` among its branches, an `OR` that needs more than one but not all of its terms ([`ts_any(list, k)`](../../functions/search/full-text.md#ts_any) or [`::min_match(k)`](../../functions/search/full-text.md#min-match) with `k` above 1), and a group with [`::merge('max')`](../../functions/search/scoring.md#merge) are not pruned.
 
-You can confirm pruning is active in the query plan — `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`); the scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
+The index stores the kind of score bound that the scorer named in `optimize_top_k` needs, and every scorer that needs the same kind can use it. So `lm_dirichlet` with another `mu`, or `BM25` with another `k1`, prunes too:
+
+| `optimize_top_k` names | `ORDER BY` scorers that prune |
+| :--- | :--- |
+| `raw_tf`, `TFIDF` with `with_norms` false, or `BM25` with `b = 0` | `raw_tf`, `TFIDF` with `with_norms` false, `BM25` with `b = 0` |
+| `lm_jm`, `TFIDF` with `with_norms` true, or `BM25` with `b = 1` | `lm_jm`, `TFIDF` with `with_norms` true, `BM25` with `b = 1` |
+| `lm_dirichlet` or `dfi` | `lm_dirichlet`, `dfi` |
+| `BM25` with any other `b` | `BM25` with the same `b` |
+
+`BM25` with `k1 = 0`, `indri_dirichlet`, `raw_boost`, `raw_dl`, `idf` and `constant` have no score bounds, so they never prune, neither in `ORDER BY` nor in `optimize_top_k`.
+
+`EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`) when the first two conditions hold, plus a `Bounds:` row that names the index's scorer when it differs from the `ORDER BY` scorer; it doesn't check the filter's shape. The scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
 
 ## Tie-breaking
 

@@ -21,7 +21,7 @@ and POSIX-style [regular expressions](#regular-expressions).
 
 The `LIKE` expression returns `true` if the string matches the supplied pattern. (As expected, the `NOT LIKE` expression returns `false` if `LIKE` returns `true`, and vice versa. An equivalent expression is `NOT (string LIKE pattern)`.)
 
-If pattern does not contain percent signs or underscores, then the pattern only represents the string itself; in that case `LIKE` acts like the equals operator. An underscore (`_`) in pattern stands for (matches) any single character; a percent sign (`%`) matches any sequence of zero or more characters.
+If pattern does not contain percent signs, underscores or the escape character (a backslash, unless an `ESCAPE` clause names another one), then the pattern only represents the string itself; in that case `LIKE` acts like the equals operator. An underscore (`_`) in pattern stands for (matches) any single character; a percent sign (`%`) matches any sequence of zero or more characters.
 
 `LIKE` pattern matching always covers the entire string. Therefore, if it's desired to match a sequence anywhere within a string, the pattern must start and end with a percent sign.
 
@@ -35,11 +35,17 @@ The keyword `ILIKE` can be used instead of `LIKE` to make the match case-insensi
 
 <SqlLogicTest id="sql/functions/pattern_matching/index/example_003" />
 
-To search within a string for a character that is a wildcard (`%` or `_`), the pattern must use an `ESCAPE` clause and an escape character to indicate the wildcard should be treated as a literal character instead of a wildcard. See an example below.
+To match a literal `%` or `_`, put the escape character before it. Without an `ESCAPE` clause, `LIKE`, `ILIKE` and their negations escape with a backslash (`\`), as in PostgreSQL, so `'a\%c'` matches `a%c` but not `azc`. The escape character before any other character matches that character, so `\\` matches one backslash. This holds in a `WHERE` clause on a table too:
+
+<SqlLogicTest id="sql/functions/pattern_matching/index/example_014" />
+
+An `ESCAPE` clause names a different escape character, and `ESCAPE ''` turns escaping off, so a backslash matches itself:
+
+<SqlLogicTest id="sql/functions/pattern_matching/index/example_015" />
 
 Additionally, the function `like_escape` has the same functionality as a `LIKE` expression with an `ESCAPE` clause, but using function syntax. See the [Text Functions page](../../../sql/functions/text.md) for details.
 
-Search for strings with 'a' then a literal percent sign then 'c':
+Search for strings with 'a' then a literal percent sign then 'c', with `$` as the escape character:
 
 <SqlLogicTest id="sql/functions/pattern_matching/index/example_004" />
 

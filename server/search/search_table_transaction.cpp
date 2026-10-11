@@ -167,9 +167,6 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
 
   auto apply_op = [&](const LocalTableChangesEntry::Op& op) {
     if (op.IsTruncate()) {
-      if (!op.clears_shard) {
-        trx.Remove(std::make_shared<irs::All>());
-      }
       return;
     }
     remover.InitImpl(op.delete_rows.size());
@@ -276,8 +273,14 @@ void SearchTableTransaction::AddSearchTruncate(
   }
   w.transactions.clear();
   w.buffer_trx = nullptr;
-  _changes[shard->GetTableId()].AppendTruncate(clears_shard &&
-                                               !shard->BuildInFlight());
+  const bool clears = clears_shard && !shard->BuildInFlight();
+  if (!clears) {
+    auto& trx = *w.transactions.emplace_back(
+      std::make_unique<irs::IndexWriter::Transaction>(
+        shard->GetTransaction(/*exclusive_segment=*/true)));
+    trx.Remove(std::make_shared<irs::All>());
+  }
+  _changes[shard->GetTableId()].AppendTruncate(clears);
 }
 
 void SearchTableTransaction::RegisterFlush() noexcept {
@@ -452,6 +455,12 @@ uint64_t SearchTableTransaction::AppendCommit(
     // the op. Position is the ordering, so nothing carries a watermark.
     auto& wal_ops = op_lists.emplace_back();
     wal_ops.reserve(entry.ops.size() * 2 + 2);
+    std::span<const LocalTableChangesEntry::Op> ops{entry.ops};
+    if (!ops.empty() && ops.front().IsTruncate()) {
+      wal_ops.push_back(
+        SearchDbWal::Op{.kind = SearchDbWal::Op::Kind::kTruncate});
+      ops = ops.subspan(1);
+    }
     if (!entry.segments.empty()) {
       // Everything promoted sits ahead of what is left inline: a removal in
       // this record names rows committed before the transaction, never these.
@@ -470,7 +479,7 @@ uint64_t SearchTableTransaction::AppendCommit(
                                         .last_band = upto});
       band = upto;
     };
-    for (const auto& op : entry.ops) {
+    for (const auto& op : ops) {
       emit_rows_to(std::min(op.band_watermark, band_count));
       wal_ops.push_back(SearchDbWal::Op{
         .kind = op.truncate ? SearchDbWal::Op::Kind::kTruncate

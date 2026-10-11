@@ -352,7 +352,7 @@ void CompiledPhrase::PickAnchor(std::span<const PhraseWordStat> words) {
   }
 }
 
-void PhraseCheck::AnchorMatch::Reset() {
+void PhraseCheck::AnchorMatch::Reset(uint32_t anchors) {
   _batch_terms = nullptr;
   _batch_pos = nullptr;
   _batch_base = 0;
@@ -362,7 +362,9 @@ void PhraseCheck::AnchorMatch::Reset() {
   _arena.Reset();
   _pending.clear();
   _last = 0;
+  _anchors = anchors;
   _steps = 0;
+  _overran = false;
 }
 
 void PhraseCheck::AnchorMatch::Carry(uint64_t span) {
@@ -462,11 +464,14 @@ std::span<const duckdb::string_t> RowValues::At(duckdb::idx_t row) {
 bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out,
                         uint32_t anchors) {
   const auto values = _rows.At(row);
-  _state.anchors = anchors;
-  Start(_state.phrase->anchor.has_value());
+  Start(_state.phrase->anchor.has_value(), anchors);
   Analyze(values);
-  if (Restart()) {
-    Analyze(values);
+  if (auto* anchor = std::get_if<AnchorMatch>(&_match)) {
+    anchor->Drain(_state);
+    if (anchor->Overran()) {
+      Start(false);
+      Analyze(values);
+    }
   }
   out = {};
   return std::visit([&](auto& match) { return match.Finish(_state, out); },
@@ -482,15 +487,14 @@ void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
   }
 }
 
-void PhraseCheck::Start(bool anchored) {
+void PhraseCheck::Start(bool anchored, uint32_t anchors) {
   _state.done = false;
-  _state.restart = false;
   _state.freq = 0;
   _last_pos = 0;
   _value_base = 0;
   const auto& phrase = *_state.phrase;
   if (anchored) {
-    Use<AnchorMatch>().Reset();
+    Use<AnchorMatch>().Reset(anchors);
   } else if (phrase.automaton && !_state.count) {
     Use<AutomatonMatch>().Reset();
   } else {
@@ -527,17 +531,6 @@ void PhraseCheck::Take(TokenBatch& batch) {
     _last_pos = std::max(_last_pos, batch.pos[count - 1]);
   }
   std::visit([&](auto& match) { match.Feed(batch, from, _state); }, _match);
-}
-
-bool PhraseCheck::Restart() {
-  if (auto* anchor = std::get_if<AnchorMatch>(&_match)) {
-    anchor->Drain(_state);
-  }
-  if (!_state.restart) {
-    return false;
-  }
-  Start(false);
-  return true;
 }
 
 void PhraseCheck::AnchorMatch::Drain(State& state) {
@@ -606,7 +599,7 @@ void PhraseCheck::AnchorMatch::Feed(const TokenBatch& batch, uint32_t from,
 }
 
 bool PhraseCheck::AnchorMatch::Finish(State& state, PhraseVerdict& out) {
-  SDB_ASSERT(state.done && !state.restart);
+  SDB_ASSERT(state.done && !_overran);
   return state.Counted(out);
 }
 
@@ -615,8 +608,8 @@ bool PhraseCheck::AnchorMatch::Hit(size_t at, State& state) {
   if (const auto left = Ways<false>(slot, at, state)) {
     state.freq += left * Ways<true>(slot, at, state);
   }
-  state.done |= (!state.count && state.freq != 0) ||
-                (state.anchors != 0 && --state.anchors == 0);
+  state.done |=
+    (!state.count && state.freq != 0) || (_anchors != 0 && --_anchors == 0);
   return state.done;
 }
 
@@ -647,7 +640,7 @@ uint64_t PhraseCheck::AnchorMatch::Ways(uint32_t slot, size_t at,
     }
     accepted = p;
     ways += Ways<Right>(other, j, state);
-    if (state.restart) {
+    if (_overran) {
       return 0;
     }
     if (!state.count && ways != 0) {
@@ -661,7 +654,7 @@ bool PhraseCheck::AnchorMatch::Over(State& state) noexcept {
   if (++_steps <= kStepsPerToken * _end + kStepSlack) {
     return false;
   }
-  state.restart = true;
+  _overran = true;
   state.done = true;
   return true;
 }

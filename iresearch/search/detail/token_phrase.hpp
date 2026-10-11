@@ -224,17 +224,16 @@ class PhraseCheck final : public TokenConsumer {
     const CompiledPhrase* phrase;
     bool count;
     bool done = false;
-    bool restart = false;
-    uint32_t anchors = 0;
     uint64_t freq = 0;
   };
 
   class AnchorMatch {
    public:
-    void Reset();
+    void Reset(uint32_t anchors);
     void Feed(const TokenBatch& batch, uint32_t from, State& state);
     void Consumed(const TokenBatch& batch, const State& state);
     void Drain(State& state);
+    bool Overran() const noexcept { return _overran; }
     bool Finish(State& state, PhraseVerdict& out);
 
    private:
@@ -272,7 +271,9 @@ class PhraseCheck final : public TokenConsumer {
     duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
     std::vector<size_t> _pending;
     uint32_t _last = 0;
+    uint32_t _anchors = 0;
     uint64_t _steps = 0;
+    bool _overran = false;
   };
 
   class AutomatonMatch {
@@ -318,8 +319,7 @@ class PhraseCheck final : public TokenConsumer {
 
   void Analyze(std::span<const duckdb::string_t> values);
   void Take(TokenBatch& batch);
-  void Start(bool anchored);
-  bool Restart();
+  void Start(bool anchored, uint32_t anchors = 0);
 
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
   ScanAnalyzer _analyzer;

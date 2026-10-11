@@ -1,0 +1,10 @@
+{
+ "columns": ["pktable_cat", "pktable_schem", "pktable_name", "pkcolumn_name", "fktable_cat", "fktable_schem", "fktable_name", "fkcolumn_name", "key_seq", "update_rule", "delete_rule", "fk_name", "pk_name", "deferrability"],
+ "rows": [
+  [null, "app", "author", "id", null, "app", "book", "author_id", 1, 3, 3, "book_author_id_fkey", "author_pkey", 7],
+  [null, "app", "book", "id", null, "app", "edition", "book_id", 1, 3, 3, "edition_book_id_fkey", "book_pkey", 7],
+  [null, "app", "category", "id", null, "app", "category", "parent_id", 1, 3, 3, "category_parent_id_fkey", "category_pkey", 7],
+  [null, "app", "edition", "book_id", null, "app", "edition_note", "book_id", 1, 3, 3, "edition_note_book_id_no_fkey", "edition_pkey", 7],
+  [null, "app", "edition", "no", null, "app", "edition_note", "no", 2, 3, 3, "edition_note_book_id_no_fkey", "edition_pkey", 7]
+ ]
+}

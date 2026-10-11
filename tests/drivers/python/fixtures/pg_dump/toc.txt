@@ -1,0 +1,42 @@
+SCHEMA - inventory postgres
+TYPE public mood postgres
+FUNCTION public add_one(integer) postgres
+TABLE inventory stock postgres
+VIEW inventory low_stock postgres
+TABLE public customers postgres
+COMMENT public TABLE customers postgres
+COMMENT public COLUMN customers.email postgres
+TABLE public orders postgres
+VIEW public customer_orders postgres
+COMMENT public VIEW customer_orders postgres
+SEQUENCE public customers_id_seq postgres
+SEQUENCE OWNED BY public customers_id_seq postgres
+TABLE public items postgres
+TABLE public order_lines postgres
+SEQUENCE public order_no postgres
+SEQUENCE public orders_id_seq postgres
+SEQUENCE OWNED BY public orders_id_seq postgres
+DEFAULT public customers id postgres
+DEFAULT public orders id postgres
+TABLE DATA inventory stock postgres
+TABLE DATA public customers postgres
+TABLE DATA public items postgres
+TABLE DATA public order_lines postgres
+TABLE DATA public orders postgres
+SEQUENCE SET public customers_id_seq postgres
+SEQUENCE SET public order_no postgres
+SEQUENCE SET public orders_id_seq postgres
+CONSTRAINT inventory stock stock_pkey postgres
+CONSTRAINT public customers customers_email_key postgres
+CONSTRAINT public customers customers_pkey postgres
+CONSTRAINT public items items_pkey postgres
+CONSTRAINT public order_lines order_lines_order_id_qty_key postgres
+CONSTRAINT public order_lines order_lines_pkey postgres
+CONSTRAINT public orders orders_pkey postgres
+INDEX public customers_lower_email_idx postgres
+INDEX public customers_name_idx postgres
+INDEX public orders_partial_idx postgres
+INDEX public orders_placed_desc_idx postgres
+FK CONSTRAINT public order_lines order_lines_order_id_fkey postgres
+FK CONSTRAINT public orders orders_customer_fk postgres
+FK CONSTRAINT public orders orders_sku_fk postgres

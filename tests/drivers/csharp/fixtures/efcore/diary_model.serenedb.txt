@@ -1,0 +1,10 @@
+default schema public
+collation 
+annotation Npgsql:Enum:mood = happy,meh,sad
+table public.Diaries comment 
+  column Id integer nullable False default nextval('Diaries_Id_seq') computed  stored  generated  comment  collation 
+  column Steps integer[] nullable False default  computed  stored  generated  comment  collation 
+  column Words text[] nullable False default  computed  stored  generated  comment  collation 
+  column Price numeric(18,3) nullable False default  computed  stored  generated  comment  collation 
+  column DoublePrice numeric(18,3) nullable False default  computed CAST((Price * 2) AS DECIMAL) stored True generated  comment  collation 
+  primary key PK_Diaries (Id)

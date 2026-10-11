@@ -1,0 +1,33 @@
+{
+ "match_plain": [
+  10,
+  20
+ ],
+ "match_phrase": [
+  30
+ ],
+ "match_raw": [
+  30
+ ],
+ "match_websearch": [
+  30,
+  50
+ ],
+ "match_negated": [
+  10,
+  20,
+  50
+ ],
+ "match_combined": [
+  30,
+  40,
+  50
+ ],
+ "rank": [
+  30,
+  40,
+  50
+ ],
+ "headline": "<b>Chronosphere</b> 10",
+ "lookup": 1
+}

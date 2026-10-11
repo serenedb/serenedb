@@ -1,0 +1,6 @@
+model Clock {
+  id        Int      @id @default(autoincrement())
+  wakesAt   DateTime @map("wakes_at") @db.Time(6)
+  sleepsAt  DateTime @map("sleeps_at") @db.Timetz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+}

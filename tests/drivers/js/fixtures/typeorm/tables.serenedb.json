@@ -1,0 +1,361 @@
+[
+ {
+  "name": "guild",
+  "columns": [
+   {
+    "name": "id",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": true,
+    "isUnique": false,
+    "isArray": false,
+    "default": "nextval('guild_id_seq')"
+   },
+   {
+    "name": "name",
+    "type": "text",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": true,
+    "isArray": false
+   }
+  ],
+  "indices": [],
+  "uniques": [
+   {
+    "name": "UQ_2ca3d32eea4c6607919f4774bf5",
+    "columnNames": [
+     "name"
+    ]
+   }
+  ],
+  "checks": [],
+  "foreignKeys": []
+ },
+ {
+  "name": "guild_heroes_hero",
+  "columns": [
+   {
+    "name": "guildId",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": true,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "heroId",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": true,
+    "isUnique": false,
+    "isArray": false
+   }
+  ],
+  "indices": [
+   {
+    "name": "IDX_6280470b749ad84b33819ed38e",
+    "columnNames": [
+     "heroId"
+    ],
+    "isUnique": false,
+    "where": ""
+   },
+   {
+    "name": "IDX_6d752a5d11c9b3ec179111fa8b",
+    "columnNames": [
+     "guildId"
+    ],
+    "isUnique": false,
+    "where": ""
+   }
+  ],
+  "uniques": [],
+  "checks": [],
+  "foreignKeys": []
+ },
+ {
+  "name": "hero",
+  "columns": [
+   {
+    "name": "id",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": true,
+    "isUnique": false,
+    "isArray": false,
+    "default": "nextval('hero_id_seq')"
+   },
+   {
+    "name": "name",
+    "type": "text",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": true,
+    "isArray": false
+   },
+   {
+    "name": "title",
+    "type": "text",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "role",
+    "type": "enum",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "'carry'",
+    "enum": [
+     "carry",
+     "support",
+     "offlane"
+    ]
+   },
+   {
+    "name": "level",
+    "type": "smallint",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "'1'"
+   },
+   {
+    "name": "gold",
+    "type": "bigint",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "'0'"
+   },
+   {
+    "name": "rating",
+    "type": "double precision",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "power",
+    "type": "numeric",
+    "length": "",
+    "precision": 10,
+    "scale": 2,
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "'0'"
+   },
+   {
+    "name": "active",
+    "type": "boolean",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "true"
+   },
+   {
+    "name": "born",
+    "type": "date",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "portrait",
+    "type": "bytea",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "aliases",
+    "type": "text",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": true
+   },
+   {
+    "name": "tags",
+    "type": "text",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "uid",
+    "type": "uuid",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": true,
+    "generationStrategy": "uuid",
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "createdAt",
+    "type": "timestamp without time zone",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "now()"
+   },
+   {
+    "name": "updatedAt",
+    "type": "timestamp without time zone",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "now()"
+   },
+   {
+    "name": "version",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   }
+  ],
+  "indices": [],
+  "uniques": [
+   {
+    "name": "UQ_615f5a253cc6e2f8aacb054ad32",
+    "columnNames": [
+     "name"
+    ]
+   }
+  ],
+  "checks": [],
+  "foreignKeys": []
+ },
+ {
+  "name": "item",
+  "columns": [
+   {
+    "name": "id",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": true,
+    "isUnique": false,
+    "isArray": false,
+    "default": "nextval('item_id_seq')"
+   },
+   {
+    "name": "name",
+    "type": "text",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   },
+   {
+    "name": "cost",
+    "type": "integer",
+    "length": "",
+    "isNullable": false,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false,
+    "default": "'0'"
+   },
+   {
+    "name": "heroId",
+    "type": "integer",
+    "length": "",
+    "isNullable": true,
+    "isGenerated": false,
+    "isPrimary": false,
+    "isUnique": false,
+    "isArray": false
+   }
+  ],
+  "indices": [
+   {
+    "name": "IDX_item_name_cost",
+    "columnNames": [
+     "name",
+     "cost"
+    ],
+    "isUnique": false,
+    "where": ""
+   }
+  ],
+  "uniques": [
+   {
+    "name": "UQ_item_hero_name",
+    "columnNames": [
+     "heroId",
+     "name"
+    ]
+   }
+  ],
+  "checks": [
+   {
+    "name": "CHK_item_cost",
+    "expression": "(\"cost\" >= 0)"
+   }
+  ],
+  "foreignKeys": []
+ }
+]

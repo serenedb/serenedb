@@ -1,0 +1,11 @@
+{
+ "columns": ["function_cat", "function_schem", "function_name", "remarks", "function_type", "specific_name"],
+ "rows": [
+  ["<db>", "pg_catalog", "lower", null, 1, "lower_<oid>"],
+  ["<db>", "pg_catalog", "now", null, 1, "now_<oid>"],
+  ["<db>", "pg_catalog", "length", null, 1, "length_<oid>"],
+  ["<db>", "pg_catalog", "length", null, 1, "length_<oid>"],
+  ["<db>", "pg_catalog", "length", null, 1, "length_<oid>"],
+  ["<db>", "pg_catalog", "length", null, 1, "length_<oid>"]
+ ]
+}

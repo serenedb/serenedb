@@ -1,0 +1,11 @@
+{
+ "columns": ["SCOPE", "COLUMN_NAME", "DATA_TYPE", "TYPE_NAME", "COLUMN_SIZE", "BUFFER_LENGTH", "DECIMAL_DIGITS", "PSEUDO_COLUMN"],
+ "rows": [
+  [2, "id", 4, "int4", 10, null, 0, 1],
+  [2, "id", -5, "int8", 19, null, 0, 1],
+  [2, "id", 4, "int4", 10, null, 0, 1],
+  [2, "book_id", -5, "int8", 19, null, 0, 1],
+  [2, "no", 5, "int2", 5, null, 0, 1],
+  [2, "id", 4, "int4", 10, null, 0, 1]
+ ]
+}

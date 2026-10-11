@@ -1,0 +1,6 @@
+{
+ "defaultValue": "'2'::bigint",
+ "maxLength": null,
+ "nullable": false,
+ "type": "bigint"
+}

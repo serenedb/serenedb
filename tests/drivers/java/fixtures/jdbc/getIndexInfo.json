@@ -1,0 +1,20 @@
+{
+ "columns": ["TABLE_CAT", "TABLE_SCHEM", "TABLE_NAME", "NON_UNIQUE", "INDEX_QUALIFIER", "INDEX_NAME", "TYPE", "ORDINAL_POSITION", "COLUMN_NAME", "ASC_OR_DESC", "CARDINALITY", "PAGES", "FILTER_CONDITION"],
+ "rows": [
+  [null, "app", "author", false, null, "author_email_idx", 3, 1, "email", "A", 0.0, 1, null],
+  [null, "app", "author", false, null, "author_name_key", 3, 1, "name", "A", 0.0, 1, null],
+  [null, "app", "author", false, null, "author_pkey", 3, 1, "id", "A", 0.0, 1, null],
+  [null, "app", "book", false, null, "book_author_title_uniq", 3, 1, "author_id", "A", 0.0, 1, null],
+  [null, "app", "book", false, null, "book_author_title_uniq", 3, 2, "title", "A", 0.0, 1, null],
+  [null, "app", "book", false, null, "book_pkey", 3, 1, "id", "A", 0.0, 1, null],
+  [null, "app", "book", true, null, "book_lower_idx", 3, 1, "lower((title)::text)", "A", 0.0, 1, null],
+  [null, "app", "book", true, null, "book_multi_idx", 3, 1, "author_id", "A", 0.0, 1, null],
+  [null, "app", "book", true, null, "book_multi_idx", 3, 2, "published", "D", 0.0, 1, null],
+  [null, "app", "book", true, null, "book_partial_idx", 3, 1, "price", "A", 0.0, 1, "(price > (10)::numeric)"],
+  [null, "app", "book", true, null, "book_title_idx", 3, 1, "title", "A", 0.0, 1, null],
+  [null, "app", "category", false, null, "category_pkey", 3, 1, "id", "A", 0.0, 1, null],
+  [null, "app", "edition", false, null, "edition_pkey", 3, 1, "book_id", "A", 0.0, 1, null],
+  [null, "app", "edition", false, null, "edition_pkey", 3, 2, "no", "A", 0.0, 1, null],
+  [null, "app", "measure", false, null, "measure_pkey", 3, 1, "id", "A", 0.0, 1, null]
+ ]
+}

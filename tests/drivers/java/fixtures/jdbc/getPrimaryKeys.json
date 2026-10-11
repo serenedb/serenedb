@@ -1,0 +1,11 @@
+{
+ "columns": ["table_cat", "table_schem", "table_name", "column_name", "key_seq", "pk_name"],
+ "rows": [
+  [null, "app", "author", "id", 1, "author_pkey"],
+  [null, "app", "book", "id", 1, "book_pkey"],
+  [null, "app", "category", "id", 1, "category_pkey"],
+  [null, "app", "edition", "book_id", 1, "edition_pkey"],
+  [null, "app", "edition", "no", 2, "edition_pkey"],
+  [null, "app", "measure", "id", 1, "measure_pkey"]
+ ]
+}

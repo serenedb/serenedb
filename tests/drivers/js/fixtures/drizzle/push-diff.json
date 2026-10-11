@@ -1,0 +1,8 @@
+{
+ "hasDataLoss": false,
+ "statements": [
+  "ALTER TABLE \"items\" DROP CONSTRAINT \"items_hero_name\";",
+  "ALTER TABLE \"heroes\" ALTER COLUMN \"gold\" SET DEFAULT 0;",
+  "ALTER TABLE \"items\" ADD CONSTRAINT \"items_hero_name\" UNIQUE(\"hero_id\",\"name\");"
+ ]
+}

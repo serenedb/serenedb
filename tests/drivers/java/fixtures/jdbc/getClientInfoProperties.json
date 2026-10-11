@@ -1,0 +1,6 @@
+{
+ "columns": ["NAME", "MAX_LEN", "DEFAULT_VALUE", "DESCRIPTION"],
+ "rows": [
+  ["ApplicationName", 63, "", "The name of the application currently utilizing the connection."]
+ ]
+}

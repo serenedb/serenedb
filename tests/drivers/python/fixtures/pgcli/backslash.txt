@@ -1,0 +1,304 @@
+> \dt
+Schema | Name | Type | Owner
+public | customers | table | postgres
+public | items | table | postgres
+public | order_lines | table | postgres
+public | orders | table | postgres
+SELECT 4
+
+> \dt inventory.*
+Schema | Name | Type | Owner
+inventory | stock | table | postgres
+SELECT 1
+
+> \dv
+Schema | Name | Type | Owner
+public | customer_orders | view | postgres
+SELECT 1
+
+> \dm
+Schema | Name | Type | Owner
+SELECT 0
+
+> \ds
+Schema | Name | Type | Owner
+public | customers_id_seq | sequence | postgres
+public | order_no | sequence | postgres
+public | orders_id_seq | sequence | postgres
+SELECT 3
+
+> \di
+Schema | Name | Type | Owner
+public | customers_email_key | index | postgres
+public | customers_lower_email_idx | index | postgres
+public | customers_name_idx | index | postgres
+public | customers_pkey | index | postgres
+public | items_pkey | index | postgres
+public | order_lines_order_id_qty_key | index | postgres
+public | order_lines_pkey | index | postgres
+public | orders_partial_idx | index | postgres
+public | orders_pkey | index | postgres
+public | orders_placed_desc_idx | index | postgres
+SELECT 10
+
+> \df
+Schema | Name | Result data type | Argument data types | Type
+public | add_one | integer | x integer | normal
+SELECT 1
+
+> \df+ add_one
+Schema | Name | Result data type | Argument data types | Type | Volatility | Owner | Language | Source code | Description
+public | add_one | integer | x integer | normal | immutable | postgres | sql | SELECT x + 1 | None
+SELECT 1
+
+> \dT
+Schema | Name | Description
+public | mood | None
+SELECT 1
+
+> \dD
+Schema | Name | Type | Modifier | Check
+SELECT 0
+
+> \dn
+Name | Owner
+inventory | postgres
+public | pg_database_owner
+SELECT 2
+
+> \dn+
+Name | Owner | Access privileges | Description
+inventory | postgres | None | None
+public | pg_database_owner | pg_database_owner=UC/pg_database_owner
+=U/pg_database_owner | standard public schema
+SELECT 2
+
+> \du postgres
+rolname | rolsuper | rolinherit | rolcreaterole | rolcreatedb | rolcanlogin | rolconnlimit | rolvaliduntil | memberof | rolreplication
+postgres | True | True | True | True | True | -1 | None | [] | True
+SELECT 1
+
+> \l <db>
+Name | Owner | Encoding | Collate | Ctype | Access privileges
+<db> | postgres | UTF8 | en_US.utf8 | en_US.utf8 | None
+SELECT 1
+
+> \dx
+Name | Version | Schema | Description
+plpgsql | 1.0 | pg_catalog | PL/pgSQL procedural language
+SELECT 1
+
+> \dp
+Schema | Name | Type | Access privileges | Column privileges | Policies
+public | customer_orders | view | None |  | 
+public | customers | table | None |  | 
+public | customers_id_seq | sequence | None |  | 
+public | items | table | None |  | 
+public | order_lines | table | None |  | 
+public | order_no | sequence | None |  | 
+public | orders | table | None |  | 
+public | orders_id_seq | sequence | None |  | 
+SELECT 8
+
+> \ddp
+Owner | Schema | Type | Access privileges
+SELECT 0
+
+> \db
+Name | Owner | Location
+pg_default | postgres | 
+pg_global | postgres | 
+SELECT 2
+
+> \dF
+Schema | Name | Description
+pg_catalog | arabic | configuration for arabic language
+pg_catalog | armenian | configuration for armenian language
+pg_catalog | basque | configuration for basque language
+pg_catalog | catalan | configuration for catalan language
+pg_catalog | danish | configuration for danish language
+pg_catalog | dutch | configuration for dutch language
+pg_catalog | english | configuration for english language
+pg_catalog | estonian | configuration for estonian language
+pg_catalog | finnish | configuration for finnish language
+pg_catalog | french | configuration for french language
+pg_catalog | german | configuration for german language
+pg_catalog | greek | configuration for greek language
+pg_catalog | hindi | configuration for hindi language
+pg_catalog | hungarian | configuration for hungarian language
+pg_catalog | indonesian | configuration for indonesian language
+pg_catalog | irish | configuration for irish language
+pg_catalog | italian | configuration for italian language
+pg_catalog | lithuanian | configuration for lithuanian language
+pg_catalog | nepali | configuration for nepali language
+pg_catalog | norwegian | configuration for norwegian language
+pg_catalog | portuguese | configuration for portuguese language
+pg_catalog | romanian | configuration for romanian language
+pg_catalog | russian | configuration for russian language
+pg_catalog | serbian | configuration for serbian language
+pg_catalog | simple | simple configuration
+pg_catalog | spanish | configuration for spanish language
+pg_catalog | swedish | configuration for swedish language
+pg_catalog | tamil | configuration for tamil language
+pg_catalog | turkish | configuration for turkish language
+pg_catalog | yiddish | configuration for yiddish language
+SELECT 30
+
+> \dE
+Schema | Name | Type | Owner
+SELECT 0
+
+> \d
+Schema | Name | Type | Owner
+public | customer_orders | view | postgres
+public | customers | table | postgres
+public | customers_id_seq | sequence | postgres
+public | items | table | postgres
+public | order_lines | table | postgres
+public | order_no | sequence | postgres
+public | orders | table | postgres
+public | orders_id_seq | sequence | postgres
+SELECT 8
+
+> \d customers
+Column | Type | Modifiers
+id | integer |  not null default nextval('customers_id_seq'::regclass)
+name | character varying(100) |  not null
+email | text | 
+mood | mood | 
+born | date | 
+score | numeric(10,2) |  default 0
+active | boolean |  default true
+created | timestamp with time zone |  default now()
+Indexes:
+    "customers_pkey" PRIMARY KEY, btree (id)
+    "customers_email_key" UNIQUE CONSTRAINT, btree (email)
+    "customers_lower_email_idx" UNIQUE, btree (lower(email))
+    "customers_name_idx" btree (name)
+Referenced by:
+    TABLE "orders" CONSTRAINT "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id)
+
+
+> \d+ customers
+Column | Type | Modifiers | Storage | Stats target | Description
+id | integer |  not null default nextval('customers_id_seq'::regclass) | plain | None | None
+name | character varying(100) |  not null | extended | None | None
+email | text |  | extended | None | contact address
+mood | mood |  | plain | None | None
+born | date |  | plain | None | None
+score | numeric(10,2) |  default 0 | main | None | None
+active | boolean |  default true | plain | None | None
+created | timestamp with time zone |  default now() | plain | None | None
+Indexes:
+    "customers_pkey" PRIMARY KEY, btree (id)
+    "customers_email_key" UNIQUE CONSTRAINT, btree (email)
+    "customers_lower_email_idx" UNIQUE, btree (lower(email))
+    "customers_name_idx" btree (name)
+Referenced by:
+    TABLE "orders" CONSTRAINT "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id)
+Has OIDs: no
+
+
+> \d orders
+Column | Type | Modifiers
+id | bigint |  not null default nextval('orders_id_seq'::regclass)
+customer_id | integer |  not null
+sku | character(8) | 
+placed | date |  not null
+note | text | 
+Indexes:
+    "orders_pkey" PRIMARY KEY, btree (id)
+    "orders_partial_idx" btree (customer_id) WHERE note IS NOT NULL
+    "orders_placed_desc_idx" btree (placed DESC, id)
+Check constraints:
+    "orders_note_len" CHECK (length(note) < 500)
+Foreign-key constraints:
+    "orders_customer_fk" FOREIGN KEY (customer_id) REFERENCES customers(id)
+    "orders_sku_fk" FOREIGN KEY (sku) REFERENCES items(sku)
+Referenced by:
+    TABLE "order_lines" CONSTRAINT "order_lines_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+
+
+> \d order_lines
+Column | Type | Modifiers
+order_id | bigint |  not null
+line | smallint |  not null
+qty | integer |  not null default 1
+total | numeric(12,2) |  default (qty::numeric * 2.5) generated always as ((qty::numeric * 2.5)) stored
+Indexes:
+    "order_lines_pkey" PRIMARY KEY, btree (order_id, line)
+    "order_lines_order_id_qty_key" UNIQUE CONSTRAINT, btree (order_id, qty)
+Foreign-key constraints:
+    "order_lines_order_id_fkey" FOREIGN KEY (order_id) REFERENCES orders(id)
+
+
+> \d inventory.stock
+Column | Type | Modifiers
+sku | character(8) |  not null
+warehouse | text |  not null
+amount | integer |  default 0
+Indexes:
+    "stock_pkey" PRIMARY KEY, btree (sku)
+
+
+> \d customer_orders
+Column | Type | Modifiers
+name | character varying(100) | 
+n | bigint | 
+
+> \d+ customer_orders
+Column | Type | Modifiers | Storage | Description
+name | character varying(100) |  | extended | None
+n | bigint |  | plain | None
+View definition:
+ SELECT c.name,
+    count(o.id) AS n
+   FROM customers c
+     LEFT JOIN orders o ON o.customer_id = c.id
+  GROUP BY c.name; 
+
+
+> \d customers_name_idx
+Column | Type | Definition
+name | character varying(100) | name
+btree, for table "public.customers"
+
+
+> \d order_no
+Column | Type | Value
+last_value | bigint | 100
+log_cnt | bigint | 0
+is_called | boolean | False
+
+> \sf add_one
+Source
+CREATE OR REPLACE FUNCTION public.add_one(x integer)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$SELECT x + 1$function$
+
+
+> describe items
+Column | Type | Modifiers
+sku | character(8) |  not null
+title | text |  not null
+qty | integer | 
+price | double precision | 
+tags | text[] | 
+meta | json | 
+weight | real | 
+added | timestamp without time zone | 
+ready | time without time zone | 
+shelf_life | interval | 
+uid | uuid | 
+blob | bytea | 
+small | smallint | 
+big | bigint | 
+Indexes:
+    "items_pkey" PRIMARY KEY, btree (sku)
+Check constraints:
+    "items_qty_check" CHECK (qty > 0)
+Referenced by:
+    TABLE "orders" CONSTRAINT "orders_sku_fk" FOREIGN KEY (sku) REFERENCES items(sku)
+

@@ -1,0 +1,13 @@
+{
+ "columns": ["FUNCTION_CAT", "FUNCTION_SCHEM", "FUNCTION_NAME", "COLUMN_NAME", "COLUMN_TYPE", "DATA_TYPE", "TYPE_NAME", "PRECISION", "LENGTH", "SCALE", "RADIX", "NULLABLE", "REMARKS", "CHAR_OCTET_LENGTH", "ORDINAL_POSITION", "IS_NULLABLE", "SPECIFIC_NAME"],
+ "rows": [
+  [null, "app", "add_one", "returnValue", 4, 4, "int4", null, null, null, null, 2, null, null, 0, "", "add_one_<oid>"],
+  [null, "app", "add_one", "i", 1, 4, "int4", null, null, null, null, 2, null, null, 1, "", "add_one_<oid>"],
+  [null, "app", "book_count", "returnValue", 4, -5, "int8", null, null, null, null, 2, null, null, 0, "", "book_count_<oid>"],
+  [null, "app", "book_count", "a", 1, 4, "int4", null, null, null, null, 2, null, null, 1, "", "book_count_<oid>"],
+  [null, "app", "pairs", "k", 4, 4, "int4", null, null, null, null, 2, null, null, 1, "", "pairs_<oid>"],
+  [null, "app", "pairs", "v", 4, 12, "text", null, null, null, null, 2, null, null, 2, "", "pairs_<oid>"],
+  [null, "app", "touch", "returnValue", 4, 1111, "void", null, null, null, null, 2, null, null, 0, "", "touch_<oid>"],
+  [null, "app", "touch", "x", 1, 4, "int4", null, null, null, null, 2, null, null, 1, "", "touch_<oid>"]
+ ]
+}

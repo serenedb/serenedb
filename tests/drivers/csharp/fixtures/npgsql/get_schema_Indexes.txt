@@ -1,0 +1,6 @@
+table_catalog | table_schema | table_name | index_name | type_desc
+<database> | drv | players | players_mmr_idx | 
+<database> | drv | players | players_pkey | 
+<database> | drv | players | players_team_id_nick_key | 
+<database> | drv | teams | teams_name_key | 
+<database> | drv | teams | teams_pkey | 

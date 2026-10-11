@@ -67,6 +67,19 @@ struct PhraseVerdict {
   score_t scale = kNoBoost;
 };
 
+struct PhraseWordStat {
+  uint64_t docs = 0;
+  uint64_t freq = 0;
+};
+
+bool IsAnchored(const ByPhraseOptions& phrase) noexcept;
+bool IsStandalone(const ByPhraseOptions& phrase) noexcept;
+std::vector<PhraseWordStat> PhraseWordStats(
+  const ByPhraseOptions& phrase, std::span<const TermReader* const> readers);
+std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
+                                            const IndexReader& index,
+                                            field_id field);
+
 struct CompiledPhrase {
   static constexpr uint32_t kMaxBits = 64;
 
@@ -110,28 +123,15 @@ struct CompiledPhrase {
     uint32_t length = 0;
   };
 
-  struct WordStat {
-    uint64_t docs = 0;
-    uint64_t freq = 0;
-  };
-
   CompiledPhrase(const ByPhraseOptions& phrase,
                  std::span<const std::vector<bstring>> expanded,
-                 std::span<const WordStat> words);
+                 std::span<const PhraseWordStat> words);
 
   CompiledPhrase(const ByPhraseOptions& phrase, bytes_view word_separator,
-                 std::span<const WordStat> words);
+                 std::span<const PhraseWordStat> words);
 
   CompiledPhrase(CompiledPhrase&&) = delete;
   CompiledPhrase& operator=(CompiledPhrase&&) = delete;
-
-  static bool Standalone(const ByPhraseOptions& phrase) noexcept;
-  static bool Anchored(const ByPhraseOptions& phrase) noexcept;
-  static std::vector<WordStat> WordStats(
-    const ByPhraseOptions& phrase, std::span<const TermReader* const> readers);
-  static std::vector<WordStat> WordStats(const ByPhraseOptions& phrase,
-                                         const IndexReader& index,
-                                         field_id field);
 
   bool Accepts(uint32_t slot, const duckdb::string_t& term) const;
   uint64_t MaskOf(const duckdb::string_t& term) const;
@@ -181,12 +181,25 @@ struct CompiledPhrase {
 
   void Init(const ByPhraseOptions& phrase,
             std::span<const std::vector<bstring>> expanded, bool predicates,
-            std::span<const WordStat> words);
+            std::span<const PhraseWordStat> words);
   void AddPattern(uint32_t slot, const ByPhraseOptions::PhrasePart& part);
   void Index(std::span<const uint32_t> term_slots);
   void LayoutSlop();
   void LayoutAutomaton();
-  void PickAnchor(std::span<const WordStat> words);
+  void PickAnchor(std::span<const PhraseWordStat> words);
+};
+
+class RowValues {
+ public:
+  void Bind(duckdb::Vector& values, duckdb::idx_t count);
+  std::span<const duckdb::string_t> At(duckdb::idx_t row);
+
+ private:
+  duckdb::UnifiedVectorFormat _format;
+  duckdb::UnifiedVectorFormat _children;
+  duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
+  uint64_t _array_size = 0;
+  std::vector<duckdb::string_t> _values;
 };
 
 class PhraseCheck final : public TokenConsumer {
@@ -196,7 +209,9 @@ class PhraseCheck final : public TokenConsumer {
   PhraseCheck(const CompiledPhrase& phrase, const PhraseTokens& tokens,
               bool count);
 
-  void Bind(duckdb::Vector& values, duckdb::idx_t count);
+  void Bind(duckdb::Vector& values, duckdb::idx_t count) {
+    _rows.Bind(values, count);
+  }
   bool Check(duckdb::idx_t row, PhraseVerdict& out, uint32_t anchors = 0);
 
   void Prepare(duckdb::string_t) noexcept { _value_base = _last_pos; }
@@ -207,14 +222,6 @@ class PhraseCheck final : public TokenConsumer {
  private:
   static constexpr uint64_t kStepsPerToken = 4;
   static constexpr uint64_t kStepSlack = 256;
-
-  struct Rows {
-    duckdb::UnifiedVectorFormat format;
-    duckdb::UnifiedVectorFormat children;
-    duckdb::LogicalTypeId type = duckdb::LogicalTypeId::VARCHAR;
-    uint64_t array_size = 0;
-    std::vector<duckdb::string_t> values;
-  };
 
   struct Token {
     duckdb::string_t term;
@@ -280,7 +287,6 @@ class PhraseCheck final : public TokenConsumer {
     return _state.template emplace<State>();
   }
 
-  std::span<const duckdb::string_t> Values(duckdb::idx_t row);
   void Analyze(std::span<const duckdb::string_t> values);
   void Take(TokenBatch& batch);
 
@@ -307,7 +313,7 @@ class PhraseCheck final : public TokenConsumer {
   const CompiledPhrase* _phrase;
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
   ScanAnalyzer _analyzer;
-  Rows _rows;
+  RowValues _rows;
   std::variant<Anchor, Automaton, Positions> _state;
   bool _dense;
   bool _count;

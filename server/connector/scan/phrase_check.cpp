@@ -94,7 +94,7 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
     return std::nullopt;
   }
   const auto& checked = tokens->Check(options);
-  if (!irs::CompiledPhrase::Standalone(checked)) {
+  if (!irs::IsStandalone(checked)) {
     return std::nullopt;
   }
   const bool patterns = absl::c_any_of(checked, [](const auto& info) {
@@ -110,7 +110,7 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   }
   auto compiled = std::make_shared<const irs::CompiledPhrase>(
     checked, options.word_separator(),
-    irs::CompiledPhrase::WordStats(checked, ctx.reader, phrase.field_id()));
+    irs::PhraseWordStats(checked, ctx.reader, phrase.field_id()));
   return Split(filter, std::move(index), tokens->text, *type,
                "sdb_phrase_check", CheckPhrase,
                duckdb::make_uniq<PhraseCheckBind>(std::move(compiled), tokens),

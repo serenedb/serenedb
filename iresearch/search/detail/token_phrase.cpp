@@ -36,32 +36,17 @@
 
 namespace irs {
 
-CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
-                               std::span<const std::vector<bstring>> expanded,
-                               std::span<const WordStat> words)
-  : slop{.max = phrase.slop()} {
-  Init(phrase, expanded, false, words);
-}
-
-CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
-                               bytes_view word_separator,
-                               std::span<const WordStat> words)
-  : slop{.max = phrase.slop()}, separator{word_separator} {
-  SDB_ASSERT(Standalone(phrase));
-  Init(phrase, {}, true, words);
-}
-
-bool CompiledPhrase::Anchored(const ByPhraseOptions& phrase) noexcept {
+bool IsAnchored(const ByPhraseOptions& phrase) noexcept {
   return phrase.slop() == 0 &&
          (phrase.empty() ||
           std::none_of(std::next(phrase.begin()), phrase.end(),
                        [](const auto& info) { return info.offs_min == 0; }));
 }
 
-std::vector<CompiledPhrase::WordStat> CompiledPhrase::WordStats(
+std::vector<PhraseWordStat> PhraseWordStats(
   const ByPhraseOptions& phrase, std::span<const TermReader* const> readers) {
-  std::vector<WordStat> words;
-  if (!Anchored(phrase)) {
+  std::vector<PhraseWordStat> words;
+  if (!IsAnchored(phrase)) {
     return words;
   }
   words.resize(phrase.size());
@@ -79,8 +64,9 @@ std::vector<CompiledPhrase::WordStat> CompiledPhrase::WordStats(
   return words;
 }
 
-std::vector<CompiledPhrase::WordStat> CompiledPhrase::WordStats(
-  const ByPhraseOptions& phrase, const IndexReader& index, field_id field) {
+std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
+                                            const IndexReader& index,
+                                            field_id field) {
   constexpr size_t kSampled = 8;
   std::vector<const TermReader*> readers;
   readers.reserve(index.size());
@@ -95,10 +81,10 @@ std::vector<CompiledPhrase::WordStat> CompiledPhrase::WordStats(
       [](const TermReader* reader) { return reader->docs_count(); });
     readers.resize(kSampled);
   }
-  return WordStats(phrase, readers);
+  return PhraseWordStats(phrase, readers);
 }
 
-bool CompiledPhrase::Standalone(const ByPhraseOptions& phrase) noexcept {
+bool IsStandalone(const ByPhraseOptions& phrase) noexcept {
   return absl::c_all_of(phrase, [](const auto& info) {
     return std::visit(
       []<typename Part>(const Part& part) {
@@ -120,9 +106,25 @@ bool CompiledPhrase::Standalone(const ByPhraseOptions& phrase) noexcept {
   });
 }
 
+CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
+                               std::span<const std::vector<bstring>> expanded,
+                               std::span<const PhraseWordStat> words)
+  : slop{.max = phrase.slop()} {
+  Init(phrase, expanded, false, words);
+}
+
+CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
+                               bytes_view word_separator,
+                               std::span<const PhraseWordStat> words)
+  : slop{.max = phrase.slop()}, separator{word_separator} {
+  SDB_ASSERT(IsStandalone(phrase));
+  Init(phrase, {}, true, words);
+}
+
 void CompiledPhrase::Init(const ByPhraseOptions& phrase,
                           std::span<const std::vector<bstring>> expanded,
-                          bool predicates, std::span<const WordStat> words) {
+                          bool predicates,
+                          std::span<const PhraseWordStat> words) {
   const auto n = static_cast<uint32_t>(phrase.size());
   slots.resize(n);
   std::vector<uint32_t> term_slots;
@@ -165,7 +167,7 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
   }
   Index(term_slots);
 
-  if (!Anchored(phrase)) {
+  if (!IsAnchored(phrase)) {
     if (slop.max != 0 && n > 1) {
       LayoutSlop();
     }
@@ -325,7 +327,7 @@ void CompiledPhrase::LayoutAutomaton() {
   automaton = std::move(layout);
 }
 
-void CompiledPhrase::PickAnchor(std::span<const WordStat> words) {
+void CompiledPhrase::PickAnchor(std::span<const PhraseWordStat> words) {
   constexpr auto kUnknown = std::numeric_limits<double>::max();
   double best = kUnknown;
   for (uint32_t k = 0; k != slots.size(); ++k) {
@@ -333,7 +335,7 @@ void CompiledPhrase::PickAnchor(std::span<const WordStat> words) {
       continue;
     }
     const auto& word = *slots[k].word;
-    const auto [docs, freq] = k < words.size() ? words[k] : WordStat{};
+    const auto [docs, freq] = k < words.size() ? words[k] : PhraseWordStat{};
     double cost = kUnknown;
     if (docs != 0) {
       cost = freq != 0 ? static_cast<double>(freq) / static_cast<double>(docs)
@@ -414,23 +416,54 @@ PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
     _dense{!_tokenizer->Traits().explicit_pos},
     _count{count} {}
 
-void PhraseCheck::Bind(duckdb::Vector& values, duckdb::idx_t count) {
+void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   const auto& type = values.GetType();
-  _rows.type = type.id();
-  values.ToUnifiedFormat(count, _rows.format);
-  if (_rows.type == duckdb::LogicalTypeId::LIST) {
+  _type = type.id();
+  values.ToUnifiedFormat(count, _format);
+  if (_type == duckdb::LogicalTypeId::LIST) {
     duckdb::ListVector::GetEntry(values).ToUnifiedFormat(
-      duckdb::ListVector::GetListSize(values), _rows.children);
-  } else if (_rows.type == duckdb::LogicalTypeId::ARRAY) {
-    _rows.array_size = duckdb::ArrayType::GetSize(type);
+      duckdb::ListVector::GetListSize(values), _children);
+  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
+    _array_size = duckdb::ArrayType::GetSize(type);
     duckdb::ArrayVector::GetEntry(values).ToUnifiedFormat(
-      duckdb::ArrayVector::GetTotalSize(values), _rows.children);
+      duckdb::ArrayVector::GetTotalSize(values), _children);
   }
+}
+
+std::span<const duckdb::string_t> RowValues::At(duckdb::idx_t row) {
+  const auto idx = _format.sel->get_index(row);
+  if (!_format.validity.RowIsValid(idx)) {
+    return {};
+  }
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  if (_type == duckdb::LogicalTypeId::LIST) {
+    const auto entry =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(_format)[idx];
+    begin = entry.offset;
+    end = entry.offset + entry.length;
+  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
+    begin = idx * _array_size;
+    end = begin + _array_size;
+  } else {
+    return {
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format) + idx, 1};
+  }
+  _values.clear();
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
+  for (auto i = begin; i != end; ++i) {
+    const auto child = _children.sel->get_index(i);
+    if (_children.validity.RowIsValid(child)) {
+      _values.push_back(data[child]);
+    }
+  }
+  return _values;
 }
 
 bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out,
                         uint32_t anchors) {
-  const auto values = Values(row);
+  const auto values = _rows.At(row);
   _anchors = anchors;
   Start(_phrase->anchor.has_value());
   Analyze(values);
@@ -447,40 +480,6 @@ void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
     }
     _analyzer.Scan(*_tokenizer, value, *this);
   }
-}
-
-std::span<const duckdb::string_t> PhraseCheck::Values(duckdb::idx_t row) {
-  auto& rows = _rows;
-  const auto idx = rows.format.sel->get_index(row);
-  if (!rows.format.validity.RowIsValid(idx)) {
-    return {};
-  }
-  uint64_t begin = 0;
-  uint64_t end = 0;
-  if (rows.type == duckdb::LogicalTypeId::LIST) {
-    const auto entry =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(
-        rows.format)[idx];
-    begin = entry.offset;
-    end = entry.offset + entry.length;
-  } else if (rows.type == duckdb::LogicalTypeId::ARRAY) {
-    begin = idx * rows.array_size;
-    end = begin + rows.array_size;
-  } else {
-    return {
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(rows.format) + idx,
-      1};
-  }
-  rows.values.clear();
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(rows.children);
-  for (auto i = begin; i != end; ++i) {
-    const auto child = rows.children.sel->get_index(i);
-    if (rows.children.validity.RowIsValid(child)) {
-      rows.values.push_back(data[child]);
-    }
-  }
-  return rows.values;
 }
 
 void PhraseCheck::Start(bool anchored) {

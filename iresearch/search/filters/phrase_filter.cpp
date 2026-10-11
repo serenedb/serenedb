@@ -491,8 +491,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
                          ctx.needs_terms};
   SDB_ASSERT(state.Slots() == options.size());
   containers::FlatHashSet<bytes_view> words;
-  std::vector<CompiledPhrase::WordStat> stats(tokens->spec ? 0
-                                                           : options.size());
+  std::vector<PhraseWordStat> stats(tokens->spec ? 0 : options.size());
   size_t slot = 0;
   for (const auto& info : options) {
     const auto begin = state.offsets[slot];
@@ -522,7 +521,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   if (tokens->spec) {
     spec_terms = SpecTerms(options, *tokens->spec, part_terms);
     const TermReader* readers[] = {&reader};
-    stats = CompiledPhrase::WordStats(*tokens->spec, readers);
+    stats = PhraseWordStats(*tokens->spec, readers);
   }
   auto query = memory::make_tracked<TokenPhraseQuery>(
     ctx.memory, segment, reader, std::move(approx), tokens, column,

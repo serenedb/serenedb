@@ -576,40 +576,40 @@ TEST(PhraseCheckTest, routes) {
 TEST(PhraseCheckTest, anchor_is_the_rarest_word) {
   const std::span<const std::vector<irs::bstring>> expanded;
   const auto phrase = Phrase("a b c");
-  const irs::CompiledPhrase::WordStat stats[] = {{.docs = 10, .freq = 50},
-                                                 {.docs = 10, .freq = 12},
-                                                 {.docs = 4, .freq = 40}};
+  const irs::PhraseWordStat stats[] = {{.docs = 10, .freq = 50},
+                                       {.docs = 10, .freq = 12},
+                                       {.docs = 4, .freq = 40}};
   const irs::CompiledPhrase compiled{phrase, expanded, stats};
   ASSERT_TRUE(compiled.anchor.has_value());
   EXPECT_EQ(1U, compiled.anchor->slot);
-  EXPECT_TRUE(irs::CompiledPhrase::Anchored(phrase));
+  EXPECT_TRUE(irs::IsAnchored(phrase));
   auto sloppy = phrase;
   sloppy.set_slop(1);
-  EXPECT_FALSE(irs::CompiledPhrase::Anchored(sloppy));
+  EXPECT_FALSE(irs::IsAnchored(sloppy));
   irs::ByPhraseOptions stacked;
   PushTerm(stacked, "a", 0, 0);
   PushTerm(stacked, "b", 0, 0);
-  EXPECT_FALSE(irs::CompiledPhrase::Anchored(stacked));
+  EXPECT_FALSE(irs::IsAnchored(stacked));
 }
 
 TEST(PhraseCheckTest, standalone_parts) {
   using irs::CompiledPhrase;
-  EXPECT_TRUE(CompiledPhrase::Standalone(Phrase("a b")));
+  EXPECT_TRUE(irs::IsStandalone(Phrase("a b")));
   auto sloppy = Phrase("a b");
   sloppy.set_slop(2);
-  EXPECT_TRUE(CompiledPhrase::Standalone(sloppy));
+  EXPECT_TRUE(irs::IsStandalone(sloppy));
 
   auto prefix = Phrase("a");
   prefix.push_back<irs::ByPrefixOptions>().term = Bytes("b");
-  EXPECT_TRUE(CompiledPhrase::Standalone(prefix));
+  EXPECT_TRUE(irs::IsStandalone(prefix));
   prefix.set_slop(1);
-  EXPECT_TRUE(CompiledPhrase::Standalone(prefix));
+  EXPECT_TRUE(irs::IsStandalone(prefix));
 
   auto like = Phrase("a");
   like.push_back<irs::ByWildcardOptions>().term = Bytes("%b");
-  EXPECT_FALSE(CompiledPhrase::Standalone(like));
+  EXPECT_FALSE(irs::IsStandalone(like));
   EXPECT_TRUE(like.LowerParts());
-  EXPECT_TRUE(CompiledPhrase::Standalone(like));
+  EXPECT_TRUE(irs::IsStandalone(like));
 
   for (const size_t max_terms : {0, 3}) {
     SCOPED_TRACE(max_terms);
@@ -619,16 +619,16 @@ TEST(PhraseCheckTest, standalone_parts) {
     part.max_distance = 1;
     part.max_terms = max_terms;
     EXPECT_TRUE(fuzzy.LowerParts());
-    EXPECT_EQ(max_terms == 0, CompiledPhrase::Standalone(fuzzy));
+    EXPECT_EQ(max_terms == 0, irs::IsStandalone(fuzzy));
   }
 }
 
 TEST(PhraseCheckTest, stacked_parts_check_positions) {
-  EXPECT_TRUE(irs::CompiledPhrase::Anchored(irs::ByPhraseOptions{}));
+  EXPECT_TRUE(irs::IsAnchored(irs::ByPhraseOptions{}));
   irs::ByPhraseOptions phrase;
   PushTerm(phrase, "red", 0, 0);
   PushTerm(phrase, "car", 0, 0);
-  EXPECT_FALSE(irs::CompiledPhrase::Anchored(phrase));
+  EXPECT_FALSE(irs::IsAnchored(phrase));
   const std::span<const std::vector<irs::bstring>> expanded;
   const irs::CompiledPhrase compiled{phrase, expanded, {}};
   EXPECT_EQ(PhraseMatch::Positions, RouteOf(compiled));
@@ -639,7 +639,7 @@ TEST(PhraseCheckTest, stacked_parts_check_positions) {
 TEST(PhraseCheckTest, standalone_fuzzy_part_needs_a_source) {
   auto fuzzy = Phrase("a");
   fuzzy.push_back<irs::LevenshteinAutomatonOptions>();
-  EXPECT_FALSE(irs::CompiledPhrase::Standalone(fuzzy));
+  EXPECT_FALSE(irs::IsStandalone(fuzzy));
 }
 
 TEST(PhraseCheckTest, expansion_slot_without_expanded_terms_matches_nothing) {
@@ -1052,15 +1052,14 @@ void ExpectDeferredLikeInline(const Index& index,
   ASSERT_EQ(irs::Type<irs::ByPhrase>::id(), lowered->type());
   const auto& filter = irs::utils::downCast<irs::ByPhrase>(*lowered);
   const auto& options = filter.options();
-  ASSERT_TRUE(irs::CompiledPhrase::Standalone(options));
+  ASSERT_TRUE(irs::IsStandalone(options));
   const auto expected = index.Docs(filter);
   const auto conjunction = irs::PartsConjunction(filter, nullptr);
   ASSERT_NE(nullptr, conjunction);
   const auto candidates = index.Docs(*conjunction);
   ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
   EXPECT_TRUE(std::ranges::includes(candidates, expected));
-  const auto stats =
-    irs::CompiledPhrase::WordStats(options, index.Reader(), kPlainId);
+  const auto stats = irs::PhraseWordStats(options, index.Reader(), kPlainId);
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
     irs::CompiledPhrase compiled{options, options.word_separator(), stats};
@@ -1480,8 +1479,7 @@ TEST(TokenPhraseIndexTest, standalone_patterns_skip_shingles) {
   auto phrase = Phrase("quick");
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
   const irs::CompiledPhrase compiled{
-    phrase, Bytes("_"),
-    irs::CompiledPhrase::WordStats(phrase, index.Reader(), kPlainId)};
+    phrase, Bytes("_"), irs::PhraseWordStats(phrase, index.Reader(), kPlainId)};
   irs::PhraseCheck phrase_check{compiled, TextOf<DenseWords>(), true};
   const auto check = [&](std::string_view text) {
     irs::PhraseVerdict verdict;
@@ -1538,8 +1536,8 @@ TEST(TokenPhraseIndexTest, word_stats_sample_the_largest_segments) {
     docs, std::type_identity<DenseWords>{}, {.segment_docs = 2}};
   ASSERT_EQ(10U, index.Reader().size());
   ASSERT_EQ(nullptr, index.Reader()[0].field(kPlainId));
-  const auto stats = irs::CompiledPhrase::WordStats(Phrase("quick brown"),
-                                                    index.Reader(), kPlainId);
+  const auto stats =
+    irs::PhraseWordStats(Phrase("quick brown"), index.Reader(), kPlainId);
   ASSERT_EQ(2U, stats.size());
   for (const auto& stat : stats) {
     EXPECT_EQ(16U, stat.docs);

@@ -93,7 +93,8 @@ class CpuResumer final : public duckdb::Task {
   // enqueues; while running/scheduled a wake just bumps so Execute requeues.
   void RequestRun() noexcept {
     if (_run.fetch_add(2, std::memory_order_acq_rel) == 0) {
-      _scheduler.ScheduleTask(_io.DuckProducer(_scheduler), shared_from_this());
+      _scheduler.ScheduleTaskNext(_io.DuckProducer(_scheduler),
+                                  shared_from_this());
     }
   }
 

@@ -356,65 +356,72 @@ void CompiledPhrase::PickAnchor(std::span<const PhraseWordStat> words) {
   }
 }
 
-void PhraseCheck::Anchor::Reset() {
-  batch_terms = nullptr;
-  batch_pos = nullptr;
-  batch_base = 0;
-  end = 0;
-  carry_base = 0;
-  carry.clear();
-  arena.Reset();
-  pending.clear();
-  last = 0;
-  steps = 0;
+void PhraseCheck::AnchorMatch::Reset() {
+  _batch_terms = nullptr;
+  _batch_pos = nullptr;
+  _batch_base = 0;
+  _end = 0;
+  _carry_base = 0;
+  _carry.clear();
+  _arena.Reset();
+  _pending.clear();
+  _last = 0;
+  _steps = 0;
 }
 
-void PhraseCheck::Anchor::Carry(uint64_t span) {
-  const uint64_t tail = PosAt(end - 1);
+void PhraseCheck::AnchorMatch::Carry(uint64_t span) {
+  const uint64_t tail = PosAt(_end - 1);
   const auto keep = tail > span ? tail - span : 0;
-  auto from = end;
-  while (from > carry_base && PosAt(from - 1) >= keep) {
+  auto from = _end;
+  while (from > _carry_base && PosAt(from - 1) >= keep) {
     --from;
   }
-  next.clear();
-  for (auto at = from; at != end; ++at) {
+  _next.clear();
+  for (auto at = from; at != _end; ++at) {
     auto term = TermAt(at);
-    if (at >= batch_base && !term.IsInlined()) {
+    if (at >= _batch_base && !term.IsInlined()) {
       const auto size = static_cast<uint32_t>(term.GetSize());
-      auto* data = arena.Allocate(size);
+      auto* data = _arena.Allocate(size);
       std::memcpy(data, term.GetData(), size);
       term = {reinterpret_cast<const char*>(data), size};
     }
-    next.push_back({.term = term, .pos = PosAt(at)});
+    _next.push_back({.term = term, .pos = PosAt(at)});
   }
-  std::swap(carry, next);
-  carry_base = from;
+  std::swap(_carry, _next);
+  _carry_base = from;
 }
 
-void PhraseCheck::Automaton::Reset(const CompiledPhrase::Automaton& layout,
-                                   bool count) {
-  state = 0;
-  mask = 0;
-  at = 0;
+void PhraseCheck::AnchorMatch::Consumed(const TokenBatch& batch,
+                                        const State& state) {
+  if (!state.done && batch.count != 0) {
+    const auto& layout = *state.phrase->anchor;
+    Carry(layout.left + layout.right);
+  }
+}
+
+void PhraseCheck::AutomatonMatch::Reset(const CompiledPhrase::Automaton& layout,
+                                        bool count) {
+  _bits = 0;
+  _mask = 0;
+  _at = 0;
   if (count && !layout.extras.empty()) {
-    counts.assign(layout.length, 0);
-    sums.assign(layout.extras.size(), 0);
+    _counts.assign(layout.length, 0);
+    _sums.assign(layout.extras.size(), 0);
   }
 }
 
-void PhraseCheck::Positions::Reset(size_t n) {
-  slots.resize(n);
-  for (auto& slot : slots) {
+void PhraseCheck::PositionsMatch::Reset(size_t n) {
+  _slots.resize(n);
+  for (auto& slot : _slots) {
     slot.clear();
   }
 }
 
 PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
                          const PhraseTokens& tokens, bool count)
-  : _phrase{&phrase},
-    _tokenizer{tokens.tokenizer()},
-    _dense{!_tokenizer->Traits().explicit_pos},
-    _count{count} {}
+  : _tokenizer{tokens.tokenizer()},
+    _state{.phrase = &phrase, .count = count},
+    _dense{!_tokenizer->Traits().explicit_pos} {}
 
 void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   const auto& type = values.GetType();
@@ -464,18 +471,20 @@ std::span<const duckdb::string_t> RowValues::At(duckdb::idx_t row) {
 bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out,
                         uint32_t anchors) {
   const auto values = _rows.At(row);
-  _anchors = anchors;
-  Start(_phrase->anchor.has_value());
+  _state.anchors = anchors;
+  Start(_state.phrase->anchor.has_value());
   Analyze(values);
   if (Restart()) {
     Analyze(values);
   }
-  return End(out);
+  out = {};
+  return std::visit([&](auto& match) { return match.Finish(_state, out); },
+                    _match);
 }
 
 void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
   for (const auto& value : values) {
-    if (_done) {
+    if (_state.done) {
       return;
     }
     _analyzer.Scan(*_tokenizer, value, *this);
@@ -483,38 +492,38 @@ void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
 }
 
 void PhraseCheck::Start(bool anchored) {
-  _done = false;
-  _restart = false;
+  _state.done = false;
+  _state.restart = false;
+  _state.freq = 0;
   _last_pos = 0;
   _value_base = 0;
-  _freq = 0;
+  const auto& phrase = *_state.phrase;
   if (anchored) {
-    Use<Anchor>().Reset();
-  } else if (_phrase->automaton) {
-    Use<Automaton>().Reset(*_phrase->automaton, _count);
+    Use<AnchorMatch>().Reset();
+  } else if (phrase.automaton) {
+    Use<AutomatonMatch>().Reset(*phrase.automaton, _state.count);
   } else {
-    Use<Positions>().Reset(_phrase->slots.size());
+    Use<PositionsMatch>().Reset(phrase.slots.size());
   }
 }
 
 void PhraseCheck::Consume(TokenBatch& batch, DocRuns) {
   Take(batch);
   _fed = 0;
-  auto* anchor = std::get_if<Anchor>(&_state);
-  if (anchor && !_done && batch.count != 0) {
-    anchor->Carry(_phrase->anchor->left + _phrase->anchor->right);
+  if (auto* anchor = std::get_if<AnchorMatch>(&_match)) {
+    anchor->Consumed(batch, _state);
   }
 }
 
 bool PhraseCheck::OnProgress(TokenBatch& batch) {
   Take(batch);
-  return !_done;
+  return !_state.done;
 }
 
 void PhraseCheck::Take(TokenBatch& batch) {
   const auto from = std::exchange(_fed, batch.count);
   const auto count = batch.count;
-  if (_done || from == count) {
+  if (_state.done || from == count) {
     return;
   }
   if (_dense) {
@@ -526,226 +535,228 @@ void PhraseCheck::Take(TokenBatch& batch) {
     }
     _last_pos = std::max(_last_pos, batch.pos[count - 1]);
   }
-  std::visit([&](auto& state) { Feed(state, batch, from); }, _state);
+  std::visit([&](auto& match) { match.Feed(batch, from, _state); }, _match);
 }
 
 bool PhraseCheck::Restart() {
-  if (auto* anchor = std::get_if<Anchor>(&_state); anchor && !_done) {
-    anchor->batch_terms = nullptr;
-    anchor->batch_pos = nullptr;
-    anchor->batch_base = anchor->carry_base + anchor->carry.size();
-    anchor->end = anchor->batch_base;
-    for (const auto at : anchor->pending) {
-      if (Hit(*anchor, at)) {
-        break;
-      }
-    }
-    anchor->pending.clear();
-    _done = true;
+  if (auto* anchor = std::get_if<AnchorMatch>(&_match)) {
+    anchor->Drain(_state);
   }
-  if (!_restart) {
+  if (!_state.restart) {
     return false;
   }
   Start(false);
   return true;
 }
 
-bool PhraseCheck::End(PhraseVerdict& out) {
-  out = {};
-  return std::visit([&](auto& state) { return Finish(state, out); }, _state);
+void PhraseCheck::AnchorMatch::Drain(State& state) {
+  if (state.done) {
+    return;
+  }
+  _batch_terms = nullptr;
+  _batch_pos = nullptr;
+  _batch_base = _carry_base + _carry.size();
+  _end = _batch_base;
+  for (const auto at : _pending) {
+    if (Hit(at, state)) {
+      break;
+    }
+  }
+  _pending.clear();
+  state.done = true;
 }
 
-bool PhraseCheck::Counted(PhraseVerdict& out) const noexcept {
-  if (_freq == 0) {
+bool PhraseCheck::State::Counted(PhraseVerdict& out) const noexcept {
+  if (freq == 0) {
     return false;
   }
-  out.freq = _count ? std::saturate_cast<uint32_t>(_freq) : 1;
+  out.freq = count ? std::saturate_cast<uint32_t>(freq) : 1;
   return true;
 }
 
-void PhraseCheck::Feed(Anchor& anchor, const TokenBatch& batch, uint32_t from) {
-  const auto& layout = *_phrase->anchor;
-  anchor.batch_terms = batch.terms;
-  anchor.batch_pos = batch.pos;
-  anchor.batch_base = anchor.carry_base + anchor.carry.size();
-  anchor.end = anchor.batch_base + batch.count;
+void PhraseCheck::AnchorMatch::Feed(const TokenBatch& batch, uint32_t from,
+                                    State& state) {
+  const auto& layout = *state.phrase->anchor;
+  _batch_terms = batch.terms;
+  _batch_pos = batch.pos;
+  _batch_base = _carry_base + _carry.size();
+  _end = _batch_base + batch.count;
   const uint64_t last = batch.pos[batch.count - 1];
   size_t keep = 0;
-  for (const auto at : anchor.pending) {
-    if (anchor.PosAt(at) + layout.right < last) {
-      if (Hit(anchor, at)) {
+  for (const auto at : _pending) {
+    if (PosAt(at) + layout.right < last) {
+      if (Hit(at, state)) {
         return;
       }
     } else {
-      anchor.pending[keep++] = at;
+      _pending[keep++] = at;
     }
   }
-  anchor.pending.resize(keep);
-  const auto& word = *_phrase->slots[layout.slot].word;
+  _pending.resize(keep);
+  const auto& word = *state.phrase->slots[layout.slot].word;
   for (auto i = from; i != batch.count; ++i) {
     if (batch.terms[i] != word) {
       continue;
     }
     const auto pos = batch.pos[i];
-    if (pos == anchor.last) {
+    if (pos == _last) {
       continue;
     }
-    anchor.last = pos;
-    const auto at = anchor.batch_base + i;
+    _last = pos;
+    const auto at = _batch_base + i;
     if (pos + layout.right < last) {
-      if (Hit(anchor, at)) {
+      if (Hit(at, state)) {
         return;
       }
     } else {
-      anchor.pending.push_back(at);
+      _pending.push_back(at);
     }
   }
 }
 
-bool PhraseCheck::Finish(Anchor&, PhraseVerdict& out) {
-  SDB_ASSERT(_done && !_restart);
-  return Counted(out);
+bool PhraseCheck::AnchorMatch::Finish(State& state, PhraseVerdict& out) {
+  SDB_ASSERT(state.done && !state.restart);
+  return state.Counted(out);
 }
 
-bool PhraseCheck::Hit(Anchor& anchor, size_t at) {
-  const auto slot = _phrase->anchor->slot;
-  if (const auto left = Ways<false>(anchor, slot, at)) {
-    _freq += left * Ways<true>(anchor, slot, at);
+bool PhraseCheck::AnchorMatch::Hit(size_t at, State& state) {
+  const auto slot = state.phrase->anchor->slot;
+  if (const auto left = Ways<false>(slot, at, state)) {
+    state.freq += left * Ways<true>(slot, at, state);
   }
-  _done |= (!_count && _freq != 0) || (_anchors != 0 && --_anchors == 0);
-  return _done;
+  state.done |= (!state.count && state.freq != 0) ||
+                (state.anchors != 0 && --state.anchors == 0);
+  return state.done;
 }
 
 template<bool Right>
-uint64_t PhraseCheck::Ways(Anchor& anchor, uint32_t slot, size_t at) {
-  const auto& phrase = *_phrase;
+uint64_t PhraseCheck::AnchorMatch::Ways(uint32_t slot, size_t at,
+                                        State& state) {
+  const auto& phrase = *state.phrase;
   if (slot == (Right ? phrase.slots.size() - 1 : 0)) {
     return 1;
   }
   const auto other = Right ? slot + 1 : slot - 1;
   const auto& gap = phrase.slots[Right ? other : slot];
-  const uint64_t pos = anchor.PosAt(at);
+  const uint64_t pos = PosAt(at);
   uint64_t ways = 0;
   uint64_t accepted = std::numeric_limits<uint64_t>::max();
-  for (auto j = at; Right ? ++j < anchor.end : j-- > anchor.carry_base;) {
-    const uint64_t p = anchor.PosAt(j);
+  for (auto j = at; Right ? ++j < _end : j-- > _carry_base;) {
+    const uint64_t p = PosAt(j);
     const auto distance = Right ? p - pos : pos - p;
     if (distance > gap.offs_max) {
       break;
     }
-    if (Over(anchor)) {
+    if (Over(state)) {
       return 0;
     }
     if (distance < gap.offs_min || p == accepted ||
-        !phrase.Accepts(other, anchor.TermAt(j))) {
+        !phrase.Accepts(other, TermAt(j))) {
       continue;
     }
     accepted = p;
-    ways += Ways<Right>(anchor, other, j);
-    if (_restart) {
+    ways += Ways<Right>(other, j, state);
+    if (state.restart) {
       return 0;
     }
-    if (!_count && ways != 0) {
+    if (!state.count && ways != 0) {
       return 1;
     }
   }
   return ways;
 }
 
-bool PhraseCheck::Over(Anchor& anchor) noexcept {
-  if (++anchor.steps <= kStepsPerToken * anchor.end + kStepSlack) {
+bool PhraseCheck::AnchorMatch::Over(State& state) noexcept {
+  if (++_steps <= kStepsPerToken * _end + kStepSlack) {
     return false;
   }
-  _restart = true;
-  _done = true;
+  state.restart = true;
+  state.done = true;
   return true;
 }
 
-void PhraseCheck::Feed(Automaton& automaton, const TokenBatch& batch,
-                       uint32_t from) {
+void PhraseCheck::AutomatonMatch::Feed(const TokenBatch& batch, uint32_t from,
+                                       State& state) {
   for (auto i = from; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
-    if (pos != automaton.at) {
-      Flush(automaton);
-      if (_done) {
+    if (pos != _at) {
+      Flush(state);
+      if (state.done) {
         return;
       }
-      if (automaton.at != 0) {
-        for (auto gap = automaton.at + 1; gap < pos && automaton.state != 0;
-             ++gap) {
-          Step(automaton, 0);
+      if (_at != 0) {
+        for (auto gap = _at + 1; gap < pos && _bits != 0; ++gap) {
+          Step(0, state);
         }
       }
-      automaton.at = pos;
+      _at = pos;
     }
-    automaton.mask |= _phrase->MaskOf(batch.terms[i]);
+    _mask |= state.phrase->MaskOf(batch.terms[i]);
   }
 }
 
-bool PhraseCheck::Finish(Automaton& automaton, PhraseVerdict& out) {
-  if (!_done) {
-    Flush(automaton);
+bool PhraseCheck::AutomatonMatch::Finish(State& state, PhraseVerdict& out) {
+  if (!state.done) {
+    Flush(state);
   }
-  return Counted(out);
+  return state.Counted(out);
 }
 
-void PhraseCheck::Flush(Automaton& automaton) {
-  if (automaton.at == 0 || (automaton.state == 0 && automaton.mask == 0)) {
-    automaton.mask = 0;
+void PhraseCheck::AutomatonMatch::Flush(State& state) {
+  if (_at == 0 || (_bits == 0 && _mask == 0)) {
+    _mask = 0;
     return;
   }
-  Step(automaton, automaton.mask);
-  automaton.mask = 0;
+  Step(_mask, state);
+  _mask = 0;
 }
 
-void PhraseCheck::Step(Automaton& automaton, uint64_t mask) {
-  const auto& layout = *_phrase->automaton;
-  auto next = ((automaton.state << 1) | 1) & (mask | layout.wild);
+void PhraseCheck::AutomatonMatch::Step(uint64_t mask, State& state) {
+  const auto& layout = *state.phrase->automaton;
+  auto next = ((_bits << 1) | 1) & (mask | layout.wild);
   for (const auto& extra : layout.extras) {
-    if (automaton.state & extra.range) {
+    if (_bits & extra.range) {
       next |= extra.bit & mask;
     }
   }
-  if (!_count || layout.extras.empty()) {
-    automaton.state = next;
-    if (automaton.state & layout.last) {
-      ++_freq;
-      _done = !_count;
+  if (!state.count || layout.extras.empty()) {
+    _bits = next;
+    if (_bits & layout.last) {
+      ++state.freq;
+      state.done = !state.count;
     }
     return;
   }
-  if ((automaton.state | next) == 0) {
+  if ((_bits | next) == 0) {
     return;
   }
-  auto& counts = automaton.counts;
   for (size_t x = 0; x != layout.extras.size(); ++x) {
     uint64_t sum = 0;
-    for (auto r = layout.extras[x].range & automaton.state; r != 0;
-         r &= r - 1) {
-      sum += counts[std::countr_zero(r)];
+    for (auto r = layout.extras[x].range & _bits; r != 0; r &= r - 1) {
+      sum += _counts[std::countr_zero(r)];
     }
-    automaton.sums[x] = sum;
+    _sums[x] = sum;
   }
   for (auto j = layout.length - 1; j != 0; --j) {
-    counts[j] = (next >> j & 1) ? counts[j - 1] : 0;
+    _counts[j] = (next >> j & 1) ? _counts[j - 1] : 0;
   }
-  counts[0] = next & 1;
+  _counts[0] = next & 1;
   for (size_t x = 0; x != layout.extras.size(); ++x) {
     const auto& extra = layout.extras[x];
     if (mask & extra.bit) {
-      counts[extra.index] += automaton.sums[x];
+      _counts[extra.index] += _sums[x];
     }
   }
-  automaton.state = next;
-  _freq += counts[layout.length - 1];
+  _bits = next;
+  state.freq += _counts[layout.length - 1];
 }
 
-void PhraseCheck::Feed(Positions& positions, const TokenBatch& batch,
-                       uint32_t from) {
+void PhraseCheck::PositionsMatch::Feed(const TokenBatch& batch, uint32_t from,
+                                       State& state) {
   for (auto i = from; i != batch.count; ++i) {
     const auto pos = batch.pos[i];
-    _phrase->ForEachSlot(batch.terms[i], [&](uint32_t slot) {
-      auto& slot_positions = positions.slots[slot];
+    state.phrase->ForEachSlot(batch.terms[i], [&](uint32_t slot) {
+      auto& slot_positions = _slots[slot];
       if (slot_positions.empty() || slot_positions.back() != pos) {
         slot_positions.push_back(pos);
       }
@@ -753,22 +764,21 @@ void PhraseCheck::Feed(Positions& positions, const TokenBatch& batch,
   }
 }
 
-bool PhraseCheck::Finish(Positions& positions, PhraseVerdict& out) {
-  const auto& phrase = *_phrase;
+bool PhraseCheck::PositionsMatch::Finish(State& state, PhraseVerdict& out) {
+  const auto& phrase = *state.phrase;
   const auto n = phrase.slots.size();
-  if (absl::c_any_of(positions.slots,
-                     [](const auto& slot) { return slot.empty(); })) {
+  if (absl::c_any_of(_slots, [](const auto& slot) { return slot.empty(); })) {
     return false;
   }
   if (n > 1 && phrase.slop.max != 0) {
-    detail::slop::SpanCursors cursors{positions.slots, positions.scratch};
-    const auto res = detail::slop::Sweep<0>(cursors, phrase.slop.offsets,
-                                            phrase.slop.max, phrase.slop.pairs,
-                                            positions.scratch, !_count, [] {});
+    detail::slop::SpanCursors cursors{_slots, _scratch};
+    const auto res =
+      detail::slop::Sweep<0>(cursors, phrase.slop.offsets, phrase.slop.max,
+                             phrase.slop.pairs, _scratch, !state.count, [] {});
     if (!res.any) {
       return false;
     }
-    if (_count) {
+    if (state.count) {
       out.freq = std::saturate_cast<uint32_t>(res.freq);
       out.scale =
         static_cast<score_t>(res.weight / static_cast<double>(res.freq));
@@ -778,39 +788,38 @@ bool PhraseCheck::Finish(Positions& positions, PhraseVerdict& out) {
     return true;
   }
 
-  auto& valid = positions.valid;
-  valid.clear();
-  for (const auto p : positions.slots.back()) {
-    valid.push_back({.pos = p, .ways = 1});
+  _valid.clear();
+  for (const auto p : _slots.back()) {
+    _valid.push_back({.pos = p, .ways = 1});
   }
   for (size_t i = n - 1; i != 0; --i) {
     const auto& slot = phrase.slots[i];
-    positions.next.clear();
+    _next.clear();
     size_t lo = 0;
     size_t hi = 0;
     uint64_t window = 0;
-    for (const auto p : positions.slots[i - 1]) {
+    for (const auto p : _slots[i - 1]) {
       const uint64_t min = uint64_t{p} + slot.offs_min;
       const uint64_t max = uint64_t{p} + slot.offs_max;
-      for (; hi != valid.size() && valid[hi].pos <= max; ++hi) {
-        window += valid[hi].ways;
+      for (; hi != _valid.size() && _valid[hi].pos <= max; ++hi) {
+        window += _valid[hi].ways;
       }
-      for (; lo != hi && valid[lo].pos < min; ++lo) {
-        window -= valid[lo].ways;
+      for (; lo != hi && _valid[lo].pos < min; ++lo) {
+        window -= _valid[lo].ways;
       }
       if (window != 0) {
-        positions.next.push_back({.pos = p, .ways = window});
+        _next.push_back({.pos = p, .ways = window});
       }
     }
-    std::swap(valid, positions.next);
-    if (valid.empty()) {
+    std::swap(_valid, _next);
+    if (_valid.empty()) {
       return false;
     }
   }
-  for (const auto& way : valid) {
-    _freq += way.ways;
+  for (const auto& way : _valid) {
+    state.freq += way.ways;
   }
-  return Counted(out);
+  return state.Counted(out);
 }
 
 }  // namespace irs

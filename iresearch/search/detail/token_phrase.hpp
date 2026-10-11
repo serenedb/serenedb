@@ -220,110 +220,120 @@ class PhraseCheck final : public TokenConsumer {
   bool OnProgress(TokenBatch& batch) final;
 
  private:
-  static constexpr uint64_t kStepsPerToken = 4;
-  static constexpr uint64_t kStepSlack = 256;
+  struct State {
+    bool Counted(PhraseVerdict& out) const noexcept;
 
-  struct Token {
-    duckdb::string_t term;
-    uint32_t pos;
+    const CompiledPhrase* phrase;
+    bool count;
+    bool done = false;
+    bool restart = false;
+    uint32_t anchors = 0;
+    uint64_t freq = 0;
   };
 
-  struct Way {
-    PosAttr::value_t pos;
-    uint64_t ways;
-  };
-
-  struct Anchor {
+  class AnchorMatch {
+   public:
     void Reset();
-    void Carry(uint64_t span);
+    void Feed(const TokenBatch& batch, uint32_t from, State& state);
+    void Consumed(const TokenBatch& batch, const State& state);
+    void Drain(State& state);
+    bool Finish(State& state, PhraseVerdict& out);
+
+   private:
+    static constexpr uint64_t kStepsPerToken = 4;
+    static constexpr uint64_t kStepSlack = 256;
+
+    struct Token {
+      duckdb::string_t term;
+      uint32_t pos;
+    };
 
     const duckdb::string_t& TermAt(size_t at) const noexcept {
-      return at < batch_base ? carry[at - carry_base].term
-                             : batch_terms[at - batch_base];
+      return at < _batch_base ? _carry[at - _carry_base].term
+                              : _batch_terms[at - _batch_base];
     }
 
     uint32_t PosAt(size_t at) const noexcept {
-      return at < batch_base ? carry[at - carry_base].pos
-                             : batch_pos[at - batch_base];
+      return at < _batch_base ? _carry[at - _carry_base].pos
+                              : _batch_pos[at - _batch_base];
     }
 
-    const duckdb::string_t* batch_terms = nullptr;
-    const uint32_t* batch_pos = nullptr;
-    size_t batch_base = 0;
-    size_t end = 0;
-    size_t carry_base = 0;
-    std::vector<Token> carry;
-    std::vector<Token> next;
-    duckdb::ArenaAllocator arena{duckdb::Allocator::DefaultAllocator()};
-    std::vector<size_t> pending;
-    uint32_t last = 0;
-    uint64_t steps = 0;
+    void Carry(uint64_t span);
+    bool Hit(size_t at, State& state);
+    template<bool Right>
+    uint64_t Ways(uint32_t slot, size_t at, State& state);
+    bool Over(State& state) noexcept;
+
+    const duckdb::string_t* _batch_terms = nullptr;
+    const uint32_t* _batch_pos = nullptr;
+    size_t _batch_base = 0;
+    size_t _end = 0;
+    size_t _carry_base = 0;
+    std::vector<Token> _carry;
+    std::vector<Token> _next;
+    duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
+    std::vector<size_t> _pending;
+    uint32_t _last = 0;
+    uint64_t _steps = 0;
   };
 
-  struct Automaton {
+  class AutomatonMatch {
+   public:
     void Reset(const CompiledPhrase::Automaton& layout, bool count);
+    void Feed(const TokenBatch& batch, uint32_t from, State& state);
+    bool Finish(State& state, PhraseVerdict& out);
 
-    uint64_t state = 0;
-    uint64_t mask = 0;
-    uint32_t at = 0;
-    std::vector<uint64_t> counts;
-    std::vector<uint64_t> sums;
+   private:
+    void Step(uint64_t mask, State& state);
+    void Flush(State& state);
+
+    uint64_t _bits = 0;
+    uint64_t _mask = 0;
+    uint32_t _at = 0;
+    std::vector<uint64_t> _counts;
+    std::vector<uint64_t> _sums;
   };
 
-  struct Positions {
+  class PositionsMatch {
+   public:
     void Reset(size_t slots);
+    void Feed(const TokenBatch& batch, uint32_t from, State& state);
+    bool Finish(State& state, PhraseVerdict& out);
 
-    std::vector<std::vector<PosAttr::value_t>> slots;
-    std::vector<Way> valid;
-    std::vector<Way> next;
-    detail::slop::MatchScratch scratch;
+   private:
+    struct Way {
+      PosAttr::value_t pos;
+      uint64_t ways;
+    };
+
+    std::vector<std::vector<PosAttr::value_t>> _slots;
+    std::vector<Way> _valid;
+    std::vector<Way> _next;
+    detail::slop::MatchScratch _scratch;
   };
 
-  template<typename State>
-  State& Use() {
-    if (auto* state = std::get_if<State>(&_state)) {
-      return *state;
+  template<typename Match>
+  Match& Use() {
+    if (auto* match = std::get_if<Match>(&_match)) {
+      return *match;
     }
-    return _state.template emplace<State>();
+    return _match.template emplace<Match>();
   }
 
   void Analyze(std::span<const duckdb::string_t> values);
   void Take(TokenBatch& batch);
-
   void Start(bool anchored);
   bool Restart();
-  bool End(PhraseVerdict& out);
-  bool Counted(PhraseVerdict& out) const noexcept;
 
-  void Feed(Anchor& anchor, const TokenBatch& batch, uint32_t from);
-  bool Finish(Anchor& anchor, PhraseVerdict& out);
-  bool Hit(Anchor& anchor, size_t at);
-  template<bool Right>
-  uint64_t Ways(Anchor& anchor, uint32_t slot, size_t at);
-  bool Over(Anchor& anchor) noexcept;
-
-  void Feed(Automaton& automaton, const TokenBatch& batch, uint32_t from);
-  bool Finish(Automaton& automaton, PhraseVerdict& out);
-  void Step(Automaton& automaton, uint64_t mask);
-  void Flush(Automaton& automaton);
-
-  void Feed(Positions& positions, const TokenBatch& batch, uint32_t from);
-  bool Finish(Positions& positions, PhraseVerdict& out);
-
-  const CompiledPhrase* _phrase;
   std::shared_ptr<analysis::Tokenizer> _tokenizer;
   ScanAnalyzer _analyzer;
   RowValues _rows;
-  std::variant<Anchor, Automaton, Positions> _state;
+  std::variant<AnchorMatch, AutomatonMatch, PositionsMatch> _match;
+  State _state;
   bool _dense;
-  bool _count;
-  bool _done = false;
-  bool _restart = false;
   uint32_t _last_pos = 0;
   uint32_t _value_base = 0;
-  uint32_t _anchors = 0;
   uint32_t _fed = 0;
-  uint64_t _freq = 0;
 };
 
 }  // namespace irs

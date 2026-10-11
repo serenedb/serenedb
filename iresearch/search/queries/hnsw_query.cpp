@@ -431,6 +431,30 @@ void HnswAdmit(Dist& dist, uint32_t ef, HnswSearchScratch& s) {
   s.batch.clear();
 }
 
+std::vector<uint32_t> AdmittedSeeds(detail::LazyBitset& set,
+                                    const HnswGraph& graph, uint32_t want) {
+  std::vector<uint32_t> seeds;
+  const auto size = static_cast<uint64_t>(graph.Size());
+  for (uint32_t k = 0; k < want; ++k) {
+    const auto from =
+      doc_limits::min() + static_cast<doc_id_t>(size * k / want);
+    for (auto doc = set.Probe(from); !doc_limits::eof(doc);
+         doc = set.Probe(doc + 1)) {
+      const auto node = static_cast<uint32_t>(doc - doc_limits::min());
+      if (node >= size) {
+        break;
+      }
+      if (graph.LevelOf(node) != 0) {
+        if (seeds.empty() || seeds.back() != node) {
+          seeds.push_back(node);
+        }
+        break;
+      }
+    }
+  }
+  return seeds;
+}
+
 template<typename Dist>
 void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
                   uint32_t ef, HnswSearchScratch& s) {
@@ -533,7 +557,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // than the exact answer costs. A walk that could not fill its beam although
   // the predicate admits enough docs lost the admitted subgraph's connectivity:
   // the scan answers exactly.
-  const auto budget = matches;
+  uint64_t budget = matches;
   if (two_hop && mode == HnswFilterMode::Walk && !ask_per_hop) {
     mode = HnswFilterMode::TwoHop;
   }
@@ -581,6 +605,14 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     set = MakeSet(_inner.get(), table, docs_count);
   } else if (run(admit)) {
     return;
+  } else if (two_hop && mode == HnswFilterMode::TwoHop &&
+             scratch.scored < budget) {
+    budget -= scratch.scored;
+    const auto seeds = AdmittedSeeds(set, graph, 2 * _ef);
+    if (walked(HnswSearchTopKFrom<HnswWalk::TwoHop>(graph, dist, _ef, scratch,
+                                                    seeds, admit, budget))) {
+      return;
+    }
   }
   HnswScanTopK(set, graph, dist, _ef, scratch);
 }

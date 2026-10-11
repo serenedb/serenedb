@@ -817,6 +817,47 @@ bool HnswSearchTopK(const HnswGraph& graph, Dist& dist, uint32_t ef,
   return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
 }
 
+template<HnswWalk Walk, typename Dist, typename Accept>
+bool HnswSearchTopKFrom(const HnswGraph& graph, Dist& dist, uint32_t ef,
+                        HnswSearchScratch& s, std::span<const uint32_t> seeds,
+                        const Accept& accept, uint64_t budget) {
+  s.nearest.clear();
+  s.frontier.clear();
+  s.scored = 0;
+  s.visited.Reset(graph.Size());
+  if constexpr (Walk == HnswWalk::TwoHop) {
+    s.visited_hop2.Reset(graph.Size());
+  }
+  s.visited.Next();
+  s.batch.clear();
+  for (const auto node : seeds) {
+    if (!s.visited.TestAndSet(node)) {
+      s.batch.push_back(node);
+      dist.Prefetch(node);
+    }
+  }
+  if (s.batch.empty()) {
+    return true;
+  }
+  s.scores.resize(s.batch.size());
+  dist.Batch(s.batch, s.scores.data(), kHnswNoThreshold);
+  s.scored += s.batch.size();
+  for (size_t i = 0; i < s.batch.size(); ++i) {
+    const HnswCandidate cand{s.scores[i], s.batch[i]};
+    s.frontier.push_back(cand);
+    if (accept(cand.node)) {
+      s.nearest.push_back(cand);
+    }
+  }
+  std::make_heap(s.frontier.begin(), s.frontier.end(), HnswFrontierOrder{});
+  std::make_heap(s.nearest.begin(), s.nearest.end(), HnswNearestOrder{});
+  while (s.nearest.size() > ef) {
+    std::pop_heap(s.nearest.begin(), s.nearest.end(), HnswNearestOrder{});
+    s.nearest.pop_back();
+  }
+  return HnswExpandLevel<Walk>(graph, dist, 0, ef, s, accept, budget);
+}
+
 template<bool Inclusive, typename Dist, typename Accept = HnswAcceptAll>
 void HnswSearchRadius(const HnswGraph& graph, Dist& dist, score_t threshold,
                       size_t max_results, HnswSearchScratch& s,

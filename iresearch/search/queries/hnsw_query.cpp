@@ -468,15 +468,13 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   SDB_ASSERT(_inner != nullptr || table != nullptr);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
-  // Which plan answers this decides how the set is built, so the count comes
-  // first and costs nothing: a bounded sample of the set stands in, and folding
-  // to decide costs more than either plan does.
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
   bool bounded = true;
   if (table != nullptr || _inner->Kind() == QueryKind::Boolean) {
     probe.emplace(MakeSet(_inner.get(), table, docs_count));
-    matches = probe->EstimateCount(kCountSampleWindows);
+    matches = table == nullptr ? probe->Count()
+                               : probe->EstimateCount(kCountSampleWindows);
     bounded = probe->Filled() >= probe->End();
   } else {
     matches = _inner->EstimateMax();

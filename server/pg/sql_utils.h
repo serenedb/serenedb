@@ -49,7 +49,7 @@ std::string QuoteLiteral(std::string_view value);
 
 std::string MacroBody(const duckdb::MacroFunction& macro);
 
-std::string MacroParameterName(const duckdb::MacroFunction& macro,
-                               duckdb::idx_t index);
+std::string_view MacroParameterName(const duckdb::MacroFunction& macro,
+                                    duckdb::idx_t index);
 
 }  // namespace sdb::pg

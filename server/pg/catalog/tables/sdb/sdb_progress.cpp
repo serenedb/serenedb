@@ -84,7 +84,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<ProgressSnapshot>{&LoadSnapshots, {}}};
+    ArraySource<ProgressSnapshot>{&LoadSnapshots, {}, {}}};
 
   static constexpr auto kHidden = Shape<kSql, const ProgressSnapshot>(
     kProgressBase, Col<"query">([](const auto&) {

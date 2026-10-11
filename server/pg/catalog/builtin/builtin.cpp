@@ -85,6 +85,16 @@ constexpr auto kTypes = [] {
   return types;
 }();
 
+static_assert([] {
+  for (const auto& type : kTypes) {
+    if ((type.nsp != kPgCatalogSchema && type.nsp != kPgInformationSchema) ||
+        type.oid < 0 || static_cast<duckdb::idx_t>(type.oid) >= kMaxSystem) {
+      return false;
+    }
+  }
+  return true;
+}());
+
 constexpr BuiltinProc kProcs[] = {
 #include "pg/catalog/generated/builtin_procs.gen.inc"
 };

@@ -51,14 +51,13 @@
 #include "connector/functions/otel.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
-#include "connector/functions/system.h"
 #include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
-#include "pg/catalog/functions/ruleutils.h"
+#include "pg/catalog/functions/functions.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
@@ -167,9 +166,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterKeyEncodingFunctions(db);
 
-  connector::RegisterPgSystemFunctions(db);
-
-  connector::RegisterRuleutilsFunctions(db);
+  pg::RegisterFunctions(db);
 
   connector::RegisterPgInOutFunctions(db);
 

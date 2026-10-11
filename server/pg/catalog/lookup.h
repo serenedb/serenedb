@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
 
 #include <array>
@@ -42,6 +42,7 @@
 #include <string_view>
 #include <vector>
 
+#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
 
 namespace duckdb {
@@ -62,8 +63,6 @@ class SereneDBCatalog;
 
 }  // namespace catalog
 namespace pg {
-
-class SystemScan;
 
 struct PrivChar {
   duckdb::AclMode mode;
@@ -109,6 +108,9 @@ duckdb::idx_t CatalogClassOid(duckdb::CatalogType type);
 
 duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
   duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view);
+int16_t ViewAttnum(duckdb::ClientContext& context,
+                   duckdb::ViewCatalogEntry& view,
+                   const duckdb::Identifier& name);
 
 std::vector<bool> NotNullColumns(const duckdb::TableCatalogEntry& table);
 
@@ -117,16 +119,28 @@ inline int16_t Attnum(const duckdb::ColumnDefinition& column) {
 }
 
 template<typename Keys>
-std::vector<int16_t> Attnums(const duckdb::ColumnList& columns, Keys&& keys) {
-  return keys | std::views::transform([&](auto key) {
+auto Attnums(const duckdb::ColumnList& columns, const Keys& keys) {
+  return keys | std::views::transform([&columns](auto key) {
            return Attnum(columns.GetColumn(key));
-         }) |
-         std::ranges::to<std::vector>();
+         });
 }
 
+inline auto KeyAttnums(const duckdb::ColumnList& columns,
+                       const duckdb::UniqueConstraint& key) {
+  return std::views::iota(size_t{0}, key.HasIndex()
+                                       ? size_t{1}
+                                       : key.GetColumnNames().size()) |
+         std::views::transform([&columns, &key](size_t i) {
+           return Attnum(key.HasIndex()
+                           ? columns.GetColumn(key.GetIndex())
+                           : columns.GetColumn(key.GetColumnNames()[i]));
+         });
+}
+
+bool HasDefault(const duckdb::ColumnDefinition& column);
+
 inline bool HasAttrdef(const duckdb::ColumnDefinition& column) {
-  return (column.HasDefaultValue() || column.Generated()) &&
-         column.CatalogOid() != 0;
+  return (HasDefault(column) || column.Generated()) && column.CatalogOid() != 0;
 }
 
 inline const duckdb::ParsedExpression& DefaultExpression(
@@ -178,11 +192,19 @@ duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
   const SystemScan& scan, const duckdb::TableCatalogEntry& table,
   const duckdb::ForeignKeyConstraint& fk);
 
+template<typename R>
 const duckdb::UniqueConstraint* ReferencedKey(
-  const duckdb::TableCatalogEntry& target, std::span<const int16_t> attnums);
+  const duckdb::TableCatalogEntry& target, const R& attnums) {
+  for (const auto& key : KeyIndexes(target)) {
+    if (absl::c_equal(KeyAttnums(target.GetColumns(), key), attnums)) {
+      return &key;
+    }
+  }
+  return nullptr;
+}
 
-std::string ConstraintName(const duckdb::TableCatalogEntry& table,
-                           const duckdb::Constraint& constraint);
+SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
+                                const duckdb::Constraint& constraint);
 
 bool NumbersRows(const duckdb::CatalogEntry& sequence);
 
@@ -243,26 +265,22 @@ class ArrayTypeNames final {
  public:
   explicit ArrayTypeNames(const SystemScan& scan) : _scan{scan} {}
 
-  std::string Of(const duckdb::CatalogEntry& element);
+  SystemText Of(const duckdb::CatalogEntry& element);
 
  private:
-  static constexpr uint32_t kLookupsBeforeScan = 64;
-
-  struct SchemaNames {
-    uint32_t looked_up = 0;
-    std::optional<bool> unprefixed;
-  };
-
-  bool Unprefixed(const duckdb::CatalogEntry& element);
-
   const SystemScan& _scan;
-  absl::flat_hash_map<duckdb::idx_t, SchemaNames> _schemas;
+  duckdb::idx_t _schema = kInvalidOid;
+  bool _unprefixed = false;
 };
 
 const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
                                           std::string_view name);
 std::optional<duckdb::idx_t> RoleOrPublic(duckdb::ClientContext& context,
                                           std::string_view name);
+duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
+  duckdb::ClientContext& context, std::string_view name);
+duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
+  duckdb::ClientContext& context, duckdb::idx_t id);
 
 struct SubObject {
   duckdb::TableCatalogEntry* table = nullptr;
@@ -274,7 +292,7 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
                        duckdb::SchemaCatalogEntry& schema,
                        std::string_view name);
 
-std::optional<std::string> NextvalArgument(
+std::optional<std::string_view> NextvalArgument(
   const duckdb::ParsedExpression& expression);
 
 }  // namespace pg

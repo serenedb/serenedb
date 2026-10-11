@@ -40,7 +40,7 @@ class PgCollation final : public SystemTableScan<kPgCollationSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<BuiltinCollation>{&LoadCollations, {}}};
+    ArraySource<BuiltinCollation>{&LoadCollations, {}, {}}};
 
   static constexpr auto kCollation = Shape<kSql, const BuiltinCollation>(
     Col<"oid">(&BuiltinCollation::oid),

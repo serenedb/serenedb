@@ -34,8 +34,8 @@ class PgAggregate final : public SystemTableScan<kPgAggregateSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins,
-                                                   kAggregateKeys}};
+    ArraySource<BuiltinFunction, BuiltinFunctions>{
+      &LoadBuiltins, kAggregateKeys, {}}};
 
   static constexpr auto kAggregate = Shape<kSql, const BuiltinFunction>(
     Col<"aggfnoid">(&BuiltinFunction::oid),

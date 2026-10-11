@@ -27,8 +27,8 @@
 
 #include "auth/role_closure.h"
 #include "pg/catalog/builtin/builtin.h"
-#include "pg/catalog/functions/format_type.h"
-#include "pg/catalog/functions/reg_types.h"
+#include "pg/catalog/functions/pg_catalog/format_type.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/types.h"
@@ -57,7 +57,6 @@ struct ColumnTypeInfo {
 struct InfoColumn {
   const SystemScan& scan;
   std::string_view database;
-  const Session& session;
   ArrayTypeNames& arrays;
   std::string_view schema;
   std::string_view relation;
@@ -69,7 +68,6 @@ struct InfoColumn {
   bool internal;
   mutable std::optional<ColumnTypeInfo> info;
   mutable duckdb::Identifier udt_schema;
-  mutable std::string udt_name;
 
   const ColumnTypeInfo& Info() const {
     if (info) {
@@ -134,7 +132,7 @@ constexpr std::tuple kRelationColumns{
 
 constexpr std::tuple kTypeColumns{
   Col<"udt_catalog">(&InfoColumn::database),
-  Col<"data_type">([](const auto& row) -> std::string {
+  Col<"data_type">([](const auto& row) -> std::string_view {
     const auto& info = row.Info();
     if (!info.builtin) {
       return info.array ? "ARRAY" : "USER-DEFINED";
@@ -142,8 +140,13 @@ constexpr std::tuple kTypeColumns{
     if (info.base->elem != 0 && info.base->len == -1) {
       return "ARRAY";
     }
-    return FormatTypeOut(row.session, static_cast<uint64_t>(info.base->oid),
-                         std::nullopt);
+    if (info.base->nsp != kPgCatalogSchema) {
+      return "USER-DEFINED";
+    }
+    if (const auto name = SqlTypeName(info.base->oid); !name.empty()) {
+      return name;
+    }
+    return info.base->name;
   }),
   Col<"udt_schema">([](const auto& row) -> std::optional<std::string_view> {
     const auto& info = row.Info();
@@ -156,7 +159,7 @@ constexpr std::tuple kTypeColumns{
     row.udt_schema = info.entry->ParentSchemaName();
     return std::string_view{row.udt_schema.GetIdentifierName()};
   }),
-  Col<"udt_name">([](const auto& row) -> std::optional<std::string_view> {
+  Col<"udt_name">([](const auto& row) -> std::optional<SystemText> {
     const auto& info = row.Info();
     if (info.builtin) {
       return info.base->name;
@@ -167,8 +170,7 @@ constexpr std::tuple kTypeColumns{
     if (!info.array) {
       return std::string_view{info.entry->name.GetIdentifierName()};
     }
-    row.udt_name = row.arrays.Of(*info.entry);
-    return std::string_view{row.udt_name};
+    return row.arrays.Of(*info.entry);
   }),
   Col<"domain_catalog">([](const auto& row) -> std::optional<std::string_view> {
     if (!IsDomain(row.Info())) {
@@ -244,7 +246,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
         return row.column->GeneratedExpression().ToString();
       }),
     Col<"column_default">([](const auto& row) -> std::optional<std::string> {
-      if (row.column->Generated() || !row.column->HasDefaultValue()) {
+      if (row.column->Generated() || !HasDefault(*row.column)) {
         return std::nullopt;
       }
       return row.column->DefaultValue().ToString();
@@ -258,7 +260,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   void Row(const duckdb::TableCatalogEntry& table) {
     const bool visible = Visible(table.permissions);
     const auto schema = table.ParentSchemaName();
-    const auto not_null = NotNullColumns(table);
+    const auto not_null =
+      Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     for (const auto& column :
          table.GetColumns().Logical() |
            std::views::filter([&](const duckdb::ColumnDefinition& column) {
@@ -266,21 +269,20 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
                     (_closure->HeldModes(column.Acl()) & kAnyColumnPrivilege) !=
                       duckdb::AclMode::NoRights;
            })) {
-      Emit<kTableColumn>({.scan = *this,
-                          .database = _database,
-                          .session = _session,
-                          .arrays = _arrays,
-                          .schema = schema.GetIdentifierName(),
-                          .relation = table.name.GetIdentifierName(),
-                          .name = column.Name().GetIdentifierName(),
-                          .position = static_cast<size_t>(Attnum(column)),
-                          .type = column.Type(),
-                          .column = &column,
-                          .not_null = not_null[column.Logical().index],
-                          .internal = table.internal,
-                          .info = {},
-                          .udt_schema = {},
-                          .udt_name = {}});
+      Emit<kTableColumn>(
+        {.scan = *this,
+         .database = _database,
+         .arrays = _arrays,
+         .schema = schema.GetIdentifierName(),
+         .relation = table.name.GetIdentifierName(),
+         .name = column.Name().GetIdentifierName(),
+         .position = static_cast<size_t>(Attnum(column)),
+         .type = column.Type(),
+         .column = &column,
+         .not_null = !not_null.empty() && not_null[column.Logical().index],
+         .internal = table.internal,
+         .info = {},
+         .udt_schema = {}});
     }
   }
 
@@ -297,7 +299,6 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
       Emit<kViewColumn>(
         {.scan = *this,
          .database = _database,
-         .session = _session,
          .arrays = _arrays,
          .schema = schema.GetIdentifierName(),
          .relation = view.name.GetIdentifierName(),
@@ -308,8 +309,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .not_null = false,
          .internal = false,
          .info = {},
-         .udt_schema = {},
-         .udt_name = {}});
+         .udt_schema = {}});
     }
   }
 
@@ -320,7 +320,6 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   }
 
   std::string_view _database = Database().GetName().GetIdentifierName();
-  Session _session = MakeSession(&Context());
   ArrayTypeNames _arrays{*this};
   std::shared_ptr<const auth::RoleClosure> _closure = SessionClosure();
 };

@@ -23,6 +23,8 @@
 #include <ranges>
 
 #include "pg/catalog/engine/builtin_functions.h"
+#include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/sql_utils.h"
 #include "pg/types.h"
@@ -61,8 +63,48 @@ constexpr ArrayKey<BuiltinFunction, BuiltinFunctions> kBuiltinKeys[] = {
   {kPgProcSql["proname"], FindNamed},
 };
 
+constexpr SystemFact kBuiltinFacts[] = {
+  {kPgProcSql["pronamespace"], kPgCatalogSchema, kPgCatalogSchema},
+  {kPgProcSql["pronamespace"], kPgInformationSchema, kPgInformationSchema},
+  {kPgProcSql["oid"], 0, kMaxSystem - 1},
+};
+
 bool ReturnsSet(const duckdb::MacroFunction& macro) {
   return !macro.is_procedure && macro.type == duckdb::MacroType::TABLE_MACRO;
+}
+
+bool ReturnsTable(const duckdb::MacroFunction& macro) {
+  return ReturnsSet(macro) && !macro.return_names.empty();
+}
+
+duckdb::idx_t ArgumentOid(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::UNKNOWN ? 0 : Type2Oid(type);
+}
+
+auto AllArgTypes(const duckdb::MacroFunction& macro) {
+  const auto inputs = macro.types.size();
+  return std::views::iota(size_t{0}, inputs + macro.return_types.size()) |
+         std::views::transform([&macro, inputs](size_t i) -> duckdb::idx_t {
+           return i < inputs ? ArgumentOid(macro.types[i])
+                             : Type2Oid(macro.return_types[i - inputs]);
+         });
+}
+
+auto ArgModes(const duckdb::MacroFunction& macro) {
+  const auto inputs = macro.types.size();
+  return std::views::iota(size_t{0}, inputs + macro.return_types.size()) |
+         std::views::transform(
+           [inputs](size_t i) { return i < inputs ? 'i' : 't'; });
+}
+
+auto ArgNames(const duckdb::MacroFunction& macro) {
+  const auto inputs = macro.parameters.size();
+  const auto outputs = ReturnsTable(macro) ? macro.return_names.size() : 0;
+  return std::views::iota(size_t{0}, inputs + outputs) |
+         std::views::transform([&macro, inputs](size_t i) -> std::string_view {
+           return i < inputs ? MacroParameterName(macro, i)
+                             : std::string_view{macro.return_names[i - inputs]};
+         });
 }
 
 struct Macro {
@@ -72,11 +114,20 @@ struct Macro {
 
 class PgProc final : public SystemTableScan<kPgProcSql> {
  public:
-  using SystemTableScan::SystemTableScan;
+  PgProc(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
+    : SystemTableScan{context, input} {
+    if (VisibleOnly()) {
+      _session = MakeSession(&context);
+    }
+  }
 
   static constexpr std::tuple kSources{
-    ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins, kBuiltinKeys},
+    ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins, kBuiltinKeys,
+                                                   kBuiltinFacts},
     CatalogSource{kTypes, SystemSchemas::Skip, kProcIndexes}};
+
+  static constexpr SystemVisibility kVisibility{kSql["oid"],
+                                                "pg_function_is_visible"};
 
   static constexpr auto kBuiltin = Shape<kSql, const BuiltinFunction>(
     Col<"oid">(&BuiltinFunction::oid), Col<"proname">(&BuiltinFunction::name),
@@ -119,42 +170,48 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       if (row.macro.return_types.empty()) {
         return kInvalidOid;
       }
-      return ReturnsSet(row.macro) && !row.macro.return_names.empty()
-               ? kRecord
-               : Type2Oid(row.macro.return_types[0]);
+      return ReturnsTable(row.macro) ? kRecord
+                                     : Type2Oid(row.macro.return_types[0]);
     }),
     Col<"proargtypes">([](const auto& row) {
-      return row.macro.types |
-             std::views::transform([](const duckdb::LogicalType& type) {
-               return type.id() == duckdb::LogicalTypeId::UNKNOWN
-                        ? 0
-                        : Type2Oid(type);
-             });
+      return row.macro.types | std::views::transform(ArgumentOid);
     }),
-    Col<"proargnames">(
-      [](const auto& row) -> std::optional<std::vector<std::string>> {
-        std::vector<std::string> names;
-        for (duckdb::idx_t i = 0; i < row.macro.parameters.size(); ++i) {
-          names.emplace_back(MacroParameterName(row.macro, i));
-        }
-        if (absl::c_all_of(names,
-                           [](const auto& name) { return name.empty(); })) {
-          return std::nullopt;
-        }
-        return names;
-      }),
+    Col<"proallargtypes">([](const auto& row) {
+      return ReturnsTable(row.macro) ? std::optional{AllArgTypes(row.macro)}
+                                     : std::nullopt;
+    }),
+    Col<"proargmodes">([](const auto& row) {
+      return ReturnsTable(row.macro) ? std::optional{ArgModes(row.macro)}
+                                     : std::nullopt;
+    }),
+    Col<"proargnames">([](const auto& row) {
+      auto names = ArgNames(row.macro);
+      return absl::c_all_of(names,
+                            [](std::string_view name) { return name.empty(); })
+               ? std::nullopt
+               : std::optional{names};
+    }),
     Col<"prosrc">([](const auto& row) { return MacroBody(row.macro); }),
     Col<"proacl">([](const auto& row) -> const auto& {
       return row.entry.permissions.acl;
     }));
 
-  void Row(const BuiltinFunction& function) { Emit<kBuiltin>(function); }
+  void Row(const BuiltinFunction& function) {
+    Emit<kBuiltin>(function, [&] { return Visible(function.oid); });
+  }
 
   void Row(const duckdb::MacroCatalogEntry& entry) {
     for (const auto& macro : entry.macros) {
-      Emit<kMacro>({entry, *macro});
+      Emit<kMacro>({entry, *macro}, [&] { return Visible(entry.oid); });
     }
   }
+
+ private:
+  bool Visible(duckdb::idx_t oid) const {
+    return FunctionIsVisible(*_session, oid).value_or(false);
+  }
+
+  std::optional<Session> _session;
 };
 
 }  // namespace

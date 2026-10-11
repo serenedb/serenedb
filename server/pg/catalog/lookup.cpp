@@ -48,7 +48,6 @@
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <limits>
-#include <mutex>
 #include <ranges>
 #include <span>
 #include <tuple>
@@ -122,6 +121,31 @@ duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
   } catch (const std::exception&) {
   }
   return view.GetColumnInfo();
+}
+
+bool HasDefault(const duckdb::ColumnDefinition& column) {
+  if (!column.HasDefaultValue()) {
+    return false;
+  }
+  const auto* expression = &column.DefaultValue();
+  while (expression->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
+    expression = &expression->Cast<duckdb::CastExpression>().Child();
+  }
+  return expression->GetExpressionClass() !=
+           duckdb::ExpressionClass::CONSTANT ||
+         !expression->Cast<duckdb::ConstantExpression>().GetLiteral().IsNull();
+}
+
+int16_t ViewAttnum(duckdb::ClientContext& context,
+                   duckdb::ViewCatalogEntry& view,
+                   const duckdb::Identifier& name) {
+  const auto columns = ViewColumns(context, view);
+  for (duckdb::idx_t i = 0; columns && i < columns->types.size(); ++i) {
+    if (view.ColumnName(*columns, i) == name) {
+      return static_cast<int16_t>(i + 1);
+    }
+  }
+  return 0;
 }
 
 std::vector<bool> NotNullColumns(const duckdb::TableCatalogEntry& table) {
@@ -243,34 +267,22 @@ duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
   return SiblingTable(scan.Transaction(), table, fk.info.table);
 }
 
-const duckdb::UniqueConstraint* ReferencedKey(
-  const duckdb::TableCatalogEntry& target, std::span<const int16_t> attnums) {
-  for (const auto& key : KeyIndexes(target)) {
-    if (absl::c_equal(Attnums(target.GetColumns(),
-                              key.GetLogicalIndexes(target.GetColumns())),
-                      attnums)) {
-      return &key;
-    }
-  }
-  return nullptr;
-}
-
-std::string ConstraintName(const duckdb::TableCatalogEntry& table,
-                           const duckdb::Constraint& constraint) {
+SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
+                                const duckdb::Constraint& constraint) {
   if (!constraint.constraint_name.empty() ||
       constraint.type != duckdb::ConstraintType::NOT_NULL) {
-    return constraint.constraint_name;
+    return {{constraint.constraint_name}};
   }
-  return absl::StrCat(
-    table.name.GetIdentifierName(), "_",
-    table.GetColumn(constraint.Cast<duckdb::NotNullConstraint>().index)
-      .Name()
-      .GetIdentifierName(),
-    "_not_null");
+  return {{table.name.GetIdentifierName(), "_",
+           table.GetColumn(constraint.Cast<duckdb::NotNullConstraint>().index)
+             .Name()
+             .GetIdentifierName(),
+           "_not_null"}};
 }
 
 bool NumbersRows(const duckdb::CatalogEntry& sequence) {
-  return sequence.tags.contains(std::string{catalog::kGeneratedPkSequenceTag});
+  static const std::string kTag{catalog::kGeneratedPkSequenceTag};
+  return sequence.tags.contains(kTag);
 }
 
 namespace {
@@ -449,6 +461,27 @@ std::optional<duckdb::idx_t> RoleOrPublic(duckdb::ClientContext& context,
   return std::nullopt;
 }
 
+duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
+  duckdb::ClientContext& context, std::string_view name) {
+  auto& cluster = catalog::ClusterOf(context);
+  return cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .GetEntry(cluster.GetCatalogTransaction(context), duckdb::Identifier{name});
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
+  duckdb::ClientContext& context, duckdb::idx_t id) {
+  auto& cluster = catalog::ClusterOf(context);
+  duckdb::optional_ptr<duckdb::CatalogEntry> result;
+  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
+    .Scan(cluster.GetCatalogTransaction(context),
+          [&](duckdb::CatalogEntry& entry) {
+            if (!result && entry.oid == id) {
+              result = &entry;
+            }
+          });
+  return result;
+}
+
 std::optional<ObjectName> RelationObject(const Session& session, uint64_t oid) {
   if (auto entry = EntryByOid(session, oid)) {
     if (CatalogClassOid(entry->type) != kPgClassTable) {
@@ -518,30 +551,25 @@ std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
   return array;
 }
 
-std::string ArrayTypeNames::Of(const duckdb::CatalogEntry& element) {
-  const auto& name = element.name.GetIdentifierName();
-  if (!name.starts_with('_') && Unprefixed(element)) {
-    return absl::StrCat("_", name);
-  }
-  return ArrayTypeName(_scan.Transaction(), element);
-}
-
-bool ArrayTypeNames::Unprefixed(const duckdb::CatalogEntry& element) {
-  auto& names = _schemas[element.ParentSchemaOid()];
-  if (!names.unprefixed && ++names.looked_up > kLookupsBeforeScan) {
+SystemText ArrayTypeNames::Of(const duckdb::CatalogEntry& element) {
+  if (element.ParentSchemaOid() != _schema) {
+    static const SystemPrefix kUnderscored{
+      .lower = duckdb::Identifier{std::string_view{"_"}},
+      .upper = duckdb::Identifier{std::string_view{"_\xff", 2}}};
     auto& schema = element.ParentSchema(_scan.Transaction());
-    names.unprefixed = absl::c_none_of(
+    _schema = element.ParentSchemaOid();
+    _unprefixed = absl::c_none_of(
       std::array{duckdb::CatalogType::TYPE_ENTRY,
                  duckdb::CatalogType::TABLE_ENTRY},
       [&](duckdb::CatalogType type) {
-        return absl::c_any_of(
-          _scan.MemberSet(schema, type).entries,
-          [](const duckdb::CatalogEntry* entry) {
-            return entry->name.GetIdentifierName().starts_with('_');
-          });
+        return !_scan.MemberSet(schema, type, &kUnderscored).entries.empty();
       });
   }
-  return names.unprefixed.value_or(false);
+  const auto& name = element.name.GetIdentifierName();
+  if (!name.starts_with('_') && _unprefixed) {
+    return SystemConcatText{{"_", name}};
+  }
+  return ArrayTypeName(_scan.Transaction(), element);
 }
 
 std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
@@ -630,24 +658,24 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
     schema.Scan(context, duckdb::CatalogType::TABLE_ENTRY, match);
     return found;
   }
-  std::call_once(snapshot->keys_once, [&] {
+  const auto& keys = snapshot->keys.Get([&](auto& keys) {
     for (auto* entry : snapshot->entries) {
       if (entry->type != duckdb::CatalogType::TABLE_ENTRY) {
         continue;
       }
       auto& table = entry->Cast<duckdb::TableCatalogEntry>();
       for (const auto& key : KeyIndexes(table)) {
-        snapshot->keys.try_emplace(key.constraint_name, &table, &key);
+        keys.try_emplace(key.constraint_name, &table, &key);
       }
     }
   });
-  if (const auto it = snapshot->keys.find(name); it != snapshot->keys.end()) {
+  if (const auto it = keys.find(name); it != keys.end()) {
     found = {.table = it->second.first, .key_index = it->second.second};
   }
   return found;
 }
 
-std::optional<std::string> NextvalArgument(
+std::optional<std::string_view> NextvalArgument(
   const duckdb::ParsedExpression& expression) {
   if (expression.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION) {
     return std::nullopt;
@@ -665,12 +693,12 @@ std::optional<std::string> NextvalArgument(
   if (argument->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
     return std::nullopt;
   }
-  const auto value =
-    argument->Cast<duckdb::ConstantExpression>().GetLiteral().ToValue();
-  if (value.IsNull()) {
+  const auto& literal =
+    argument->Cast<duckdb::ConstantExpression>().GetLiteral();
+  if (literal.kind != duckdb::LiteralKind::STRING) {
     return std::nullopt;
   }
-  return value.ToString();
+  return std::string_view{literal.text};
 }
 
 }  // namespace sdb::pg

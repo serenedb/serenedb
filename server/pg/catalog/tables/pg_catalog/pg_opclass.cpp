@@ -53,7 +53,7 @@ class PgOpclass final : public SystemTableScan<kPgOpclassSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<Opclass>{&LoadStatic<kOpclasses>, {}},
+    ArraySource<Opclass>{&LoadStatic<kOpclasses>, {}, {}},
     CatalogSource{kTypes, SystemSchemas::Skip, kOpclassIndexes}};
 
   static constexpr auto kOpclassMethod =

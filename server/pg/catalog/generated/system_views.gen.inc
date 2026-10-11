@@ -351,8 +351,7 @@
           ( SELECT array_agg(a.attname ORDER BY a.attnum)
             FROM pg_attribute a
             WHERE a.attrelid = GPT.relid AND
-                  -- TODO(mbkkt): restore ANY() once DuckDB supports correlated UNNEST
-                  list_has(GPT.attrs, a.attnum)
+                  a.attnum = ANY(GPT.attrs)
           ) AS attnames,
           pg_get_expr(GPT.qual, GPT.relid) AS rowfilter
       FROM pg_publication P,
@@ -764,29 +763,30 @@
 {"pg_catalog", "pg_stat_activity", 12226, false,
  R"(SELECT
               S.datid AS datid,
-              S.datname AS datname,
+              D.datname AS datname,
               S.pid,
-              NULL::INTEGER AS leader_pid,
-              U.oid AS usesysid,
-              S.usename AS usename,
-              NULL::TEXT AS application_name,
-              NULL::TEXT AS client_addr,
-              NULL::TEXT AS client_hostname,
-              NULL::INTEGER AS client_port,
-              to_timestamp(S.backend_start_us / 1000000.0) AS backend_start,
-              NULL::TIMESTAMPTZ AS xact_start,
-              to_timestamp(S.query_start_us / 1000000.0) AS query_start,
-              NULL::TIMESTAMPTZ AS state_change,
-              NULL::TEXT AS wait_event_type,
-              NULL::TEXT AS wait_event,
-              S.state AS state,
-              NULL::TEXT AS backend_xid,
-              NULL::TEXT AS backend_xmin,
-              NULL::BIGINT AS query_id,
-              S.query AS query,
-              'client backend' AS backend_type
-      FROM sdb_progress AS S
-          LEFT JOIN pg_authid AS U ON (S.usename = U.rolname))"},
+              S.leader_pid,
+              S.usesysid,
+              U.rolname AS usename,
+              S.application_name,
+              S.client_addr,
+              S.client_hostname,
+              S.client_port,
+              S.backend_start,
+              S.xact_start,
+              S.query_start,
+              S.state_change,
+              S.wait_event_type,
+              S.wait_event,
+              S.state,
+              S.backend_xid,
+              s.backend_xmin,
+              S.query_id,
+              S.query,
+              S.backend_type
+      FROM pg_stat_get_activity(NULL) AS S
+          LEFT JOIN pg_database AS D ON (S.datid = D.oid)
+          LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid))"},
 {"pg_catalog", "pg_stat_replication", 12231, false,
  R"(SELECT
               S.pid,
@@ -1069,83 +1069,139 @@
       FROM pg_stat_get_wal() w)"},
 {"pg_catalog", "pg_stat_progress_analyze", 12309, false,
  R"(SELECT
-          S.pid AS pid, S.datid AS datid, S.datname AS datname,
-          S.relid AS relid,
-          S.phase AS phase,
-          0::BIGINT AS sample_blks_total,
-          0::BIGINT AS sample_blks_scanned,
-          0::BIGINT AS ext_stats_total,
-          0::BIGINT AS ext_stats_computed,
-          S.items_total AS child_tables_total,
-          S.items_processed AS child_tables_done,
-          S.current_relid AS current_child_table_relid,
-          0::double precision AS delay_time
-      FROM sdb_progress S WHERE S.command = 'ANALYZE')"},
+          S.pid AS pid, S.datid AS datid, D.datname AS datname,
+          CAST(S.relid AS oid) AS relid,
+          CASE S.param1 WHEN 0 THEN 'initializing'
+                        WHEN 1 THEN 'acquiring sample rows'
+                        WHEN 2 THEN 'acquiring inherited sample rows'
+                        WHEN 3 THEN 'computing statistics'
+                        WHEN 4 THEN 'computing extended statistics'
+                        WHEN 5 THEN 'finalizing analyze'
+                        END AS phase,
+          S.param2 AS sample_blks_total,
+          S.param3 AS sample_blks_scanned,
+          S.param4 AS ext_stats_total,
+          S.param5 AS ext_stats_computed,
+          S.param6 AS child_tables_total,
+          S.param7 AS child_tables_done,
+          CAST(S.param8 AS oid) AS current_child_table_relid,
+          S.param9 / 1000000::double precision AS delay_time
+      FROM pg_stat_get_progress_info('ANALYZE') AS S
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 {"pg_catalog", "pg_stat_progress_vacuum", 12314, false,
  R"(SELECT
-          S.pid AS pid, S.datid AS datid, S.datname AS datname,
+          S.pid AS pid, S.datid AS datid, D.datname AS datname,
           S.relid AS relid,
-          S.phase AS phase,
-          S.steps_total AS heap_blks_total, S.step AS heap_blks_scanned,
-          0::BIGINT AS heap_blks_vacuumed, 0::BIGINT AS index_vacuum_count,
-          0::BIGINT AS max_dead_tuple_bytes, 0::BIGINT AS dead_tuple_bytes,
-          0::BIGINT AS num_dead_item_ids, S.items_total AS indexes_total,
-          S.items_processed AS indexes_processed,
-          0::double precision AS delay_time
-      FROM sdb_progress S WHERE S.command = 'VACUUM')"},
+          CASE S.param1 WHEN 0 THEN 'initializing'
+                        WHEN 1 THEN 'scanning heap'
+                        WHEN 2 THEN 'vacuuming indexes'
+                        WHEN 3 THEN 'vacuuming heap'
+                        WHEN 4 THEN 'cleaning up indexes'
+                        WHEN 5 THEN 'truncating heap'
+                        WHEN 6 THEN 'performing final cleanup'
+                        END AS phase,
+          S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
+          S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
+          S.param6 AS max_dead_tuple_bytes, S.param7 AS dead_tuple_bytes,
+          S.param8 AS num_dead_item_ids, S.param9 AS indexes_total,
+          S.param10 AS indexes_processed,
+          S.param11 / 1000000::double precision AS delay_time
+      FROM pg_stat_get_progress_info('VACUUM') AS S
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 {"pg_catalog", "pg_stat_progress_cluster", 12319, false,
  R"(SELECT
           S.pid AS pid,
           S.datid AS datid,
-          S.datname AS datname,
+          D.datname AS datname,
           S.relid AS relid,
-          S.command AS command,
-          S.phase AS phase,
-          S.current_relid AS cluster_index_relid,
-          S.tuples_processed AS heap_tuples_scanned,
-          0::BIGINT AS heap_tuples_written,
-          S.steps_total AS heap_blks_total,
-          S.step AS heap_blks_scanned,
-          0::BIGINT AS index_rebuild_count
-      FROM sdb_progress S WHERE S.command = 'CLUSTER')"},
+          CASE S.param1 WHEN 1 THEN 'CLUSTER'
+                        WHEN 2 THEN 'VACUUM FULL'
+                        END AS command,
+          CASE S.param2 WHEN 0 THEN 'initializing'
+                        WHEN 1 THEN 'seq scanning heap'
+                        WHEN 2 THEN 'index scanning heap'
+                        WHEN 3 THEN 'sorting tuples'
+                        WHEN 4 THEN 'writing new heap'
+                        WHEN 5 THEN 'swapping relation files'
+                        WHEN 6 THEN 'rebuilding index'
+                        WHEN 7 THEN 'performing final cleanup'
+                        END AS phase,
+          CAST(S.param3 AS oid) AS cluster_index_relid,
+          S.param4 AS heap_tuples_scanned,
+          S.param5 AS heap_tuples_written,
+          S.param6 AS heap_blks_total,
+          S.param7 AS heap_blks_scanned,
+          S.param8 AS index_rebuild_count
+      FROM pg_stat_get_progress_info('CLUSTER') AS S
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 {"pg_catalog", "pg_stat_progress_create_index", 12324, false,
  R"(SELECT
-          S.pid AS pid, S.datid AS datid, S.datname AS datname,
+          S.pid AS pid, S.datid AS datid, D.datname AS datname,
           S.relid AS relid,
-          S.current_relid AS index_relid,
-          S.command AS command,
-          S.phase AS phase,
-          0::BIGINT AS lockers_total,
-          0::BIGINT AS lockers_done,
-          0::BIGINT AS current_locker_pid,
-          0::BIGINT AS blocks_total,
-          0::BIGINT AS blocks_done,
-          S.tuples_total AS tuples_total,
-          S.tuples_processed AS tuples_done,
-          0::BIGINT AS partitions_total,
-          0::BIGINT AS partitions_done
-      FROM sdb_progress S WHERE S.command IN ('CREATE INDEX', 'REINDEX'))"},
+          CAST(S.param7 AS oid) AS index_relid,
+          CASE S.param1 WHEN 1 THEN 'CREATE INDEX'
+                        WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'
+                        WHEN 3 THEN 'REINDEX'
+                        WHEN 4 THEN 'REINDEX CONCURRENTLY'
+                        END AS command,
+          CASE S.param10 WHEN 0 THEN 'initializing'
+                         WHEN 1 THEN 'waiting for writers before build'
+                         WHEN 2 THEN 'building index' ||
+                             COALESCE((': ' || pg_indexam_progress_phasename(S.param9::oid, S.param11)),
+                                      '')
+                         WHEN 3 THEN 'waiting for writers before validation'
+                         WHEN 4 THEN 'index validation: scanning index'
+                         WHEN 5 THEN 'index validation: sorting tuples'
+                         WHEN 6 THEN 'index validation: scanning table'
+                         WHEN 7 THEN 'waiting for old snapshots'
+                         WHEN 8 THEN 'waiting for readers before marking dead'
+                         WHEN 9 THEN 'waiting for readers before dropping'
+                         END as phase,
+          S.param4 AS lockers_total,
+          S.param5 AS lockers_done,
+          S.param6 AS current_locker_pid,
+          S.param16 AS blocks_total,
+          S.param17 AS blocks_done,
+          S.param12 AS tuples_total,
+          S.param13 AS tuples_done,
+          S.param14 AS partitions_total,
+          S.param15 AS partitions_done
+      FROM pg_stat_get_progress_info('CREATE INDEX') AS S
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 {"pg_catalog", "pg_stat_progress_basebackup", 12329, false,
  R"(SELECT
           S.pid AS pid,
-          S.phase AS phase,
-          S.bytes_total AS backup_total,
-          S.bytes_processed AS backup_streamed,
-          S.items_total AS tablespaces_total,
-          S.items_processed AS tablespaces_streamed
-      FROM sdb_progress S WHERE S.command = 'BASEBACKUP')"},
+          CASE S.param1 WHEN 0 THEN 'initializing'
+                        WHEN 1 THEN 'waiting for checkpoint to finish'
+                        WHEN 2 THEN 'estimating backup size'
+                        WHEN 3 THEN 'streaming database files'
+                        WHEN 4 THEN 'waiting for wal archiving to finish'
+                        WHEN 5 THEN 'transferring wal files'
+                        END AS phase,
+          CASE S.param2 WHEN -1 THEN NULL ELSE S.param2 END AS backup_total,
+          S.param3 AS backup_streamed,
+          S.param4 AS tablespaces_total,
+          S.param5 AS tablespaces_streamed
+      FROM pg_stat_get_progress_info('BASEBACKUP') AS S)"},
 {"pg_catalog", "pg_stat_progress_copy", 12333, false,
  R"(SELECT
-          S.pid AS pid, S.datid AS datid, S.datname AS datname,
+          S.pid AS pid, S.datid AS datid, D.datname AS datname,
           S.relid AS relid,
-          S.command AS command,
-          S.io_type AS "type",
-          S.bytes_processed AS bytes_processed,
-          S.bytes_total AS bytes_total,
-          S.tuples_processed AS tuples_processed,
-          0::BIGINT AS tuples_excluded,
-          0::BIGINT AS tuples_skipped
-      FROM sdb_progress S WHERE S.command IN ('COPY FROM', 'COPY TO'))"},
+          CASE S.param5 WHEN 1 THEN 'COPY FROM'
+                        WHEN 2 THEN 'COPY TO'
+                        END AS command,
+          CASE S.param6 WHEN 1 THEN 'FILE'
+                        WHEN 2 THEN 'PROGRAM'
+                        WHEN 3 THEN 'PIPE'
+                        WHEN 4 THEN 'CALLBACK'
+                        END AS "type",
+          S.param1 AS bytes_processed,
+          S.param2 AS bytes_total,
+          S.param3 AS tuples_processed,
+          S.param4 AS tuples_excluded,
+          S.param7 AS tuples_skipped
+      FROM pg_stat_get_progress_info('COPY') AS S
+          LEFT JOIN pg_database D ON S.datid = D.oid)"},
 {"pg_catalog", "pg_user_mappings", 12338, false,
  R"(SELECT
           U.oid       AS umid,
@@ -1230,12 +1286,12 @@
                AS data_type,
 
              CAST(
-               information_schema._pg_char_max_length(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_char_max_length(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS character_maximum_length,
 
              CAST(
-               information_schema._pg_char_octet_length(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_char_octet_length(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS character_octet_length,
 
@@ -1248,27 +1304,27 @@
              CAST(co.collname AS sql_identifier) AS collation_name,
 
              CAST(
-               information_schema._pg_numeric_precision(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_numeric_precision(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_precision,
 
              CAST(
-               information_schema._pg_numeric_precision_radix(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_numeric_precision_radix(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_precision_radix,
 
              CAST(
-               information_schema._pg_numeric_scale(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_numeric_scale(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS numeric_scale,
 
              CAST(
-               information_schema._pg_datetime_precision(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_datetime_precision(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS cardinal_number)
                AS datetime_precision,
 
              CAST(
-               information_schema._pg_interval_type(information_schema._pg_truetypid(a.atttypid, t.typtype, t.typbasetype), information_schema._pg_truetypmod(a.atttypmod, t.typtype, t.typtypmod))
+               information_schema._pg_interval_type(information_schema._pg_truetypid(a, t), information_schema._pg_truetypmod(a, t))
                AS character_data)
                AS interval_type,
              CAST(null AS cardinal_number) AS interval_precision,
@@ -1341,17 +1397,15 @@
 
       UNION ALL
       -- not-null constraints
-      -- sql_identifier and character_data is in system.main, not information_schema
-      SELECT current_database()::sql_identifier AS constraint_catalog,
-             rs.nspname::sql_identifier AS constraint_schema,
-             con.conname::sql_identifier AS constraint_name,
-             -- format is in system.main, not pg_catalog
-             format('%s IS NOT NULL', coalesce(att.attname, 'VALUE'))::character_data AS check_clause
+      SELECT current_database()::information_schema.sql_identifier AS constraint_catalog,
+             rs.nspname::information_schema.sql_identifier AS constraint_schema,
+             con.conname::information_schema.sql_identifier AS constraint_name,
+             pg_catalog.format('%s IS NOT NULL', coalesce(at.attname, 'VALUE'))::information_schema.character_data AS check_clause
        FROM pg_constraint con
               LEFT JOIN pg_namespace rs ON rs.oid = con.connamespace
               LEFT JOIN pg_class c ON c.oid = con.conrelid
               LEFT JOIN pg_type t ON t.oid = con.contypid
-              LEFT JOIN pg_attribute att ON (con.conrelid = att.attrelid AND con.conkey[1] = att.attnum)
+              LEFT JOIN pg_attribute at ON (con.conrelid = at.attrelid AND con.conkey[1] = at.attnum)
        WHERE pg_has_role(coalesce(c.relowner, t.typowner), 'USAGE'::text)
          AND con.contype = 'n')"},
 {"information_schema", "collations", 13351, false,
@@ -1441,9 +1495,8 @@
                     pr_c.prtype,
                     pr_c.grantable,
                     pr_c.relowner
-             -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-             FROM (SELECT oid, relname, relnamespace, relowner, acl.*
-                   FROM pg_class, aclexplode(coalesce(relacl, acldefault('r', relowner))) AS acl
+             FROM (SELECT oid, relname, relnamespace, relowner, (aclexplode(coalesce(relacl, acldefault('r', relowner)))).*
+                   FROM pg_class
                    WHERE relkind IN ('r', 'v', 'f', 'p')
                   ) pr_c (oid, relname, relnamespace, relowner, grantor, grantee, prtype, grantable),
                   pg_attribute a
@@ -1459,9 +1512,8 @@
                     pr_a.prtype,
                     pr_a.grantable,
                     c.relowner
-             -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-             FROM (SELECT attrelid, attname, acl.*
-                   FROM pg_attribute a JOIN pg_class cc ON (a.attrelid = cc.oid), aclexplode(coalesce(attacl, acldefault('c', relowner))) AS acl
+             FROM (SELECT attrelid, attname, (aclexplode(coalesce(attacl, acldefault('c', relowner)))).*
+                   FROM pg_attribute a JOIN pg_class cc ON (a.attrelid = cc.oid)
                    WHERE attnum > 0
                          AND NOT attisdropped
                   ) pr_a (attrelid, attname, grantor, grantee, prtype, grantable),
@@ -1699,9 +1751,9 @@
              CAST(nr_nspname AS sql_identifier) AS table_schema,
              CAST(relname AS sql_identifier) AS table_name,
              CAST(a.attname AS sql_identifier) AS column_name,
-             CAST(ss.ea_n AS cardinal_number) AS ordinal_position,
+             CAST((ss.x).n AS cardinal_number) AS ordinal_position,
              CAST(CASE WHEN contype = 'f' THEN
-                         information_schema._pg_index_position(ss.conindid, ss.confkey[ss.ea_n])
+                         information_schema._pg_index_position(ss.conindid, ss.confkey[(ss.x).n])
                        ELSE NULL
                   END AS cardinal_number)
                AS position_in_unique_constraint
@@ -1710,17 +1762,17 @@
                    nc.nspname AS nc_nspname, nr.nspname AS nr_nspname,
                    c.oid AS coid, c.conname, c.contype, c.conindid,
                    c.confkey, c.confrelid,
-                   ea.x AS ea_x, ea.n AS ea_n
-            FROM pg_namespace nr
-                 JOIN pg_class r ON nr.oid = r.relnamespace
-                 JOIN pg_constraint c ON r.oid = c.conrelid
-                 JOIN pg_namespace nc ON nc.oid = c.connamespace,
-                 information_schema._pg_expandarray(c.conkey) AS ea
-            WHERE c.contype IN ('p', 'u', 'f')
+                   information_schema._pg_expandarray(c.conkey) AS x
+            FROM pg_namespace nr, pg_class r, pg_namespace nc,
+                 pg_constraint c
+            WHERE nr.oid = r.relnamespace
+                  AND r.oid = c.conrelid
+                  AND nc.oid = c.connamespace
+                  AND c.contype IN ('p', 'u', 'f')
                   AND r.relkind IN ('r', 'p')
                   AND (NOT pg_is_other_temp_schema(nr.oid)) ) AS ss
       WHERE ss.roid = a.attrelid
-            AND a.attnum = ss.ea_x
+            AND a.attnum = (ss.x).x
             AND NOT a.attisdropped
             AND (pg_has_role(relowner, 'USAGE')
                  OR has_column_privilege(roid, a.attnum,
@@ -1729,18 +1781,18 @@
  R"(SELECT CAST(current_database() AS sql_identifier) AS specific_catalog,
              CAST(n_nspname AS sql_identifier) AS specific_schema,
              CAST(nameconcatoid(proname, p_oid) AS sql_identifier) AS specific_name,
-             CAST(ss.ea_n AS cardinal_number) AS ordinal_position,
+             CAST((ss.x).n AS cardinal_number) AS ordinal_position,
              CAST(
                CASE WHEN proargmodes IS NULL THEN 'IN'
-                  WHEN proargmodes[ss.ea_n] = 'i' THEN 'IN'
-                  WHEN proargmodes[ss.ea_n] = 'o' THEN 'OUT'
-                  WHEN proargmodes[ss.ea_n] = 'b' THEN 'INOUT'
-                  WHEN proargmodes[ss.ea_n] = 'v' THEN 'IN'
-                  WHEN proargmodes[ss.ea_n] = 't' THEN 'OUT'
+                  WHEN proargmodes[(ss.x).n] = 'i' THEN 'IN'
+                  WHEN proargmodes[(ss.x).n] = 'o' THEN 'OUT'
+                  WHEN proargmodes[(ss.x).n] = 'b' THEN 'INOUT'
+                  WHEN proargmodes[(ss.x).n] = 'v' THEN 'IN'
+                  WHEN proargmodes[(ss.x).n] = 't' THEN 'OUT'
                END AS character_data) AS parameter_mode,
              CAST('NO' AS yes_or_no) AS is_result,
              CAST('NO' AS yes_or_no) AS as_locator,
-             CAST(NULLIF(proargnames[ss.ea_n], '') AS sql_identifier) AS parameter_name,
+             CAST(NULLIF(proargnames[(ss.x).n], '') AS sql_identifier) AS parameter_name,
              CAST(
                CASE WHEN t.typelem <> 0 AND t.typlen = -1 THEN 'ARRAY'
                     WHEN nt.nspname = 'pg_catalog' THEN format_type(t.oid, null)
@@ -1767,23 +1819,22 @@
              CAST(null AS sql_identifier) AS scope_schema,
              CAST(null AS sql_identifier) AS scope_name,
              CAST(null AS cardinal_number) AS maximum_cardinality,
-             CAST(ss.ea_n AS sql_identifier) AS dtd_identifier,
+             CAST((ss.x).n AS sql_identifier) AS dtd_identifier,
              CAST(
                CASE WHEN pg_has_role(proowner, 'USAGE')
-                    THEN pg_get_function_arg_default(p_oid, ss.ea_n)
+                    THEN pg_get_function_arg_default(p_oid, (ss.x).n)
                     ELSE NULL END
                AS character_data) AS parameter_default
 
       FROM pg_type t, pg_namespace nt,
            (SELECT n.nspname AS n_nspname, p.proname, p.oid AS p_oid, p.proowner,
                    p.proargnames, p.proargmodes,
-                   ea.x AS ea_x, ea.n AS ea_n
-            FROM pg_namespace n, pg_proc p,
-                 information_schema._pg_expandarray(coalesce(p.proallargtypes, p.proargtypes::oid[])) AS ea
+                   information_schema._pg_expandarray(coalesce(p.proallargtypes, p.proargtypes::oid[])) AS x
+            FROM pg_namespace n, pg_proc p
             WHERE n.oid = p.pronamespace
                   AND (pg_has_role(p.proowner, 'USAGE') OR
                        has_function_privilege(p.oid, 'EXECUTE'))) AS ss
-      WHERE t.oid = ss.ea_x AND t.typnamespace = nt.oid)"},
+      WHERE t.oid = (ss.x).x AND t.typnamespace = nt.oid)"},
 {"information_schema", "referential_constraints", 13424, false,
  R"(SELECT CAST(current_database() AS sql_identifier) AS constraint_catalog,
              CAST(ncon.nspname AS sql_identifier) AS constraint_schema,
@@ -1893,8 +1944,7 @@
                     THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT oid, proname, proowner, pronamespace, acl.* FROM pg_proc, aclexplode(coalesce(proacl, acldefault('f', proowner))) AS acl
+              SELECT oid, proname, proowner, pronamespace, (aclexplode(coalesce(proacl, acldefault('f', proowner)))).* FROM pg_proc
            ) p (oid, proname, proowner, pronamespace, grantor, grantee, prtype, grantable),
            pg_namespace n,
            pg_authid u_grantor,
@@ -2187,8 +2237,7 @@
              CAST(CASE WHEN c.prtype = 'SELECT' THEN 'YES' ELSE 'NO' END AS yes_or_no) AS with_hierarchy
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT oid, relname, relnamespace, relkind, relowner, acl.* FROM pg_class, aclexplode(coalesce(relacl, acldefault('r', relowner))) AS acl
+              SELECT oid, relname, relnamespace, relkind, relowner, (aclexplode(coalesce(relacl, acldefault('r', relowner)))).* FROM pg_class
            ) AS c (oid, relname, relnamespace, relkind, relowner, grantor, grantee, prtype, grantable),
            pg_namespace nc,
            pg_authid u_grantor,
@@ -2297,10 +2346,8 @@
              CAST(a.attname AS sql_identifier) AS event_object_column
 
       FROM pg_namespace n, pg_class c, pg_trigger t,
-           -- Rewritten: (ta0.tgat).x / .n -> ea.x / ea.n
-           (SELECT tgoid, ea.x AS tgattnum, ea.n AS tgattpos
-            FROM (SELECT oid AS tgoid, tgattr FROM pg_trigger) AS ta0,
-                 information_schema._pg_expandarray(ta0.tgattr) AS ea) AS ta,
+           (SELECT tgoid, (ta0.tgat).x AS tgattnum, (ta0.tgat).n AS tgattpos
+            FROM (SELECT oid AS tgoid, information_schema._pg_expandarray(tgattr) AS tgat FROM pg_trigger) AS ta0) AS ta,
            pg_attribute a
 
       WHERE n.oid = c.relnamespace
@@ -2339,8 +2386,8 @@
                  ELSE null END
                AS character_data) AS action_condition,
              CAST(
-               regexp_extract(pg_get_triggerdef(t.oid),
-                              '(?s) FOR EACH (?:ROW|STATEMENT) (.*)$', 1)
+               substring(pg_get_triggerdef(t.oid) from
+                         position('EXECUTE FUNCTION' in substring(pg_get_triggerdef(t.oid) from 48)) + 47)
                AS character_data) AS action_statement,
              CAST(
                -- hard-wired reference to TRIGGER_TYPE_ROW
@@ -2387,8 +2434,7 @@
                     THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT oid, typname, typnamespace, typtype, typowner, acl.* FROM pg_type, aclexplode(coalesce(typacl, acldefault('T', typowner))) AS acl
+              SELECT oid, typname, typnamespace, typtype, typowner, (aclexplode(coalesce(typacl, acldefault('T', typowner)))).* FROM pg_type
            ) AS t (oid, typname, typnamespace, typtype, typowner, grantor, grantee, prtype, grantable),
            pg_namespace n,
            pg_authid u_grantor,
@@ -2455,8 +2501,7 @@
                     THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT oid, typname, typnamespace, typtype, typowner, acl.* FROM pg_type, aclexplode(coalesce(typacl, acldefault('T', typowner))) AS acl
+              SELECT oid, typname, typnamespace, typtype, typowner, (aclexplode(coalesce(typacl, acldefault('T', typowner)))).* FROM pg_type
            ) AS t (oid, typname, typnamespace, typtype, typowner, grantor, grantee, prtype, grantable),
            pg_namespace n,
            pg_authid u_grantor,
@@ -2493,8 +2538,7 @@
                     THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT fdwname, fdwowner, acl.* FROM pg_foreign_data_wrapper, aclexplode(coalesce(fdwacl, acldefault('F', fdwowner))) AS acl
+              SELECT fdwname, fdwowner, (aclexplode(coalesce(fdwacl, acldefault('F', fdwowner)))).* FROM pg_foreign_data_wrapper
            ) AS fdw (fdwname, fdwowner, grantor, grantee, prtype, grantable),
            pg_authid u_grantor,
            (
@@ -2528,8 +2572,7 @@
                     THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT srvname, srvowner, acl.* FROM pg_foreign_server, aclexplode(coalesce(srvacl, acldefault('S', srvowner))) AS acl
+              SELECT srvname, srvowner, (aclexplode(coalesce(srvacl, acldefault('S', srvowner)))).* FROM pg_foreign_server
            ) AS srv (srvname, srvowner, grantor, grantee, prtype, grantable),
            pg_authid u_grantor,
            (
@@ -2563,8 +2606,7 @@
                     THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_grantable
 
       FROM (
-              -- TODO(mbkkt): rewrite once DuckDB parser supports (expr).* composite expansion
-              SELECT oid, relname, relnamespace, relkind, relowner, acl.* FROM pg_class, aclexplode(coalesce(relacl, acldefault('r', relowner))) AS acl
+              SELECT oid, relname, relnamespace, relkind, relowner, (aclexplode(coalesce(relacl, acldefault('r', relowner)))).* FROM pg_class
            ) AS c (oid, relname, relnamespace, relkind, relowner, grantor, grantee, prtype, grantable),
            pg_namespace n,
            pg_authid u_grantor,
@@ -2846,15 +2888,12 @@
              UNION ALL
 
              /* information_schema.parameters */
-             -- Rewritten: (ss.x).n / (ss.x).x -> ea_n / ea_x
              SELECT pronamespace,
                     CAST(nameconcatoid(proname, oid) AS sql_identifier),
-                    'ROUTINE'::text, ss.ea_n, ss.ea_x, 0
+                    'ROUTINE'::text, (ss.x).n, (ss.x).x, 0
              FROM (SELECT p.pronamespace, p.proname, p.oid,
-                          ea.x AS ea_x, ea.n AS ea_n
-                   FROM pg_proc p,
-                        information_schema._pg_expandarray(coalesce(p.proallargtypes, p.proargtypes::oid[])) AS ea
-                   ) AS ss
+                          information_schema._pg_expandarray(coalesce(p.proallargtypes, p.proargtypes::oid[])) AS x
+                   FROM pg_proc p) AS ss
 
              UNION ALL
 
@@ -2897,10 +2936,9 @@
              CAST(c.nspname AS sql_identifier) AS table_schema,
              CAST(c.relname AS sql_identifier) AS table_name,
              CAST(c.attname AS sql_identifier) AS column_name,
-             CAST(opts.option_name AS sql_identifier) AS option_name,
-             CAST(opts.option_value AS character_data) AS option_value
-      FROM information_schema._pg_foreign_table_columns c,
-           pg_options_to_table(c.attfdwoptions) opts)"},
+             CAST((pg_options_to_table(c.attfdwoptions)).option_name AS sql_identifier) AS option_name,
+             CAST((pg_options_to_table(c.attfdwoptions)).option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_table_columns c)"},
 {"information_schema", "_pg_foreign_data_wrappers", 13592, true,
  R"(SELECT w.oid,
              w.fdwowner,
@@ -2916,10 +2954,9 @@
 {"information_schema", "foreign_data_wrapper_options", 13596, false,
  R"(SELECT foreign_data_wrapper_catalog,
              foreign_data_wrapper_name,
-             CAST(opts.option_name AS sql_identifier) AS option_name,
-             CAST(opts.option_value AS character_data) AS option_value
-      FROM information_schema._pg_foreign_data_wrappers w,
-           pg_options_to_table(w.fdwoptions) opts)"},
+             CAST((pg_options_to_table(w.fdwoptions)).option_name AS sql_identifier) AS option_name,
+             CAST((pg_options_to_table(w.fdwoptions)).option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_data_wrappers w)"},
 {"information_schema", "foreign_data_wrappers", 13600, false,
  R"(SELECT foreign_data_wrapper_catalog,
              foreign_data_wrapper_name,
@@ -2945,10 +2982,9 @@
 {"information_schema", "foreign_server_options", 13608, false,
  R"(SELECT foreign_server_catalog,
              foreign_server_name,
-             CAST(opts.option_name AS sql_identifier) AS option_name,
-             CAST(opts.option_value AS character_data) AS option_value
-      FROM information_schema._pg_foreign_servers s,
-           pg_options_to_table(s.srvoptions) opts)"},
+             CAST((pg_options_to_table(s.srvoptions)).option_name AS sql_identifier) AS option_name,
+             CAST((pg_options_to_table(s.srvoptions)).option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_servers s)"},
 {"information_schema", "foreign_servers", 13612, false,
  R"(SELECT foreign_server_catalog,
              foreign_server_name,
@@ -2982,10 +3018,9 @@
  R"(SELECT foreign_table_catalog,
              foreign_table_schema,
              foreign_table_name,
-             CAST(opts.option_name AS sql_identifier) AS option_name,
-             CAST(opts.option_value AS character_data) AS option_value
-      FROM information_schema._pg_foreign_tables t,
-           pg_options_to_table(t.ftoptions) opts)"},
+             CAST((pg_options_to_table(t.ftoptions)).option_name AS sql_identifier) AS option_name,
+             CAST((pg_options_to_table(t.ftoptions)).option_value AS character_data) AS option_value
+      FROM information_schema._pg_foreign_tables t)"},
 {"information_schema", "foreign_tables", 13625, false,
  R"(SELECT foreign_table_catalog,
              foreign_table_schema,
@@ -3021,4 +3056,5 @@
              foreign_server_catalog,
              foreign_server_name
       FROM information_schema._pg_user_mappings)"},
+{"pg_catalog", "pg_stat_progress_create_table_as", kMinSystem + 403, false, {}},
 // clang-format on

@@ -20,6 +20,7 @@
 
 #include "pg/catalog/engine/registry.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <deque>
@@ -37,7 +38,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/functions/macros_sql.h"
+#include "pg/catalog/functions/functions.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/views/system_views.h"
 #include "pg/types.h"
@@ -51,13 +52,10 @@ namespace {
 std::vector<SystemTable*> gTables;
 std::deque<SystemTable> gEmptyTables;
 
-constexpr duckdb::AclItem kOwnerAcl{
-  .grantee = kRootUser,
-  .grantor = kRootUser,
-  .privs = duckdb::AclMode::Insert | duckdb::AclMode::Select |
-           duckdb::AclMode::Update | duckdb::AclMode::Delete |
-           duckdb::AclMode::Truncate | duckdb::AclMode::References |
-           duckdb::AclMode::Trigger | duckdb::AclMode::Maintain};
+const duckdb::AclItem kOwnerAcl{.grantee = kRootUser,
+                                .grantor = kRootUser,
+                                .privs = duckdb::Permissions::AllPrivileges(
+                                  duckdb::CatalogType::TABLE_ENTRY)};
 
 constexpr duckdb::AclItem kPublicSelect{.grantee = kPublicGrantee,
                                         .grantor = kRootUser,
@@ -74,6 +72,14 @@ std::vector<StaticView> gViews;
 irs::containers::FlatHashMap<Key, const StaticView*> gViewsByName;
 irs::containers::FlatHashMap<duckdb::idx_t, const StaticView*> gViewsByOid;
 irs::containers::FlatHashSet<Key> gRelationNames;
+
+std::string_view ViewSql(const SystemView& view) {
+  const auto* written =
+    absl::c_find_if(kSystemViewSql, [&](const SystemViewSql& sql) {
+      return sql.schema == view.schema && sql.name == view.name;
+    });
+  return written == std::end(kSystemViewSql) ? view.sql : written->sql;
+}
 
 duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   duckdb::Parser& parser, const SystemMacro& macro) {
@@ -158,7 +164,7 @@ void InitSystemViews(duckdb::Parser& parser) {
     auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
     info->SetSchema(duckdb::Identifier{view.schema});
     info->SetViewName(duckdb::Identifier{view.name});
-    info->sql = view.sql;
+    info->sql = ViewSql(view);
     info->temporary = true;
     info->internal = true;
     parser.statements.clear();
@@ -181,17 +187,19 @@ void InitSystemFunctions(duckdb::Parser& parser) {
   irs::containers::NodeHashMap<FunctionKey,
                                duckdb::unique_ptr<duckdb::CreateMacroInfo>>
     built;
-  for (const auto& macro : kExternalMacros) {
-    auto info = ParseMacro(parser, macro);
-    FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
-    const auto it = built.find(key);
-    if (it == built.end()) {
-      built.emplace(key, std::move(info));
-      continue;
-    }
-    auto& existing = *it->second;
-    for (auto& m : info->macros) {
-      existing.macros.emplace_back(std::move(m));
+  for (const auto macros : {kPgCatalogMacros, kInformationSchemaMacros}) {
+    for (const auto& macro : macros) {
+      auto info = ParseMacro(parser, macro);
+      FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
+      const auto it = built.find(key);
+      if (it == built.end()) {
+        built.emplace(key, std::move(info));
+        continue;
+      }
+      auto& existing = *it->second;
+      for (auto& m : info->macros) {
+        existing.macros.emplace_back(std::move(m));
+      }
     }
   }
   for (auto& [key, info] : built) {

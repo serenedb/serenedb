@@ -11,6 +11,8 @@ TABLE_FOLDERS = {
     'information_schema': 'information_schema',
 }
 
+VIEW_FOLDERS = ('pg_catalog', 'information_schema')
+
 RELATIONS_SQL = f"""
 SELECT c.oid::int8, n.nspname, c.relname, c.relkind, c.relisshared,
        {SUPERUSER_ONLY_SQL}
@@ -180,13 +182,26 @@ def table_files():
             yield f'tables/{folder}/{file}', schema, file.removesuffix('.cpp')
 
 
+def view_files():
+    for schema in VIEW_FOLDERS:
+        for file in sorted(os.listdir(os.path.join(CATALOG_DIR, 'views',
+                                                   schema))):
+            yield schema, file.removesuffix('.cpp')
+
+
 def registry():
     coded = sorted(relation_constant(schema, name)[1:]
                    for _, schema, name in table_files())
-    return generated('the files in server/pg/catalog/tables', [
+    views = sorted((relation_constant(schema, name)[1:], schema, name)
+                   for schema, name in view_files())
+    return generated('the files in server/pg/catalog/tables and views', [
         f'extern SystemTable g{name};' for name in coded] +
         ['SystemTable* const kSystemTables[] = {'] +
-        [f'  &g{name},' for name in coded] + ['};'])
+        [f'  &g{name},' for name in coded] + ['};'] +
+        [f'extern std::string_view g{const};' for const, _, _ in views] +
+        ['const SystemViewSql kSystemViewSql[] = {'] +
+        [f'  {{{cpp_str(schema)}, {cpp_str(name)}, g{const}}},'
+         for const, schema, name in views] + ['};'])
 
 
 def named_oids(gen, sql, names):

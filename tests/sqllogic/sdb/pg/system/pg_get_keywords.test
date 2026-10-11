@@ -1,8 +1,24 @@
 query
-SELECT (SELECT count(*) FROM pg_get_keywords()) = (SELECT count(*) FROM duckdb_keywords()) AS every_keyword
+SELECT (SELECT count(*) FROM pg_get_keywords()) = (SELECT count(DISTINCT keyword_name) FROM duckdb_keywords()) AS every_keyword,
+       (SELECT count(*) = count(DISTINCT word) FROM pg_get_keywords()) AS once_each
 ----
-every_keyword
-t
+every_keyword	once_each
+t	t
+
+
+query
+SELECT word, catcode, catdesc
+FROM pg_get_keywords()
+WHERE word IN ('columns', 'generated', 'map', 'struct', 'try_cast', 'tuple')
+ORDER BY word
+----
+word	catcode	catdesc
+columns	U	unreserved
+generated	U	unreserved
+map	U	unreserved
+struct	U	unreserved
+try_cast	U	unreserved
+tuple	U	unreserved
 
 
 query

@@ -22,7 +22,10 @@ PROCEDURES = {'array_subscript_handler': 'kArraySubscriptHandler'}
 
 SDB_OWNED_TYPES = ('tsquery', '_tsquery')
 
-PSEUDO_TYPES = ('any', 'internal', 'record')
+PSEUDO_TYPES = ('any', 'anyelement', 'event_trigger', 'fdw_handler',
+                'index_am_handler', 'internal', 'language_handler',
+                'pg_ddl_command', 'record', 'table_am_handler', 'trigger',
+                'tsm_handler')
 
 ENUM_PROCS = ('enum_in', 'enum_out', 'enum_recv', 'enum_send')
 
@@ -185,6 +188,8 @@ SDB_TABLES = {
         ('items_total', 'int8'),
     )),
 }
+
+SDB_VIEWS = {('pg_catalog', 'pg_stat_progress_create_table_as'): 403}
 
 SUPERUSER_ONLY = {('pg_catalog', 'pg_foreign_server')}
 

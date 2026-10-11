@@ -153,9 +153,11 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
         Sequence(table, object, flags.IsOwnedBy());
       }
     });
-    table.ScanTriggers(Transaction(), [&](duckdb::CatalogEntry& trigger) {
-      Trigger(table, trigger.Cast<duckdb::TriggerCatalogEntry>());
-    });
+    if (Triggered(table)) {
+      table.ScanTriggers(Transaction(), [&](duckdb::CatalogEntry& trigger) {
+        Trigger(table, trigger.Cast<duckdb::TriggerCatalogEntry>());
+      });
+    }
   }
 
   void Row(const duckdb::TriggerCatalogEntry& trigger) {
@@ -290,67 +292,71 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void RuleRelation(const duckdb::ViewCatalogEntry& view,
                     duckdb::CatalogEntry& relation,
                     const RuleReferences& references) {
-    std::vector<duckdb::Identifier> qualifiers;
-    for (const auto* table : references.tables) {
+    const auto schema = relation.ParentSchemaName();
+    const auto names_relation = [&](const duckdb::BaseTableRef* table) {
       const auto& name = table->GetQualifiedName();
-      if (name.Name() == relation.name &&
-          (name.Schema().empty() ||
-           name.Schema() == relation.ParentSchemaName())) {
-        qualifiers.emplace_back(table->alias.empty() ? name.Name()
-                                                     : table->alias);
-      }
-    }
-    if (qualifiers.empty()) {
+      return name.Name() == relation.name &&
+             (name.Schema().empty() || name.Schema() == schema);
+    };
+    if (absl::c_none_of(references.tables, names_relation)) {
       return;
     }
-    std::vector<duckdb::Identifier> names;
+    const auto qualifies = [&](const duckdb::Identifier& qualifier) {
+      return absl::c_any_of(
+        references.tables, [&](const duckdb::BaseTableRef* table) {
+          return names_relation(table) &&
+                 (table->alias.empty() ? table->GetQualifiedName().Name()
+                                       : table->alias) == qualifier;
+        });
+    };
+    const bool star = absl::c_any_of(
+      references.stars, [&](const duckdb::StarExpression* reference) {
+        return reference->RelationName().empty() ||
+               qualifies(reference->RelationName());
+      });
+    const auto referenced = [&](const duckdb::Identifier& column) {
+      return star ||
+             absl::c_any_of(references.columns,
+                            [&](const duckdb::ColumnRefExpression* ref) {
+                              const auto& parts = ref->ColumnNames();
+                              return parts.back() == column &&
+                                     (parts.size() < 2 ||
+                                      qualifies(parts[parts.size() - 2]));
+                            });
+    };
+    bool any = false;
+    const auto depend = [&](int32_t attnum) {
+      any = true;
+      Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, attnum,
+             'n');
+    };
     if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
       for (const auto& column :
            relation.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
-        names.emplace_back(column.Name());
+        if (referenced(column.Name())) {
+          depend(Attnum(column));
+        }
       }
-    } else if (const auto columns = ViewColumns(
-                 Context(), relation.Cast<duckdb::ViewCatalogEntry>())) {
+    } else if (auto& target = relation.Cast<duckdb::ViewCatalogEntry>();
+               const auto columns = ViewColumns(Context(), target)) {
       for (size_t i = 0; i < columns->types.size(); ++i) {
-        names.emplace_back(
-          relation.Cast<duckdb::ViewCatalogEntry>().ColumnName(*columns, i));
-      }
-    }
-    std::vector<int32_t> attnums;
-    const auto reference = [&](const duckdb::Identifier& column) {
-      const auto it = absl::c_find(names, column);
-      const auto attnum = static_cast<int32_t>(it - names.begin() + 1);
-      if (it != names.end() && !absl::c_linear_search(attnums, attnum)) {
-        attnums.emplace_back(attnum);
-      }
-    };
-    for (const auto* column : references.columns) {
-      const auto& parts = column->ColumnNames();
-      if (parts.size() < 2 ||
-          absl::c_linear_search(qualifiers, parts[parts.size() - 2])) {
-        reference(parts.back());
-      }
-    }
-    for (const auto* star : references.stars) {
-      if (star->RelationName().empty() ||
-          absl::c_linear_search(qualifiers, star->RelationName())) {
-        for (const auto& name : names) {
-          reference(name);
+        const auto& name = target.ColumnName(*columns, i);
+        if (referenced(name) &&
+            absl::c_none_of(std::views::iota(size_t{0}, i), [&](size_t j) {
+              return target.ColumnName(*columns, j) == name;
+            })) {
+          depend(static_cast<int32_t>(i + 1));
         }
       }
     }
-    absl::c_sort(attnums);
-    if (attnums.empty()) {
+    if (!any) {
       Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, 0, 'n');
-    }
-    for (const auto attnum : attnums) {
-      Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, attnum,
-             'n');
     }
   }
 
+  template<typename R>
   void Columns(duckdb::idx_t constraint, const duckdb::TableCatalogEntry& table,
-               std::span<const int16_t> attnums, char deptype) {
+               const R& attnums, char deptype) {
     for (const auto attnum : attnums) {
       Depend(kPgConstraintTable, constraint, 0, kPgClassTable, table.oid,
              attnum, deptype);
@@ -367,9 +373,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
       case UNIQUE: {
         const auto& unique = constraint.Cast<duckdb::UniqueConstraint>();
         if (Allows<"deptype">('a')) {
-          Columns(constraint.oid, table,
-                  Attnums(table.GetColumns(),
-                          unique.GetLogicalIndexes(table.GetColumns())),
+          Columns(constraint.oid, table, KeyAttnums(table.GetColumns(), unique),
                   'a');
         }
         Depend(kPgClassTable, unique.index_oid, 0, kPgConstraintTable,

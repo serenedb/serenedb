@@ -248,6 +248,51 @@ uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
   return rows;
 }
 
+template<typename Fn>
+uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
+                          uint64_t want, uint32_t d, bool normalize,
+                          std::vector<float>& buf, Fn&& fn) {
+  ColumnReader::VectorScratch scratch{col.Type()};
+  auto scan = col.InitScan(ctx);
+  const auto rows = col.RowCount();
+  uint64_t found = 0;
+  for (uint64_t done = 0; done < rows && found < want;) {
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - done));
+    auto& batch = scratch.Reset();
+    col.Scan(scan, batch, take);
+    const auto& mask = duckdb::FlatVector::Validity(batch);
+    const auto* src =
+      duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
+    size_t n = take;
+    if (mask.AllValid()) {
+      buf.assign(src, src + n * d);
+    } else {
+      buf.resize(n * d);
+      n = 0;
+      for (duckdb::idx_t i = 0; i < take; ++i) {
+        if (mask.RowIsValid(i)) {
+          std::copy_n(src + i * size_t{d}, d, buf.data() + n * d);
+          ++n;
+        }
+      }
+    }
+    n = static_cast<size_t>(std::min<uint64_t>(n, want - found));
+    if (normalize) {
+      for (size_t i = 0; i < n; ++i) {
+        float* v = buf.data() + i * d;
+        duckdb::L2NormalizeOp::Operation(v, v, d);
+      }
+    }
+    if (n != 0) {
+      fn(buf.data(), n);
+    }
+    found += n;
+    done += take;
+  }
+  return found;
+}
+
 inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 inline constexpr uint64_t kHnswEncodeChunk = 16 * STANDARD_VECTOR_SIZE;
 
@@ -335,17 +380,23 @@ bool EncodeColumn(const ColReader& reader, const ColumnReader& col,
     const auto* src =
       duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
     const float* vecs = src;
-    if (normalize) {
+    const bool all_valid = mask.AllValid();
+    if (normalize || !all_valid) {
       enc.owned.assign(src, src + static_cast<size_t>(take) * d);
+      vecs = enc.owned.data();
+    }
+    if (normalize) {
       for (duckdb::idx_t i = 0; i < take; ++i) {
         float* v = enc.owned.data() + i * size_t{d};
         duckdb::L2NormalizeOp::Operation(v, v, d);
       }
-      vecs = enc.owned.data();
     }
-    for (duckdb::idx_t i = 0; i < take; ++i) {
-      if (!mask.RowIsValid(i)) {
-        valid[enc.next + i] = 0;
+    if (!all_valid) {
+      for (duckdb::idx_t i = 0; i < take; ++i) {
+        if (!mask.RowIsValid(i)) {
+          valid[enc.next + i] = 0;
+          std::fill_n(enc.owned.data() + i * size_t{d}, d, 0.f);
+        }
       }
     }
     if (!enc.writer->EncodeInto(codes + enc.next * size_t{record_size}, vecs,
@@ -931,25 +982,27 @@ bool HnswWriter::Compute(const ColReader& reader, const ColumnReader& col,
   uint64_t trained_rows = 0;
   if (_qw) {
     const uint64_t sample = std::min<uint64_t>(_rows, kHnswTrainSample);
-    trained_rows = ScanVectors(
-      col, ctx, sample, _d, normalize, batch_buf,
-      [&](const float* rows, size_t n, uint64_t, const duckdb::ValidityMask&) {
-        if (train) {
-          _qw->Train(rows, n);
-        }
-        if (needs_centroid) {
-          for (size_t i = 0; i < n; ++i) {
-            const float* row = rows + i * size_t{_d};
-            for (uint32_t j = 0; j < _d; ++j) {
-              _centroid[j] += row[j];
-            }
-          }
-        }
-      });
+    trained_rows = ScanValidVectors(col, ctx, sample, _d, normalize, batch_buf,
+                                    [&](const float* rows, size_t n) {
+                                      if (train) {
+                                        _qw->Train(rows, n);
+                                      }
+                                      if (needs_centroid) {
+                                        for (size_t i = 0; i < n; ++i) {
+                                          const float* row =
+                                            rows + i * size_t{_d};
+                                          for (uint32_t j = 0; j < _d; ++j) {
+                                            _centroid[j] += row[j];
+                                          }
+                                        }
+                                      }
+                                    });
+    if (trained_rows == 0) {
+      return true;
+    }
   }
 
   if (needs_centroid) {
-    SDB_ASSERT(trained_rows != 0);
     const float inv = 1.f / static_cast<float>(trained_rows);
     for (uint32_t j = 0; j < _d; ++j) {
       _centroid[j] *= inv;
@@ -960,10 +1013,9 @@ bool HnswWriter::Compute(const ColReader& reader, const ColumnReader& col,
   if (_qw) {
     const uint64_t refine = _qw->RefineSamples(_rows);
     if (refine != 0) {
-      ScanVectors(col, ctx, std::min<uint64_t>(_rows, refine), _d, normalize,
-                  batch_buf,
-                  [&](const float* rows, size_t n, uint64_t,
-                      const duckdb::ValidityMask&) { _qw->Refine(rows, n); });
+      ScanValidVectors(
+        col, ctx, std::min<uint64_t>(_rows, refine), _d, normalize, batch_buf,
+        [&](const float* rows, size_t n) { _qw->Refine(rows, n); });
       _qw->RefineDone();
     }
   }

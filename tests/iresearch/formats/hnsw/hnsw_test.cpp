@@ -600,27 +600,38 @@ class HnswParallelBuildTest : public ::testing::TestWithParam<HnswQuant> {
   double Recall(const irs::DirectoryReader& reader,
                 const std::vector<std::vector<float>>& vecs,
                 size_t null_every = 0) const {
+    std::vector<bool> present(vecs.size());
+    for (size_t i = 0; i < vecs.size(); ++i) {
+      present[i] = null_every == 0 || i % null_every != 3;
+    }
+    return Recall(reader, vecs, present, kMetric);
+  }
+
+  double Recall(const irs::DirectoryReader& reader,
+                const std::vector<std::vector<float>>& vecs,
+                const std::vector<bool>& present,
+                irs::VectorMetric metric) const {
     EXPECT_EQ(1U, reader.size()) << "recall maps docs of one segment";
-    std::vector<std::vector<float>> present;
+    std::vector<std::vector<float>> kept;
     std::vector<irs::doc_id_t> docs;
     for (size_t i = 0; i < vecs.size(); ++i) {
-      if (null_every != 0 && i % null_every == 3) {
+      if (!present[i]) {
         continue;
       }
-      present.push_back(vecs[i]);
+      kept.push_back(vecs[i]);
       docs.push_back(static_cast<irs::doc_id_t>(i) + irs::doc_limits::min());
     }
     size_t total = 0;
     size_t matched = 0;
     for (const auto& q : MakeVectors(20, 4711)) {
-      auto filter = MakeKnnFilter(q, kMetric, Quant(), 128);
+      auto filter = MakeKnnFilter(q, metric, Quant(), 128);
       const auto got = RunKnn(reader, filter);
       for (const auto doc : got) {
         const auto row = doc - irs::doc_limits::min();
-        EXPECT_FALSE(null_every != 0 && row % null_every == 3)
+        EXPECT_TRUE(present[row])
           << "null row " << row << " came back from the graph";
       }
-      for (const auto idx : BruteForceTopK(present, q, kMetric, 10)) {
+      for (const auto idx : BruteForceTopK(kept, q, metric, 10)) {
         ++total;
         const auto want = docs[idx - irs::doc_limits::min()];
         matched += std::ranges::find(got, want) != got.end() ? 1 : 0;
@@ -810,6 +821,30 @@ void WriteNullVectorAt(irs::ColWriter& cs, irs::doc_id_t doc) {
   duckdb::FlatVector::SetSize(v, 1);
   cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
             /*count=*/1);
+}
+
+TEST_P(HnswParallelBuildTest, LeadingNullRowsStayOutOfTheQuantizer) {
+  constexpr size_t kNulls = 900;
+  constexpr size_t kRows = 1400;
+  const auto vecs = MakeVectors(kRows, 83);
+  std::vector<bool> present(kRows, true);
+  std::fill_n(present.begin(), kNulls, false);
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  auto trx = writer->GetBatch();
+  for (size_t i = 0; i < kRows; ++i) {
+    auto doc = trx.Insert();
+    if (present[i]) {
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[i]);
+    } else {
+      WriteNullVectorAt(*doc.GetColWriter(), doc.DocId());
+    }
+  }
+  trx.Commit();
+  writer->RefreshCommit();
+  const auto reader = writer->GetSnapshot();
+  ASSERT_EQ(1U, reader.size());
+  EXPECT_GE(Recall(reader, vecs, present, kMetric), RecallFloor());
 }
 
 TEST_P(HnswParallelBuildTest, AllNullColumnBuildsNoGraph) {

@@ -1,6 +1,0 @@
-CONSTRAINT_CATALOG | CONSTRAINT_SCHEMA | CONSTRAINT_NAME | TABLE_CATALOG | TABLE_SCHEMA | TABLE_NAME | CONSTRAINT_TYPE | IS_DEFERRABLE | INITIALLY_DEFERRED
-<database> | drv | players_pkey | <database> | drv | players | PRIMARY KEY | False | False
-<database> | drv | players_team_id_fkey | <database> | drv | players | FOREIGN KEY | False | False
-<database> | drv | players_team_id_nick_key | <database> | drv | players | UNIQUE KEY | False | False
-<database> | drv | teams_name_key | <database> | drv | teams | UNIQUE KEY | False | False
-<database> | drv | teams_pkey | <database> | drv | teams | PRIMARY KEY | False | False

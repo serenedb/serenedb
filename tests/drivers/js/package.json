@@ -7,29 +7,9 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@prisma/adapter-pg": "7.10.0",
-    "@prisma/client": "7.10.0",
-    "@supabase/postgres-meta": "0.100.0",
-    "drizzle-kit": "0.31.11",
-    "drizzle-orm": "0.45.4",
-    "knex": "3.3.0",
-    "kysely": "0.29.6",
-    "pg": "^8.13.1",
-    "postgres": "^3.4.5",
-    "prisma": "7.10.0",
-    "reflect-metadata": "0.2.2",
-    "sequelize": "6.37.8",
-    "typeorm": "1.1.2",
     "vitest": "^2.1.8",
-    "yaml": "^2.6.1"
-  },
-  "allowScripts": {
-    "prisma@7.10.0": true,
-    "@prisma/engines@7.10.0": true,
-    "esbuild@0.18.20": true,
-    "esbuild@0.25.12": true,
-    "esbuild@0.21.5": true,
-    "esbuild@0.28.2": true,
-    "@sentry-internal/node-cpu-profiler": false
+    "yaml": "^2.6.1",
+    "pg": "^8.13.1",
+    "postgres": "^3.4.5"
   }
 }

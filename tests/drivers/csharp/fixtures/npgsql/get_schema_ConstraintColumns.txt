@@ -1,7 +1,0 @@
-constraint_catalog | constraint_schema | constraint_name | table_catalog | table_schema | table_name | column_name | ordinal_number | constraint_type
-<database> | drv | players_pkey | <database> | drv | players | id | 1 | PRIMARY KEY
-<database> | drv | players_team_id_fkey | <database> | drv | players | team_id | 2 | FOREIGN KEY
-<database> | drv | players_team_id_nick_key | <database> | drv | players | nick | 3 | UNIQUE KEY
-<database> | drv | players_team_id_nick_key | <database> | drv | players | team_id | 2 | UNIQUE KEY
-<database> | drv | teams_name_key | <database> | drv | teams | name | 2 | UNIQUE KEY
-<database> | drv | teams_pkey | <database> | drv | teams | id | 1 | PRIMARY KEY

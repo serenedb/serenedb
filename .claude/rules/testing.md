@@ -12,8 +12,7 @@ paths:
 - `tests/sqllogic/sdb/`: SereneDB only. `tests/sqllogic/pg/`: PostgreSQL only, validating the spec.
 - `tests/sqllogic/recovery/`: a fresh serened per file, for crashes, restarts and anything server-wide ([sqllogic.md](sqllogic.md)).
 - `tests/server/<area>/`, `tests/iresearch/`: gtests, for isolated C++ logic a sqllogic test can't reach well.
-- `tests/drivers/<lang>/`: client drivers, ORMs and tools over the wire (Django, SQLAlchemy, Hibernate, Prisma, EF Core, ActiveRecord, pg_dump, pgAdmin, ...), on the shared spec in `tests/drivers/spec/`; `tests/drivers/psql/` pins psql's output; `tests/drivers/network/`: pg_hba matching; `tests/sqllogic/any/pg/clients/` replays the catalog queries of GUI and API tools such as DBeaver and Metabase.
-- Client suites are checked against PostgreSQL 18. Introspection output is compared with a golden written by a run against PostgreSQL with `SDB_DRV_UPDATE_GOLDENS=1`; the same run against SereneDB writes a twin, `<name>.serenedb<ext>`, only where SereneDB's output differs. A SereneDB gap is pinned by a strict expected failure (pytest `xfail(strict=True)`, `xfailOnSereneDB` in the other languages) whose reason cites the issue. It fails once the gap is closed: then delete the marker, and regenerate or delete the twin.
+- `tests/drivers/<lang>/`: client drivers over the wire, on the shared spec in `tests/drivers/spec/`; `tests/drivers/psql/` pins psql's output; `tests/drivers/network/`: pg_hba matching.
 - `tests/drivers/stress/`: concurrency and soak profiles; `tests/drivers/sqlsmith/` and `tests/drivers/fuzz/`: fuzzers.
 - `tests/bench/micro/`: microbenchmarks; `scripts/perf/`: end-to-end performance scripts. `tests/duckdb/`: DuckDB's and the extensions' own suites.
 

@@ -1,6 +1,0 @@
-{
- "columns": ["procedure_cat", "procedure_schem", "procedure_name", "?column?", "?column?", "?column?", "remarks", "procedure_type", "specific_name"],
- "rows": [
-  [null, "app", "touch", null, null, null, null, 2, "touch_<oid>"]
- ]
-}

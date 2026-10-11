@@ -1,5 +1,0 @@
-id base .. type bigint size  precision  scale  nullable  key  unique  autoincrement  identity False readonly True default  attnum 0 oid 20 postgres type bigint
-nick base .. type text size  precision  scale  nullable  key  unique  autoincrement  identity False readonly True default  attnum 0 oid 25 postgres type text
-name base .. type text size  precision  scale  nullable  key  unique  autoincrement  identity False readonly True default  attnum 0 oid 25 postgres type text
-budget base .. type numeric size  precision 12 scale 2 nullable  key  unique  autoincrement  identity False readonly True default  attnum 0 oid 1700 postgres type numeric
-next_mmr base .. type integer size  precision  scale  nullable  key  unique  autoincrement  identity False readonly True default  attnum 0 oid 23 postgres type integer

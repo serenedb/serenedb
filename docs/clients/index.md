@@ -33,8 +33,6 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 |---|---|---|---|
 | LangChain (Python) | `langchain-serenedb` | Vector store: embeddings, metadata filtering, hybrid BM25 + vector retrieval | [Guide](./langchain-serenedb/index.md) |
 
-ORMs, migration tools and database tools that SereneDB's CI tests (Django, SQLAlchemy, Hibernate, Prisma, EF Core, GORM, Active Record, Laravel and more) are listed with what works and what doesn't yet on [ORMs & Tools](./frameworks.md).
-
 ## Elasticsearch clients
 
 Elasticsearch clients and tools connect over HTTP to the subset of the Elasticsearch REST API that SereneDB serves.

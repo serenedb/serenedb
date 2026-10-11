@@ -323,7 +323,7 @@ declare -A lang_junit_glob=(
 	[php]="$SDB_DRV_JUNIT/tests-drivers-php-junit.xml"
 	[python]="$SDB_DRV_JUNIT/tests-drivers-python-*-junit.xml"
 	[r]="$SDB_DRV_JUNIT/tests-drivers-r-junit.xml"
-	[ruby]="$SDB_DRV_JUNIT/tests-drivers-ruby*-junit.xml"
+	[ruby]="$SDB_DRV_JUNIT/tests-drivers-ruby-junit.xml"
 	[rust]="$SDB_DRV_JUNIT/tests-drivers-rust-junit.xml"
 	[psql]="$SDB_DRV_JUNIT/tests-drivers-psql-junit.xml"
 )

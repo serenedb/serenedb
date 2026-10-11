@@ -1,5 +1,0 @@
-id base drv.players.id type bigint size  precision  scale  nullable False key True unique True autoincrement True identity False readonly False default nextval('drv.players_id_seq'::regclass) attnum 1 oid 20 postgres type bigint
-nick base drv.players.nick type text size  precision  scale  nullable False key False unique False autoincrement False identity False readonly False default  attnum 3 oid 25 postgres type text
-name base drv.teams.name type character varying size 40 precision  scale  nullable False key False unique True autoincrement False identity False readonly False default  attnum 2 oid 1043 postgres type character varying
-budget base drv.teams.budget type numeric size  precision 12 scale 2 nullable True key False unique False autoincrement False identity False readonly False default 0 attnum 4 oid 1700 postgres type numeric
-next_mmr base .. type integer size  precision  scale  nullable  key  unique  autoincrement  identity False readonly True default  attnum 0 oid 23 postgres type integer

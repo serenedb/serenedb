@@ -34,7 +34,7 @@ RUN \
       llvm-23 clang-23 lld-23 libclang-rt-23-dev \
       bison flex libfl-dev \
       dh-make fakeroot \
-      python3 python3-dev python3-pip python3-venv perl \
+      python3 python3-dev python3-pip perl \
       git gcc g++ binutils coreutils bash \
       postgresql-client-18 \
       systemd \
@@ -44,7 +44,6 @@ RUN \
       php-cli php-pgsql php-mbstring php-xml php-zip composer \
       dotnet-sdk-10.0 \
       libpq-dev pkg-config \
-      unixodbc odbc-postgresql \
       ruby-full \
       r-base-core r-cran-dbi r-cran-yaml r-cran-bit64 r-cran-blob r-cran-hms r-cran-lubridate \
       r-cran-withr r-cran-cpp11 r-cran-plogr \
@@ -59,6 +58,7 @@ RUN \
     | tar -C /usr/local -xz && \
   Rscript -e 'install.packages("RPostgres", repos="https://cloud.r-project.org", quiet=TRUE)' && \
   Rscript -e 'library(RPostgres)' && \
+  gem install --no-document pg && \
   ln -sf /usr/bin/clang-23 /usr/bin/clang && \
   ln -sf /usr/bin/clang++-23 /usr/bin/clang++ && \
   ln -sf /usr/bin/ccache /usr/local/bin/clang && \
@@ -74,13 +74,10 @@ ENV NUGET_PACKAGES=/opt/sdb-drivers/nuget
 ENV MAVEN_OPTS=--sun-misc-unsafe-memory-access=allow
 ENV GOTOOLCHAIN=local
 
-COPY --from=drivers python/requirements.txt python/pgadmin-requirements.txt /tmp/drivers/python/
+COPY --from=drivers python/requirements.txt /tmp/drivers/python/
 COPY test-data-requirements.txt /tmp/
 RUN python3 -m pip install --break-system-packages --no-cache-dir --root-user-action=ignore \
-      -r /tmp/drivers/python/requirements.txt -r /tmp/test-data-requirements.txt && \
-    python3 -m venv /opt/sdb-drivers/pgadmin && \
-    /opt/sdb-drivers/pgadmin/bin/pip install --no-cache-dir \
-      -r /tmp/drivers/python/pgadmin-requirements.txt
+      -r /tmp/drivers/python/requirements.txt -r /tmp/test-data-requirements.txt
 
 ENV SDB_DUCKDB_HOME=/opt/sdb-duckdb
 RUN mkdir -p "$SDB_DUCKDB_HOME" && HOME="$SDB_DUCKDB_HOME" python3 -c 'import duckdb; duckdb.connect().install_extension("tpch")' && \
@@ -102,10 +99,6 @@ RUN cd /opt/sdb-drivers/js && npm ci --no-fund --no-audit
 
 COPY --from=drivers php/composer.json php/composer.lock /opt/sdb-drivers/php/
 RUN cd /opt/sdb-drivers/php && composer install --no-interaction --no-progress
-
-COPY --from=drivers ruby/Gemfile ruby/Gemfile.lock /tmp/drivers/ruby/
-RUN gem install --no-document bundler && \
-    cd /tmp/drivers/ruby && BUNDLE_FROZEN=true bundle install
 
 COPY --from=drivers go/go.mod go/go.sum /tmp/drivers/go/
 RUN cd /tmp/drivers/go && go mod download && \

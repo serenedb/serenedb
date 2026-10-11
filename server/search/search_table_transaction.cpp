@@ -22,8 +22,10 @@
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <duckdb/storage/storage_lock.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/transaction_log_writer.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -89,7 +91,13 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
  public:
   SearchTableLogWriter(SearchShardWrites& writes,
                        LocalTableChangesEntry& changes)
-    : _writes{writes}, _changes{changes} {}
+    : _writes{writes}, _changes{changes} {
+    if (_changes.ClearsShard()) {
+      _checkpoint_lock =
+        duckdb::DuckTransactionManager::Get(writes.table->catalog.GetAttached())
+          .SharedCheckpointLock();
+    }
+  }
 
   void WriteToWAL(duckdb::WriteAheadLog& wal) final {
     for (auto& trx : _writes.transactions) {
@@ -138,6 +146,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
                   shard.GetTableId(), " tick=", _tick, ": ", e.what());
       }
     }
+    _checkpoint_lock.reset();
     SDB_PARK_ONCE_ON_FAILURE("pause_search_commit_before_delete_log");
     if (!_changes.ops.empty() && shard.IsDeleteLogOpen()) {
       RecordDeletesForBuild(shard, _changes, _tick);
@@ -169,6 +178,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
  private:
   SearchShardWrites& _writes;
   LocalTableChangesEntry& _changes;
+  duckdb::unique_ptr<duckdb::StorageLockKey> _checkpoint_lock;
   uint64_t _tick = 0;
 };
 

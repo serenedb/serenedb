@@ -86,7 +86,7 @@ A body can run another job with `EXECUTE JOB`: that job runs in a session of its
 
 ## Monitoring
 
-`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts.
+`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts. Notices and warnings that a run raises, scheduled or started with `EXECUTE JOB`, go to the server log as warnings prefixed with the job's name.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_004" />
 

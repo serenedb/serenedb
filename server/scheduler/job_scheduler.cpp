@@ -40,6 +40,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
@@ -47,6 +48,7 @@
 #include "catalog/catalog.h"
 #include "catalog/entry/job.h"
 #include "connector/duckdb_client_state.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 #include "scheduler/background_scheduler.h"
 
@@ -173,6 +175,12 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   }
   auto connection = connector::MakeSystemConnection(
     user, job.owner, job.catalog.GetIdentifierName(), job.database_oid);
+  absl::Cleanup log_notices = [&] {
+    connection.ctx->ConsumeNotices([&](auto& notice) {
+      SDB_WARN(GENERAL, "job \"", job.name.GetIdentifierName(),
+               "\": ", notice.errmsg);
+    });
+  };
   context = connection.conn->context;
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));

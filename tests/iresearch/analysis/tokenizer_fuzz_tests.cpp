@@ -116,7 +116,8 @@ TEST(TokenizerFuzz, SpecsCoverEveryTokenizerKind) {
 TEST(TokenizerFuzz, EverySpecConstructsAndDeclaresSaneTraits) {
   for (const auto* spec : SelectedSpecs()) {
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
 
     const auto traits = tokenizer->Traits();
@@ -239,9 +240,10 @@ TEST(TokenizerFuzz, RecoversAfterRejectedValue) {
   const auto& good = WordValues();
   for (const auto* spec : SelectedSpecs()) {
     SCOPED_TRACE(spec->name);
-    auto clean = Make(*spec);
+    auto conn = Connect();
+    auto clean = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, clean);
-    auto poisoned = Make(*spec);
+    auto poisoned = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, poisoned);
 
     for (const auto layout : DeclaredLayouts(clean->Traits())) {
@@ -336,7 +338,8 @@ TEST(TokenizerFuzz, RebindCycles) {
   const auto values = WordValues();
   for (const auto* spec : SelectedSpecs()) {
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     const auto layout = DeclaredLayouts(tokenizer->Traits()).back();
     std::vector<Result> baseline;
@@ -347,7 +350,7 @@ TEST(TokenizerFuzz, RebindCycles) {
 
     for (size_t round = 0; round < 3; ++round) {
       tokenizer->Unbind();
-      auto rebound = Make(*spec);
+      auto rebound = Make(*spec, *conn.context);
       ASSERT_NE(nullptr, rebound);
       std::swap(tokenizer, rebound);
       const auto traits = tokenizer->Traits();
@@ -372,7 +375,8 @@ TEST(TokenizerFuzz, MemoryUsageStaysBounded) {
     static_cast<size_t>(EnvU64("TOKENIZER_FUZZ_MEMORY_VALUES", 2048));
   for (const auto* spec : SelectedSpecs()) {
     SCOPED_TRACE(spec->name);
-    auto tokenizer = Make(*spec);
+    auto conn = Connect();
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     const auto values = SpecCorpus(*spec, Seed(), ValueBudget(*spec, count));
     const auto layout = DeclaredLayouts(tokenizer->Traits()).back();
@@ -413,7 +417,8 @@ TEST_P(TokenizerFuzzLoad, ManyValues) {
   const auto start = Clock::now();
 
   SCOPED_TRACE(testing::Message() << spec->name << " seed=" << seed);
-  auto tokenizer = Make(*spec);
+  auto conn = Connect();
+  auto tokenizer = Make(*spec, *conn.context);
   ASSERT_NE(nullptr, tokenizer);
   const auto traits = tokenizer->Traits();
   const auto layout = DeclaredLayouts(traits).back();

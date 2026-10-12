@@ -32,12 +32,12 @@ namespace {
 class Lz4Encoder final : public ContentEncoder {
  public:
   Lz4Encoder() {
+    _out.resize(std::max(LZ4F_compressBound(kSlice, &_prefs),
+                         LZ4F_compressBound(0, &_prefs)));
     const auto rc = LZ4F_createCompressionContext(&_cctx, LZ4F_VERSION);
     if (LZ4F_isError(rc)) {
       ThrowCodecError("lz4", LZ4F_getErrorName(rc));
     }
-    _out.resize(std::max(LZ4F_compressBound(kSlice, &_prefs),
-                         LZ4F_compressBound(0, &_prefs)));
   }
 
   ~Lz4Encoder() override { LZ4F_freeCompressionContext(_cctx); }

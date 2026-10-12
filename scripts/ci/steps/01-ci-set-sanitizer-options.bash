@@ -7,7 +7,10 @@ SAN_COMMON_OPTIONS="log_exe_name=true:print_suppressions=0"
 
 # LeakSanitizer (LSan) or AddressSanitizer (ASan)
 if [[ "$SANITIZERS" =~ "Leak" || "$SANITIZERS" =~ "Address" ]]; then
-	LSAN_OPTIONS="${SAN_COMMON_OPTIONS}:log_path=/serenedb/out/sanitizers/leak/log"
+	LSAN_OPTIONS="${SAN_COMMON_OPTIONS}"
+	if [[ ! "$SANITIZERS" =~ "Address" ]]; then
+		LSAN_OPTIONS="${LSAN_OPTIONS}:log_path=/serenedb/out/sanitizers/leak/log"
+	fi
 	if [ -f "resources/suppressions/lsan.txt" ]; then
 		LSAN_OPTIONS="${LSAN_OPTIONS}:suppressions=/serenedb/resources/suppressions/lsan.txt"
 	fi

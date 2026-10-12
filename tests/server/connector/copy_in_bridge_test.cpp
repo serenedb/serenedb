@@ -386,7 +386,7 @@ TEST(CopyInBridgeTeardown, FailMidStreamRethrows) {
     });
 
     // Feeder: publish ~half the frames, then Fail.
-    auto feeder = [&]() -> yaclib::Future<> {
+    const auto feeder = [&]() -> yaclib::Future<> {
       co_await yaclib::On(io);
       const size_t fail_at = in.frames.size() / 2;
       for (size_t i = 0; i < in.frames.size(); ++i) {
@@ -400,8 +400,8 @@ TEST(CopyInBridgeTeardown, FailMidStreamRethrows) {
         bridge.ResetDrained();
       }
       co_return {};
-    }();
-    std::ignore = std::move(feeder).Get();
+    };
+    std::ignore = feeder().Get();
     worker.join();
     io.Stop();
     io.Wait();
@@ -436,7 +436,7 @@ TEST(CopyInBridgeTeardown, AbortMidStreamStopsFeeder) {
 
     // Feeder mirrors RunCopyInFeeder's Aborted() guard: once aborted, stop
     // publishing (just drain frames without handing them out) and finish.
-    auto feeder = [&]() -> yaclib::Future<> {
+    const auto feeder = [&]() -> yaclib::Future<> {
       co_await yaclib::On(io);
       for (const auto& f : in.frames) {
         if (!bridge.Aborted()) {
@@ -446,8 +446,8 @@ TEST(CopyInBridgeTeardown, AbortMidStreamStopsFeeder) {
         }
       }
       co_return {};
-    }();
-    std::ignore = std::move(feeder).Get();
+    };
+    std::ignore = feeder().Get();
     worker.join();
     io.Stop();
     io.Wait();

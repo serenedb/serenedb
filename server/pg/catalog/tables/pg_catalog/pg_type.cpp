@@ -38,13 +38,11 @@ constexpr duckdb::CatalogType kTypes[] = {
   duckdb::CatalogType::VIEW_ENTRY,
 };
 
-constexpr duckdb::CatalogType kUserTypes[] = {duckdb::CatalogType::TYPE_ENTRY};
-
 constexpr SystemKindTypes kTypeKinds[] = {
   {'b', kTypes},
   {'c', kTypes},
-  {'d', kUserTypes},
-  {'e', kUserTypes},
+  {'d', kTypeTypes},
+  {'e', kTypeTypes},
 };
 
 constexpr SystemIndex kIndexes[] = {
@@ -80,13 +78,9 @@ constexpr SystemFact kBuiltinFacts[] = {
   {kPgTypeSql["oid"], 0, kMaxSystem - 1},
 };
 
-const BuiltinType kComposite = *FindBuiltinType(kPgClassRowtype);
+const BuiltinType kComposite = *FindBuiltinRowType(kPgClassTable);
 const BuiltinType kArray = *FindBuiltinType(kInt4Array);
 const BuiltinType kDomain = *FindBuiltinType(kCardinalNumber);
-const int32_t kEnumIn = BuiltinProcOid("enum_in");
-const int32_t kEnumOut = BuiltinProcOid("enum_out");
-const int32_t kEnumRecv = BuiltinProcOid("enum_recv");
-const int32_t kEnumSend = BuiltinProcOid("enum_send");
 
 consteval auto TypeColumns(auto base, auto align) {
   return std::tuple{

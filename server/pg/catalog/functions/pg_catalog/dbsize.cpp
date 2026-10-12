@@ -80,24 +80,31 @@ RelationStorageSize StoreTableDataSize(duckdb::ClientContext& context,
   return result;
 }
 
+int64_t BoundIndexBytes(duckdb::ClientContext& context,
+                        duckdb::DataTableInfo& info, const auto& match) {
+  info.BindIndexes(context);
+  int64_t total = 0;
+  for (auto entry : info.GetIndexes().IndexEntries()) {
+    if (entry->GetBindState() == duckdb::IndexBindState::BOUND) {
+      const auto index = entry->GetReadHandle<duckdb::BoundIndex>();
+      if (match(index)) {
+        total += static_cast<int64_t>(index->GetAllocationSize());
+      }
+    }
+  }
+  return total;
+}
+
 int64_t StoreTableIndexBytes(duckdb::ClientContext& context,
                              const duckdb::TableCatalogEntry& table) {
   if (!table.IsDuckTable()) {
     return 0;
   }
-  auto& info = *const_cast<duckdb::TableCatalogEntry&>(table)
-                  .GetStorage()
-                  .GetDataTableInfo();
-  info.BindIndexes(context);
-  int64_t total = 0;
-  for (auto entry : info.GetIndexes().IndexEntries()) {
-    if (entry->GetBindState() != duckdb::IndexBindState::BOUND) {
-      continue;
-    }
-    const auto index = entry->GetReadHandle<duckdb::BoundIndex>();
-    total += static_cast<int64_t>(index->GetAllocationSize());
-  }
-  return total;
+  return BoundIndexBytes(context,
+                         *const_cast<duckdb::TableCatalogEntry&>(table)
+                            .GetStorage()
+                            .GetDataTableInfo(),
+                         [](const auto&) { return true; });
 }
 
 int64_t SearchTableBytes(const catalog::SearchTableEntry& table) {
@@ -153,14 +160,9 @@ int64_t IndexEntryBytes(duckdb::ClientContext& context,
   }
   // A secondary index is an ART on the store table, so its size is the
   // allocation the store table reports for it.
-  auto& info = index.GetDataTableInfo();
-  info.BindIndexes(context);
-  auto entry = info.GetIndexes().FindEntry(index.name);
-  if (!entry || entry->GetBindState() != duckdb::IndexBindState::BOUND) {
-    return 0;
-  }
-  const auto bound = entry->GetReadHandle<duckdb::BoundIndex>();
-  return static_cast<int64_t>(bound->GetAllocationSize());
+  return BoundIndexBytes(
+    context, index.GetDataTableInfo(),
+    [&](const auto& bound) { return bound->GetIndexName() == index.name; });
 }
 
 int64_t KeyIndexBytes(duckdb::ClientContext& context,
@@ -174,19 +176,11 @@ int64_t KeyIndexBytes(duckdb::ClientContext& context,
   for (const auto logical : key.GetLogicalIndexes(columns)) {
     ids.emplace_back(columns.LogicalToPhysical(logical).index);
   }
-  auto& info = *table.GetStorage().GetDataTableInfo();
-  info.BindIndexes(context);
-  for (auto entry : info.GetIndexes().IndexEntries()) {
-    if (entry->GetBindState() != duckdb::IndexBindState::BOUND) {
-      continue;
-    }
-    const auto index = entry->GetReadHandle<duckdb::BoundIndex>();
-    if (index->GetConstraintType() == key.GetIndexConstraintType() &&
-        absl::c_equal(index->GetColumnIds(), ids)) {
-      return static_cast<int64_t>(index->GetAllocationSize());
-    }
-  }
-  return 0;
+  return BoundIndexBytes(
+    context, *table.GetStorage().GetDataTableInfo(), [&](const auto& index) {
+      return index->GetConstraintType() == key.GetIndexConstraintType() &&
+             absl::c_equal(index->GetColumnIds(), ids);
+    });
 }
 
 int64_t TableIndexesTotalBytes(duckdb::ClientContext& context,
@@ -356,14 +350,10 @@ void PgDatabaseSizeOidFunction(duckdb::DataChunk& args,
 
   duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
     args.data[0], result, args.size(), [&](int64_t oid) -> int64_t {
-      // Try our catalog by OID first
-      auto entry = FindDatabaseById(context, static_cast<uint64_t>(oid));
-      // DuckDB's pg_database OIDs don't match ours -- fall back to
-      // current database (covers the common pg_database_size(d.oid)
-      // WHERE d.datname = current_database() pattern)
+      const auto entry = FindDatabaseById(context, static_cast<uint64_t>(oid));
       duckdb::optional_ptr<duckdb::Catalog> database =
         entry ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
-              : SessionCatalog(context).get();
+              : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database with OID ", oid, " does not exist"));

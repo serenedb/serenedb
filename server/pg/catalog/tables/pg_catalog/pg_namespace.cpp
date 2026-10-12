@@ -20,12 +20,11 @@
 
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 
+#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
-
-constexpr duckdb::CatalogType kTypes[] = {duckdb::CatalogType::SCHEMA_ENTRY};
 
 constexpr SystemIndex kIndexes[] = {
   {kPgNamespaceSql["oid"], SystemLookup::Object},
@@ -37,7 +36,7 @@ class PgNamespace final : public SystemTableScan<kPgNamespaceSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kTypes, SystemSchemas::Visit, kIndexes}};
+    CatalogSource{kSchemaTypes, SystemSchemas::Visit, kIndexes}};
 
   static constexpr auto kSchema = Shape<kSql, const duckdb::SchemaCatalogEntry>(
     Col<"oid">(&duckdb::CatalogEntry::oid),

@@ -216,11 +216,7 @@ std::shared_ptr<const BuiltinFunctions> gBuiltins
 }  // namespace
 
 const BuiltinFunction* BuiltinFunctions::Find(duckdb::idx_t oid) const {
-  const auto it = absl::c_lower_bound(
-    _functions, oid, [](const BuiltinFunction& function, duckdb::idx_t key) {
-      return function.oid < key;
-    });
-  return it != _functions.end() && it->oid == oid ? &*it : nullptr;
+  return FindByOid(_functions, oid);
 }
 
 std::span<const uint32_t> BuiltinFunctions::Named(std::string_view name) const {

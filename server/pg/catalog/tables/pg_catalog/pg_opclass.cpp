@@ -22,13 +22,12 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/tokenizer.h"
+#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/types.h"
 
 namespace sdb::pg {
 namespace {
-
-constexpr duckdb::CatalogType kTypes[] = {duckdb::CatalogType::TOKENIZER_ENTRY};
 
 constexpr SystemIndex kOpclassIndexes[] = {
   {kPgOpclassSql["oid"], SystemLookup::Object},
@@ -54,7 +53,7 @@ class PgOpclass final : public SystemTableScan<kPgOpclassSql> {
 
   static constexpr std::tuple kSources{
     ArraySource<Opclass>{&LoadStatic<kOpclasses>, {}, {}},
-    CatalogSource{kTypes, SystemSchemas::Skip, kOpclassIndexes}};
+    CatalogSource{kTokenizerTypes, SystemSchemas::Skip, kOpclassIndexes}};
 
   static constexpr auto kOpclassMethod =
     Col<"opcmethod">([](const auto&) { return kPgAmInverted; });

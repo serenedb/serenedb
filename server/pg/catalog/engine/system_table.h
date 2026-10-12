@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
-#include <absl/container/inlined_vector.h>
 
 #include <algorithm>
 #include <array>
@@ -85,6 +84,7 @@ struct TableFilterState;
 namespace sdb::catalog {
 
 class TokenizerCatalogEntry;
+class SnapshotCatalog;
 struct CatalogSnapshot;
 
 }  // namespace sdb::catalog
@@ -96,7 +96,23 @@ enum class SystemKey : uint8_t {
   Indexed,
 };
 
-using SystemCell = std::optional<std::string_view>;
+constexpr int64_t SystemNumber(std::string_view text) {
+  if (text == "true") {
+    return 1;
+  }
+  if (text == "false") {
+    return 0;
+  }
+  const bool negative = text.starts_with('-');
+  int64_t value = 0;
+  for (const char digit : text.substr(negative ? 1 : 0)) {
+    if (digit < '0' || digit > '9') {
+      SDB_UNREACHABLE();
+    }
+    value = value * 10 + (digit - '0');
+  }
+  return negative ? -value : value;
+}
 
 struct SystemSqlColumn {
   std::string_view name;
@@ -105,7 +121,7 @@ struct SystemSqlColumn {
   duckdb::PhysicalType element;
   bool not_null;
   SystemKey key;
-  SystemCell default_value;
+  std::optional<std::string_view> default_value;
 };
 
 enum class SystemLookup : uint8_t {
@@ -140,6 +156,8 @@ struct SystemSql {
   duckdb::idx_t oid;
   std::string_view schema;
   std::string_view name;
+  int32_t row_type;
+  int32_t row_array_type;
   char relkind;
   bool superuser_only;
   bool shared;
@@ -208,15 +226,14 @@ constexpr std::tuple<Columns...> SystemColumns(std::tuple<Columns...> columns) {
   return columns;
 }
 
-template<const SystemSql& Sql, typename Ctx, typename... Cols>
-consteval SystemShape<Sql, Ctx, Cols...> MakeShape(
-  std::tuple<Cols...> columns) {
-  return {columns};
-}
-
 template<const SystemSql& Sql, typename Ctx, typename... Args>
 consteval auto Shape(Args... args) {
-  return MakeShape<Sql, Ctx>(std::tuple_cat(SystemColumns(args)...));
+  return std::apply(
+    [](auto... columns) {
+      return SystemShape<Sql, Ctx, decltype(columns)...>{
+        std::tuple{columns...}};
+    },
+    std::tuple_cat(SystemColumns(args)...));
 }
 
 template<const auto& Shape>
@@ -225,31 +242,6 @@ using SystemShapeOf = std::remove_cvref_t<decltype(Shape)>;
 struct SystemScanFunctions {
   duckdb::table_function_init_global_t init;
   duckdb::table_function_t scan;
-};
-
-consteval size_t SystemWidth(duckdb::PhysicalType physical) {
-  using enum duckdb::PhysicalType;
-  if (physical == BOOL) {
-    return 1;
-  }
-  if (physical == INT16) {
-    return 2;
-  }
-  if (physical == INT32 || physical == FLOAT) {
-    return 4;
-  }
-  if (physical == INT64) {
-    return 8;
-  }
-  if (physical == VARCHAR) {
-    return sizeof(duckdb::string_t);
-  }
-  SDB_UNREACHABLE();
-}
-
-struct SystemDefault {
-  duckdb::Value value;
-  std::array<std::byte, sizeof(duckdb::string_t)> bytes;
 };
 
 struct SystemFact {
@@ -270,7 +262,6 @@ struct SystemTypeShape {
 
 class SystemTable {
  public:
-  SystemTable(const SystemSql& sql, std::span<const SystemCell> cells);
   SystemTable(const SystemSql& sql, SystemScanFunctions functions,
               std::span<const SystemFact> facts,
               std::optional<SystemVisibility> visibility,
@@ -283,14 +274,7 @@ class SystemTable {
 
   const SystemSql& Sql() const noexcept { return _sql; }
   const duckdb::ColumnList& Columns() const noexcept { return _columns; }
-  const SystemDefault& Default(duckdb::idx_t column) const {
-    return _defaults[column];
-  }
   const SystemScanFunctions& Functions() const noexcept { return _functions; }
-  std::span<const SystemCell> Cells() const noexcept { return _cells; }
-  std::span<const std::unique_ptr<duckdb::DataChunk>> Chunks() const noexcept {
-    return _chunks;
-  }
   const SystemFact* FactOf(uint32_t column) const {
     const auto it = absl::c_find_if(
       _facts, [&](const SystemFact& fact) { return fact.column == column; });
@@ -311,17 +295,14 @@ class SystemTable {
  private:
   const SystemSql& _sql;
   SystemScanFunctions _functions;
-  std::span<const SystemCell> _cells;
   std::span<const SystemFact> _facts;
   std::optional<SystemVisibility> _visibility;
   std::span<const SystemTypeShape> _type_shapes;
   duckdb::ColumnList _columns;
-  std::vector<SystemDefault> _defaults;
-  std::vector<std::unique_ptr<std::byte[]>> _storage;
-  std::vector<std::unique_ptr<duckdb::DataChunk>> _chunks;
 };
 
 duckdb::LogicalType SystemRowType(const SystemSql& sql);
+duckdb::LogicalType SystemColumnType(int32_t oid);
 
 class SystemScan;
 
@@ -374,19 +355,22 @@ struct SystemPrefix {
   duckdb::Identifier upper;
 };
 
-struct SystemMembers {
-  std::vector<duckdb::CatalogEntry*> entries;
-  std::vector<duckdb::SchemaCatalogEntry*> schemas;
-  absl::InlinedVector<duckdb::CatalogType, 8> sets;
-  std::bitset<256> wanted;
-  std::optional<uint32_t> nsp_column;
-  std::optional<SystemPrefix> prefix;
-};
-
 struct SystemSet {
   std::shared_ptr<const catalog::CatalogSnapshot> snapshot;
   std::vector<duckdb::CatalogEntry*> found;
   std::span<duckdb::CatalogEntry* const> entries;
+};
+
+struct SystemWalk {
+  duckdb::SchemaCatalogEntry* schema;
+  duckdb::CatalogType type;
+};
+
+struct SystemEntries {
+  SystemSet listed;
+  std::vector<SystemWalk> walks;
+  std::bitset<256> wanted;
+  std::optional<SystemPrefix> prefix;
 };
 
 struct CatalogSetSource {
@@ -439,7 +423,7 @@ struct SystemCondition {
   }
 
   bool PassesNull() const noexcept {
-    return null && !keys && excluded.empty() && !lower && !upper;
+    return null && !not_null && !keys && excluded.empty() && !lower && !upper;
   }
 
   template<typename V>
@@ -456,6 +440,21 @@ struct SystemCondition {
            (!upper || (upper->inclusive ? !(upper->value < value)
                                         : value < upper->value));
   }
+
+  bool Overlaps(const T& min, const T& max) const {
+    if (null) {
+      return false;
+    }
+    if (keys) {
+      const auto key = absl::c_lower_bound(*keys, min);
+      return key != keys->end() && !(max < *key);
+    }
+    return !(min == max && absl::c_linear_search(excluded, min)) &&
+           (!lower ||
+            (lower->inclusive ? !(max < lower->value) : lower->value < max)) &&
+           (!upper ||
+            (upper->inclusive ? !(upper->value < min) : min < upper->value));
+  }
 };
 
 struct SystemFilter {
@@ -464,16 +463,11 @@ struct SystemFilter {
   std::bitset<256> chars;
 };
 
-struct SystemResidual {
-  uint32_t slot;
-  duckdb::unique_ptr<duckdb::TableFilterState> state;
-};
-
 struct SystemPrune {
   uint32_t column;
   const duckdb::TableFilter* filter;
   duckdb::unique_ptr<duckdb::TableFilterState> state;
-  mutable duckdb::BaseStatistics stats;
+  duckdb::unique_ptr<duckdb::BaseStatistics> stats;
 };
 
 struct SystemVector {
@@ -482,22 +476,13 @@ struct SystemVector {
   duckdb::ValidityMask* validity;
 };
 
-struct SystemRange {
-  std::string lower;
-  std::optional<SystemBound<std::string>> upper;
-  bool exact;
-};
-
 struct SystemStableText {
   std::string_view text;
 };
 
-std::optional<SystemRange> RangeOf(const duckdb::Expression& expr);
-std::optional<bool> BooleanOf(const duckdb::Expression& expr);
-std::optional<bool> NullCheckOf(const duckdb::Expression& expr);
-bool IsExclusion(const duckdb::Expression& expr);
-bool IsVisibility(const duckdb::Expression& expr,
-                  const SystemVisibility& visibility);
+duckdb::TableFilterPushdown SystemPushdown(const SystemTable& table,
+                                           duckdb::column_t column,
+                                           const duckdb::Expression& expr);
 
 template<typename Row, typename Holder = void>
 struct ArrayKey {
@@ -562,8 +547,8 @@ class SystemScan {
     return *_database.GetDependencyManager();
   }
 
-  SystemMembers Resolve(const CatalogSource& source);
-  SystemSet Resolve(const CatalogSetSource& source) const;
+  SystemEntries Resolve(const CatalogSource& source);
+  SystemEntries Resolve(const CatalogSetSource& source) const;
   SystemSet MemberSet(duckdb::SchemaCatalogEntry& schema,
                       duckdb::CatalogType type,
                       const SystemPrefix* prefix) const;
@@ -588,19 +573,20 @@ class SystemScan {
 
   template<typename V>
   bool Allows(uint32_t column, const V& value) const {
-    if (Filtered(column) && !Passes(column, value)) {
-      return false;
-    }
     if constexpr (std::is_integral_v<V> && !std::is_same_v<V, char>) {
-      return ((_pruned >> column) & 1) == 0 ||
-             Survives(column, static_cast<int64_t>(value),
-                      static_cast<int64_t>(value));
+      return Allows(column, static_cast<int64_t>(value),
+                    static_cast<int64_t>(value));
     } else {
-      return true;
+      return !Filtered(column) || Passes(column, value);
     }
   }
 
-  bool AllowsAbove(uint32_t column, int64_t value) const;
+  IRS_FORCE_INLINE bool Allows(uint32_t column, int64_t min,
+                               int64_t max) const {
+    return (((_filtered | _pruned) >> column) & 1) == 0 ||
+           Overlaps(column, min, max);
+  }
+
   bool AllowsSchema(std::optional<uint32_t> column,
                     const duckdb::SchemaCatalogEntry& schema) const;
 
@@ -702,22 +688,19 @@ class SystemScan {
   void Visiting(duckdb::CatalogType type) noexcept { _visiting = type; }
 #endif
 
-  IRS_FORCE_INLINE bool Needs(uint32_t column) const noexcept {
-    return ((_needed >> column) & 1) != 0;
-  }
-
   IRS_FORCE_INLINE bool Reads(uint32_t column) const noexcept {
     return (((_needed | _filtered) >> column) & 1) != 0;
   }
 
   bool VisibleOnly() const noexcept { return _visible_only; }
 
- protected:
-  void EmitChunk(const duckdb::DataChunk& source);
-
  private:
-  static constexpr uint32_t kNowhere = ~uint32_t{0};
-  static constexpr size_t kMaxSlots = 64 + 2;
+  IRS_FORCE_INLINE bool Needs(uint32_t column) const noexcept {
+    return ((_needed >> column) & 1) != 0;
+  }
+
+  SystemSet SetOf(catalog::SnapshotCatalog& catalog, duckdb::CatalogSet& set,
+                  const duckdb::CatalogTransaction& transaction) const;
 
   std::span<
     const std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
@@ -739,8 +722,8 @@ class SystemScan {
     typename SystemShapeOf<Shape>::Context>::Type;
 
   template<const auto& Shape, size_t I, bool Checked>
-  IRS_FORCE_INLINE static bool Write(SystemScan& scan,
-                    typename SystemShapeOf<Shape>::Context& ctx) {
+  IRS_FORCE_INLINE static bool Write(
+    SystemScan& scan, typename SystemShapeOf<Shape>::Context& ctx) {
     using T = SystemShapeOf<Shape>;
     constexpr auto kColumn = T::kColumns[I];
     constexpr auto& kMeta = T::kSql.columns[kColumn];
@@ -947,15 +930,12 @@ class SystemScan {
     const auto& target = _vectors[_slots[C]];
     if constexpr (!kMeta.default_value) {
       target.validity->SetInvalid(_row);
+    } else if constexpr (kMeta.physical == VARCHAR) {
+      Put<VARCHAR>(target, _row, SystemStableText{*kMeta.default_value});
     } else {
-      static_assert(
-        kMeta.physical != LIST &&
-          (kMeta.physical != VARCHAR ||
-           kMeta.default_value->size() <= duckdb::string_t::INLINE_LENGTH),
-        "a column default is a scalar that fits a string_t");
-      constexpr auto kWidth = SystemWidth(kMeta.physical);
-      std::memcpy(target.data + _row * kWidth, _table.Default(C).bytes.data(),
-                  kWidth);
+      static_assert(kMeta.physical != LIST, "a column default is a scalar");
+      constexpr auto kValue = SystemNumber(*kMeta.default_value);
+      Put<kMeta.physical>(target, _row, kValue);
     }
   }
 
@@ -965,13 +945,12 @@ class SystemScan {
                         const SystemConcatText& value);
   void PutAcl(const SystemVector& target, duckdb::idx_t row,
               const duckdb::AclItem& item);
-  bool Survives(uint32_t column, int64_t min, int64_t max) const;
+  bool Overlaps(uint32_t column, int64_t min, int64_t max) const;
   bool Possible(std::span<const SystemFact> facts) const;
-  bool Overlaps(const SystemFact& fact) const;
 #ifdef SDB_DEV
   bool Declared(uint64_t provided) const;
 #endif
-  bool Compile(duckdb::column_t column, const duckdb::TableFilter& filter);
+  void Compile(duckdb::column_t column, const duckdb::TableFilter& filter);
   const SystemIndex* Choose(std::span<const SystemIndex> indexes,
                             size_t name_probes) const;
   std::string_view NamePrefix(std::span<const SystemIndex> indexes) const;
@@ -986,19 +965,19 @@ class SystemScan {
                    std::vector<duckdb::CatalogEntry*>& entries) const;
   void AppendNamed(std::string_view name,
                    std::span<const duckdb::CatalogType> types,
-                   SystemSchemas system, SystemMembers& members) const;
+                   SystemSchemas system,
+                   std::span<duckdb::SchemaCatalogEntry* const> schemas,
+                   const std::bitset<256>& wanted,
+                   std::vector<duckdb::CatalogEntry*>& entries) const;
 
   duckdb::ClientContext& _context;
   duckdb::DuckCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
   std::shared_ptr<const auth::RoleGraph> _roles;
-  duckdb::vector<duckdb::column_t> _column_ids;
-  std::array<uint32_t, kMaxSlots> _places;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
-  std::vector<SystemResidual> _residuals;
-  duckdb::DataChunk _side;
+  std::vector<std::pair<uint32_t, duckdb::Value>> _constants;
   std::vector<SystemVector> _vectors;
   duckdb::idx_t _row = 0;
   size_t _skip = 0;
@@ -1021,6 +1000,9 @@ template<const SystemSql& Sql>
 class SystemTableScan : public SystemScan {
  public:
   static constexpr const SystemSql& kSql = Sql;
+  static constexpr std::span<const SystemFact> kFacts{};
+  static constexpr std::optional<SystemVisibility> kVisibility{};
+  static constexpr std::span<const SystemTypeShape> kTypeShapes{};
 
   using SystemScan::SystemScan;
 
@@ -1030,13 +1012,8 @@ class SystemTableScan : public SystemScan {
   }
 
   template<irs::utils::detail::FixedString Name>
-  bool AllowsAbove(int64_t value) const {
-    return SystemScan::AllowsAbove(Sql[std::string_view{Name}], value);
-  }
-
-  template<irs::utils::detail::FixedString Name>
-  bool Needs() const noexcept {
-    return SystemScan::Needs(Sql[std::string_view{Name}]);
+  bool Allows(int64_t min, int64_t max) const {
+    return SystemScan::Allows(Sql[std::string_view{Name}], min, max);
   }
 
   template<irs::utils::detail::FixedString Name>
@@ -1113,26 +1090,6 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
 template<typename Source>
 class SystemCursor;
 
-template<>
-class SystemCursor<SystemSet> final {
- public:
-  explicit SystemCursor(SystemSet set) : _set{std::move(set)} {}
-
-  template<typename T>
-  bool Run(T& table) {
-    for (; _next < _set.entries.size(); ++_next) {
-      if (table.Step([&] { Dispatch(table, *_set.entries[_next]); })) {
-        return true;
-      }
-    }
-    return false;
-  }
-
- private:
-  SystemSet _set;
-  size_t _next = 0;
-};
-
 template<typename Row, typename Holder>
 class SystemCursor<SystemArray<Row, Holder>> final {
  public:
@@ -1145,7 +1102,7 @@ class SystemCursor<SystemArray<Row, Holder>> final {
 
   template<typename T>
   bool Run(T& table) {
-    for (; _next < Size(); ++_next) {
+    for (const auto size = Size(); _next < size; ++_next) {
       if (table.Step([&] {
             table.Row(_array.picked ? *(*_array.picked)[_next]
                                     : _array.rows.Rows()[_next]);
@@ -1162,45 +1119,21 @@ class SystemCursor<SystemArray<Row, Holder>> final {
 };
 
 template<>
-class SystemCursor<SystemMembers> final {
+class SystemCursor<SystemEntries> final {
  public:
-  explicit SystemCursor(SystemMembers members) : _members{std::move(members)} {}
+  explicit SystemCursor(SystemEntries entries) : _entries{std::move(entries)} {}
 
   template<typename T>
   bool Run(T& table) {
-    using enum duckdb::CatalogType;
-    for (; _next < _members.entries.size(); ++_next) {
-      if (table.Step([&] { Dispatch(table, *_members.entries[_next]); })) {
+    const auto listed = _entries.listed.entries;
+    for (; _next < listed.size(); ++_next) {
+      if (table.Step([&] { Dispatch(table, *listed[_next]); })) {
         return true;
       }
     }
-    for (; _schema < _members.schemas.size();
-         ++_schema, _entered = false, _set = 0) {
-      auto& schema = *_members.schemas[_schema];
-      if (!_entered) {
-        if (!table.AllowsSchema(_members.nsp_column, schema)) {
-          continue;
-        }
-        if (_members.wanted.test(std::to_underlying(SCHEMA_ENTRY)) &&
-            table.Step(
-              [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); })) {
-          return true;
-        }
-        _entered = true;
-      }
-      for (; _set < _members.sets.size(); ++_set, _pos = 0, _set_entries = {}) {
-        const auto type = _members.sets[_set];
-        if (!_set_entries.snapshot) {
-          const bool keyed =
-            (type == TABLE_ENTRY || type == VIEW_ENTRY) &&
-            _members.wanted.test(std::to_underlying(INDEX_ENTRY));
-          _set_entries = table.MemberSet(
-            schema, type,
-            _members.prefix && !keyed ? &*_members.prefix : nullptr);
-        }
-        if (Walk(table, schema, type)) {
-          return true;
-        }
+    for (; _walk < _entries.walks.size(); ++_walk, _pos = 0, _set = {}) {
+      if (Walk(table, _entries.walks[_walk])) {
+        return true;
       }
     }
     return false;
@@ -1208,9 +1141,21 @@ class SystemCursor<SystemMembers> final {
 
  private:
   template<typename T>
-  bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema,
-            duckdb::CatalogType type) {
+  bool Walk(T& table, const SystemWalk& walk) {
     using enum duckdb::CatalogType;
+    const auto type = walk.type;
+    if (type == SCHEMA_ENTRY) {
+      return table.Step(
+        [&] { Visit<duckdb::SchemaCatalogEntry>(table, *walk.schema); });
+    }
+    if (!_set.snapshot) {
+      const bool keyed = (type == TABLE_ENTRY || type == VIEW_ENTRY) &&
+                         _entries.wanted.test(std::to_underlying(INDEX_ENTRY));
+      _set = table.MemberSet(
+        *walk.schema, type,
+        _entries.prefix && !keyed ? &*_entries.prefix : nullptr);
+    }
+    const auto& schema = *walk.schema;
     if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
       return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
         if (entry.type == TABLE_ENTRY) {
@@ -1241,15 +1186,16 @@ class SystemCursor<SystemMembers> final {
 
   template<typename T, typename V>
   bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema, V&& visit) {
-    const auto entries = _set_entries.entries;
-    table.Walking(_set_entries.snapshot.get());
+    const auto entries = _set.entries;
+    const bool user_schema = !schema.internal;
+    table.Walking(_set.snapshot.get());
     for (; _pos < entries.size(); ++_pos) {
       if (_pos + kPrefetchAhead < entries.size()) {
         __builtin_prefetch(entries[_pos + kPrefetchAhead]);
       }
       auto& entry = *entries[_pos];
-      if (!_members.wanted.test(std::to_underlying(entry.type)) ||
-          (entry.internal && !schema.internal)) {
+      if (!_entries.wanted.test(std::to_underlying(entry.type)) ||
+          (entry.internal && user_schema)) {
         continue;
       }
       if (table.Step([&] { visit(entry); })) {
@@ -1262,17 +1208,14 @@ class SystemCursor<SystemMembers> final {
 
   static constexpr size_t kPrefetchAhead = 8;
 
-  SystemMembers _members;
+  SystemEntries _entries;
   size_t _next = 0;
-  size_t _schema = 0;
-  bool _entered = false;
-  size_t _set = 0;
+  size_t _walk = 0;
   size_t _pos = 0;
-  SystemSet _set_entries;
+  SystemSet _set;
 };
 
-SystemCursor(SystemSet) -> SystemCursor<SystemSet>;
-SystemCursor(SystemMembers) -> SystemCursor<SystemMembers>;
+SystemCursor(SystemEntries) -> SystemCursor<SystemEntries>;
 template<typename Row, typename Holder>
 SystemCursor(SystemArray<Row, Holder>)
   -> SystemCursor<SystemArray<Row, Holder>>;
@@ -1326,23 +1269,11 @@ void SystemScanRun(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
 
 template<typename T>
 SystemTable SystemTableOf() {
-  std::span<const SystemFact> facts;
-  if constexpr (requires { T::kFacts; }) {
-    facts = T::kFacts;
-  }
-  std::optional<SystemVisibility> visibility;
-  if constexpr (requires { T::kVisibility; }) {
-    visibility = T::kVisibility;
-  }
-  std::span<const SystemTypeShape> type_shapes;
-  if constexpr (requires { T::kTypeShapes; }) {
-    type_shapes = T::kTypeShapes;
-  }
   return SystemTable{T::kSql,
                      {&SystemScanInit<T>, &SystemScanRun<T>},
-                     facts,
-                     visibility,
-                     type_shapes};
+                     T::kFacts,
+                     T::kVisibility,
+                     T::kTypeShapes};
 }
 
 }  // namespace sdb::pg

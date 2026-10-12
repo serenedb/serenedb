@@ -45,18 +45,9 @@
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kViewTypes[] = {duckdb::CatalogType::TABLE_ENTRY,
-                                              duckdb::CatalogType::VIEW_ENTRY};
-constexpr duckdb::CatalogType kIndexTypes[] = {
-  duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::INDEX_ENTRY};
-constexpr duckdb::CatalogType kSequenceTypes[] = {
-  duckdb::CatalogType::SEQUENCE_ENTRY};
-constexpr duckdb::CatalogType kCompositeTypes[] = {
-  duckdb::CatalogType::TYPE_ENTRY};
-
 constexpr SystemKindTypes kRelkinds[] = {
-  {'r', kTableTypes},    {'v', kViewTypes},      {'i', kIndexTypes},
-  {'S', kSequenceTypes}, {'c', kCompositeTypes},
+  {'r', kTableTypes},    {'v', kTableViewTypes}, {'i', kIndexTypes},
+  {'S', kSequenceTypes}, {'c', kTypeTypes},
 };
 
 constexpr SystemIndex kIndexes[] = {

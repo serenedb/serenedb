@@ -5,6 +5,8 @@ target_sources(
         catalog/engine/builtin_functions.cpp
         catalog/engine/registry.cpp
         catalog/engine/scan_function.cpp
+        catalog/engine/system_filter.cpp
+        catalog/engine/system_source.cpp
         catalog/engine/system_table.cpp
         catalog/functions/functions.cpp
         catalog/functions/information_schema/macros.cpp

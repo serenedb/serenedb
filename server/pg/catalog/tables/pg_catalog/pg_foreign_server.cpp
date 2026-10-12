@@ -46,7 +46,8 @@ class PgForeignServer final : public SystemTableScan<kPgForeignServerSql> {
       Col<"oid">(&duckdb::CatalogEntry::oid),
       Col<"srvname">(&duckdb::CatalogEntry::name), Col<"srvowner">(kOwner),
       Col<"srvfdw">([](const auto& server) {
-        const auto* wrapper = FindForeignDataWrapper(server.FdwName());
+        const auto* wrapper =
+          FindSystemObject(kForeignDataWrappers, server.FdwName());
         return wrapper ? wrapper->oid : kInvalidOid;
       }),
       Col<"srvacl">(kAcl), Col<"srvoptions">([](const auto& server) {

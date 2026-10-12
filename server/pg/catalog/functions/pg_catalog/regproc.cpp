@@ -166,7 +166,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
 
 std::optional<uint64_t> SchemaOid(const Session& session,
                                   std::string_view schema, bool missing_ok) {
-  if (const auto* system = FindSystemNamespace(schema)) {
+  if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     return system->oid;
   }
   if (auto entry = FindSchema(session, schema)) {
@@ -179,7 +179,7 @@ std::optional<uint64_t> SchemaOid(const Session& session,
 
 bool RelationIn(const Session& session, const SessionSchema& schema,
                 std::string_view name) {
-  if (FindSystemNamespace(schema.name)) {
+  if (FindSystemObject(kSystemNamespaces, schema.name)) {
     return IsSystemRelation(schema.name, name);
   }
   auto entry = schema.entry;
@@ -795,7 +795,7 @@ int32_t TypmodIn(uint64_t oid, std::span<const int32_t> typmods,
 
 uint64_t FindTypeIn(const Session& session, std::string_view schema,
                     std::string_view name) {
-  if (const auto* system = FindSystemNamespace(schema)) {
+  if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     if (const auto* builtin = FindBuiltinType(system->oid, name)) {
       return static_cast<uint64_t>(builtin->oid);
     }
@@ -1001,8 +1001,8 @@ std::string FormatType(const Session& session, uint64_t oid) {
         FindVisibleType(session, builtin->name) == oid) {
       return std::string{builtin->name};
     }
-    return QualifiedOutName(FindSystemNamespace(builtin->nsp)->name,
-                            builtin->name);
+    return QualifiedOutName(
+      FindSystemObject(kSystemNamespaces, builtin->nsp)->name, builtin->name);
   }
   if (auto name = FormatUserType(session, oid, std::nullopt)) {
     return std::move(*name);
@@ -1103,7 +1103,7 @@ void CollectProcs(const Session& session, const BuiltinFunctions& builtins,
         ProcCandidate{.oid = oid, .nsp = nsp, .args = std::move(args)});
     }
   };
-  if (const auto* system = FindSystemNamespace(schema)) {
+  if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
     for (const auto index : builtins.Named(name)) {
       const auto& function = builtins.All()[index];
       if (function.nsp == system->oid) {
@@ -1152,7 +1152,8 @@ std::optional<ProcInfo> FindProc(const Session& session,
     if (const auto* function = builtins.Find(oid)) {
       return ProcInfo{
         .nsp = function->nsp,
-        .schema = std::string{FindSystemNamespace(function->nsp)->name},
+        .schema =
+          std::string{FindSystemObject(kSystemNamespaces, function->nsp)->name},
         .name = function->name,
         .args = function->argtypes};
     }
@@ -1503,7 +1504,7 @@ std::optional<uint64_t> NamespaceIn(const Session& session,
 }
 
 std::string NamespaceOut(const Session& session, uint64_t oid) {
-  if (const auto* system = FindSystemNamespace(oid)) {
+  if (const auto* system = FindSystemObject(kSystemNamespaces, oid)) {
     return std::string{system->name};
   }
   if (session.database) {

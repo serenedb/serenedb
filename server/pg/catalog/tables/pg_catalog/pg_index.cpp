@@ -38,9 +38,6 @@
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kTypes[] = {duckdb::CatalogType::TABLE_ENTRY,
-                                          duckdb::CatalogType::INDEX_ENTRY};
-
 constexpr SystemIndex kIndexes[] = {
   {kPgIndexSql["indexrelid"], SystemLookup::Object},
   {kPgIndexSql["indrelid"], SystemLookup::Dependents},
@@ -117,7 +114,7 @@ class PgIndex final : public SystemTableScan<kPgIndexSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kTypes, SystemSchemas::Skip, kIndexes}};
+    CatalogSource{kIndexTypes, SystemSchemas::Skip, kIndexes}};
 
   static constexpr auto kKey = Shape<kSql, const KeyRow>(
     Col<"indexrelid">([](const auto& row) { return row.key.index_oid; }),

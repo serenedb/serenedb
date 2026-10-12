@@ -64,26 +64,27 @@ class SereneDBCatalog;
 }  // namespace catalog
 namespace pg {
 
-struct PrivChar {
+struct AclPrivilege {
   duckdb::AclMode mode;
   char chr;
+  std::string_view name;
 };
-inline constexpr std::array kPrivChars{
-  PrivChar{duckdb::AclMode::Insert, 'a'},
-  PrivChar{duckdb::AclMode::Select, 'r'},
-  PrivChar{duckdb::AclMode::Update, 'w'},
-  PrivChar{duckdb::AclMode::Delete, 'd'},
-  PrivChar{duckdb::AclMode::Truncate, 'D'},
-  PrivChar{duckdb::AclMode::References, 'x'},
-  PrivChar{duckdb::AclMode::Trigger, 't'},
-  PrivChar{duckdb::AclMode::Maintain, 'm'},
-  PrivChar{duckdb::AclMode::Execute, 'X'},
-  PrivChar{duckdb::AclMode::Usage, 'U'},
-  PrivChar{duckdb::AclMode::Create, 'C'},
-  PrivChar{duckdb::AclMode::CreateTemp, 'T'},
-  PrivChar{duckdb::AclMode::Connect, 'c'},
-  PrivChar{duckdb::AclMode::Set, 's'},
-  PrivChar{duckdb::AclMode::AlterSystem, 'A'},
+inline constexpr std::array kAclPrivileges{
+  AclPrivilege{duckdb::AclMode::Insert, 'a', "INSERT"},
+  AclPrivilege{duckdb::AclMode::Select, 'r', "SELECT"},
+  AclPrivilege{duckdb::AclMode::Update, 'w', "UPDATE"},
+  AclPrivilege{duckdb::AclMode::Delete, 'd', "DELETE"},
+  AclPrivilege{duckdb::AclMode::Truncate, 'D', "TRUNCATE"},
+  AclPrivilege{duckdb::AclMode::References, 'x', "REFERENCES"},
+  AclPrivilege{duckdb::AclMode::Trigger, 't', "TRIGGER"},
+  AclPrivilege{duckdb::AclMode::Execute, 'X', "EXECUTE"},
+  AclPrivilege{duckdb::AclMode::Usage, 'U', "USAGE"},
+  AclPrivilege{duckdb::AclMode::Create, 'C', "CREATE"},
+  AclPrivilege{duckdb::AclMode::CreateTemp, 'T', "TEMPORARY"},
+  AclPrivilege{duckdb::AclMode::Connect, 'c', "CONNECT"},
+  AclPrivilege{duckdb::AclMode::Set, 's', "SET"},
+  AclPrivilege{duckdb::AclMode::AlterSystem, 'A', "ALTER SYSTEM"},
+  AclPrivilege{duckdb::AclMode::Maintain, 'm', "MAINTAIN"},
 };
 
 inline constexpr std::array kForeignDataWrapperAcl{duckdb::AclItem{
@@ -103,6 +104,20 @@ inline constexpr std::array kSchemaObjectTypes{
 };
 inline constexpr auto kRelationTypes = std::span{kSchemaObjectTypes}.first<5>();
 inline constexpr auto kTableTypes = std::span{kSchemaObjectTypes}.first<1>();
+inline constexpr auto kTableViewTypes =
+  std::span{kSchemaObjectTypes}.first<2>();
+inline constexpr auto kViewTypes =
+  std::span{kSchemaObjectTypes}.subspan<1, 1>();
+inline constexpr auto kSequenceTypes =
+  std::span{kSchemaObjectTypes}.subspan<3, 1>();
+inline constexpr auto kTypeTypes =
+  std::span{kSchemaObjectTypes}.subspan<4, 1>();
+inline constexpr auto kFunctionTypes = std::span{kSchemaObjectTypes}.last<2>();
+inline constexpr std::array kSchemaTypes{duckdb::CatalogType::SCHEMA_ENTRY};
+inline constexpr std::array kIndexTypes{duckdb::CatalogType::TABLE_ENTRY,
+                                        duckdb::CatalogType::INDEX_ENTRY};
+inline constexpr std::array kTokenizerTypes{
+  duckdb::CatalogType::TOKENIZER_ENTRY};
 
 duckdb::idx_t CatalogClassOid(duckdb::CatalogType type);
 
@@ -178,6 +193,30 @@ std::vector<int16_t> IndexAttnums(duckdb::ClientContext& context,
                                   const duckdb::IndexCatalogEntry& index,
                                   duckdb::CatalogEntry& relation);
 
+struct IndexColumn {
+  std::string_view name;
+  const duckdb::LogicalType& type;
+};
+
+inline IndexColumn IndexColumnAt(const duckdb::CatalogEntry& relation,
+                                 const duckdb::ViewColumnInfo* columns,
+                                 int16_t attnum) {
+  static const duckdb::LogicalType kExpression{duckdb::LogicalTypeId::VARCHAR};
+  if (attnum == 0) {
+    return {"expr", kExpression};
+  }
+  const auto column = static_cast<duckdb::idx_t>(attnum - 1);
+  if (relation.type == duckdb::CatalogType::VIEW_ENTRY) {
+    return {relation.Cast<duckdb::ViewCatalogEntry>()
+              .ColumnName(*columns, column)
+              .GetIdentifierName(),
+            columns->types[column]};
+  }
+  const auto& definition = relation.Cast<duckdb::TableCatalogEntry>().GetColumn(
+    duckdb::LogicalIndex{column});
+  return {definition.Name().GetIdentifierName(), definition.Type()};
+}
+
 std::vector<int16_t> ExpressionAttnums(
   const duckdb::TableCatalogEntry& table,
   const duckdb::ParsedExpression& expression);
@@ -189,7 +228,8 @@ duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
   const duckdb::Identifier& name);
 
 duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
-  const SystemScan& scan, const duckdb::TableCatalogEntry& table,
+  duckdb::CatalogTransaction transaction,
+  const duckdb::TableCatalogEntry& table,
   const duckdb::ForeignKeyConstraint& fk);
 
 template<typename R>

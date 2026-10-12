@@ -210,8 +210,6 @@ def render(rows):
 
 
 def output():
-    if not DOCS.exists():
-        return None
     rows = parse(DOCS)
     if not rows:
         raise SystemExit("no claim rows parsed from " + str(DOCS))

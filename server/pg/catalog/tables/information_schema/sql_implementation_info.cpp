@@ -25,25 +25,58 @@
 namespace sdb::pg {
 namespace {
 
-// clang-format off
-constexpr SystemCell kRows[] = {
-  "10003", "CATALOG NAME", std::nullopt, "Y", std::nullopt,
-  "10004", "COLLATING SEQUENCE", std::nullopt, "C.UTF-8", std::nullopt,
-  "13", "SERVER NAME", std::nullopt, "", std::nullopt,
-  "17", "DBMS NAME", std::nullopt, "SereneDB", std::nullopt,
-  "18", "DBMS VERSION", std::nullopt, SERENEDB_VERSION, std::nullopt,
-  "2", "DATA SOURCE NAME", std::nullopt, "", std::nullopt,
-  "23", "CURSOR COMMIT BEHAVIOR", "1", std::nullopt, "close cursors and retain prepared statements",
-  "26", "DEFAULT TRANSACTION ISOLATION", "4", std::nullopt, "REPEATABLE READ; user-settable",
-  "28", "IDENTIFIER CASE", "3", std::nullopt, "stored in mixed case - case sensitive",
-  "46", "TRANSACTION CAPABLE", "2", std::nullopt, "both DML and DDL",
-  "85", "NULL COLLATION", "4", std::nullopt, "nulls sort at the end",
-  "94", "SPECIAL CHARACTERS", std::nullopt, "", "all non-ASCII characters allowed",
+struct ImplementationInfo {
+  std::string_view id;
+  std::string_view name;
+  std::optional<int32_t> number;
+  std::optional<std::string_view> text;
+  std::optional<std::string_view> comments;
 };
-// clang-format on
+
+constexpr std::array kInfos{
+  ImplementationInfo{"10003", "CATALOG NAME", std::nullopt, "Y", std::nullopt},
+  ImplementationInfo{"10004", "COLLATING SEQUENCE", std::nullopt, "C.UTF-8",
+                     std::nullopt},
+  ImplementationInfo{"13", "SERVER NAME", std::nullopt, "", std::nullopt},
+  ImplementationInfo{"17", "DBMS NAME", std::nullopt, "SereneDB", std::nullopt},
+  ImplementationInfo{"18", "DBMS VERSION", std::nullopt, SERENEDB_VERSION,
+                     std::nullopt},
+  ImplementationInfo{"2", "DATA SOURCE NAME", std::nullopt, "", std::nullopt},
+  ImplementationInfo{"23", "CURSOR COMMIT BEHAVIOR", 1, std::nullopt,
+                     "close cursors and retain prepared statements"},
+  ImplementationInfo{"26", "DEFAULT TRANSACTION ISOLATION", 4, std::nullopt,
+                     "REPEATABLE READ; user-settable"},
+  ImplementationInfo{"28", "IDENTIFIER CASE", 3, std::nullopt,
+                     "stored in mixed case - case sensitive"},
+  ImplementationInfo{"46", "TRANSACTION CAPABLE", 2, std::nullopt,
+                     "both DML and DDL"},
+  ImplementationInfo{"85", "NULL COLLATION", 4, std::nullopt,
+                     "nulls sort at the end"},
+  ImplementationInfo{"94", "SPECIAL CHARACTERS", std::nullopt, "",
+                     "all non-ASCII characters allowed"},
+};
+
+class InfoSqlImplementationInfo final
+  : public SystemTableScan<kInfoSqlImplementationInfoSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr std::tuple kSources{
+    ArraySource<ImplementationInfo>{&LoadStatic<kInfos>, {}, {}}};
+
+  static constexpr auto kInfo = Shape<kSql, const ImplementationInfo>(
+    Col<"implementation_info_id">(&ImplementationInfo::id),
+    Col<"implementation_info_name">(&ImplementationInfo::name),
+    Col<"integer_value">(&ImplementationInfo::number),
+    Col<"character_value">(&ImplementationInfo::text),
+    Col<"comments">(&ImplementationInfo::comments));
+
+  void Row(const ImplementationInfo& info) { Emit<kInfo>(info); }
+};
 
 }  // namespace
 
-SystemTable gInfoSqlImplementationInfo{kInfoSqlImplementationInfoSql, kRows};
+SystemTable gInfoSqlImplementationInfo =
+  SystemTableOf<InfoSqlImplementationInfo>();
 
 }  // namespace sdb::pg

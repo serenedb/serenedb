@@ -23,15 +23,20 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
+#include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/collate_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <string>
 #include <vector>
 
+#include "pg/catalog/tables/tables.h"
+#include "pg/catalog/views/system_views.h"
 #include "pg/types.h"
 
 namespace sdb::pg {
@@ -58,10 +63,14 @@ constexpr BuiltinType SdbType(int32_t oid, std::string_view name,
           .typmod = -1};
 }
 
+constexpr const BuiltinType& PgType(int32_t oid) {
+  return *absl::c_find_if(
+    kPgTypes, [&](const BuiltinType& type) { return type.oid == oid; });
+}
+
 constexpr BuiltinType SdbArray(int32_t oid, std::string_view name,
                                int32_t elem) {
-  auto row = *absl::c_find_if(
-    kPgTypes, [](const BuiltinType& type) { return type.oid == kInt4Array; });
+  auto row = PgType(kInt4Array);
   row.oid = oid;
   row.name = name;
   row.elem = elem;
@@ -111,6 +120,52 @@ static_assert(absl::c_is_sorted(kTypes, kByOid) &&
               absl::c_is_sorted(kProcs, kByOid) &&
               absl::c_is_sorted(kCollations, kByOid));
 
+const std::vector<BuiltinType>& AllTypes() {
+  static std::deque<std::string> array_names;
+  static const auto kAll = [] {
+    std::vector<BuiltinType> types{std::begin(kTypes), std::end(kTypes)};
+    const auto add_row_type = [&](duckdb::idx_t relid, std::string_view schema,
+                                  std::string_view name, int32_t oid,
+                                  int32_t array) {
+      if (oid == 0) {
+        return;
+      }
+      const auto nsp = FindSystemObject(kSystemNamespaces, schema)->oid;
+      auto row = PgType(kRecord);
+      row.oid = oid;
+      row.name = name;
+      row.nsp = nsp;
+      row.type = 'c';
+      row.category = 'C';
+      row.array = array;
+      row.relid = static_cast<int32_t>(relid);
+      types.emplace_back(row);
+      auto element = PgType(kInt4Array);
+      element.oid = array;
+      element.name = array_names.emplace_back(absl::StrCat("_", name));
+      element.nsp = nsp;
+      element.elem = oid;
+      element.align = 'd';
+      types.emplace_back(element);
+    };
+    for (const auto* sql : kGeneratedTables) {
+      add_row_type(sql->oid, sql->schema, sql->name, sql->row_type,
+                   sql->row_array_type);
+    }
+    for (const auto& view : kExternalViews) {
+      add_row_type(view.oid, view.schema, view.name, view.row_type,
+                   view.row_array_type);
+    }
+    absl::c_sort(types, kByOid);
+    SDB_ASSERT(
+      absl::c_adjacent_find(types, [](const auto& lhs, const auto& rhs) {
+        return lhs.oid == rhs.oid;
+      }) == types.end());
+    return types;
+  }();
+  return kAll;
+}
+
 const std::vector<BuiltinCollation>& Collations() {
   static const auto kAll = [] {
     auto& db = irs::DuckDBEngine::Instance().instance();
@@ -151,12 +206,6 @@ static_assert(absl::c_all_of(kTypes, [](const BuiltinType& type) {
          });
 }));
 
-const auto* FindByOid(const auto& rows, int64_t oid) {
-  const auto it = absl::c_lower_bound(
-    rows, oid, [](const auto& row, int64_t key) { return row.oid < key; });
-  return it != std::end(rows) && it->oid == oid ? &*it : nullptr;
-}
-
 template<typename Key, typename Row>
 const Row* Find(const absl::flat_hash_map<Key, const Row*>& index, Key key) {
   const auto it = index.find(key);
@@ -173,7 +222,7 @@ struct TypeIndex {
 const TypeIndex& Types() {
   static const TypeIndex kIndex = [] {
     TypeIndex index;
-    for (const auto& type : kTypes) {
+    for (const auto& type : AllTypes()) {
       index.by_name.emplace(std::pair{type.nsp, type.name}, &type);
       if (type.relid != 0) {
         index.by_relid.emplace(type.relid, &type);
@@ -186,10 +235,10 @@ const TypeIndex& Types() {
 
 }  // namespace
 
-std::span<const BuiltinType> BuiltinTypes() { return kTypes; }
+std::span<const BuiltinType> BuiltinTypes() { return AllTypes(); }
 
 const BuiltinType* FindBuiltinType(int32_t oid) {
-  return FindByOid(kTypes, oid);
+  return FindByOid(AllTypes(), oid);
 }
 
 const BuiltinType* FindBuiltinType(duckdb::idx_t nsp, std::string_view name) {
@@ -201,13 +250,6 @@ const BuiltinType* FindBuiltinRowType(duckdb::idx_t relid) {
 }
 
 std::span<const BuiltinProc> BuiltinProcs() { return kProcs; }
-
-int32_t BuiltinProcOid(std::string_view name) {
-  const auto it = absl::c_find_if(
-    kProcs, [&](const BuiltinProc& proc) { return proc.name == name; });
-  SDB_ASSERT(it != std::end(kProcs));
-  return it->oid;
-}
 
 std::span<const BuiltinCollation> BuiltinCollations() { return Collations(); }
 

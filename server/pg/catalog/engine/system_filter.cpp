@@ -417,17 +417,6 @@ bool SystemScan::Possible(std::span<const SystemFact> facts) const {
   return possible == constrained;
 }
 
-bool SystemScan::AllowsSchema(std::optional<uint32_t> column,
-                              const duckdb::SchemaCatalogEntry& schema) const {
-  if (!column) {
-    return true;
-  }
-  if (_table.Sql().columns[*column].physical == duckdb::PhysicalType::VARCHAR) {
-    return Allows(*column, std::string_view{schema.name.GetIdentifierName()});
-  }
-  return Allows(*column, static_cast<int64_t>(schema.oid));
-}
-
 duckdb::TableFilterPushdown SystemPushdown(const SystemTable& table,
                                            duckdb::column_t column,
                                            const duckdb::Expression& expr) {

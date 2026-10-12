@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/database.hpp>
@@ -27,6 +28,8 @@
 #include <initializer_list>
 #include <span>
 #include <string_view>
+
+#include "pg/catalog/lookup.h"
 
 namespace sdb::pg {
 
@@ -40,11 +43,31 @@ extern const std::span<const SystemMacro> kPgCatalogMacros;
 extern const std::span<const SystemMacro> kInformationSchemaMacros;
 
 void Register(duckdb::ExtensionLoader& loader, std::string_view schema,
+              duckdb::FunctionStability stability,
               duckdb::ScalarFunctionSet set);
 void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
-                    std::string_view name,
+                    std::string_view name, duckdb::FunctionStability stability,
+                    duckdb::init_local_state_t init,
                     std::initializer_list<duckdb::ScalarFunction> functions);
-duckdb::ScalarFunction WithinQuery(duckdb::ScalarFunction function);
+
+inline void RegisterScalar(
+  duckdb::ExtensionLoader& loader, std::string_view schema,
+  std::string_view name, duckdb::FunctionStability stability,
+  std::initializer_list<duckdb::ScalarFunction> functions) {
+  RegisterScalar(loader, schema, name, stability, nullptr, functions);
+}
+
+inline duckdb::unique_ptr<duckdb::FunctionLocalState> InitSession(
+  duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
+  return duckdb::make_uniq<SessionState>(&state.GetContext());
+}
+
+inline const Session& SessionOf(duckdb::ExpressionState& state) {
+  return duckdb::ExecuteFunctionState::GetFunctionState(state)
+    ->Cast<SessionState>()
+    .session;
+}
 
 void RegisterAclFunctions(duckdb::ExtensionLoader& loader);
 void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader);

@@ -262,11 +262,10 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       const std::string_view str(input.GetData(), input.GetSize());
-      const auto quoted = pg::QuoteIdentifier(str);
-      if (quoted == str) {
+      if (!pg::RequiresQuotes(str)) {
         return input;
       }
-      return duckdb::StringVector::AddString(result, quoted);
+      return duckdb::StringVector::AddString(result, pg::QuoteIdentifier(str));
     });
 }
 

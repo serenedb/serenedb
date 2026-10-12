@@ -25,16 +25,20 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/function/function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
-#include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -254,12 +258,13 @@ void VisitDefaultAcls(
     visitor);
 
 struct ObjectName {
-  std::string schema;
-  std::string name;
+  std::string_view schema;
+  std::string_view name;
 };
 
-inline ObjectName NameOf(const duckdb::CatalogEntry& entry) {
-  return {.schema = entry.ParentSchemaName().GetIdentifierName(),
+inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
+                         const duckdb::CatalogEntry& entry) {
+  return {.schema = entry.ParentSchema(transaction).name.GetIdentifierName(),
           .name = entry.name.GetIdentifierName()};
 }
 
@@ -274,28 +279,41 @@ struct RegOutRecent {
   std::string_view text;
 };
 
+inline constexpr size_t kRegOutLimit = 4096;
+
 struct Session {
   duckdb::ClientContext* context;
   catalog::SereneDBCatalog* database;
   std::optional<duckdb::CatalogTransaction> transaction;
+  mutable std::optional<duckdb::CatalogEntryRetriever> retriever;
   std::vector<SessionSchema> search_path;
-  mutable irs::containers::NodeHashMap<std::pair<uint8_t, uint64_t>,
-                                       std::string>
+  mutable irs::containers::FlatHashMap<std::pair<uint8_t, uint64_t>,
+                                       std::string_view>
     reg_out;
+  mutable std::deque<std::string> reg_out_texts;
   mutable std::array<RegOutRecent, 64> reg_out_recent;
 };
 
 duckdb::optional_ptr<catalog::SereneDBCatalog> SessionCatalog(
   duckdb::ClientContext& context);
 Session MakeSession(duckdb::ClientContext* context);
+
+struct SessionState final : duckdb::FunctionLocalState {
+  explicit SessionState(duckdb::ClientContext* context)
+    : session{MakeSession(context)} {}
+
+  Session session;
+};
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
-duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
+inline duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
   duckdb::CatalogTransaction transaction, duckdb::SchemaCatalogEntry& schema,
-  duckdb::CatalogType type, const duckdb::Identifier& name);
+  duckdb::CatalogType type, const duckdb::Identifier& name) {
+  return schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type).GetEntry(
+    transaction, name);
+}
 duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   const Session& session, uint64_t oid);
-std::optional<ObjectName> RelationObject(const Session& session, uint64_t oid);
 std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid);
 uint64_t ArrayElementOid(const Session& session, uint64_t oid);
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
@@ -331,6 +349,19 @@ SubObject FindKeyIndex(const Session& session, uint64_t oid);
 SubObject FindKeyIndex(duckdb::ClientContext& context,
                        duckdb::SchemaCatalogEntry& schema,
                        std::string_view name);
+
+struct StaticView;
+
+struct Relation {
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry;
+  const duckdb::UniqueConstraint* key;
+  const SystemTable* system;
+  const StaticView* view;
+};
+
+std::optional<Relation> FindRelation(const Session& session, uint64_t oid);
+ObjectName NameOf(duckdb::CatalogTransaction transaction,
+                  const Relation& relation);
 
 std::optional<std::string_view> NextvalArgument(
   const duckdb::ParsedExpression& expression);

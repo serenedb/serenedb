@@ -1065,7 +1065,7 @@ std::vector<RenderedRule> RenderHbaRules() {
         r.netmask = AddrToText(rule.address.family, rule.address.mask);
         break;
     }
-    out.push_back(std::move(r));
+    out.emplace_back(std::move(r));
   }
   return out;
 }

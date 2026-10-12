@@ -118,7 +118,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   PgClass(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
     : SystemTableScan{context, input} {
     if (VisibleOnly()) {
-      _session = MakeSession(&context);
+      _session.emplace(MakeSession(&context));
     }
   }
 
@@ -338,8 +338,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
 
   IRS_NO_INLINE bool Shown(const duckdb::CatalogEntry& owner,
                            std::string_view name) const {
-    const auto schema = owner.ParentSchemaName();
-    return RelationVisible(*_session, schema.GetIdentifierName(), name);
+    return RelationVisible(*_session, NameOf(Transaction(), owner).schema,
+                           name);
   }
 
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners;

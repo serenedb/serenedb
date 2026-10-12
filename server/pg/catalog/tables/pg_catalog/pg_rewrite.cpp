@@ -36,7 +36,7 @@ class PgRewrite final : public SystemTableScan<kPgRewriteSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kViewTypes, SystemSchemas::Skip, kRewriteIndexes}};
+    CatalogSource{kViewTypes, SystemSchemas::Visit, kRewriteIndexes}};
 
   static constexpr auto kRule = Shape<kSql, const duckdb::ViewCatalogEntry>(
     Col<"oid">(&duckdb::CatalogEntry::oid),

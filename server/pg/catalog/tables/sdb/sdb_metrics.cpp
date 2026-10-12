@@ -127,6 +127,9 @@ class SdbMetrics final : public SystemTableScan<kSdbMetricsSql> {
   void Row(const Metric& metric) { Emit<kMetric>(metric); }
 
   void Row(const duckdb::IndexCatalogEntry& index) {
+    if (!Allows<"relation_id">(index.oid)) {
+      return;
+    }
     if (const auto* inverted =
           dynamic_cast<const catalog::InvertedIndexEntry*>(&index);
         inverted && inverted->Storage()) {
@@ -135,6 +138,9 @@ class SdbMetrics final : public SystemTableScan<kSdbMetricsSql> {
   }
 
   void Row(const duckdb::TableCatalogEntry& table) {
+    if (!Allows<"relation_id">(table.oid)) {
+      return;
+    }
     if (const auto* search =
           dynamic_cast<const catalog::SearchTableEntry*>(&table)) {
       Store(search->Storage()->GetStats(), table.oid);

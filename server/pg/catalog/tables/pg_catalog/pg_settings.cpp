@@ -285,6 +285,7 @@ struct Setting {
   const Guc* guc;
   mutable std::optional<std::optional<std::string>> boot;
   mutable std::optional<duckdb::Value> current;
+  mutable std::optional<std::optional<std::string>> displayed;
   mutable bool session;
 
   const std::optional<std::string>& Boot() const {
@@ -305,12 +306,19 @@ struct Setting {
       auto& value = current.emplace();
       if (option && option->get_setting) {
         value = option->get_setting(context);
-        session = guc && Display(context, value) != Boot();
+        session = guc && Displayed() != Boot();
       } else if (auto lookup = context.TryGetCurrentSetting(name, value)) {
         session = lookup.GetScope() == duckdb::SettingScope::LOCAL;
       }
     }
     return *current;
+  }
+
+  const std::optional<std::string>& Displayed() const {
+    if (!displayed) {
+      displayed.emplace(Display(context, Current()));
+    }
+    return *displayed;
   }
 
   bool Session() const {
@@ -335,7 +343,7 @@ class PgSettings final : public SystemTableScan<kPgSettingsSql> {
 
   static constexpr auto kGuc = Shape<kSql, const Setting>(
     kSettingColumns, Col<"setting">([](const auto& row) {
-      return InBaseUnit(Display(row.context, row.Current()), *row.guc);
+      return InBaseUnit(row.Displayed(), *row.guc);
     }),
     Col<"boot_val">(
       [](const auto& row) { return InBaseUnit(row.Boot(), *row.guc); }),
@@ -354,8 +362,8 @@ class PgSettings final : public SystemTableScan<kPgSettingsSql> {
       [](const auto& row) { return NonEmpty(row.guc->enumvals); }));
 
   static constexpr auto kCustom = Shape<kSql, const Setting>(
-    kSettingColumns, Col<"setting">([](const auto& row) {
-      return Display(row.context, row.Current());
+    kSettingColumns, Col<"setting">([](const auto& row) -> const auto& {
+      return row.Displayed();
     }),
     Col<"boot_val">([](const auto& row) -> const auto& { return row.Boot(); }),
     Col<"reset_val">([](const auto& row) -> const auto& { return row.Boot(); }),
@@ -392,7 +400,7 @@ class PgSettings final : public SystemTableScan<kPgSettingsSql> {
     }
     const Setting setting{
       context, name, option, extension, FindGuc(name.GetIdentifierName()),
-      {},      {},   false};
+      {},      {},   {},     false};
     if (setting.guc) {
       Emit<kGuc>(setting);
     } else {

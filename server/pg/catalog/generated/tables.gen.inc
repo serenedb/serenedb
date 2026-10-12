@@ -933,8 +933,8 @@ inline constexpr SystemSql kSdbMetricsSql{kSdbMetricsTable, "pg_catalog", "sdb_m
 inline constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"pid", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"datid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
-  {"usename", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
-  {"datname", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
+  {"usename", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
+  {"datname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"state", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"query", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"backend_start_us", kInt8, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},

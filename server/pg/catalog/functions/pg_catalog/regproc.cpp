@@ -66,47 +66,55 @@ constexpr std::array kRelationSets{duckdb::CatalogType::TABLE_ENTRY,
                                    duckdb::CatalogType::SEQUENCE_ENTRY,
                                    duckdb::CatalogType::INDEX_ENTRY};
 
+OutText OutName(std::string_view name) {
+  if (RequiresQuotes(name)) {
+    return QuoteIdentifier(name);
+  }
+  return name;
+}
+
 }  // namespace
 
 std::string QualifiedOutName(std::string_view schema, std::string_view name) {
-  return absl::StrCat(QuoteIdentifier(schema), ".", QuoteIdentifier(name));
+  return absl::StrCat(AsView(OutName(schema)), ".", AsView(OutName(name)));
 }
 
-uint64_t ResolveRelation(duckdb::ClientContext& context,
+uint64_t ResolveRelation(const Session& session,
                          const duckdb::QualifiedName& name) {
+  auto& context = *session.context;
+  auto& retriever = *session.retriever;
   // Every half of the relation namespace, in the order postgres resolves them
   // -- a table and a view share duckdb's set, so the first lookup covers both.
   for (const auto type : kRelationSets) {
-    if (auto entry = duckdb::Catalog::GetEntry(
-          context, duckdb::EntryLookupInfo{type, name},
-          duckdb::OnEntryNotFound::RETURN_NULL)) {
+    if (auto entry = retriever.GetEntry(duckdb::EntryLookupInfo{type, name},
+                                        duckdb::OnEntryNotFound::RETURN_NULL)) {
       return entry->oid;
     }
   }
-  if (auto entry = duckdb::Catalog::GetEntry(
-        context, duckdb::EntryLookupInfo{duckdb::CatalogType::TYPE_ENTRY, name},
+  if (auto entry = retriever.GetEntry(
+        duckdb::EntryLookupInfo{duckdb::CatalogType::TYPE_ENTRY, name},
         duckdb::OnEntryNotFound::RETURN_NULL);
       entry && duckdb::StructType::IsStruct(
                  entry->Cast<duckdb::TypeCatalogEntry>().user_type)) {
     return entry->oid;
   }
-  if (auto database = SessionCatalog(context)) {
-    const auto key_index = [&](const duckdb::Identifier& schema_name) {
-      auto schema = database->GetSchema(context, schema_name,
-                                        duckdb::OnEntryNotFound::RETURN_NULL);
-      if (!schema) {
-        return kInvalidOid;
-      }
-      const auto key =
-        FindKeyIndex(context, *schema, name.Name().GetIdentifierName());
-      return key.key_index ? key.key_index->index_oid : kInvalidOid;
-    };
-    if (!name.Schema().empty()) {
-      return key_index(name.Schema());
-    }
-    for (const auto& path :
-         duckdb::ClientData::Get(context).catalog_search_path->Get()) {
-      if (const auto oid = key_index(path.GetSchema()); oid != kInvalidOid) {
+  if (!session.database) {
+    return kInvalidOid;
+  }
+  const auto key_index = [&](duckdb::SchemaCatalogEntry& schema) {
+    const auto key =
+      FindKeyIndex(context, schema, name.Name().GetIdentifierName());
+    return key.key_index ? key.key_index->index_oid : kInvalidOid;
+  };
+  if (!name.Schema().empty()) {
+    auto schema =
+      session.database->GetSchema(*session.transaction, name.Schema(),
+                                  duckdb::OnEntryNotFound::RETURN_NULL);
+    return schema ? key_index(*schema) : kInvalidOid;
+  }
+  for (const auto& schema : session.search_path) {
+    if (auto entry = schema.entry) {
+      if (const auto oid = key_index(*entry); oid != kInvalidOid) {
         return oid;
       }
     }
@@ -457,8 +465,7 @@ class TypeParser {
     if (token.kind != TokenKind::Word && token.kind != TokenKind::Quoted) {
       ThrowSyntaxError(token);
     }
-    ++_pos;
-    return token.text;
+    return std::move(_tokens[_pos++].text);
   }
 
   static ParsedType Keyword(std::string_view name) {
@@ -958,8 +965,8 @@ std::string_view SqlTypeName(int32_t oid) {
 
 namespace {
 
-std::optional<std::string> FormatUserType(const Session& session, uint64_t oid,
-                                          std::optional<int32_t> typmod) {
+std::optional<OutText> FormatUserType(const Session& session, uint64_t oid,
+                                      std::optional<int32_t> typmod) {
   if (!session.context) {
     return std::nullopt;
   }
@@ -970,20 +977,21 @@ std::optional<std::string> FormatUserType(const Session& session, uint64_t oid,
     return std::nullopt;
   }
   auto name = FindVisibleType(session, object->name) == element
-                ? QuoteIdentifier(object->name)
-                : QualifiedOutName(object->schema, object->name);
+                ? OutName(object->name)
+                : OutText{QualifiedOutName(object->schema, object->name)};
+  const std::string_view suffix = array != kInvalidOid ? "[]" : "";
   if (typmod && *typmod >= 0) {
-    absl::StrAppend(&name, "(", *typmod, ")");
+    return absl::StrCat(AsView(name), "(", *typmod, ")", suffix);
   }
-  if (array != kInvalidOid) {
-    absl::StrAppend(&name, "[]");
+  if (!suffix.empty()) {
+    return absl::StrCat(AsView(name), suffix);
   }
   return name;
 }
 
-std::string FormatType(const Session& session, uint64_t oid) {
+OutText FormatType(const Session& session, uint64_t oid) {
   if (oid == kInvalidOid) {
-    return "-";
+    return std::string_view{"-"};
   }
   if (oid < kMaxSystem) {
     const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
@@ -992,14 +1000,15 @@ std::string FormatType(const Session& session, uint64_t oid) {
     }
     if (builtin->IsArray()) {
       return absl::StrCat(
-        FormatType(session, static_cast<uint64_t>(builtin->elem)), "[]");
+        AsView(FormatType(session, static_cast<uint64_t>(builtin->elem))),
+        "[]");
     }
     if (const auto name = SqlTypeName(builtin->oid); !name.empty()) {
-      return std::string{name};
+      return name;
     }
     if (builtin->nsp == kPgCatalogSchema ||
         FindVisibleType(session, builtin->name) == oid) {
-      return std::string{builtin->name};
+      return builtin->name;
     }
     return QualifiedOutName(
       FindSystemObject(kSystemNamespaces, builtin->nsp)->name, builtin->name);
@@ -1010,28 +1019,16 @@ std::string FormatType(const Session& session, uint64_t oid) {
   return absl::StrCat(oid);
 }
 
-std::optional<ObjectName> ClassObject(const Session& session, uint64_t oid) {
-  if (auto object = RelationObject(session, oid)) {
-    return object;
-  }
-  auto entry = EntryByOid(session, oid);
-  if (!entry || entry->type != duckdb::CatalogType::TYPE_ENTRY ||
-      !duckdb::StructType::IsStruct(
-        entry->Cast<duckdb::TypeCatalogEntry>().user_type)) {
-    return std::nullopt;
-  }
-  return NameOf(*entry);
-}
-
-std::string ClassOut(const Session& session, uint64_t oid) {
+OutText ClassOut(const Session& session, uint64_t oid) {
   if (!session.context) {
     return absl::StrCat(oid);
   }
-  const auto object = ClassObject(session, oid);
-  if (!object) {
+  const auto relation = FindRelation(session, oid);
+  if (!relation) {
     return absl::StrCat(oid);
   }
-  return RelationName(session, object->schema, object->name);
+  const auto object = NameOf(*session.transaction, *relation);
+  return RelationName(session, object.schema, object.name);
 }
 
 std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
@@ -1058,7 +1055,7 @@ std::optional<uint64_t> ClassIn(const Session& session, std::string_view text,
       ? duckdb::QualifiedName{name}
       : duckdb::QualifiedName{
           database, duckdb::Identifier{(*names)[names->size() - 2]}, name};
-  if (const auto oid = ResolveRelation(*session.context, qualified);
+  if (const auto oid = ResolveRelation(session, qualified);
       oid != kInvalidOid) {
     return oid;
   }
@@ -1076,8 +1073,8 @@ struct ProcCandidate {
 
 struct ProcInfo {
   uint64_t nsp;
-  std::string schema;
-  std::string name;
+  std::string_view schema;
+  std::string_view name;
   std::vector<duckdb::idx_t> args;
 };
 
@@ -1152,8 +1149,7 @@ std::optional<ProcInfo> FindProc(const Session& session,
     if (const auto* function = builtins.Find(oid)) {
       return ProcInfo{
         .nsp = function->nsp,
-        .schema =
-          std::string{FindSystemObject(kSystemNamespaces, function->nsp)->name},
+        .schema = FindSystemObject(kSystemNamespaces, function->nsp)->name,
         .name = function->name,
         .args = function->argtypes};
     }
@@ -1167,11 +1163,12 @@ std::optional<ProcInfo> FindProc(const Session& session,
   if (macros.empty()) {
     return std::nullopt;
   }
-  auto object = NameOf(*entry);
-  return ProcInfo{.nsp = entry->ParentSchemaOid(),
-                  .schema = std::move(object.schema),
-                  .name = std::move(object.name),
-                  .args = MacroArgs(*macros.front())};
+  return ProcInfo{
+    .nsp = entry->ParentSchemaOid(),
+    .schema =
+      entry->ParentSchema(*session.transaction).name.GetIdentifierName(),
+    .name = entry->name.GetIdentifierName(),
+    .args = MacroArgs(*macros.front())};
 }
 
 bool ProcVisible(const Session& session, const BuiltinFunctions& builtins,
@@ -1204,12 +1201,13 @@ std::string ProcOut(const Session& session, uint64_t oid, bool signature) {
   if (!signature) {
     return name;
   }
-  return absl::StrCat(name, "(",
-                      absl::StrJoin(info->args, ",",
-                                    [&](std::string* out, duckdb::idx_t arg) {
-                                      out->append(FormatType(session, arg));
-                                    }),
-                      ")");
+  return absl::StrCat(
+    name, "(",
+    absl::StrJoin(info->args, ",",
+                  [&](std::string* out, duckdb::idx_t arg) {
+                    out->append(AsView(FormatType(session, arg)));
+                  }),
+    ")");
 }
 
 std::optional<uint64_t> ProcIn(const Session& session, std::string_view text,
@@ -1402,9 +1400,9 @@ std::optional<uint64_t> CollationIn(const Session& session,
                            "\" for encoding \"UTF8\" does not exist")));
 }
 
-std::string CollationOut(uint64_t oid) {
+OutText CollationOut(uint64_t oid) {
   if (const auto* collation = FindBuiltinCollation(static_cast<int64_t>(oid))) {
-    return QuoteIdentifier(collation->name);
+    return OutName(collation->name);
   }
   return absl::StrCat(oid);
 }
@@ -1457,14 +1455,14 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
                                                  "\" does not exist")));
 }
 
-std::string DictionaryOut(const Session& session, uint64_t oid) {
+OutText DictionaryOut(const Session& session, uint64_t oid) {
   auto entry = EntryByOid(session, oid);
   if (!entry || entry->type != duckdb::CatalogType::TOKENIZER_ENTRY) {
     return absl::StrCat(oid);
   }
-  const auto object = NameOf(*entry);
+  const auto object = NameOf(*session.transaction, *entry);
   if (FindVisibleDictionary(session, object.name) == oid) {
-    return QuoteIdentifier(object.name);
+    return OutName(object.name);
   }
   return QualifiedOutName(object.schema, object.name);
 }
@@ -1503,14 +1501,14 @@ std::optional<uint64_t> NamespaceIn(const Session& session,
   return SchemaOid(session, *name, missing_ok);
 }
 
-std::string NamespaceOut(const Session& session, uint64_t oid) {
+OutText NamespaceOut(const Session& session, uint64_t oid) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, oid)) {
-    return std::string{system->name};
+    return system->name;
   }
   if (session.database) {
     if (auto schema =
           session.database->FindSchemaById(*session.transaction, oid)) {
-      return QuoteIdentifier(schema->name.GetIdentifierName());
+      return OutName(schema->name.GetIdentifierName());
     }
   }
   return absl::StrCat(oid);
@@ -1547,29 +1545,31 @@ constexpr std::array kTypmodlessTypes{kBool,   kInt2,   kInt4, kInt8,
 
 }  // namespace
 
-std::string FormatTypeOut(const Session& session, uint64_t oid,
-                          std::optional<int32_t> typmod) {
+OutText FormatTypeOut(const Session& session, uint64_t oid,
+                      std::optional<int32_t> typmod) {
   if (oid == kInvalidOid) {
     return FormatType(session, oid);
   }
   if (oid >= kMaxSystem) {
-    return FormatUserType(session, oid, typmod).value_or("???");
+    return FormatUserType(session, oid, typmod)
+      .value_or(std::string_view{"???"});
   }
   const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid));
   if (!builtin) {
-    return "???";
+    return std::string_view{"???"};
   }
   if (builtin->IsArray()) {
     return absl::StrCat(
-      FormatTypeOut(session, static_cast<uint64_t>(builtin->elem), typmod),
+      AsView(
+        FormatTypeOut(session, static_cast<uint64_t>(builtin->elem), typmod)),
       "[]");
   }
   if (typmod && *typmod < 0) {
     if (builtin->oid == kBit) {
-      return "\"bit\"";
+      return std::string_view{"\"bit\""};
     }
     if (builtin->oid == kBpchar) {
-      return "bpchar";
+      return std::string_view{"bpchar"};
     }
   }
   if (typmod && *typmod >= 0) {
@@ -1596,17 +1596,63 @@ std::string FormatTypeOut(const Session& session, uint64_t oid,
         return absl::StrCat(sql, IntervalTypmodOut(*typmod));
     }
   }
-  auto name = FormatType(session, oid);
   if (typmod && *typmod >= 0 &&
       !absl::c_linear_search(kTypmodlessTypes, builtin->oid)) {
-    absl::StrAppend(&name, "(", *typmod, ")");
+    return absl::StrCat(AsView(FormatType(session, oid)), "(", *typmod, ")");
   }
-  return name;
+  return FormatType(session, oid);
 }
+
+namespace {
+
+template<RegKind Kind>
+IRS_NO_INLINE std::string_view CacheRegOut(const Session& session, uint64_t oid,
+                                           RegOutRecent& recent) {
+  using enum RegKind;
+  const auto kind = std::to_underlying(Kind);
+  const std::pair key{kind, oid};
+  if (const auto it = session.reg_out.find(key); it != session.reg_out.end()) {
+    recent = {.oid = oid, .kind = kind, .text = it->second};
+    return it->second;
+  }
+  auto text = [&]() -> OutText {
+    if constexpr (Kind == Proc || Kind == Procedure) {
+      return ProcOut(session, oid, Kind == Procedure);
+    } else if constexpr (Kind == Oper || Kind == Operator || Kind == Config) {
+      return absl::StrCat(oid);
+    } else if constexpr (Kind == Class) {
+      return ClassOut(session, oid);
+    } else if constexpr (Kind == Type) {
+      return FormatType(session, oid);
+    } else if constexpr (Kind == Collation) {
+      return CollationOut(oid);
+    } else if constexpr (Kind == Dictionary) {
+      return DictionaryOut(session, oid);
+    } else if constexpr (Kind == Role) {
+      return RoleOut(session, oid);
+    } else {
+      static_assert(Kind == Namespace);
+      return NamespaceOut(session, oid);
+    }
+  }();
+  if (session.reg_out.size() >= kRegOutLimit) {
+    session.reg_out.clear();
+    session.reg_out_texts.clear();
+    session.reg_out_recent = {};
+  }
+  auto* built = std::get_if<std::string>(&text);
+  const std::string_view stored =
+    built ? session.reg_out_texts.emplace_back(std::move(*built))
+          : *std::get_if<std::string_view>(&text);
+  session.reg_out.emplace(key, stored);
+  recent = {.oid = oid, .kind = kind, .text = stored};
+  return stored;
+}
+
+}  // namespace
 
 template<RegKind Kind>
 std::string_view RegOut(const Session& session, uint64_t oid) {
-  using enum RegKind;
   if (oid == kInvalidOid) {
     return "-";
   }
@@ -1617,34 +1663,7 @@ std::string_view RegOut(const Session& session, uint64_t oid) {
   if (recent.oid == oid && recent.kind == kind) {
     return recent.text;
   }
-  const std::pair key{kind, oid};
-  if (const auto it = session.reg_out.find(key); it != session.reg_out.end()) {
-    recent = {.oid = oid, .kind = kind, .text = it->second};
-    return it->second;
-  }
-  std::string text;
-  if constexpr (Kind == Proc || Kind == Procedure) {
-    text = ProcOut(session, oid, Kind == Procedure);
-  } else if constexpr (Kind == Oper || Kind == Operator || Kind == Config) {
-    text = absl::StrCat(oid);
-  } else if constexpr (Kind == Class) {
-    text = ClassOut(session, oid);
-  } else if constexpr (Kind == Type) {
-    text = FormatType(session, oid);
-  } else if constexpr (Kind == Collation) {
-    text = CollationOut(oid);
-  } else if constexpr (Kind == Dictionary) {
-    text = DictionaryOut(session, oid);
-  } else if constexpr (Kind == Role) {
-    text = RoleOut(session, oid);
-  } else {
-    static_assert(Kind == Namespace);
-    text = NamespaceOut(session, oid);
-  }
-  const std::string_view stored =
-    session.reg_out.emplace(key, std::move(text)).first->second;
-  recent = {.oid = oid, .kind = kind, .text = stored};
-  return stored;
+  return CacheRegOut<Kind>(session, oid, recent);
 }
 
 template<RegKind Kind>
@@ -1727,15 +1746,6 @@ template std::optional<uint64_t> RegIn<RegKind::Namespace>(const Session&,
                                                            std::string_view,
                                                            bool);
 
-std::optional<int32_t> RegTypmodIn(const Session& session,
-                                   std::string_view text) {
-  const auto type = ResolveType(session, text, true);
-  if (!type) {
-    return std::nullopt;
-  }
-  return type->typmod;
-}
-
 bool RelationVisible(const Session& session, std::string_view schema,
                      std::string_view name) {
   const auto at = absl::c_find_if(
@@ -1748,27 +1758,42 @@ bool RelationVisible(const Session& session, std::string_view schema,
                       });
 }
 
-std::string RelationName(const Session& session, std::string_view schema,
-                         std::string_view name) {
-  return RelationVisible(session, schema, name)
-           ? QuoteIdentifier(name)
-           : QualifiedOutName(schema, name);
+OutText RelationName(const Session& session, std::string_view schema,
+                     std::string_view name) {
+  if (RelationVisible(session, schema, name)) {
+    return OutName(name);
+  }
+  return QualifiedOutName(schema, name);
 }
 
 std::optional<bool> RelationIsVisible(const Session& session, uint64_t oid) {
-  const auto object = ClassObject(session, oid);
-  if (!object) {
+  const auto relation = FindRelation(session, oid);
+  if (!relation) {
     return std::nullopt;
   }
-  return RelationVisible(session, object->schema, object->name);
+  const auto object = NameOf(*session.transaction, *relation);
+  return RelationVisible(session, object.schema, object.name);
 }
 
 std::optional<bool> TypeIsVisible(const Session& session, uint64_t oid) {
-  const auto object = TypeObject(session, oid);
-  if (!object) {
-    return std::nullopt;
+  if (const auto object = TypeObject(session, oid)) {
+    return FindVisibleType(session, object->name) == oid;
   }
-  return FindVisibleType(session, object->name) == oid;
+  duckdb::optional_ptr<duckdb::CatalogEntry> element;
+  if (oid & kRowTypeOidBit) {
+    const auto relation = FindRelation(session, RowTypeRelation(oid));
+    if (!relation) {
+      return std::nullopt;
+    }
+    element = relation->entry;
+  } else {
+    element = EntryByOid(session, TypeElementOid(oid));
+    if (!element || element->type != duckdb::CatalogType::TYPE_ENTRY) {
+      return std::nullopt;
+    }
+  }
+  return element && FindVisibleType(session, ArrayTypeName(*session.transaction,
+                                                           *element)) == oid;
 }
 
 std::optional<bool> FunctionIsVisible(const Session& session, uint64_t oid) {
@@ -1785,7 +1810,7 @@ namespace {
 template<RegKind Kind>
 void ToRegFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                    duckdb::Vector& result) {
-  const auto session = MakeSession(&state.GetContext());
+  const auto& session = SessionOf(state);
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t text) -> duckdb::optional<int64_t> {
@@ -1800,15 +1825,15 @@ void ToRegFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void ToRegtypmodFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
-  const auto session = MakeSession(&state.GetContext());
+  const auto& session = SessionOf(state);
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int32_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t text) -> duckdb::optional<int32_t> {
-      const auto typmod = RegTypmodIn(session, connector::AsView(text));
-      if (!typmod) {
+      const auto type = ResolveType(session, connector::AsView(text), true);
+      if (!type) {
         return duckdb::nullopt;
       }
-      return *typmod;
+      return type->typmod;
     });
 }
 
@@ -1818,7 +1843,9 @@ void RegisterToRegFunction(duckdb::ExtensionLoader& loader,
   duckdb::ScalarFunction scalar{
     {duckdb::LogicalType::VARCHAR}, std::move(type), std::move(function)};
   scalar.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-  RegisterScalar(loader, irs::StaticStrings::kPgCatalogSchema, name, {scalar});
+  RegisterScalar(loader, irs::StaticStrings::kPgCatalogSchema, name,
+                 duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY,
+                 InitSession, {scalar});
 }
 
 }  // namespace

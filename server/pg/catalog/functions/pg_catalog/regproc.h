@@ -21,11 +21,11 @@
 #pragma once
 
 #include <cstdint>
-#include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 #include "pg/types.h"
 
@@ -47,25 +47,32 @@ enum class RegKind : uint8_t {
   Namespace,
 };
 
+using OutText = std::variant<std::string_view, std::string>;
+
+inline std::string_view AsView(const OutText& text) {
+  if (const auto* view = std::get_if<std::string_view>(&text)) {
+    return *view;
+  }
+  return *std::get_if<std::string>(&text);
+}
+
 std::string QualifiedOutName(std::string_view schema, std::string_view name);
 
 std::string_view SqlTypeName(int32_t oid);
 
-std::string FormatTypeOut(const Session& session, uint64_t oid,
-                          std::optional<int32_t> typmod);
+OutText FormatTypeOut(const Session& session, uint64_t oid,
+                      std::optional<int32_t> typmod);
 
 template<RegKind Kind>
 std::string_view RegOut(const Session& session, uint64_t oid);
 template<RegKind Kind>
 std::optional<uint64_t> RegIn(const Session& session, std::string_view text,
                               bool missing_ok);
-std::optional<int32_t> RegTypmodIn(const Session& session,
-                                   std::string_view text);
 
-uint64_t ResolveRelation(duckdb::ClientContext& context,
+uint64_t ResolveRelation(const Session& session,
                          const duckdb::QualifiedName& name);
-std::string RelationName(const Session& session, std::string_view schema,
-                         std::string_view name);
+OutText RelationName(const Session& session, std::string_view schema,
+                     std::string_view name);
 
 bool RelationVisible(const Session& session, std::string_view schema,
                      std::string_view name);

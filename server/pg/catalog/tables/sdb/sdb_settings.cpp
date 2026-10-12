@@ -50,13 +50,16 @@ constexpr std::string_view kSecretFlags[] = {"auth_password", "auth_api_key",
                                              "auth_bearer_token"};
 
 SystemRows<const absl::CommandLineFlag*> LoadFlags(SystemScan&) {
-  auto flags = std::views::values(absl::GetAllFlags()) |
-               std::ranges::to<std::vector<const absl::CommandLineFlag*>>();
-  absl::c_sort(flags, [](const absl::CommandLineFlag* lhs,
-                         const absl::CommandLineFlag* rhs) {
-    return lhs->Name() < rhs->Name();
-  });
-  return flags;
+  static const auto kFlags = [] {
+    auto flags = std::views::values(absl::GetAllFlags()) |
+                 std::ranges::to<std::vector<const absl::CommandLineFlag*>>();
+    absl::c_sort(flags, [](const absl::CommandLineFlag* lhs,
+                           const absl::CommandLineFlag* rhs) {
+      return lhs->Name() < rhs->Name();
+    });
+    return flags;
+  }();
+  return std::span<const absl::CommandLineFlag* const>{kFlags};
 }
 
 struct Flag {
@@ -64,14 +67,14 @@ struct Flag {
   mutable std::optional<std::string> current;
   mutable std::optional<std::string> boot;
 
-  const std::string& Current() const {
+  std::string_view Current() const {
     if (!current) {
       current = flag.CurrentValue();
     }
     return *current;
   }
 
-  const std::string& Boot() const {
+  std::string_view Boot() const {
     if (!boot) {
       boot = flag.DefaultValue();
     }
@@ -103,8 +106,8 @@ class SdbSettings final : public SystemTableScan<kSdbSettingsSql> {
       return std::string_view{row.Current() == row.Boot() ? "default"
                                                           : "command line"};
     }),
-    Col<"boot_val">([](const auto& row) -> const auto& { return row.Boot(); }),
-    Col<"reset_val">([](const auto& row) -> const auto& { return row.Boot(); }),
+    Col<"boot_val">([](const auto& row) { return row.Boot(); }),
+    Col<"reset_val">([](const auto& row) { return row.Boot(); }),
     Col<"pending_restart">([](const auto&) { return false; }));
 
   void Row(const absl::CommandLineFlag* flag) { Emit<kFlag>({*flag, {}, {}}); }

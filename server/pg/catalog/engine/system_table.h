@@ -21,6 +21,8 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 
 #include <algorithm>
 #include <array>
@@ -52,6 +54,7 @@
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/shared.hpp>
@@ -265,7 +268,12 @@ class SystemTable {
   SystemTable(const SystemSql& sql, SystemScanFunctions functions,
               std::span<const SystemFact> facts,
               std::optional<SystemVisibility> visibility,
-              std::span<const SystemTypeShape> type_shapes);
+              std::span<const SystemTypeShape> type_shapes)
+    : _sql{sql},
+      _functions{functions},
+      _facts{facts},
+      _visibility{visibility},
+      _type_shapes{type_shapes} {}
 
   SystemTable(const SystemTable&) = delete;
   SystemTable& operator=(const SystemTable&) = delete;
@@ -357,26 +365,32 @@ struct SystemPrefix {
 
 struct SystemSet {
   std::shared_ptr<const catalog::CatalogSnapshot> snapshot;
-  std::vector<duckdb::CatalogEntry*> found;
   std::span<duckdb::CatalogEntry* const> entries;
-};
-
-struct SystemWalk {
-  duckdb::SchemaCatalogEntry* schema;
-  duckdb::CatalogType type;
-};
-
-struct SystemEntries {
-  SystemSet listed;
-  std::vector<SystemWalk> walks;
-  std::bitset<256> wanted;
-  std::optional<SystemPrefix> prefix;
 };
 
 struct CatalogSetSource {
   SystemCatalog catalog;
   duckdb::CatalogType type;
   std::span<const SystemIndex> indexes;
+};
+
+struct SystemKeys {
+  std::span<const std::string> names;
+  std::span<const int64_t> oids;
+  const CatalogSource* source = nullptr;
+  const CatalogSetSource* set = nullptr;
+  bool dependents = false;
+
+  size_t Count() const noexcept { return names.size() + oids.size(); }
+};
+
+struct SystemEntries {
+  SystemSet listed;
+  SystemKeys keys;
+  std::vector<duckdb::SchemaCatalogEntry*> schemas;
+  absl::InlinedVector<duckdb::CatalogType, 8> sets;
+  std::bitset<256> wanted;
+  std::optional<SystemPrefix> prefix;
 };
 
 template<typename Row, typename Holder = void>
@@ -549,6 +563,8 @@ class SystemScan {
 
   SystemEntries Resolve(const CatalogSource& source);
   SystemEntries Resolve(const CatalogSetSource& source) const;
+  void VisitKey(const SystemEntries& entries, size_t key,
+                absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
   SystemSet MemberSet(duckdb::SchemaCatalogEntry& schema,
                       duckdb::CatalogType type,
                       const SystemPrefix* prefix) const;
@@ -586,9 +602,6 @@ class SystemScan {
     return (((_filtered | _pruned) >> column) & 1) == 0 ||
            Overlaps(column, min, max);
   }
-
-  bool AllowsSchema(std::optional<uint32_t> column,
-                    const duckdb::SchemaCatalogEntry& schema) const;
 
   void Begin(duckdb::DataChunk& output);
   void End(duckdb::DataChunk& output);
@@ -961,14 +974,14 @@ class SystemScan {
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
     std::string_view name, SystemSchemas system) const;
   std::vector<duckdb::SchemaCatalogEntry*> Schemas(SystemSchemas system) const;
-  void AppendOwned(duckdb::idx_t oid, SystemSchemas system,
-                   std::vector<duckdb::CatalogEntry*>& entries) const;
-  void AppendNamed(std::string_view name,
-                   std::span<const duckdb::CatalogType> types,
-                   SystemSchemas system,
-                   std::span<duckdb::SchemaCatalogEntry* const> schemas,
-                   const std::bitset<256>& wanted,
-                   std::vector<duckdb::CatalogEntry*>& entries) const;
+  duckdb::optional_ptr<duckdb::CatalogEntry> FindOwned(
+    duckdb::idx_t oid, SystemSchemas system) const;
+  void VisitNamed(std::string_view name,
+                  std::span<const duckdb::CatalogType> types,
+                  SystemSchemas system,
+                  std::span<duckdb::SchemaCatalogEntry* const> schemas,
+                  const std::bitset<256>& wanted,
+                  absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
 
   duckdb::ClientContext& _context;
   duckdb::DuckCatalog& _database;
@@ -1131,9 +1144,25 @@ class SystemCursor<SystemEntries> final {
         return true;
       }
     }
-    for (; _walk < _entries.walks.size(); ++_walk, _pos = 0, _set = {}) {
-      if (Walk(table, _entries.walks[_walk])) {
+    const auto& keys = _entries.keys;
+    const bool distinct = keys.Count() > 1 || keys.dependents;
+    for (const auto steps = keys.dependents ? 2 * keys.Count() : keys.Count();
+         _key < steps; ++_key) {
+      if (table.Step([&] {
+            table.VisitKey(_entries, _key, [&](duckdb::CatalogEntry& entry) {
+              if (!distinct || Fresh(entry)) {
+                Dispatch(table, entry);
+              }
+            });
+          })) {
         return true;
+      }
+    }
+    for (; _schema < _entries.schemas.size(); ++_schema, _slot = 0) {
+      for (; _slot < _entries.sets.size(); ++_slot, _pos = 0, _set = {}) {
+        if (Walk(table, *_entries.schemas[_schema], _entries.sets[_slot])) {
+          return true;
+        }
       }
     }
     return false;
@@ -1141,21 +1170,19 @@ class SystemCursor<SystemEntries> final {
 
  private:
   template<typename T>
-  bool Walk(T& table, const SystemWalk& walk) {
+  bool Walk(T& table, duckdb::SchemaCatalogEntry& schema,
+            duckdb::CatalogType type) {
     using enum duckdb::CatalogType;
-    const auto type = walk.type;
     if (type == SCHEMA_ENTRY) {
       return table.Step(
-        [&] { Visit<duckdb::SchemaCatalogEntry>(table, *walk.schema); });
+        [&] { Visit<duckdb::SchemaCatalogEntry>(table, schema); });
     }
     if (!_set.snapshot) {
       const bool keyed = (type == TABLE_ENTRY || type == VIEW_ENTRY) &&
                          _entries.wanted.test(std::to_underlying(INDEX_ENTRY));
       _set = table.MemberSet(
-        *walk.schema, type,
-        _entries.prefix && !keyed ? &*_entries.prefix : nullptr);
+        schema, type, _entries.prefix && !keyed ? &*_entries.prefix : nullptr);
     }
-    const auto& schema = *walk.schema;
     if (type == TABLE_ENTRY || type == VIEW_ENTRY) {
       return Walk(table, schema, [&](duckdb::CatalogEntry& entry) {
         if (entry.type == TABLE_ENTRY) {
@@ -1206,13 +1233,21 @@ class SystemCursor<SystemEntries> final {
     return false;
   }
 
+  bool Fresh(const duckdb::CatalogEntry& entry) {
+    const auto [it, inserted] = _seen.try_emplace(&entry, _key);
+    return inserted || it->second == _key;
+  }
+
   static constexpr size_t kPrefetchAhead = 8;
 
   SystemEntries _entries;
   size_t _next = 0;
-  size_t _walk = 0;
+  size_t _key = 0;
+  size_t _schema = 0;
+  size_t _slot = 0;
   size_t _pos = 0;
   SystemSet _set;
+  irs::containers::FlatHashMap<const duckdb::CatalogEntry*, size_t> _seen;
 };
 
 SystemCursor(SystemEntries) -> SystemCursor<SystemEntries>;

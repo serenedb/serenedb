@@ -20,23 +20,15 @@
 
 #pragma once
 
-#include <absl/synchronization/mutex.h>
-
 #include <atomic>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_set.hpp>
-#include <duckdb/catalog/dependency.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/enums/database_modification_type.hpp>
-#include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <string_view>
 #include <utility>
-#include <vector>
 
 #include "catalog/database_directory.h"
 #include "catalog/entry/foreign_server.h"
@@ -51,8 +43,6 @@ class PhysicalOperator;
 class LogicalInsert;
 class LogicalCreateTable;
 class LogicalMergeInto;
-class UniqueConstraint;
-class ColumnDefinition;
 struct CreateJobInfo;
 struct DropInfo;
 

@@ -30,7 +30,10 @@ def statements(text):
             if i < 0:
                 break
         elif text.startswith('/*', i):
-            i = text.find('*/', i) + 1
+            i = text.find('*/', i)
+            if i < 0:
+                break
+            i += 1
         elif ch == ';':
             out.append(text[start:i])
             start = i + 1

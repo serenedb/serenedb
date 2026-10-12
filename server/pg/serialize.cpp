@@ -53,18 +53,15 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <icu-helpers.hpp>
 #include <icu-zone-lut.hpp>
-#include <limits>
-#include <string_view>
-#include <type_traits>
-
-#define SDB_PG_LOGICAL_TYPES_NO_FACTORY
-
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
+#include <limits>
+#include <string_view>
+#include <type_traits>
 
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"

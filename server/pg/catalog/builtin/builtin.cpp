@@ -186,13 +186,13 @@ const std::vector<BuiltinCollation>& Collations() {
       const std::string_view name = entry->name.GetIdentifierName();
       const bool icu =
         absl::StartsWith(entry->function.name.GetIdentifierName(), "collate_");
-      collations.push_back(
-        {.oid = static_cast<int32_t>(kFirstCollation + collations.size() -
-                                     std::size(kCollations)),
-         .name = name,
-         .provider = icu ? 'i' : 'b',
-         .locale = icu ? name : std::string_view{},
-         .deterministic = entry->not_required_for_equality});
+      collations.emplace_back(BuiltinCollation{
+        .oid = static_cast<int32_t>(kFirstCollation + collations.size() -
+                                    std::size(kCollations)),
+        .name = name,
+        .provider = icu ? 'i' : 'b',
+        .locale = icu ? name : std::string_view{},
+        .deterministic = entry->not_required_for_equality});
     }
     return collations;
   }();

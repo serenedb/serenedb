@@ -56,6 +56,7 @@ enum class MergeUnitKind : uint8_t {
 struct MergeUnit {
   MergeUnitKind kind;
   field_id id = field_limits::invalid();
+  uint64_t cost = 0;
 };
 
 inline constexpr uint64_t kMergeDocsMax =
@@ -76,13 +77,25 @@ class MergePlan {
 
   std::span<const MergeUnit> Units() const noexcept;
 
+  std::span<const size_t> Dependencies(size_t unit) const noexcept;
+
   bool RunUnit(size_t unit);
 
   const MergeProfile& Profile() const noexcept;
 
+  void SetWallNanos(uint64_t nanos) noexcept;
+
  private:
   struct State;
   std::unique_ptr<State> _state;
+};
+
+class MergeExecutor {
+ public:
+  virtual bool Run(MergePlan& plan) = 0;
+
+ protected:
+  ~MergeExecutor() = default;
 };
 
 bool RunSerially(MergePlan& plan);

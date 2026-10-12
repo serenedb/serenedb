@@ -93,8 +93,8 @@ Each result row describes one merge:
 | `outcome` | `merged`; `deferred` (merged, visible after the next commit); `nothing`; `busy` (a segment was being merged by another task); `failed` |
 | `inputs`, `input_docs`, `input_live_docs`, `input_bytes` | The merged segments, their documents, live documents and bytes |
 | `output`, `output_docs`, `output_bytes` | The new segment |
-| `total_ms` | Time of the merge |
-| `prepare_ms`, `norms_ms`, `columns_ms`, `columns_commit_ms`, `ann_ms`, `postings_ms`, `commit_ms` | Time of each merge step |
+| `total_ms` | Wall-clock time of the merge |
+| `prepare_ms`, `norms_ms`, `columns_ms`, `columns_commit_ms`, `ann_ms`, `postings_ms`, `commit_ms` | Time spent in each merge step, added up over the threads that ran it |
 | `error` | Why a merge failed |
 
 `EXPLAIN` prints the plan in a `SEGMENT_REWRITE` box, with one group of lines per merge:
@@ -114,7 +114,9 @@ Each result row describes one merge:
 
 `EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
 
-`sdb_compact` needs the same privilege as `VACUUM` on the table (`MAINTAIN`). Its merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them.
+A merge runs as separate pieces of work: the norms of each indexed field, one after another, then every column and the postings of all indexed fields side by side, then the column file's footer, the vector indexes one at a time, and finally the index files. `CALL sdb_compact` and `VACUUM (COMPACT_*)` run these pieces on as many threads as the session may use (the `threads` setting), so a merge of a wide table finishes sooner on more threads. With several threads the step times of a merge add up to more than its `total_ms`. Background compaction runs each merge on one thread.
+
+`sdb_compact` needs the same privilege as `VACUUM` on the table (`MAINTAIN`). Its merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain.
 
 `sdb_segments(relation)` lists the segments of a search table or an inverted index: `segment`, `docs`, `live_docs`, `deleted_docs`, `bytes`, and `rowid_min` / `rowid_max`, the range of row ids a segment holds.
 

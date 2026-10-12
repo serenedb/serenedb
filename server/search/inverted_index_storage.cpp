@@ -387,11 +387,12 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::CompactionResult* outcome)
-  -> yaclib::Future<ResultWithTime> {
+  MergeOrigin origin, irs::CompactionResult* outcome,
+  irs::MergeExecutor* executor) -> yaclib::Future<ResultWithTime> {
   auto begin = std::chrono::steady_clock::now();
-  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
-                                           field_options, env, origin, outcome);
+  auto result =
+    co_await CompactUnsafeImpl(policy, progress, empty_compaction,
+                               field_options, env, origin, outcome, executor);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
@@ -420,15 +421,15 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::CompactionResult* outcome)
-  -> yaclib::Future<absl::Status> {
+  MergeOrigin origin, irs::CompactionResult* outcome,
+  irs::MergeExecutor* executor) -> yaclib::Future<absl::Status> {
   empty_compaction = false;
   MergeRecorder recorder{GetId(), origin};
   const auto recorded = recorder.Wrap(policy);
 
   try {
-    auto res =
-      co_await _writer->CompactAsync(recorded, field_options, progress, env);
+    auto res = co_await _writer->CompactAsync(recorded, field_options, progress,
+                                              env, executor);
     const auto error = res.error;
     const auto size = res.size;
     if (outcome) {

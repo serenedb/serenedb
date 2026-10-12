@@ -50,6 +50,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "insert_field.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "tests_shared.hpp"
@@ -750,6 +751,35 @@ TEST_P(HnswParallelBuildTest, MergeKeepsNullRowsOutOfTheGraph) {
               data->graph.LevelOf(static_cast<uint32_t>(i)) != 0)
       << i;
   }
+  EXPECT_GE(Recall(merged, vecs, kNullEvery), RecallFloor());
+}
+
+TEST_P(HnswParallelBuildTest, MergeUnitsRunInParallel) {
+  constexpr size_t kBig = 1500;
+  constexpr size_t kSmall = 600;
+  constexpr size_t kNullEvery = 7;
+  const auto vecs = MakeVectors(kBig + kSmall, 61);
+  const ThreadEnv env{4};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, Options(nullptr));
+  Insert(*writer, vecs, 0, kBig, kNullEvery);
+  Insert(*writer, vecs, kBig, kBig + kSmall, kNullEvery);
+  ASSERT_EQ(2U, writer->GetSnapshot().size());
+  tests::merge::ThreadedMergeExecutor executor{4};
+  ASSERT_TRUE(irs::GetReady(writer->CompactAsync(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount()), nullptr,
+    {}, &env, &executor)));
+  writer->RefreshCommit();
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged.size());
+  const auto data = Graph(merged[0]);
+  ASSERT_NE(nullptr, data);
+  for (size_t i = 0; i < vecs.size(); ++i) {
+    EXPECT_EQ(i % kNullEvery != 3,
+              data->graph.LevelOf(static_cast<uint32_t>(i)) != 0)
+      << i;
+  }
+  EXPECT_EQ(0U, env.Held());
   EXPECT_GE(Recall(merged, vecs, kNullEvery), RecallFloor());
 }
 

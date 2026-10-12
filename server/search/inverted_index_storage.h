@@ -173,7 +173,8 @@ class InvertedIndexStorage final
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
-                          irs::CompactionResult* outcome = nullptr)
+                          irs::CompactionResult* outcome = nullptr,
+                          irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;
 
   ResultWithTime RefreshUnsafe(bool wait,
@@ -284,7 +285,8 @@ class InvertedIndexStorage final
                          bool& empty_compaction,
                          const irs::IndexFieldOptions* field_options,
                          const irs::AnnBuildEnv* env, MergeOrigin origin,
-                         irs::CompactionResult* outcome)
+                         irs::CompactionResult* outcome,
+                         irs::MergeExecutor* executor)
     -> yaclib::Future<absl::Status>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,

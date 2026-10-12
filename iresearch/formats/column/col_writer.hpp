@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -75,6 +76,8 @@ class ColWriter final {
 
   NormColumnWriter& StreamNormColumn(field_id id);
 
+  std::vector<AnnWriter*> AnnWriters();
+
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
   bool Commit(uint64_t target_row);
@@ -109,6 +112,7 @@ class ColWriter final {
   duckdb::DatabaseInstance* _db;
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
+  std::mutex _mutex;
   IndexOutput::ptr _out;
   std::unique_ptr<ColBlockSink> _blocks;
   std::unique_ptr<WriteContext> _write_ctx;

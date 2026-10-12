@@ -48,6 +48,8 @@ namespace {
 
 using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
 
+constexpr uint64_t kAnnCostPerByte = 32;
+
 void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader) {
   for (auto id : reader.field_ids()) {
@@ -122,7 +124,6 @@ struct MergePlan::State {
 
   bool WriteColumnsFooter() {
     MergeStepClock clock{profile};
-    idx = std::make_unique<IdxWriter>(track_dir, segment.name);
     col_writer->SetIdxWriter(*idx);
     if (!col_writer->Commit(segment.docs_count, progress)) {
       return false;
@@ -145,15 +146,13 @@ struct MergePlan::State {
 
   bool MergePostings() {
     MergeStepClock clock{profile};
-    ann_reader.reset();
-    ann_writers = col_writer->TakeAnnWriters();
-    if (segment.docs_count != 0 && !ann_writers.empty()) {
+    if (ivf && segment.docs_count != 0) {
       col_reader = std::make_unique<ColReader>(track_dir, segment.name, db);
-    }
-    cluster_readers =
-      PrepareIvfClusterReaders(ann_writers, col_reader.get(), ivf_ctx);
-    for (const auto* reader : cluster_readers) {
-      index_features |= reader->properties().index_features;
+      cluster_readers = PrepareIvfClusterReaders(col_writer->AnnWriters(),
+                                                 col_reader.get(), ivf_ctx);
+      for (const auto* reader : cluster_readers) {
+        index_features |= reader->properties().index_features;
+      }
     }
     clock.Lap(MergeStep::Ann);
     if (!progress()) {
@@ -179,6 +178,8 @@ struct MergePlan::State {
 
   bool WriteIndex() {
     MergeStepClock clock{profile};
+    ann_reader.reset();
+    ann_writers = col_writer->TakeAnnWriters();
     for (const auto& writer : ann_writers) {
       writer->Flush();
     }
@@ -212,6 +213,8 @@ struct MergePlan::State {
   std::unique_ptr<ColumnMerger> columns;
   MergedNormIdMap merged_norm_ids;
   std::vector<MergeUnit> units;
+  std::vector<std::vector<size_t>> deps;
+  bool ivf = false;
   std::unique_ptr<IdxWriter> idx;
   std::unique_ptr<ColReader> ann_reader;
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
@@ -282,6 +285,7 @@ bool MergePlan::Prepare() {
   s.col_writer->SetFieldOptions(s.field_options);
   s.columns = std::make_unique<ColumnMerger>(s.sources, s.field_options);
   s.norms.emplace(s.sources, s.doc_map.get_allocator().Manager());
+  s.idx = std::make_unique<IdxWriter>(s.track_dir, s.segment.name);
 
   std::vector<field_id> norm_fields;
   if (s.field_options) {
@@ -303,21 +307,59 @@ bool MergePlan::Prepare() {
                id);
     s.merged_norm_ids.emplace(id, out);
     s.norms->AddField(out, id, stats.sum, stats.non_zero);
-    s.units.push_back({.kind = MergeUnitKind::Norms, .id = id});
+    s.units.push_back(
+      {.kind = MergeUnitKind::Norms, .id = id, .cost = s.segment.docs_count});
   }
+  uint64_t column_bytes = 0;
   for (const auto id : s.columns->Columns()) {
-    s.units.push_back({.kind = MergeUnitKind::Column, .id = id});
+    const auto bytes = s.columns->StoredBytes(id);
+    column_bytes += bytes;
+    s.units.push_back({.kind = MergeUnitKind::Column, .id = id, .cost = bytes});
   }
+  const auto footer = s.units.size();
   s.units.push_back({.kind = MergeUnitKind::ColumnsFooter});
+  s.deps.resize(s.units.size());
+  const auto norm_units = s.merged_norm_ids.size();
+  for (size_t unit = 0; unit != footer; ++unit) {
+    if (unit != 0 && unit < norm_units) {
+      s.deps[unit].push_back(unit - 1);
+    } else if (unit >= norm_units && norm_units != 0) {
+      s.deps[unit].push_back(norm_units - 1);
+    }
+    s.deps[footer].push_back(unit);
+  }
+  std::vector<size_t> ivf_units;
   if (s.field_options) {
     for (const auto id : s.columns->Columns()) {
-      if (s.field_options->GetColumnOptions(id).ann_info) {
-        s.units.push_back({.kind = MergeUnitKind::Ann, .id = id});
+      const auto& ann = s.field_options->GetColumnOptions(id).ann_info;
+      if (!ann) {
+        continue;
+      }
+      const auto unit = s.units.size();
+      s.units.push_back({.kind = MergeUnitKind::Ann,
+                         .id = id,
+                         .cost = s.columns->StoredBytes(id) * kAnnCostPerByte});
+      s.deps.push_back({unit - 1});
+      if (ann->kind == AnnKind::Ivf) {
+        s.ivf = true;
+        ivf_units.push_back(unit);
       }
     }
   }
-  s.units.push_back({.kind = MergeUnitKind::Postings});
+  uint64_t input_bytes = 0;
+  for (const auto& input : s.doc_map) {
+    input_bytes += input.reader->Meta().byte_size;
+  }
+  s.units.push_back(
+    {.kind = MergeUnitKind::Postings,
+     .cost = input_bytes > column_bytes ? input_bytes - column_bytes : 0});
+  s.deps.push_back(std::move(ivf_units));
+  const auto index = s.units.size();
   s.units.push_back({.kind = MergeUnitKind::Index});
+  s.deps.emplace_back();
+  for (size_t unit = footer; unit != index; ++unit) {
+    s.deps[index].push_back(unit);
+  }
   clock.Lap(MergeStep::Prepare);
   return true;
 }
@@ -326,14 +368,23 @@ std::span<const MergeUnit> MergePlan::Units() const noexcept {
   return _state->units;
 }
 
+std::span<const size_t> MergePlan::Dependencies(size_t unit) const noexcept {
+  SDB_ASSERT(unit < _state->deps.size());
+  return _state->deps[unit];
+}
+
+void MergePlan::SetWallNanos(uint64_t nanos) noexcept {
+  _state->profile.SetWallNanos(nanos);
+}
+
 bool MergePlan::RunUnit(size_t unit) {
   auto& s = *_state;
   SDB_ASSERT(unit < s.units.size());
   if (!s.progress()) {
     return false;
   }
-  const auto& [kind, id] = s.units[unit];
-  switch (kind) {
+  const auto id = s.units[unit].id;
+  switch (s.units[unit].kind) {
     case MergeUnitKind::Norms:
       return s.MergeNorms(id);
     case MergeUnitKind::Column:

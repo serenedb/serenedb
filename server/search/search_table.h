@@ -189,17 +189,19 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                                const irs::MergeWriter::FlushProgress& progress,
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options,
-                               MergeOrigin origin) {
+                               MergeOrigin origin,
+                               irs::MergeExecutor* executor = nullptr) {
     return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
                                             field_options, &AnnBuildEnv(),
-                                            origin));
+                                            origin, nullptr, executor));
   }
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
                           bool& empty_compaction,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
-                          irs::CompactionResult* outcome = nullptr)
+                          irs::CompactionResult* outcome = nullptr,
+                          irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;
   ResultWithTime CleanupUnsafe();
 
@@ -211,7 +213,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   void VacuumRefresh();
-  void VacuumCompact(uint32_t target_segments);
+  void VacuumCompact(uint32_t target_segments,
+                     irs::MergeExecutor* executor = nullptr);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();

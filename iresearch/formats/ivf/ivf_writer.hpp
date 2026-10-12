@@ -163,8 +163,9 @@ class IvfWriter final : public AnnWriter {
   std::unique_ptr<IvfTermReader> _reader;
 };
 
-inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
-  std::span<const std::unique_ptr<AnnWriter>> writers, ColReader* col_reader,
+template<typename Writers>
+std::vector<const BasicTermReader*> PrepareIvfClusterReaders(
+  const Writers& writers, ColReader* col_reader,
   std::optional<ReadContext>& ctx) {
   std::vector<const BasicTermReader*> out;
   if (col_reader == nullptr || writers.empty()) {

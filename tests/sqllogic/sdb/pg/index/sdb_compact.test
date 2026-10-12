@@ -786,3 +786,163 @@ DROP TABLE sdbc_src
 
 statement ok
 DROP TABLE sdbc_plain
+
+
+# A merge spreads its columns and postings over the session's threads; the
+# rows and search results are the same with one thread and with several.
+statement ok
+CREATE TABLE sdbc_par (id INT PRIMARY KEY, body TEXT, n BIGINT, x DOUBLE,
+                       flag BOOLEAN, label TEXT)
+WITH (storage = 'search', compaction_interval = 0)
+
+
+statement ok
+INSERT INTO sdbc_par
+SELECT i, CASE WHEN i % 2 = 0 THEN 'fox dog' ELSE 'owl cat' END, i * 3,
+       i / 4.0, i % 3 = 0, 'L' || (i % 7)
+FROM generate_series(1, 50000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+INSERT INTO sdbc_par
+SELECT i, CASE WHEN i % 2 = 0 THEN 'fox dog' ELSE 'owl cat' END, i * 3,
+       i / 4.0, i % 3 = 0, 'L' || (i % 7)
+FROM generate_series(50001, 100000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+INSERT INTO sdbc_par
+SELECT i, CASE WHEN i % 2 = 0 THEN 'fox dog' ELSE 'owl cat' END, i * 3,
+       i / 4.0, i % 3 = 0, 'L' || (i % 7)
+FROM generate_series(100001, 150000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+INSERT INTO sdbc_par
+SELECT i, CASE WHEN i % 2 = 0 THEN 'fox dog' ELSE 'owl cat' END, i * 3,
+       i / 4.0, i % 3 = 0, 'L' || (i % 7)
+FROM generate_series(150001, 200000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+SET threads = 4
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('sdbc_par', mode := 'compact', target_segments := 2)
+ORDER BY merge
+----
+merge	outcome	input_docs	output_docs
+1	merged	100000	100000
+2	merged	100000	100000
+
+
+query
+SELECT count(*) AS rows, sum(n) AS n, sum(x)::BIGINT AS x,
+       count(*) FILTER (WHERE flag) AS flags,
+       count(DISTINCT label) AS labels,
+       count(*) FILTER (WHERE body LIKE '%dog%') AS dogs
+FROM sdbc_par
+----
+rows	n	x	flags	labels	dogs
+200000	60000300000	5000025000	66666	7	100000
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('sdbc_par', mode := 'compact')
+----
+merge	outcome	input_docs	output_docs
+1	merged	200000	200000
+
+
+query
+SELECT count(*) AS rows, sum(n) AS n, sum(x)::BIGINT AS x,
+       count(*) FILTER (WHERE flag) AS flags,
+       count(DISTINCT label) AS labels,
+       count(*) FILTER (WHERE body LIKE '%dog%') AS dogs
+FROM sdbc_par
+----
+rows	n	x	flags	labels	dogs
+200000	60000300000	5000025000	66666	7	100000
+
+
+# A statement timeout stops the call between two merges; the rows stay.
+statement ok
+INSERT INTO sdbc_par
+SELECT i, 'fox owl', i * 3, i / 4.0, false, 'L0'
+FROM generate_series(200001, 225000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+INSERT INTO sdbc_par
+SELECT i, 'fox owl', i * 3, i / 4.0, false, 'L0'
+FROM generate_series(225001, 250000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+INSERT INTO sdbc_par
+SELECT i, 'fox owl', i * 3, i / 4.0, false, 'L0'
+FROM generate_series(250001, 275000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) sdbc_par
+
+
+statement ok
+SET statement_timeout = 1
+
+
+statement error
+SELECT * FROM sdb_compact('sdbc_par', mode := 'compact', target_segments := 2)
+----
+db error: ERROR: canceling statement due to statement timeout
+
+
+statement ok
+RESET statement_timeout
+
+
+query
+SELECT count(*) AS rows FROM sdbc_par
+----
+rows
+275000
+
+
+statement ok
+RESET threads
+
+
+statement ok
+DROP TABLE sdbc_par

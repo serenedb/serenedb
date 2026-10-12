@@ -93,6 +93,8 @@ set(iresearch-tests_sources
     ./index/merge/merge_characterization_tests.cpp
     ./index/merge/merge_oracle_tests.cpp
     ./index/merge/merge_plan_tests.cpp
+    ./index/merge/merge_schedule_tests.cpp
+    ./index/merge/support/parallel_merge.cpp
     ./index/merge/support/segment_dump.cpp
     ./index/merge/support/segment_gen.cpp
     ./index/merge_writer_tests.cpp

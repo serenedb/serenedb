@@ -21,10 +21,14 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/directory_utils.hpp>
+#include <thread>
 #include <unordered_set>
+#include <vector>
 
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
@@ -376,4 +380,73 @@ TEST_F(DirectoryUtilsTests, test_tracking_dir) {
 
     ASSERT_FALSE(track_dir.remove("def"));
   }
+}
+
+TEST_F(DirectoryUtilsTests, test_tracking_dir_failures_and_threads) {
+  struct FailingDirectory final : public irs::Directory {
+    using Directory::Directory;
+
+    irs::DirectoryAttributes attrs{};
+    irs::DirectoryAttributes& attributes() noexcept final { return attrs; }
+    irs::IndexOutput::ptr create(std::string_view) noexcept final {
+      return nullptr;
+    }
+    bool exists(bool&, std::string_view) const noexcept final { return false; }
+    bool length(uint64_t&, std::string_view) const noexcept final {
+      return false;
+    }
+    bool visit(const visitor_f&) const final { return false; }
+    irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
+      return nullptr;
+    }
+    bool mtime(std::time_t&, std::string_view) const noexcept final {
+      return false;
+    }
+    irs::IndexInput::ptr open(std::string_view,
+                              irs::IOAdvice) const noexcept final {
+      return nullptr;
+    }
+    bool remove(std::string_view) noexcept final { return false; }
+    bool rename(std::string_view, std::string_view) noexcept final {
+      return false;
+    }
+    bool sync(std::span<const std::string_view>) noexcept final {
+      return false;
+    }
+  } failing{irs::ResourceManagementOptions::gDefault};
+
+  {
+    irs::TrackingDirectory track_dir{failing};
+    EXPECT_EQ(nullptr, track_dir.create("abc"));
+    EXPECT_FALSE(track_dir.rename("abc", "def"));
+    uint64_t byte_size{1};
+    EXPECT_TRUE(track_dir.FlushTracked(byte_size).empty());
+    EXPECT_EQ(0, byte_size);
+  }
+
+  irs::MemoryDirectory dir;
+  irs::TrackingDirectory track_dir{dir};
+  std::vector<std::thread> threads;
+  for (size_t t = 0; t != 8; ++t) {
+    threads.emplace_back([&track_dir, t] {
+      for (size_t i = 0; i != 50; ++i) {
+        auto out = track_dir.create(absl::StrCat("f", t, "_", i));
+        EXPECT_NE(nullptr, out);
+        if (out) {
+          out->WriteByte(1);
+        }
+      }
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  uint64_t byte_size{0};
+  EXPECT_EQ(400, track_dir.FlushTracked(byte_size).size());
+  EXPECT_EQ(400, byte_size);
+
+  track_dir.create("g").reset();
+  track_dir.ClearTracked();
+  EXPECT_TRUE(track_dir.FlushTracked(byte_size).empty());
+  EXPECT_EQ(0, byte_size);
 }

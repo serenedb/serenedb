@@ -55,6 +55,8 @@ class ColumnMerger {
 
   std::span<const field_id> Columns() const noexcept;
 
+  uint64_t StoredBytes(field_id column) const;
+
   bool Merge(field_id column, ColWriter& output,
              absl::FunctionRef<bool()> progress);
 

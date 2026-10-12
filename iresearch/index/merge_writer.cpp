@@ -32,7 +32,8 @@ namespace irs {
 
 auto MergeWriter::Flush(SegmentMeta& segment,
                         const FlushProgress& progress /*= {}*/,
-                        const AnnBuildEnv* env /*= nullptr*/)
+                        const AnnBuildEnv* env /*= nullptr*/,
+                        MergeExecutor* executor /*= nullptr*/)
   -> yaclib::Future<bool> {
   bool result = false;
   Finally segment_invalidator = [&result, &segment]() noexcept {
@@ -43,7 +44,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   };
   MergePlan plan{_dir, _readers,       segment,  _scorer,
                  _db,  _field_options, progress, env};
-  result = plan.Prepare() && RunSerially(plan);
+  result = plan.Prepare() &&
+           (executor != nullptr ? executor->Run(plan) : RunSerially(plan));
   _profile = plan.Profile();
   co_return result;
 }

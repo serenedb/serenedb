@@ -100,6 +100,7 @@ set(IResearch_core_sources
     ./index/iterators.cpp
     ./index/merge/input_norms.cpp
     ./index/merge/merge_plan.cpp
+    ./index/merge/merge_schedule.cpp
     ./index/merge/norms_unit.cpp
     ./index/merge/postings_unit.cpp
     ./index/merge_writer.cpp

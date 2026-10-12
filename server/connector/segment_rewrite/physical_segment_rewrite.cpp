@@ -20,28 +20,127 @@
 
 #include "connector/segment_rewrite/physical_segment_rewrite.h"
 
+#include <chrono>
+#include <duckdb/common/mutex.hpp>
 #include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_config.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/query_profiler.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
+#include <iresearch/index/merge/merge_plan.hpp>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "search/compaction/merge_unit_run.h"
+
 namespace sdb::connector {
 namespace {
 
+using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
+
 struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
+  explicit SegmentRewriteSourceState(duckdb::idx_t threads) noexcept
+    : threads{threads} {}
+
+  duckdb::idx_t MaxThreads() final { return threads; }
+
+  duckdb::idx_t threads;
   search::CompactionOptions options;
   bool pinned = false;
   size_t next = 0;
-  bool finished = false;
   std::vector<ExecutedMerge> executed;
-
-  duckdb::idx_t MaxThreads() final { return 1; }
+  bool driver_taken = false;
+  bool finished = false;
+  std::shared_ptr<search::MergeUnitRun> run;
+  std::optional<duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>>
+    actuals;
 };
+
+struct SegmentRewriteLocalState final : duckdb::LocalSourceState {
+  bool driver = false;
+};
+
+void RunAndWake(SegmentRewriteSourceState& state, search::MergeUnitRun& run,
+                size_t unit) {
+  run.Run(unit);
+  Guard guard{state.lock};
+  state.UnblockTasks();
+}
+
+class SegmentRewriteExecutor final : public irs::MergeExecutor {
+ public:
+  explicit SegmentRewriteExecutor(SegmentRewriteSourceState& state) noexcept
+    : _state{state} {}
+
+  bool Run(irs::MergePlan& plan) final {
+    const auto run = std::make_shared<search::MergeUnitRun>(plan);
+    {
+      Guard guard{_state.lock};
+      _state.run = run;
+      _state.UnblockTasks();
+    }
+    while (const auto unit = run->Next()) {
+      RunAndWake(_state, *run, *unit);
+    }
+    {
+      Guard guard{_state.lock};
+      _state.run.reset();
+    }
+    return run->Finish();
+  }
+
+ private:
+  SegmentRewriteSourceState& _state;
+};
+
+duckdb::SourceResultType Help(const duckdb::PhysicalOperator& op,
+                              duckdb::ExecutionContext& context,
+                              SegmentRewriteSourceState& state,
+                              const duckdb::InterruptState& interrupt) {
+  std::shared_ptr<search::MergeUnitRun> run;
+  std::optional<size_t> unit;
+  {
+    Guard guard{state.lock};
+    if (state.finished) {
+      if (state.actuals) {
+        context.thread.profiler.GetOperatorMetrics(op).SetExtraInfo(
+          *state.actuals);
+      }
+      return duckdb::SourceResultType::FINISHED;
+    }
+    if (state.run) {
+      run = state.run;
+      unit = run->schedule.Claim();
+    }
+    if (!unit) {
+      return state.BlockSource(interrupt);
+    }
+  }
+  RunAndWake(state, *run, *unit);
+  return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+}
+
+void FinishJob(SegmentRewriteSourceState& state) {
+  Guard guard{state.lock};
+  state.finished = true;
+  state.PreventBlocking();
+  state.UnblockTasks();
+}
+
+bool DeadlinePassed(const duckdb::ClientContext& client) noexcept {
+  if (!client.query_deadline.IsValid()) {
+    return false;
+  }
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     std::chrono::steady_clock::now().time_since_epoch())
+                     .count();
+  return static_cast<duckdb::idx_t>(now) >= client.query_deadline.GetIndex();
+}
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
 
@@ -102,68 +201,97 @@ PhysicalSegmentRewrite::PhysicalSegmentRewrite(
     _job{std::move(job)} {}
 
 duckdb::unique_ptr<duckdb::GlobalSourceState>
-PhysicalSegmentRewrite::GetGlobalSourceState(duckdb::ClientContext&) const {
-  return duckdb::make_uniq<SegmentRewriteSourceState>();
+PhysicalSegmentRewrite::GetGlobalSourceState(
+  duckdb::ClientContext& context) const {
+  return duckdb::make_uniq<SegmentRewriteSourceState>(
+    duckdb::TaskScheduler::QueryThreads(context));
+}
+
+duckdb::unique_ptr<duckdb::LocalSourceState>
+PhysicalSegmentRewrite::GetLocalSourceState(duckdb::ExecutionContext&,
+                                            duckdb::GlobalSourceState&) const {
+  return duckdb::make_uniq<SegmentRewriteLocalState>();
 }
 
 duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
   duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
   duckdb::OperatorSourceInput& input) const {
   auto& state = input.global_state.Cast<SegmentRewriteSourceState>();
+  auto& local = input.local_state.Cast<SegmentRewriteLocalState>();
+  if (!local.driver) {
+    {
+      Guard guard{state.lock};
+      if (!state.driver_taken) {
+        state.driver_taken = true;
+        local.driver = true;
+      }
+    }
+    if (!local.driver) {
+      return Help(*this, context, state, input.interrupt_state);
+    }
+  }
   const auto& merges = _job->plan.merges;
-  if (state.finished) {
-    return duckdb::SourceResultType::FINISHED;
-  }
-  context.client.InterruptCheck();
-  if (!state.pinned) {
-    state.options = _job->target.PinOptions();
-    state.pinned = true;
-  }
-  if (state.next < merges.size()) {
-    const auto& planned = merges[state.next];
-    std::vector<std::string> names;
-    names.reserve(planned.inputs.size());
-    for (const auto& segment : planned.inputs) {
-      names.emplace_back(segment.name);
+  try {
+    context.client.InterruptCheck();
+    context.client.DeadlineCheck();
+    if (!state.pinned) {
+      state.options = _job->target.PinOptions();
+      state.pinned = true;
     }
-    auto& client = context.client;
-    const irs::MergeWriter::FlushProgress progress = [&client] {
-      return !client.IsInterrupted();
-    };
-    auto run = _job->target.Compact(search::ExplicitPolicy(names), progress,
-                                    state.options.field_options,
-                                    search::MergeOrigin::Sql);
-    ExecutedMerge executed{
-      .outcome = run.error.empty() ? search::OutcomeOf(run.result)
-                                   : search::MergeOutcome::Failed,
-      .stats = std::move(run.result.stats),
-      .error = std::move(run.error),
-    };
-    if (executed.stats.inputs.empty()) {
-      executed.stats.inputs = std::move(names);
-    }
-    ++state.next;
-    AppendRow(chunk, state.next, executed);
-    state.executed.emplace_back(std::move(executed));
     if (state.next < merges.size()) {
-      return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+      const auto& planned = merges[state.next];
+      std::vector<std::string> names;
+      names.reserve(planned.inputs.size());
+      for (const auto& segment : planned.inputs) {
+        names.emplace_back(segment.name);
+      }
+      auto& client = context.client;
+      const irs::MergeWriter::FlushProgress progress = [&client] {
+        return !client.IsInterrupted() && !DeadlinePassed(client);
+      };
+      SegmentRewriteExecutor executor{state};
+      auto run = _job->target.Compact(search::ExplicitPolicy(names), progress,
+                                      state.options.field_options,
+                                      search::MergeOrigin::Sql, &executor);
+      context.client.InterruptCheck();
+      context.client.DeadlineCheck();
+      ExecutedMerge executed{
+        .outcome = run.error.empty() ? search::OutcomeOf(run.result)
+                                     : search::MergeOutcome::Failed,
+        .stats = std::move(run.result.stats),
+        .error = std::move(run.error),
+      };
+      if (executed.stats.inputs.empty()) {
+        executed.stats.inputs = std::move(names);
+      }
+      ++state.next;
+      AppendRow(chunk, state.next, executed);
+      state.executed.emplace_back(std::move(executed));
+      if (state.next < merges.size()) {
+        return duckdb::SourceResultType::HAVE_MORE_OUTPUT;
+      }
     }
-  }
-  state.finished = true;
-  if (!state.executed.empty()) {
-    _job->target.Publish();
-  }
-  auto& profiler = context.thread.profiler;
-  if (profiler.IsEnabled()) {
-    auto params = ParamsToString();
-    AppendSegmentRewriteActuals(state.executed,
-                                DeterministicRendering(context.client), params);
-    duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> info;
-    for (const auto& [key, value] : params) {
-      info[key] = value;
+    if (!state.executed.empty()) {
+      _job->target.Publish();
     }
-    profiler.GetOperatorMetrics(*this).SetExtraInfo(std::move(info));
+    auto& profiler = context.thread.profiler;
+    if (profiler.IsEnabled()) {
+      auto params = ParamsToString();
+      AppendSegmentRewriteActuals(
+        state.executed, DeterministicRendering(context.client), params);
+      duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> info;
+      for (const auto& [key, value] : params) {
+        info[key] = value;
+      }
+      profiler.GetOperatorMetrics(*this).SetExtraInfo(info);
+      Guard guard{state.lock};
+      state.actuals = std::move(info);
+    }
+  } catch (...) {
+    FinishJob(state);
+    throw;
   }
+  FinishJob(state);
   return duckdb::SourceResultType::FINISHED;
 }
 

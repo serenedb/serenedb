@@ -381,8 +381,8 @@ auto SearchTable::CompactUnsafeAsync(
   const irs::CompactionPolicy& policy,
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
-  MergeOrigin origin, irs::CompactionResult* outcome)
-  -> yaclib::Future<ResultWithTime> {
+  MergeOrigin origin, irs::CompactionResult* outcome,
+  irs::MergeExecutor* executor) -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
@@ -391,8 +391,8 @@ auto SearchTable::CompactUnsafeAsync(
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    auto res =
-      co_await _writer->CompactAsync(recorded, field_options, progress, env);
+    auto res = co_await _writer->CompactAsync(recorded, field_options, progress,
+                                              env, executor);
     if (!res) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));
@@ -442,7 +442,8 @@ void SearchTable::VacuumRefresh() {
   CleanupUnsafe();
 }
 
-void SearchTable::VacuumCompact(uint32_t target_segments) {
+void SearchTable::VacuumCompact(uint32_t target_segments,
+                                irs::MergeExecutor* executor) {
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
   const auto target = std::max<uint32_t>(1, target_segments);
   const auto field_options = Config();
@@ -474,7 +475,7 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
         };
       bool empty = false;
       CompactUnsafe(bucket, kProgress, empty, field_options.get(),
-                    MergeOrigin::Vacuum);
+                    MergeOrigin::Vacuum, executor);
       merged |= !empty;
     }
     SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");

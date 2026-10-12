@@ -45,6 +45,7 @@ class DatabaseInstance;
 
 namespace irs {
 
+class MergeExecutor;
 struct TrackingDirectory;
 
 class MergeWriter : public util::Noncopyable {
@@ -74,7 +75,8 @@ class MergeWriter : public util::Noncopyable {
 
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
-             const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
+             const AnnBuildEnv* env = nullptr,
+             MergeExecutor* executor = nullptr) -> yaclib::Future<bool>;
 
   const MergeDocMap& DocMap() const noexcept { return _readers; }
 

@@ -68,7 +68,8 @@ class MergeTarget {
   MergeRun Compact(const irs::CompactionPolicy& policy,
                    const irs::MergeWriter::FlushProgress& progress,
                    const irs::IndexFieldOptions* field_options,
-                   search::MergeOrigin origin) const;
+                   search::MergeOrigin origin,
+                   irs::MergeExecutor* executor = nullptr) const;
   void Publish() const;
 
  private:

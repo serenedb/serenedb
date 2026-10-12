@@ -44,6 +44,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_dump.hpp"
 #include "index/merge/support/segment_gen.hpp"
 #include "insert_field.hpp"
@@ -82,7 +83,7 @@ MergeResult RunMerge(
   const irs::IndexFieldOptions* field_options,
   const irs::MergeWriter::FlushProgress& progress = {},
   irs::IResourceManager& memory = irs::IResourceManager::gNoop,
-  irs::ScorerPtr scorer = nullptr) {
+  irs::ScorerPtr scorer = nullptr, irs::MergeExecutor* executor = nullptr) {
   MergeResult result;
   const irs::SegmentWriterOptions options{
     .scorer = scorer,
@@ -92,7 +93,8 @@ MergeResult RunMerge(
   };
   irs::MergeWriter merger{out, options};
   merger.Reset(inputs.begin(), inputs.end());
-  result.flushed = irs::GetReady(merger.Flush(result.meta, progress));
+  result.flushed =
+    irs::GetReady(merger.Flush(result.meta, progress, nullptr, executor));
   if (result.flushed) {
     result.reader = irs::SegmentReaderImpl::Open(
       out, result.meta, irs::tests::DefaultReaderOptions());
@@ -674,11 +676,13 @@ void WriteVectors(irs::IndexWriter& writer, size_t docs, uint64_t seed) {
   ASSERT_TRUE(writer.RefreshCommit());
 }
 
-void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
+void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs,
+                    irs::MergeExecutor* executor) {
   irs::FunctionFieldOptions field_options{
     IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
   irs::MemoryDirectory out;
-  const auto merged = RunMerge(out, inputs, &field_options);
+  const auto merged = RunMerge(out, inputs, &field_options, {},
+                               irs::IResourceManager::gNoop, nullptr, executor);
   ASSERT_TRUE(merged.flushed);
   for (const auto id : {kLowVector, kHighVector}) {
     SCOPED_TRACE(id);
@@ -697,6 +701,23 @@ void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
   without_clusters(expected);
   without_clusters(actual);
   EXPECT_EQ("", FirstDifference(expected, actual));
+}
+
+void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
+  {
+    SCOPED_TRACE("serial");
+    ExpectIvfMerge(inputs, nullptr);
+  }
+  {
+    SCOPED_TRACE("scheduled");
+    ThreadedMergeExecutor executor{4};
+    ExpectIvfMerge(inputs, &executor);
+  }
+  for (const uint64_t seed : {1, 2}) {
+    SCOPED_TRACE(absl::StrCat("shuffled ", seed));
+    ShuffledMergeExecutor executor{4, seed};
+    ExpectIvfMerge(inputs, &executor);
+  }
 }
 
 TEST(MergeIvfTest, ClusterPostingsReplaceTheInputs) {
@@ -721,6 +742,35 @@ TEST(MergeIvfTest, ClusterPostingsAreWrittenAroundTheOtherFields) {
   ASSERT_EQ(2, inputs.size());
   ASSERT_EQ(nullptr, inputs.front()->field(kLowVector));
   ExpectIvfMerge(inputs);
+}
+
+TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
+  irs::MemoryDirectory dir;
+  auto writer = MakeWriter(dir, IvfColumns);
+  WriteVectors(*writer, 300, 7);
+  WriteVectors(*writer, 200, 8);
+  const auto reader = writer->GetSnapshot();
+  std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> deleted;
+  std::vector<const irs::SubReader*> inputs;
+  for (const auto& segment : reader.Meta().index_meta.segments) {
+    auto meta = segment.meta;
+    irs::DocumentMask all;
+    for (auto doc = irs::doc_limits::min();
+         doc < meta.docs_count + irs::doc_limits::min(); ++doc) {
+      all.Add(doc);
+    }
+    meta.docs_mask = std::make_shared<irs::DocumentMask>(std::move(all));
+    meta.live_docs_count = 0;
+    deleted.push_back(irs::SegmentReaderImpl::Open(
+      dir, meta, irs::tests::DefaultReaderOptions()));
+    ASSERT_NE(nullptr, deleted.back());
+    inputs.push_back(deleted.back().get());
+  }
+  ASSERT_EQ(2, inputs.size());
+  irs::FunctionFieldOptions field_options{
+    IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE};
+  irs::MemoryDirectory out;
+  EXPECT_FALSE(RunMerge(out, inputs, &field_options).flushed);
 }
 
 TEST(MergeIvfTest, ClusterFieldsWithoutIvfOptionsAreDropped) {

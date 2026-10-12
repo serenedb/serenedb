@@ -1431,7 +1431,7 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
                                const MergeWriter::FlushProgress& progress,
-                               const AnnBuildEnv* env)
+                               const AnnBuildEnv* env, MergeExecutor* executor)
   -> yaclib::Future<CompactionResult> {
   Compaction candidates;
   const auto run_id = reinterpret_cast<uintptr_t>(&candidates);
@@ -1557,7 +1557,7 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
 
   // We do not persist segment meta since some removals may come later
   const bool flushed =
-    co_await merger.Flush(compaction_segment.meta, progress, env);
+    co_await merger.Flush(compaction_segment.meta, progress, env, executor);
   result.stats.profile = merger.Profile();
   if (!flushed) {
     // Nothing to compact or compaction failure

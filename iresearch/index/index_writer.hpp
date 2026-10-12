@@ -428,7 +428,8 @@ class IndexWriter : private util::Noncopyable {
   auto CompactAsync(const CompactionPolicy& policy,
                     const IndexFieldOptions* field_options,
                     const MergeWriter::FlushProgress& progress,
-                    const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
+                    const AnnBuildEnv* env, MergeExecutor* executor = nullptr)
+    -> yaclib::Future<CompactionResult>;
 
   bool AdoptSegment(std::string_view meta_file, uint64_t tick);
 

@@ -40,8 +40,10 @@ class ArrayColumnReader final : public ColumnReader {
                    ? _children.front()->RowCount() / _array_size
                    : 0;
     auto stats = duckdb::ArrayStats::CreateEmpty(_type);
-    duckdb::ArrayStats::SetChildStats(
-      stats, _children.front()->MergedStatistics().ToUnique());
+    if (!_children.empty()) {
+      duckdb::ArrayStats::SetChildStats(
+        stats, _children.front()->MergedStatistics().ToUnique());
+    }
     FinishStats(std::move(stats));
   }
 

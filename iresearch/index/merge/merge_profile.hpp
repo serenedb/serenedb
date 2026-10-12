@@ -21,6 +21,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -52,24 +53,49 @@ constexpr std::string_view MergeStepName(MergeStep step) noexcept {
 
 class MergeProfile {
  public:
+  MergeProfile() = default;
+  MergeProfile(const MergeProfile& other) noexcept { CopyFrom(other); }
+  MergeProfile& operator=(const MergeProfile& other) noexcept {
+    CopyFrom(other);
+    return *this;
+  }
+
   void Add(MergeStep step, uint64_t nanos) noexcept {
-    _nanos[static_cast<size_t>(step)] += nanos;
+    _nanos[static_cast<size_t>(step)].fetch_add(nanos,
+                                                std::memory_order_relaxed);
+  }
+
+  void SetWallNanos(uint64_t nanos) noexcept {
+    _wall.store(nanos, std::memory_order_relaxed);
   }
 
   uint64_t Nanos(MergeStep step) const noexcept {
-    return _nanos[static_cast<size_t>(step)];
+    return _nanos[static_cast<size_t>(step)].load(std::memory_order_relaxed);
   }
 
   uint64_t TotalNanos() const noexcept {
+    if (const auto wall = _wall.load(std::memory_order_relaxed); wall != 0) {
+      return wall;
+    }
     uint64_t total = 0;
-    for (const auto nanos : _nanos) {
-      total += nanos;
+    for (const auto& nanos : _nanos) {
+      total += nanos.load(std::memory_order_relaxed);
     }
     return total;
   }
 
  private:
-  std::array<uint64_t, kMergeStepCount> _nanos{};
+  void CopyFrom(const MergeProfile& other) noexcept {
+    for (size_t step = 0; step != kMergeStepCount; ++step) {
+      _nanos[step].store(other._nanos[step].load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
+    }
+    _wall.store(other._wall.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+  }
+
+  std::array<std::atomic<uint64_t>, kMergeStepCount> _nanos{};
+  std::atomic<uint64_t> _wall{0};
 };
 
 class MergeStepClock {

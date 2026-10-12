@@ -162,16 +162,17 @@ std::string MergeTarget::ColumnName(irs::field_id id) const {
 MergeRun MergeTarget::Compact(const irs::CompactionPolicy& policy,
                               const irs::MergeWriter::FlushProgress& progress,
                               const irs::IndexFieldOptions* field_options,
-                              search::MergeOrigin origin) const {
+                              search::MergeOrigin origin,
+                              irs::MergeExecutor* executor) const {
   MergeRun run;
   bool empty = false;
   const auto* env = &search::AnnBuildEnv();
-  auto [status, time_ms] =
-    _table
-      ? irs::GetBlocking(_table->CompactUnsafeAsync(
-          policy, progress, empty, field_options, env, origin, &run.result))
-      : irs::GetBlocking(_index->CompactUnsafeAsync(
-          policy, progress, empty, field_options, env, origin, &run.result));
+  auto [status, time_ms] = _table ? irs::GetBlocking(_table->CompactUnsafeAsync(
+                                      policy, progress, empty, field_options,
+                                      env, origin, &run.result, executor))
+                                  : irs::GetBlocking(_index->CompactUnsafeAsync(
+                                      policy, progress, empty, field_options,
+                                      env, origin, &run.result, executor));
   if (!status.ok()) {
     run.error = std::string{status.message()};
   }

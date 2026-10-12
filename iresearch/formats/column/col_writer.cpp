@@ -120,6 +120,7 @@ ColumnWriter& ColWriter::OpenColumnInternal(
   uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog,
   ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
+  std::lock_guard lock{_mutex};
   if (auto it = _by_id.find(id); it != _by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(
@@ -172,6 +173,7 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
     id, row_group_size, [this]() -> ColBlockSink& {
+      std::lock_guard lock{_mutex};
       EnsureOut();
       return *_blocks;
     }));
@@ -182,6 +184,7 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
 NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
                                             uint32_t row_group_size) {
   SDB_ASSERT(row_group_size != 0);
+  std::lock_guard lock{_mutex};
   if (auto it = _norm_by_id.find(id); it != _norm_by_id.end()) {
     return *it->second;
   }
@@ -189,12 +192,14 @@ NormColumnWriter& ColWriter::OpenNormColumn(field_id id,
 }
 
 NormColumnWriter& ColWriter::StreamNormColumn(field_id id) {
+  std::lock_guard lock{_mutex};
   SDB_ASSERT(!_norm_by_id.contains(id), "ColWriter::StreamNormColumn: column ",
              id, " already open");
   return AddNormColumn(id, 0);
 }
 
 AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
+  std::lock_guard lock{_mutex};
   if (auto it = _ann_by_id.find(column_id); it != _ann_by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(existing.info == info,
@@ -229,6 +234,16 @@ void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
       entry->writer->SetIdxWriter(idx);
     }
   }
+}
+
+std::vector<AnnWriter*> ColWriter::AnnWriters() {
+  std::lock_guard lock{_mutex};
+  std::vector<AnnWriter*> out;
+  out.reserve(_ann_writers.size());
+  for (auto& entry : _ann_writers) {
+    out.push_back(entry->writer.get());
+  }
+  return out;
 }
 
 std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
@@ -276,7 +291,10 @@ bool ColWriter::Commit(uint64_t target_row,
     _committed = true;
     return true;
   }
-  EnsureOut();
+  {
+    std::lock_guard lock{_mutex};
+    EnsureOut();
+  }
   for (auto& cw : _columns) {
     if (!progress()) {
       return false;

@@ -34,8 +34,15 @@ class PhysicalSegmentRewrite final : public duckdb::PhysicalOperator {
                          duckdb::idx_t estimated_cardinality);
 
   bool IsSource() const final { return true; }
+  bool ParallelSource() const final { return true; }
+  duckdb::OrderPreservationType SourceOrder() const final {
+    return duckdb::OrderPreservationType::NO_ORDER;
+  }
   duckdb::unique_ptr<duckdb::GlobalSourceState> GetGlobalSourceState(
     duckdb::ClientContext& context) const final;
+  duckdb::unique_ptr<duckdb::LocalSourceState> GetLocalSourceState(
+    duckdb::ExecutionContext& context,
+    duckdb::GlobalSourceState& gstate) const final;
   duckdb::SourceResultType GetDataInternal(
     duckdb::ExecutionContext& context, duckdb::DataChunk& chunk,
     duckdb::OperatorSourceInput& input) const final;

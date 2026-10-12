@@ -33,6 +33,7 @@
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/async.hpp>
@@ -50,6 +51,7 @@
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
+#include "search/compaction/task_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
@@ -245,7 +247,8 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
 void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
                             const irs::IndexFieldOptions& field_options,
                             duckdb::ClientContext& context,
-                            pg::ProgressMetrics* progress) {
+                            pg::ProgressMetrics* progress,
+                            irs::MergeExecutor& executor) {
   static const auto kPolicy = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   // Fired by the merge every ~16k docs: feeds the sub-index progress counter
@@ -272,7 +275,7 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     // the step holds for the whole call.
     const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
       kPolicy, tick, empty_compaction, &field_options, env_ptr,
-      search::MergeOrigin::Vacuum));
+      search::MergeOrigin::Vacuum, nullptr, &executor));
     if (!res.ok()) {
       context.InterruptCheck();
       THROW_SQL_ERROR(
@@ -467,6 +470,9 @@ void DispatchInverted(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->items_total, total);
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
+  search::TaskMergeExecutor executor{
+    duckdb::TaskScheduler::GetScheduler(context),
+    duckdb::TaskScheduler::QueryThreads(context)};
   for (auto& step : steps) {
     context.InterruptCheck();
     if (step.storage) {
@@ -493,7 +499,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         step.storage->Refresh(report);
       } else {
         CompactInvertedStorage(*step.storage, *step.field_options, context,
-                               progress);
+                               progress, executor);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
@@ -505,7 +511,7 @@ void DispatchInverted(duckdb::ClientContext& context,
       } else {
         static constinit SettingRef gTargetSegments{
           "sdb_compact_target_segments"};
-        search->VacuumCompact(gTargetSegments.Int(context));
+        search->VacuumCompact(gTargetSegments.Int(context), &executor);
       }
     }
   }

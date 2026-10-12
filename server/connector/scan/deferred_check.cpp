@@ -24,55 +24,14 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
-#include <iresearch/formats/column/col_reader.hpp>
-#include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
-#include <iresearch/utils/down_cast.hpp>
 #include <utility>
 
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
-namespace {
-
-using irs::utils::downCast;
-
-std::optional<DeferredCheck> Defer(irs::Filter::ptr& filter,
-                                   const DeferContext& ctx) {
-  const auto type = filter->type();
-  if (type == irs::Type<irs::ByWildcardNGram>::id()) {
-    return DeferWildcard(filter, ctx);
-  }
-  if (type == irs::Type<irs::ByPhrase>::id()) {
-    return DeferPhrase(filter, ctx);
-  }
-  return DeferGeo(filter, ctx);
-}
-
-bool Spliceable(const irs::Filter& filter, const irs::BooleanFilter& parent) {
-  if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
-    return false;
-  }
-  const auto& boolean = downCast<irs::BooleanFilter>(filter);
-  return boolean.Transparent() && boolean.MergeType() == parent.MergeType();
-}
-
-}  // namespace
-
-std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
-                                              irs::field_id column) {
-  for (const auto& segment : reader) {
-    const auto* col_reader = segment.GetColReader();
-    if (const auto* stored =
-          col_reader ? col_reader->Column(column) : nullptr) {
-      return stored->Type();
-    }
-  }
-  return std::nullopt;
-}
 
 DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
                     irs::field_id column, const duckdb::LogicalType& type,
@@ -94,37 +53,21 @@ DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
     .check = std::make_shared<const duckdb::ExpressionFilter>(std::move(expr))};
 }
 
-std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
-                                       const DeferContext& ctx) {
+std::vector<DeferredCheck> MakeChecks(std::vector<irs::Filter::ptr> sources,
+                                      const irs::IndexReader& reader) {
   std::vector<DeferredCheck> checks;
-  const auto defer = [&](irs::Filter::ptr& filter) {
-    auto check = Defer(filter, ctx);
-    if (check) {
-      checks.emplace_back(std::move(*check));
-    }
-    return check.has_value();
-  };
-  if (root->type() != irs::Type<irs::BooleanFilter>::id()) {
-    defer(root);
-    return checks;
-  }
-  auto& boolean = downCast<irs::BooleanFilter>(*root);
-  auto& must = boolean.Bucket(irs::Occur::Must).filters;
-  std::vector<irs::Filter::ptr> spliced;
-  for (auto& child : must) {
-    if (defer(child) && Spliceable(*child, boolean)) {
-      spliced.emplace_back(std::move(child));
+  checks.reserve(sources.size());
+  for (auto& source : sources) {
+    const auto type = source->type();
+    std::shared_ptr<const irs::Filter> shared = std::move(source);
+    if (type == irs::Type<irs::ByWildcardNGram>::id()) {
+      checks.emplace_back(MakeWildcardCheck(std::move(shared)));
+    } else if (type == irs::Type<irs::ByPhrase>::id()) {
+      checks.emplace_back(MakePhraseCheck(std::move(shared), reader));
+    } else {
+      checks.emplace_back(MakeGeoCheck(std::move(shared), reader));
     }
   }
-  if (spliced.empty()) {
-    return checks;
-  }
-  std::erase(must, nullptr);
-  for (auto& conjunction : spliced) {
-    downCast<irs::BooleanFilter>(*conjunction).SpliceInto(boolean);
-  }
-  auto& terms = boolean.Bucket(irs::Occur::Must).terms;
-  terms.erase(std::ranges::unique(terms).begin(), terms.end());
   return checks;
 }
 

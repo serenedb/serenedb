@@ -340,6 +340,7 @@ set(IResearch_core_sources
     ./search/queries/boolean_query.cpp
     ./search/filters/filter_optimizer.cpp
     ./search/filters/boolean_rules.cpp
+    ./search/filters/deferral.cpp
     ./search/filters/range_rules.cpp
     ./search/filters/lowering_rules.cpp
     ./search/filters/levenshtein_prefix_rules.cpp

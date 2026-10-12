@@ -54,8 +54,6 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
-#include "iresearch/search/scorers/constant_score.hpp"
-#include "iresearch/search/scorers/unscored.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
@@ -759,31 +757,6 @@ Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
       }
     },
     part);
-}
-
-Filter::ptr PartsConjunction(const ByPhrase& phrase, const Scorer* scorer) {
-  const auto* own = phrase.GetScorer();
-  const auto* effective = own ? own : scorer;
-  const bool constant =
-    effective && effective->type() == Type<ConstantScore>::id();
-  if (effective && !constant && !IsUnscored(*effective)) {
-    return nullptr;
-  }
-  auto conjunction = std::make_unique<BooleanFilter>();
-  for (const auto& info : phrase.options()) {
-    conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
-                     Occur::Must);
-  }
-  auto& terms = conjunction->Bucket(Occur::Must).terms;
-  terms.erase(std::ranges::unique(terms).begin(), terms.end());
-  if (effective) {
-    conjunction->SetScorer(own);
-    conjunction->SetBoost(phrase.GetBoost());
-    if (constant) {
-      conjunction->SetMergeType(ScoreMergeType::Max);
-    }
-  }
-  return conjunction;
 }
 
 bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {

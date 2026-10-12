@@ -25,7 +25,6 @@
 #include <duckdb/planner/table_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <memory>
-#include <optional>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -65,19 +64,11 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitCheck(
     *bind_data->Cast<SharedCheckBind<Data>>().data);
 }
 
-struct DeferContext {
-  const irs::IndexReader& reader;
-  const irs::Scorer* scorer;
-};
-
-std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
-                                       const DeferContext& ctx);
+std::vector<DeferredCheck> MakeChecks(std::vector<irs::Filter::ptr> sources,
+                                      const irs::IndexReader& reader);
 
 void AddDeferredChecks(ScanGlobalState& state,
                        std::span<const DeferredCheck> checks);
-
-std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
-                                              irs::field_id column);
 
 DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
                     irs::field_id column, const duckdb::LogicalType& type,
@@ -85,13 +76,12 @@ DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
                     duckdb::unique_ptr<duckdb::FunctionData> bind,
                     duckdb::init_local_state_t init = nullptr);
 
-std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
-                                           const DeferContext& ctx);
+DeferredCheck MakeWildcardCheck(std::shared_ptr<const irs::Filter> source);
 
-std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
-                                         const DeferContext& ctx);
+DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
+                              const irs::IndexReader& reader);
 
-std::optional<DeferredCheck> DeferGeo(irs::Filter::ptr& filter,
-                                      const DeferContext& ctx);
+DeferredCheck MakeGeoCheck(std::shared_ptr<const irs::Filter> source,
+                           const irs::IndexReader& reader);
 
 }  // namespace sdb::connector

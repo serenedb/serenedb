@@ -1329,15 +1329,20 @@ bool ClaimSearchConjuncts(
 
   irs::Filter::ptr root = std::move(root_and);
   connector::EnsureIncludeSides(*root);
-  irs::Optimize(root, {.scored = scan.score.text.has_value(),
-                       .analyzed_fields = std::move(analyzed_fields),
-                       .null_markers = &null_markers});
+  const auto scorer =
+    scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
+  irs::OptimizeContext optimize{.scored = scan.score.text.has_value(),
+                                .analyzed_fields = std::move(analyzed_fields),
+                                .null_markers = &null_markers,
+                                .scorer = scorer.get()};
+  const auto& reader = scan.search.snapshot->reader;
+  std::vector<irs::Filter::ptr> deferred;
   if (scan.offsets.requests.empty() && !scan.score.vector) {
-    const auto scorer =
-      scan.score.text ? search::MakeScorer(*scan.score.text) : nullptr;
-    scan.search.deferred = connector::DeferChecks(
-      root, {.reader = scan.search.snapshot->reader, .scorer = scorer.get()});
+    optimize.reader = &reader;
+    optimize.deferred = &deferred;
   }
+  irs::Optimize(root, optimize);
+  scan.search.deferred = connector::MakeChecks(std::move(deferred), reader);
 
   scan.search.filter = std::move(root);
   scan.search.filter_scorers = std::move(filter_scorers);

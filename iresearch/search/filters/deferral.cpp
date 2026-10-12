@@ -1,0 +1,171 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/search/filters/deferral.hpp"
+
+#include <memory>
+#include <utility>
+
+#include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/token_phrase.hpp"
+#include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/filters/common.hpp"
+#include "iresearch/search/filters/geo_filter.hpp"
+#include "iresearch/search/filters/phrase_filter.hpp"
+#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/utils/down_cast.hpp"
+
+namespace irs {
+
+std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
+                                                    field_id column) {
+  for (const auto& segment : reader) {
+    const auto* col_reader = segment.GetColReader();
+    if (const auto* stored =
+          col_reader ? col_reader->Column(column) : nullptr) {
+      return stored->Type();
+    }
+  }
+  return std::nullopt;
+}
+
+namespace optimizer {
+namespace {
+
+using irs::utils::downCast;
+
+Filter::ptr PartsConjunction(const ByPhrase& phrase,
+                             const OptimizeContext& ctx) {
+  const auto* scorer = ScorerOf(phrase, ctx);
+  const bool constant =
+    scorer != nullptr && scorer->type() == Type<ConstantScore>::id();
+  if (scorer != nullptr && !constant && !IsUnscored(*scorer)) {
+    return nullptr;
+  }
+  auto conjunction = std::make_unique<BooleanFilter>();
+  for (const auto& info : phrase.options()) {
+    conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
+                     Occur::Must);
+  }
+  auto& terms = conjunction->Bucket(Occur::Must).terms;
+  terms.erase(std::ranges::unique(terms).begin(), terms.end());
+  if (scorer != nullptr) {
+    conjunction->SetScorer(phrase.GetScorer());
+    conjunction->SetBoost(phrase.GetBoost());
+    if (constant) {
+      conjunction->SetMergeType(ScoreMergeType::Max);
+    }
+  }
+  return conjunction;
+}
+
+bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
+  const auto& phrase = downCast<ByPhrase>(*slot);
+  const auto& options = phrase.options();
+  const auto& tokens = options.tokens();
+  if (!tokens || !StoredColumnType(*ctx.reader, tokens->text)) {
+    return false;
+  }
+  const auto& checked = tokens->Check(options);
+  if (!IsStandalone(checked) ||
+      (checked.slop() != 0 && HasPatternParts(checked) &&
+       tokens->tokenizer()->Traits().explicit_pos)) {
+    return false;
+  }
+  auto index = PartsConjunction(phrase, ctx);
+  if (!index) {
+    return false;
+  }
+  TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
+  ctx.deferred->emplace_back(std::exchange(slot, std::move(index)));
+  return true;
+}
+
+template<typename GeoType>
+bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
+  auto& geo = downCast<GeoType>(*slot);
+  auto& options = *geo.mutable_options();
+  const auto type = StoredColumnType(*ctx.reader, options.store_field_id);
+  if (!type || type->InternalType() != duckdb::PhysicalType::VARCHAR) {
+    return false;
+  }
+  auto plan = PlanGeo(options);
+  if (plan->kind != GeoPlan::Kind::Cells) {
+    return false;
+  }
+  options.plan = std::move(plan);
+  auto index = std::make_unique<GeoType>(geo);
+  index->mutable_options()->store_field_id = field_limits::invalid();
+  ctx.deferred->emplace_back(std::exchange(slot, std::move(index)));
+  return true;
+}
+
+bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
+  const auto& wildcard = downCast<ByWildcardNGram>(*slot);
+  if (!wildcard.options().matcher) {
+    return false;
+  }
+  auto index = std::make_unique<ByWildcardNGram>(wildcard);
+  index->mutable_options()->matcher = nullptr;
+  ctx.deferred->emplace_back(std::exchange(slot, std::move(index)));
+  return true;
+}
+
+bool Defer(Filter::ptr& slot, const OptimizeContext& ctx) {
+  const auto type = slot->type();
+  if (type == Type<ByPhrase>::id()) {
+    return DeferPhrase(slot, ctx);
+  }
+  if (type == Type<ByWildcardNGram>::id()) {
+    return DeferWildcard(slot, ctx);
+  }
+  if (type == Type<GeoFilter>::id()) {
+    return DeferGeo<GeoFilter>(slot, ctx);
+  }
+  if (type == Type<GeoDistanceFilter>::id()) {
+    return DeferGeo<GeoDistanceFilter>(slot, ctx);
+  }
+  return false;
+}
+
+}  // namespace
+
+void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
+  if (ctx.deferred == nullptr) {
+    return;
+  }
+  if (root->type() != Type<BooleanFilter>::id()) {
+    Defer(root, ctx);
+    return;
+  }
+  bool deferred = false;
+  for (auto& child :
+       downCast<BooleanFilter>(*root).Bucket(Occur::Must).filters) {
+    deferred |= Defer(child, ctx);
+  }
+  if (deferred) {
+    RunRules(root, ctx);
+  }
+}
+
+}  // namespace optimizer
+}  // namespace irs

@@ -26,6 +26,7 @@
 
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/boolean_rules.hpp"
+#include "iresearch/search/filters/deferral.hpp"
 #include "iresearch/search/filters/levenshtein_prefix_rules.hpp"
 #include "iresearch/search/filters/lowering_rules.hpp"
 #include "iresearch/search/filters/range_rules.hpp"
@@ -48,6 +49,8 @@ void AssertValid([[maybe_unused]] const Filter& filter) {
              irs::utils::downCast<BooleanFilter>(filter).Valid());
 }
 
+}  // namespace
+
 void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   AssertValid(*slot);
   bool changed = true;
@@ -69,6 +72,8 @@ void RunRules(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
   AssertValid(*slot);
 }
+
+namespace {
 
 void RunPass(Filter::ptr& root, const OptimizeContext& ctx) {
   if (!ctx.scored) {
@@ -144,6 +149,7 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
     return;
   }
   RunPass(root, ctx);
+  optimizer::ApplyDeferral(root, ctx);
   optimizer::LowerAutomatons(root, ctx);
   optimizer::FuseConjunctions(root, ctx);
 #ifdef SDB_DEV

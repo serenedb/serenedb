@@ -172,6 +172,4 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
 Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
                        bool constant);
 
-Filter::ptr PartsConjunction(const ByPhrase& phrase, const Scorer* scorer);
-
 }  // namespace irs

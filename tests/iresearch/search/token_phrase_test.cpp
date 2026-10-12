@@ -967,6 +967,23 @@ irs::Filter::ptr LoweredAnd(irs::ByPhrase phrase, std::string_view term) {
   return out;
 }
 
+irs::Filter::ptr IndexPart(const irs::ByPhrase& phrase, const Index& index,
+                           const irs::Scorer* scorer = nullptr) {
+  irs::Filter::ptr root = std::make_unique<irs::ByPhrase>(phrase);
+  std::vector<irs::Filter::ptr> deferred;
+  irs::Optimize(root, {.scored = scorer != nullptr,
+                       .scorer = scorer,
+                       .reader = &index.Reader(),
+                       .deferred = &deferred});
+  if (deferred.empty()) {
+    EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), root->type());
+    return nullptr;
+  }
+  EXPECT_EQ(1U, deferred.size());
+  EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), deferred.front()->type());
+  return root;
+}
+
 std::string RandomText(std::mt19937& rng,
                        std::span<const std::string_view> words, size_t length) {
   std::string text;
@@ -1125,7 +1142,7 @@ void ExpectDeferredLikeInline(const Index& index,
   const auto& options = filter.options();
   ASSERT_TRUE(irs::IsStandalone(options));
   const auto expected = index.Docs(filter);
-  const auto conjunction = irs::PartsConjunction(filter, nullptr);
+  const auto conjunction = IndexPart(filter, index);
   ASSERT_NE(nullptr, conjunction);
   const auto candidates = index.Docs(*conjunction);
   ASSERT_LE(candidates.size(), STANDARD_VECTOR_SIZE);
@@ -1379,8 +1396,10 @@ TEST(TokenPhraseFilterTest, parts_conjunction_has_one_filter_per_part) {
   options.push_back<irs::ByPrefixOptions>().term = Bytes("fo");
   const auto phrase =
     PhraseOn(kPlainId, std::move(options), Tokens<DenseWords>());
+  const std::vector<std::string> docs{"quick brown fox"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
 
-  const auto conjunction = irs::PartsConjunction(phrase, nullptr);
+  const auto conjunction = IndexPart(phrase, index);
   ASSERT_NE(nullptr, conjunction);
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), conjunction->type());
   const auto& all = irs::utils::downCast<irs::BooleanFilter>(*conjunction);
@@ -1406,7 +1425,9 @@ TEST(TokenPhraseFilterTest, parts_conjunction_has_one_filter_per_part) {
 TEST(TokenPhraseFilterTest, parts_conjunction_keeps_one_clause_per_word) {
   const auto phrase =
     PhraseOn(kPlainId, Phrase("the cat in the hat"), Tokens<DenseWords>());
-  const auto conjunction = irs::PartsConjunction(phrase, nullptr);
+  const std::vector<std::string> docs{"the cat in the hat"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  const auto conjunction = IndexPart(phrase, index);
   ASSERT_NE(nullptr, conjunction);
   const auto& all = irs::utils::downCast<irs::BooleanFilter>(*conjunction);
   EXPECT_EQ((std::vector<irs::bstring>{
@@ -1447,11 +1468,13 @@ TEST(TokenPhraseFilterTest, part_filter_of_every_kind) {
 TEST(TokenPhraseFilterTest, parts_conjunction_follows_the_scorer) {
   auto phrase = PhraseOn(kPlainId, Phrase("quick brown"), Tokens<DenseWords>());
   phrase.SetBoost(2.f);
+  const std::vector<std::string> docs{"quick brown fox"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
   const irs::BM25 bm25;
   const irs::ConstantScore constant{3.f};
   const auto& unscored = irs::Unscored::Instance();
   const auto conjunction = [&](const irs::Scorer* scorer) {
-    auto filter = irs::PartsConjunction(phrase, scorer);
+    auto filter = IndexPart(phrase, index, scorer);
     EXPECT_TRUE(!filter ||
                 filter->type() == irs::Type<irs::BooleanFilter>::id());
     return filter;
@@ -1504,7 +1527,7 @@ TEST(TokenPhraseIndexTest, constant_score_conjunction_scores_like_the_phrase) {
   auto phrase = PhraseOn(kPlainId, std::move(options), Tokens<DenseWords>());
   phrase.SetBoost(2.f);
   const irs::ConstantScore constant{3.f};
-  const auto conjunction = irs::PartsConjunction(phrase, &constant);
+  const auto conjunction = IndexPart(phrase, index, &constant);
   ASSERT_NE(nullptr, conjunction);
 
   const auto expected = index.ScoresBy(constant, phrase);

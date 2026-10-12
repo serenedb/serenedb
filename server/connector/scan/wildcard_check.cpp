@@ -46,17 +46,9 @@ void CheckWildcard(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 }  // namespace
 
-std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
-                                           const DeferContext&) {
-  const auto& wildcard = irs::utils::downCast<irs::ByWildcardNGram>(*filter);
-  const auto& options = wildcard.options();
-  if (!options.matcher) {
-    return std::nullopt;
-  }
-  auto index = std::make_unique<irs::ByWildcardNGram>(wildcard);
-  index->mutable_options()->matcher = nullptr;
-  std::shared_ptr<const irs::Filter> source =
-    std::exchange(filter, std::move(index));
+DeferredCheck MakeWildcardCheck(std::shared_ptr<const irs::Filter> source) {
+  const auto& options =
+    irs::utils::downCast<irs::ByWildcardNGram>(*source).options();
   return Split(std::move(source), options.store_field_id,
                duckdb::LogicalType::BLOB, "sdb_wildcard_check", CheckWildcard,
                duckdb::make_uniq<WildcardCheckBind>(options.matcher));

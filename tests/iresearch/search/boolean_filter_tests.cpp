@@ -1953,26 +1953,39 @@ TEST(BooleanFilter_test, duplicate_term_merges_boost) {
   // type, and a threshold counts how many clauses matched -- neither is
   // settled while the node is still filling, so `boolean_dedup` folds them.
   {
+    tests::sort::Boost sort;
     irs::BooleanFilter q;
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 3.f);
     ASSERT_EQ(2, q.Size(irs::Occur::Must));
 
-    const auto optimized = tests::Optimized(std::move(q));
+    const auto optimized = tests::Optimized(std::move(q), &sort);
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), optimized->type());
     EXPECT_EQ(5.f, optimized->GetBoost());
   }
 
   {
+    tests::sort::Boost sort;
     irs::BooleanFilter q;
     q.SetMergeType(irs::ScoreMergeType::Max);
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 3.f);
     ASSERT_EQ(2, q.Size(irs::Occur::Must));
 
-    const auto optimized = tests::Optimized(std::move(q));
+    const auto optimized = tests::Optimized(std::move(q), &sort);
     ASSERT_EQ(irs::Type<irs::ByTerm>::id(), optimized->type());
     EXPECT_EQ(3.f, optimized->GetBoost());
+  }
+
+  {
+    irs::BooleanFilter q;
+    AddTerm(q, irs::Occur::Must, kFieldAbc, "def");
+    AddTerm(q, irs::Occur::Must, kFieldAbc, "def");
+    ASSERT_EQ(2, q.Size(irs::Occur::Must));
+
+    const auto optimized = tests::Optimized(std::move(q));
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), optimized->type());
+    EXPECT_EQ(irs::kNoBoost, optimized->GetBoost());
   }
 
   {
@@ -1998,7 +2011,7 @@ TEST(BooleanFilter_test, duplicate_term_merges_boost) {
   }
 
   // A required clause is met by every document the node returns, so the
-  // optional copy is dropped and its boost goes to the survivor.
+  // optional copy is dropped.
   {
     irs::BooleanFilter q;
     AddTerm(q, irs::Occur::Must, kFieldAbc, "def", 2.f);

@@ -23,6 +23,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
+#include <iresearch/search/filters/deferral.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>
@@ -68,37 +69,18 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 }  // namespace
 
-std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
-                                         const DeferContext& ctx) {
-  const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*filter);
+DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
+                              const irs::IndexReader& reader) {
+  const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*source);
   const auto& options = phrase.options();
   const auto& tokens = options.tokens();
-  if (!tokens) {
-    return std::nullopt;
-  }
-  const auto type = StoredType(ctx.reader, tokens->text);
-  if (!type) {
-    return std::nullopt;
-  }
   const auto& checked = tokens->Check(options);
-  if (!irs::IsStandalone(checked)) {
-    return std::nullopt;
-  }
-  if (checked.slop() != 0 && irs::HasPatternParts(checked) &&
-      tokens->tokenizer()->Traits().explicit_pos) {
-    return std::nullopt;
-  }
-  auto index = irs::PartsConjunction(phrase, ctx.scorer);
-  if (!index) {
-    return std::nullopt;
-  }
   auto bind =
     duckdb::make_uniq<PhraseCheckBind>(std::make_shared<const PhraseCheckData>(
       tokens, checked, options.word_separator(),
-      irs::PhraseWordStats(checked, ctx.reader, phrase.field_id())));
-  std::shared_ptr<const irs::Filter> source =
-    std::exchange(filter, std::move(index));
-  return Split(std::move(source), tokens->text, *type, "sdb_phrase_check",
+      irs::PhraseWordStats(checked, reader, phrase.field_id())));
+  const auto type = *irs::StoredColumnType(reader, tokens->text);
+  return Split(std::move(source), tokens->text, type, "sdb_phrase_check",
                CheckPhrase, std::move(bind),
                InitCheck<PhraseCheckState, PhraseCheckData>);
 }

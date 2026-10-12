@@ -28,10 +28,13 @@
 #include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "iresearch/search/filters/filter.hpp"
 
 namespace irs {
+
+struct IndexReader;
 
 struct OptimizeContext {
   bool scored = false;
@@ -40,6 +43,9 @@ struct OptimizeContext {
   irs::containers::FlatHashSet<irs::field_id> analyzed_fields;
   const irs::containers::FlatHashMap<irs::field_id, irs::field_id>*
     null_markers = nullptr;
+  const Scorer* scorer = nullptr;
+  const IndexReader* reader = nullptr;
+  std::vector<Filter::ptr>* deferred = nullptr;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
     return analyzed_fields.contains(field);
@@ -108,6 +114,8 @@ void RegisterRule() {
 }
 
 void InitOptimizeRules();
+
+void RunRules(Filter::ptr& slot, const OptimizeContext& ctx);
 
 void Optimize(Filter::ptr& root, const OptimizeContext& ctx = {});
 

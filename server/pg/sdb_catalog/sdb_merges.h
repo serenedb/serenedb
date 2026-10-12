@@ -32,12 +32,18 @@ struct SdbMerges {
   uint64_t merge_id;
   Oid relation_id;
   Text origin;
+  Text state;
+  Text lane;
+  double score;
+  Timestamptz queued;
   Timestamptz started;
   double elapsed_ms;
+  int64_t threads;
   Array<Text> inputs;
   int64_t input_docs;
   int64_t input_live_docs;
   int64_t input_bytes;
+  int64_t estimated_bytes;
 };
 
 struct SdbMergeHistory {

@@ -94,7 +94,7 @@ Oid RelationOid(const search::MergeRecord& record) {
 
 template<>
 MaterializedData SystemTableSnapshot<SdbMerges>::GetTableData() {
-  const auto records = Visible(search::MergeRegistry::Instance().Running(),
+  const auto records = Visible(search::MergeRegistry::Instance().Active(),
                                CurrentRelations(_context));
   const auto now = absl::ToUnixMicros(absl::Now());
   std::vector<std::vector<Text>> inputs;
@@ -107,14 +107,31 @@ MaterializedData SystemTableSnapshot<SdbMerges>::GetTableData() {
       .merge_id = record.id,
       .relation_id = RelationOid(record),
       .origin = search::MergeOriginName(record.origin),
+      .state = record.Queued() ? "queued" : "running",
+      .lane = search::MergeLaneName(record.lane),
+      .score = record.score,
+      .queued = At(record.queued_us),
       .started = At(record.started_us),
       .elapsed_ms = static_cast<double>(now - record.started_us) / 1000,
+      .threads = static_cast<int64_t>(record.threads),
       .inputs = names,
       .input_docs = static_cast<int64_t>(record.stats.input_docs),
       .input_live_docs = static_cast<int64_t>(record.stats.input_live_docs),
       .input_bytes = static_cast<int64_t>(record.stats.input_bytes),
+      .estimated_bytes = static_cast<int64_t>(record.EstimatedBytes()),
     };
-    WriteData(result, value, 0, row, Roles());
+    uint64_t nulls = 0;
+    if (record.queued_us == 0) {
+      nulls |= MaskFromNulls(
+        {GetIndex(&SdbMerges::lane), GetIndex(&SdbMerges::score)});
+    }
+    if (record.Queued()) {
+      nulls |= MaskFromNulls({GetIndex(&SdbMerges::elapsed_ms)});
+    }
+    if (record.threads == 0) {
+      nulls |= MaskFromNulls({GetIndex(&SdbMerges::threads)});
+    }
+    WriteData(result, value, nulls, row, Roles());
   }
   return {std::move(result), records.size()};
 }

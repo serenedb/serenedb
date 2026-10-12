@@ -407,11 +407,11 @@ auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
                                 const irs::MergeWriter::FlushProgress& progress,
                                 bool& empty_compaction,
                                 const irs::IndexFieldOptions* field_options,
-                                const irs::AnnBuildEnv* env, MergeOrigin origin,
+                                const irs::AnnBuildEnv* env, uint64_t merge_id,
                                 irs::CompactionResult* outcome,
                                 irs::MergeExecutor* executor)
   -> yaclib::Future<ResultWithTime> {
-  MergeRecorder recorder{GetTableId(), origin};
+  MergeRecorder recorder{GetTableId(), MergeOrigin::Background, merge_id};
   recorder.Begin(ticket.Candidates());
   co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
     return _writer->RunMerge(std::move(ticket), field_options, progress, env,

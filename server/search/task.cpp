@@ -142,7 +142,7 @@ class StorageMergeJob final : public MergeJob {
     return _ticket.Candidates();
   }
 
-  yaclib::Future<MergeOutcome> Run(const std::atomic_bool& stop,
+  yaclib::Future<MergeOutcome> Run(uint64_t id, const std::atomic_bool& stop,
                                    size_t helpers) final {
     SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
       THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -174,7 +174,7 @@ class StorageMergeJob final : public MergeJob {
     irs::CompactionResult outcome;
     auto [res, time_ms] = co_await _storage->RunMergeAsync(
       std::move(_ticket), progress, empty_compaction, opts.field_options,
-      &AnnBuildEnv(), MergeOrigin::Background, &outcome, &executor);
+      &AnnBuildEnv(), id, &outcome, &executor);
     if (!res.ok()) {
       SDB_DEBUG(SEARCH, "error after running for ", time_ms,
                 "ms while compacting Search index '", _storage->GetId(),

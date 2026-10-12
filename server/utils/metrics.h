@@ -40,8 +40,10 @@ enum class Gauge : uint8_t {
   RefreshPending,     // refresh tasks queued
   CompactionActive,   // compaction tasks running now
   CompactionPending,  // compaction tasks queued
-  CleanupActive,      // cleanup tasks running now
-  CleanupPending,     // cleanup tasks queued
+  CompactionThreads,
+  CompactionWrittenBytes,
+  CleanupActive,   // cleanup tasks running now
+  CleanupPending,  // cleanup tasks queued
   Count,
 };
 

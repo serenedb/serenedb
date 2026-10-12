@@ -51,7 +51,7 @@ FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_s');
 ----
 metrics	sized
-12	2
+15	2
 
 query
 SELECT count(*) AS storage_less_index_rows
@@ -67,7 +67,7 @@ FROM sdb_metrics
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_t_idx');
 ----
 own_storage_index_rows
-12
+15
 
 query
 SELECT metric, value
@@ -80,6 +80,9 @@ avg_cleanup_time_ms	0
 avg_commit_time_ms	0
 avg_consolidation_time_ms	0
 index_size	0
+merge_pending_bytes	0
+merges_queued	0
+merges_running	0
 num_buffered_docs	0
 num_docs	0
 num_failed_cleanups	0

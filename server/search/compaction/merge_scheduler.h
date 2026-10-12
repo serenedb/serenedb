@@ -44,19 +44,6 @@ class IExecutor;
 }  // namespace yaclib
 namespace sdb::search {
 
-enum class MergeLane : uint8_t {
-  Small = 0,
-  Big,
-};
-
-struct MergeEstimate {
-  uint64_t bytes = 0;
-  uint64_t rewrite_bytes = 0;
-  size_t segments = 0;
-  double score = 0;
-  MergeLane lane = MergeLane::Big;
-};
-
 MergeEstimate EstimateMerge(irs::CompactionView candidates,
                             uint64_t small_bytes) noexcept;
 
@@ -66,7 +53,8 @@ class MergeJob {
 
   virtual irs::CompactionView Candidates() const noexcept = 0;
 
-  virtual yaclib::Future<MergeOutcome> Run(const std::atomic_bool& stop,
+  virtual yaclib::Future<MergeOutcome> Run(uint64_t id,
+                                           const std::atomic_bool& stop,
                                            size_t helpers) = 0;
 };
 
@@ -80,6 +68,7 @@ class MergeScheduler {
     absl::Duration backoff = absl::Seconds(1);
     absl::Duration max_backoff = absl::Minutes(5);
     std::function<absl::Time()> now;
+    MergeRegistry* registry = nullptr;
   };
 
   class Relation {
@@ -124,16 +113,6 @@ class MergeScheduler {
     std::shared_ptr<Relation> _relation;
   };
 
-  struct QueuedMerge {
-    uint64_t id = 0;
-    uint64_t relation = 0;
-    MergeEstimate estimate;
-    std::vector<std::string> inputs;
-    absl::Time queued;
-    bool running = false;
-    size_t helpers = 0;
-  };
-
   MergeScheduler(yaclib::IExecutor& executor, Options options);
   ~MergeScheduler();
 
@@ -157,8 +136,6 @@ class MergeScheduler {
   bool TryAcquireHelper() noexcept;
   void ReleaseHelper() noexcept;
 
-  std::vector<QueuedMerge> Snapshot() const;
-
  private:
   struct Entry;
   class Start;
@@ -172,15 +149,17 @@ class MergeScheduler {
   bool NoneRunning() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   static bool NoneRunningFor(const Relation* relation);
   absl::Time Now() const;
+  void Drop(Queue& dropped) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  void UpdateGauges() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void Pump();
   yaclib::Future<> Execute(Entry& entry);
-  void Finish(Entry& entry, MergeOutcome outcome) noexcept;
+  void Finish(Entry& entry, MergeOutcome outcome, std::string error) noexcept;
 
   yaclib::IExecutor& _executor;
   const Options _options;
+  MergeRegistry& _registry;
   mutable absl::Mutex _mutex;
   bool _stopping ABSL_GUARDED_BY(_mutex) = false;
-  uint64_t _next_id ABSL_GUARDED_BY(_mutex) = 1;
   size_t _threads ABSL_GUARDED_BY(_mutex) = 0;
   size_t _big ABSL_GUARDED_BY(_mutex) = 0;
   size_t _small ABSL_GUARDED_BY(_mutex) = 0;

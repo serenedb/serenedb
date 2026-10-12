@@ -136,7 +136,7 @@ Background compaction runs on the server's background threads (`--background_thr
 
 Two system tables show merges of the current database, whichever task ran them (`origin`: `background`, `vacuum` or `sql`):
 
-- `sdb_merges` lists merges in progress: `merge_id`, `relation_id`, `origin`, `started`, `elapsed_ms` and the inputs.
+- `sdb_merges` lists the merges that run or wait in the background queue: `merge_id`, `relation_id`, `origin`, `state` (`queued` or `running`), `queued`, `started`, `elapsed_ms`, the inputs, and `estimated_bytes`, what the merge will write, estimated from the live share of its inputs. Background merges also show `lane` (`small` or `big`), `score` (bytes rewritten per segment removed; the lowest starts first) and, once running, `threads` (the threads the merge may use). A queued merge keeps its `merge_id` when it runs and in `sdb_merge_history`; one dropped from the queue, for example by a `VACUUM` on its table, leaves no history.
 - `sdb_merge_history` keeps the last 256 finished merges of the server, with the columns of a `sdb_compact` row plus `merge_id`, `relation_id`, `origin`, `started` and `finished`.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
@@ -255,8 +255,13 @@ The per-index metrics, modelled on the statistics an ArangoSearch / IResearch da
 | `avg_commit_time_ms` | Average duration of the last few commits, in ms |
 | `avg_cleanup_time_ms` | Average duration of the last few cleanups, in ms |
 | `avg_consolidation_time_ms` | Average duration of the last few consolidations, in ms |
+| `merges_queued` | Background merges waiting in the queue |
+| `merges_running` | Merges running now, background or on demand |
+| `merge_pending_bytes` | Bytes the queued and running merges will write, estimated; with `num_segments`, how far compaction lags behind the writes |
 
-The `avg_*` values are a rolling average over a small window of the most recent successful operations. Rows cover the inverted indexes in the **current database**. Join `pg_class` to resolve the index name, or `pg_index` to reach the base table:
+The `avg_*` values are a rolling average over a small window of the most recent successful operations.
+
+Among the process-wide rows, `compaction_pending` counts the background merges waiting in the queue, `compaction_threads` the background threads that merges hold, and `compaction_written_bytes` the bytes merges have written since the server started. Rows cover the inverted indexes in the **current database**. Join `pg_class` to resolve the index name, or `pg_index` to reach the base table:
 
 ```sql
 -- Per-index statistics, with index names

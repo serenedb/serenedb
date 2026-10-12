@@ -27,9 +27,12 @@
 #include <vector>
 
 #include "search/compaction/merge_registry.h"
+#include "server/utils/metrics.h"
 
 namespace {
 
+using sdb::search::MergeEstimate;
+using sdb::search::MergeLane;
 using sdb::search::MergeOrigin;
 using sdb::search::MergeOutcome;
 using sdb::search::MergeRecord;
@@ -45,7 +48,7 @@ std::vector<MergeRecord> HistoryOf(uint64_t relation_id) {
 }
 
 bool IsRunning(uint64_t relation_id) {
-  const auto running = MergeRegistry::Instance().Running();
+  const auto running = MergeRegistry::Instance().Active();
   return std::any_of(running.begin(), running.end(),
                      [&](const MergeRecord& record) {
                        return record.relation_id == relation_id;
@@ -115,6 +118,75 @@ TEST(MergeRegistry, NamesAreStable) {
   EXPECT_EQ("failed", sdb::search::MergeOutcomeName(MergeOutcome::Failed));
   EXPECT_EQ("cancelled",
             sdb::search::MergeOutcomeName(MergeOutcome::Cancelled));
+  EXPECT_EQ("small", sdb::search::MergeLaneName(MergeLane::Small));
+  EXPECT_EQ("big", sdb::search::MergeLaneName(MergeLane::Big));
+}
+
+TEST(MergeRegistry, AQueuedMergeRunsAndFinishesUnderOneId) {
+  MergeRegistry registry;
+  const SegmentStub first{"_1", 10};
+  const SegmentStub second{"_2", 30};
+  const irs::SubReader* const segments[] = {&first, &second};
+  const auto id = registry.Queue(
+    7, segments, MergeEstimate{.score = 2.5, .lane = MergeLane::Small});
+  auto active = registry.Active();
+  ASSERT_EQ(1, active.size());
+  EXPECT_TRUE(active[0].Queued());
+  EXPECT_EQ(7, active[0].relation_id);
+  EXPECT_EQ(MergeOrigin::Background, active[0].origin);
+  EXPECT_LT(0, active[0].queued_us);
+  EXPECT_EQ(MergeLane::Small, active[0].lane);
+  EXPECT_DOUBLE_EQ(2.5, active[0].score);
+  EXPECT_EQ(40, active[0].stats.input_docs);
+  EXPECT_EQ(0, active[0].threads);
+
+  registry.Dispatch(id, 3);
+  active = registry.Active();
+  ASSERT_EQ(1, active.size());
+  EXPECT_FALSE(active[0].Queued());
+  EXPECT_EQ(3, active[0].threads);
+  EXPECT_LE(active[0].queued_us, active[0].started_us);
+
+  registry.Finish(id, MergeOutcome::Cancelled, {}, {});
+  EXPECT_TRUE(registry.Active().empty());
+  const auto history = registry.History();
+  ASSERT_EQ(1, history.size());
+  EXPECT_EQ(id, history[0].id);
+  EXPECT_EQ(MergeOutcome::Cancelled, history[0].outcome);
+  EXPECT_EQ(std::vector<std::string>({"_1", "_2"}), history[0].stats.inputs);
+}
+
+TEST(MergeRegistry, ADroppedQueuedMergeLeavesNoHistory) {
+  MergeRegistry registry;
+  const SegmentStub segment{"_1", 10};
+  const auto id = registry.Queue(7, irs::Compaction{&segment}, {});
+  registry.Drop(id);
+  registry.Dispatch(id, 1);
+  EXPECT_TRUE(registry.Active().empty());
+  EXPECT_TRUE(registry.History().empty());
+}
+
+TEST(MergeRegistry, EstimatedBytesFollowTheLiveShare) {
+  MergeRecord record;
+  EXPECT_EQ(0, record.EstimatedBytes());
+  record.stats.input_docs = 10;
+  record.stats.input_live_docs = 4;
+  record.stats.input_bytes = 1000;
+  EXPECT_EQ(400, record.EstimatedBytes());
+}
+
+TEST(MergeRegistry, MergesThatProduceASegmentCountTheirBytes) {
+  MergeRegistry registry;
+  const auto before =
+    sdb::metrics::Get(sdb::metrics::Gauge::CompactionWrittenBytes);
+  irs::MergeStats stats;
+  stats.output_bytes = 70;
+  registry.Finish(registry.Start(7, MergeOrigin::Sql), MergeOutcome::Merged,
+                  stats, {});
+  registry.Finish(registry.Start(7, MergeOrigin::Sql), MergeOutcome::Failed,
+                  stats, {});
+  EXPECT_EQ(before + 70,
+            sdb::metrics::Get(sdb::metrics::Gauge::CompactionWrittenBytes));
 }
 
 TEST(MergeRegistry, FinishedMergeMovesToHistory) {
@@ -187,7 +259,7 @@ TEST(MergeRegistry, RunningMergesAreOrderedById) {
     registry.Start(kRelation, MergeOrigin::Sql),
     registry.Start(kRelation, MergeOrigin::Sql)};
   std::vector<uint64_t> running;
-  for (const auto& record : registry.Running()) {
+  for (const auto& record : registry.Active()) {
     if (record.relation_id == kRelation) {
       running.emplace_back(record.id);
     }
@@ -254,6 +326,25 @@ TEST(MergeRecorder, DroppedMidMergeRecordsAFailure) {
   EXPECT_EQ(MergeOutcome::Failed, history.front().outcome);
   EXPECT_EQ(std::vector<std::string>{"_1"}, history.front().stats.inputs);
   EXPECT_EQ(10, history.front().stats.input_docs);
+}
+
+TEST(MergeRecorder, AQueuedMergeKeepsItsId) {
+  constexpr uint64_t kRelation = 0x5eed'000d;
+  auto& registry = MergeRegistry::Instance();
+  const SegmentStub segment{"_1", 10};
+  const auto id = registry.Queue(kRelation, irs::Compaction{&segment}, {});
+  registry.Dispatch(id, 1);
+  {
+    MergeRecorder recorder{kRelation, MergeOrigin::Background, id};
+    recorder.Begin(irs::Compaction{&segment});
+    EXPECT_TRUE(IsRunning(kRelation));
+    recorder.Finish(Result(irs::CompactionError::Ok, 1));
+  }
+  const auto history = HistoryOf(kRelation);
+  ASSERT_EQ(1, history.size());
+  EXPECT_EQ(id, history[0].id);
+  EXPECT_EQ(MergeOutcome::Merged, history[0].outcome);
+  EXPECT_EQ(std::vector<std::string>{"_1"}, history[0].stats.inputs);
 }
 
 TEST(MergeRecorder, UnstartedRecorderLeavesNothing) {

@@ -190,7 +190,7 @@ class InvertedIndexStorage final
                      const irs::MergeWriter::FlushProgress& progress,
                      bool& empty_compaction,
                      const irs::IndexFieldOptions* field_options,
-                     const irs::AnnBuildEnv* env, MergeOrigin origin,
+                     const irs::AnnBuildEnv* env, uint64_t merge_id,
                      irs::CompactionResult* outcome = nullptr,
                      irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;

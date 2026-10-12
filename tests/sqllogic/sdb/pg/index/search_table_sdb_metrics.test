@@ -22,6 +22,9 @@ avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	0
 index_size	0
+merge_pending_bytes	0
+merges_queued	0
+merges_running	0
 num_buffered_docs	3
 num_docs	0
 num_failed_cleanups	0
@@ -44,6 +47,9 @@ avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	0
 index_size	<slt:ignore>
+merge_pending_bytes	0
+merges_queued	0
+merges_running	0
 num_buffered_docs	0
 num_docs	3
 num_failed_cleanups	0
@@ -69,6 +75,9 @@ avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	0
 index_size	<slt:ignore>
+merge_pending_bytes	0
+merges_queued	0
+merges_running	0
 num_buffered_docs	0
 num_docs	5
 num_failed_cleanups	0
@@ -91,6 +100,9 @@ avg_cleanup_time_ms	<slt:ignore>
 avg_commit_time_ms	<slt:ignore>
 avg_consolidation_time_ms	<slt:ignore>
 index_size	<slt:ignore>
+merge_pending_bytes	0
+merges_queued	0
+merges_running	0
 num_buffered_docs	0
 num_docs	5
 num_failed_cleanups	0

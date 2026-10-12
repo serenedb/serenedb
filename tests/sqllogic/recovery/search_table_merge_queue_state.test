@@ -1,0 +1,198 @@
+control substitution on
+
+statement ok
+CREATE TABLE mq_plain (id INT);
+
+statement ok
+CREATE INDEX mq_plain_idx ON mq_plain (id);
+
+statement ok
+CREATE TABLE mq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+CREATE TABLE mq_nudge (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO mq_nudge VALUES (1, 'owl');
+
+statement ok
+VACUUM (REFRESH_TABLE) mq_nudge;
+
+statement ok
+INSERT INTO mq_nudge VALUES (2, 'owl');
+
+statement ok
+VACUUM (REFRESH_TABLE) mq_nudge;
+
+statement ok
+SET sdb_faults = 'hold_merge_dispatch';
+
+statement ok
+ALTER TABLE mq SET (compaction_interval = 100);
+
+query ok retry 40 backoff 250ms
+SELECT state, origin, lane, score > 0 AS scored, queued IS NOT NULL AS since,
+       started IS NULL AS waiting, elapsed_ms IS NULL AS idle,
+       threads IS NULL AS unthreaded, cardinality(inputs) AS inputs,
+       input_docs, estimated_bytes > 0 AS estimated
+FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+state	origin	lane	scored	since	waiting	idle	unthreaded	inputs	input_docs	estimated
+queued	background	small	t	t	t	t	t	4	400	t
+
+query
+SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
+----
+pending
+1
+
+query
+SELECT metric, value > 0 AS positive FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq')
+  AND metric IN ('merges_queued', 'merges_running', 'merge_pending_bytes')
+ORDER BY metric;
+----
+metric	positive
+merge_pending_bytes	t
+merges_queued	t
+merges_running	f
+
+statement ok
+CREATE TABLE mq_ids AS
+SELECT merge_id FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+statement ok
+SET sdb_faults = '-hold_merge_dispatch';
+
+statement ok
+ALTER TABLE mq_nudge SET (compaction_interval = 100);
+
+query ok retry 40 backoff 250ms
+SELECT state, threads, started IS NOT NULL AS started, elapsed_ms >= 0 AS timed,
+       merge_id = (SELECT merge_id FROM mq_ids) AS same_id
+FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+state	threads	started	timed	same_id
+running	1	t	t	t
+
+query
+SELECT value >= 1 AS held FROM sdb_metrics WHERE metric = 'compaction_threads';
+----
+held
+t
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+query ok retry 40 backoff 250ms
+SELECT origin, outcome, merge_id = (SELECT merge_id FROM mq_ids) AS same_id
+FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+origin	outcome	same_id
+background	merged	t
+
+query ok retry 40 backoff 250ms
+SELECT metric, value FROM sdb_metrics
+WHERE metric IN ('compaction_pending', 'compaction_threads')
+ORDER BY metric;
+----
+metric	value
+compaction_pending	0
+compaction_threads	0
+
+query
+SELECT value > 0 AS written FROM sdb_metrics WHERE metric = 'compaction_written_bytes';
+----
+written
+t
+
+statement ok
+SET sdb_faults = 'hold_merge_dispatch';
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(401, 500) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(501, 600) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+query ok retry 40 backoff 250ms
+SELECT count(*) > 0 AS waiting FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq') AND state = 'queued';
+----
+waiting
+t
+
+statement ok
+ALTER TABLE mq SET (compaction_interval = 0);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS merges FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+merges
+0
+
+query
+SELECT value AS pending FROM sdb_metrics WHERE metric = 'compaction_pending';
+----
+pending
+0
+
+query
+SELECT count(*) AS finished FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+----
+finished
+1
+
+statement ok
+SET sdb_faults = '-hold_merge_dispatch';
+
+statement ok
+DROP TABLE mq_ids;
+
+statement ok
+DROP TABLE mq;
+
+statement ok
+DROP TABLE mq_nudge;
+
+statement ok
+DROP TABLE mq_plain;

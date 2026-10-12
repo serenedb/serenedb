@@ -26,10 +26,24 @@
 #include <algorithm>
 #include <utility>
 
+#include "server/utils/metrics.h"
+
 namespace sdb::search {
 namespace {
 
 int64_t NowMicros() noexcept { return absl::ToUnixMicros(absl::Now()); }
+
+irs::MergeStats InputsOf(irs::CompactionView candidates) {
+  irs::MergeStats inputs;
+  inputs.inputs.reserve(candidates.size());
+  for (const auto* candidate : candidates) {
+    inputs.inputs.emplace_back(candidate->Meta().name);
+    inputs.input_docs += candidate->docs_count();
+    inputs.input_live_docs += candidate->live_docs_count();
+    inputs.input_bytes += candidate->Meta().byte_size;
+  }
+  return inputs;
+}
 
 }  // namespace
 
@@ -90,29 +104,65 @@ MergeRegistry& MergeRegistry::Instance() {
   return gInstance;
 }
 
+std::string_view MergeLaneName(MergeLane lane) noexcept {
+  return lane == MergeLane::Small ? "small" : "big";
+}
+
+uint64_t MergeRecord::EstimatedBytes() const noexcept {
+  if (stats.input_docs == 0) {
+    return 0;
+  }
+  return static_cast<uint64_t>(static_cast<long double>(stats.input_bytes) *
+                               static_cast<long double>(stats.input_live_docs) /
+                               static_cast<long double>(stats.input_docs));
+}
+
+uint64_t MergeRegistry::Queue(uint64_t relation_id,
+                              irs::CompactionView candidates,
+                              const MergeEstimate& estimate) {
+  auto inputs = InputsOf(candidates);
+  absl::MutexLock lock{&_mutex};
+  const auto id = _next_id++;
+  _active.emplace(id, MergeRecord{
+                        .id = id,
+                        .relation_id = relation_id,
+                        .queued_us = NowMicros(),
+                        .lane = estimate.lane,
+                        .score = estimate.score,
+                        .stats = std::move(inputs),
+                      });
+  return id;
+}
+
+void MergeRegistry::Dispatch(uint64_t id, size_t threads) {
+  absl::MutexLock lock{&_mutex};
+  if (auto it = _active.find(id); it != _active.end()) {
+    it->second.started_us = NowMicros();
+    it->second.threads = threads;
+  }
+}
+
+void MergeRegistry::Drop(uint64_t id) {
+  absl::MutexLock lock{&_mutex};
+  _active.erase(id);
+}
+
 uint64_t MergeRegistry::Start(uint64_t relation_id, MergeOrigin origin) {
   absl::MutexLock lock{&_mutex};
   const auto id = _next_id++;
-  _running.emplace(id, MergeRecord{
-                         .id = id,
-                         .relation_id = relation_id,
-                         .origin = origin,
-                         .started_us = NowMicros(),
-                       });
+  _active.emplace(id, MergeRecord{
+                        .id = id,
+                        .relation_id = relation_id,
+                        .origin = origin,
+                        .started_us = NowMicros(),
+                      });
   return id;
 }
 
 void MergeRegistry::SetInputs(uint64_t id, irs::CompactionView candidates) {
-  irs::MergeStats inputs;
-  inputs.inputs.reserve(candidates.size());
-  for (const auto* candidate : candidates) {
-    inputs.inputs.emplace_back(candidate->Meta().name);
-    inputs.input_docs += candidate->docs_count();
-    inputs.input_live_docs += candidate->live_docs_count();
-    inputs.input_bytes += candidate->Meta().byte_size;
-  }
+  auto inputs = InputsOf(candidates);
   absl::MutexLock lock{&_mutex};
-  if (auto it = _running.find(id); it != _running.end()) {
+  if (auto it = _active.find(id); it != _active.end()) {
     it->second.stats = std::move(inputs);
   }
 }
@@ -120,14 +170,18 @@ void MergeRegistry::SetInputs(uint64_t id, irs::CompactionView candidates) {
 void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
                            irs::MergeStats stats, std::string error) {
   absl::MutexLock lock{&_mutex};
-  auto it = _running.find(id);
-  if (it == _running.end()) {
+  auto it = _active.find(id);
+  if (it == _active.end()) {
     return;
   }
   auto record = std::move(it->second);
-  _running.erase(it);
+  _active.erase(it);
   if (outcome == MergeOutcome::Nothing && error.empty()) {
     return;
+  }
+  if (Produced(outcome)) {
+    metrics::Add(metrics::Gauge::CompactionWrittenBytes,
+                 static_cast<int64_t>(stats.output_bytes));
   }
   record.outcome = outcome;
   record.finished_us = NowMicros();
@@ -141,11 +195,11 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
   _history.emplace_back(std::move(record));
 }
 
-std::vector<MergeRecord> MergeRegistry::Running() const {
+std::vector<MergeRecord> MergeRegistry::Active() const {
   absl::MutexLock lock{&_mutex};
   std::vector<MergeRecord> records;
-  records.reserve(_running.size());
-  for (const auto& [_, record] : _running) {
+  records.reserve(_active.size());
+  for (const auto& [_, record] : _active) {
     records.emplace_back(record);
   }
   std::sort(records.begin(), records.end(),

@@ -20,6 +20,8 @@
 
 #include "sdb_metrics.h"
 
+#include <absl/container/flat_hash_map.h>
+
 #include <array>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -33,6 +35,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/inverted_store_index.h"
+#include "search/compaction/merge_registry.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/metrics.h"
@@ -84,6 +87,39 @@ constexpr std::array<IndexMetricDesc, 12> kIndexMetrics = {{
    "average time of the last few consolidations, in ms"},
 }};
 
+struct MergeLoad {
+  uint64_t queued = 0;
+  uint64_t running = 0;
+  uint64_t pending_bytes = 0;
+};
+
+struct MergeMetricDesc {
+  std::string_view metric;
+  uint64_t MergeLoad::* field;
+  std::string_view description;
+};
+
+constexpr std::array<MergeMetricDesc, 3> kMergeMetrics = {{
+  {"merges_queued", &MergeLoad::queued, "background merges waiting to run"},
+  {"merges_running", &MergeLoad::running, "merges running now"},
+  {"merge_pending_bytes", &MergeLoad::pending_bytes,
+   "estimated bytes that the queued and running merges will write"},
+}};
+
+absl::flat_hash_map<uint64_t, MergeLoad> MergeLoads() {
+  absl::flat_hash_map<uint64_t, MergeLoad> loads;
+  for (const auto& record : search::MergeRegistry::Instance().Active()) {
+    auto& load = loads[record.relation_id];
+    if (record.Queued()) {
+      ++load.queued;
+    } else {
+      ++load.running;
+    }
+    load.pending_bytes += record.EstimatedBytes();
+  }
+  return loads;
+}
+
 }  // namespace
 
 template<>
@@ -113,9 +149,18 @@ MaterializedData SystemTableSnapshot<SdbMetrics>::GetTableData() {
   masks.insert(masks.end(), values.size() - wal_first, kPerProcessMask);
 
   auto& context = _context;
-  const auto emit = [&](const StoreStats& stats, Oid relation_id) {
+  const auto loads = MergeLoads();
+  const auto emit = [&](const StoreStats& stats, uint64_t oid) {
+    const Oid relation_id{static_cast<uint32_t>(oid)};
     for (const auto& desc : kIndexMetrics) {
       values.emplace_back(desc.metric, stats.*desc.field, desc.description,
+                          relation_id);
+      masks.emplace_back(kPerIndexMask);
+    }
+    const auto it = loads.find(oid);
+    const auto load = it == loads.end() ? MergeLoad{} : it->second;
+    for (const auto& desc : kMergeMetrics) {
+      values.emplace_back(desc.metric, load.*desc.field, desc.description,
                           relation_id);
       masks.emplace_back(kPerIndexMask);
     }

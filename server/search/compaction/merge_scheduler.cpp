@@ -35,6 +35,8 @@
 #include <yaclib/exe/executor.hpp>
 #include <yaclib/exe/submit.hpp>
 
+#include "server/utils/metrics.h"
+
 namespace sdb::search {
 namespace {
 
@@ -65,7 +67,7 @@ class MergeScheduler::Start {
 
   ~Start() {
     if (_entry != nullptr) {
-      _scheduler->Finish(*_entry, MergeOutcome::Cancelled);
+      _scheduler->Finish(*_entry, MergeOutcome::Cancelled, {});
     }
   }
 
@@ -103,7 +105,10 @@ MergeEstimate EstimateMerge(irs::CompactionView candidates,
 }
 
 MergeScheduler::MergeScheduler(yaclib::IExecutor& executor, Options options)
-  : _executor{executor}, _options{std::move(options)} {}
+  : _executor{executor},
+    _options{std::move(options)},
+    _registry{_options.registry ? *_options.registry
+                                : MergeRegistry::Instance()} {}
 
 MergeScheduler::~MergeScheduler() { Stop(); }
 
@@ -117,6 +122,21 @@ size_t MergeScheduler::RelationCap() const noexcept {
 
 absl::Time MergeScheduler::Now() const {
   return _options.now ? _options.now() : absl::Now();
+}
+
+void MergeScheduler::Drop(Queue& dropped) {
+  for (const auto& entry : dropped) {
+    --entry->relation->_queued;
+    _registry.Drop(entry->id);
+  }
+  UpdateGauges();
+}
+
+void MergeScheduler::UpdateGauges() const {
+  metrics::Set(metrics::Gauge::CompactionPending,
+               static_cast<int64_t>(_queue.size()));
+  metrics::Set(metrics::Gauge::CompactionThreads,
+               static_cast<int64_t>(_threads));
 }
 
 bool MergeScheduler::NoneRunning() const { return _running.empty(); }
@@ -178,10 +198,11 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
   {
     absl::MutexLock lock{&_mutex};
     if (!_stopping && relation->_paused == 0) {
-      entry->id = _next_id++;
+      entry->id = _registry.Queue(relation->Id(), candidates, entry->estimate);
       entry->queued = Now();
       _queue.emplace_back(std::move(entry));
       ++relation->_queued;
+      UpdateGauges();
     }
   }
   entry.reset();
@@ -197,10 +218,10 @@ void MergeScheduler::CancelQueued(const Relation& relation) {
       ++it;
       continue;
     }
-    --(*it)->relation->_queued;
     dropped.emplace_back(std::move(*it));
     it = _queue.erase(it);
   }
+  Drop(dropped);
 }
 
 void MergeScheduler::StopRunning(const Relation& relation) {
@@ -224,10 +245,10 @@ MergeScheduler::Lease MergeScheduler::TakeOver(
         ++it;
         continue;
       }
-      --relation->_queued;
       dropped.emplace_back(std::move(*it));
       it = _queue.erase(it);
     }
+    Drop(dropped);
     for (const auto& [raw, entry] : _running) {
       if (entry->relation == relation) {
         entry->stop.store(true, std::memory_order_relaxed);
@@ -275,9 +296,7 @@ void MergeScheduler::Interrupt() noexcept {
   absl::MutexLock lock{&_mutex};
   _stopping = true;
   dropped.swap(_queue);
-  for (auto& entry : dropped) {
-    --entry->relation->_queued;
-  }
+  Drop(dropped);
   for (auto& [raw, entry] : _running) {
     entry->stop.store(true, std::memory_order_relaxed);
   }
@@ -296,6 +315,7 @@ bool MergeScheduler::TryAcquireHelper() noexcept {
   }
   ++_big;
   ++_threads;
+  UpdateGauges();
   return true;
 }
 
@@ -305,36 +325,9 @@ void MergeScheduler::ReleaseHelper() noexcept {
     SDB_ASSERT(_big != 0 && _threads != 0);
     --_big;
     --_threads;
+    UpdateGauges();
   }
   Pump();
-}
-
-std::vector<MergeScheduler::QueuedMerge> MergeScheduler::Snapshot() const {
-  std::vector<QueuedMerge> merges;
-  absl::MutexLock lock{&_mutex};
-  merges.reserve(_queue.size() + _running.size());
-  const auto describe = [&](const Entry& entry, bool running) {
-    merges.emplace_back(QueuedMerge{
-      .id = entry.id,
-      .relation = entry.relation->Id(),
-      .estimate = entry.estimate,
-      .inputs = entry.inputs,
-      .queued = entry.queued,
-      .running = running,
-      .helpers = entry.helpers,
-    });
-  };
-  for (const auto& [raw, entry] : _running) {
-    describe(*entry, true);
-  }
-  for (const auto& entry : _queue) {
-    describe(*entry, false);
-  }
-  std::sort(merges.begin(), merges.end(),
-            [](const QueuedMerge& lhs, const QueuedMerge& rhs) {
-              return lhs.id < rhs.id;
-            });
-  return merges;
 }
 
 void MergeScheduler::Pump() {
@@ -344,6 +337,7 @@ void MergeScheduler::Pump() {
     if (_stopping) {
       return;
     }
+    SDB_IF_FAILURE("hold_merge_dispatch") { return; }
     const auto now = Now();
     const auto aging = absl::ToDoubleSeconds(_options.aging);
     for (;;) {
@@ -379,10 +373,12 @@ void MergeScheduler::Pump() {
         ++relation._running_big;
         entry->helpers = _options.helpers_per_merge;
       }
+      _registry.Dispatch(entry->id, 1 + entry->helpers);
       auto* raw = entry.get();
       _running.emplace(raw, std::move(entry));
       started.emplace_back(raw);
     }
+    UpdateGauges();
   }
   for (auto* entry : started) {
     yaclib::Submit(_executor, Start{*this, *entry});
@@ -391,20 +387,23 @@ void MergeScheduler::Pump() {
 
 yaclib::Future<> MergeScheduler::Execute(Entry& entry) {
   auto outcome = MergeOutcome::Failed;
+  std::string error;
   try {
-    outcome = co_await entry.job->Run(entry.stop, entry.helpers);
+    outcome = co_await entry.job->Run(entry.id, entry.stop, entry.helpers);
   } catch (const std::exception& e) {
+    error = e.what();
     SDB_WARN(SEARCH, "background merge of relation ", entry.relation->Id(),
-             " failed: ", e.what());
+             " failed: ", error);
   } catch (...) {
     SDB_WARN(SEARCH, "background merge of relation ", entry.relation->Id(),
              " failed");
   }
-  Finish(entry, outcome);
+  Finish(entry, outcome, std::move(error));
   co_return {};
 }
 
-void MergeScheduler::Finish(Entry& raw, MergeOutcome outcome) noexcept {
+void MergeScheduler::Finish(Entry& raw, MergeOutcome outcome,
+                            std::string error) noexcept {
   std::unique_ptr<Entry> entry;
   {
     absl::MutexLock lock{&_mutex};
@@ -433,6 +432,12 @@ void MergeScheduler::Finish(Entry& raw, MergeOutcome outcome) noexcept {
         relation._blocked.insert_or_assign(std::move(name), until);
       }
     }
+    UpdateGauges();
+  }
+  if (outcome == MergeOutcome::Cancelled) {
+    _registry.Drop(entry->id);
+  } else {
+    _registry.Finish(entry->id, outcome, {}, std::move(error));
   }
   const auto relation = entry->relation;
   entry.reset();

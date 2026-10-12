@@ -59,15 +59,37 @@ MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept;
 
 bool Produced(MergeOutcome outcome) noexcept;
 
+enum class MergeLane : uint8_t {
+  Small = 0,
+  Big,
+};
+
+std::string_view MergeLaneName(MergeLane lane) noexcept;
+
+struct MergeEstimate {
+  uint64_t bytes = 0;
+  uint64_t rewrite_bytes = 0;
+  size_t segments = 0;
+  double score = 0;
+  MergeLane lane = MergeLane::Big;
+};
+
 struct MergeRecord {
   uint64_t id = 0;
   uint64_t relation_id = 0;
   MergeOrigin origin = MergeOrigin::Background;
   MergeOutcome outcome = MergeOutcome::Running;
+  int64_t queued_us = 0;
   int64_t started_us = 0;
   int64_t finished_us = 0;
+  MergeLane lane = MergeLane::Big;
+  double score = 0;
+  size_t threads = 0;
   irs::MergeStats stats{};
   std::string error{};
+
+  bool Queued() const noexcept { return started_us == 0; }
+  uint64_t EstimatedBytes() const noexcept;
 };
 
 class MergeRegistry {
@@ -76,25 +98,30 @@ class MergeRegistry {
 
   static MergeRegistry& Instance();
 
+  uint64_t Queue(uint64_t relation_id, irs::CompactionView candidates,
+                 const MergeEstimate& estimate);
+  void Dispatch(uint64_t id, size_t threads);
+  void Drop(uint64_t id);
   uint64_t Start(uint64_t relation_id, MergeOrigin origin);
   void SetInputs(uint64_t id, irs::CompactionView candidates);
   void Finish(uint64_t id, MergeOutcome outcome, irs::MergeStats stats,
               std::string error);
 
-  std::vector<MergeRecord> Running() const;
+  std::vector<MergeRecord> Active() const;
   std::vector<MergeRecord> History() const;
 
  private:
   mutable absl::Mutex _mutex;
   uint64_t _next_id = 1;
-  absl::flat_hash_map<uint64_t, MergeRecord> _running;
+  absl::flat_hash_map<uint64_t, MergeRecord> _active;
   std::deque<MergeRecord> _history;
 };
 
 class MergeRecorder {
  public:
-  MergeRecorder(uint64_t relation_id, MergeOrigin origin) noexcept
-    : _relation_id{relation_id}, _origin{origin} {}
+  MergeRecorder(uint64_t relation_id, MergeOrigin origin,
+                uint64_t id = 0) noexcept
+    : _relation_id{relation_id}, _origin{origin}, _id{id} {}
   MergeRecorder(const MergeRecorder&) = delete;
   MergeRecorder& operator=(const MergeRecorder&) = delete;
   ~MergeRecorder();
@@ -109,7 +136,7 @@ class MergeRecorder {
 
   uint64_t _relation_id;
   MergeOrigin _origin;
-  uint64_t _id = 0;
+  uint64_t _id;
   bool _finished = false;
 };
 

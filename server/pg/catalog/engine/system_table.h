@@ -884,6 +884,8 @@ class SystemScan {
       Cells<duckdb::timestamp_tz_t>(target)[row] = value;
     } else if constexpr (P == INT64) {
       Cells<int64_t>(target)[row] = Integer<int64_t>(value);
+    } else if constexpr (P == UINT64) {
+      Cells<uint64_t>(target)[row] = Integer<uint64_t>(value);
     } else if constexpr (P == FLOAT) {
       static_assert(std::is_arithmetic_v<V>, "real column needs a number");
       Cells<float>(target)[row] = static_cast<float>(value);

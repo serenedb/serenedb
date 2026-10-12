@@ -27,10 +27,13 @@ extern SystemTable gPgLanguage;
 extern SystemTable gPgNamespace;
 extern SystemTable gPgOpclass;
 extern SystemTable gPgProc;
+extern SystemTable gPgReplicationOrigin;
 extern SystemTable gPgRewrite;
 extern SystemTable gPgSequence;
 extern SystemTable gPgSettings;
 extern SystemTable gPgShdepend;
+extern SystemTable gPgSubscription;
+extern SystemTable gPgSubscriptionRel;
 extern SystemTable gPgTablespace;
 extern SystemTable gPgTrigger;
 extern SystemTable gPgTsDict;
@@ -66,10 +69,13 @@ SystemTable* const kSystemTables[] = {
   &gPgNamespace,
   &gPgOpclass,
   &gPgProc,
+  &gPgReplicationOrigin,
   &gPgRewrite,
   &gPgSequence,
   &gPgSettings,
   &gPgShdepend,
+  &gPgSubscription,
+  &gPgSubscriptionRel,
   &gPgTablespace,
   &gPgTrigger,
   &gPgTsDict,

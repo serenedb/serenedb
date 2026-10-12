@@ -1,0 +1,88 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT '192.168.1.5/24'::INET AS v4, '2001:db8::1'::INET AS v6;
+----
+v4	v6
+192.168.1.5/24	2001:db8::1
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+query
+SELECT x FROM (VALUES ('10.0.0.1'::INET), ('10.0.0.5/8'::INET), ('::1'::INET), ('10.0.0.0/16'::INET)) t(x) ORDER BY x;
+----
+x
+10.0.0.5/8
+10.0.0.0/16
+10.0.0.1
+::1
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+query
+SELECT '10.1.2.3'::INET <<= '10.0.0.0/8'::INET AS inside, '10.0.0.0/8'::INET >>= '10.1.2.3'::INET AS contains, '1.2.3.4'::INET <<= '::/0'::INET AS other_family;
+----
+inside	contains	other_family
+t	t	f
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT host('192.168.1.5/24'::INET) AS host, network('192.168.1.5/24'::INET) AS network, broadcast('192.168.1.5/24'::INET) AS broadcast, family('::1'::INET) AS family;
+----
+host	network	broadcast	family
+192.168.1.5	192.168.1.0/24	192.168.1.255/24	6
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE TABLE hosts (id INTEGER PRIMARY KEY, ip INET);
+
+statement ok
+INSERT INTO hosts VALUES (1, '10.1.2.3'), (2, '10.200.0.7'), (3, '192.168.1.5'), (4, '2001:db8::1');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX hosts_idx ON hosts USING inverted (id, ip);
+
+statement ok
+VACUUM (REFRESH_TABLE) hosts;
+
+query
+SELECT id, ip FROM hosts_idx WHERE ip <<= '10.0.0.0/8' ORDER BY id;
+----
+id	ip
+1	10.1.2.3
+2	10.200.0.7
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE TABLE networks (id INTEGER PRIMARY KEY, net INET, name VARCHAR);
+
+statement ok
+INSERT INTO networks VALUES (1, '10.0.0.0/8', 'corporate'), (2, '10.1.0.0/16', 'office'), (3, '192.168.0.0/16', 'lab');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX networks_idx ON networks USING inverted (id, net) INCLUDE (name);
+
+statement ok
+VACUUM (REFRESH_TABLE) networks;
+
+query
+SELECT id, name FROM networks_idx WHERE net >>= '10.1.2.3' ORDER BY id;
+----
+id	name
+1	corporate
+2	office

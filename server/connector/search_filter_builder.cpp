@@ -79,6 +79,7 @@
 #include "functions/ts_common.hpp"
 #include "functions/ts_query_codec.h"
 #include "geo_filter_builder.hpp"
+#include "inet_filter_builder.hpp"
 #include "query/config.h"
 #include "search/scorer_options.h"
 
@@ -785,6 +786,10 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
       return absl::OkStatus();
     }
   }
+  if (auto s =
+        TryFromInetEquality(filter, ctx, left_expr, right_expr, not_equal)) {
+    return *s;
+  }
 
   // Use the JSON-path-aware resolver so `(content->>'val')::int = 42` is
   // claimed by the index: the cast is peeled and routed to the numeric-
@@ -830,6 +835,9 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
                             const duckdb::Expression& field_expr,
                             const duckdb::Expression& value_expr,
                             ComparisonOp op) {
+  if (auto s = TryFromInetComparison(filter, ctx, field_expr, value_expr, op)) {
+    return *s;
+  }
   if (ctx.negated) {
     op = InvertComparisonOp(op);
   }
@@ -981,6 +989,9 @@ template<bool GenericVersion>
 absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
                     const duckdb::BoundOperatorExpression& op_expr) {
   SDB_ASSERT(op_expr.GetChildren().size() >= 2);
+  if (auto s = TryFromInetIn(filter, ctx, op_expr)) {
+    return *s;
+  }
 
   const auto* column_info =
     FindColumnInfoForExpr(ctx, *op_expr.GetChildren()[0]);
@@ -1244,6 +1255,9 @@ absl::Status FromFunctionExpression(
   }
   if (TryDispatchGeoFunction(filter, ctx, func)) {
     return absl::OkStatus();
+  }
+  if (auto s = TryFromInetFunction(filter, ctx, func)) {
+    return *s;
   }
 
   char escape_char = '\\';

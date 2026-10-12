@@ -20,6 +20,7 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 - **JSON** — index a JSON extraction expression such as `(doc ->> 'host') my_dict`, optionally with a dictionary; this indexes exactly the sub-field you search. (See also the [`VARIANT`](../../data_types/variant.md) type for storing typed payloads.)
 - **Generated columns** — index a [generated column](./index.md) the same as any other column (index the column itself, not its defining expression).
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
+- **`INET` columns** take no dictionary. The index answers `=`, `IN`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `<<=` and `>>=`; see [Inet](../../data_types/inet.md#indexing).
 
 `HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 

@@ -202,6 +202,9 @@ class SearchSinkInsertBaseImpl {
   void WriteBoolColumn(const Field& field, const Field& null_field,
                        duckdb::idx_t count);
 
+  void WriteInetColumn(const Field& field, const Field& null_field,
+                       const duckdb::Vector& vec, duckdb::idx_t count);
+
   void WriteNullColumn(const Field& null_field, duckdb::idx_t count);
 
   template<duckdb::LogicalTypeId ChildKind>

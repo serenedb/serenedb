@@ -902,6 +902,18 @@ void ValidateInvertedIndexKey(std::string_view label,
       ERR_MSG("Unknown built-in opclass '", opclass.name, "' on '", label,
               "' (known: ", DescribeKnownOpclassTypes(), ")"));
   }
+  if (pg::IsInet(type)) {
+    if (!opclass.name.empty()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+        ERR_MSG("Column '", label,
+                "' has type INET and can not use the "
+                "text search dictionary '",
+                opclass.name, "'"),
+        ERR_HINT("Index an INET column without an opclass: (", label, ")"));
+    }
+    return;
+  }
   ValidateTermDictKey(label, type, opclass.name);
 }
 

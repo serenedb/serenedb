@@ -27,7 +27,7 @@ the next value of that sequence.
 | `FLOAT`                    | `FLOAT4`, `REAL`                   | Single precision floating-point number (4 bytes)                                                           |
 | `GEOMETRY` |  | Planar geometry with an optional coordinate reference system, see [Geometry](./geometry.md) |
 | `HUGEINT`                  | `INT128` | Signed sixteen-byte integer                                                                                |
-| `INET` |  | IPv4 or IPv6 host address with an optional netmask |
+| `INET` |  | IPv4 or IPv6 host address with an optional netmask, see [Inet](./inet.md) |
 | `INTEGER`                  | `INT4`, `INT`, `SIGNED`, `INT32` | Signed four-byte integer                                                                                   |
 | `INTERVAL`                 |                                    | Date / time delta                                                                                          |
 | `JSON`                     |                                    | [JSON object](../../data_import_and_export/json/overview.md)                                               |

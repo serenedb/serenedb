@@ -1688,15 +1688,15 @@ void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
 
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
-  // PG binary inet bytes: [0]=family, [1]=bits, [2]=is_cidr, [3]=nb (4 or 16),
-  // then nb big-endian addr bytes; only bits and nb are read.
   if (data.size() < 4) {
     return false;
   }
-  const auto nb = static_cast<uint8_t>(data[3]);
+  const auto family = static_cast<uint8_t>(data[0]);
   const auto bits = static_cast<uint8_t>(data[1]);
-  const bool is_v6 = nb == 16;
-  if ((!is_v6 && nb != 4) || data.size() != static_cast<size_t>(4) + nb) {
+  const auto nb = static_cast<uint8_t>(data[3]);
+  const bool is_v6 = family == 3;
+  if ((!is_v6 && family != 2) || nb != (is_v6 ? 16 : 4) || bits > nb * 8 ||
+      data.size() != size_t{4} + nb) {
     return false;
   }
   const char* addr = data.data() + 4;

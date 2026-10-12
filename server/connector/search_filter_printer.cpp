@@ -47,6 +47,8 @@
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
+#include "connector/inet_terms.h"
+
 namespace irs {
 namespace {
 
@@ -116,6 +118,9 @@ std::string TermValue(bytes_view term, Kind kind) {
   }
   if (sdb::connector::term_dict::IsNumeric(kind)) {
     return DecodeNumericTerm(term);
+  }
+  if (kind == Kind::Inet) {
+    return sdb::connector::inet_terms::Describe(term);
   }
   return TermToString(term);
 }
@@ -465,7 +470,10 @@ struct FilterPrinter {
       const auto& f = downCast<const ByPrefix>(filter);
       ExplainNode node{"Starts With"};
       node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Prefix"] = TermToString(f.options().term);
+      const auto kind = FieldKind(f.field_id());
+      node.attributes["Prefix"] = kind == Kind::Inet
+                                    ? TermValue(f.options().term, kind)
+                                    : TermToString(f.options().term);
       return node;
     }
     if (type == Type<ByNestedFilter>::id()) {

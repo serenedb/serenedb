@@ -250,11 +250,9 @@
 - oid: 869
   name: inet
   pg_typname: inet
-  # TODO: SereneDB - inet lives in the DuckDB inet extension; same gap
-  # as cidr above.
-  text: false
-  binary: false
-  array: false
+  text: true
+  binary: true
+  array: true
   samples: ["127.0.0.1", "::1", "10.0.0.1/24", null]
 
 # ---- bit ----

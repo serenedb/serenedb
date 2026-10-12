@@ -131,10 +131,6 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   // of every per-field answer the build needs.
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
 
-  struct ExpressionSlot {
-    irs::field_id field_id;
-    duckdb::idx_t slot;
-  };
   std::vector<ExpressionSlot> expression_slots;
 
   std::optional<SearchBackfillTarget> search_backfill;
@@ -153,7 +149,6 @@ struct CreateIndexLocalState final : public duckdb::LocalSinkState {
   std::vector<std::string> row_keys;
   std::vector<duckdb::string_t> key_views;
   std::vector<FeedColumn> columns;
-  std::vector<ExpressionValue> expression_values;
   duckdb::SelectionVector backfill_sel{STANDARD_VECTOR_SIZE};
   std::unique_ptr<duckdb::Vector> pk_scratch;
   size_t uncommitted_min_slot = std::numeric_limits<size_t>::max();
@@ -579,16 +574,8 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  auto& expression_values = lstate->expression_values;
-  expression_values.clear();
-  for (const auto& expression : gstate.expression_slots) {
-    SDB_ASSERT(expression.slot < chunk.ColumnCount());
-    expression_values.emplace_back(expression.field_id,
-                                   &chunk.data[expression.slot]);
-  }
-
   irs::CommitOnFlush commit_on_flush;
-  FeedChunk(*writer, num_rows, pk, chunk, columns, expression_values,
+  FeedChunk(*writer, num_rows, pk, chunk, columns, gstate.expression_slots,
             &commit_on_flush);
 
   if (commit_on_flush.committed &&

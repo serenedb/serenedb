@@ -33,7 +33,7 @@ namespace sdb::connector {
 void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
                const PkChunk& pk, duckdb::DataChunk& chunk,
                std::span<const FeedColumn> columns,
-               std::span<const ExpressionValue> expression_values,
+               std::span<const ExpressionSlot> expressions,
                irs::CommitOnFlush* commit_on_flush) {
   writer.Init(count, pk, commit_on_flush);
   for (const auto& column : columns) {
@@ -42,9 +42,11 @@ void FeedChunk(DuckDBSinkIndexWriter& writer, duckdb::idx_t count,
     }
     writer.SwitchColumn(column.desc, chunk.data[column.slot], count);
   }
-  for (const auto& value : expression_values) {
-    writer.SwitchExpression({value.values->GetType(), value.field_id},
-                            *value.values, count);
+  for (const auto& expression : expressions) {
+    SDB_ASSERT(expression.slot < chunk.ColumnCount());
+    const auto& values = chunk.data[expression.slot];
+    writer.SwitchExpression({values.GetType(), expression.field_id}, values,
+                            count);
   }
   writer.Finish();
 }

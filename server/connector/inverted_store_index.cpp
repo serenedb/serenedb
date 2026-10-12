@@ -424,8 +424,16 @@ InvertedStoreIndex::InvertedStoreIndex(
     _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
   for (const auto& key : _config->keys) {
-    if (_config->FindKey(key.field_id) == &key) {
-      _fields.emplace_back(key.field_id);
+    if (_config->FindKey(key.field_id) != &key) {
+      continue;
+    }
+    const duckdb::idx_t slot = _columns.size() + _expressions.size();
+    if (bound_expressions[slot]->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_REF) {
+      _columns.emplace_back(
+        slot, ColumnDescriptor{key.field_id, logical_types[slot]});
+    } else {
+      _expressions.emplace_back(key.field_id, slot);
     }
   }
   gBoundInvertedIndexes.fetch_add(1, std::memory_order_release);
@@ -490,13 +498,8 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
       key_views[i] =
         primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
     }
-    std::vector<ExpressionValue> values;
-    values.reserve(_fields.size());
-    for (size_t column = 0; column < _fields.size(); ++column) {
-      values.emplace_back(_fields[column], &results.data[column]);
-    }
     FeedChunk(writer, count, PkChunk{.key_terms = key_views, .column = &rows},
-              results, {}, values);
+              results, _columns, _expressions);
   }
   trx.AdvanceQueries(1);
 }

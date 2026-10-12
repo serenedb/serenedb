@@ -154,7 +154,7 @@ connection default
 statement error
 DROP ROLE subenf_vedernikoff;
 ----
-db error: ERROR: role "subenf_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: Cannot drop entry "subenf_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 connection default

@@ -9,6 +9,9 @@
 control substitution on
 
 statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
+
+statement ok
 DROP TEXT SEARCH DICTIONARY IF EXISTS stc_dict
 
 statement ok
@@ -994,6 +997,9 @@ SELECT count(*) > 0 AS populated FROM information_schema."views";
 ----
 populated
 t
+
+statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
 
 statement ok
 DEALLOCATE stc_prep

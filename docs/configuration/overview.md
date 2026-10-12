@@ -262,6 +262,17 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 
 `SHOW` prints a setting with a unit the way PostgreSQL does (`SHOW work_mem` is `4MB`), and `pg_settings` gives it in the setting's base unit (`4096` with unit `kB`). Other PostgreSQL settings, such as `shared_buffers` or `wal_level`, describe PostgreSQL's own machinery; SereneDB does not have them, and `SHOW` fails with `unrecognized configuration parameter`.
 
+#### Logical replication
+
+Server-wide settings of [subscriptions](../sql/statements/create_subscription/index.md). Only a superuser may set them, and a change applies to running subscriptions too.
+
+| Name                                          | Description                                                                                                                                                                                                    | Type        | Default value                                       |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
+| `max_sync_workers_per_subscription` | How many tables one subscription copies at the same time during its initial synchronization, each over its own publisher connection (a walsender on the publisher). | `UINTEGER` | `2` |
+| `wal_receiver_status_interval` | How often a subscription reports its position to the publisher (seconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`). 0 disables the periodic reports. | `VARCHAR` | `10s` |
+| `wal_receiver_timeout` | A subscription whose publisher sends nothing for this long drops the connection and reconnects (milliseconds without a unit). 0 disables the timeout. | `VARCHAR` | `1min` |
+| `wal_retrieve_retry_interval` | How long a failed subscription waits before it reconnects (milliseconds without a unit). | `VARCHAR` | `5s` |
+
 #### Security
 
 Authentication, authorization and what the server is allowed to reach.

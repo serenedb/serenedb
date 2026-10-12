@@ -21,11 +21,15 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
+#include <fast_float/fast_float.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/types/string.hpp>
@@ -40,8 +44,10 @@
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <iterator>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -212,6 +218,19 @@ void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
     ERR_MSG(
       "parameter \"", name,
       "\" is accepted for compatibility but is not enforced by serened")));
+}
+
+std::string FormatDuration(int64_t ms) {
+  if (ms == 0) {
+    return "0";
+  }
+  for (const auto& [unit, scale] : std::views::reverse(kTimeUnits)) {
+    const auto factor = static_cast<int64_t>(scale);
+    if (factor != 0 && ms % factor == 0) {
+      return absl::StrCat(ms / factor, unit);
+    }
+  }
+  return absl::StrCat(ms, "ms");
 }
 
 template<irs::utils::detail::FixedString Name>

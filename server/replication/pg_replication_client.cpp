@@ -74,9 +74,9 @@
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_bridge.h"
-#include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
+#include "pg/types.h"
 #include "replication/repl_source.h"
 #include "replication/settings.h"
 

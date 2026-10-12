@@ -28,11 +28,6 @@
 #include "pg/catalog/oids.h"
 #include "pg/types.h"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace sdb::pg {
 
 #include "pg/catalog/generated/tables.gen.inc"

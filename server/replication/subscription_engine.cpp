@@ -42,7 +42,7 @@
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/io_context.h"
-#include "pg/pg_types.h"
+#include "pg/types.h"
 #include "replication/settings.h"
 
 namespace sdb::replication {

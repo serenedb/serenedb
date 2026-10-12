@@ -141,7 +141,8 @@ std::string KindName(CatalogType type) {
 }
 
 void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
-  if (const auto* system = pg::FindSystemNamespace(schema)) {
+  if (const auto* system =
+        pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to create \"", system->name, ".",

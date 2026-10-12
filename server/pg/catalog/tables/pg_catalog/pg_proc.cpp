@@ -32,14 +32,9 @@
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kTypes[] = {
-  duckdb::CatalogType::MACRO_ENTRY,
-  duckdb::CatalogType::TABLE_MACRO_ENTRY,
-};
-
 constexpr SystemKindTypes kProkinds[] = {
-  {'f', kTypes},
-  {'p', kTypes},
+  {'f', kFunctionTypes},
+  {'p', kFunctionTypes},
 };
 
 constexpr SystemIndex kProcIndexes[] = {
@@ -124,7 +119,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
   static constexpr std::tuple kSources{
     ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins, kBuiltinKeys,
                                                    kBuiltinFacts},
-    CatalogSource{kTypes, SystemSchemas::Skip, kProcIndexes}};
+    CatalogSource{kFunctionTypes, SystemSchemas::Skip, kProcIndexes}};
 
   static constexpr SystemVisibility kVisibility{kSql["oid"],
                                                 "pg_function_is_visible"};

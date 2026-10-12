@@ -63,7 +63,7 @@ def procedures(gen, types):
     oids = sorted({row[i] for row in types for i in PROC_COLUMNS if row[i]})
     return gen.query(PROCS_SQL, (oids, list(config.ACCESS_METHODS),
                                  list(config.LANGUAGES),
-                                 list(config.ENUM_PROCS)))
+                                 list(config.PROCEDURES)))
 
 
 def supported_types(gen):
@@ -71,7 +71,7 @@ def supported_types(gen):
     by_oid = {row[0]: row for row in types}
     mapped = mapped_types()
     keep = {row[0] for row in types
-            if row[23] or row[1] in config.PSEUDO_TYPES or
+            if row[1] in config.PSEUDO_TYPES or
             (camel(row[1]) in mapped and not array_element(row, by_oid))}
     while True:
         procs = procedures(gen, [by_oid[oid] for oid in keep])
@@ -98,18 +98,9 @@ def type_constants(types, by_oid):
     constants = {}
     for row in types:
         element = array_element(row, by_oid)
-        row_type = element or row
-        if row_type[23] and row_type[0] >= config.FIRST_INITDB_OID:
-            continue
-        base = camel(row_type[1])
-        suffix = 'Rowtype' if row_type[23] else ''
-        constants[row[0]] = f'k{base}{suffix}{"Array" if element else ""}'
+        base = camel((element or row)[1])
+        constants[row[0]] = f'k{base}{"Array" if element else ""}'
     return constants
-
-
-def builtin_type_constants(gen):
-    types, by_oid, _ = supported_types(gen)
-    return type_constants(types, by_oid)
 
 
 def generate(gen):
@@ -140,3 +131,4 @@ def generate(gen):
     gen.write('builtin_collations.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {cpp_char(provider)}, {cpp_str(locale)}}},'
         for oid, name, provider, locale in collations])
+    return constants

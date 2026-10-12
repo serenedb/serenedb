@@ -31,16 +31,15 @@ class PgForeignDataWrapper final
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<ForeignDataWrapper>{&LoadStatic<kForeignDataWrappers>, {}, {}}};
+    ArraySource<SystemObject>{&LoadStatic<kForeignDataWrappers>, {}, {}}};
 
-  static constexpr auto kWrapper = Shape<kSql, const ForeignDataWrapper>(
-    Col<"oid">(&ForeignDataWrapper::oid),
-    Col<"fdwname">(&ForeignDataWrapper::name),
+  static constexpr auto kWrapper = Shape<kSql, const SystemObject>(
+    Col<"oid">(&SystemObject::oid), Col<"fdwname">(&SystemObject::name),
     Col<"fdwowner">([](const auto&) { return kRootUser; }),
     Col<"fdwacl">(
       [](const auto&) -> const auto& { return kForeignDataWrapperAcl; }));
 
-  void Row(const ForeignDataWrapper& wrapper) { Emit<kWrapper>(wrapper); }
+  void Row(const SystemObject& wrapper) { Emit<kWrapper>(wrapper); }
 };
 
 }  // namespace

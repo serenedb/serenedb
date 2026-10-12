@@ -37,11 +37,8 @@ from pg_catalog.common import REPO_ROOT, Generator, write
 
 
 def repository_outputs():
-    outputs = {relations.REGISTRY: relations.registry()}
-    text = claims.output()
-    if text is not None:
-        outputs[str(claims.TEST)] = text
-    return outputs
+    return {relations.REGISTRY: relations.registry(),
+            str(claims.TEST): claims.output()}
 
 
 def main():
@@ -65,10 +62,10 @@ def main():
         parser.error('--pg and --pg-src go together')
     if args.pg:
         gen = Generator(args.pg, args.pg_src)
-        builtins.generate(gen)
-        relations.generate(gen)
+        types = builtins.generate(gen)
+        relations.generate(gen, types)
         views.generate(gen)
-        functions.generate(gen)
+        functions.generate(gen, types)
     for path, text in outputs.items():
         write(path, text)
     return 0

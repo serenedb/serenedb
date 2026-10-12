@@ -52,7 +52,8 @@ struct ForeignKeyRow : ConstraintRow {
   duckdb::optional_ptr<const duckdb::TableCatalogEntry> Target(
     const SystemScan& scan) const {
     if (!target) {
-      target = ReferencedTable(scan, table, As<duckdb::ForeignKeyConstraint>());
+      target = ReferencedTable(scan.Transaction(), table,
+                               As<duckdb::ForeignKeyConstraint>());
     }
     return *target;
   }

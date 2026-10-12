@@ -413,7 +413,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     if (!Allows<"deptype">('n')) {
       return;
     }
-    const auto target = ReferencedTable(*this, table, fk);
+    const auto target = ReferencedTable(Transaction(), table, fk);
     if (!target) {
       return;
     }

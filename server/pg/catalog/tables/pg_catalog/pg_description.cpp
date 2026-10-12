@@ -20,6 +20,7 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <limits>
 
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
@@ -35,21 +36,12 @@ constexpr duckdb::CatalogType kTypes[] = {
   duckdb::CatalogType::TOKENIZER_ENTRY,
 };
 
-constexpr duckdb::CatalogType kNamespaceTypes[] = {
-  duckdb::CatalogType::SCHEMA_ENTRY};
-constexpr duckdb::CatalogType kClassTypes[] = {
-  duckdb::CatalogType::TABLE_ENTRY, duckdb::CatalogType::VIEW_ENTRY,
-  duckdb::CatalogType::INDEX_ENTRY, duckdb::CatalogType::SEQUENCE_ENTRY};
-constexpr duckdb::CatalogType kTypeTypes[] = {duckdb::CatalogType::TYPE_ENTRY};
-constexpr duckdb::CatalogType kProcTypes[] = {
-  duckdb::CatalogType::MACRO_ENTRY, duckdb::CatalogType::TABLE_MACRO_ENTRY};
-constexpr duckdb::CatalogType kTsDictTypes[] = {
-  duckdb::CatalogType::TOKENIZER_ENTRY};
-
 constexpr SystemKindTypes kClasses[] = {
-  {kPgNamespaceTable, kNamespaceTypes}, {kPgClassTable, kClassTypes},
-  {kPgTypeTable, kTypeTypes},           {kPgProcTable, kProcTypes},
-  {kPgTsDictTable, kTsDictTypes},
+  {kPgNamespaceTable, kSchemaTypes},
+  {kPgClassTable, std::span{kSchemaObjectTypes}.first<4>()},
+  {kPgTypeTable, kTypeTypes},
+  {kPgProcTable, kFunctionTypes},
+  {kPgTsDictTable, kTokenizerTypes},
 };
 
 constexpr SystemIndex kIndexes[] = {
@@ -89,7 +81,7 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
       return;
     }
     Comment(kPgClassTable, table.oid, 0, table.comment);
-    if (!AllowsAbove<"objsubid">(0)) {
+    if (!Allows<"objsubid">(1, std::numeric_limits<int32_t>::max())) {
       return;
     }
     for (const auto& column : table.GetColumns().Logical()) {
@@ -105,7 +97,7 @@ class PgDescription final : public SystemTableScan<kPgDescriptionSql> {
       return;
     }
     Comment(kPgClassTable, view.oid, 0, view.comment);
-    if (!AllowsAbove<"objsubid">(0)) {
+    if (!Allows<"objsubid">(1, std::numeric_limits<int32_t>::max())) {
       return;
     }
     if (const auto columns = ViewColumns(Context(), view)) {

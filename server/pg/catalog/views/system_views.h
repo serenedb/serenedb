@@ -31,6 +31,8 @@ struct SystemView {
   std::string_view schema;
   std::string_view name;
   duckdb::idx_t oid;
+  int32_t row_type;
+  int32_t row_array_type;
   bool superuser_only;
   std::string_view sql;
 };

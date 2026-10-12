@@ -49,6 +49,13 @@ namespace sdb::pg {
 
 namespace {
 
+class SystemEmptyScan final : public SystemScan {
+ public:
+  using SystemScan::SystemScan;
+
+  static constexpr std::tuple<> kSources{};
+};
+
 std::vector<SystemTable*> gTables;
 std::deque<SystemTable> gEmptyTables;
 
@@ -140,8 +147,12 @@ void InitSystemTables() {
   }
   for (const auto* sql : kGeneratedTables) {
     if (!gTablesByOid.contains(sql->oid)) {
-      auto* table =
-        &gEmptyTables.emplace_back(*sql, std::span<const SystemCell>{});
+      auto* table = &gEmptyTables.emplace_back(
+        *sql,
+        SystemScanFunctions{&SystemScanInit<SystemEmptyScan>,
+                            &SystemScanRun<SystemEmptyScan>},
+        std::span<const SystemFact>{}, std::nullopt,
+        std::span<const SystemTypeShape>{});
       gTables.emplace_back(table);
       gTablesByOid.emplace(sql->oid, table);
     }

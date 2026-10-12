@@ -259,12 +259,13 @@ duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
 }
 
 duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
-  const SystemScan& scan, const duckdb::TableCatalogEntry& table,
+  duckdb::CatalogTransaction transaction,
+  const duckdb::TableCatalogEntry& table,
   const duckdb::ForeignKeyConstraint& fk) {
   if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
     return &table;
   }
-  return SiblingTable(scan.Transaction(), table, fk.info.table);
+  return SiblingTable(transaction, table, fk.info.table);
 }
 
 SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
@@ -314,7 +315,7 @@ void AppendAcl(std::string& out, const duckdb::AclItem& item,
     PutRole(out, item.grantee, roles);
   }
   out.push_back('=');
-  for (const auto& p : kPrivChars) {
+  for (const auto& p : kAclPrivileges) {
     if ((item.privs & p.mode) != duckdb::AclMode::NoRights) {
       out.push_back(p.chr);
       if ((item.grant_option & p.mode) != duckdb::AclMode::NoRights) {
@@ -471,15 +472,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabase(
 duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
   duckdb::ClientContext& context, duckdb::idx_t id) {
   auto& cluster = catalog::ClusterOf(context);
-  duckdb::optional_ptr<duckdb::CatalogEntry> result;
-  cluster.GetCatalogSet(duckdb::CatalogType::DATABASE_ENTRY)
-    .Scan(cluster.GetCatalogTransaction(context),
-          [&](duckdb::CatalogEntry& entry) {
-            if (!result && entry.oid == id) {
-              result = &entry;
-            }
-          });
-  return result;
+  const auto entry = cluster.GetOidIndex().GetVisible(
+    id, cluster.GetCatalogTransaction(context).view);
+  if (!entry || entry->type != duckdb::CatalogType::DATABASE_ENTRY) {
+    return nullptr;
+  }
+  return entry;
 }
 
 std::optional<ObjectName> RelationObject(const Session& session, uint64_t oid) {
@@ -585,8 +583,9 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
   }
   if (oid <= std::numeric_limits<int32_t>::max()) {
     if (const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid))) {
-      return ObjectName{std::string{FindSystemNamespace(builtin->nsp)->name},
-                        std::string{builtin->name}};
+      return ObjectName{
+        std::string{FindSystemObject(kSystemNamespaces, builtin->nsp)->name},
+        std::string{builtin->name}};
     }
   }
   if (auto entry = EntryByOid(session, oid);

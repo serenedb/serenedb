@@ -46,7 +46,7 @@ inline constexpr SystemSqlColumn kInfoColumnsColumns[] = {
   {"generation_expression", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"is_updatable", kYesOrNo, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kInfoColumnsSql{kInfoColumnsTable, "information_schema", "columns", 'v', false, false, 10000, kInfoColumnsColumns};
+inline constexpr SystemSql kInfoColumnsSql{kInfoColumnsTable, "information_schema", "columns", 13383, 13382, 'v', false, false, 10000, kInfoColumnsColumns};
 inline constexpr SystemSqlColumn kInfoSqlFeaturesColumns[] = {
   {"feature_id", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"feature_name", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -56,7 +56,7 @@ inline constexpr SystemSqlColumn kInfoSqlFeaturesColumns[] = {
   {"is_verified_by", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"comments", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kInfoSqlFeaturesSql{kInfoSqlFeaturesTable, "information_schema", "sql_features", 'r', false, false, 1000, kInfoSqlFeaturesColumns};
+inline constexpr SystemSql kInfoSqlFeaturesSql{kInfoSqlFeaturesTable, "information_schema", "sql_features", 13478, 13477, 'r', false, false, 1000, kInfoSqlFeaturesColumns};
 inline constexpr SystemSqlColumn kInfoSqlImplementationInfoColumns[] = {
   {"implementation_info_id", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"implementation_info_name", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -64,7 +64,7 @@ inline constexpr SystemSqlColumn kInfoSqlImplementationInfoColumns[] = {
   {"character_value", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"comments", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kInfoSqlImplementationInfoSql{kInfoSqlImplementationInfoTable, "information_schema", "sql_implementation_info", 'r', false, false, 1000, kInfoSqlImplementationInfoColumns};
+inline constexpr SystemSql kInfoSqlImplementationInfoSql{kInfoSqlImplementationInfoTable, "information_schema", "sql_implementation_info", 13483, 13482, 'r', false, false, 1000, kInfoSqlImplementationInfoColumns};
 inline constexpr SystemSqlColumn kInfoSqlPartsColumns[] = {
   {"feature_id", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"feature_name", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -72,14 +72,14 @@ inline constexpr SystemSqlColumn kInfoSqlPartsColumns[] = {
   {"is_verified_by", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"comments", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kInfoSqlPartsSql{kInfoSqlPartsTable, "information_schema", "sql_parts", 'r', true, false, 1000, kInfoSqlPartsColumns};
+inline constexpr SystemSql kInfoSqlPartsSql{kInfoSqlPartsTable, "information_schema", "sql_parts", 13488, 13487, 'r', true, false, 1000, kInfoSqlPartsColumns};
 inline constexpr SystemSqlColumn kInfoSqlSizingColumns[] = {
   {"sizing_id", kCardinalNumber, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"sizing_name", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"supported_value", kCardinalNumber, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"comments", kCharacterData, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kInfoSqlSizingSql{kInfoSqlSizingTable, "information_schema", "sql_sizing", 'r', false, false, 1000, kInfoSqlSizingColumns};
+inline constexpr SystemSql kInfoSqlSizingSql{kInfoSqlSizingTable, "information_schema", "sql_sizing", 13493, 13492, 'r', false, false, 1000, kInfoSqlSizingColumns};
 inline constexpr SystemSqlColumn kPgAggregateColumns[] = {
   {"aggfnoid", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"aggkind", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, "n"},
@@ -104,14 +104,14 @@ inline constexpr SystemSqlColumn kPgAggregateColumns[] = {
   {"agginitval", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"aggminitval", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgAggregateSql{kPgAggregateTable, "pg_catalog", "pg_aggregate", 'r', false, false, 1000, kPgAggregateColumns};
+inline constexpr SystemSql kPgAggregateSql{kPgAggregateTable, "pg_catalog", "pg_aggregate", 10027, 10026, 'r', false, false, 1000, kPgAggregateColumns};
 inline constexpr SystemSqlColumn kPgAmColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"amname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
   {"amhandler", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"amtype", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgAmSql{kPgAmTable, "pg_catalog", "pg_am", 'r', false, false, 10, kPgAmColumns};
+inline constexpr SystemSql kPgAmSql{kPgAmTable, "pg_catalog", "pg_am", 10015, 10014, 'r', false, false, 10, kPgAmColumns};
 inline constexpr SystemSqlColumn kPgAmopColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"amopfamily", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -123,7 +123,7 @@ inline constexpr SystemSqlColumn kPgAmopColumns[] = {
   {"amopmethod", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"amopsortfamily", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgAmopSql{kPgAmopTable, "pg_catalog", "pg_amop", 'r', false, false, 1000, kPgAmopColumns};
+inline constexpr SystemSql kPgAmopSql{kPgAmopTable, "pg_catalog", "pg_amop", 10017, 10016, 'r', false, false, 1000, kPgAmopColumns};
 inline constexpr SystemSqlColumn kPgAmprocColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"amprocfamily", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -132,14 +132,14 @@ inline constexpr SystemSqlColumn kPgAmprocColumns[] = {
   {"amprocnum", kInt2, duckdb::PhysicalType::INT16, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"amproc", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgAmprocSql{kPgAmprocTable, "pg_catalog", "pg_amproc", 'r', false, false, 1000, kPgAmprocColumns};
+inline constexpr SystemSql kPgAmprocSql{kPgAmprocTable, "pg_catalog", "pg_amproc", 10019, 10018, 'r', false, false, 1000, kPgAmprocColumns};
 inline constexpr SystemSqlColumn kPgAttrdefColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"adrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"adnum", kInt2, duckdb::PhysicalType::INT16, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"adbin", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgAttrdefSql{kPgAttrdefTable, "pg_catalog", "pg_attrdef", 'r', false, false, 10000, kPgAttrdefColumns};
+inline constexpr SystemSql kPgAttrdefSql{kPgAttrdefTable, "pg_catalog", "pg_attrdef", 10001, 10000, 'r', false, false, 10000, kPgAttrdefColumns};
 inline constexpr SystemSqlColumn kPgAttributeColumns[] = {
   {"attrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"attname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -167,7 +167,7 @@ inline constexpr SystemSqlColumn kPgAttributeColumns[] = {
   {"attfdwoptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"attmissingval", kAnyarray, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgAttributeSql{kPgAttributeTable, "pg_catalog", "pg_attribute", 'r', false, false, 100000, kPgAttributeColumns};
+inline constexpr SystemSql kPgAttributeSql{kPgAttributeTable, "pg_catalog", "pg_attribute", 75, 270, 'r', false, false, 100000, kPgAttributeColumns};
 inline constexpr SystemSqlColumn kPgAuthMembersColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"roleid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -177,7 +177,7 @@ inline constexpr SystemSqlColumn kPgAuthMembersColumns[] = {
   {"inherit_option", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "false"},
   {"set_option", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "false"},
 };
-inline constexpr SystemSql kPgAuthMembersSql{kPgAuthMembersTable, "pg_catalog", "pg_auth_members", 'r', false, true, 1000, kPgAuthMembersColumns};
+inline constexpr SystemSql kPgAuthMembersSql{kPgAuthMembersTable, "pg_catalog", "pg_auth_members", 2843, 10058, 'r', false, true, 1000, kPgAuthMembersColumns};
 inline constexpr SystemSqlColumn kPgAuthidColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"rolname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -192,7 +192,7 @@ inline constexpr SystemSqlColumn kPgAuthidColumns[] = {
   {"rolpassword", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"rolvaliduntil", kTimestamptz, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgAuthidSql{kPgAuthidTable, "pg_catalog", "pg_authid", 'r', true, true, 10, kPgAuthidColumns};
+inline constexpr SystemSql kPgAuthidSql{kPgAuthidTable, "pg_catalog", "pg_authid", 2842, 10057, 'r', true, true, 10, kPgAuthidColumns};
 inline constexpr SystemSqlColumn kPgCastColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"castsource", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -201,7 +201,7 @@ inline constexpr SystemSqlColumn kPgCastColumns[] = {
   {"castcontext", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
   {"castmethod", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgCastSql{kPgCastTable, "pg_catalog", "pg_cast", 'r', false, false, 1000, kPgCastColumns};
+inline constexpr SystemSql kPgCastSql{kPgCastTable, "pg_catalog", "pg_cast", 10043, 10042, 'r', false, false, 1000, kPgCastColumns};
 inline constexpr SystemSqlColumn kPgClassColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"relname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -238,7 +238,7 @@ inline constexpr SystemSqlColumn kPgClassColumns[] = {
   {"reloptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"relpartbound", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgClassSql{kPgClassTable, "pg_catalog", "pg_class", 'r', false, false, 10000, kPgClassColumns};
+inline constexpr SystemSql kPgClassSql{kPgClassTable, "pg_catalog", "pg_class", 83, 273, 'r', false, false, 10000, kPgClassColumns};
 inline constexpr SystemSqlColumn kPgCollationColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"collname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -253,7 +253,7 @@ inline constexpr SystemSqlColumn kPgCollationColumns[] = {
   {"collicurules", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"collversion", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgCollationSql{kPgCollationTable, "pg_catalog", "pg_collation", 'r', false, false, 10, kPgCollationColumns};
+inline constexpr SystemSql kPgCollationSql{kPgCollationTable, "pg_catalog", "pg_collation", 10095, 10094, 'r', false, false, 10, kPgCollationColumns};
 inline constexpr SystemSqlColumn kPgConstraintColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"conname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -284,7 +284,7 @@ inline constexpr SystemSqlColumn kPgConstraintColumns[] = {
   {"conexclop", kOidArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::INT64, false, SystemKey::None, std::nullopt},
   {"conbin", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgConstraintSql{kPgConstraintTable, "pg_catalog", "pg_constraint", 'r', false, false, 10000, kPgConstraintColumns};
+inline constexpr SystemSql kPgConstraintSql{kPgConstraintTable, "pg_catalog", "pg_constraint", 10003, 10002, 'r', false, false, 10000, kPgConstraintColumns};
 inline constexpr SystemSqlColumn kPgConversionColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"conname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -295,7 +295,7 @@ inline constexpr SystemSqlColumn kPgConversionColumns[] = {
   {"conproc", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"condefault", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "true"},
 };
-inline constexpr SystemSql kPgConversionSql{kPgConversionTable, "pg_catalog", "pg_conversion", 'r', false, false, 1000, kPgConversionColumns};
+inline constexpr SystemSql kPgConversionSql{kPgConversionTable, "pg_catalog", "pg_conversion", 10049, 10048, 'r', false, false, 1000, kPgConversionColumns};
 inline constexpr SystemSqlColumn kPgDatabaseColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"datname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -316,13 +316,13 @@ inline constexpr SystemSqlColumn kPgDatabaseColumns[] = {
   {"datcollversion", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"datacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgDatabaseSql{kPgDatabaseTable, "pg_catalog", "pg_database", 'r', false, true, 10, kPgDatabaseColumns};
+inline constexpr SystemSql kPgDatabaseSql{kPgDatabaseTable, "pg_catalog", "pg_database", 1248, 10052, 'r', false, true, 10, kPgDatabaseColumns};
 inline constexpr SystemSqlColumn kPgDbRoleSettingColumns[] = {
   {"setdatabase", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"setrole", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"setconfig", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgDbRoleSettingSql{kPgDbRoleSettingTable, "pg_catalog", "pg_db_role_setting", 'r', false, true, 1000, kPgDbRoleSettingColumns};
+inline constexpr SystemSql kPgDbRoleSettingSql{kPgDbRoleSettingTable, "pg_catalog", "pg_db_role_setting", 10054, 10053, 'r', false, true, 1000, kPgDbRoleSettingColumns};
 inline constexpr SystemSqlColumn kPgDefaultAclColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"defaclrole", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -330,7 +330,7 @@ inline constexpr SystemSqlColumn kPgDefaultAclColumns[] = {
   {"defaclobjtype", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
   {"defaclacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, true, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgDefaultAclSql{kPgDefaultAclTable, "pg_catalog", "pg_default_acl", 'r', false, false, 1000, kPgDefaultAclColumns};
+inline constexpr SystemSql kPgDefaultAclSql{kPgDefaultAclTable, "pg_catalog", "pg_default_acl", 10088, 10087, 'r', false, false, 1000, kPgDefaultAclColumns};
 inline constexpr SystemSqlColumn kPgDependColumns[] = {
   {"classid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"objid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -340,21 +340,21 @@ inline constexpr SystemSqlColumn kPgDependColumns[] = {
   {"refobjsubid", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"deptype", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgDependSql{kPgDependTable, "pg_catalog", "pg_depend", 'r', false, false, 100000, kPgDependColumns};
+inline constexpr SystemSql kPgDependSql{kPgDependTable, "pg_catalog", "pg_depend", 10051, 10050, 'r', false, false, 100000, kPgDependColumns};
 inline constexpr SystemSqlColumn kPgDescriptionColumns[] = {
   {"objoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"classoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"objsubid", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"description", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgDescriptionSql{kPgDescriptionTable, "pg_catalog", "pg_description", 'r', false, false, 1000, kPgDescriptionColumns};
+inline constexpr SystemSql kPgDescriptionSql{kPgDescriptionTable, "pg_catalog", "pg_description", 10041, 10040, 'r', false, false, 1000, kPgDescriptionColumns};
 inline constexpr SystemSqlColumn kPgEnumColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"enumtypid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"enumsortorder", kFloat4, duckdb::PhysicalType::FLOAT, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"enumlabel", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
 };
-inline constexpr SystemSql kPgEnumSql{kPgEnumTable, "pg_catalog", "pg_enum", 'r', false, false, 1000, kPgEnumColumns};
+inline constexpr SystemSql kPgEnumSql{kPgEnumTable, "pg_catalog", "pg_enum", 10045, 10044, 'r', false, false, 1000, kPgEnumColumns};
 inline constexpr SystemSqlColumn kPgEventTriggerColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"evtname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -364,7 +364,7 @@ inline constexpr SystemSqlColumn kPgEventTriggerColumns[] = {
   {"evtenabled", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
   {"evttags", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgEventTriggerSql{kPgEventTriggerTable, "pg_catalog", "pg_event_trigger", 'r', false, false, 1000, kPgEventTriggerColumns};
+inline constexpr SystemSql kPgEventTriggerSql{kPgEventTriggerTable, "pg_catalog", "pg_event_trigger", 10039, 10038, 'r', false, false, 1000, kPgEventTriggerColumns};
 inline constexpr SystemSqlColumn kPgExtensionColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"extname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -375,7 +375,7 @@ inline constexpr SystemSqlColumn kPgExtensionColumns[] = {
   {"extconfig", kOidArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::INT64, false, SystemKey::None, std::nullopt},
   {"extcondition", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgExtensionSql{kPgExtensionTable, "pg_catalog", "pg_extension", 'r', false, false, 1000, kPgExtensionColumns};
+inline constexpr SystemSql kPgExtensionSql{kPgExtensionTable, "pg_catalog", "pg_extension", 10074, 10073, 'r', false, false, 1000, kPgExtensionColumns};
 inline constexpr SystemSqlColumn kPgForeignDataWrapperColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"fdwname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -385,7 +385,7 @@ inline constexpr SystemSqlColumn kPgForeignDataWrapperColumns[] = {
   {"fdwacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"fdwoptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgForeignDataWrapperSql{kPgForeignDataWrapperTable, "pg_catalog", "pg_foreign_data_wrapper", 'r', false, false, 1000, kPgForeignDataWrapperColumns};
+inline constexpr SystemSql kPgForeignDataWrapperSql{kPgForeignDataWrapperTable, "pg_catalog", "pg_foreign_data_wrapper", 10076, 10075, 'r', false, false, 1000, kPgForeignDataWrapperColumns};
 inline constexpr SystemSqlColumn kPgForeignServerColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"srvname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -396,13 +396,13 @@ inline constexpr SystemSqlColumn kPgForeignServerColumns[] = {
   {"srvacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"srvoptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgForeignServerSql{kPgForeignServerTable, "pg_catalog", "pg_foreign_server", 'r', true, false, 1000, kPgForeignServerColumns};
+inline constexpr SystemSql kPgForeignServerSql{kPgForeignServerTable, "pg_catalog", "pg_foreign_server", 10078, 10077, 'r', true, false, 1000, kPgForeignServerColumns};
 inline constexpr SystemSqlColumn kPgForeignTableColumns[] = {
   {"ftrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"ftserver", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"ftoptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgForeignTableSql{kPgForeignTableTable, "pg_catalog", "pg_foreign_table", 'r', false, false, 1000, kPgForeignTableColumns};
+inline constexpr SystemSql kPgForeignTableSql{kPgForeignTableTable, "pg_catalog", "pg_foreign_table", 10082, 10081, 'r', false, false, 1000, kPgForeignTableColumns};
 inline constexpr SystemSqlColumn kPgHbaFileRulesColumns[] = {
   {"rule_number", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"file_name", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -416,7 +416,7 @@ inline constexpr SystemSqlColumn kPgHbaFileRulesColumns[] = {
   {"options", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"error", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgHbaFileRulesSql{kPgHbaFileRulesTable, "pg_catalog", "pg_hba_file_rules", 'v', true, false, 1000, kPgHbaFileRulesColumns};
+inline constexpr SystemSql kPgHbaFileRulesSql{kPgHbaFileRulesTable, "pg_catalog", "pg_hba_file_rules", 12116, 12115, 'v', true, false, 1000, kPgHbaFileRulesColumns};
 inline constexpr SystemSqlColumn kPgIndexColumns[] = {
   {"indexrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"indrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -440,14 +440,14 @@ inline constexpr SystemSqlColumn kPgIndexColumns[] = {
   {"indexprs", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"indpred", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgIndexSql{kPgIndexTable, "pg_catalog", "pg_index", 'r', false, false, 10000, kPgIndexColumns};
+inline constexpr SystemSql kPgIndexSql{kPgIndexTable, "pg_catalog", "pg_index", 10007, 10006, 'r', false, false, 10000, kPgIndexColumns};
 inline constexpr SystemSqlColumn kPgInheritsColumns[] = {
   {"inhrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"inhparent", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"inhseqno", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"inhdetachpending", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "false"},
 };
-inline constexpr SystemSql kPgInheritsSql{kPgInheritsTable, "pg_catalog", "pg_inherits", 'r', false, false, 1000, kPgInheritsColumns};
+inline constexpr SystemSql kPgInheritsSql{kPgInheritsTable, "pg_catalog", "pg_inherits", 10005, 10004, 'r', false, false, 1000, kPgInheritsColumns};
 inline constexpr SystemSqlColumn kPgInitPrivsColumns[] = {
   {"objoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"classoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -455,7 +455,7 @@ inline constexpr SystemSqlColumn kPgInitPrivsColumns[] = {
   {"privtype", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
   {"initprivs", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, true, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgInitPrivsSql{kPgInitPrivsTable, "pg_catalog", "pg_init_privs", 'r', false, false, 1000, kPgInitPrivsColumns};
+inline constexpr SystemSql kPgInitPrivsSql{kPgInitPrivsTable, "pg_catalog", "pg_init_privs", 10090, 10089, 'r', false, false, 1000, kPgInitPrivsColumns};
 inline constexpr SystemSqlColumn kPgLanguageColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"lanname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -467,26 +467,26 @@ inline constexpr SystemSqlColumn kPgLanguageColumns[] = {
   {"lanvalidator", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"lanacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgLanguageSql{kPgLanguageTable, "pg_catalog", "pg_language", 'r', false, false, 10, kPgLanguageColumns};
+inline constexpr SystemSql kPgLanguageSql{kPgLanguageTable, "pg_catalog", "pg_language", 10021, 10020, 'r', false, false, 10, kPgLanguageColumns};
 inline constexpr SystemSqlColumn kPgLargeobjectColumns[] = {
   {"loid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"pageno", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"data", kBytea, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgLargeobjectSql{kPgLargeobjectTable, "pg_catalog", "pg_largeobject", 'r', true, false, 1000, kPgLargeobjectColumns};
+inline constexpr SystemSql kPgLargeobjectSql{kPgLargeobjectTable, "pg_catalog", "pg_largeobject", 10025, 10024, 'r', true, false, 1000, kPgLargeobjectColumns};
 inline constexpr SystemSqlColumn kPgLargeobjectMetadataColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"lomowner", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"lomacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgLargeobjectMetadataSql{kPgLargeobjectMetadataTable, "pg_catalog", "pg_largeobject_metadata", 'r', false, false, 1000, kPgLargeobjectMetadataColumns};
+inline constexpr SystemSql kPgLargeobjectMetadataSql{kPgLargeobjectMetadataTable, "pg_catalog", "pg_largeobject_metadata", 10023, 10022, 'r', false, false, 1000, kPgLargeobjectMetadataColumns};
 inline constexpr SystemSqlColumn kPgNamespaceColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"nspname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
   {"nspowner", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"nspacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgNamespaceSql{kPgNamespaceTable, "pg_catalog", "pg_namespace", 'r', false, false, 10, kPgNamespaceColumns};
+inline constexpr SystemSql kPgNamespaceSql{kPgNamespaceTable, "pg_catalog", "pg_namespace", 10047, 10046, 'r', false, false, 10, kPgNamespaceColumns};
 inline constexpr SystemSqlColumn kPgOpclassColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"opcmethod", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -498,7 +498,7 @@ inline constexpr SystemSqlColumn kPgOpclassColumns[] = {
   {"opcdefault", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "false"},
   {"opckeytype", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgOpclassSql{kPgOpclassTable, "pg_catalog", "pg_opclass", 'r', false, false, 1000, kPgOpclassColumns};
+inline constexpr SystemSql kPgOpclassSql{kPgOpclassTable, "pg_catalog", "pg_opclass", 10013, 10012, 'r', false, false, 1000, kPgOpclassColumns};
 inline constexpr SystemSqlColumn kPgOperatorColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"oprname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -516,7 +516,7 @@ inline constexpr SystemSqlColumn kPgOperatorColumns[] = {
   {"oprrest", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"oprjoin", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgOperatorSql{kPgOperatorTable, "pg_catalog", "pg_operator", 'r', false, false, 1000, kPgOperatorColumns};
+inline constexpr SystemSql kPgOperatorSql{kPgOperatorTable, "pg_catalog", "pg_operator", 10009, 10008, 'r', false, false, 1000, kPgOperatorColumns};
 inline constexpr SystemSqlColumn kPgOpfamilyColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"opfmethod", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -524,13 +524,13 @@ inline constexpr SystemSqlColumn kPgOpfamilyColumns[] = {
   {"opfnamespace", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"opfowner", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgOpfamilySql{kPgOpfamilyTable, "pg_catalog", "pg_opfamily", 'r', false, false, 1000, kPgOpfamilyColumns};
+inline constexpr SystemSql kPgOpfamilySql{kPgOpfamilyTable, "pg_catalog", "pg_opfamily", 10011, 10010, 'r', false, false, 1000, kPgOpfamilyColumns};
 inline constexpr SystemSqlColumn kPgParameterAclColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"parname", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
   {"paracl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgParameterAclSql{kPgParameterAclTable, "pg_catalog", "pg_parameter_acl", 'r', false, true, 1000, kPgParameterAclColumns};
+inline constexpr SystemSql kPgParameterAclSql{kPgParameterAclTable, "pg_catalog", "pg_parameter_acl", 10097, 10096, 'r', false, true, 1000, kPgParameterAclColumns};
 inline constexpr SystemSqlColumn kPgPartitionedTableColumns[] = {
   {"partrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"partstrat", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
@@ -541,7 +541,7 @@ inline constexpr SystemSqlColumn kPgPartitionedTableColumns[] = {
   {"partcollation", kOidvector, duckdb::PhysicalType::LIST, duckdb::PhysicalType::INT64, true, SystemKey::None, std::nullopt},
   {"partexprs", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgPartitionedTableSql{kPgPartitionedTableTable, "pg_catalog", "pg_partitioned_table", 'r', false, false, 1000, kPgPartitionedTableColumns};
+inline constexpr SystemSql kPgPartitionedTableSql{kPgPartitionedTableTable, "pg_catalog", "pg_partitioned_table", 10099, 10098, 'r', false, false, 1000, kPgPartitionedTableColumns};
 inline constexpr SystemSqlColumn kPgPolicyColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"polname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -552,7 +552,7 @@ inline constexpr SystemSqlColumn kPgPolicyColumns[] = {
   {"polqual", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"polwithcheck", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgPolicySql{kPgPolicyTable, "pg_catalog", "pg_policy", 'r', false, false, 1000, kPgPolicyColumns};
+inline constexpr SystemSql kPgPolicySql{kPgPolicyTable, "pg_catalog", "pg_policy", 10084, 10083, 'r', false, false, 1000, kPgPolicyColumns};
 inline constexpr SystemSqlColumn kPgProcColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"proname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -585,7 +585,7 @@ inline constexpr SystemSqlColumn kPgProcColumns[] = {
   {"proconfig", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"proacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgProcSql{kPgProcTable, "pg_catalog", "pg_proc", 'r', false, false, 10000, kPgProcColumns};
+inline constexpr SystemSql kPgProcSql{kPgProcTable, "pg_catalog", "pg_proc", 81, 272, 'r', false, false, 10000, kPgProcColumns};
 inline constexpr SystemSqlColumn kPgPublicationColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"pubname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -598,13 +598,13 @@ inline constexpr SystemSqlColumn kPgPublicationColumns[] = {
   {"pubviaroot", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "false"},
   {"pubgencols", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgPublicationSql{kPgPublicationTable, "pg_catalog", "pg_publication", 'r', false, false, 1000, kPgPublicationColumns};
+inline constexpr SystemSql kPgPublicationSql{kPgPublicationTable, "pg_catalog", "pg_publication", 10107, 10106, 'r', false, false, 1000, kPgPublicationColumns};
 inline constexpr SystemSqlColumn kPgPublicationNamespaceColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"pnpubid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"pnnspid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
 };
-inline constexpr SystemSql kPgPublicationNamespaceSql{kPgPublicationNamespaceTable, "pg_catalog", "pg_publication_namespace", 'r', false, false, 1000, kPgPublicationNamespaceColumns};
+inline constexpr SystemSql kPgPublicationNamespaceSql{kPgPublicationNamespaceTable, "pg_catalog", "pg_publication_namespace", 10109, 10108, 'r', false, false, 1000, kPgPublicationNamespaceColumns};
 inline constexpr SystemSqlColumn kPgPublicationRelColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"prpubid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -612,7 +612,7 @@ inline constexpr SystemSqlColumn kPgPublicationRelColumns[] = {
   {"prqual", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"prattrs", kInt2Vector, duckdb::PhysicalType::LIST, duckdb::PhysicalType::INT16, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgPublicationRelSql{kPgPublicationRelTable, "pg_catalog", "pg_publication_rel", 'r', false, false, 1000, kPgPublicationRelColumns};
+inline constexpr SystemSql kPgPublicationRelSql{kPgPublicationRelTable, "pg_catalog", "pg_publication_rel", 10111, 10110, 'r', false, false, 1000, kPgPublicationRelColumns};
 inline constexpr SystemSqlColumn kPgRangeColumns[] = {
   {"rngtypid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"rngsubtype", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
@@ -622,12 +622,12 @@ inline constexpr SystemSqlColumn kPgRangeColumns[] = {
   {"rngcanonical", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"rngsubdiff", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgRangeSql{kPgRangeTable, "pg_catalog", "pg_range", 'r', false, false, 1000, kPgRangeColumns};
+inline constexpr SystemSql kPgRangeSql{kPgRangeTable, "pg_catalog", "pg_range", 10101, 10100, 'r', false, false, 1000, kPgRangeColumns};
 inline constexpr SystemSqlColumn kPgReplicationOriginColumns[] = {
   {"roident", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"roname", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
 };
-inline constexpr SystemSql kPgReplicationOriginSql{kPgReplicationOriginTable, "pg_catalog", "pg_replication_origin", 'r', false, true, 1000, kPgReplicationOriginColumns};
+inline constexpr SystemSql kPgReplicationOriginSql{kPgReplicationOriginTable, "pg_catalog", "pg_replication_origin", 10086, 10085, 'r', false, true, 1000, kPgReplicationOriginColumns};
 inline constexpr SystemSqlColumn kPgRewriteColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"rulename", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -638,7 +638,7 @@ inline constexpr SystemSqlColumn kPgRewriteColumns[] = {
   {"ev_qual", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, "<>"},
   {"ev_action", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgRewriteSql{kPgRewriteTable, "pg_catalog", "pg_rewrite", 'r', false, false, 1000, kPgRewriteColumns};
+inline constexpr SystemSql kPgRewriteSql{kPgRewriteTable, "pg_catalog", "pg_rewrite", 10035, 10034, 'r', false, false, 1000, kPgRewriteColumns};
 inline constexpr SystemSqlColumn kPgSeclabelColumns[] = {
   {"objoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"classoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -646,7 +646,7 @@ inline constexpr SystemSqlColumn kPgSeclabelColumns[] = {
   {"provider", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
   {"label", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgSeclabelSql{kPgSeclabelTable, "pg_catalog", "pg_seclabel", 'r', false, false, 1000, kPgSeclabelColumns};
+inline constexpr SystemSql kPgSeclabelSql{kPgSeclabelTable, "pg_catalog", "pg_seclabel", 10092, 10091, 'r', false, false, 1000, kPgSeclabelColumns};
 inline constexpr SystemSqlColumn kPgSequenceColumns[] = {
   {"seqrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"seqtypid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
@@ -657,7 +657,7 @@ inline constexpr SystemSqlColumn kPgSequenceColumns[] = {
   {"seqcache", kInt8, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"seqcycle", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::None, "false"},
 };
-inline constexpr SystemSql kPgSequenceSql{kPgSequenceTable, "pg_catalog", "pg_sequence", 'r', false, false, 1000, kPgSequenceColumns};
+inline constexpr SystemSql kPgSequenceSql{kPgSequenceTable, "pg_catalog", "pg_sequence", 10105, 10104, 'r', false, false, 1000, kPgSequenceColumns};
 inline constexpr SystemSqlColumn kPgSettingsColumns[] = {
   {"name", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::Unique, std::nullopt},
   {"setting", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -677,7 +677,7 @@ inline constexpr SystemSqlColumn kPgSettingsColumns[] = {
   {"sourceline", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"pending_restart", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgSettingsSql{kPgSettingsTable, "pg_catalog", "pg_settings", 'v', false, false, 1000, kPgSettingsColumns};
+inline constexpr SystemSql kPgSettingsSql{kPgSettingsTable, "pg_catalog", "pg_settings", 12106, 12105, 'v', false, false, 1000, kPgSettingsColumns};
 inline constexpr SystemSqlColumn kPgShdependColumns[] = {
   {"dbid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"classid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -687,20 +687,20 @@ inline constexpr SystemSqlColumn kPgShdependColumns[] = {
   {"refobjid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"deptype", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgShdependSql{kPgShdependTable, "pg_catalog", "pg_shdepend", 'r', false, true, 1000, kPgShdependColumns};
+inline constexpr SystemSql kPgShdependSql{kPgShdependTable, "pg_catalog", "pg_shdepend", 10060, 10059, 'r', false, true, 1000, kPgShdependColumns};
 inline constexpr SystemSqlColumn kPgShdescriptionColumns[] = {
   {"objoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"classoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"description", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgShdescriptionSql{kPgShdescriptionTable, "pg_catalog", "pg_shdescription", 'r', false, true, 1000, kPgShdescriptionColumns};
+inline constexpr SystemSql kPgShdescriptionSql{kPgShdescriptionTable, "pg_catalog", "pg_shdescription", 10062, 10061, 'r', false, true, 1000, kPgShdescriptionColumns};
 inline constexpr SystemSqlColumn kPgShseclabelColumns[] = {
   {"objoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"classoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"provider", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
   {"label", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
 };
-inline constexpr SystemSql kPgShseclabelSql{kPgShseclabelTable, "pg_catalog", "pg_shseclabel", 'r', false, true, 1000, kPgShseclabelColumns};
+inline constexpr SystemSql kPgShseclabelSql{kPgShseclabelTable, "pg_catalog", "pg_shseclabel", 4066, 10093, 'r', false, true, 1000, kPgShseclabelColumns};
 inline constexpr SystemSqlColumn kPgStatisticColumns[] = {
   {"starelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"staattnum", kInt2, duckdb::PhysicalType::INT16, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -734,7 +734,7 @@ inline constexpr SystemSqlColumn kPgStatisticColumns[] = {
   {"stavalues4", kAnyarray, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"stavalues5", kAnyarray, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgStatisticSql{kPgStatisticTable, "pg_catalog", "pg_statistic", 'r', true, false, 1000, kPgStatisticColumns};
+inline constexpr SystemSql kPgStatisticSql{kPgStatisticTable, "pg_catalog", "pg_statistic", 10029, 10028, 'r', true, false, 1000, kPgStatisticColumns};
 inline constexpr SystemSqlColumn kPgStatisticExtColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"stxrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -746,7 +746,7 @@ inline constexpr SystemSqlColumn kPgStatisticExtColumns[] = {
   {"stxkind", kCharArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, true, SystemKey::None, std::nullopt},
   {"stxexprs", kPgNodeTree, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgStatisticExtSql{kPgStatisticExtTable, "pg_catalog", "pg_statistic_ext", 'r', false, false, 1000, kPgStatisticExtColumns};
+inline constexpr SystemSql kPgStatisticExtSql{kPgStatisticExtTable, "pg_catalog", "pg_statistic_ext", 10031, 10030, 'r', false, false, 1000, kPgStatisticExtColumns};
 inline constexpr SystemSqlColumn kPgStatisticExtDataColumns[] = {
   {"stxoid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"stxdinherit", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "false"},
@@ -755,7 +755,7 @@ inline constexpr SystemSqlColumn kPgStatisticExtDataColumns[] = {
   {"stxdmcv", kPgMcvList, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"stxdexpr", 10028, duckdb::PhysicalType::LIST, duckdb::PhysicalType::STRUCT, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgStatisticExtDataSql{kPgStatisticExtDataTable, "pg_catalog", "pg_statistic_ext_data", 'r', true, false, 1000, kPgStatisticExtDataColumns};
+inline constexpr SystemSql kPgStatisticExtDataSql{kPgStatisticExtDataTable, "pg_catalog", "pg_statistic_ext_data", 10033, 10032, 'r', true, false, 1000, kPgStatisticExtDataColumns};
 inline constexpr SystemSqlColumn kPgSubscriptionColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"subdbid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -776,14 +776,14 @@ inline constexpr SystemSqlColumn kPgSubscriptionColumns[] = {
   {"subpublications", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, true, SystemKey::None, std::nullopt},
   {"suborigin", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgSubscriptionSql{kPgSubscriptionTable, "pg_catalog", "pg_subscription", 'r', false, true, 1000, kPgSubscriptionColumns};
+inline constexpr SystemSql kPgSubscriptionSql{kPgSubscriptionTable, "pg_catalog", "pg_subscription", 6101, 10112, 'r', false, true, 1000, kPgSubscriptionColumns};
 inline constexpr SystemSqlColumn kPgSubscriptionRelColumns[] = {
   {"srsubid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"srrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"srsubstate", kChar, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::None, ""},
   {"srsublsn", kPgLsn, duckdb::PhysicalType::UINT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgSubscriptionRelSql{kPgSubscriptionRelTable, "pg_catalog", "pg_subscription_rel", 'r', false, false, 1000, kPgSubscriptionRelColumns};
+inline constexpr SystemSql kPgSubscriptionRelSql{kPgSubscriptionRelTable, "pg_catalog", "pg_subscription_rel", 10114, 10113, 'r', false, false, 1000, kPgSubscriptionRelColumns};
 inline constexpr SystemSqlColumn kPgTablespaceColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"spcname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, ""},
@@ -791,7 +791,7 @@ inline constexpr SystemSqlColumn kPgTablespaceColumns[] = {
   {"spcacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
   {"spcoptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgTablespaceSql{kPgTablespaceTable, "pg_catalog", "pg_tablespace", 'r', false, true, 10, kPgTablespaceColumns};
+inline constexpr SystemSql kPgTablespaceSql{kPgTablespaceTable, "pg_catalog", "pg_tablespace", 10056, 10055, 'r', false, true, 10, kPgTablespaceColumns};
 inline constexpr SystemSqlColumn kPgTransformColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"trftype", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -799,7 +799,7 @@ inline constexpr SystemSqlColumn kPgTransformColumns[] = {
   {"trffromsql", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"trftosql", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgTransformSql{kPgTransformTable, "pg_catalog", "pg_transform", 'r', false, false, 1000, kPgTransformColumns};
+inline constexpr SystemSql kPgTransformSql{kPgTransformTable, "pg_catalog", "pg_transform", 10103, 10102, 'r', false, false, 1000, kPgTransformColumns};
 inline constexpr SystemSqlColumn kPgTriggerColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"tgrelid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
@@ -821,7 +821,7 @@ inline constexpr SystemSqlColumn kPgTriggerColumns[] = {
   {"tgoldtable", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"tgnewtable", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgTriggerSql{kPgTriggerTable, "pg_catalog", "pg_trigger", 'r', false, false, 1000, kPgTriggerColumns};
+inline constexpr SystemSql kPgTriggerSql{kPgTriggerTable, "pg_catalog", "pg_trigger", 10037, 10036, 'r', false, false, 1000, kPgTriggerColumns};
 inline constexpr SystemSqlColumn kPgTsConfigColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"cfgname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -829,14 +829,14 @@ inline constexpr SystemSqlColumn kPgTsConfigColumns[] = {
   {"cfgowner", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"cfgparser", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgTsConfigSql{kPgTsConfigTable, "pg_catalog", "pg_ts_config", 'r', false, false, 1000, kPgTsConfigColumns};
+inline constexpr SystemSql kPgTsConfigSql{kPgTsConfigTable, "pg_catalog", "pg_ts_config", 10064, 10063, 'r', false, false, 1000, kPgTsConfigColumns};
 inline constexpr SystemSqlColumn kPgTsConfigMapColumns[] = {
   {"mapcfg", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"maptokentype", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"mapseqno", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"mapdict", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgTsConfigMapSql{kPgTsConfigMapTable, "pg_catalog", "pg_ts_config_map", 'r', false, false, 1000, kPgTsConfigMapColumns};
+inline constexpr SystemSql kPgTsConfigMapSql{kPgTsConfigMapTable, "pg_catalog", "pg_ts_config_map", 10066, 10065, 'r', false, false, 1000, kPgTsConfigMapColumns};
 inline constexpr SystemSqlColumn kPgTsDictColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"dictname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -845,7 +845,7 @@ inline constexpr SystemSqlColumn kPgTsDictColumns[] = {
   {"dicttemplate", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"dictinitoption", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgTsDictSql{kPgTsDictTable, "pg_catalog", "pg_ts_dict", 'r', false, false, 1000, kPgTsDictColumns};
+inline constexpr SystemSql kPgTsDictSql{kPgTsDictTable, "pg_catalog", "pg_ts_dict", 10068, 10067, 'r', false, false, 1000, kPgTsDictColumns};
 inline constexpr SystemSqlColumn kPgTsParserColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"prsname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -856,7 +856,7 @@ inline constexpr SystemSqlColumn kPgTsParserColumns[] = {
   {"prsheadline", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"prslextype", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgTsParserSql{kPgTsParserTable, "pg_catalog", "pg_ts_parser", 'r', false, false, 1000, kPgTsParserColumns};
+inline constexpr SystemSql kPgTsParserSql{kPgTsParserTable, "pg_catalog", "pg_ts_parser", 10070, 10069, 'r', false, false, 1000, kPgTsParserColumns};
 inline constexpr SystemSqlColumn kPgTsTemplateColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"tmplname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -864,7 +864,7 @@ inline constexpr SystemSqlColumn kPgTsTemplateColumns[] = {
   {"tmplinit", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
   {"tmpllexize", kRegproc, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::None, "0"},
 };
-inline constexpr SystemSql kPgTsTemplateSql{kPgTsTemplateTable, "pg_catalog", "pg_ts_template", 'r', false, false, 1000, kPgTsTemplateColumns};
+inline constexpr SystemSql kPgTsTemplateSql{kPgTsTemplateTable, "pg_catalog", "pg_ts_template", 10072, 10071, 'r', false, false, 1000, kPgTsTemplateColumns};
 inline constexpr SystemSqlColumn kPgTypeColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"typname", kName, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, ""},
@@ -899,14 +899,14 @@ inline constexpr SystemSqlColumn kPgTypeColumns[] = {
   {"typdefault", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"typacl", kAclitemArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgTypeSql{kPgTypeTable, "pg_catalog", "pg_type", 'r', false, false, 10000, kPgTypeColumns};
+inline constexpr SystemSql kPgTypeSql{kPgTypeTable, "pg_catalog", "pg_type", 71, 210, 'r', false, false, 10000, kPgTypeColumns};
 inline constexpr SystemSqlColumn kPgUserMappingColumns[] = {
   {"oid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Unique, "0"},
   {"umuser", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"umserver", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, true, SystemKey::Indexed, "0"},
   {"umoptions", kTextArray, duckdb::PhysicalType::LIST, duckdb::PhysicalType::VARCHAR, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kPgUserMappingSql{kPgUserMappingTable, "pg_catalog", "pg_user_mapping", 'r', true, false, 1000, kPgUserMappingColumns};
+inline constexpr SystemSql kPgUserMappingSql{kPgUserMappingTable, "pg_catalog", "pg_user_mapping", 10080, 10079, 'r', true, false, 1000, kPgUserMappingColumns};
 inline constexpr SystemSqlColumn kSdbSettingsColumns[] = {
   {"name", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"setting", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -922,14 +922,14 @@ inline constexpr SystemSqlColumn kSdbSettingsColumns[] = {
   {"reset_val", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"pending_restart", kBool, duckdb::PhysicalType::BOOL, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kSdbSettingsSql{kSdbSettingsTable, "pg_catalog", "sdb_settings", 'r', false, false, 1000, kSdbSettingsColumns};
+inline constexpr SystemSql kSdbSettingsSql{kSdbSettingsTable, "pg_catalog", "sdb_settings", 0, 0, 'r', false, false, 1000, kSdbSettingsColumns};
 inline constexpr SystemSqlColumn kSdbMetricsColumns[] = {
   {"metric", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"value", kInt8, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"description", kText, duckdb::PhysicalType::VARCHAR, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"relation_id", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kSdbMetricsSql{kSdbMetricsTable, "pg_catalog", "sdb_metrics", 'r', false, false, 1000, kSdbMetricsColumns};
+inline constexpr SystemSql kSdbMetricsSql{kSdbMetricsTable, "pg_catalog", "sdb_metrics", 0, 0, 'r', false, false, 1000, kSdbMetricsColumns};
 inline constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"pid", kInt4, duckdb::PhysicalType::INT32, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"datid", kOid, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
@@ -958,7 +958,7 @@ inline constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"items_processed", kInt8, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
   {"items_total", kInt8, duckdb::PhysicalType::INT64, duckdb::PhysicalType::INVALID, false, SystemKey::None, std::nullopt},
 };
-inline constexpr SystemSql kSdbProgressSql{kSdbProgressTable, "pg_catalog", "sdb_progress", 'r', false, false, 1000, kSdbProgressColumns};
+inline constexpr SystemSql kSdbProgressSql{kSdbProgressTable, "pg_catalog", "sdb_progress", 0, 0, 'r', false, false, 1000, kSdbProgressColumns};
 inline constexpr const SystemSql* kGeneratedTables[] = {
   &kInfoColumnsSql,
   &kInfoSqlFeaturesSql,

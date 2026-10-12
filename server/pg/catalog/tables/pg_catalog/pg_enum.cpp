@@ -20,12 +20,11 @@
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 
+#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
-
-constexpr duckdb::CatalogType kTypeTypes[] = {duckdb::CatalogType::TYPE_ENTRY};
 
 constexpr SystemIndex kEnumIndexes[] = {
   {kPgEnumSql["enumtypid"], SystemLookup::Object},

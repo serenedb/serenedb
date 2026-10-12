@@ -26,36 +26,58 @@ namespace {
 
 constexpr std::string_view kFullNames = "SereneDB keeps longer names in full.";
 
-// clang-format off
-constexpr SystemCell kRows[] = {
-  "0", "MAXIMUM DRIVER CONNECTIONS", std::nullopt, std::nullopt,
-  "1", "MAXIMUM CONCURRENT ACTIVITIES", "0", std::nullopt,
-  "30", "MAXIMUM COLUMN NAME LENGTH", "63", kFullNames,
-  "31", "MAXIMUM CURSOR NAME LENGTH", "63", kFullNames,
-  "32", "MAXIMUM SCHEMA NAME LENGTH", "63", kFullNames,
-  "34", "MAXIMUM CATALOG NAME LENGTH", "63", kFullNames,
-  "35", "MAXIMUM TABLE NAME LENGTH", "63", kFullNames,
-  "97", "MAXIMUM COLUMNS IN GROUP BY", "0", std::nullopt,
-  "99", "MAXIMUM COLUMNS IN ORDER BY", "0", std::nullopt,
-  "100", "MAXIMUM COLUMNS IN SELECT", "1664", std::nullopt,
-  "101", "MAXIMUM COLUMNS IN TABLE", "1600", std::nullopt,
-  "106", "MAXIMUM TABLES IN SELECT", "0", std::nullopt,
-  "107", "MAXIMUM USER NAME LENGTH", "63", kFullNames,
-  "10005", "MAXIMUM IDENTIFIER LENGTH", "63", kFullNames,
-  "20000", "MAXIMUM STATEMENT OCTETS", "0", std::nullopt,
-  "20001", "MAXIMUM STATEMENT OCTETS DATA", "0", std::nullopt,
-  "20002", "MAXIMUM STATEMENT OCTETS SCHEMA", "0", std::nullopt,
-  "25000", "MAXIMUM CURRENT DEFAULT TRANSFORM GROUP LENGTH", std::nullopt, std::nullopt,
-  "25001", "MAXIMUM CURRENT TRANSFORM GROUP LENGTH", std::nullopt, std::nullopt,
-  "25002", "MAXIMUM CURRENT PATH LENGTH", "0", std::nullopt,
-  "25003", "MAXIMUM CURRENT ROLE LENGTH", std::nullopt, std::nullopt,
-  "25004", "MAXIMUM SESSION USER LENGTH", "63", kFullNames,
-  "25005", "MAXIMUM SYSTEM USER LENGTH", "63", kFullNames,
+struct SqlSizing {
+  int32_t id;
+  std::string_view name;
+  std::optional<int32_t> value;
+  std::optional<std::string_view> comments;
 };
-// clang-format on
+
+constexpr std::array kSizings{
+  SqlSizing{0, "MAXIMUM DRIVER CONNECTIONS", std::nullopt, std::nullopt},
+  SqlSizing{1, "MAXIMUM CONCURRENT ACTIVITIES", 0, std::nullopt},
+  SqlSizing{30, "MAXIMUM COLUMN NAME LENGTH", 63, kFullNames},
+  SqlSizing{31, "MAXIMUM CURSOR NAME LENGTH", 63, kFullNames},
+  SqlSizing{32, "MAXIMUM SCHEMA NAME LENGTH", 63, kFullNames},
+  SqlSizing{34, "MAXIMUM CATALOG NAME LENGTH", 63, kFullNames},
+  SqlSizing{35, "MAXIMUM TABLE NAME LENGTH", 63, kFullNames},
+  SqlSizing{97, "MAXIMUM COLUMNS IN GROUP BY", 0, std::nullopt},
+  SqlSizing{99, "MAXIMUM COLUMNS IN ORDER BY", 0, std::nullopt},
+  SqlSizing{100, "MAXIMUM COLUMNS IN SELECT", 1664, std::nullopt},
+  SqlSizing{101, "MAXIMUM COLUMNS IN TABLE", 1600, std::nullopt},
+  SqlSizing{106, "MAXIMUM TABLES IN SELECT", 0, std::nullopt},
+  SqlSizing{107, "MAXIMUM USER NAME LENGTH", 63, kFullNames},
+  SqlSizing{10005, "MAXIMUM IDENTIFIER LENGTH", 63, kFullNames},
+  SqlSizing{20000, "MAXIMUM STATEMENT OCTETS", 0, std::nullopt},
+  SqlSizing{20001, "MAXIMUM STATEMENT OCTETS DATA", 0, std::nullopt},
+  SqlSizing{20002, "MAXIMUM STATEMENT OCTETS SCHEMA", 0, std::nullopt},
+  SqlSizing{25000, "MAXIMUM CURRENT DEFAULT TRANSFORM GROUP LENGTH",
+            std::nullopt, std::nullopt},
+  SqlSizing{25001, "MAXIMUM CURRENT TRANSFORM GROUP LENGTH", std::nullopt,
+            std::nullopt},
+  SqlSizing{25002, "MAXIMUM CURRENT PATH LENGTH", 0, std::nullopt},
+  SqlSizing{25003, "MAXIMUM CURRENT ROLE LENGTH", std::nullopt, std::nullopt},
+  SqlSizing{25004, "MAXIMUM SESSION USER LENGTH", 63, kFullNames},
+  SqlSizing{25005, "MAXIMUM SYSTEM USER LENGTH", 63, kFullNames},
+};
+
+class InfoSqlSizing final : public SystemTableScan<kInfoSqlSizingSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr std::tuple kSources{
+    ArraySource<SqlSizing>{&LoadStatic<kSizings>, {}, {}}};
+
+  static constexpr auto kSizing = Shape<kSql, const SqlSizing>(
+    Col<"sizing_id">(&SqlSizing::id), Col<"sizing_name">(&SqlSizing::name),
+    Col<"supported_value">(&SqlSizing::value),
+    Col<"comments">(&SqlSizing::comments));
+
+  void Row(const SqlSizing& sizing) { Emit<kSizing>(sizing); }
+};
 
 }  // namespace
 
-SystemTable gInfoSqlSizing{kInfoSqlSizingSql, kRows};
+SystemTable gInfoSqlSizing = SystemTableOf<InfoSqlSizing>();
 
 }  // namespace sdb::pg

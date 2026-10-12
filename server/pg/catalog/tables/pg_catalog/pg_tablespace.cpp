@@ -29,15 +29,13 @@ class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    ArraySource<SystemTablespace>{&LoadStatic<kSystemTablespaces>, {}, {}}};
+    ArraySource<SystemObject>{&LoadStatic<kSystemTablespaces>, {}, {}}};
 
-  static constexpr auto kTablespace = Shape<kSql, const SystemTablespace>(
-    Col<"oid">(&SystemTablespace::oid), Col<"spcname">(&SystemTablespace::name),
+  static constexpr auto kTablespace = Shape<kSql, const SystemObject>(
+    Col<"oid">(&SystemObject::oid), Col<"spcname">(&SystemObject::name),
     Col<"spcowner">([](const auto&) { return kRootUser; }));
 
-  void Row(const SystemTablespace& tablespace) {
-    Emit<kTablespace>(tablespace);
-  }
+  void Row(const SystemObject& tablespace) { Emit<kTablespace>(tablespace); }
 };
 
 }  // namespace

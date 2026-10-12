@@ -156,7 +156,8 @@ const duckdb::ViewCatalogEntry* UserView(const pg::Session& session,
   if (!view) {
     return nullptr;
   }
-  if (pg::FindSystemNamespace(view->ParentSchemaName().GetIdentifierName())) {
+  if (pg::FindSystemObject(pg::kSystemNamespaces,
+                           view->ParentSchemaName().GetIdentifierName())) {
     return nullptr;
   }
   return view;
@@ -184,19 +185,7 @@ Definition RuleDefinition(const pg::Session& session, int64_t oid,
 std::string ForeignKeyDefinition(const pg::Session& session,
                                  const duckdb::TableCatalogEntry& table,
                                  const duckdb::ForeignKeyConstraint& fk) {
-  const duckdb::TableCatalogEntry* target = &table;
-  if (fk.info.type != duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
-    const auto entry = duckdb::Catalog::GetEntry(
-      *session.context,
-      duckdb::EntryLookupInfo{
-        duckdb::CatalogType::TABLE_ENTRY,
-        duckdb::QualifiedName{duckdb::Identifier{}, fk.info.schema,
-                              fk.info.table}},
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    target = entry && entry->type == duckdb::CatalogType::TABLE_ENTRY
-               ? &entry->Cast<duckdb::TableCatalogEntry>()
-               : nullptr;
-  }
+  const auto target = pg::ReferencedTable(*session.transaction, table, fk);
   const auto columns = [](const duckdb::TableCatalogEntry& owner,
                           std::span<const duckdb::PhysicalIndex> keys) {
     return absl::StrJoin(keys, ", ",
@@ -678,23 +667,13 @@ uint64_t ViewOid(duckdb::ClientContext& context, duckdb::string_t name) {
   return oid;
 }
 
+template<typename... Pretty>
 void PgGetViewdefByName(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
   const auto session = pg::MakeSession(&state.GetContext());
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    args.data[0], result, args.size(), [&](duckdb::string_t name) {
-      return Emit(result,
-                  ViewDefinition(session, ViewOid(*session.context, name)));
-    });
-}
-
-void PgGetViewdefByNamePretty(duckdb::DataChunk& args,
-                              duckdb::ExpressionState& state,
-                              duckdb::Vector& result) {
-  const auto session = pg::MakeSession(&state.GetContext());
-  duckdb::BinaryExecutor::Execute<duckdb::string_t, bool, duckdb::string_t>(
-    args.data[0], args.data[1], result, args.size(),
-    [&](duckdb::string_t name, bool) {
+  duckdb::VariadicExecutor::Execute<duckdb::string_t, duckdb::string_t,
+                                    Pretty...>(
+    args, result, [&](duckdb::string_t name, Pretty...) {
       return Emit(result,
                   ViewDefinition(session, ViewOid(*session.context, name)));
     });
@@ -710,12 +689,6 @@ void PgGetIndexdefColumn(duckdb::DataChunk& args,
     });
 }
 
-void NullResult(duckdb::DataChunk&, duckdb::ExpressionState&,
-                duckdb::Vector& result) {
-  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-  duckdb::ConstantVector::SetNull(result, true);
-}
-
 }  // namespace
 
 void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
@@ -725,121 +698,84 @@ void RegisterRuleutilsFunctions(duckdb::ExtensionLoader& loader) {
   const auto boolean = duckdb::LogicalType::BOOLEAN;
   const auto bigint = duckdb::LogicalType::BIGINT;
 
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_viewdef"};
-    set.AddFunction(
-      duckdb::ScalarFunction{{oid}, text, OidFunction(ViewDefinition)});
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, boolean},
-      text,
-      OidArgFunction<bool>([](const auto& session, int64_t view, bool) {
-        return ViewDefinition(session, view);
-      })});
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, bigint},
-      text,
-      OidArgFunction<int64_t>([](const auto& session, int64_t view, int64_t) {
-        return ViewDefinition(session, view);
-      })});
-    set.AddFunction(duckdb::ScalarFunction{{text}, text, PgGetViewdefByName});
-    set.AddFunction(
-      duckdb::ScalarFunction{{text, boolean}, text, PgGetViewdefByNamePretty});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_ruledef"};
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid}, text, OidFunction([](const auto& session, int64_t rule) {
-        return RuleDefinition(session, rule, false);
-      })});
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, boolean}, text, OidArgFunction<bool>(RuleDefinition)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_constraintdef"};
-    set.AddFunction(
-      duckdb::ScalarFunction{{oid}, text, OidFunction(ConstraintDefinition)});
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, boolean},
-      text,
-      OidArgFunction<bool>([](const auto& session, int64_t constraint, bool) {
-        return ConstraintDefinition(session, constraint);
-      })});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_indexdef"};
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid}, text, OidFunction([](const auto& session, int64_t index) {
-        return IndexDefinition(session, index, 0, false);
-      })});
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, bigint, boolean}, text, PgGetIndexdefColumn});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_triggerdef"};
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid}, text, OidFunction([](const auto& session, int64_t trigger) {
-        return TriggerDefinition(session, trigger, false);
-      })});
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, boolean}, text, OidArgFunction<bool>(TriggerDefinition)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_functiondef"};
-    set.AddFunction(
-      duckdb::ScalarFunction{{oid}, text, OidFunction(FunctionDefinition)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_function_arguments"};
-    set.AddFunction(duckdb::ScalarFunction{
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_viewdef",
+    {duckdb::ScalarFunction{{oid}, text, OidFunction(ViewDefinition)},
+     duckdb::ScalarFunction{
+       {oid, boolean},
+       text,
+       OidArgFunction<bool>([](const auto& session, int64_t view, bool) {
+         return ViewDefinition(session, view);
+       })},
+     duckdb::ScalarFunction{
+       {oid, bigint},
+       text,
+       OidArgFunction<int64_t>([](const auto& session, int64_t view, int64_t) {
+         return ViewDefinition(session, view);
+       })},
+     duckdb::ScalarFunction{{text}, text, PgGetViewdefByName<>},
+     duckdb::ScalarFunction{{text, boolean}, text, PgGetViewdefByName<bool>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_ruledef",
+    {duckdb::ScalarFunction{
+       {oid}, text, OidFunction([](const auto& session, int64_t rule) {
+         return RuleDefinition(session, rule, false);
+       })},
+     duckdb::ScalarFunction{
+       {oid, boolean}, text, OidArgFunction<bool>(RuleDefinition)}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_constraintdef",
+    {duckdb::ScalarFunction{{oid}, text, OidFunction(ConstraintDefinition)},
+     duckdb::ScalarFunction{
+       {oid, boolean},
+       text,
+       OidArgFunction<bool>([](const auto& session, int64_t constraint, bool) {
+         return ConstraintDefinition(session, constraint);
+       })}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_indexdef",
+    {duckdb::ScalarFunction{
+       {oid}, text, OidFunction([](const auto& session, int64_t index) {
+         return IndexDefinition(session, index, 0, false);
+       })},
+     duckdb::ScalarFunction{
+       {oid, bigint, boolean}, text, PgGetIndexdefColumn}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_triggerdef",
+    {duckdb::ScalarFunction{
+       {oid}, text, OidFunction([](const auto& session, int64_t trigger) {
+         return TriggerDefinition(session, trigger, false);
+       })},
+     duckdb::ScalarFunction{
+       {oid, boolean}, text, OidArgFunction<bool>(TriggerDefinition)}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_functiondef",
+    {duckdb::ScalarFunction{{oid}, text, OidFunction(FunctionDefinition)}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_function_arguments",
+    {duckdb::ScalarFunction{
       {oid},
       text,
       FunctionInfo(
         [](const pg::Session& session, const duckdb::MacroFunction& macro)
           -> Definition { return Arguments(session, macro, true); },
-        BuiltinArguments)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_function_identity_arguments"};
-    set.AddFunction(duckdb::ScalarFunction{
+        BuiltinArguments)}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_function_identity_arguments",
+    {duckdb::ScalarFunction{
       {oid},
       text,
       FunctionInfo(
         [](const pg::Session& session, const duckdb::MacroFunction& macro)
           -> Definition { return Arguments(session, macro, false); },
-        BuiltinArguments)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_function_result"};
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid}, text, FunctionInfo(FunctionResult, BuiltinResult)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_function_arg_default"};
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid, bigint}, text, OidArgFunction<int64_t>(FunctionArgDefault)});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  for (const auto* name : {"pg_get_partkeydef", "pg_get_statisticsobjdef",
-                           "pg_get_statisticsobjdef_columns"}) {
-    duckdb::ScalarFunctionSet set{name};
-    set.AddFunction(duckdb::ScalarFunction{{oid}, text, NullResult});
-    Register(loader, pg_catalog, std::move(set));
-  }
-  {
-    duckdb::ScalarFunctionSet set{"pg_get_statisticsobjdef_expressions"};
-    set.AddFunction(duckdb::ScalarFunction{
-      {oid}, duckdb::LogicalType::LIST(text), NullResult});
-    Register(loader, pg_catalog, std::move(set));
-  }
+        BuiltinArguments)}});
+  RegisterScalar(loader, pg_catalog, "pg_get_function_result",
+                 {duckdb::ScalarFunction{
+                   {oid}, text, FunctionInfo(FunctionResult, BuiltinResult)}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_get_function_arg_default",
+    {duckdb::ScalarFunction{
+      {oid, bigint}, text, OidArgFunction<int64_t>(FunctionArgDefault)}});
 }
 
 }  // namespace sdb::pg

@@ -27,9 +27,6 @@
 namespace sdb::pg {
 namespace {
 
-constexpr duckdb::CatalogType kSequenceTypes[] = {
-  duckdb::CatalogType::SEQUENCE_ENTRY};
-
 constexpr SystemIndex kSequenceIndexes[] = {
   {kPgSequenceSql["seqrelid"], SystemLookup::Object},
 };

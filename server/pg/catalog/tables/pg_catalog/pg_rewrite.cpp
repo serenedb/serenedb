@@ -20,12 +20,11 @@
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 
+#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
-
-constexpr duckdb::CatalogType kViewTypes[] = {duckdb::CatalogType::VIEW_ENTRY};
 
 constexpr SystemIndex kRewriteIndexes[] = {
   {kPgRewriteSql["oid"], SystemLookup::Object},

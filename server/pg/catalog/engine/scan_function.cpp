@@ -21,12 +21,15 @@
 #include "pg/catalog/engine/scan_function.h"
 
 #include <algorithm>
-#include <duckdb/function/partition_stats.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression_iterator.hpp>
+#include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/operator/logical_get.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/node_statistics.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <optional>
 
 #include "catalog/entry/system_table.h"
 #include "pg/catalog/engine/system_table.h"
@@ -38,9 +41,7 @@ struct SystemTableBindData final : duckdb::FunctionData {
   catalog::SystemTableEntry* entry = nullptr;
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    auto copy = duckdb::make_uniq<SystemTableBindData>();
-    copy->entry = entry;
-    return copy;
+    return duckdb::make_uniq<SystemTableBindData>(*this);
   }
 
   bool Equals(const duckdb::FunctionData& other) const final {
@@ -107,24 +108,28 @@ duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableStatistics(
 bool SystemTablePushdownExpression(duckdb::ClientContext&,
                                    const duckdb::LogicalGet& get,
                                    duckdb::Expression& expr) {
-  const auto& visibility =
-    get.bind_data->Cast<SystemTableBindData>().entry->Table().Visibility();
-  return pg::RangeOf(expr).has_value() || pg::BooleanOf(expr).has_value() ||
-         pg::NullCheckOf(expr).has_value() || pg::IsExclusion(expr) ||
-         (visibility && pg::IsVisibility(expr, *visibility));
+  std::optional<duckdb::column_t> column;
+  duckdb::ExpressionIterator::VisitExpression<duckdb::BoundColumnRefExpression>(
+    expr, [&](const duckdb::BoundColumnRefExpression& ref) {
+      column = get.GetColumnIndex(ref.Binding()).GetPrimaryIndex();
+    });
+  return column && pg::SystemPushdown(
+                     get.bind_data->Cast<SystemTableBindData>().entry->Table(),
+                     *column, expr) != duckdb::TableFilterPushdown::Reject;
 }
 
-duckdb::vector<duckdb::PartitionStatistics> SystemTablePartitionStats(
-  duckdb::ClientContext&, duckdb::GetPartitionStatsInput& input) {
-  const auto& table =
-    input.bind_data->Cast<SystemTableBindData>().entry->Table();
-  if (table.Cells().empty()) {
-    return {};
-  }
-  duckdb::PartitionStatistics stats;
-  stats.count = table.Cells().size() / table.Sql().columns.size();
-  stats.count_type = duckdb::CountType::COUNT_EXACT;
-  return {stats};
+duckdb::TableFilterPushdown SystemTableSupportsPushdownFilter(
+  duckdb::FunctionData& bind_data, duckdb::idx_t column,
+  duckdb::TableFilter& filter) {
+  return pg::SystemPushdown(
+    bind_data.Cast<SystemTableBindData>().entry->Table(), column,
+    *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr);
+}
+
+duckdb::virtual_column_map_t SystemTableVirtualColumns(
+  duckdb::ClientContext&,
+  duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  return bind_data->Cast<SystemTableBindData>().entry->GetVirtualColumns();
 }
 
 void SystemTableScanSerialize(
@@ -164,7 +169,8 @@ duckdb::TableFunction CreateSystemTableScanFunction(
   func.filter_pushdown = true;
   func.filter_prune = true;
   func.pushdown_expression = SystemTablePushdownExpression;
-  func.get_partition_stats = SystemTablePartitionStats;
+  func.supports_pushdown_filter = SystemTableSupportsPushdownFilter;
+  func.get_virtual_columns = SystemTableVirtualColumns;
   func.cardinality = SystemTableCardinality;
   func.statistics_extended = SystemTableStatistics;
   func.get_bind_info = SystemTableGetBindInfo;

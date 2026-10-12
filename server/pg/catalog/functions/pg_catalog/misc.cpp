@@ -55,6 +55,7 @@
 #include "connector/pg_logical_types.h"
 #include "network/cancel_registry.h"
 #include "pg/catalog/engine/registry.h"
+#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
@@ -409,141 +410,33 @@ void ZeroFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                                              [](int64_t) { return T{0}; });
 }
 
-enum class StatKind : uint8_t {
-  Count,
-  Time,
-  Timestamp,
-  UntrackedCount,
-  UntrackedTime,
-};
-
-struct StatFunction {
+struct StubFunction {
   std::string_view name;
-  bool takes_oid;
-  StatKind kind;
+  int32_t argument;
+  int32_t result;
+  bool zero;
 };
 
-constexpr StatFunction kStatFunctions[] = {
-  {"pg_stat_get_analyze_count", true, StatKind::Count},
-  {"pg_stat_get_autoanalyze_count", true, StatKind::Count},
-  {"pg_stat_get_autovacuum_count", true, StatKind::Count},
-  {"pg_stat_get_bgwriter_buf_written_clean", false, StatKind::Count},
-  {"pg_stat_get_bgwriter_maxwritten_clean", false, StatKind::Count},
-  {"pg_stat_get_bgwriter_stat_reset_time", false, StatKind::Timestamp},
-  {"pg_stat_get_blocks_fetched", true, StatKind::Count},
-  {"pg_stat_get_blocks_hit", true, StatKind::Count},
-  {"pg_stat_get_buf_alloc", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_buffers_written", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_num_performed", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_num_requested", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_num_timed", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_restartpoints_performed", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_restartpoints_requested", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_restartpoints_timed", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_slru_written", false, StatKind::Count},
-  {"pg_stat_get_checkpointer_stat_reset_time", false, StatKind::Timestamp},
-  {"pg_stat_get_checkpointer_sync_time", false, StatKind::Time},
-  {"pg_stat_get_checkpointer_write_time", false, StatKind::Time},
-  {"pg_stat_get_db_active_time", true, StatKind::Time},
-  {"pg_stat_get_db_blk_read_time", true, StatKind::Time},
-  {"pg_stat_get_db_blk_write_time", true, StatKind::Time},
-  {"pg_stat_get_db_blocks_fetched", true, StatKind::Count},
-  {"pg_stat_get_db_blocks_hit", true, StatKind::Count},
-  {"pg_stat_get_db_checksum_failures", true, StatKind::Count},
-  {"pg_stat_get_db_checksum_last_failure", true, StatKind::Timestamp},
-  {"pg_stat_get_db_conflict_all", true, StatKind::Count},
-  {"pg_stat_get_db_conflict_bufferpin", true, StatKind::Count},
-  {"pg_stat_get_db_conflict_lock", true, StatKind::Count},
-  {"pg_stat_get_db_conflict_logicalslot", true, StatKind::Count},
-  {"pg_stat_get_db_conflict_snapshot", true, StatKind::Count},
-  {"pg_stat_get_db_conflict_startup_deadlock", true, StatKind::Count},
-  {"pg_stat_get_db_conflict_tablespace", true, StatKind::Count},
-  {"pg_stat_get_db_deadlocks", true, StatKind::Count},
-  {"pg_stat_get_db_idle_in_transaction_time", true, StatKind::Time},
-  {"pg_stat_get_db_parallel_workers_launched", true, StatKind::Count},
-  {"pg_stat_get_db_parallel_workers_to_launch", true, StatKind::Count},
-  {"pg_stat_get_db_session_time", true, StatKind::Time},
-  {"pg_stat_get_db_sessions", true, StatKind::Count},
-  {"pg_stat_get_db_sessions_abandoned", true, StatKind::Count},
-  {"pg_stat_get_db_sessions_fatal", true, StatKind::Count},
-  {"pg_stat_get_db_sessions_killed", true, StatKind::Count},
-  {"pg_stat_get_db_stat_reset_time", true, StatKind::Timestamp},
-  {"pg_stat_get_db_temp_bytes", true, StatKind::Count},
-  {"pg_stat_get_db_temp_files", true, StatKind::Count},
-  {"pg_stat_get_db_tuples_deleted", true, StatKind::Count},
-  {"pg_stat_get_db_tuples_fetched", true, StatKind::Count},
-  {"pg_stat_get_db_tuples_inserted", true, StatKind::Count},
-  {"pg_stat_get_db_tuples_returned", true, StatKind::Count},
-  {"pg_stat_get_db_tuples_updated", true, StatKind::Count},
-  {"pg_stat_get_db_xact_commit", true, StatKind::Count},
-  {"pg_stat_get_db_xact_rollback", true, StatKind::Count},
-  {"pg_stat_get_dead_tuples", true, StatKind::Count},
-  {"pg_stat_get_function_calls", true, StatKind::UntrackedCount},
-  {"pg_stat_get_function_self_time", true, StatKind::UntrackedTime},
-  {"pg_stat_get_function_total_time", true, StatKind::UntrackedTime},
-  {"pg_stat_get_ins_since_vacuum", true, StatKind::Count},
-  {"pg_stat_get_last_analyze_time", true, StatKind::Timestamp},
-  {"pg_stat_get_last_autoanalyze_time", true, StatKind::Timestamp},
-  {"pg_stat_get_last_autovacuum_time", true, StatKind::Timestamp},
-  {"pg_stat_get_last_vacuum_time", true, StatKind::Timestamp},
-  {"pg_stat_get_lastscan", true, StatKind::Timestamp},
-  {"pg_stat_get_mod_since_analyze", true, StatKind::Count},
-  {"pg_stat_get_numscans", true, StatKind::Count},
-  {"pg_stat_get_total_analyze_time", true, StatKind::Time},
-  {"pg_stat_get_total_autoanalyze_time", true, StatKind::Time},
-  {"pg_stat_get_total_autovacuum_time", true, StatKind::Time},
-  {"pg_stat_get_total_vacuum_time", true, StatKind::Time},
-  {"pg_stat_get_tuples_deleted", true, StatKind::Count},
-  {"pg_stat_get_tuples_fetched", true, StatKind::Count},
-  {"pg_stat_get_tuples_hot_updated", true, StatKind::Count},
-  {"pg_stat_get_tuples_inserted", true, StatKind::Count},
-  {"pg_stat_get_tuples_newpage_updated", true, StatKind::Count},
-  {"pg_stat_get_tuples_returned", true, StatKind::Count},
-  {"pg_stat_get_tuples_updated", true, StatKind::Count},
-  {"pg_stat_get_vacuum_count", true, StatKind::Count},
-  {"pg_stat_get_xact_function_calls", true, StatKind::UntrackedCount},
-  {"pg_stat_get_xact_function_self_time", true, StatKind::UntrackedTime},
-  {"pg_stat_get_xact_function_total_time", true, StatKind::UntrackedTime},
-  {"pg_stat_get_xact_numscans", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_deleted", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_fetched", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_hot_updated", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_inserted", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_newpage_updated", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_returned", true, StatKind::Count},
-  {"pg_stat_get_xact_tuples_updated", true, StatKind::Count},
+constexpr StubFunction kStubFunctions[] = {
+#include "pg/catalog/generated/scalar_stubs.gen.inc"
 };
 
-duckdb::LogicalType StatType(const StatFunction& stat) {
-  switch (stat.kind) {
-    case StatKind::Count:
-    case StatKind::UntrackedCount:
-      return duckdb::LogicalType::BIGINT;
-    case StatKind::Time:
-    case StatKind::UntrackedTime:
-      return duckdb::LogicalType::DOUBLE;
-    case StatKind::Timestamp:
-      return duckdb::LogicalType::TIMESTAMP_TZ;
-  }
-  SDB_UNREACHABLE();
-}
-
-void RegisterStatFunctions(duckdb::ExtensionLoader& loader) {
-  for (const auto& stat : kStatFunctions) {
-    const bool zero =
-      stat.kind == StatKind::Count || stat.kind == StatKind::Time;
-    const bool per_row = zero && stat.takes_oid;
+void RegisterStubFunctions(duckdb::ExtensionLoader& loader) {
+  for (const auto& stub : kStubFunctions) {
+    auto result = SystemColumnType(stub.result);
+    const bool per_row = stub.zero && stub.argument != 0;
+    const auto zero = result.id() == duckdb::LogicalTypeId::DOUBLE
+                        ? ZeroFunction<double>
+                        : ZeroFunction<int64_t>;
     duckdb::ScalarFunction function{
-      stat.takes_oid ? duckdb::vector<duckdb::LogicalType>{OID()}
-                     : duckdb::vector<duckdb::LogicalType>{},
-      StatType(stat),
-      per_row ? (stat.kind == StatKind::Count ? ZeroFunction<int64_t>
-                                              : ZeroFunction<double>)
-              : nullptr};
+      stub.argument != 0
+        ? duckdb::vector<duckdb::LogicalType>{SystemColumnType(stub.argument)}
+        : duckdb::vector<duckdb::LogicalType>{},
+      std::move(result), per_row ? zero : nullptr};
     if (!per_row) {
-      function.SetBindExpressionCallback(zero ? BindZero : BindNull);
+      function.SetBindExpressionCallback(stub.zero ? BindZero : BindNull);
     }
-    duckdb::ScalarFunctionSet set{Identifier{stat.name}};
+    duckdb::ScalarFunctionSet set{Identifier{stub.name}};
     set.AddFunction(std::move(function));
     Register(loader, irs::StaticStrings::kPgCatalogSchema, std::move(set));
   }
@@ -587,29 +480,26 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auto count = args.size();
-  auto names = args.data[0].Values<duckdb::string_t>();
-  auto oks = args.data[1].Values<bool>();
-  auto* result_ptr =
-    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  auto& result_validity = duckdb::FlatVector::ValidityMutable(result);
-  for (duckdb::idx_t row = 0; row < count; row++) {
-    auto name_value = names[row];
-    auto ok_value = oks[row];
-    if (!name_value.IsValid() || !ok_value.IsValid()) {
-      result_validity.SetInvalid(row);
+  const auto names = args.data[0].Values<duckdb::string_t>();
+  const auto oks = args.data[1].Values<bool>();
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::string_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); row++) {
+    const auto name = names[row];
+    const auto ok = oks[row];
+    if (!name.IsValid() || !ok.IsValid()) {
+      writer.WriteNull();
       continue;
     }
-    const bool missing_ok = ok_value.GetValue();
-    const auto key = name_value.GetValue().GetString();
+    const auto key = name.GetValue().GetString();
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
-      result_ptr[row] =
-        duckdb::StringVector::AddString(result, value.ToString());
+      writer.WriteValue(
+        duckdb::StringVector::AddString(result, value.ToString()));
       continue;
     }
-    if (missing_ok) {
-      result_validity.SetInvalid(row);
+    if (ok.GetValue()) {
+      writer.WriteNull();
       continue;
     }
     THROW_SQL_ERROR(
@@ -650,30 +540,30 @@ void PgBackendPidFunction(duckdb::DataChunk& args,
                    duckdb::count_t(args.size()));
 }
 
-// Cancel (or, with `terminate`, terminate) each requested backend by pid ->
+// Cancel (or, with `kTerminate`, terminate) each requested backend by pid ->
 // BOOLEAN per row (true if the pid matched a live backend). Shared by
 // pg_cancel_backend and pg_terminate_backend. Authorised by being a session
 // (single superuser), so it matches on the pid half of the cancel key alone,
 // no secret.
+template<bool kTerminate>
 void CancelBackendsByPid(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state, duckdb::Vector& result,
-                         bool terminate) {
+                         duckdb::ExpressionState& state,
+                         duckdb::Vector& result) {
   auto& conn_ctx = GetSereneDBContext(state.GetContext());
   auto* registry = conn_ctx.GetCancelRegistry();
-  auto pids = args.data[0].Values<int32_t>();
-  auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
-  auto& validity = duckdb::FlatVector::ValidityMutable(result);
+  const auto pids = args.data[0].Values<int32_t>();
+  auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   using CancelResult = network::CancelRegistry::CancelResult;
   for (duckdb::idx_t i = 0; i < args.size(); ++i) {
-    auto pid = pids[i];
+    const auto pid = pids[i];
     if (!pid.IsValid()) {
-      validity.SetInvalid(i);
+      out.WriteNull();
       continue;
     }
     const auto target = static_cast<uint32_t>(pid.GetValue());
-    const auto outcome = registry ? registry->CancelByPid(target, terminate)
+    const auto outcome = registry ? registry->CancelByPid(target, kTerminate)
                                   : CancelResult::NotFound;
-    out[i] = outcome == CancelResult::Cancelled;
+    out.WriteValue(outcome == CancelResult::Cancelled);
     if (outcome == CancelResult::Ambiguous) {
       // The pid is the high half of a random key, not a unique OS pid; two
       // backends collided on it, so cancelling either could hit the wrong one.
@@ -687,21 +577,6 @@ void CancelBackendsByPid(duckdb::DataChunk& args,
         ERR_MSG("PID ", target, " is not a PostgreSQL backend process")));
     }
   }
-}
-
-// pg_cancel_backend(pid) -> bool: interrupt the target backend's current query.
-void PgCancelBackendFunction(duckdb::DataChunk& args,
-                             duckdb::ExpressionState& state,
-                             duckdb::Vector& result) {
-  CancelBackendsByPid(args, state, result, /*terminate=*/false);
-}
-
-// pg_terminate_backend(pid) -> bool: interrupt the target backend's current
-// query and stop its session (the connection closes).
-void PgTerminateBackendFunction(duckdb::DataChunk& args,
-                                duckdb::ExpressionState& state,
-                                duckdb::Vector& result) {
-  CancelBackendsByPid(args, state, result, /*terminate=*/true);
 }
 
 // set_config(name, value, is_local) -> text
@@ -754,39 +629,18 @@ void SearchPathCanonicalFunction(duckdb::DataChunk& args,
 template<bool kCountNulls>
 void CountNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         duckdb::Vector& result) {
-  const auto count = args.size();
-  const auto ncols = args.ColumnCount();
-  std::vector<duckdb::UnifiedVectorFormat> vdata(ncols);
-  for (duckdb::idx_t col = 0; col < ncols; col++) {
-    args.data[col].ToUnifiedFormat(count, vdata[col]);
+  std::vector<duckdb::VectorValidityIterator> columns;
+  columns.reserve(args.ColumnCount());
+  for (const auto& vector : args.data) {
+    columns.emplace_back(vector);
   }
-  auto out = duckdb::FlatVector::Writer<int32_t>(result, count);
-
-  for (duckdb::idx_t row = 0; row < count; row++) {
-    int32_t matched = 0;
-    for (duckdb::idx_t col = 0; col < ncols; col++) {
-      const auto idx = vdata[col].sel->get_index(row);
-      if (vdata[col].validity.RowIsValid(idx) != kCountNulls) {
-        matched++;
-      }
-    }
-    out.WriteValue(matched);
+  auto out = duckdb::FlatVector::Writer<int32_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); row++) {
+    out.WriteValue(static_cast<int32_t>(
+      absl::c_count_if(columns, [&](const duckdb::VectorValidityIterator& v) {
+        return v.IsValid(row) != kCountNulls;
+      })));
   }
-}
-
-// num_nonnulls(...) -> int
-// Ported from PG: counts non-null arguments.
-void NumNonNullsFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
-  CountNullsFunction<false>(args, state, result);
-}
-
-// num_nulls(...) -> int
-// Ported from PG: counts null arguments.
-void NumNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
-                      duckdb::Vector& result) {
-  CountNullsFunction<true>(args, state, result);
 }
 
 // --- pg_typeof ---
@@ -865,7 +719,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "pg_char_to_encoding",
     {duckdb::ScalarFunction{{text}, int4, PgCharToEncodingFunction}});
-  RegisterStatFunctions(loader);
+  RegisterStubFunctions(loader);
   RegisterScalar(
     loader, pg_catalog, "pg_stat_get_live_tuples",
     {WithinQuery(duckdb::ScalarFunction{{oid}, int8, LiveTuplesFunction})});
@@ -923,18 +777,18 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   loader.RegisterFunction(duckdb::ScalarFunction{"pg_cancel_backend",
                                                  {duckdb::LogicalType::INTEGER},
                                                  duckdb::LogicalType::BOOLEAN,
-                                                 PgCancelBackendFunction});
+                                                 CancelBackendsByPid<false>});
   loader.RegisterFunction(duckdb::ScalarFunction{"pg_terminate_backend",
                                                  {duckdb::LogicalType::INTEGER},
                                                  duckdb::LogicalType::BOOLEAN,
-                                                 PgTerminateBackendFunction});
+                                                 CancelBackendsByPid<true>});
 
   // num_nonnulls(...) -> int
   {
     duckdb::ScalarFunction func{"num_nonnulls",
                                 {duckdb::LogicalType::ANY},
                                 duckdb::LogicalType::INTEGER,
-                                NumNonNullsFunction};
+                                CountNullsFunction<false>};
     func.GetSignature()
       .AddArgs("args", duckdb::LogicalType::ANY)
       .AddKwargs("kwargs", duckdb::LogicalType::ANY);
@@ -947,7 +801,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction func{"num_nulls",
                                 {duckdb::LogicalType::ANY},
                                 duckdb::LogicalType::INTEGER,
-                                NumNullsFunction};
+                                CountNullsFunction<true>};
     func.GetSignature()
       .AddArgs("args", duckdb::LogicalType::ANY)
       .AddKwargs("kwargs", duckdb::LogicalType::ANY);

@@ -1,7 +1,7 @@
 import os
 import re
 
-from . import builtins, config
+from . import config
 from .common import (CATALOG_DIR, GENERATED_DIR, SUPERUSER_ONLY_SQL, camel,
                      cpp_bool, cpp_char, cpp_str, generated)
 
@@ -15,8 +15,9 @@ VIEW_FOLDERS = ('pg_catalog', 'information_schema')
 
 RELATIONS_SQL = f"""
 SELECT c.oid::int8, n.nspname, c.relname, c.relkind, c.relisshared,
-       {SUPERUSER_ONLY_SQL}
+       {SUPERUSER_ONLY_SQL}, c.reltype::int4, coalesce(t.typarray, 0)::int4
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+LEFT JOIN pg_type t ON t.oid = c.reltype
 WHERE (n.nspname IN ('pg_catalog', 'information_schema') AND c.relkind = 'r')
    OR (n.nspname, c.relname) IN (SELECT * FROM unnest(%s::text[], %s::text[]))
 ORDER BY n.nspname, c.relname
@@ -60,8 +61,7 @@ BKI_DEFAULT = re.compile(r'BKI_DEFAULT\(((?:[^()]|\([^)]*\))*)\)')
 NUMBER = re.compile(r'-?\d+(\.\d+)?')
 ZERO = {'bool': 'false', 'char': '', 'name': '', 'text': '', 'bytea': '',
         'pg_node_tree': '', 'int2': '0', 'int4': '0', 'int8': '0',
-        'float4': '0', 'float8': '0', 'oid': '0', 'xid': '0', 'regproc': '0',
-        'regtype': '0'}
+        'float4': '0', 'float8': '0', 'oid': '0', 'xid': '0', 'regproc': '0'}
 
 
 def bki_defaults(gen, name):
@@ -115,7 +115,7 @@ def relations(gen):
     native = list(config.NATIVE_VIEWS)
     rels = gen.query(RELATIONS_SQL, ([s for s, _ in native],
                                      [n for _, n in native]))
-    return rels + [(None, 'pg_catalog', name, 'r', False, False)
+    return rels + [(None, 'pg_catalog', name, 'r', False, False, 0, 0)
                    for name in config.SDB_TABLES]
 
 
@@ -147,7 +147,8 @@ def column_line(column, type_oid, typname, element, composite, notnull,
             f'{cpp_bool(notnull)}, SystemKey::{key}, {value}}},')
 
 
-def table_lines(gen, oid, schema, name, relkind, shared, superuser, types):
+def table_lines(gen, oid, schema, name, relkind, shared, superuser, row_type,
+                row_array_type, types):
     columns = relation_columns(gen, oid, name)
     if len(columns) > MAX_COLUMNS:
         raise SystemExit(f'{schema}.{name} has more than {MAX_COLUMNS} columns')
@@ -167,7 +168,8 @@ def table_lines(gen, oid, schema, name, relkind, shared, superuser, types):
              in columns] +
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Table, '
-             f'{cpp_str(schema)}, {cpp_str(name)}, {cpp_char(relkind)}, '
+             f'{cpp_str(schema)}, {cpp_str(name)}, {row_type}, '
+             f'{row_array_type}, {cpp_char(relkind)}, '
              f'{cpp_bool(superuser)}, {cpp_bool(shared)}, {rows}, '
              f'{const}Columns}};'])
 
@@ -210,11 +212,10 @@ def named_oids(gen, sql, names):
             for name, const in names.items()]
 
 
-def generate(gen):
+def generate(gen, types):
     reserved = {row[0] for row in gen.query(
         "SELECT word FROM pg_get_keywords() WHERE catcode <> 'U'")}
-    types = builtins.builtin_type_constants(gen)
-    oids = (named_oids(gen, 'SELECT %s::regnamespace::oid::int8',
+    oids =(named_oids(gen, 'SELECT %s::regnamespace::oid::int8',
                        config.SCHEMAS) +
             named_oids(gen, 'SELECT oid::int8 FROM pg_database '
                             'WHERE datname = %s', config.DATABASES) +
@@ -239,7 +240,8 @@ def generate(gen):
                             "'pg_catalog'::regnamespace",
                        config.COLLATIONS))
     tables, all_tables, known = [], [], set()
-    for oid, schema, name, relkind, shared, superuser in relations(gen):
+    for (oid, schema, name, relkind, shared, superuser, row_type,
+         row_array_type) in relations(gen):
         known.add((schema, name))
         const = relation_constant(schema, name)
         table_oid = (oid if oid is not None
@@ -248,7 +250,7 @@ def generate(gen):
                     f'{table_oid};')
         superuser = superuser or (schema, name) in config.SUPERUSER_ONLY
         tables += table_lines(gen, oid, schema, name, relkind, shared,
-                              superuser, types)
+                              superuser, row_type, row_array_type, types)
         all_tables.append(f'&{const}Sql,')
     tables.append('inline constexpr const SystemSql* kGeneratedTables[] = {')
     tables += ['  ' + line for line in all_tables]

@@ -173,9 +173,10 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       return;
     }
     const auto it = _relations.find(index.table_oid);
-    if (auto relation = it != _relations.end()
-                          ? duckdb::optional_ptr<duckdb::CatalogEntry>{it->second}
-                          : FindById(index.table_oid)) {
+    if (auto relation =
+          it != _relations.end()
+            ? duckdb::optional_ptr<duckdb::CatalogEntry>{it->second}
+            : FindById(index.table_oid)) {
       IndexColumns(index.oid, *relation,
                    IndexAttnums(Context(), index, *relation));
     }
@@ -217,27 +218,14 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
   template<typename R>
   void IndexColumns(duckdb::idx_t oid, duckdb::CatalogEntry& relation,
                     const R& attnums) {
-    auto* view = relation.type == duckdb::CatalogType::VIEW_ENTRY
-                   ? &relation.Cast<duckdb::ViewCatalogEntry>()
-                   : nullptr;
-    const auto columns = view ? ViewColumns(Context(), *view) : nullptr;
+    const auto columns =
+      relation.type == duckdb::CatalogType::VIEW_ENTRY
+        ? ViewColumns(Context(), relation.Cast<duckdb::ViewCatalogEntry>())
+        : nullptr;
     int16_t attnum = 0;
     for (const int16_t key : attnums) {
-      ++attnum;
-      const auto column = static_cast<duckdb::idx_t>(key - 1);
-      if (key == 0) {
-        Emit<kColumn>({oid, "expr", attnum, duckdb::LogicalType::VARCHAR});
-      } else if (view) {
-        Emit<kColumn>({oid,
-                       view->ColumnName(*columns, column).GetIdentifierName(),
-                       attnum, columns->types[column]});
-      } else {
-        const auto& definition =
-          relation.Cast<duckdb::TableCatalogEntry>().GetColumn(
-            duckdb::LogicalIndex{column});
-        Emit<kColumn>({oid, definition.Name().GetIdentifierName(), attnum,
-                       definition.Type()});
-      }
+      const auto column = IndexColumnAt(relation, columns.get(), key);
+      Emit<kColumn>({oid, column.name, ++attnum, column.type});
     }
   }
 

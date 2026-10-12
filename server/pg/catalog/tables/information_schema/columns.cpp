@@ -151,7 +151,7 @@ constexpr std::tuple kTypeColumns{
   Col<"udt_schema">([](const auto& row) -> std::optional<std::string_view> {
     const auto& info = row.Info();
     if (info.builtin) {
-      return FindSystemNamespace(info.base->nsp)->name;
+      return FindSystemObject(kSystemNamespaces, info.base->nsp)->name;
     }
     if (!info.entry) {
       return std::nullopt;
@@ -183,7 +183,7 @@ constexpr std::tuple kTypeColumns{
     if (!IsDomain(info)) {
       return std::nullopt;
     }
-    return FindSystemNamespace(info.builtin->nsp)->name;
+    return FindSystemObject(kSystemNamespaces, info.builtin->nsp)->name;
   }),
   Col<"domain_name">([](const auto& row) -> std::optional<std::string_view> {
     const auto& info = row.Info();
@@ -225,8 +225,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
-  static constexpr std::tuple kSources{CatalogSource{
-    std::span{kSchemaObjectTypes}.first<2>(), SystemSchemas::Visit, kIndexes}};
+  static constexpr std::tuple kSources{
+    CatalogSource{kTableViewTypes, SystemSchemas::Visit, kIndexes}};
 
   static constexpr auto kTableColumn = Shape<kSql, const InfoColumn>(
     kRelationColumns, kTypeColumns, Col<"is_nullable">([](const auto& row) {

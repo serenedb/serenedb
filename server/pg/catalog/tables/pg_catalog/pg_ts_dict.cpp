@@ -19,12 +19,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "catalog/entry/tokenizer.h"
+#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
-
-constexpr duckdb::CatalogType kTypes[] = {duckdb::CatalogType::TOKENIZER_ENTRY};
 
 constexpr SystemIndex kTsDictIndexes[] = {
   {kPgTsDictSql["oid"], SystemLookup::Object},
@@ -37,7 +36,7 @@ class PgTsDict final : public SystemTableScan<kPgTsDictSql> {
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kTypes, SystemSchemas::Skip, kTsDictIndexes}};
+    CatalogSource{kTokenizerTypes, SystemSchemas::Skip, kTsDictIndexes}};
 
   static constexpr auto kDictionary =
     Shape<kSql, const catalog::TokenizerCatalogEntry>(

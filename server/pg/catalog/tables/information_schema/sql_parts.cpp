@@ -24,24 +24,43 @@
 namespace sdb::pg {
 namespace {
 
-// clang-format off
-constexpr SystemCell kRows[] = {
-  "1", "Framework (SQL/Framework)", "NO", std::nullopt, "",
-  "10", "Object Language Bindings (SQL/OLB)", "NO", std::nullopt, "",
-  "11", "Information and Definition Schema (SQL/Schemata)", "NO", std::nullopt, "",
-  "13", "Routines and Types Using the Java Programming Language (SQL/JRT)", "NO", std::nullopt, "",
-  "14", "XML-Related Specifications (SQL/XML)", "NO", std::nullopt, "",
-  "15", "Multi-Dimensional Arrays (SQL/MDA)", "NO", std::nullopt, "",
-  "16", "Property Graph Queries (SQL/PGQ)", "NO", std::nullopt, "",
-  "2", "Foundation (SQL/Foundation)", "NO", std::nullopt, "",
-  "3", "Call-Level Interface (SQL/CLI)", "NO", std::nullopt, "",
-  "4", "Persistent Stored Modules (SQL/PSM)", "NO", std::nullopt, "",
-  "9", "Management of External Data (SQL/MED)", "NO", std::nullopt, "",
+struct SqlPart {
+  std::string_view id;
+  std::string_view name;
 };
-// clang-format on
+
+constexpr std::array kParts{
+  SqlPart{"1", "Framework (SQL/Framework)"},
+  SqlPart{"10", "Object Language Bindings (SQL/OLB)"},
+  SqlPart{"11", "Information and Definition Schema (SQL/Schemata)"},
+  SqlPart{"13",
+          "Routines and Types Using the Java Programming Language (SQL/JRT)"},
+  SqlPart{"14", "XML-Related Specifications (SQL/XML)"},
+  SqlPart{"15", "Multi-Dimensional Arrays (SQL/MDA)"},
+  SqlPart{"16", "Property Graph Queries (SQL/PGQ)"},
+  SqlPart{"2", "Foundation (SQL/Foundation)"},
+  SqlPart{"3", "Call-Level Interface (SQL/CLI)"},
+  SqlPart{"4", "Persistent Stored Modules (SQL/PSM)"},
+  SqlPart{"9", "Management of External Data (SQL/MED)"},
+};
+
+class InfoSqlParts final : public SystemTableScan<kInfoSqlPartsSql> {
+ public:
+  using SystemTableScan::SystemTableScan;
+
+  static constexpr std::tuple kSources{
+    ArraySource<SqlPart>{&LoadStatic<kParts>, {}, {}}};
+
+  static constexpr auto kPart = Shape<kSql, const SqlPart>(
+    Col<"feature_id">(&SqlPart::id), Col<"feature_name">(&SqlPart::name),
+    Col<"is_supported">([](const auto&) { return std::string_view{"NO"}; }),
+    Col<"comments">([](const auto&) { return std::string_view{}; }));
+
+  void Row(const SqlPart& part) { Emit<kPart>(part); }
+};
 
 }  // namespace
 
-SystemTable gInfoSqlParts{kInfoSqlPartsSql, kRows};
+SystemTable gInfoSqlParts = SystemTableOf<InfoSqlParts>();
 
 }  // namespace sdb::pg

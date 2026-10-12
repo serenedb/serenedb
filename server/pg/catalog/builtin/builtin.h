@@ -20,14 +20,24 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <span>
 #include <string_view>
 
 #include "pg/catalog/oids.h"
 
 namespace sdb::pg {
+
+template<typename Rows, typename Key>
+const auto* FindByOid(const Rows& rows, Key oid) {
+  const auto it = absl::c_lower_bound(
+    rows, oid, [](const auto& row, Key key) { return row.oid < key; });
+  return it != std::end(rows) && it->oid == oid ? &*it : nullptr;
+}
 
 struct BuiltinType {
   int32_t oid;
@@ -91,7 +101,6 @@ const BuiltinType* FindBuiltinType(duckdb::idx_t nsp, std::string_view name);
 const BuiltinType* FindBuiltinRowType(duckdb::idx_t relid);
 
 std::span<const BuiltinProc> BuiltinProcs();
-int32_t BuiltinProcOid(std::string_view name);
 
 std::span<const BuiltinCollation> BuiltinCollations();
 const BuiltinCollation* FindBuiltinCollation(int64_t oid);

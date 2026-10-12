@@ -26,10 +26,11 @@ server/connector/functions/sdb_segments.cpp:77-78 every search-table and index s
 server/connector/segment_rewrite/segment_rewrite_job.cpp:65-75 every search-table and index segment carries the generated row key with its range
 server/connector/segment_rewrite/segment_rewrite_job.cpp:97-101 every segment has the generated row key column, so a merge has columns
 server/connector/segment_rewrite/segment_rewrite_job.cpp:126 the return after an exhaustive switch over irs::MergeStep
-server/search/compaction/merge_registry.cpp:51 the implicit default of an exhaustive switch over MergeOrigin
-server/search/compaction/merge_registry.cpp:59 the return after an exhaustive switch over MergeOrigin
-server/search/compaction/merge_registry.cpp:63 the implicit default of an exhaustive switch over MergeOutcome
-server/search/compaction/merge_registry.cpp:79 the return after an exhaustive switch over MergeOutcome
-server/search/compaction/merge_registry.cpp:83 the implicit default of an exhaustive switch over irs::CompactionError
-server/search/compaction/merge_registry.cpp:95 the return after an exhaustive switch over irs::CompactionError
+server/search/compaction/merge_registry.cpp:70 the implicit default of an exhaustive switch over MergeOrigin
+server/search/compaction/merge_registry.cpp:78 the return after an exhaustive switch over MergeOrigin
+server/search/compaction/merge_registry.cpp:82 the implicit default of an exhaustive switch over MergeOutcome
+server/search/compaction/merge_registry.cpp:98 the return after an exhaustive switch over MergeOutcome
+server/search/compaction/merge_registry.cpp:102 the implicit default of an exhaustive switch over irs::CompactionError
+server/search/compaction/merge_registry.cpp:114 the return after an exhaustive switch over irs::CompactionError
+server/pg/sdb_catalog/sdb_merges.cpp:200-203 every flushed segment carries the generated row key with its range, and a merge records its inputs before it can fail; only a merge whose policy never ran, which an allocation failure alone causes, has no range
 server/search/task.cpp:164-166 an index whose options cannot be pinned although its storage is not retired: only between RemoveIndex and OnDrop inside FinalizeCommit of its DROP INDEX

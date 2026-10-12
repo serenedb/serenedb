@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/time/clock.h>
+#include <absl/time/time.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -38,6 +40,7 @@ using sdb::search::MergeOutcome;
 using sdb::search::MergeRecord;
 using sdb::search::MergeRecorder;
 using sdb::search::MergeRegistry;
+using sdb::search::SegmentEvent;
 
 std::vector<MergeRecord> HistoryOf(uint64_t relation_id) {
   auto records = MergeRegistry::Instance().History();
@@ -45,6 +48,18 @@ std::vector<MergeRecord> HistoryOf(uint64_t relation_id) {
     return record.relation_id != relation_id;
   });
   return records;
+}
+
+size_t CountOf(std::span<const MergeRecord> records, SegmentEvent event) {
+  return static_cast<size_t>(std::count_if(
+    records.begin(), records.end(),
+    [&](const MergeRecord& record) { return record.event == event; }));
+}
+
+void LetAMicrosecondPass() {
+  const auto start = absl::Now();
+  while (absl::Now() - start < absl::Microseconds(2)) {
+  }
 }
 
 bool IsRunning(uint64_t relation_id) {
@@ -65,8 +80,14 @@ irs::CompactionResult Result(irs::CompactionError error, size_t size) {
 class SegmentStub final : public irs::SubReader {
  public:
   SegmentStub(std::string name, uint32_t docs)
-    : _meta{
-        .name = std::move(name), .docs_count = docs, .live_docs_count = docs} {}
+    : SegmentStub{std::move(name), docs, docs, 0} {}
+
+  SegmentStub(std::string name, uint32_t docs, uint32_t live_docs,
+              uint64_t bytes)
+    : _meta{.name = std::move(name),
+            .docs_count = docs,
+            .live_docs_count = live_docs,
+            .byte_size = bytes} {}
 
   uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return _meta; }
@@ -120,6 +141,76 @@ TEST(MergeRegistry, NamesAreStable) {
             sdb::search::MergeOutcomeName(MergeOutcome::Cancelled));
   EXPECT_EQ("small", sdb::search::MergeLaneName(MergeLane::Small));
   EXPECT_EQ("big", sdb::search::MergeLaneName(MergeLane::Big));
+  EXPECT_EQ("flush", sdb::search::SegmentEventName(SegmentEvent::Flush));
+  EXPECT_EQ("merge", sdb::search::SegmentEventName(SegmentEvent::Merge));
+}
+
+TEST(MergeRegistry, AFlushRecordsEverySegmentItWrote) {
+  MergeRegistry registry;
+  const SegmentStub first{"_1", 10, 8, 100};
+  const SegmentStub second{"_2", 5, 5, 50};
+  const irs::SubReader* const segments[] = {&first, &second};
+  registry.RecordFlushes(7, segments);
+  EXPECT_TRUE(registry.Active().empty());
+
+  const auto history = registry.History();
+  ASSERT_EQ(2, history.size());
+  const auto& record = history[0];
+  EXPECT_EQ(SegmentEvent::Flush, record.event);
+  EXPECT_EQ(7, record.relation_id);
+  EXPECT_EQ(0, record.started_us);
+  EXPECT_LT(0, record.finished_us);
+  EXPECT_TRUE(record.stats.inputs.empty());
+  EXPECT_EQ("_1", record.stats.output);
+  EXPECT_EQ(10, record.stats.output_docs);
+  EXPECT_EQ(8, record.output_live_docs);
+  EXPECT_EQ(100, record.stats.output_bytes);
+  EXPECT_FALSE(record.rowid_min);
+  EXPECT_FALSE(record.rowid_max);
+  EXPECT_EQ("_2", history[1].stats.output);
+  EXPECT_EQ(record.finished_us, history[1].finished_us);
+  EXPECT_LT(record.id, history[1].id);
+}
+
+TEST(MergeRegistry, FlushesAndMergesShareOneTimeline) {
+  MergeRegistry registry;
+  const SegmentStub segment{"_1", 10};
+  const irs::SubReader* const segments[] = {&segment};
+  const auto merge = registry.Start(7, MergeOrigin::Sql);
+  registry.RecordFlushes(7, segments);
+  LetAMicrosecondPass();
+  registry.Finish(merge, MergeOutcome::Merged, {}, {});
+
+  const auto history = registry.History();
+  ASSERT_EQ(2, history.size());
+  EXPECT_EQ(SegmentEvent::Flush, history[0].event);
+  EXPECT_LT(merge, history[0].id);
+  EXPECT_EQ(SegmentEvent::Merge, history[1].event);
+  EXPECT_EQ(merge, history[1].id);
+}
+
+TEST(MergeRegistry, FlushesKeepTheirOwnBoundedHistory) {
+  MergeRegistry registry;
+  const auto merge = registry.Start(7, MergeOrigin::Sql);
+  registry.Finish(merge, MergeOutcome::Busy, {}, {});
+  const SegmentStub segment{"_1", 1};
+  const irs::SubReader* const segments[] = {&segment};
+  const auto total = MergeRegistry::kFlushHistoryCapacity + 5;
+  for (size_t i = 0; i < total; ++i) {
+    registry.RecordFlushes(7, segments);
+  }
+
+  const auto history = registry.History();
+  EXPECT_EQ(1, CountOf(history, SegmentEvent::Merge));
+  ASSERT_EQ(MergeRegistry::kFlushHistoryCapacity,
+            CountOf(history, SegmentEvent::Flush));
+  uint64_t oldest = UINT64_MAX;
+  for (const auto& record : history) {
+    if (record.event == SegmentEvent::Flush) {
+      oldest = std::min(oldest, record.id);
+    }
+  }
+  EXPECT_EQ(merge + 1 + total - MergeRegistry::kFlushHistoryCapacity, oldest);
 }
 
 TEST(MergeRegistry, AQueuedMergeRunsAndFinishesUnderOneId) {
@@ -211,11 +302,13 @@ TEST(MergeRegistry, FinishedMergeMovesToHistory) {
   ASSERT_EQ(1, history.size());
   const auto& record = history.front();
   EXPECT_EQ(id, record.id);
+  EXPECT_EQ(SegmentEvent::Merge, record.event);
   EXPECT_EQ(MergeOrigin::Sql, record.origin);
   EXPECT_EQ(MergeOutcome::Merged, record.outcome);
   EXPECT_LE(record.started_us, record.finished_us);
   EXPECT_EQ(stats.inputs, record.stats.inputs);
   EXPECT_EQ("_3", record.stats.output);
+  EXPECT_EQ(9, record.output_live_docs);
   EXPECT_EQ(1000, record.stats.profile.Nanos(irs::MergeStep::Columns));
   EXPECT_TRUE(record.error.empty());
 }
@@ -248,7 +341,8 @@ TEST(MergeRegistry, HistoryIsBounded) {
   ASSERT_EQ(MergeRegistry::kHistoryCapacity, history.size());
   EXPECT_EQ(ids[total - MergeRegistry::kHistoryCapacity], history.front().id);
   EXPECT_EQ(ids.back(), history.back().id);
-  EXPECT_EQ(MergeRegistry::kHistoryCapacity, registry.History().size());
+  EXPECT_EQ(MergeRegistry::kHistoryCapacity,
+            CountOf(registry.History(), SegmentEvent::Merge));
 }
 
 TEST(MergeRegistry, RunningMergesAreOrderedById) {

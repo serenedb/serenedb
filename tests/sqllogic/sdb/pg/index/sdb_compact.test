@@ -1,9 +1,3 @@
-# CALL sdb_compact merges segments of a search table or an inverted index on
-# demand, EXPLAIN shows what it would merge, sdb_segments lists the segments and
-# sdb_merge_history keeps finished merges. Background compaction is off for the
-# tables that get merged here, so every merge in this file comes from
-# sdb_compact or VACUUM.
-
 statement ok
 SET profiling_renderer_settings = {'deterministic': true}
 
@@ -120,14 +114,28 @@ hits
 
 query
 SELECT origin, outcome, cardinality(inputs) AS inputs, input_docs, output_docs,
-       finished >= started AS ordered, error
-FROM sdb_merge_history
+       output_live_docs, finished >= started AS ordered, rowid_min, rowid_max,
+       error
+FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
-ORDER BY merge_id
+  AND type = 'merge'
+ORDER BY id
 ----
-origin	outcome	inputs	input_docs	output_docs	ordered	error
-sql	merged	2	200	200	t	NULL
-sql	merged	2	200	200	t	NULL
+origin	outcome	inputs	input_docs	output_docs	output_live_docs	ordered	rowid_min	rowid_max	error
+sql	merged	2	200	200	200	t	1	200	NULL
+sql	merged	2	200	200	200	t	201	400	NULL
+
+
+query
+SELECT count(*) AS flushes, sum(output_docs) AS docs, min(rowid_min) AS first,
+       max(rowid_max) AS last, bool_and(origin IS NULL AND outcome IS NULL
+         AND started IS NULL AND inputs IS NULL AND total_ms IS NULL) AS bare
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc')
+  AND type = 'flush'
+----
+flushes	docs	first	last	bare
+4	400	1	400	t
 
 
 query
@@ -363,12 +371,15 @@ segments	docs
 
 
 query
-SELECT origin, outcome, input_docs
-FROM sdb_merge_history
+SELECT type, origin, outcome, input_docs, output_docs
+FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sdbc_idx')
+ORDER BY id
 ----
-origin	outcome	input_docs
-sql	merged	200
+type	origin	outcome	input_docs	output_docs
+flush	NULL	NULL	NULL	100
+flush	NULL	NULL	NULL	100
+merge	sql	merged	200	200
 
 
 # The planner keeps a group of one segment without deletes as it is, merges a

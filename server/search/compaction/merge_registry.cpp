@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "search/compaction/merge_planner.h"
 #include "server/utils/metrics.h"
 
 namespace sdb::search {
@@ -33,19 +34,37 @@ namespace {
 
 int64_t NowMicros() noexcept { return absl::ToUnixMicros(absl::Now()); }
 
-irs::MergeStats InputsOf(irs::CompactionView candidates) {
-  irs::MergeStats inputs;
-  inputs.inputs.reserve(candidates.size());
+struct Inputs {
+  irs::MergeStats stats;
+  std::optional<int64_t> rowid_min;
+  std::optional<int64_t> rowid_max;
+};
+
+Inputs InputsOf(irs::CompactionView candidates) {
+  Inputs inputs;
+  inputs.stats.inputs.reserve(candidates.size());
   for (const auto* candidate : candidates) {
-    inputs.inputs.emplace_back(candidate->Meta().name);
-    inputs.input_docs += candidate->docs_count();
-    inputs.input_live_docs += candidate->live_docs_count();
-    inputs.input_bytes += candidate->Meta().byte_size;
+    const auto segment = DescribeSegment(*candidate);
+    inputs.stats.inputs.emplace_back(segment.name);
+    inputs.stats.input_docs += segment.docs;
+    inputs.stats.input_live_docs += segment.live_docs;
+    inputs.stats.input_bytes += segment.bytes;
+    if (!segment.rowid_min) {
+      continue;
+    }
+    inputs.rowid_min = std::min(inputs.rowid_min.value_or(*segment.rowid_min),
+                                *segment.rowid_min);
+    inputs.rowid_max = std::max(inputs.rowid_max.value_or(*segment.rowid_max),
+                                *segment.rowid_max);
   }
   return inputs;
 }
 
 }  // namespace
+
+std::string_view SegmentEventName(SegmentEvent event) noexcept {
+  return event == SegmentEvent::Flush ? "flush" : "merge";
+}
 
 std::string_view MergeOriginName(MergeOrigin origin) noexcept {
   switch (origin) {
@@ -129,9 +148,40 @@ uint64_t MergeRegistry::Queue(uint64_t relation_id,
                         .queued_us = NowMicros(),
                         .lane = estimate.lane,
                         .score = estimate.score,
-                        .stats = std::move(inputs),
+                        .stats = std::move(inputs.stats),
+                        .rowid_min = inputs.rowid_min,
+                        .rowid_max = inputs.rowid_max,
                       });
   return id;
+}
+
+void MergeRegistry::RecordFlushes(
+  uint64_t relation_id, std::span<const irs::SubReader* const> segments) {
+  const auto now = NowMicros();
+  std::vector<MergeRecord> records;
+  records.reserve(segments.size());
+  for (const auto* segment : segments) {
+    auto described = DescribeSegment(*segment);
+    auto& record = records.emplace_back(MergeRecord{
+      .relation_id = relation_id,
+      .event = SegmentEvent::Flush,
+      .finished_us = now,
+      .output_live_docs = described.live_docs,
+      .rowid_min = described.rowid_min,
+      .rowid_max = described.rowid_max,
+    });
+    record.stats.output = std::move(described.name);
+    record.stats.output_docs = described.docs;
+    record.stats.output_bytes = described.bytes;
+  }
+  absl::MutexLock lock{&_mutex};
+  for (auto& record : records) {
+    record.id = _next_id++;
+    if (_flushes.size() == kFlushHistoryCapacity) {
+      _flushes.pop_front();
+    }
+    _flushes.emplace_back(std::move(record));
+  }
 }
 
 void MergeRegistry::Dispatch(uint64_t id, size_t threads) {
@@ -163,7 +213,9 @@ void MergeRegistry::SetInputs(uint64_t id, irs::CompactionView candidates) {
   auto inputs = InputsOf(candidates);
   absl::MutexLock lock{&_mutex};
   if (auto it = _active.find(id); it != _active.end()) {
-    it->second.stats = std::move(inputs);
+    it->second.stats = std::move(inputs.stats);
+    it->second.rowid_min = inputs.rowid_min;
+    it->second.rowid_max = inputs.rowid_max;
   }
 }
 
@@ -188,6 +240,7 @@ void MergeRegistry::Finish(uint64_t id, MergeOutcome outcome,
   if (!stats.inputs.empty() || stats.profile.TotalNanos() != 0) {
     record.stats = std::move(stats);
   }
+  record.output_live_docs = record.stats.output_docs;
   record.error = std::move(error);
   if (_history.size() == kHistoryCapacity) {
     _history.pop_front();
@@ -210,8 +263,18 @@ std::vector<MergeRecord> MergeRegistry::Active() const {
 }
 
 std::vector<MergeRecord> MergeRegistry::History() const {
-  absl::MutexLock lock{&_mutex};
-  return {_history.begin(), _history.end()};
+  std::vector<MergeRecord> records;
+  {
+    absl::MutexLock lock{&_mutex};
+    records.reserve(_history.size() + _flushes.size());
+    records.insert(records.end(), _history.begin(), _history.end());
+    records.insert(records.end(), _flushes.begin(), _flushes.end());
+  }
+  std::stable_sort(records.begin(), records.end(),
+                   [](const MergeRecord& lhs, const MergeRecord& rhs) {
+                     return lhs.finished_us < rhs.finished_us;
+                   });
+  return records;
 }
 
 MergeRecorder::~MergeRecorder() {

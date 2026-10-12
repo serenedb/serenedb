@@ -132,6 +132,9 @@ struct SegmentOptions {
 using ProgressReportCallback =
   std::function<void(std::string_view phase, size_t current, size_t total)>;
 
+using FlushedSegmentsCallback =
+  std::function<void(std::span<const SubReader* const> segments)>;
+
 struct IndexWriterOptions : public SegmentOptions {
   IndexReaderOptions reader_options;
 
@@ -152,6 +155,8 @@ struct IndexWriterOptions : public SegmentOptions {
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
 
   const AnnBuildEnv* ann_env = nullptr;
+
+  FlushedSegmentsCallback on_flushed;
 
   IndexWriterOptions() {}
 };
@@ -759,6 +764,7 @@ class IndexWriter : private util::Noncopyable {
   struct PendingBase {
     FlushContextPtr ctx{nullptr, nullptr};
     SourcePosition position;
+    size_t flushed = 0;
 
     void StartReset(IndexWriter& writer) noexcept {
       auto* curr = ctx.get();
@@ -801,6 +807,7 @@ class IndexWriter : private util::Noncopyable {
 
   PendingContext PrepareFlush(const CommitInfo& info);
   void ApplyFlush(PendingContext&& context);
+  void ReportFlushed(const DirectoryReaderImpl& commit, size_t count) noexcept;
 
   FlushContextPtr GetFlushContext() const noexcept;
   FlushContextPtr SwitchFlushContext() noexcept;
@@ -821,6 +828,7 @@ class IndexWriter : private util::Noncopyable {
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
+  FlushedSegmentsCallback _on_flushed;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;
   struct {

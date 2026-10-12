@@ -141,9 +141,12 @@ outcome	input_docs	output_docs
 merged	2	2
 
 query
-SELECT origin, outcome, input_docs
-FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'my_metrics');
+SELECT type, origin, outcome, input_docs, output_docs
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'my_metrics')
+ORDER BY id;
 ----
-origin	outcome	input_docs
-sql	merged	2
+type	origin	outcome	input_docs	output_docs
+flush	NULL	NULL	NULL	1
+flush	NULL	NULL	NULL	1
+merge	sql	merged	2	2

@@ -1302,6 +1302,7 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     std::move(options.meta_payload_writer), std::move(reader));
   writer->_db = options.db;
   writer->_ann_env = options.ann_env;
+  writer->_on_flushed = std::move(options.on_flushed);
   // Wrap the provider callbacks into the fallback options (tests).
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
@@ -2081,6 +2082,7 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   auto segment_ctxs = OpenFlushed(ctx->segments, queries, removals, dir,
                                   committed_reader.Options(), progress);
   auto flushed = PublishFlushed(segment_ctxs, dir, progress);
+  const auto flushed_count = flushed.segments.size();
   segments.insert(segments.end(),
                   std::make_move_iterator(flushed.segments.begin()),
                   std::make_move_iterator(flushed.segments.end()));
@@ -2140,7 +2142,8 @@ IndexWriter::PendingContext IndexWriter::PrepareFlush(const CommitInfo& info) {
   const auto position = ctx->position;
   return {
     PendingBase{.ctx = std::move(ctx),  // Retain flush context reference
-                .position = position},
+                .position = position,
+                .flushed = flushed_count},
     std::move(pending_meta),  // Retain meta pending flush
     std::move(readers),
     std::move(files_to_sync),
@@ -2230,6 +2233,8 @@ void IndexWriter::Finish() {
     throw IllegalState{"Failed to commit index metadata"};
   }
 
+  const auto flushed = _pending_state.flushed;
+  const auto commit = _pending_state.commit;
   // noexcept part!
   {
     std::lock_guard lock{_compacting.lock};
@@ -2244,6 +2249,22 @@ void IndexWriter::Finish() {
                                std::memory_order_release);
   }
   _pending_state.FinishReset();
+  if (flushed != 0 && _on_flushed) {
+    ReportFlushed(*commit, flushed);
+  }
+}
+
+void IndexWriter::ReportFlushed(const DirectoryReaderImpl& commit,
+                                size_t count) noexcept {
+  try {
+    std::vector<const SubReader*> segments;
+    segments.reserve(count);
+    for (auto i = commit.size() - count; i != commit.size(); ++i) {
+      segments.emplace_back(&commit[i]);
+    }
+    _on_flushed(segments);
+  } catch (...) {
+  }
 }
 
 void IndexWriter::Abort() noexcept {

@@ -134,10 +134,14 @@ Background compaction runs on the server's background threads (`--background_thr
 
 `sdb_segments(relation)` lists the segments of a search table or an inverted index: `segment`, `docs`, `live_docs`, `deleted_docs`, `bytes`, and `rowid_min` / `rowid_max`, the range of row ids a segment holds.
 
-Two system tables show merges of the current database, whichever task ran them (`origin`: `background`, `vacuum` or `sql`):
+Two system tables show the compaction of the current database's search tables and indexes, whichever task ran a merge (`origin`: `background`, `vacuum` or `sql`):
 
-- `sdb_merges` lists the merges that run or wait in the background queue: `merge_id`, `relation_id`, `origin`, `state` (`queued` or `running`), `queued`, `started`, `elapsed_ms`, the inputs, and `estimated_bytes`, what the merge will write, estimated from the live share of its inputs. Background merges also show `lane` (`small` or `big`), `score` (bytes rewritten per segment removed; the lowest starts first) and, once running, `threads` (the threads the merge may use). A queued merge keeps its `merge_id` when it runs and in `sdb_merge_history`; one dropped from the queue, for example by a `VACUUM` on its table, leaves no history.
-- `sdb_merge_history` keeps the last 256 finished merges of the server, with the columns of a `sdb_compact` row plus `merge_id`, `relation_id`, `origin`, `started` and `finished`.
+- `sdb_merges` lists the merges that run or wait in the background queue: `merge_id`, `relation_id`, `origin`, `state` (`queued` or `running`), `queued`, `started`, `elapsed_ms`, the inputs, and `estimated_bytes`, what the merge will write, estimated from the live share of its inputs. Background merges also show `lane` (`small` or `big`), `score` (bytes rewritten per segment removed; the lowest starts first) and, once running, `threads` (the threads the merge may use). A queued merge keeps its `merge_id` when it runs, and it becomes the `id` of the merge's `sdb_compact_history` row; a merge dropped from the queue, for example by a `VACUUM` on its table, leaves no history.
+- `sdb_compact_history` keeps the segments the server wrote recently, one row each: the last 256 finished merges, and the last 8192 segments written by refreshes. `type` tells them apart:
+  - `merge` rows have the columns of a `sdb_compact` row plus `id`, `relation_id`, `origin`, `started` and `finished`;
+  - `flush` rows describe a segment a refresh published at `finished`: `id`, `relation_id`, `output`, `output_docs` and `output_bytes`. The columns that only describe a merge are `NULL`.
+
+  Both kinds also show `output_live_docs`, the documents of the new segment still live when it was published, and `rowid_min` / `rowid_max`, the range of row ids it holds. The flush rows of a load show the order and sizes in which its data arrived.
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
 

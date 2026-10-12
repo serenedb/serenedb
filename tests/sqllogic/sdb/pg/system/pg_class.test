@@ -75,7 +75,7 @@ oid	relname	reltablespace	relkind
 16785	sdb_metrics	0	r
 16786	sdb_progress	0	r
 16787	sdb_merges	0	r
-16788	sdb_merge_history	0	r
+16788	sdb_compact_history	0	r
 <slt:ignore>	pg_roles	0	v
 <slt:ignore>	pg_shadow	0	v
 <slt:ignore>	pg_group	0	v

@@ -152,6 +152,10 @@ void SearchTable::OpenWriter(bool in_memory) {
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
+  writer_options.on_flushed =
+    [id = GetTableId()](std::span<const irs::SubReader* const> segments) {
+      MergeRegistry::Instance().RecordFlushes(id, segments);
+    };
   // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
   // references, so Make() must not unlink them; FinishRecovery cleans up once
   // replay is done. A new shard's directory is empty, so it keeps the default.

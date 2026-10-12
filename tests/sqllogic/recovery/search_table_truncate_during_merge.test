@@ -68,9 +68,9 @@ segments
 0
 
 query
-SELECT count(*) AS finished FROM sdb_merge_history
+SELECT count(*) AS finished FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tm')
-  AND origin = 'background' AND outcome IN ('cancelled', 'merged');
+  AND type = 'merge' AND origin = 'background' AND outcome IN ('cancelled', 'merged');
 ----
 finished
 1

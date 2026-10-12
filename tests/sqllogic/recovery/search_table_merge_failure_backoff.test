@@ -35,9 +35,9 @@ ALTER TABLE mf SET (compaction_interval = 100);
 
 query ok retry 40 backoff 250ms
 SELECT count(*) > 0 AS failed
-FROM sdb_merge_history
+FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mf')
-  AND origin = 'background' AND outcome = 'failed';
+  AND type = 'merge' AND origin = 'background' AND outcome = 'failed';
 ----
 failed
 t

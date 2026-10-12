@@ -187,6 +187,10 @@ InvertedIndexStorage::InvertedIndexStorage(
   writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = options.segment_memory_max;
   writer_options.segment_docs_max = options.segment_docs_max;
+  writer_options.on_flushed =
+    [id = GetId()](std::span<const irs::SubReader* const> segments) {
+      MergeRegistry::Instance().RecordFlushes(id, segments);
+    };
 #ifdef SDB_DEV
   // Dev safety net: a second IndexWriter opening the same index directory (a
   // lifecycle bug -- two storages/loops on one dir) fails to acquire the lock

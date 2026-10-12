@@ -218,7 +218,7 @@ const PgSystemSchema kPgCatalog{
   MakeTable<SystemTable<SdbMetrics>>(),
   MakeTable<SystemTable<SdbSettings>>(),
   MakeTable<SystemTable<SdbMerges>>(),
-  MakeTable<SystemTable<SdbMergeHistory>>(),
+  MakeTable<SystemTable<SdbCompactHistory>>(),
 };
 
 const PgSystemSchema kInformationSchema{

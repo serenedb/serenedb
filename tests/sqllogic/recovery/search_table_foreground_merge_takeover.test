@@ -54,9 +54,9 @@ SET sdb_faults = '-pause_merge_unit';
 wait
 
 query
-SELECT origin, outcome FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tv')
-ORDER BY merge_id;
+SELECT origin, outcome FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tv') AND type = 'merge'
+ORDER BY id;
 ----
 origin	outcome
 background	cancelled
@@ -128,9 +128,9 @@ SET sdb_faults = '-pause_merge_unit';
 wait
 
 query
-SELECT origin, outcome FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tc')
-ORDER BY merge_id;
+SELECT origin, outcome FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tc') AND type = 'merge'
+ORDER BY id;
 ----
 origin	outcome
 background	cancelled
@@ -206,9 +206,9 @@ segments
 4
 
 query
-SELECT origin, outcome FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tt')
-ORDER BY merge_id;
+SELECT origin, outcome FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tt') AND type = 'merge'
+ORDER BY id;
 ----
 origin	outcome
 vacuum	cancelled
@@ -259,9 +259,9 @@ segments
 2
 
 query
-SELECT origin, outcome FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk')
-ORDER BY merge_id;
+SELECT origin, outcome FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk') AND type = 'merge'
+ORDER BY id;
 ----
 origin	outcome
 vacuum	cancelled

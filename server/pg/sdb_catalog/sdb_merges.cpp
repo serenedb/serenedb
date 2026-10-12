@@ -137,19 +137,20 @@ MaterializedData SystemTableSnapshot<SdbMerges>::GetTableData() {
 }
 
 template<>
-MaterializedData SystemTableSnapshot<SdbMergeHistory>::GetTableData() {
+MaterializedData SystemTableSnapshot<SdbCompactHistory>::GetTableData() {
   const auto records = Visible(search::MergeRegistry::Instance().History(),
                                CurrentRelations(_context));
   std::vector<std::vector<Text>> inputs;
   inputs.reserve(records.size());
-  auto result = CreateColumns<SdbMergeHistory>(records.size());
+  auto result = CreateColumns<SdbCompactHistory>(records.size());
   for (size_t row = 0; row < records.size(); ++row) {
     const auto& record = records[row];
     const auto& stats = record.stats;
     const auto& names = inputs.emplace_back(Names(record));
-    const SdbMergeHistory value{
-      .merge_id = record.id,
+    const SdbCompactHistory value{
+      .id = record.id,
       .relation_id = RelationOid(record),
+      .type = search::SegmentEventName(record.event),
       .origin = search::MergeOriginName(record.origin),
       .outcome = search::MergeOutcomeName(record.outcome),
       .started = At(record.started_us),
@@ -160,7 +161,10 @@ MaterializedData SystemTableSnapshot<SdbMergeHistory>::GetTableData() {
       .input_bytes = static_cast<int64_t>(stats.input_bytes),
       .output = stats.output,
       .output_docs = static_cast<int64_t>(stats.output_docs),
+      .output_live_docs = static_cast<int64_t>(record.output_live_docs),
       .output_bytes = static_cast<int64_t>(stats.output_bytes),
+      .rowid_min = record.rowid_min.value_or(0),
+      .rowid_max = record.rowid_max.value_or(0),
       .total_ms = Millis(stats.profile.TotalNanos()),
       .prepare_ms = StepMillis(record, irs::MergeStep::Prepare),
       .norms_ms = StepMillis(record, irs::MergeStep::Norms),
@@ -172,11 +176,33 @@ MaterializedData SystemTableSnapshot<SdbMergeHistory>::GetTableData() {
       .error = record.error,
     };
     uint64_t nulls = 0;
+    if (record.event == search::SegmentEvent::Flush) {
+      nulls |= MaskFromNulls({
+        GetIndex(&SdbCompactHistory::origin),
+        GetIndex(&SdbCompactHistory::outcome),
+        GetIndex(&SdbCompactHistory::inputs),
+        GetIndex(&SdbCompactHistory::input_docs),
+        GetIndex(&SdbCompactHistory::input_live_docs),
+        GetIndex(&SdbCompactHistory::input_bytes),
+        GetIndex(&SdbCompactHistory::total_ms),
+        GetIndex(&SdbCompactHistory::prepare_ms),
+        GetIndex(&SdbCompactHistory::norms_ms),
+        GetIndex(&SdbCompactHistory::columns_ms),
+        GetIndex(&SdbCompactHistory::columns_commit_ms),
+        GetIndex(&SdbCompactHistory::ann_ms),
+        GetIndex(&SdbCompactHistory::postings_ms),
+        GetIndex(&SdbCompactHistory::commit_ms),
+      });
+    }
     if (stats.output.empty()) {
-      nulls |= MaskFromNulls({GetIndex(&SdbMergeHistory::output)});
+      nulls |= MaskFromNulls({GetIndex(&SdbCompactHistory::output)});
+    }
+    if (!record.rowid_min) {
+      nulls |= MaskFromNulls({GetIndex(&SdbCompactHistory::rowid_min),
+                              GetIndex(&SdbCompactHistory::rowid_max)});
     }
     if (record.error.empty()) {
-      nulls |= MaskFromNulls({GetIndex(&SdbMergeHistory::error)});
+      nulls |= MaskFromNulls({GetIndex(&SdbCompactHistory::error)});
     }
     WriteData(result, value, nulls, row, Roles());
   }

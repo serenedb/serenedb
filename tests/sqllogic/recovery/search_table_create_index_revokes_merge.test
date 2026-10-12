@@ -55,9 +55,9 @@ n
 200
 
 query
-SELECT count(*) AS merges FROM sdb_merge_history
+SELECT count(*) AS merges FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'ci')
-  AND outcome = 'cancelled';
+  AND type = 'merge' AND outcome = 'cancelled';
 ----
 merges
 0

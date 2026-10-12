@@ -86,9 +86,10 @@ n	s
 1000	500500
 
 query
-SELECT count(*) > 1 AS rounds FROM sdb_merge_history
+SELECT count(*) > 1 AS rounds FROM sdb_compact_history
 WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mrd')
-  AND origin = 'background' AND outcome IN ('merged', 'deferred');
+  AND type = 'merge' AND origin = 'background'
+  AND outcome IN ('merged', 'deferred');
 ----
 rounds
 t

@@ -46,12 +46,13 @@ struct SdbMerges {
   int64_t estimated_bytes;
 };
 
-struct SdbMergeHistory {
+struct SdbCompactHistory {
   static constexpr uint64_t kId = kMinSystem + 404;
-  static constexpr std::string_view kName = "sdb_merge_history";
+  static constexpr std::string_view kName = "sdb_compact_history";
 
-  uint64_t merge_id;
+  uint64_t id;
   Oid relation_id;
+  Text type;
   Text origin;
   Text outcome;
   Timestamptz started;
@@ -62,7 +63,10 @@ struct SdbMergeHistory {
   int64_t input_bytes;
   Text output;
   int64_t output_docs;
+  int64_t output_live_docs;
   int64_t output_bytes;
+  int64_t rowid_min;
+  int64_t rowid_max;
   double total_ms;
   double prepare_ms;
   double norms_ms;
@@ -79,6 +83,6 @@ template<>
 MaterializedData SystemTableSnapshot<SdbMerges>::GetTableData();
 
 template<>
-MaterializedData SystemTableSnapshot<SdbMergeHistory>::GetTableData();
+MaterializedData SystemTableSnapshot<SdbCompactHistory>::GetTableData();
 
 }  // namespace sdb::pg

@@ -115,9 +115,9 @@ statement ok
 SET sdb_faults = '-pause_merge_unit';
 
 query ok retry 40 backoff 250ms
-SELECT origin, outcome, merge_id = (SELECT merge_id FROM mq_ids) AS same_id
-FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+SELECT origin, outcome, id = (SELECT merge_id FROM mq_ids) AS same_id
+FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq') AND type = 'merge';
 ----
 origin	outcome	same_id
 background	merged	t
@@ -176,8 +176,8 @@ pending
 0
 
 query
-SELECT count(*) AS finished FROM sdb_merge_history
-WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq');
+SELECT count(*) AS finished FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mq') AND type = 'merge';
 ----
 finished
 1

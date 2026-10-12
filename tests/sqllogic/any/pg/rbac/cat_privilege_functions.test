@@ -1,0 +1,578 @@
+statement ok
+DROP TABLE IF EXISTS pfn_table;
+
+
+statement ok
+DROP TABLE IF EXISTS pfn_columns;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS pfn_sequence;
+
+
+statement ok
+DROP SCHEMA IF EXISTS pfn_schema;
+
+
+statement ok
+DROP FUNCTION IF EXISTS pfn_function(int);
+
+
+statement ok
+DROP TYPE IF EXISTS pfn_type;
+
+
+statement ok
+DROP TABLE IF EXISTS pfn_indexed;
+
+
+statement ok
+DROP TYPE IF EXISTS pfn_composite;
+
+
+statement ok
+DROP ROLE IF EXISTS pfn_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS pfn_group;
+
+
+statement ok
+DROP ROLE IF EXISTS pfn_owner;
+
+
+statement ok
+CREATE ROLE pfn_group;
+
+
+statement ok
+CREATE ROLE pfn_reader IN ROLE pfn_group;
+
+
+statement ok
+CREATE ROLE pfn_owner;
+
+
+statement ok
+CREATE TABLE pfn_table (a int, b int);
+
+
+statement ok
+CREATE TABLE pfn_columns (a int, b int);
+
+
+statement ok
+CREATE SEQUENCE pfn_sequence;
+
+
+statement ok
+CREATE SCHEMA pfn_schema;
+
+
+statement ok
+CREATE FUNCTION pfn_function(x int) RETURNS int LANGUAGE sql AS 'SELECT $1';
+
+
+statement ok
+CREATE TYPE pfn_type AS ENUM ('a');
+
+
+statement ok
+GRANT SELECT ON pfn_table TO pfn_group;
+
+
+statement ok
+GRANT UPDATE (b) ON pfn_columns TO pfn_reader;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE pfn_sequence TO pfn_reader;
+
+
+statement ok
+GRANT USAGE ON SCHEMA pfn_schema TO pfn_reader;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION pfn_function(int) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION pfn_function(int) TO pfn_group;
+
+
+statement ok
+REVOKE USAGE ON TYPE pfn_type FROM PUBLIC;
+
+
+statement ok
+CREATE TABLE pfn_indexed (a int PRIMARY KEY, b int);
+
+
+statement ok
+CREATE INDEX pfn_indexed_b ON pfn_indexed (b);
+
+
+statement ok
+ALTER TABLE pfn_indexed OWNER TO pfn_owner;
+
+
+statement ok
+GRANT SELECT ON pfn_indexed TO pfn_reader;
+
+
+statement ok
+CREATE TYPE pfn_composite AS (street text, zip int);
+
+
+statement ok
+SET ROLE pfn_reader;
+
+
+query
+SELECT has_table_privilege('pfn_table', 'SELECT') AS via_group,
+       has_table_privilege('pfn_columns', 'SELECT') AS table_select,
+       has_any_column_privilege('pfn_columns', 'UPDATE') AS any_column,
+       has_column_privilege('pfn_columns', 'b', 'UPDATE') AS column_b,
+       has_column_privilege('pfn_columns', 2::smallint, 'UPDATE') AS column_attnum,
+       has_sequence_privilege('pfn_sequence', 'USAGE') AS sequence_usage,
+       has_schema_privilege('pfn_schema', 'USAGE') AS schema_usage,
+       has_function_privilege('pfn_function(int)', 'EXECUTE') AS function_execute,
+       has_type_privilege('pfn_type', 'USAGE') AS type_usage,
+       has_database_privilege(current_database(), 'CREATE') AS database_create,
+       has_tablespace_privilege('pg_default', 'CREATE') AS tablespace_create,
+       pg_has_role('pfn_group', 'MEMBER') AS member;
+----
+via_group	table_select	any_column	column_b	column_attnum	sequence_usage	schema_usage	function_execute	type_usage	database_create	tablespace_create	member
+t	f	t	t	t	t	t	t	f	f	f	t
+
+
+query
+SELECT has_table_privilege('pfn_table'::regclass, 'SELECT') AS table_oid,
+       has_any_column_privilege('pfn_columns'::regclass, 'UPDATE') AS any_column_oid,
+       has_column_privilege('pfn_columns'::regclass, 'b', 'UPDATE') AS column_oid,
+       has_sequence_privilege('pfn_sequence'::regclass, 'USAGE') AS sequence_oid,
+       has_schema_privilege('pfn_schema'::regnamespace, 'USAGE') AS schema_oid,
+       has_function_privilege('pfn_function(int)'::regprocedure, 'EXECUTE') AS function_oid,
+       has_type_privilege('pfn_type'::regtype, 'USAGE') AS type_oid,
+       has_database_privilege((SELECT oid FROM pg_database WHERE datname = current_database()), 'CONNECT') AS database_oid,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname = 'pfn_group'), 'MEMBER') AS member_oid;
+----
+table_oid	any_column_oid	column_oid	sequence_oid	schema_oid	function_oid	type_oid	database_oid	member_oid
+t	t	t	t	t	t	f	t	t
+
+
+query
+SELECT pg_has_role('pfn_group', 'USAGE') AS usage,
+       pg_has_role('pfn_group', 'MEMBER WITH ADMIN OPTION') AS admin,
+       pg_has_role('pfn_reader', 'pfn_group', 'SET') AS set_option;
+----
+usage	admin	set_option
+t	f	t
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT has_any_column_privilege('pfn_reader', 'pfn_columns', 'UPDATE') AS any_update,
+       has_any_column_privilege('pfn_reader', 'pfn_columns', 'SELECT') AS any_select,
+       has_any_column_privilege('pfn_reader', 'pfn_columns', 'SELECT, UPDATE') AS any_either,
+       has_column_privilege('pfn_reader', 'pfn_columns', 'b', 'SELECT, UPDATE') AS column_either,
+       has_column_privilege('pfn_reader', 'pfn_columns', 'a', 'UPDATE') AS column_a,
+       has_column_privilege('pfn_reader', 'pfn_columns', 'b', 'UPDATE WITH GRANT OPTION') AS column_grant_option;
+----
+any_update	any_select	any_either	column_either	column_a	column_grant_option
+t	f	t	t	f	f
+
+
+query
+SELECT has_table_privilege('pfn_reader', 'pfn_table', 'SELECT, INSERT') AS either,
+       has_table_privilege('pfn_reader', 'pfn_table', ' select ,update ') AS spaced,
+       has_table_privilege('pfn_reader', 'pfn_table', 'SELECT WITH GRANT OPTION') AS grant_option,
+       has_table_privilege('pfn_table', 'select with grant option') AS superuser_grant_option,
+       has_table_privilege('public', 'pfn_table', 'SELECT') AS public_role;
+----
+either	spaced	grant_option	superuser_grant_option	public_role
+t	t	f	t	f
+
+
+query
+SELECT has_any_column_privilege('pfn_reader', 'pg_class'::regclass, 'SELECT') AS class_any_column,
+       has_column_privilege('pfn_reader', 'pg_class'::regclass, 'relname', 'SELECT') AS class_column,
+       has_column_privilege('pg_class'::regclass, 1::smallint, 'SELECT') AS class_attnum,
+       has_table_privilege('pfn_reader', 'pg_class', 'UPDATE') AS class_update,
+       has_table_privilege('pfn_reader', 'pg_roles'::regclass, 'SELECT') AS roles_view,
+       has_table_privilege('pfn_reader', 'information_schema.tables'::regclass, 'SELECT') AS tables_view,
+       has_table_privilege('pfn_reader', 'pg_authid'::regclass, 'SELECT') AS authid;
+----
+class_any_column	class_column	class_attnum	class_update	roles_view	tables_view	authid
+t	t	t	f	t	t	f
+
+
+query
+SELECT has_table_privilege(current_user, 999999::oid, 'SELECT') AS table_superuser,
+       has_table_privilege('pfn_reader', 999999::oid, 'SELECT') AS table_reader,
+       has_sequence_privilege(current_user, 999999::oid, 'USAGE') AS sequence_superuser,
+       has_any_column_privilege(current_user, 999999::oid, 'SELECT') AS any_column_superuser,
+       has_column_privilege(current_user, 999999::oid, 1::smallint, 'SELECT') AS column_superuser,
+       has_column_privilege(current_user, 'pfn_columns', 99::smallint, 'SELECT') AS attnum_superuser,
+       has_column_privilege('pfn_reader', 'pfn_columns', 99::smallint, 'SELECT') AS attnum_reader;
+----
+table_superuser	table_reader	sequence_superuser	any_column_superuser	column_superuser	attnum_superuser	attnum_reader
+NULL	NULL	NULL	NULL	NULL	NULL	NULL
+
+
+query
+SELECT has_schema_privilege(current_user, 999999::oid, 'USAGE') AS schema_superuser,
+       has_schema_privilege('pfn_reader', 999999::oid, 'USAGE') AS schema_reader,
+       has_database_privilege(current_user, 999999::oid, 'CONNECT') AS database_superuser,
+       has_database_privilege('pfn_reader', 999999::oid, 'CONNECT') AS database_reader,
+       has_function_privilege(current_user, 999999::oid, 'EXECUTE') AS function_superuser,
+       has_function_privilege('pfn_reader', 999999::oid, 'EXECUTE') AS function_reader,
+       has_type_privilege(current_user, 999999::oid, 'USAGE') AS type_superuser,
+       has_type_privilege('pfn_reader', 999999::oid, 'USAGE') AS type_reader,
+       has_tablespace_privilege(current_user, 999999::oid, 'CREATE') AS tablespace_superuser,
+       has_tablespace_privilege('pfn_reader', 999999::oid, 'CREATE') AS tablespace_reader,
+       pg_has_role('pfn_reader', 999999::oid, 'MEMBER') AS role_reader;
+----
+schema_superuser	schema_reader	database_superuser	database_reader	function_superuser	function_reader	type_superuser	type_reader	tablespace_superuser	tablespace_reader	role_reader
+t	NULL	t	NULL	t	NULL	t	NULL	t	NULL	f
+
+
+query
+SELECT has_type_privilege('pfn_reader', 'int4'::regtype, 'USAGE') AS builtin_type,
+       has_type_privilege('pfn_reader', 'int4', 'USAGE WITH GRANT OPTION') AS builtin_type_grant_option,
+       has_function_privilege('pfn_reader', 'version()'::regprocedure, 'EXECUTE') AS builtin_function,
+       has_function_privilege('pfn_reader', 'version()', 'EXECUTE WITH GRANT OPTION') AS builtin_function_grant_option,
+       has_schema_privilege('pfn_reader', 'pg_catalog'::regnamespace, 'USAGE') AS catalog_usage,
+       has_schema_privilege('pfn_reader', 'pg_catalog', 'USAGE WITH GRANT OPTION') AS catalog_grant_option,
+       has_schema_privilege('pfn_reader', 'pg_catalog', 'CREATE') AS catalog_create,
+       has_schema_privilege('pfn_reader', 'information_schema', 'USAGE') AS information_schema_usage,
+       has_schema_privilege('pfn_reader', 'public', 'CREATE') AS public_create;
+----
+builtin_type	builtin_type_grant_option	builtin_function	builtin_function_grant_option	catalog_usage	catalog_grant_option	catalog_create	information_schema_usage	public_create
+t	f	t	f	t	f	f	t	f
+
+
+query
+SELECT has_database_privilege('pfn_reader', current_database(), 'CONNECT, CREATE') AS either,
+       has_database_privilege('pfn_reader', current_database(), 'TEMP') AS temp,
+       has_database_privilege('pfn_reader', current_database(), 'TEMPORARY WITH GRANT OPTION') AS temp_grant_option,
+       has_tablespace_privilege('pfn_reader', 'pg_default', 'CREATE') AS tablespace_reader,
+       has_tablespace_privilege('pg_default', 'CREATE') AS tablespace_superuser;
+----
+either	temp	temp_grant_option	tablespace_reader	tablespace_superuser
+t	t	f	f	t
+
+
+query
+SELECT has_sequence_privilege('pfn_reader', 'pfn_sequence', 'SELECT') AS sequence_select,
+       has_sequence_privilege('pfn_reader', 'pfn_sequence', 'UPDATE') AS sequence_update,
+       has_sequence_privilege('pfn_reader', 'pfn_sequence', 'USAGE WITH GRANT OPTION') AS sequence_grant_option;
+----
+sequence_select	sequence_update	sequence_grant_option
+f	f	f
+
+
+query
+SELECT has_table_privilege(NULL::name, 'pfn_table', 'SELECT') AS null_role,
+       has_table_privilege('pfn_reader', NULL::text, 'SELECT') AS null_table,
+       has_table_privilege('pfn_reader', 'pfn_table', NULL) AS null_privilege,
+       has_table_privilege(NULL::oid, 'SELECT') AS null_oid;
+----
+null_role	null_table	null_privilege	null_oid
+NULL	NULL	NULL	NULL
+
+
+query
+SELECT c.relname,
+       has_table_privilege(c.oid, 'SELECT') AS superuser,
+       has_table_privilege('pfn_owner', c.oid, 'SELECT') AS owner,
+       has_table_privilege('pfn_reader', c.oid, 'SELECT') AS reader,
+       has_any_column_privilege('pfn_reader', c.oid, 'SELECT') AS reader_any_column,
+       has_column_privilege('pfn_owner', c.oid, 1::smallint, 'SELECT') AS owner_column,
+       has_column_privilege('pfn_reader', c.oid, 1::smallint, 'SELECT') AS reader_column,
+       has_column_privilege(c.oid, 99::smallint, 'SELECT') AS missing_column
+FROM pg_class c
+WHERE c.relname IN ('pfn_indexed', 'pfn_indexed_pkey', 'pfn_indexed_b', 'pfn_composite')
+ORDER BY c.relname;
+----
+relname	superuser	owner	reader	reader_any_column	owner_column	reader_column	missing_column
+pfn_composite	t	f	f	f	f	f	NULL
+pfn_indexed	t	t	t	t	t	t	NULL
+pfn_indexed_b	t	t	f	f	t	f	NULL
+pfn_indexed_pkey	t	t	f	f	t	f	NULL
+
+
+query
+SELECT has_table_privilege('pfn_reader', 'pfn_indexed_b', 'SELECT') AS index_by_name,
+       has_column_privilege('pfn_indexed_b', 'b', 'SELECT') AS index_column,
+       has_column_privilege('pfn_indexed_pkey', 'a', 'SELECT') AS key_column,
+       has_column_privilege('pfn_composite', 'zip', 'SELECT') AS composite_column;
+----
+index_by_name	index_column	key_column	composite_column
+f	t	t	t
+
+
+statement ok
+PREPARE pfn_prepared AS SELECT has_table_privilege('pfn_reader', 'pfn_columns', 'SELECT') AS held;
+
+
+query
+EXECUTE pfn_prepared;
+----
+held
+f
+
+
+statement ok
+GRANT SELECT ON pfn_columns TO pfn_reader;
+
+
+query
+EXECUTE pfn_prepared;
+----
+held
+t
+
+
+statement ok
+REVOKE SELECT ON pfn_columns FROM pfn_reader;
+
+
+query
+EXECUTE pfn_prepared;
+----
+held
+f
+
+
+statement ok
+DEALLOCATE pfn_prepared;
+
+
+statement error
+SELECT has_sequence_privilege('pfn_nosuch', 'USAGE');
+----
+db error: ERROR: relation "pfn_nosuch" does not exist
+
+
+statement error
+SELECT has_sequence_privilege('pfn_table', 'USAGE');
+----
+db error: ERROR: "pfn_table" is not a sequence
+
+
+statement error
+SELECT has_sequence_privilege('pfn_table'::regclass, 'USAGE');
+----
+db error: ERROR: "pfn_table" is not a sequence
+
+
+statement error
+SELECT has_function_privilege('pfn_nosuch()', 'EXECUTE');
+----
+db error: ERROR: function "pfn_nosuch()" does not exist
+
+
+statement error
+SELECT has_function_privilege('pfn_reader', 'pfn_function', 'EXECUTE');
+----
+db error: ERROR: expected a left parenthesis
+
+
+statement error
+SELECT has_type_privilege('pfn_nosuch', 'USAGE');
+----
+db error: ERROR: type "pfn_nosuch" does not exist
+
+
+statement error
+SELECT has_schema_privilege('pfn_nosuch', 'USAGE');
+----
+db error: ERROR: schema "pfn_nosuch" does not exist
+
+
+statement error
+SELECT has_database_privilege('pfn_nosuch', 'CONNECT');
+----
+db error: ERROR: database "pfn_nosuch" does not exist
+
+
+statement error
+SELECT has_table_privilege('pfn_nosuch', 'pfn_table', 'SELECT');
+----
+db error: ERROR: role "pfn_nosuch" does not exist
+
+
+statement error
+SELECT pg_has_role('public', 'pfn_group', 'MEMBER');
+----
+db error: ERROR: role "public" does not exist
+
+
+statement error
+SELECT pg_has_role('pfn_reader', 'pfn_nosuch', 'MEMBER');
+----
+db error: ERROR: role "pfn_nosuch" does not exist
+
+
+statement error
+SELECT has_column_privilege('pfn_columns', 'pfn_nosuch', 'SELECT');
+----
+db error: ERROR: column "pfn_nosuch" of relation "pfn_columns" does not exist
+
+
+statement error
+SELECT has_column_privilege('pfn_columns'::regclass, 'pfn_nosuch', 'SELECT');
+----
+db error: ERROR: column "pfn_nosuch" of relation "pfn_columns" does not exist
+
+
+statement error
+SELECT has_table_privilege('pfn_table', 'ALL');
+----
+db error: ERROR: unrecognized privilege type: "ALL"
+
+
+statement error
+SELECT has_table_privilege('pfn_table', 'SELECT, BOGUS');
+----
+db error: ERROR: unrecognized privilege type: "BOGUS"
+
+
+statement error
+SELECT has_table_privilege('pfn_table', '');
+----
+db error: ERROR: unrecognized privilege type: ""
+
+
+statement error
+SELECT has_table_privilege('pfn_table', 'SELECT,');
+----
+db error: ERROR: unrecognized privilege type: ""
+
+
+statement error
+SELECT pg_has_role('pfn_group', '');
+----
+db error: ERROR: unrecognized privilege type: ""
+
+
+statement error
+SELECT has_table_privilege('pfn_table', 'select  with grant option');
+----
+db error: ERROR: unrecognized privilege type: "select  with grant option"
+
+
+statement error
+SELECT has_column_privilege('pfn_indexed_b', 'a', 'SELECT');
+----
+db error: ERROR: column "a" of relation "pfn_indexed_b" does not exist
+
+
+statement error
+SELECT has_sequence_privilege('pfn_indexed_b', 'USAGE');
+----
+db error: ERROR: "pfn_indexed_b" is not a sequence
+
+
+statement error
+SELECT has_table_privilege('pfn_reader', 'pfn_table', 'USAGE');
+----
+db error: ERROR: unrecognized privilege type: "USAGE"
+
+
+statement error
+SELECT has_column_privilege('pfn_columns', 'a', 'DELETE');
+----
+db error: ERROR: unrecognized privilege type: "DELETE"
+
+
+statement error
+SELECT has_any_column_privilege('pfn_columns', 'DELETE');
+----
+db error: ERROR: unrecognized privilege type: "DELETE"
+
+
+statement error
+SELECT has_sequence_privilege('pfn_reader', 'pfn_sequence', 'INSERT');
+----
+db error: ERROR: unrecognized privilege type: "INSERT"
+
+
+statement error
+SELECT has_schema_privilege('pfn_reader', 'pfn_schema', 'SELECT');
+----
+db error: ERROR: unrecognized privilege type: "SELECT"
+
+
+statement error
+SELECT has_function_privilege('pfn_reader', 'pfn_function(int)', 'USAGE');
+----
+db error: ERROR: unrecognized privilege type: "USAGE"
+
+
+statement error
+SELECT has_type_privilege('pfn_reader', 'pfn_type', 'EXECUTE');
+----
+db error: ERROR: unrecognized privilege type: "EXECUTE"
+
+
+statement error
+SELECT has_tablespace_privilege('pg_default', 'CONNECT');
+----
+db error: ERROR: unrecognized privilege type: "CONNECT"
+
+
+statement error
+SELECT pg_has_role('pfn_reader', 'pfn_group', 'SELECT');
+----
+db error: ERROR: unrecognized privilege type: "SELECT"
+
+
+statement ok
+DROP TABLE pfn_table;
+
+
+statement ok
+DROP TABLE pfn_columns;
+
+
+statement ok
+DROP SEQUENCE pfn_sequence;
+
+
+statement ok
+DROP SCHEMA pfn_schema;
+
+
+statement ok
+DROP FUNCTION pfn_function(int);
+
+
+statement ok
+DROP TYPE pfn_type;
+
+
+statement ok
+DROP TABLE pfn_indexed;
+
+
+statement ok
+DROP TYPE pfn_composite;
+
+
+statement ok
+DROP ROLE pfn_reader;
+
+
+statement ok
+DROP ROLE pfn_group;
+
+
+statement ok
+DROP ROLE pfn_owner;

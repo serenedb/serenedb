@@ -1,0 +1,73 @@
+statement ok
+DROP TABLE IF EXISTS rtn_table;
+
+
+statement ok
+DROP TYPE IF EXISTS rtn_type;
+
+
+statement ok
+DROP TYPE IF EXISTS rtn_composite;
+
+
+statement ok
+CREATE TABLE rtn_table (a int);
+
+
+statement error (?i)(type|table) (with name )?"rtn_table" already exists
+CREATE TYPE rtn_table AS ENUM ('x');
+
+
+statement ok
+CREATE TYPE rtn_type AS ENUM ('y');
+
+
+statement error (?i)type (with name )?"rtn_type" already exists
+CREATE TABLE rtn_type (b int);
+
+
+statement error (?i)type (with name )?"rtn_type" already exists
+CREATE VIEW rtn_type AS SELECT 1 AS c;
+
+
+statement error (?i)(type "rtn_type"|another entry with this name) already exists
+ALTER TABLE rtn_table RENAME TO rtn_type;
+
+
+statement ok
+CREATE TYPE rtn_composite AS (a int);
+
+
+statement error (?i)(relation|type) (with name )?"rtn_composite" already exists
+CREATE TABLE rtn_composite (a int);
+
+
+statement ok
+CREATE INDEX rtn_type ON rtn_table (a);
+
+
+query
+SELECT typname, typtype FROM pg_type
+WHERE typname IN ('rtn_table', 'rtn_type', 'rtn_composite')
+ORDER BY typname;
+----
+typname	typtype
+rtn_composite	c
+rtn_table	c
+rtn_type	e
+
+
+statement ok
+DROP INDEX rtn_type;
+
+
+statement ok
+DROP TABLE rtn_table;
+
+
+statement ok
+DROP TYPE rtn_type;
+
+
+statement ok
+DROP TYPE rtn_composite;

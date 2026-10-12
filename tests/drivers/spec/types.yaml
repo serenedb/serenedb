@@ -468,46 +468,6 @@
   skip:
     all: ["TODO: triage Oidvector"]
 
-- oid: 71
-  name: pg_type
-  pg_typname: pg_type
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgType"]
-
-- oid: 75
-  name: pg_attribute
-  pg_typname: pg_attribute
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgAttribute"]
-
-- oid: 81
-  name: pg_proc
-  pg_typname: pg_proc
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgProc"]
-
-- oid: 83
-  name: pg_class
-  pg_typname: pg_class
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgClass"]
-
 - oid: 194
   name: pg_node_tree
   pg_typname: pg_node_tree
@@ -528,16 +488,6 @@
   skip:
     all: ["TODO: triage JsonArray"]
 
-- oid: 210
-  name: pg_type_array
-  pg_typname: pg_type_array
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgTypeArray"]
-
 - oid: 269
   name: table_am_handler
   pg_typname: table_am_handler
@@ -548,16 +498,6 @@
   skip:
     all: ["TODO: triage TableAmHandler"]
 
-- oid: 270
-  name: pg_attribute_array
-  pg_typname: pg_attribute_array
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgAttributeArray"]
-
 - oid: 271
   name: xid8_array
   pg_typname: xid8_array
@@ -567,26 +507,6 @@
   samples: []
   skip:
     all: ["TODO: triage Xid8Array"]
-
-- oid: 272
-  name: pg_proc_array
-  pg_typname: pg_proc_array
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgProcArray"]
-
-- oid: 273
-  name: pg_class_array
-  pg_typname: pg_class_array
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgClassArray"]
 
 - oid: 705
   name: unknown
@@ -1312,102 +1232,84 @@
 
 # --- auto-stubbed by oids_from_pg_types.py ---
 
-- oid: 1248
-  name: pg_database_rowtype
-  pg_typname: pg_database_rowtype
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgDatabaseRowtype"]
+# --- auto-stubbed by oids_from_pg_types.py ---
 
-- oid: 2842
-  name: pg_authid_rowtype
-  pg_typname: pg_authid_rowtype
+- oid: 32
+  name: pg_ddl_command
+  pg_typname: pg_ddl_command
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgAuthidRowtype"]
+    all: ["TODO: triage PgDdlCommand"]
 
-- oid: 2843
-  name: pg_auth_members_rowtype
-  pg_typname: pg_auth_members_rowtype
+- oid: 325
+  name: index_am_handler
+  pg_typname: index_am_handler
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgAuthMembersRowtype"]
+    all: ["TODO: triage IndexAmHandler"]
 
-- oid: 4066
-  name: pg_shseclabel_rowtype
-  pg_typname: pg_shseclabel_rowtype
+- oid: 2279
+  name: trigger
+  pg_typname: trigger
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgShseclabelRowtype"]
+    all: ["TODO: triage Trigger"]
 
-- oid: 6101
-  name: pg_subscription_rowtype
-  pg_typname: pg_subscription_rowtype
+- oid: 2280
+  name: language_handler
+  pg_typname: language_handler
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgSubscriptionRowtype"]
+    all: ["TODO: triage LanguageHandler"]
 
-- oid: 10052
-  name: pg_database_rowtype_array
-  pg_typname: pg_database_rowtype_array
+- oid: 2283
+  name: anyelement
+  pg_typname: anyelement
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgDatabaseRowtypeArray"]
+    all: ["TODO: triage Anyelement"]
 
-- oid: 10057
-  name: pg_authid_rowtype_array
-  pg_typname: pg_authid_rowtype_array
+- oid: 3115
+  name: fdw_handler
+  pg_typname: fdw_handler
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgAuthidRowtypeArray"]
+    all: ["TODO: triage FdwHandler"]
 
-- oid: 10058
-  name: pg_auth_members_rowtype_array
-  pg_typname: pg_auth_members_rowtype_array
+- oid: 3310
+  name: tsm_handler
+  pg_typname: tsm_handler
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgAuthMembersRowtypeArray"]
+    all: ["TODO: triage TsmHandler"]
 
-- oid: 10093
-  name: pg_shseclabel_rowtype_array
-  pg_typname: pg_shseclabel_rowtype_array
+- oid: 3838
+  name: event_trigger
+  pg_typname: event_trigger
   binary: false
   text: false
   array: false
   samples: []
   skip:
-    all: ["TODO: triage PgShseclabelRowtypeArray"]
-
-- oid: 10112
-  name: pg_subscription_rowtype_array
-  pg_typname: pg_subscription_rowtype_array
-  binary: false
-  text: false
-  array: false
-  samples: []
-  skip:
-    all: ["TODO: triage PgSubscriptionRowtypeArray"]
+    all: ["TODO: triage EventTrigger"]

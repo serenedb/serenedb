@@ -694,7 +694,6 @@ TEST(GatherArmsTest, FewerRunsCountsEveryRun) {
 }
 
 TEST_F(ColumnReaderTest, ScatterWinsByStringCodec) {
-  using irs::column_internal::BandsFor;
   using irs::column_internal::ScatterWins;
   const duckdb::LogicalType varchar{duckdb::LogicalType::VARCHAR};
   const auto& config = duckdb::DBConfig::GetConfig(Db());
@@ -711,12 +710,9 @@ TEST_F(ColumnReaderTest, ScatterWinsByStringCodec) {
   }
   constexpr auto kFsst = duckdb::CompressionType::COMPRESSION_FSST;
   constexpr auto kDictionary = duckdb::CompressionType::COMPRESSION_DICTIONARY;
-  EXPECT_TRUE(ScatterWins(BandsFor(kFsst, varchar), block(kFsst, 1000), varchar,
-                          sel, 100, 199));
-  EXPECT_FALSE(ScatterWins(BandsFor(kFsst, varchar), block(kFsst, 100000),
-                           varchar, sel, 100, 199));
-  EXPECT_FALSE(ScatterWins(BandsFor(kDictionary, varchar),
-                           block(kDictionary, 1000), varchar, sel, 100, 199));
+  EXPECT_TRUE(ScatterWins(block(kFsst, 1000), varchar, sel, 100, 199));
+  EXPECT_FALSE(ScatterWins(block(kFsst, 100000), varchar, sel, 100, 199));
+  EXPECT_FALSE(ScatterWins(block(kDictionary, 1000), varchar, sel, 100, 199));
 }
 
 // Point fetches (FetchRow) of scattered single rows on BIGINT and VARCHAR

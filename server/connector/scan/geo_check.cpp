@@ -21,6 +21,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -61,11 +62,8 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     [&](const auto& parser, const auto& acceptor) {
       duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
         args.data[0], result, args.size(), [&](duckdb::string_t value) {
-          return irs::MatchShape(
-            parser,
-            {reinterpret_cast<const irs::byte_type*>(value.GetData()),
-             value.GetSize()},
-            local.shape, acceptor);
+          return irs::MatchShape(parser, irs::AsBytesView(value), local.shape,
+                                 acceptor);
         });
     },
     local.parser, local.data.acceptor);

@@ -181,17 +181,10 @@ bool PadsWithNulls(const duckdb::LogicalOperator& op, size_t child) {
     default:
       return false;
   }
-  switch (op.Cast<duckdb::LogicalJoin>().join_type) {
-    case duckdb::JoinType::OUTER:
-      return true;
-    case duckdb::JoinType::LEFT:
-    case duckdb::JoinType::SINGLE:
-      return child == 1;
-    case duckdb::JoinType::RIGHT:
-      return child == 0;
-    default:
-      return false;
-  }
+  const auto join_type = op.Cast<duckdb::LogicalJoin>().join_type;
+  return child == 0 ? duckdb::IsRightOuterJoin(join_type)
+                    : duckdb::IsLeftOuterJoin(join_type) ||
+                        join_type == duckdb::JoinType::SINGLE;
 }
 
 bool BelowNullPadding(const duckdb::LogicalOperator& op,
@@ -395,7 +388,7 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
       return std::nullopt;
     }
     auto column_info = make_info(term, info, std::move(type), col_id);
-    if (bind_data.relation.IsSearchTable() || info->IsStored()) {
+    if (bind_data.relation.Stores(col_id)) {
       column_info.text = col_id;
     }
     return column_info;
@@ -440,10 +433,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
     if (SingleReferencedTableIndex(expr) != table_index) {
       return std::nullopt;
     }
-    auto normalized = connector::NormalizeBoundExpression(
-      expr, bind_data.RelationId(), projected_ids, context);
-    const auto keys = config.FindExpressionKeys(
-      connector::SerializeBoundExpression(*normalized));
+    const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
+      expr, bind_data.RelationId(), projected_ids, context));
     return expression_field(keys.term, keys.stored
                                          ? keys.stored->field_id
                                          : irs::field_limits::invalid());
@@ -508,12 +499,10 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
   if (SingleReferencedTableIndex(col_arg) != get.table_index) {
     return irs::field_limits::invalid();
   }
-  auto normalized = connector::NormalizeBoundExpression(
-    col_arg, bind_data.RelationId(), BuildProjectedColumnIds(get, bind_data),
-    client_context);
-  auto serialized = connector::SerializeBoundExpression(*normalized);
   return bind_data.relation.inverted_config->FindFieldIdByExpression(
-    serialized);
+    connector::NormalizedExpression(col_arg, bind_data.RelationId(),
+                                    BuildProjectedColumnIds(get, bind_data),
+                                    client_context));
 }
 
 duckdb::idx_t EnsureVirtualGetColumn(connector::ScanBindData& bind_data,
@@ -970,11 +959,6 @@ bool DependsOnSession(const duckdb::LogicalType& type) {
   });
 }
 
-bool Holds(const duckdb::LogicalType& type, duckdb::LogicalTypeId id) {
-  return duckdb::TypeVisitor::Contains(
-    type, [&](const duckdb::LogicalType& t) { return t.id() == id; });
-}
-
 bool ComputedFromRowAlone(const duckdb::Expression& expr) {
   if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
     const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
@@ -985,9 +969,11 @@ bool ComputedFromRowAlone(const duckdb::Expression& expr) {
       return false;
     }
     if (duckdb::BoundCastExpression::IsCast(func) &&
-        Holds(duckdb::BoundCastExpression::SourceType(func),
-              duckdb::LogicalTypeId::BLOB) &&
-        Holds(func.GetReturnType(), duckdb::LogicalTypeId::VARCHAR)) {
+        duckdb::TypeVisitor::Contains(
+          duckdb::BoundCastExpression::SourceType(func),
+          duckdb::LogicalTypeId::BLOB) &&
+        duckdb::TypeVisitor::Contains(func.GetReturnType(),
+                                      duckdb::LogicalTypeId::VARCHAR)) {
       return false;
     }
   }
@@ -1025,11 +1011,10 @@ StoredExpression PushdownStoredExpression(
   }
   auto& bind_data = *found->bind_data;
   auto& get = *found->get;
-  const auto normalized = connector::NormalizeBoundExpression(
-    *expr, bind_data.RelationId(), BuildProjectedColumnIds(get, bind_data),
-    context);
   const auto keys = bind_data.relation.inverted_config->FindExpressionKeys(
-    connector::SerializeBoundExpression(*normalized));
+    connector::NormalizedExpression(*expr, bind_data.RelationId(),
+                                    BuildProjectedColumnIds(get, bind_data),
+                                    context));
   if (!keys.stored || keys.stored->type != expr->GetReturnType()) {
     return keys.term ? StoredExpression::Indexed : StoredExpression::None;
   }
@@ -1054,19 +1039,18 @@ struct RewriteScope {
 
 void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
                        duckdb::LogicalOperator& root,
-                       duckdb::ClientContext& context, RewriteScope scope,
-                       bool keep_expression = false) {
+                       duckdb::ClientContext& context, RewriteScope scope) {
   if (!expr) {
     return;
   }
-  bool keep_children = false;
-  if (scope.stored_expressions && !keep_expression) {
+  if (scope.stored_expressions) {
     const auto stored =
       PushdownStoredExpression(expr, root, *scope.op, context);
     if (stored == StoredExpression::Read) {
       return;
     }
-    keep_children = scope.filter && stored == StoredExpression::Indexed;
+    scope.stored_expressions =
+      !scope.filter || stored != StoredExpression::Indexed;
   }
   const auto cls = expr->GetExpressionClass();
   if (cls == duckdb::ExpressionClass::BOUND_FUNCTION) {
@@ -1094,7 +1078,9 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
         return;
       }
     }
-    keep_children |= TakesIndexedExpression(name);
+    if (TakesIndexedExpression(name)) {
+      scope.stored_expressions = false;
+    }
   } else if (cls == duckdb::ExpressionClass::BOUND_WINDOW) {
     const auto& window = expr->Cast<duckdb::BoundWindowExpression>();
     const auto& aggregate = window.AggregateFunction();
@@ -1114,8 +1100,7 @@ void RewriteCallInExpr(duckdb::unique_ptr<duckdb::Expression>& expr,
   }
   duckdb::ExpressionIterator::EnumerateChildren(
     *expr, [&](duckdb::unique_ptr<duckdb::Expression>& child) {
-      RewriteCallInExpr(child, root, context, scope,
-                        keep_expression || keep_children);
+      RewriteCallInExpr(child, root, context, scope);
     });
 }
 

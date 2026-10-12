@@ -72,7 +72,7 @@ std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
   readers.reserve(index.size());
   for (const auto& segment : index) {
     if (const auto* reader = segment.field(field)) {
-      readers.push_back(reader);
+      readers.emplace_back(reader);
     }
   }
   if (readers.size() > kSampled) {
@@ -138,7 +138,7 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
   uint32_t slot = 0;
   const auto add = [&](bytes_view term) {
     terms.emplace_back(term);
-    term_slots.push_back(slot);
+    term_slots.emplace_back(slot);
   };
   for (const auto& info : phrase) {
     slots[slot].offs_min = info.offs_min;
@@ -208,7 +208,7 @@ void CompiledPhrase::AddPattern(uint32_t slot,
     },
     part);
   if (target.pattern) {
-    pattern_slots.push_back(slot);
+    pattern_slots.emplace_back(slot);
   }
 }
 
@@ -253,7 +253,7 @@ void CompiledPhrase::Index(std::span<const uint32_t> term_slots) {
     for (; i != pending.size() && pending[i].first == term; ++i) {
       const auto slot = pending[i].second;
       if (entry.size == 0 || slot_ids.back() != slot) {
-        slot_ids.push_back(slot);
+        slot_ids.emplace_back(slot);
         ++entry.size;
       }
     }
@@ -316,7 +316,7 @@ void CompiledPhrase::LayoutAutomaton() {
         for (auto j = prev + slot.offs_min - 1; j + 2 <= bit; ++j) {
           range |= uint64_t{1} << j;
         }
-        layout.extras.push_back({.range = range, .bit = uint64_t{1} << bit});
+        layout.extras.emplace_back(range, uint64_t{1} << bit);
       }
     }
     slot.bit = uint64_t{1} << bit;
@@ -390,7 +390,7 @@ void PhraseCheck::AnchorMatch::Carry(uint64_t span) {
       std::memcpy(data, term.GetData(), size);
       term = {reinterpret_cast<const char*>(data), size};
     }
-    _next.push_back({.term = term, .pos = PosAt(at)});
+    _next.emplace_back(term, PosAt(at));
   }
   std::swap(_carry, _next);
   _carry_base = from;
@@ -479,12 +479,12 @@ std::span<const duckdb::string_t> RowValues::Values(duckdb::idx_t row) {
   _values.clear();
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
-  for (auto i = begin; i != end; ++i) {
-    const auto child = _children.sel->get_index(i);
-    if (_children.validity.RowIsValid(child)) {
-      _values.push_back(data[child]);
-    }
-  }
+  analysis::ForEachValidRow(_children, begin,
+                            static_cast<uint32_t>(end - begin),
+                            [&](uint32_t, uint32_t child) {
+                              _values.emplace_back(data[child]);
+                              return true;
+                            });
   return _values;
 }
 
@@ -620,7 +620,7 @@ void PhraseCheck::AnchorMatch::Feed(const TokenBatch& batch, uint32_t from,
         return;
       }
     } else {
-      _pending.push_back(at);
+      _pending.emplace_back(at);
     }
   }
 }
@@ -744,7 +744,7 @@ void PhraseCheck::PositionsMatch::Feed(const TokenBatch& batch, uint32_t from,
     state.phrase->ForEachSlot(batch.terms[i], [&](uint32_t slot) {
       auto& slot_positions = _slots[slot];
       if (slot_positions.empty() || slot_positions.back() != pos) {
-        slot_positions.push_back(pos);
+        slot_positions.emplace_back(pos);
       }
     });
   }
@@ -776,7 +776,7 @@ bool PhraseCheck::PositionsMatch::Finish(State& state, PhraseVerdict& out) {
 
   _valid.clear();
   for (const auto p : _slots.back()) {
-    _valid.push_back({.pos = p, .ways = 1});
+    _valid.emplace_back(p, 1);
   }
   for (size_t i = n - 1; i != 0; --i) {
     const auto& slot = phrase.slots[i];
@@ -794,7 +794,7 @@ bool PhraseCheck::PositionsMatch::Finish(State& state, PhraseVerdict& out) {
         window -= _valid[lo].ways;
       }
       if (window != 0) {
-        _next.push_back({.pos = p, .ways = window});
+        _next.emplace_back(p, window);
       }
     }
     std::swap(_valid, _next);

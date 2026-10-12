@@ -757,11 +757,11 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
     if (std::any_of(
           op.expressions.begin(), op.expressions.begin() + i,
           [&](const auto& earlier) { return earlier->Equals(expr); })) {
-      projected_exprs.push_back(
+      projected_exprs.emplace_back(
         duckdb::make_uniq<duckdb::BoundConstantExpression>(
           duckdb::Value{expr.GetReturnType()}));
     } else {
-      projected_exprs.push_back(expr.Copy());
+      projected_exprs.emplace_back(expr.Copy());
     }
   }
   const auto scan_column_count = input.table_scan.types.size();

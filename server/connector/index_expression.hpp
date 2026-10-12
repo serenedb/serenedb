@@ -39,8 +39,6 @@ struct IndexedExpression {
   bool check_leaves = true;
 };
 
-std::string SerializeBoundExpression(const duckdb::Expression& expr);
-
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context);
 
@@ -54,9 +52,10 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by
 // stable catalog (table_id, col_id) instead of binder-allocated indices.
-duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
-  const duckdb::Expression& expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context);
+std::string NormalizedExpression(const duckdb::Expression& expr,
+                                 duckdb::idx_t table_id,
+                                 std::span<const ColumnId> col_index_to_id,
+                                 duckdb::ClientContext& context);
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
                                  duckdb::idx_t num_rows);

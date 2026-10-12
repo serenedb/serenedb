@@ -1111,10 +1111,10 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
     _projected_ids = BuildProjectedColumnIds(*_found.get, *_found.bind_data);
   }
   const auto resolve_in = [&](const catalog::InvertedIndexConfig& index) {
-    auto normalized = connector::NormalizeBoundExpression(
-      expr, _found.bind_data->RelationId(), *_projected_ids, _context);
     const auto* term =
-      index.FindExpressionKeys(connector::SerializeBoundExpression(*normalized))
+      index
+        .FindExpressionKeys(connector::NormalizedExpression(
+          expr, _found.bind_data->RelationId(), *_projected_ids, _context))
         .term;
     if (!term) {
       return false;

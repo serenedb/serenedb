@@ -90,14 +90,38 @@ class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
   }
 };
 
-}  // namespace
-
 std::string SerializeBoundExpression(const duckdb::Expression& expr) {
   duckdb::MemoryStream stream;
   duckdb::BinarySerializer::Serialize(expr, stream);
   return std::string{reinterpret_cast<const char*>(stream.GetData()),
                      stream.GetPosition()};
 }
+
+duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
+  auto copy = FoldConstantCasts(expr.Copy(), context);
+  duckdb::ExpressionIterator::EnumerateExpression(
+    copy, [&](duckdb::Expression& e) {
+      e.SetAlias("");
+      e.SetQueryLocation(duckdb::optional_idx{});
+      if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
+        const auto idx = cref.Binding().column_index.GetIndex();
+        SDB_ASSERT(idx < col_index_to_id.size());
+        const auto col_id = col_index_to_id[idx];
+        cref.BindingMutable() = duckdb::ColumnBinding(
+          duckdb::TableIndex(table_id),
+          duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
+      } else if (e.GetExpressionClass() ==
+                 duckdb::ExpressionClass::BOUND_FUNCTION) {
+        e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
+      }
+    });
+  return copy;
+}
+
+}  // namespace
 
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
   std::string_view bytes, duckdb::ClientContext& context) {
@@ -138,28 +162,12 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
   return result;
 }
 
-duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
-  const duckdb::Expression& expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = FoldConstantCasts(expr.Copy(), context);
-  duckdb::ExpressionIterator::EnumerateExpression(
-    copy, [&](duckdb::Expression& e) {
-      e.SetAlias("");
-      e.SetQueryLocation(duckdb::optional_idx{});
-      if (e.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-        auto& cref = e.Cast<duckdb::BoundColumnRefExpression>();
-        const auto idx = cref.Binding().column_index.GetIndex();
-        SDB_ASSERT(idx < col_index_to_id.size());
-        const auto col_id = col_index_to_id[idx];
-        cref.BindingMutable() = duckdb::ColumnBinding(
-          duckdb::TableIndex(table_id),
-          duckdb::ProjectionIndex(static_cast<duckdb::idx_t>(col_id)));
-      } else if (e.GetExpressionClass() ==
-                 duckdb::ExpressionClass::BOUND_FUNCTION) {
-        e.Cast<duckdb::BoundFunctionExpression>().IsOperatorMutable() = false;
-      }
-    });
-  return copy;
+std::string NormalizedExpression(const duckdb::Expression& expr,
+                                 duckdb::idx_t table_id,
+                                 std::span<const ColumnId> col_index_to_id,
+                                 duckdb::ClientContext& context) {
+  return SerializeBoundExpression(
+    *NormalizeBoundExpression(expr, table_id, col_index_to_id, context));
 }
 
 void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,

@@ -21,6 +21,7 @@
 #include <duckdb/common/vector_operations/unary_executor.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
+#include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>
@@ -39,9 +40,7 @@ void CheckWildcard(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   const auto& matcher = *func.BindInfo()->Cast<WildcardCheckBind>().data;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, bool>(
     args.data[0], result, args.size(), [&](duckdb::string_t terms) {
-      return irs::MatchStoredTerms(
-        matcher, {reinterpret_cast<const irs::byte_type*>(terms.GetData()),
-                  terms.GetSize()});
+      return irs::MatchStoredTerms(matcher, irs::AsBytesView(terms));
     });
 }
 

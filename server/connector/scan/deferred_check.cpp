@@ -20,8 +20,6 @@
 
 #include "connector/scan/deferred_check.h"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
@@ -86,7 +84,7 @@ DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
   fn.SetInitStateCallback(init);
   fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
-  children.push_back(
+  children.emplace_back(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL));
   auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
     duckdb::BoundScalarFunction(fn), std::move(children), std::move(bind));
@@ -102,7 +100,7 @@ std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
   const auto defer = [&](irs::Filter::ptr& filter) {
     auto check = Defer(filter, ctx);
     if (check) {
-      checks.push_back(std::move(*check));
+      checks.emplace_back(std::move(*check));
     }
     return check.has_value();
   };
@@ -115,7 +113,7 @@ std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
   std::vector<irs::Filter::ptr> spliced;
   for (auto& child : must) {
     if (defer(child) && Spliceable(*child, boolean)) {
-      spliced.push_back(std::move(child));
+      spliced.emplace_back(std::move(child));
     }
   }
   if (spliced.empty()) {
@@ -141,16 +139,14 @@ void AddDeferredChecks(ScanGlobalState& state,
     cf.filter = check.check.get();
     cf.row_gather = true;
   }
-  using ColFilter = ScanGlobalState::ColFilter;
-  const bool can_throw =
-    absl::c_any_of(state.col_filters, [](const ColFilter& cf) {
+  auto& filters = state.col_filters;
+  const auto added = filters.end() - checks.size();
+  const auto first_throwing = std::find_if(
+    filters.begin(), added, [](const ScanGlobalState::ColFilter& cf) {
       return !cf.is_score &&
              cf.filter->Cast<duckdb::ExpressionFilter>().expr->CanThrow();
     });
-  if (can_throw) {
-    absl::c_stable_partition(state.col_filters,
-                             [](const ColFilter& cf) { return cf.row_gather; });
-  }
+  std::rotate(first_throwing, added, filters.end());
 }
 
 }  // namespace sdb::connector

@@ -462,7 +462,7 @@ std::vector<std::vector<bstring>> SpecTerms(
   size_t slot = 0;
   for (const auto& info : options) {
     if (ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion) {
-      sources.push_back(slot);
+      sources.emplace_back(slot);
     }
     ++slot;
   }
@@ -795,10 +795,8 @@ bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {
 bool ByPhraseOptions::LowerParts() {
   bool changed = false;
   if (_tokens && _tokens->spec) {
-    auto spec = *_tokens->spec;
-    if (spec.LowerParts()) {
-      auto tokens = std::make_shared<PhraseTokens>(*_tokens);
-      tokens->spec = std::move(spec);
+    auto tokens = std::make_shared<PhraseTokens>(*_tokens);
+    if (tokens->spec->LowerParts()) {
       _tokens = std::move(tokens);
       changed = true;
     }

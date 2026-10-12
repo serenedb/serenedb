@@ -29,7 +29,9 @@
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/index/column_extract.hpp"
 #include "iresearch/search/detail/node_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -89,7 +91,6 @@ class TokenPhraseSlots {
       _column{&query.Column()},
       _state{_column->InitScan(_ctx)},
       _out{_column->Type()},
-      _sel{STANDARD_VECTOR_SIZE},
       _check{query.Compiled(), query.Tokens(), count},
       _anchors{MakeAnchorFreqs(query)} {}
 
@@ -170,7 +171,6 @@ class TokenPhraseSlots {
   uint32_t AnchorsAt(doc_id_t doc) { return _anchors ? _anchors->At(doc) : 0; }
 
   size_t Gather(std::span<const doc_id_t> hits) {
-    SDB_ASSERT(hits.size() <= STANDARD_VECTOR_SIZE);
     auto n = hits.size();
     while (n != 0 && hits[n - 1] - doc_limits::min() >= _column->RowCount()) {
       --n;
@@ -178,12 +178,9 @@ class TokenPhraseSlots {
     if (n == 0) {
       return 0;
     }
-    const auto first = hits.front();
-    for (size_t i = 0; i != n; ++i) {
-      _sel.set_index(i, hits[i] - first);
-    }
     auto& out = _out.Reset();
-    _column->GatherScatter(_state, first - doc_limits::min(), _sel, n, out, 0);
+    column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
+                                0);
     _check.Bind(out, n);
     return n;
   }
@@ -193,7 +190,6 @@ class TokenPhraseSlots {
   const ColumnReader* _column;
   ColumnReader::ScanState _state;
   ColumnReader::VectorScratch _out;
-  duckdb::SelectionVector _sel;
   PhraseCheck _check;
   std::unique_ptr<AnchorFreqs> _anchors;
   PhraseVerdict _verdict;

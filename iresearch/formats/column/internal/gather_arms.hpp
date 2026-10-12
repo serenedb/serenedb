@@ -63,11 +63,11 @@ inline bool FewerRuns(const duckdb::SelectionVector& sel, duckdb::idx_t hits,
   return runs < limit;
 }
 
-inline bool ScatterWins(const GatherBands& bands, const ColumnBlockMeta& block,
+inline bool ScatterWins(const ColumnBlockMeta& block,
                         const duckdb::LogicalType& type,
                         const duckdb::SelectionVector& sel, duckdb::idx_t hits,
                         duckdb::idx_t span) noexcept {
-  if (hits * 1000 <= bands.flat * span) {
+  if (hits * 1000 <= BandsFor(block.codec->type, type).flat * span) {
     return true;
   }
   if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {

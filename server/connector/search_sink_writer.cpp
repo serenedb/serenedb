@@ -556,44 +556,37 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
           switch (leaf.kind) {
             case irs::JsonLeafKind::String: {
               const std::string_view value = leaf.string;
-              bool ok = true;
+              const auto size = static_cast<uint32_t>(value.size());
               if (jpf.string_field.keyword) {
-                w.BeginValue(doc, static_cast<uint32_t>(value.size()));
-                w.Emit<irs::TokenLayout::Terms>(
-                  value.data(), static_cast<uint32_t>(value.size()));
+                w.BeginValue(doc, size);
+                w.Emit<irs::TokenLayout::Terms>(value.data(), size);
                 w.EndValue();
-              } else {
-                ok = jpf.string_field.string_analyzer->Fill(
-                  duckdb::string_t{value.data(),
-                                   static_cast<uint32_t>(value.size())},
-                  doc, w, {str_layout});
-              }
-              if (store_writer) {
-                if (jpf.string_field.keyword) {
-                  AppendBlobAt(
-                    *store_writer, doc,
-                    duckdb::string_t{value.data(),
-                                     static_cast<uint32_t>(value.size())});
+                if (store_writer) {
+                  AppendBlobAt(*store_writer, doc,
+                               duckdb::string_t{value.data(), size});
                   wrote_string_blob = true;
-                } else {
-                  // Store-producing analyzers delivered through OnStore
-                  // above; everyone else falls through to the empty-blob
-                  // backfill.
-                  wrote_string_blob =
-                    ok && jpf.string_field.string_analyzer->Traits().store;
                 }
+              } else {
+                const bool ok = jpf.string_field.string_analyzer->Fill(
+                  duckdb::string_t{value.data(), size}, doc, w, {str_layout});
+                // Store-producing analyzers delivered through OnStore
+                // above; everyone else falls through to the empty-blob
+                // backfill.
+                wrote_string_blob =
+                  store_writer && ok &&
+                  jpf.string_field.string_analyzer->Traits().store;
               }
             } break;
             case irs::JsonLeafKind::Number:
               nums[nnums++] = leaf.number;
-              _json_num_docs.push_back(doc);
+              _json_num_docs.emplace_back(doc);
               break;
             case irs::JsonLeafKind::Bool:
-              _json_bool_terms.push_back(irs::BoolTerm(leaf.boolean));
-              _json_bool_docs.push_back(doc);
+              _json_bool_terms.emplace_back(irs::BoolTerm(leaf.boolean));
+              _json_bool_docs.emplace_back(doc);
               break;
             case irs::JsonLeafKind::Null:
-              _null_docs.push_back(doc);
+              _null_docs.emplace_back(doc);
               break;
             case irs::JsonLeafKind::Composite:
               THROW_SQL_ERROR(

@@ -524,9 +524,7 @@ void ColumnReader::GatherDense(ScanState& s, uint64_t anchor,
   }
   if (anchor < _row_count) {
     const auto& block = _segments[Locate(anchor, s.window).block];
-    if (column_internal::ScatterWins(
-          column_internal::BandsFor(block.codec->type, _type), block, _type,
-          sel, hits, span)) {
+    if (column_internal::ScatterWins(block, _type, sel, hits, span)) {
       column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, 0);
       return;
     }

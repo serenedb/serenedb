@@ -21,6 +21,7 @@
 #pragma once
 
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/internal/gather_arms.hpp"
 
 namespace irs {
 
@@ -61,13 +62,8 @@ class VariantColumnReader final : public ColumnReader {
 
   void Skip(ScanState& s, duckdb::idx_t count) const final;
 
-  void GatherScatter(ScanState& s, uint64_t anchor,
-                     const duckdb::SelectionVector& sel, duckdb::idx_t hits,
-                     duckdb::Vector& out, duckdb::idx_t at) const final;
-
-  void GatherDense(ScanState& s, uint64_t anchor,
-                   const duckdb::SelectionVector& sel, duckdb::idx_t hits,
-                   duckdb::idx_t span, duckdb::Vector& out) const final;
+  IRS_COLUMN_READER_GATHER_SCATTER
+  IRS_COLUMN_READER_GATHER_DENSE
 
   bool CachedUniformShreddedLeaf(ScanState& s,
                                  std::span<const std::string_view> path,

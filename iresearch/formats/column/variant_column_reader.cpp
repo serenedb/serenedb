@@ -30,7 +30,6 @@
 #include <memory>
 #include <utility>
 
-#include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -281,24 +280,6 @@ void VariantColumnReader::Skip(ScanState& s, duckdb::idx_t count) const {
     [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
         duckdb::idx_t /*done*/) { SeekVariantRg(s, rg, local_start + run); });
   vs.cursor += count;
-}
-
-void VariantColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
-                                        const duckdb::SelectionVector& sel,
-                                        duckdb::idx_t hits, duckdb::Vector& out,
-                                        duckdb::idx_t at) const {
-  if (at == 0) {
-    NewOutputVector(s);
-  }
-  column_internal::ScatterRuns(*this, s, anchor, sel, hits, out, at);
-}
-
-void VariantColumnReader::GatherDense(ScanState& s, uint64_t anchor,
-                                      const duckdb::SelectionVector& sel,
-                                      duckdb::idx_t hits, duckdb::idx_t span,
-                                      duckdb::Vector& out) const {
-  NewOutputVector(s);
-  column_internal::DenseRuns(*this, s, anchor, sel, hits, span, out);
 }
 
 }  // namespace irs

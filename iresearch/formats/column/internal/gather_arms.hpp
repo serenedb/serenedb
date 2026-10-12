@@ -41,13 +41,10 @@ inline GatherBands BandsFor(duckdb::CompressionType codec,
       return {0, 1000};
     case duckdb::CompressionType::COMPRESSION_RLE:
       return {2, 70};
-    case duckdb::CompressionType::COMPRESSION_DICT_FSST:
-    case duckdb::CompressionType::COMPRESSION_FSST:
-      return {10, 1000};
     default:
       return type.InternalType() == duckdb::PhysicalType::VARCHAR
                ? GatherBands{10, 1000}
-               : GatherBands{10, 10};
+               : GatherBands{10, 0};
   }
 }
 
@@ -93,10 +90,10 @@ void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
                  const duckdb::SelectionVector& sel, duckdb::idx_t hits,
                  duckdb::Vector& out, duckdb::idx_t at) {
   uint64_t pos = self.Kind::GatherCursor(s);
-  SDB_ASSERT(anchor >= pos, "GatherScatter requires ascending rows");
   duckdb::idx_t i = 0;
   while (i < hits) {
     const uint64_t target = anchor + sel.get_index(i);
+    SDB_ASSERT(target >= pos, "GatherScatter requires ascending rows");
     duckdb::idx_t run = 1;
     while (i + run < hits &&
            sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
@@ -141,6 +138,7 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
                 const Rows& rows, duckdb::Vector& result,
                 duckdb::idx_t out_offset, bool whole_output = false) {
   const auto n = static_cast<duckdb::idx_t>(rows.size());
+  SDB_ASSERT(n <= STANDARD_VECTOR_SIZE, "GatherRows fills one vector");
   if (n == 0) {
     return;
   }
@@ -149,6 +147,8 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
   }
   const auto anchor = static_cast<uint64_t>(rows[0]);
   for (duckdb::idx_t i = 0; i < n; ++i) {
+    SDB_ASSERT(i == 0 || rows[i] > rows[i - 1],
+               "GatherRows requires ascending rows");
     s.sel.set_index(i, static_cast<uint64_t>(rows[i]) - anchor);
   }
   const auto span =

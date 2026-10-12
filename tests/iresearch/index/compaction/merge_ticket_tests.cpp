@@ -22,6 +22,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/store/memory_directory.hpp>
@@ -480,6 +482,101 @@ TEST_F(MergeTicketTest, ClearStopsARunningMerge) {
 
   AddSegments(2);
   EXPECT_EQ(1, Reserve({{0, 1}}).tickets.size());
+}
+
+TEST_F(MergeTicketTest, AReservationWaitsForTheCommitThatReplacesItsSegments) {
+  AddSegments(3);
+  auto merge = Reserve({{0, 1}});
+  ASSERT_EQ(1, merge.tickets.size());
+  ASSERT_EQ(CompactionError::Ok, Run(std::move(merge.tickets[0])).error);
+  if (!irs::AddFailurePointDebugging("pause_irs_commit_before_reader_swap")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  std::thread committer{[&] { _writer->RefreshCommit(); }};
+  while (
+    !irs::ShouldFailDebugging("pause_irs_commit_before_reader_swap:parked")) {
+    std::this_thread::yield();
+  }
+
+  std::atomic_bool reserved{false};
+  std::vector<std::string> names;
+  std::thread planner{[&] {
+    auto reservation = _writer->ReserveMerges(
+      [](const irs::IndexReader& index, const irs::CompactingSegments& busy,
+         irs::MergeGroups& groups) {
+        auto& group = groups.emplace_back();
+        for (const auto& segment : index) {
+          if (!busy.contains(segment.Meta().name)) {
+            group.emplace_back(&segment);
+          }
+        }
+      });
+    for (const auto& ticket : reservation.tickets) {
+      for (const auto* candidate : ticket.Candidates()) {
+        names.emplace_back(candidate->Meta().name);
+      }
+    }
+    reserved = true;
+  }};
+  std::this_thread::sleep_for(std::chrono::milliseconds{50});
+  EXPECT_FALSE(reserved.load());
+  ASSERT_TRUE(irs::AddFailurePointDebugging(
+    "pause_irs_commit_before_reader_swap:release"));
+  committer.join();
+  planner.join();
+  EXPECT_TRUE(reserved.load());
+  std::ranges::sort(names);
+  EXPECT_EQ(2, names.size());
+  EXPECT_EQ(Names(), names);
+}
+
+TEST_F(MergeTicketTest, AReservationNeverHoldsSegmentsACommitReplaced) {
+  AddSegments(2);
+  std::atomic_bool done{false};
+  std::atomic_size_t stale{0};
+  std::atomic_size_t reserved{0};
+  std::thread planner{[&] {
+    while (!done.load(std::memory_order_relaxed)) {
+      auto reservation = _writer->ReserveMerges(
+        [](const irs::IndexReader& index, const irs::CompactingSegments& busy,
+           irs::MergeGroups& groups) {
+          auto& group = groups.emplace_back();
+          for (const auto& segment : index) {
+            if (!busy.contains(segment.Meta().name)) {
+              group.emplace_back(&segment);
+            }
+          }
+        });
+      if (reservation.tickets.empty()) {
+        continue;
+      }
+      ++reserved;
+      const auto snapshot = _writer->GetSnapshot();
+      for (const auto* candidate : reservation.tickets.front().Candidates()) {
+        const auto& name = candidate->Meta().name;
+        stale += std::none_of(snapshot.begin(), snapshot.end(),
+                              [&](const irs::SubReader& segment) {
+                                return segment.Meta().name == name;
+                              });
+      }
+    }
+  }};
+  size_t merged = 0;
+  for (size_t round = 0; round != 300; ++round) {
+    AddSegments(1);
+    auto reservation = Reserve({{0, 1}});
+    if (reservation.tickets.empty()) {
+      continue;
+    }
+    merged +=
+      Run(std::move(reservation.tickets[0])).error == CompactionError::Ok;
+    _writer->RefreshCommit();
+  }
+  done = true;
+  planner.join();
+  EXPECT_EQ(0, stale.load());
+  EXPECT_LT(0, merged);
+  EXPECT_LT(0, reserved.load());
 }
 
 TEST_F(MergeTicketTest, DisjointTicketsMergeConcurrentlyWithACommit) {

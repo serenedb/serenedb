@@ -2308,11 +2308,18 @@ void IndexWriter::Finish() {
   }
 
   // noexcept part!
-  _pending_state.StartReset(*this);
-  // after this line transaction is successful (only noexcept operations below)
-  std::atomic_store_explicit(&_committed_reader,
-                             std::move(_pending_state.commit),
-                             std::memory_order_release);
+  {
+    std::lock_guard lock{_compacting.lock};
+    if (auto* ctx = _pending_state.ctx.get(); ctx != nullptr) {
+      Cleanup(*ctx);
+    }
+    SDB_PARK_ONCE_ON_FAILURE("pause_irs_commit_before_reader_swap");
+    // after this line transaction is successful (only noexcept operations
+    // below)
+    std::atomic_store_explicit(&_committed_reader,
+                               std::move(_pending_state.commit),
+                               std::memory_order_release);
+  }
   _pending_state.FinishReset();
 }
 

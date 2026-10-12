@@ -80,6 +80,44 @@ pseudo_types
 _record any anyarray anyelement anyenum cstring event_trigger fdw_handler index_am_handler internal language_handler pg_ddl_command record table_am_handler trigger tsm_handler unknown void
 
 
+query
+SELECT count(*) AS row_types
+FROM pg_type
+WHERE oid < 16384 AND typtype = 'c'
+----
+row_types
+213
+
+
+query
+SELECT t.oid, t.typname, t.typrelid::regclass::text AS relation,
+       a.oid AS array_oid, a.typname AS array_name, c.reltype = t.oid AS reltype
+FROM pg_type t
+JOIN pg_type a ON a.oid = t.typarray AND a.typelem = t.oid
+JOIN pg_class c ON c.oid = t.typrelid
+WHERE t.oid IN ('pg_class'::regtype, 'pg_statistic'::regtype,
+                'information_schema._pg_foreign_tables'::regtype)
+ORDER BY t.oid
+----
+oid	typname	relation	array_oid	array_name	reltype
+83	pg_class	pg_class	273	_pg_class	t
+10029	pg_statistic	pg_statistic	10028	_pg_statistic	t
+13618	_pg_foreign_tables	information_schema._pg_foreign_tables	13617	__pg_foreign_tables	t
+
+
+query
+SELECT format_type('_pg_class'::regtype, NULL) AS array_type,
+       83::regtype::text AS row_type,
+       'pg_statistic[]'::regtype::oid AS statistic_array,
+       (SELECT format_type(atttypid, atttypmod) || ' ' || attalign
+        FROM pg_attribute
+        WHERE attrelid = 'pg_statistic_ext_data'::regclass
+          AND attname = 'stxdexpr') AS stxdexpr
+----
+array_type	row_type	statistic_array	stxdexpr
+pg_class[]	pg_class	10028	pg_statistic[] d
+
+
 statement ok
 CREATE TYPE btc_mood AS ENUM ('ok')
 

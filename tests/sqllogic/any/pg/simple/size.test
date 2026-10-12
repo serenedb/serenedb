@@ -108,6 +108,13 @@ SELECT pg_database_size(d.oid) >= 0 AS ok FROM pg_database d WHERE d.datname = c
 ok
 t
 
+
+statement error
+SELECT pg_database_size(999999::oid);
+----
+db error: ERROR: database with OID 999999 does not exist
+
+
 # Verify unknown->regclass implicit coercion (text->regclass is castcontext='i' in pg_cast.dat)
 
 query

@@ -209,3 +209,13 @@ SELECT pg_stat_get_numscans(0) AS numscans,
 ----
 numscans	total_vacuum_time	last_vacuum_time
 0	0	t
+
+
+query
+SELECT pg_cancel_backend(0) AS cancel_missing,
+       pg_terminate_backend(0) AS terminate_missing,
+       pg_cancel_backend(NULL) IS NULL AS cancel_null,
+       pg_terminate_backend(NULL) IS NULL AS terminate_null;
+----
+cancel_missing	terminate_missing	cancel_null	terminate_null
+f	f	t	t

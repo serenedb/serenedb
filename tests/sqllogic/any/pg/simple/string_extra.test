@@ -517,6 +517,14 @@ ok
 t
 
 
+query
+SELECT current_setting('client_encoding', true) AS found,
+       current_setting(NULL, true) IS NULL AS null_name;
+----
+found	null_name
+UTF8	t
+
+
 # set_config
 
 query

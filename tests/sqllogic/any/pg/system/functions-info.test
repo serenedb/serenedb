@@ -320,20 +320,12 @@ SELECT pg_has_role(current_user, 'postgres', 'USAGE');
 pg_has_role
 t
 
-onlyif serenedb
-query
+query error db error: ERROR: relation "seq_name" does not exist
 SELECT has_sequence_privilege('seq_name', 'USAGE');
-----
-has_sequence_privilege
-t
 
 
-onlyif serenedb
-query
+query error db error: ERROR: relation "seq_name" does not exist
 SELECT has_sequence_privilege(current_user, 'seq_name', 'USAGE');
-----
-has_sequence_privilege
-t
 
 
 onlyif serenedb

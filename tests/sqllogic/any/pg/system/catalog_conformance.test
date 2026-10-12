@@ -6278,6 +6278,14 @@ SELECT o.customer_id, sum(o.amount) AS total, count_star() AS n FROM orders AS o
 
 
 query
+SELECT pg_catalog.pg_get_viewdef('app.order_totals', true) = pg_catalog.pg_get_viewdef('app.order_totals'::regclass, true) AS by_name_pretty,
+  pg_catalog.pg_get_viewdef('app.order_totals', false) = pg_catalog.pg_get_viewdef('app.order_totals'::regclass, false) AS by_name_plain
+----
+by_name_pretty	by_name_plain
+t	t
+
+
+query
 SELECT 'app.ticket_seq'::regclass::text AS regclass,
   'app.ticket_seq'::regclass::oid = (SELECT c.oid FROM pg_catalog.pg_class c WHERE c.relname = 'ticket_seq' AND c.relnamespace = 'app'::regnamespace) AS same_oid,
   to_regclass('app.ticket_seq')::text AS to_regclass,
@@ -6289,7 +6297,6 @@ regclass	same_oid	to_regclass	visible	description	any_description
 app.ticket_seq	t	app.ticket_seq	f	Ticket numbers	Ticket numbers
 
 
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('conf_reader', 'app.ticket_seq', 'SELECT') AS reader_select
 ----
@@ -6297,26 +6304,11 @@ reader_select
 f
 
 
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('conf_reader', 'app.ticket_seq', 'SELECT') AS reader_select
-----
-db error: ERROR: relation "ticket_seq" does not exist<slt:ignore>
-
-
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('app.ticket_seq', 'INSERT') AS own_insert
 ----
 own_insert
 t
-
-
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('app.ticket_seq', 'INSERT') AS own_insert
-----
-db error: ERROR: relation "ticket_seq" does not exist<slt:ignore>
 
 
 query
@@ -6440,7 +6432,6 @@ regclass	same_oid	to_regclass	visible	description	any_description
 customers_id_seq	t	customers_id_seq	t	NULL	NULL
 
 
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('conf_reader', 'public.customers_id_seq', 'SELECT') AS reader_select
 ----
@@ -6448,26 +6439,11 @@ reader_select
 f
 
 
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('conf_reader', 'public.customers_id_seq', 'SELECT') AS reader_select
-----
-db error: ERROR: relation "customers_id_seq" does not exist<slt:ignore>
-
-
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('public.customers_id_seq', 'INSERT') AS own_insert
 ----
 own_insert
 t
-
-
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('public.customers_id_seq', 'INSERT') AS own_insert
-----
-db error: ERROR: relation "customers_id_seq" does not exist<slt:ignore>
 
 
 query
@@ -6618,7 +6594,6 @@ regclass	same_oid	to_regclass	visible	description	any_description
 orders_id_seq	t	orders_id_seq	t	NULL	NULL
 
 
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('conf_reader', 'public.orders_id_seq', 'SELECT') AS reader_select
 ----
@@ -6626,26 +6601,11 @@ reader_select
 f
 
 
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('conf_reader', 'public.orders_id_seq', 'SELECT') AS reader_select
-----
-db error: ERROR: relation "orders_id_seq" does not exist<slt:ignore>
-
-
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('public.orders_id_seq', 'INSERT') AS own_insert
 ----
 own_insert
 t
-
-
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('public.orders_id_seq', 'INSERT') AS own_insert
-----
-db error: ERROR: relation "orders_id_seq" does not exist<slt:ignore>
 
 
 query
@@ -6675,7 +6635,6 @@ regclass	same_oid	to_regclass	visible	description	any_description
 plain_seq	t	plain_seq	t	NULL	NULL
 
 
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('conf_reader', 'public.plain_seq', 'SELECT') AS reader_select
 ----
@@ -6683,26 +6642,11 @@ reader_select
 f
 
 
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('conf_reader', 'public.plain_seq', 'SELECT') AS reader_select
-----
-db error: ERROR: relation "plain_seq" does not exist<slt:ignore>
-
-
-skipif serenedb
 query
 SELECT pg_catalog.has_table_privilege('public.plain_seq', 'INSERT') AS own_insert
 ----
 own_insert
 t
-
-
-onlyif serenedb
-statement error
-SELECT pg_catalog.has_table_privilege('public.plain_seq', 'INSERT') AS own_insert
-----
-db error: ERROR: relation "plain_seq" does not exist<slt:ignore>
 
 
 query

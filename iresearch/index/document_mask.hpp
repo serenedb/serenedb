@@ -23,7 +23,9 @@
 #include <roaring/bitset/bitset.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -126,6 +128,25 @@ class DocumentMask final {
 
   void AddRange(doc_id_t first, doc_id_t last);
   void Merge(const DocumentMask& other);
+
+  template<typename Visitor>
+  bool ForEachAddedSince(const DocumentMask& before, Visitor&& visitor) const {
+    const auto* words = Words();
+    const auto* before_words = before.Words();
+    const auto count = WordCount();
+    const auto before_count = before.WordCount();
+    for (size_t i = 0, end = std::max(count, before_count); i < end; ++i) {
+      const uint64_t now = i < count ? words[i] : 0;
+      const uint64_t then = i < before_count ? before_words[i] : 0;
+      if ((then & ~now) != 0) {
+        return false;
+      }
+      for (auto added = now & ~then; added != 0; added &= added - 1) {
+        visitor(static_cast<doc_id_t>(i * 64 + std::countr_zero(added)));
+      }
+    }
+    return true;
+  }
 
   void Clear() noexcept {
     roaring::api::bitset_clear(&_bits);

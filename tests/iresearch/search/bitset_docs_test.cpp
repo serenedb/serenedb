@@ -887,6 +887,43 @@ TEST(docs_mask_test, merge_grows_capacity_by_doubling) {
   ASSERT_EQ(2, merged.Count());
 }
 
+TEST(docs_mask_test, added_since_visits_only_the_new_removals) {
+  const auto before = MakeMask({1, 5, 64, 70});
+  const auto after = MakeMask({1, 3, 5, 64, 70, 200});
+  std::vector<irs::doc_id_t> added;
+  ASSERT_TRUE(after.ForEachAddedSince(
+    before, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
+  ASSERT_EQ((std::vector<irs::doc_id_t>{3, 200}), added);
+}
+
+TEST(docs_mask_test, added_since_an_empty_mask_is_every_removal) {
+  const irs::DocumentMask none;
+  const auto after = MakeMask({2, 130});
+  std::vector<irs::doc_id_t> added;
+  ASSERT_TRUE(after.ForEachAddedSince(
+    none, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
+  ASSERT_EQ((std::vector<irs::doc_id_t>{2, 130}), added);
+  ASSERT_TRUE(none.ForEachAddedSince(none, [](irs::doc_id_t) { FAIL(); }));
+}
+
+TEST(docs_mask_test, added_since_a_longer_mask_with_zero_words) {
+  irs::DocumentMask before;
+  before.Add(64 * 4 + 1);
+  before.Clear();
+  before.Add(1);
+  const auto after = MakeMask({1, 2});
+  std::vector<irs::doc_id_t> added;
+  ASSERT_TRUE(after.ForEachAddedSince(
+    before, [&](irs::doc_id_t doc) { added.emplace_back(doc); }));
+  ASSERT_EQ((std::vector<irs::doc_id_t>{2}), added);
+}
+
+TEST(docs_mask_test, added_since_refuses_a_removal_that_came_back) {
+  const auto nothing = [](irs::doc_id_t) {};
+  ASSERT_FALSE(MakeMask({1}).ForEachAddedSince(MakeMask({1, 5}), nothing));
+  ASSERT_FALSE(MakeMask({1}).ForEachAddedSince(MakeMask({1, 300}), nothing));
+}
+
 TEST(docs_mask_test, trim_releases_an_all_zero_mask) {
   auto mask = MakeMask({1, 4999});
   mask.Clear();

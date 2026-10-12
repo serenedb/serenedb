@@ -727,6 +727,16 @@ struct IntTextCore {
   }
 };
 
+struct LsnTextCore {
+  using Value = uint64_t;
+  static constexpr uint32_t kMaxBytes = sizeof("FFFFFFFF/FFFFFFFF");
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value lsn) {
+    return absl::SNPrintF(reinterpret_cast<char*>(dst), kMaxBytes, "%X/%X",
+                          static_cast<uint32_t>(lsn >> 32),
+                          static_cast<uint32_t>(lsn));
+  }
+};
+
 struct OidBinCore {
   using Value = int64_t;
   static constexpr uint32_t kMaxBytes = 4;
@@ -2245,6 +2255,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
                                  kInt8>(format, context, kind);
     }
     case UBIGINT:
+      if (IsPgLsn(type)) {
+        return MakeArraySerializer<LsnTextCore, IntBinCore<uint64_t>, kPgLsn>(
+          format, context, kind);
+      }
       return MakeArraySerializer<IntTextCore<uint64_t>, UbigintBinCore,
                                  kNumeric>(format, context, kind);
     case HUGEINT:
@@ -2528,6 +2542,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                    IntBinCore<uint32_t, int64_t>>(format,
                                                                   context);
     case UBIGINT:
+      if (IsPgLsn(type)) {
+        return SelectFieldSerializer<LsnTextCore, LsnTextCore,
+                                     IntBinCore<uint64_t>>(format, context);
+      }
       return SelectFieldSerializer<IntTextCore<uint64_t>, IntTextCore<uint64_t>,
                                    UbigintBinCore>(format, context);
     case HUGEINT:

@@ -1335,14 +1335,12 @@ bool ClaimSearchConjuncts(
                                 .analyzed_fields = std::move(analyzed_fields),
                                 .null_markers = &null_markers,
                                 .scorer = scorer.get()};
-  const auto& reader = scan.search.snapshot->reader;
-  std::vector<irs::Filter::ptr> deferred;
+  irs::Deferral deferral{.reader = scan.search.snapshot->reader};
   if (scan.offsets.requests.empty() && !scan.score.vector) {
-    optimize.reader = &reader;
-    optimize.deferred = &deferred;
+    optimize.deferral = &deferral;
   }
   irs::Optimize(root, optimize);
-  scan.search.deferred = connector::MakeChecks(std::move(deferred), reader);
+  scan.search.deferred = connector::MakeChecks(std::move(deferral));
 
   scan.search.filter = std::move(root);
   scan.search.filter_scorers = std::move(filter_scorers);

@@ -28,13 +28,12 @@
 #include <span>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "iresearch/search/filters/filter.hpp"
 
 namespace irs {
 
-struct IndexReader;
+struct Deferral;
 
 struct OptimizeContext {
   bool scored = false;
@@ -44,8 +43,7 @@ struct OptimizeContext {
   const irs::containers::FlatHashMap<irs::field_id, irs::field_id>*
     null_markers = nullptr;
   const Scorer* scorer = nullptr;
-  const IndexReader* reader = nullptr;
-  std::vector<Filter::ptr>* deferred = nullptr;
+  Deferral* deferral = nullptr;
 
   bool HasAnalyzer(irs::field_id field) const noexcept {
     return analyzed_fields.contains(field);

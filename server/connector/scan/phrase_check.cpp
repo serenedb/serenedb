@@ -23,7 +23,6 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
-#include <iresearch/search/filters/deferral.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>
@@ -69,8 +68,9 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 }  // namespace
 
-DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
+DeferredCheck MakePhraseCheck(irs::DeferredFilter deferred,
                               const irs::IndexReader& reader) {
+  std::shared_ptr<const irs::Filter> source = std::move(deferred.filter);
   const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*source);
   const auto& options = phrase.options();
   const auto& tokens = options.tokens();
@@ -79,9 +79,8 @@ DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
     duckdb::make_uniq<PhraseCheckBind>(std::make_shared<const PhraseCheckData>(
       tokens, checked, options.word_separator(),
       irs::PhraseWordStats(checked, reader, phrase.field_id())));
-  const auto type = *irs::StoredColumnType(reader, tokens->text);
-  return Split(std::move(source), tokens->text, type, "sdb_phrase_check",
-               CheckPhrase, std::move(bind),
+  return Split(std::move(source), deferred.column, deferred.type,
+               "sdb_phrase_check", CheckPhrase, std::move(bind),
                InitCheck<PhraseCheckState, PhraseCheckData>);
 }
 

@@ -21,15 +21,25 @@
 #pragma once
 
 #include <duckdb/common/types.hpp>
-#include <optional>
+#include <vector>
 
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
 
-std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
-                                                    field_id column);
+struct IndexReader;
+
+struct DeferredFilter {
+  Filter::ptr filter;
+  field_id column;
+  duckdb::LogicalType type;
+};
+
+struct Deferral {
+  const IndexReader& reader;
+  std::vector<DeferredFilter> filters;
+};
 
 namespace optimizer {
 

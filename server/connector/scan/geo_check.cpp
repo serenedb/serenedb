@@ -22,8 +22,6 @@
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
-#include <iresearch/index/index_reader.hpp>
-#include <iresearch/search/filters/deferral.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>
@@ -70,27 +68,25 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 }
 
 template<typename GeoFilter>
-DeferredCheck MakeGeoCheckOf(std::shared_ptr<const irs::Filter> source,
-                             const irs::IndexReader& reader) {
+DeferredCheck MakeGeoCheckOf(irs::DeferredFilter deferred) {
+  std::shared_ptr<const irs::Filter> source = std::move(deferred.filter);
   const auto& options = irs::utils::downCast<GeoFilter>(*source).options();
   SDB_ASSERT(options.plan);
   auto bind =
     duckdb::make_uniq<GeoCheckBind>(std::make_shared<const GeoCheckData>(
       GeoCheckData{source, irs::ParserOf(options), options.plan->acceptor}));
-  const auto type = *irs::StoredColumnType(reader, options.store_field_id);
-  return Split(std::move(source), options.store_field_id, type, "sdb_geo_check",
-               CheckGeo, std::move(bind),
+  return Split(std::move(source), deferred.column, deferred.type,
+               "sdb_geo_check", CheckGeo, std::move(bind),
                InitCheck<GeoCheckState, GeoCheckData>);
 }
 
 }  // namespace
 
-DeferredCheck MakeGeoCheck(std::shared_ptr<const irs::Filter> source,
-                           const irs::IndexReader& reader) {
-  if (source->type() == irs::Type<irs::GeoFilter>::id()) {
-    return MakeGeoCheckOf<irs::GeoFilter>(std::move(source), reader);
+DeferredCheck MakeGeoCheck(irs::DeferredFilter deferred) {
+  if (deferred.filter->type() == irs::Type<irs::GeoFilter>::id()) {
+    return MakeGeoCheckOf<irs::GeoFilter>(std::move(deferred));
   }
-  return MakeGeoCheckOf<irs::GeoDistanceFilter>(std::move(source), reader);
+  return MakeGeoCheckOf<irs::GeoDistanceFilter>(std::move(deferred));
 }
 
 }  // namespace sdb::connector

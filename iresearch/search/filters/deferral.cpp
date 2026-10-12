@@ -21,6 +21,7 @@
 #include "iresearch/search/filters/deferral.hpp"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -34,7 +35,10 @@
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
-namespace irs {
+namespace irs::optimizer {
+namespace {
+
+using irs::utils::downCast;
 
 std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
                                                     field_id column) {
@@ -47,11 +51,6 @@ std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
   }
   return std::nullopt;
 }
-
-namespace optimizer {
-namespace {
-
-using irs::utils::downCast;
 
 Filter::ptr PartsConjunction(const ByPhrase& phrase,
                              const OptimizeContext& ctx) {
@@ -66,8 +65,6 @@ Filter::ptr PartsConjunction(const ByPhrase& phrase,
     conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
                      Occur::Must);
   }
-  auto& terms = conjunction->Bucket(Occur::Must).terms;
-  terms.erase(std::ranges::unique(terms).begin(), terms.end());
   if (scorer != nullptr) {
     conjunction->SetScorer(phrase.GetScorer());
     conjunction->SetBoost(phrase.GetBoost());
@@ -82,7 +79,12 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
   const auto& phrase = downCast<ByPhrase>(*slot);
   const auto& options = phrase.options();
   const auto& tokens = options.tokens();
-  if (!tokens || !StoredColumnType(*ctx.reader, tokens->text)) {
+  if (!tokens) {
+    return false;
+  }
+  const auto column = tokens->text;
+  auto type = StoredColumnType(ctx.deferral->reader, column);
+  if (!type) {
     return false;
   }
   const auto& checked = tokens->Check(options);
@@ -96,7 +98,8 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
-  ctx.deferred->emplace_back(std::exchange(slot, std::move(index)));
+  ctx.deferral->filters.emplace_back(std::exchange(slot, std::move(index)),
+                                     column, *std::move(type));
   return true;
 }
 
@@ -104,7 +107,8 @@ template<typename GeoType>
 bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& geo = downCast<GeoType>(*slot);
   auto& options = *geo.mutable_options();
-  const auto type = StoredColumnType(*ctx.reader, options.store_field_id);
+  const auto column = options.store_field_id;
+  auto type = StoredColumnType(ctx.deferral->reader, column);
   if (!type || type->InternalType() != duckdb::PhysicalType::VARCHAR) {
     return false;
   }
@@ -115,7 +119,8 @@ bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   options.plan = std::move(plan);
   auto index = std::make_unique<GeoType>(geo);
   index->mutable_options()->store_field_id = field_limits::invalid();
-  ctx.deferred->emplace_back(std::exchange(slot, std::move(index)));
+  ctx.deferral->filters.emplace_back(std::exchange(slot, std::move(index)),
+                                     column, *std::move(type));
   return true;
 }
 
@@ -124,9 +129,15 @@ bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
   if (!wildcard.options().matcher) {
     return false;
   }
+  const auto column = wildcard.options().store_field_id;
+  auto type = StoredColumnType(ctx.deferral->reader, column);
+  if (!type) {
+    return false;
+  }
   auto index = std::make_unique<ByWildcardNGram>(wildcard);
   index->mutable_options()->matcher = nullptr;
-  ctx.deferred->emplace_back(std::exchange(slot, std::move(index)));
+  ctx.deferral->filters.emplace_back(std::exchange(slot, std::move(index)),
+                                     column, *std::move(type));
   return true;
 }
 
@@ -150,7 +161,7 @@ bool Defer(Filter::ptr& slot, const OptimizeContext& ctx) {
 }  // namespace
 
 void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
-  if (ctx.deferred == nullptr) {
+  if (ctx.deferral == nullptr) {
     return;
   }
   if (root->type() != Type<BooleanFilter>::id()) {
@@ -167,5 +178,4 @@ void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx) {
   }
 }
 
-}  // namespace optimizer
-}  // namespace irs
+}  // namespace irs::optimizer

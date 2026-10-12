@@ -37,6 +37,7 @@
 #include <iresearch/search/detail/table_filter.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
+#include <iresearch/search/filters/deferral.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -970,17 +971,18 @@ irs::Filter::ptr LoweredAnd(irs::ByPhrase phrase, std::string_view term) {
 irs::Filter::ptr IndexPart(const irs::ByPhrase& phrase, const Index& index,
                            const irs::Scorer* scorer = nullptr) {
   irs::Filter::ptr root = std::make_unique<irs::ByPhrase>(phrase);
-  std::vector<irs::Filter::ptr> deferred;
-  irs::Optimize(root, {.scored = scorer != nullptr,
-                       .scorer = scorer,
-                       .reader = &index.Reader(),
-                       .deferred = &deferred});
-  if (deferred.empty()) {
+  irs::Deferral deferral{.reader = index.Reader()};
+  irs::Optimize(
+    root,
+    {.scored = scorer != nullptr, .scorer = scorer, .deferral = &deferral});
+  if (deferral.filters.empty()) {
     EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), root->type());
     return nullptr;
   }
-  EXPECT_EQ(1U, deferred.size());
-  EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), deferred.front()->type());
+  EXPECT_EQ(1U, deferral.filters.size());
+  const auto& deferred = deferral.filters.front();
+  EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), deferred.filter->type());
+  EXPECT_EQ(phrase.options().tokens()->text, deferred.column);
   return root;
 }
 

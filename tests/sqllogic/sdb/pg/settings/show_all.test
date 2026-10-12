@@ -317,6 +317,7 @@ segment_memory_max	268435456	In-memory bytes an inverted-index or search-table s
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -341,6 +342,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 work_mem	4096	Sets the maximum memory to be used for query workspaces.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
@@ -673,6 +677,7 @@ segment_memory_max	268435456	In-memory bytes an inverted-index or search-table s
 server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -697,6 +702,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 work_mem	4096	Sets the maximum memory to be used for query workspaces.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.

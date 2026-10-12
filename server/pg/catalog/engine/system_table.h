@@ -87,6 +87,7 @@ struct TableFilterState;
 namespace sdb::catalog {
 
 class TokenizerCatalogEntry;
+class SubscriptionCatalogEntry;
 class SnapshotCatalog;
 struct CatalogSnapshot;
 
@@ -1079,11 +1080,14 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
       return Visit<catalog::ForeignServerCatalogEntry>(table, entry);
     case TOKENIZER_ENTRY:
       return Visit<catalog::TokenizerCatalogEntry>(table, entry);
+    case SUBSCRIPTION_ENTRY:
+      return Visit<catalog::SubscriptionCatalogEntry>(table, entry);
     case INVALID:
     case PREPARED_STATEMENT:
     case COLLATION_ENTRY:
     case COORDINATE_SYSTEM_ENTRY:
     case JOB_ENTRY:
+    case REPLICATION_ORIGIN_ENTRY:
     case TABLE_FUNCTION_ENTRY:
     case SCALAR_FUNCTION_ENTRY:
     case AGGREGATE_FUNCTION_ENTRY:

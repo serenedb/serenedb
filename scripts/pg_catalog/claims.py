@@ -23,6 +23,9 @@ EXEMPT = {
 }
 
 FIXTURE = """statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
+
+statement ok
 DROP TEXT SEARCH DICTIONARY IF EXISTS stc_dict
 
 statement ok
@@ -129,6 +132,9 @@ CREATE SUBSCRIPTION stc_sub CONNECTION 'host=localhost dbname=stc' PUBLICATION s
 """
 
 TEARDOWN = """statement ok
+DROP SUBSCRIPTION IF EXISTS stc_sub
+
+statement ok
 DEALLOCATE stc_prep
 
 statement ok

@@ -110,6 +110,7 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_stat_slru	0	v
 <slt:ignore>	pg_stat_wal_receiver	0	v
 <slt:ignore>	pg_stat_recovery_prefetch	0	v
+<slt:ignore>	pg_stat_subscription	0	v
 <slt:ignore>	pg_stat_ssl	0	v
 <slt:ignore>	pg_stat_gssapi	0	v
 <slt:ignore>	pg_replication_slots	0	v
@@ -131,6 +132,7 @@ oid	relname	reltablespace	relkind
 <slt:ignore>	pg_stat_progress_copy	0	v
 <slt:ignore>	pg_user_mappings	0	v
 <slt:ignore>	pg_replication_origin_status	0	v
+<slt:ignore>	pg_stat_subscription_stats	0	v
 <slt:ignore>	pg_wait_events	0	v
 <slt:ignore>	pg_aios	0	v
 <slt:ignore>	information_schema_catalog_name	0	v

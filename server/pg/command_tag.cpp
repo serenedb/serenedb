@@ -41,6 +41,7 @@
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
+#include <duckdb/parser/statement/vacuum_statement.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
 #include "catalog/catalog.h"
@@ -54,7 +55,7 @@ struct ObjectTags {
   std::string_view alter;
 };
 
-ObjectTags TagsOf(duckdb::CatalogType type) {
+ObjectTags TagsOf(duckdb::CatalogType type, bool procedure) {
   using enum duckdb::CatalogType;
   switch (type) {
     case TABLE_ENTRY:
@@ -71,6 +72,9 @@ ObjectTags TagsOf(duckdb::CatalogType type) {
       return {"CREATE TYPE", "DROP TYPE", "ALTER TYPE"};
     case MACRO_ENTRY:
     case TABLE_MACRO_ENTRY:
+      if (procedure) {
+        return {"CREATE PROCEDURE", "DROP PROCEDURE", "ALTER PROCEDURE"};
+      }
       return {"CREATE FUNCTION", "DROP FUNCTION", "ALTER FUNCTION"};
     case DATABASE_ENTRY:
       return {"CREATE DATABASE", "DROP DATABASE", "ALTER DATABASE"};
@@ -85,6 +89,8 @@ ObjectTags TagsOf(duckdb::CatalogType type) {
               "ALTER TEXT SEARCH DICTIONARY"};
     case JOB_ENTRY:
       return {"CREATE JOB", "DROP JOB", "ALTER JOB"};
+    case SUBSCRIPTION_ENTRY:
+      return {"CREATE SUBSCRIPTION", "DROP SUBSCRIPTION", "ALTER SUBSCRIPTION"};
     case INVALID:
     case PREPARED_STATEMENT:
     case COLLATION_ENTRY:
@@ -100,6 +106,7 @@ ObjectTags TagsOf(duckdb::CatalogType type) {
     case SECRET_ENTRY:
     case SECRET_TYPE_ENTRY:
     case SECRET_FUNCTION_ENTRY:
+    case REPLICATION_ORIGIN_ENTRY:
     case DEPENDENCY_ENTRY:
       return {"CREATE", "DROP", "ALTER"};
   }
@@ -143,7 +150,7 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
         return "ALTER DEFAULT PRIVILEGES";
       }
       if (!permissions.new_owner.empty()) {
-        return TagsOf(permissions.entry_catalog_type).alter;
+        return TagsOf(permissions.entry_catalog_type, false).alter;
       }
       return permissions.revoke ? "REVOKE" : "GRANT";
     }
@@ -267,7 +274,12 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               create_stmt.info->Cast<duckdb::CreateTableInfo>().query) {
             return make("SELECT", true);
           }
-          return make(TagsOf(create_stmt.info->type).create);
+          const auto& info = *create_stmt.info;
+          const bool procedure =
+            (info.type == duckdb::CatalogType::MACRO_ENTRY ||
+             info.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) &&
+            info.Cast<duckdb::CreateMacroInfo>().is_procedure;
+          return make(TagsOf(info.type, procedure).create);
         }
       }
       return make("CREATE");
@@ -281,7 +293,8 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
                           ? "DEALLOCATE ALL"
                           : "DEALLOCATE");
           }
-          return make(TagsOf(drop_stmt.info->type).drop);
+          return make(
+            TagsOf(drop_stmt.info->type, drop_stmt.info->is_procedure).drop);
         }
       }
       return make("DROP");

@@ -195,7 +195,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgTextCopyFunction(db);
   replication::RegisterReplicationSourceFunction(db);
   replication::RegisterReplicationFunctions(db);
-  pg::RegisterReplicationOriginStatus(db);
 
   connector::RegisterSearchFunctions(db);
 

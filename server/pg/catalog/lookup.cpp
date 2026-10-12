@@ -90,12 +90,15 @@ duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
       return kPgForeignServerTable;
     case TOKENIZER_ENTRY:
       return kPgTsDictTable;
+    case SUBSCRIPTION_ENTRY:
+      return kPgSubscriptionTable;
     case INVALID:
     case PREPARED_STATEMENT:
     case COLLATION_ENTRY:
     case COORDINATE_SYSTEM_ENTRY:
     case TRIGGER_ENTRY:
     case JOB_ENTRY:
+    case REPLICATION_ORIGIN_ENTRY:
     case TABLE_FUNCTION_ENTRY:
     case SCALAR_FUNCTION_ENTRY:
     case AGGREGATE_FUNCTION_ENTRY:

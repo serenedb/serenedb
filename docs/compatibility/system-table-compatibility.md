@@ -67,7 +67,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_publication_namespace    | 🟡            | Maps schemas to publications (many-to-many). |
 | pg_publication_rel          | 🟡            | Maps relations (tables) to publications (many-to-many). |
 | pg_range                    | 🟡            | Stores information about range types. SereneDB has no range types. |
-| pg_replication_origin       | 🟡            | Contains replication origins shared across the cluster. |
+| pg_replication_origin       | 🟢            | One origin `pg_<subscription oid>` per subscription; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
 | pg_rewrite                  | 🟢            | Stores rewrite rules for tables and views. |
 | pg_seclabel                 | 🟡            | Stores security labels on database objects. |
 | pg_sequence                 | 🟢            | Contains information about sequences. |

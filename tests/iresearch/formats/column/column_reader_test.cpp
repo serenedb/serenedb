@@ -550,6 +550,7 @@ struct PointCodecCase {
   duckdb::CompressionType codec;
   std::function<bool(uint64_t)> valid;
   std::function<duckdb::Value(uint64_t)> value;
+  std::optional<duckdb::CompressionType> validity_codec = std::nullopt;
 };
 
 void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
@@ -586,6 +587,15 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
     col->DataBlocks(),
     [&](const auto& block) { return block.codec->type == c.codec; }))
     << c.name << ": " << codecs;
+  if (c.validity_codec) {
+    ASSERT_NE(col->Validity(), nullptr) << c.name;
+    ASSERT_TRUE(std::ranges::any_of(col->Validity()->DataBlocks(),
+                                    [&](const auto& block) {
+                                      return block.codec->type ==
+                                             *c.validity_codec;
+                                    }))
+      << c.name;
+  }
 
   std::vector<uint64_t> order(kRows);
   std::iota(order.begin(), order.end(), uint64_t{0});
@@ -621,8 +631,40 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
   const auto periodic = [](uint64_t g) { return g % 17 != 0; };
   const auto dense = [](uint64_t g) { return (g * 2654435761U) % 3 != 0; };
   const auto runs = [](uint64_t g) { return (g / 300) % 5 != 0; };
+  const auto short_runs = [](uint64_t g) { return (g / 50) % 4 != 0; };
+  const auto rare = [](uint64_t g) { return g % 50 == 0; };
   const auto mix = [](uint64_t g) { return g * 0x9E3779B97F4A7C15ULL; };
   const std::vector<PointCodecCase> cases{
+    {"bigint for wide", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, periodic,
+     [&](uint64_t g) {
+       return Value::BIGINT(static_cast<int64_t>(mix(g) >> 4));
+     }},
+    {"integer for wide", LogicalType::INTEGER,
+     CompressionType::COMPRESSION_BITPACKING, all,
+     [&](uint64_t g) {
+       return Value::INTEGER(static_cast<int32_t>(mix(g) >> 33));
+     }},
+    {"smallint for", LogicalType::SMALLINT,
+     CompressionType::COMPRESSION_BITPACKING, sparse,
+     [](uint64_t g) {
+       return Value::SMALLINT(static_cast<int16_t>((g * 31) % 30000) - 15000);
+     },
+     CompressionType::COMPRESSION_ROARING},
+    {"bigint short null runs", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, short_runs,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g * 3)); },
+     CompressionType::COMPRESSION_ROARING},
+    {"bigint mostly null", LogicalType::BIGINT,
+     CompressionType::COMPRESSION_BITPACKING, rare,
+     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g % 777)); },
+     CompressionType::COMPRESSION_ROARING},
+    {"double alprd exceptions", LogicalType::DOUBLE,
+     CompressionType::COMPRESSION_ALPRD, all,
+     [](uint64_t g) {
+       return g % 97 == 0 ? Value::DOUBLE(-1e300 * static_cast<double>(g))
+                          : Value::DOUBLE(std::sin(static_cast<double>(g)));
+     }},
     {"bigint for", LogicalType::BIGINT, CompressionType::COMPRESSION_BITPACKING,
      periodic,
      [](uint64_t g) {

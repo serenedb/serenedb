@@ -22,7 +22,9 @@
 
 #include <absl/container/node_hash_map.h>
 #include <absl/strings/match.h>
+#include <absl/strings/str_cat.h>
 
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -188,7 +190,6 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
   // on settings like enable_profiling unconditionally enables profiling.
   const bool is_reset = value.IsNull();
 
-  // Best-effort restore; swallow to keep noexcept contract.
   try {
     // Built-in options first.
     duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
@@ -238,7 +239,10 @@ void Config::RestoreValue(std::string_view key, duckdb::Value value) noexcept {
       _client_ctx.config.user_settings.SetUserSetting(
         ext.setting_index.GetIndex(), std::move(typed));
     }
-  } catch (...) {
+  } catch (const std::exception& e) {
+    _client_ctx.WarnUser(
+      absl::StrCat("could not restore setting \"", key,
+                   "\": ", duckdb::ErrorData{e}.RawMessage()));
   }
 }
 

@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -230,8 +231,9 @@ ResultWithTime SearchTable::RefreshUnsafe(
       }
     }
   } catch (const std::exception& e) {
-    result = absl::InternalError(absl::StrCat(
-      "refresh failed for search table ", GetTableId(), ": ", e.what()));
+    result = absl::InternalError(
+      absl::StrCat("refresh failed for search table ", GetTableId(), ": ",
+                   duckdb::ErrorData{e}.RawMessage()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -437,14 +439,16 @@ auto SearchTable::CompactUnsafeAsync(
     const auto res =
       co_await _writer->CompactAsync(policy, field_options, progress, env);
     if (!res) {
-      result = absl::InternalError(
-        absl::StrCat("compaction failed for search table ", GetTableId()));
+      SDB_DEBUG(SEARCH, "compaction of search table ", GetTableId(),
+                " merged nothing: cancelled, or every document was removed");
+      empty_compaction = true;
     } else {
       empty_compaction = (res.size == 0);  // nothing merged -> idle round
     }
   } catch (const std::exception& e) {
-    result = absl::InternalError(absl::StrCat(
-      "consolidation failed for search table ", GetTableId(), ": ", e.what()));
+    result = absl::InternalError(
+      absl::StrCat("consolidation failed for search table ", GetTableId(), ": ",
+                   duckdb::ErrorData{e}.RawMessage()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -460,8 +464,9 @@ ResultWithTime SearchTable::CleanupUnsafe() {
   try {
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
-    result = absl::InternalError(absl::StrCat(
-      "cleanup failed for search table ", GetTableId(), ": ", e.what()));
+    result = absl::InternalError(
+      absl::StrCat("cleanup failed for search table ", GetTableId(), ": ",
+                   duckdb::ErrorData{e}.RawMessage()));
   }
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -471,18 +476,22 @@ ResultWithTime SearchTable::CleanupUnsafe() {
   return {std::move(result), time_ms};
 }
 
-void SearchTable::VacuumRefresh() {
+absl::Status SearchTable::VacuumRefresh() {
   RefreshResult code = RefreshResult::Undefined;
-  RefreshUnsafe(/*wait=*/true, nullptr, code);
-  CleanupUnsafe();
+  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+    return res;
+  }
+  return CleanupUnsafe().res;
 }
 
-void SearchTable::VacuumCompact(uint32_t target_segments) {
+absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
   static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
   const auto target = std::max<uint32_t>(1, target_segments);
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
-  RefreshUnsafe(/*wait=*/true, nullptr, code);
+  if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+    return res;
+  }
   for (size_t pass = 0; pass < 8; ++pass) {
     std::vector<std::vector<std::string>> buckets(target);
     {
@@ -508,15 +517,21 @@ void SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      CompactUnsafe(bucket, kProgress, empty, field_options.get());
+      if (auto res =
+            CompactUnsafe(bucket, kProgress, empty, field_options.get()).res;
+          !res.ok()) {
+        return res;
+      }
       merged |= !empty;
     }
-    RefreshUnsafe(/*wait=*/true, nullptr, code);
+    if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
+      return res;
+    }
     if (!merged) {
       break;
     }
   }
-  CleanupUnsafe();
+  return CleanupUnsafe().res;
 }
 
 }  // namespace sdb::search

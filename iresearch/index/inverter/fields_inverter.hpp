@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <array>
 #include <deque>
 #include <span>
+#include <string>
 
 #include "iresearch/analysis/numeric_terms.hpp"
 #include "iresearch/analysis/token_batch.hpp"
@@ -35,7 +38,6 @@
 #include "iresearch/index/inverter/term_dictionary.hpp"
 #include "iresearch/index/typed_terms.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -81,6 +83,7 @@ class FieldInverter : util::Noncopyable {
   }
 
   const auto& Meta() const noexcept { return _meta; }
+  std::string_view Error() const noexcept { return _error; }
   doc_id_t LastDoc() const noexcept { return _state.last_doc; }
   const TermDictionary& Dictionary() const noexcept { return _dict; }
   std::span<const doc_id_t> InlineDocs() const noexcept {
@@ -356,7 +359,7 @@ class FieldInverter : util::Noncopyable {
       if (_dense_pos) {
         if (last_pos + n < last_pos || last_pos + n >= pos_limits::eof())
           [[unlikely]] {
-          SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+          _error = "the tokenizer produced invalid token positions";
           return false;
         }
       } else {
@@ -368,7 +371,7 @@ class FieldInverter : util::Noncopyable {
           len += pos[i] != pos[i - 1];
         }
         if (!monotonic || pos[n - 1] >= pos_limits::eof()) [[unlikely]] {
-          SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+          _error = "the tokenizer produced invalid token positions";
           return false;
         }
       }
@@ -383,7 +386,7 @@ class FieldInverter : util::Noncopyable {
           valid &= end[i] >= start[i];
         }
         if (!valid) [[unlikely]] {
-          SDB_ERROR(IRESEARCH, "invalid offset in field '", _meta.id, "'");
+          _error = "the tokenizer produced invalid token offsets";
           return false;
         }
         _fill_last_start = start[n - 1];
@@ -402,7 +405,7 @@ class FieldInverter : util::Noncopyable {
     if (entry.count == 0) {
       return true;
     }
-    if (!CheckDocBudget(id, entry.len)) [[unlikely]] {
+    if (!CheckDocBudget(entry.len)) [[unlikely]] {
       return false;
     }
     log.PushRef(id, e);
@@ -468,7 +471,7 @@ class FieldInverter : util::Noncopyable {
     if (!n) [[unlikely]] {
       return true;
     }
-    if (!CheckDocBudget(id, n)) [[unlikely]] {
+    if (!CheckDocBudget(n)) [[unlikely]] {
       return false;
     }
     _state.stats.len += n;
@@ -498,7 +501,7 @@ class FieldInverter : util::Noncopyable {
         return false;
       }
     }
-    if (!CheckDocBudget(id, run.len)) [[unlikely]] {
+    if (!CheckDocBudget(run.len)) [[unlikely]] {
       return false;
     }
 
@@ -522,7 +525,7 @@ class FieldInverter : util::Noncopyable {
     if (_dense_pos) {
       const uint32_t last_pos = pos_base + count;
       if (last_pos < pos_base || last_pos >= pos_limits::eof()) [[unlikely]] {
-        SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+        _error = "the tokenizer produced invalid token positions";
         return {pos_limits::eof(), 0};
       }
       return {last_pos, count};
@@ -538,7 +541,7 @@ class FieldInverter : util::Noncopyable {
     const uint32_t last_pos = pos_base + pos_arr[count - 1];
     if (!monotonic || last_pos < pos_base || last_pos >= pos_limits::eof())
       [[unlikely]] {
-      SDB_ERROR(IRESEARCH, "invalid position in field '", _meta.id, "'");
+      _error = "the tokenizer produced invalid token positions";
       return {pos_limits::eof(), 0};
     }
     return {last_pos, len};
@@ -560,7 +563,7 @@ class FieldInverter : util::Noncopyable {
     valid &= uint64_t{_state.value_offs} + max_end <=
              std::numeric_limits<uint32_t>::max();
     if (!valid) [[unlikely]] {
-      SDB_ERROR(IRESEARCH, "invalid offset in field '", _meta.id, "'");
+      _error = "the tokenizer produced invalid token offsets";
       return false;
     }
     return true;
@@ -588,11 +591,11 @@ class FieldInverter : util::Noncopyable {
     _state.AdvancePos(run.last, run.len);
   }
 
-  IRS_FORCE_INLINE bool CheckDocBudget(doc_id_t doc, uint64_t n) const {
+  IRS_FORCE_INLINE bool CheckDocBudget(uint64_t n) const {
     if (_state.stats.len + n > std::numeric_limits<int32_t>::max())
       [[unlikely]] {
-      SDB_ERROR(IRESEARCH, "too many tokens in field: ", _meta.id,
-                ", document: ", doc);
+      _error = absl::StrCat("the document has more than ",
+                            std::numeric_limits<int32_t>::max(), " tokens");
       return false;
     }
     return true;
@@ -721,7 +724,7 @@ class FieldInverter : util::Noncopyable {
 
     Reset<Log::kLayout>(id);
 
-    if (!CheckDocBudget(id, 1)) [[unlikely]] {
+    if (!CheckDocBudget(1)) [[unlikely]] {
       return false;
     }
 
@@ -731,8 +734,8 @@ class FieldInverter : util::Noncopyable {
     } else {
       const uint32_t pos = _state.last_pos + 1;
       if (pos >= pos_limits::eof()) [[unlikely]] {
-        SDB_ERROR(IRESEARCH, "invalid position ", pos,
-                  " >= ", pos_limits::eof(), " in field '", _meta.id, "'");
+        _error = absl::StrCat("the document has more than ",
+                              pos_limits::eof() - 1, " token positions");
         return false;
       }
       if constexpr (Log::kLayout == TokenLayout::TermsPos) {
@@ -818,6 +821,7 @@ class FieldInverter : util::Noncopyable {
   NormColumnWriter* _norm_writer = nullptr;
   uint32_t _norm_row_group_size = 0;
   FieldMeta _meta;
+  mutable std::string _error;
   std::string _dict_id;
   uint32_t _dict_base = 0;
   uint32_t _dict_size = 0;

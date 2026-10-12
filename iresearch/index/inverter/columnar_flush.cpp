@@ -29,7 +29,7 @@
 #include <functional>
 #include <variant>
 
-#include "iresearch/error/error.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -56,8 +56,9 @@ uint64_t PrefixKeyAt(const duckdb::string_t& term, uint32_t skip) noexcept {
 }
 
 [[noreturn]] void ThrowDesyncedLog(field_id field, std::string_view what) {
-  throw IndexError{absl::StrCat("occurrence log desynced in field '", field,
-                                "' (", what, "), aborting segment flush")};
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                  ERR_MSG("occurrence log desynced in field '", field, "' (",
+                          what, "), aborting segment flush"));
 }
 
 class LogColumnReader {

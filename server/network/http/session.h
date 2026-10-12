@@ -31,12 +31,14 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_parameters.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -704,7 +706,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
           try {
             co_await handler->Handle(*this, request, writer);
-          } catch (const std::exception&) {
+          } catch (const std::exception& e) {
+            SDB_ERROR(HTTP, "request handler failed: ",
+                      duckdb::ErrorData{e}.RawMessage());
             if (!writer.HeadWritten()) {
               writer.Error(http::HttpStatus::InternalError, "internal");
             }
@@ -743,7 +747,9 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
       _codec.Reset();
       _idle.store(true, std::memory_order_release);
     }
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
+    SDB_ERROR(HTTP, "http session terminated by exception: ",
+              duckdb::ErrorData{e}.RawMessage());
   }
   co_await DrainSendOnTask();
   this->Stop();

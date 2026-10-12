@@ -30,7 +30,6 @@
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -96,10 +95,6 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = _dir->create(_filename);
-  if (!_out) {
-    throw IoError{
-      absl::StrCat("col writer: cannot create .col file: ", _filename)};
-  }
   _write_ctx = std::make_unique<WriteContext>(*_db, *_out);
 }
 

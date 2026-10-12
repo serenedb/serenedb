@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -374,7 +375,7 @@ std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
     return image;
   } catch (const std::exception& e) {
     SDB_ERROR(STARTUP, "cannot build the docs index in database \"", name,
-              "\": ", e.what());
+              "\": ", duckdb::ErrorData{e}.RawMessage());
     return {};
   }
 }

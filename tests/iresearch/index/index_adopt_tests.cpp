@@ -47,11 +47,9 @@ class CountingDirectory : public tests::DirectoryMock {
   explicit CountingDirectory(irs::Directory& impl)
     : tests::DirectoryMock{impl} {}
 
-  irs::IndexOutput::ptr create(std::string_view name) noexcept final {
+  irs::IndexOutput::ptr create(std::string_view name) final {
     auto out = tests::DirectoryMock::create(name);
-    if (out) {
-      ++_creates[std::string{name}];
-    }
+    ++_creates[std::string{name}];
     return out;
   }
 
@@ -308,7 +306,7 @@ TEST_F(IndexAdoptTest, AdoptSegmentRepublishesFlushedRows) {
   ASSERT_EQ(0, _writer->GetSnapshot().live_docs_count());
 
   for (const auto& meta_file : adopt) {
-    ASSERT_TRUE(_writer->AdoptSegment(meta_file, /*tick=*/7));
+    _writer->AdoptSegment(meta_file, /*tick=*/7);
   }
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -349,7 +347,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentBesideACompactionIsNotResynced) {
   static const auto kFullMerge = irs::index_utils::MakePolicy(
     irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   ASSERT_TRUE(_writer->Compact(kFullMerge));
-  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), 20));
+  _writer->AdoptSegment(adopt.front(), 20);
 
   _dir->TakeSynced();
   ASSERT_TRUE(_writer->RefreshCommit());
@@ -389,7 +387,7 @@ TEST_F(IndexAdoptTest, AdoptSegmentTickOrdersAgainstRemoval) {
 
   Restart(/*cleanup_on_open=*/false);
   for (const auto& meta_file : adopt) {
-    ASSERT_TRUE(_writer->AdoptSegment(meta_file, /*tick=*/10));
+    _writer->AdoptSegment(meta_file, /*tick=*/10);
   }
   {
     // Removal below the adopted tick: the segment is newer, so it survives.
@@ -424,8 +422,8 @@ TEST_F(IndexAdoptTest, AdoptTickDecidesRemovalMasking) {
 
   Restart(/*cleanup_on_open=*/false);
   // One removal at tick 20; one segment below it, one above.
-  ASSERT_TRUE(_writer->AdoptSegment(before.front(), /*tick=*/19));
-  ASSERT_TRUE(_writer->AdoptSegment(after.front(), /*tick=*/21));
+  _writer->AdoptSegment(before.front(), /*tick=*/19);
+  _writer->AdoptSegment(after.front(), /*tick=*/21);
   {
     auto trx = _writer->GetBatch();
     trx.Remove(ByName("target"));
@@ -471,8 +469,7 @@ TEST_F(IndexAdoptTest, AdoptTickFollowsManifestPositionNotRecordTick) {
   ASSERT_EQ(2, queries);
   ASSERT_EQ(1, queries_before_segment);
   const uint64_t first_tick = kMaxTick - queries;
-  ASSERT_TRUE(
-    _writer->AdoptSegment(adopt.front(), first_tick + queries_before_segment));
+  _writer->AdoptSegment(adopt.front(), first_tick + queries_before_segment);
   ASSERT_TRUE(trx.Commit(kMaxTick));
   ASSERT_TRUE(_writer->RefreshCommit());
 
@@ -553,7 +550,7 @@ TEST_F(IndexAdoptTest, AdoptedSegmentSurvivesCleanupBeforePublish) {
   ASSERT_FALSE(data_files.empty());
 
   Restart(/*cleanup_on_open=*/false);
-  ASSERT_TRUE(_writer->AdoptSegment(adopt.front(), /*tick=*/7));
+  _writer->AdoptSegment(adopt.front(), /*tick=*/7);
 
   // Before the commit that publishes it.
   irs::directory_utils::RemoveAllUnreferenced(*_dir);
@@ -579,7 +576,8 @@ TEST_F(IndexAdoptTest, AdoptSegmentRejectsAnUnreadableMeta) {
 
   Restart(/*cleanup_on_open=*/false);
   ASSERT_NE(nullptr, _dir->create(adopt.front()));
-  EXPECT_FALSE(_writer->AdoptSegment(adopt.front(), /*tick=*/1));
+  ASSERT_SQL_ERROR(_writer->AdoptSegment(adopt.front(), /*tick=*/1),
+                   ERRCODE_INDEX_CORRUPTED);
 
   _writer->RefreshCommit();
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
@@ -634,15 +632,14 @@ std::vector<std::string_view> Views(const std::vector<std::string>& in) {
   return {in.begin(), in.end()};
 }
 
-bool Replace(irs::IndexWriter& writer, const std::vector<std::string>& replaced,
+void Replace(irs::IndexWriter& writer, const std::vector<std::string>& replaced,
              const std::vector<std::string>& adopted,
              irs::IndexWriter::QueryContext::FilterPtr removal = nullptr) {
-  return writer.ReplaceSegments(
-    Views(replaced), Views(adopted),
-    [&](irs::IndexWriter::QueryContext::FilterPtr& out) {
-      out = std::move(removal);
-      return true;
-    });
+  writer.ReplaceSegments(Views(replaced), Views(adopted),
+                         [&](irs::IndexWriter::QueryContext::FilterPtr& out) {
+                           out = std::move(removal);
+                           return true;
+                         });
 }
 
 }  // namespace
@@ -674,7 +671,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsSwapsInOneGeneration) {
     << "a flushed-but-unadopted segment must not be visible";
 
   _dir->TakeSynced();
-  ASSERT_TRUE(Replace(*_writer, sources, replacement));
+  Replace(*_writer, sources, replacement);
   ASSERT_TRUE(_writer->RefreshCommit());
 
   // One generation: sources gone, replacement in, in the same published meta.
@@ -715,7 +712,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesPendingRemovals) {
 
   // Adopted at the floor, so the pending removal is above it and must reach
   // the replacement.
-  ASSERT_TRUE(Replace(*_writer, sources, replacement));
+  Replace(*_writer, sources, replacement);
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(0, _writer->GetSnapshot().live_docs_count())
@@ -758,7 +755,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsAppliesRemovalsInTheAdoptGeneration) {
 
   // Reissued into the swap itself rather than after it.
   _dir->TakeSynced();
-  ASSERT_TRUE(Replace(*_writer, sources, replacement, ByName("doomed")));
+  Replace(*_writer, sources, replacement, ByName("doomed"));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
@@ -800,7 +797,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsRemovalReachesOnlyTheAdopted) {
   const auto replacement = MetaFilesOf(build.FlushAndFsync());
   build.Abort();
 
-  ASSERT_TRUE(Replace(*_writer, sources, replacement, ByName("twin")));
+  Replace(*_writer, sources, replacement, ByName("twin"));
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(2, _writer->GetSnapshot().live_docs_count());
@@ -825,12 +822,11 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsProviderCanCancel) {
   build.Abort();
 
   bool asked = false;
-  ASSERT_TRUE(
-    _writer->ReplaceSegments(Views(sources), Views(replacement),
-                             [&](irs::IndexWriter::QueryContext::FilterPtr&) {
-                               asked = true;
-                               return false;
-                             }));
+  _writer->ReplaceSegments(Views(sources), Views(replacement),
+                           [&](irs::IndexWriter::QueryContext::FilterPtr&) {
+                             asked = true;
+                             return false;
+                           });
   _writer->RefreshCommit();
 
   EXPECT_TRUE(asked);
@@ -859,12 +855,13 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsRefusesABegunCommit) {
   ASSERT_TRUE(_writer->RefreshBegin());
 
   bool asked = false;
-  EXPECT_FALSE(
+  ASSERT_SQL_ERROR(
     _writer->ReplaceSegments(Views(sources), Views(replacement),
                              [&](irs::IndexWriter::QueryContext::FilterPtr&) {
                                asked = true;
                                return true;
-                             }));
+                             }),
+    ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE);
   EXPECT_FALSE(asked);
 
   _writer->RefreshCommit();
@@ -896,7 +893,7 @@ TEST_F(IndexAdoptTest, ReplaceSegmentsToleratesAVanishedSource) {
   // One source still in the index, one gone.
   std::vector<std::string> replaced = sources;
   replaced.emplace_back("_ffffffff");
-  ASSERT_TRUE(Replace(*_writer, replaced, replacement));
+  Replace(*_writer, replaced, replacement);
   ASSERT_TRUE(_writer->RefreshCommit());
 
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count());
@@ -1426,7 +1423,7 @@ TEST_F(IndexAdoptTest, ReplaceBeforeAbortSurvivesCleanup) {
   const std::string replacement_name = flushed.front().meta.name;
 
   // The order the build uses: reference through adoption, then abort.
-  ASSERT_TRUE(Replace(*_writer, sources, replacement));
+  Replace(*_writer, sources, replacement);
   build.Abort();
   irs::directory_utils::RemoveAllUnreferenced(*_dir);
 
@@ -1467,7 +1464,8 @@ TEST_F(IndexAdoptTest, AbortBeforeReplaceLosesTheFilesToCleanup) {
        "ordering note in search_table_backfill.cpp can be dropped";
   // And the swap correctly refuses rather than adopting a segment whose files
   // are gone.
-  EXPECT_FALSE(Replace(*_writer, sources, replacement));
+  ASSERT_SQL_ERROR(Replace(*_writer, sources, replacement),
+                   ERRCODE_UNDEFINED_FILE);
   EXPECT_EQ(1, _writer->GetSnapshot().live_docs_count())
     << "the original row must still be there";
 }

@@ -262,6 +262,7 @@ struct InvertedStoreIndex::ReplaySession {
   irs::IndexWriter::Transaction delete_trx;
   DuckDBSearchSinkDeleteWriter delete_writer;
   bool deleting = false;
+  bool replayed = false;
 };
 
 struct InvertedStoreIndex::LiveFeed {
@@ -635,6 +636,7 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   if (!session) {
     return;
   }
+  session->replayed = true;
   if (std::exchange(session->deleting, false)) {
     irs::IndexWriter::Transaction* deletes[] = {&session->delete_trx};
     CommitReplay(deletes, ReplayPosition());
@@ -653,6 +655,7 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
   if (!session || count == 0) {
     return;
   }
+  session->replayed = true;
   if (!std::exchange(session->deleting, true)) {
     try {
       session->executor.WorkOnTasks();
@@ -672,9 +675,9 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
               [&](size_t i) { return data[fmt.sel->get_index(i)]; });
 }
 
-void InvertedStoreIndex::FinishReplay() {
+bool InvertedStoreIndex::FinishReplay() {
   if (!_replay) {
-    return;
+    return false;
   }
   auto& session = *_replay;
   session.executor.WorkOnTasks();
@@ -688,7 +691,9 @@ void InvertedStoreIndex::FinishReplay() {
   } else {
     CommitReplaySlots(session, end);
   }
+  const bool replayed = session.replayed;
   _replay.reset();
+  return replayed;
 }
 
 duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,

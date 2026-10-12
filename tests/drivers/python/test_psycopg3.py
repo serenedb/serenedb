@@ -601,6 +601,37 @@ def test_standalone_commit_rollback_no_txn_warns_25p01():
         c.close()
 
 
+def test_engine_warning_reaches_the_client_as_a_notice():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SET profiling_mode = 'standard'")
+        assert [s for s, _ in diags] == ["WARNING"], diags
+        assert "profiling_mode setting is deprecated" in diags[0][1], diags
+    finally:
+        c.close()
+
+
+def test_offset_without_guaranteed_order_warns():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    grouped = "SELECT k, count(*) FROM (VALUES ('a'), ('b'), ('a')) t(k) GROUP BY k"
+    try:
+        with c.cursor() as cur:
+            cur.execute(grouped + " ORDER BY k OFFSET 1")
+            assert cur.fetchall() == [("b", 1)]
+            assert diags == [], diags
+            cur.execute(grouped + " OFFSET 1")
+            assert len(cur.fetchall()) == 1
+        assert [s for s, _ in diags] == ["WARNING"], diags
+        assert "row order is not guaranteed" in diags[0][1], diags
+    finally:
+        c.close()
+
+
 def test_copy_text_header():
     # PG honors HEADER in FORMAT text (DuckDB treats it as csv-only): TO STDOUT
     # emits the column-name header line, FROM STDIN skips the first line.

@@ -212,6 +212,15 @@ TEST(collation_token_stream_test, check_tokens) {
             BlockTerm(*stream, unicode_data));
 }
 
+TEST(collation_token_stream_test, long_value_keeps_its_key) {
+  auto stream = MakeCollation("en");
+  ASSERT_NE(nullptr, stream);
+  const std::string data(40000, 'a');
+  const auto expected = ReferenceKey("en", data);
+  ASSERT_GT(expected.size(), 32768U);
+  ASSERT_EQ(expected, BlockTerm(*stream, data));
+}
+
 TEST(collation_token_stream_test, native_fills_match_pull) {
   auto analyzer = MakeCollation("de");
   ASSERT_NE(nullptr, analyzer);

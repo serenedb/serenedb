@@ -21,7 +21,6 @@
 #pragma once
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
@@ -143,14 +142,7 @@ class PositionImpl final : public PosAttr {
   void Prepare(const DocState& state) {
     if (!_pos.in) {
       _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
-
-      if (!_pos.in) {
-        // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH, "Failed to reopen positions input");
-
-        throw IoError("failed to reopen positions input");
-      }
-
+      SDB_ASSERT(_pos.in);
       _pos.view = block_io::View(*_pos.in);
     }
     _pos.hint.Arm(state.term_state->pos_start,
@@ -160,14 +152,7 @@ class PositionImpl final : public PosAttr {
     if constexpr (IteratorTraits::Offset()) {
       if (!_pay.in) {
         _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
-
-        if (!_pay.in) {
-          // implementation returned wrong pointer
-          SDB_ERROR(IRESEARCH, "Failed to reopen payload input");
-
-          throw IoError("failed to reopen payload input");
-        }
-
+        SDB_ASSERT(_pay.in);
         _pay.view = block_io::View(*_pay.in);
       }
       _pay.hint.Arm(state.term_state->pay_start,

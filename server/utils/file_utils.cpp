@@ -205,9 +205,8 @@ void Spit(const char* filename, std::string_view s, bool sync) {
     len -= n;
   }
 
-  if (sync) {
-    // intentionally ignore this error -- nothing we can do about it.
-    std::ignore = fsync(fd);
+  if (sync && fsync(fd) != 0) {
+    ThrowFileWriteError(filename);
   }
 }
 

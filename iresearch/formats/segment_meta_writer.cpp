@@ -30,7 +30,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/index/file_names.hpp"
@@ -118,10 +117,6 @@ void Write(Directory& dir, std::string& meta_file, SegmentMeta& meta,
 
   meta_file = FileName(meta);
   auto out = dir.create(meta_file);
-
-  if (!out) [[unlikely]] {
-    throw IoError{absl::StrCat("failed to create file, path: ", meta_file)};
-  }
 
   if (has_mask) {
     WriteDocumentMask(*out, compressed, mask_size);

@@ -339,7 +339,6 @@ Settings for the PostgreSQL and ClickHouse connectors.
 | `pg_array_as_varchar` | Read Postgres arrays as varchar - enables reading mixed dimensional arrays. | `BOOLEAN` | `off` |
 | `pg_connection_cache` | Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases. | `BOOLEAN` | `on` |
 | `pg_connection_limit` | The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases. | `UBIGINT` | `32` |
-| `pg_debug_show_queries` | DEBUG SETTING: print all queries sent to Postgres to stdout. | `BOOLEAN` | `off` |
 | `pg_experimental_filter_pushdown` | Whether or not to use filter pushdown. | `BOOLEAN` | `on` |
 | `pg_null_byte_replacement` | When writing NULL bytes to Postgres, replace them with the given character. | `VARCHAR` |  |
 | `pg_oauth_token` | OAuth bearer token for PostgreSQL OAUTHBEARER authentication. Takes priority over the PGOAUTHTOKEN environment variable. | `VARCHAR` |  |

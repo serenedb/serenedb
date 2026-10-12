@@ -352,7 +352,8 @@ void CreateTextIndex(duckdb::ClientContext& context,
   SDB_ASSERT(storage);
   storage->StartTasks();
   storage->TakeDeleteLog();
-  storage->Refresh();
+  search::ThrowIfRefreshFailed(storage->Refresh(),
+                               index_entry.name.GetIdentifierName());
 }
 
 void EsCreateIndexExecute(duckdb::ClientContext& context,
@@ -1159,7 +1160,8 @@ void EsRefreshExecute(duckdb::ClientContext& context,
       if (const auto& storage =
             irs::utils::downCast<catalog::InvertedIndexEntry>(index)
               .Storage()) {
-        storage->Refresh();
+        search::ThrowIfRefreshFailed(storage->Refresh(),
+                                     index.name.GetIdentifierName());
       }
     });
   };

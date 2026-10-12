@@ -52,7 +52,6 @@
 #include <optional>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/column/array_column_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
@@ -87,10 +86,12 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   auto& cfg = duckdb::DBConfig::GetConfig(d.Get<duckdb::DatabaseInstance&>());
   auto codec = cfg.TryGetCompressionFunction(compression_type, physical);
   if (!codec) [[unlikely]] {
-    throw IndexError{absl::StrCat(
-      "Column block uses compression ", static_cast<uint32_t>(compression_type),
-      ", which this release of SereneDB does not have; it was written by a "
-      "newer release")};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("Column block uses compression ",
+              static_cast<uint32_t>(compression_type),
+              ", which this release of SereneDB does not have; it was written "
+              "by a newer release"));
   }
   return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
                          codec.get()};

@@ -90,9 +90,7 @@ class FailingDirectory : public tests::DirectoryMock {
     REMOVE,
     SYNC,
     REOPEN,
-    ReopenNull,  // return nullptr from index_input::reopen
     DUP,
-    DupNull,  // return nullptr from index_input::dup
   };
 
  private:
@@ -144,11 +142,8 @@ class FailingDirectory : public tests::DirectoryMock {
 
     ptr Dup() const final {
       if (_dir->ShouldFail(Failure::DUP, _name)) {
-        throw irs::IoError();
-      }
-
-      if (_dir->ShouldFail(Failure::DupNull, _name)) {
-        return nullptr;
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                        ERR_MSG("injected dup failure: ", _name));
       }
 
       return std::make_unique<FailingIndexInput>(_impl->Dup(), this->_name,
@@ -156,11 +151,8 @@ class FailingDirectory : public tests::DirectoryMock {
     }
     ptr Reopen() const final {
       if (_dir->ShouldFail(Failure::REOPEN, _name)) {
-        throw irs::IoError();
-      }
-
-      if (_dir->ShouldFail(Failure::ReopenNull, _name)) {
-        return nullptr;
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                        ERR_MSG("injected reopen failure: ", _name));
       }
 
       return std::make_unique<FailingIndexInput>(_impl->Reopen(), this->_name,
@@ -193,9 +185,10 @@ class FailingDirectory : public tests::DirectoryMock {
 
   bool NoFailures() const noexcept { return _failures.empty(); }
 
-  irs::IndexOutput::ptr create(std::string_view name) noexcept final {
+  irs::IndexOutput::ptr create(std::string_view name) final {
     if (ShouldFail(Failure::CREATE, name)) {
-      return nullptr;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("injected create failure: ", name));
     }
 
     return tests::DirectoryMock::create(name);
@@ -229,9 +222,10 @@ class FailingDirectory : public tests::DirectoryMock {
     return tests::DirectoryMock::mtime(result, name);
   }
   irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const noexcept final {
+                            irs::IOAdvice advice) const final {
     if (ShouldFail(Failure::OPEN, name)) {
-      return nullptr;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("injected open failure: ", name));
     }
 
     return std::make_unique<FailingIndexInput>(
@@ -324,9 +318,9 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   failure_registerer(dir);
 
   while (!dir.NoFailures()) {
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(
       (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-      irs::IoError);
+      ERRCODE_IO_ERROR);
   }
 
   // check data
@@ -401,9 +395,10 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);  // creation failure
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);  // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // creation failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // synchronization failure
 
     // successful attempt
     ASSERT_TRUE(writer->RefreshBegin());
@@ -441,9 +436,10 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);  // creation failure
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);  // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // creation failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // synchronization failure
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -514,18 +510,18 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);  // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // synchronization failure
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);  // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // synchronization failure
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);  // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);  // synchronization failure
 
     // successful attempt
     ASSERT_TRUE(writer->RefreshBegin());
@@ -568,20 +564,20 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);            // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);    // synchronization failure
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);            // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);    // synchronization failure
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(),
-                 irs::IoError);            // synchronization failure
+    ASSERT_SQL_ERROR(writer->RefreshBegin(),
+                     ERRCODE_IO_ERROR);    // synchronization failure
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -651,10 +647,10 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
+    ASSERT_SQL_ERROR(
       (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-      irs::IndexNotFound);
+      ERRCODE_UNDEFINED_FILE);
 
     // second attempt
     ASSERT_TRUE(writer->RefreshBegin());
@@ -690,10 +686,10 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
+    ASSERT_SQL_ERROR(
       (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-      irs::IndexNotFound);
+      ERRCODE_UNDEFINED_FILE);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -766,12 +762,12 @@ TEST(index_death_test_formats_15,
     // creation issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
 
     // synchornization issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
 
     // second attempt
     ASSERT_TRUE(writer->RefreshBegin());
@@ -808,12 +804,12 @@ TEST(index_death_test_formats_15,
     // creation issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
 
     // synchornization issue
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -909,13 +905,13 @@ TEST(index_death_test_formats_15,
     const irs::index_utils::CompactionCount compact_all;
 
     // segment meta creation failure
-    ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
-                 irs::IoError);
+    ASSERT_SQL_ERROR(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+                     ERRCODE_IO_ERROR);
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     // segment meta synchronization failure
     ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
     ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
 
     // check data
@@ -1035,9 +1031,9 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(
       writer->RefreshBegin(),
-      irs::IoError);  // start transaction to commit pending compaction
+      ERRCODE_IO_ERROR);  // start transaction to commit pending compaction
 
     // segment meta synchronization failure
     ASSERT_TRUE(InsertWithName(*writer, *doc4));
@@ -1048,9 +1044,9 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(
       writer->RefreshBegin(),
-      irs::IoError);  // start transaction to commit pending compaction
+      ERRCODE_IO_ERROR);  // start transaction to commit pending compaction
 
     // check data
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
@@ -1194,11 +1190,8 @@ TEST(index_death_test_formats_15, postings_doc_reopen_fail) {
   ASSERT_EQ(kDocs, term_itr->cookie().docs_count);
 
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.doc");
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
-               irs::IoError);
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.doc");
-  ASSERT_THROW((void)term_itr->postings(irs::IndexFeatures::None),
-               irs::IoError);
+  ASSERT_SQL_ERROR((void)term_itr->postings(irs::IndexFeatures::None),
+                   ERRCODE_IO_ERROR);
   ASSERT_TRUE(dir.NoFailures());
 
   auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
@@ -1278,15 +1271,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
     dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.idx");
     auto term_itr = terms->iterator();  // successful attempt
     ASSERT_NE(nullptr, term_itr);
-    ASSERT_THROW(term_itr->next(), irs::IoError);
-  }
-
-  // regiseter reopen failure in term dictionary (nullptr)
-  {
-    dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.idx");
-    auto term_itr = terms->iterator();  // successful attempt
-    ASSERT_NE(nullptr, term_itr);
-    ASSERT_THROW(term_itr->next(), irs::IoError);
+    ASSERT_SQL_ERROR(term_itr->next(), ERRCODE_IO_ERROR);
   }
 
   auto term_itr = terms->iterator();  // successful attempt
@@ -1296,42 +1281,24 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
   // can't reopen position input
-  ASSERT_THROW((void)term_itr->postings(kPositions), irs::IoError);
-  // regiseter reopen failure in positions (nullptr)
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pos");
-  // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositions), irs::IoError);
+  ASSERT_SQL_ERROR((void)term_itr->postings(kPositions), ERRCODE_IO_ERROR);
   // regiseter reopen failure in payload
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
   // can't reopen offset input
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
-
-  // regiseter reopen failure in payload (nullptr)
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
-
-  // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
+  ASSERT_SQL_ERROR((void)term_itr->postings(kPositionsOffsets),
+                   ERRCODE_IO_ERROR);
   // regiseter reopen failure in payload
   // can't reopen offset input
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
-  // regiseter reopen failure in payload (nullptr)
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
-  // can't reopen position (nullptr)
-  ASSERT_THROW((void)term_itr->postings(kPositionsOffsets), irs::IoError);
+  ASSERT_SQL_ERROR((void)term_itr->postings(kPositionsOffsets),
+                   ERRCODE_IO_ERROR);
 
   // regiseter reopen failure in positions
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pos");
-  // regiseter reopen failure in positions
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pos");
   // regiseter reopen failure in payload
   dir.RegisterFailure(FailingDirectory::Failure::REOPEN, "_1.pay");
-  // regiseter reopen failure in payload
-  dir.RegisterFailure(FailingDirectory::Failure::ReopenNull, "_1.pay");
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
-  ASSERT_THROW((void)term_itr->postings(kAllFeatures), irs::IoError);
+  ASSERT_SQL_ERROR((void)term_itr->postings(kAllFeatures), ERRCODE_IO_ERROR);
+  ASSERT_SQL_ERROR((void)term_itr->postings(kAllFeatures), ERRCODE_IO_ERROR);
 
   ASSERT_TRUE(dir.NoFailures());
   // successful attempt
@@ -1379,7 +1346,7 @@ TEST(index_death_test_formats_15,
 
     // First insert triggers segment_writer::reset(meta) -> cs Writer
     // constructor -> dir.create("_1.col") -> throw.
-    ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
 
     // Successful follow-up attempt: failure already consumed.
     ASSERT_TRUE(writer->RefreshBegin());
@@ -1409,7 +1376,7 @@ TEST(index_death_test_formats_15,
                                          irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    ASSERT_THROW(InsertWithName(*writer, *doc2), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc2), ERRCODE_IO_ERROR);
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
     ASSERT_TRUE(writer->RefreshBegin());
@@ -1467,7 +1434,7 @@ TEST(index_death_test_formats_15,
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
 
-    ASSERT_THROW(InsertWithName(*writer, *doc2), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc2), ERRCODE_IO_ERROR);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
     ASSERT_TRUE(writer->RefreshBegin());
@@ -1556,14 +1523,15 @@ TEST(index_death_test_formats_15,
         } else if (!InsertWithName(writer, *doc2)) {
           inserts_ok = false;
         }
-      } catch (const irs::IoError&) {
+      } catch (const irs::SqlException& e) {
+        ASSERT_EQ(e.error().errcode, ERRCODE_IO_ERROR) << e.message();
         // cs CREATE on `_N.col` threw at insert-time.
         ASSERT_LT(dir.NumFailures(), failures_before);
         continue;
       }
       if (inserts_ok) {
         tests::Remove(writer, *query_doc2);
-        ASSERT_THROW(writer.RefreshBegin(), irs::IoError);
+        ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
         ASSERT_LT(dir.NumFailures(), failures_before);
       }
     }
@@ -1684,7 +1652,7 @@ TEST(index_death_test_formats_15,
     while (!dir.NoFailures()) {
       const auto failures_before = dir.NumFailures();
       ASSERT_TRUE(InsertWithName(writer, *doc1));
-      ASSERT_THROW(writer.RefreshBegin(), irs::IoError);
+      ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
       ASSERT_LT(dir.NumFailures(), failures_before);
     }
   };
@@ -1841,8 +1809,9 @@ TEST(index_death_test_formats_15,
 
     std::thread compaction_thread([&writer] {
       const irs::index_utils::CompactionCount compact_all;
-      ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
-                   irs::IoError);
+      ASSERT_SQL_ERROR(
+        writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+        ERRCODE_IO_ERROR);
     });
 
     dir.wait_for_blocker();
@@ -1920,7 +1889,7 @@ TEST(index_death_test_formats_15,
     compaction_thread.join();
 
     // pending compaction commit fails on segment-meta sync.
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
 
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_TRUE(reader);
@@ -1994,8 +1963,9 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     const irs::index_utils::CompactionCount compact_all;
 
     while (!dir.NoFailures()) {
-      ASSERT_THROW(writer->Compact(irs::index_utils::MakePolicy(compact_all)),
-                   irs::IoError);
+      ASSERT_SQL_ERROR(
+        writer->Compact(irs::index_utils::MakePolicy(compact_all)),
+        ERRCODE_IO_ERROR);
       ASSERT_FALSE(writer->RefreshBegin());  // nothing to flush
     }
 
@@ -2091,7 +2061,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
 
     while (!dir.NoFailures()) {
       ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
-      ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+      ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
       ASSERT_FALSE(writer->RefreshBegin());
     }
 
@@ -2173,7 +2143,7 @@ TEST(index_death_test_formats_15,
     // Failure 1: `_1.col` CREATE fires at insert time (cs writer
     // construction).
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
-    ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
     ASSERT_TRUE(dir.NoFailures());
 
     // Failure 2: `_2.0.sm` CREATE fires during Begin's segment flush
@@ -2182,7 +2152,7 @@ TEST(index_death_test_formats_15,
     // not at insert time.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_2.0.sm");
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
     ASSERT_TRUE(dir.NoFailures());
 
     (void)doc2;
@@ -2213,7 +2183,7 @@ TEST(index_death_test_formats_15,
     // throws because cs Writer construction calls
     // `dir.create("_1.col")` which returns nullptr.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
-    ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
     ASSERT_TRUE(dir.NoFailures());
 
     // After the failure clears, Insert + Commit proceed normally.
@@ -2271,15 +2241,15 @@ TEST(index_death_test_formats_15,
 
     // 1) CREATE failure on `_1.col` -> first insert throws.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
-    ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
     ASSERT_TRUE(dir.NoFailures());
 
     // 2) Insert succeeds (allocates `_2.col`), but SYNC fails on it
-    // during Begin(). Begin() throws irs::IoError; the failed flush
-    // leaves the index empty.
+    // during Begin(). Begin() throws; the failed flush leaves the index
+    // empty.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_2.col");
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
     ASSERT_TRUE(dir.NoFailures());
 
     auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());
@@ -2316,14 +2286,14 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
 
     dir.RegisterFailure(FailingDirectory::Failure::CREATE,
                         "pending_segments_1");
-    ASSERT_THROW(writer->RefreshBegin(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
 
     dir.RegisterFailure(FailingDirectory::Failure::RENAME,
                         "pending_segments_1");
-    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
+    ASSERT_SQL_ERROR(
       (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-      irs::IndexNotFound);
+      ERRCODE_UNDEFINED_FILE);
 
     // Now empty commit succeeds.
     ASSERT_TRUE(writer->RefreshCommit());
@@ -2333,7 +2303,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
 
     // Insert fails because `.col` creation fails for the new segment.
     dir.RegisterFailure(FailingDirectory::Failure::CREATE, "_1.col");
-    ASSERT_THROW(InsertWithName(*writer, *doc1), irs::IoError);
+    ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
     ASSERT_FALSE(writer->RefreshCommit());  // nothing to commit
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -2344,7 +2314,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
 
     // SYNC fails on segment 0's `.col` -> Commit throws.
     dir.RegisterFailure(FailingDirectory::Failure::SYNC, "_2.col");
-    ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
+    ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
       irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()));
@@ -2447,10 +2417,10 @@ TEST(index_death_test_formats_15, fails_in_exists) {
 
     while (!dir.NoFailures()) {
       ASSERT_TRUE(InsertWithName(*writer, *doc1));
-      ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
-      ASSERT_THROW(
+      ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
+      ASSERT_SQL_ERROR(
         (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-        irs::IndexNotFound);
+        ERRCODE_UNDEFINED_FILE);
     }
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -2701,8 +2671,9 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
 
   // OPEN failure on `_1.col` -- DirectoryReader throws.
   dir.RegisterFailure(FailingDirectory::Failure::OPEN, "_1.col");
-  ASSERT_THROW((irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
-               irs::IoError);
+  ASSERT_SQL_ERROR(
+    (irs::DirectoryReader{dir, irs::tests::DefaultReaderOptions()}),
+    ERRCODE_IO_ERROR);
 
   // Read succeeds once the failure clears.
   auto reader = irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions());

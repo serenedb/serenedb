@@ -51,7 +51,7 @@ struct TrackingDirectory final : public Directory {
     return _impl.attributes();
   }
 
-  IndexOutput::ptr create(std::string_view name) noexcept final;
+  IndexOutput::ptr create(std::string_view name) final;
 
   bool exists(bool& result, std::string_view name) const noexcept final {
     return _impl.exists(result, name);
@@ -69,8 +69,7 @@ struct TrackingDirectory final : public Directory {
     return _impl.mtime(result, name);
   }
 
-  IndexInput::ptr open(std::string_view name,
-                       IOAdvice advice) const noexcept final {
+  IndexInput::ptr open(std::string_view name, IOAdvice advice) const final {
     return _impl.open(name, advice);
   }
 
@@ -115,7 +114,7 @@ struct RefTrackingDirectory : public Directory {
 
   void clear_refs() const;
 
-  IndexOutput::ptr create(std::string_view name) noexcept final;
+  IndexOutput::ptr create(std::string_view name) final;
 
   bool exists(bool& result, std::string_view name) const noexcept final {
     return _impl.exists(result, name);
@@ -133,8 +132,7 @@ struct RefTrackingDirectory : public Directory {
     return _impl.mtime(result, name);
   }
 
-  IndexInput::ptr open(std::string_view name,
-                       IOAdvice advice) const noexcept final;
+  IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
 
   bool remove(std::string_view name) noexcept final;
 

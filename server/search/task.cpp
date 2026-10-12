@@ -28,6 +28,7 @@
 #include <chrono>
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <exception>
@@ -207,17 +208,17 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
   } else {
-    SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx->GetId(),
-              "': ", res.message());
+    SDB_WARN(SEARCH, "error after running for ", time_ms,
+             "ms while compacting Search index '", idx->GetId(),
+             "': ", res.message());
   }
   co_return !empty_compaction;
 }
 
 // Fan out one CompactUnsafe per currently-free global slot. Each merge is
 // independent: the tier policy + the writer's _compacting exclusion set hand
-// every concurrent call a disjoint candidate window (overlap -> Fail -> no
-// work), so concurrency is bounded only by the slot gate; the smaller policy
+// every concurrent call a disjoint candidate window, so concurrency is bounded
+// only by the slot gate; the smaller policy
 // when the gate is full keeps the pool draining. noexcept on purpose: a slot is
 // acquired here and released only by its child, so if Run/push_back threw (OOM)
 // the slot would leak into the gate count -- fail fast instead.
@@ -361,7 +362,8 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
     // timer -- a clean termination signal, not an error.
     SDB_TRACE(SEARCH, name, " loop stopped");
   } catch (const std::exception& ex) {
-    SDB_ERROR(SEARCH, name, " loop terminated by exception: ", ex.what());
+    SDB_ERROR(SEARCH, name, " loop terminated by exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   }
   co_return {};
 }
@@ -488,7 +490,8 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
     // timer -- a clean termination signal, not an error.
     SDB_TRACE(SEARCH, "compaction loop stopped");
   } catch (const std::exception& ex) {
-    SDB_ERROR(SEARCH, "compaction loop terminated by exception: ", ex.what());
+    SDB_ERROR(SEARCH, "compaction loop terminated by exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   }
   co_return {};
 }

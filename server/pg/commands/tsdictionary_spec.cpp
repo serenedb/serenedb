@@ -29,6 +29,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/expression_type.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
@@ -417,8 +418,9 @@ class SpecCompiler {
     try {
       exprs = duckdb::Parser::GetBuiltinParser().ParseExpressionList(spec);
     } catch (const std::exception& e) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                      ERR_MSG(kOperation, ": ", e.what()));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_SYNTAX_ERROR),
+        ERR_MSG(kOperation, ": ", duckdb::ErrorData{e}.RawMessage()));
     }
     if (exprs.size() != 1) {
       THROW_SQL_ERROR(
@@ -770,7 +772,7 @@ class SpecCompiler {
       auto bound = constant_binder.Bind(copy);
       return duckdb::ExpressionExecutor::EvaluateScalar(_context, *bound, true);
     } catch (const std::exception& e) {
-      error = e.what();
+      error = duckdb::ErrorData{e}.RawMessage();
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG(group.name, "(): option \"", name, "\": ", error));

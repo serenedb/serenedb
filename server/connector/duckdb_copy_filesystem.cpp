@@ -213,10 +213,12 @@ void SereneDBCopyFileSystem::Write(duckdb::FileHandle& handle, void* buffer,
                   ERR_MSG("Positional write not supported for COPY TO STDOUT"));
 }
 
-bool SereneDBCopyFileSystem::FileExists(
-  const std::string& filename,
-  duckdb::optional_ptr<duckdb::FileOpener> opener) {
-  return filename == kDevStdin || filename == kDevStdout;
+duckdb::FileExistence SereneDBCopyFileSystem::TryFileExists(
+  const std::string& filename, duckdb::optional_ptr<duckdb::FileOpener> opener,
+  duckdb::optional_ptr<duckdb::ErrorData> error) {
+  return filename == kDevStdin || filename == kDevStdout
+           ? duckdb::FileExistence::EXISTS
+           : duckdb::FileExistence::MISSING;
 }
 
 duckdb::vector<duckdb::OpenFileInfo> SereneDBCopyFileSystem::Glob(

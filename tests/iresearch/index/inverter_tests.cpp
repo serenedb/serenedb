@@ -972,6 +972,7 @@ TEST(InverterRejectTest, NonMonotonicPosLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0 + 1, {"charlie", "delta"}, {5, 3});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token positions", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1007,6 +1008,7 @@ TEST(InverterRejectTest, ZeroPosLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0 + 1, {"charlie", "delta"}, {0, 0});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token positions", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1041,6 +1043,7 @@ TEST(InverterRejectTest, OffsetRegressionLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0 + 1, {"charlie"}, {}, {{5, 3}});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token offsets", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1075,6 +1078,7 @@ TEST(InverterRejectTest, OffsetWraparoundLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0, {"bravo"}, {}, {{0, 400000000u}});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token offsets", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 

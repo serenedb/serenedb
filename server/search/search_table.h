@@ -120,9 +120,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   // Re-attach a segment this shard already flushed + fsynced, named by its meta
   // file. `tick` must be in the adopting transaction's space -- it orders the
-  // segment against that transaction's removals. False == cannot be reopened.
-  bool AdoptSegment(std::string_view meta_file, uint64_t tick) {
-    return _writer->AdoptSegment(meta_file, tick);
+  // segment against that transaction's removals.
+  void AdoptSegment(std::string_view meta_file, uint64_t tick) {
+    _writer->AdoptSegment(meta_file, tick);
   }
 
   // Called once this shard's WAL has been replayed, to reclaim what the replay
@@ -205,8 +205,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   StoreStats GetStats() const;
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
-  void VacuumRefresh();
-  void VacuumCompact(uint32_t target_segments);
+  [[nodiscard]] absl::Status VacuumRefresh();
+  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();
@@ -280,12 +280,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   irs::IndexWriter::CompactionFloorGuard ArmCompactionFloor() {
     return _writer->ArmCompactionFloor();
   }
-  bool ReplaceSegments(
+  void ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
     absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
       removal_provider) {
-    return _writer->ReplaceSegments(replaced, adopted_metas, removal_provider);
+    _writer->ReplaceSegments(replaced, adopted_metas, removal_provider);
   }
 
  private:

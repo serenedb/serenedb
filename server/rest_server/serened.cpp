@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/error_data.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -46,6 +47,7 @@
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
 #include "server/utils/app_server.h"
+#include "server/utils/build.h"
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
@@ -99,7 +101,8 @@ int RunServer(int argc, char** argv) {
         try {
           fn();
         } catch (const std::exception& ex) {
-          SDB_ERROR(GENERAL, "exception stopping ", what, ": ", ex.what());
+          SDB_ERROR(GENERAL, "exception stopping ", what, ": ",
+                    duckdb::ErrorData{ex}.RawMessage());
         } catch (...) {
           SDB_ERROR(GENERAL, "unknown exception stopping ", what);
         }
@@ -135,6 +138,7 @@ int RunServer(int argc, char** argv) {
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition.
       stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
+      SDB_INFO(GENERAL, "SereneDB is shut down");
     };
 
     irs::CrashHandler::SetState("starting");
@@ -160,7 +164,7 @@ int RunServer(int argc, char** argv) {
     // running.
     network.StartListeners();
 
-    SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+    SDB_INFO(STARTUP, "SereneDB is ready for business. Have fun!");
 
     irs::CrashHandler::SetState("running");
     server.wait();
@@ -169,8 +173,8 @@ int RunServer(int argc, char** argv) {
     // gLogger is still up (Shutdown runs in main() after RunServer
     // returns), but go through SDB_ERROR so the line lands in the same
     // duckdb_logs() store as everything else.
-    SDB_ERROR(GENERAL,
-              "serened terminated because of an exception: ", ex.what());
+    SDB_ERROR(GENERAL, "serened terminated because of an exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   } catch (...) {
     SDB_ERROR(GENERAL,
               "serened terminated because of an exception of unknown type");
@@ -223,13 +227,14 @@ int main(int argc, char* argv[]) {
                        : irs::ExecutableRemap{.skipped = "disabled"};
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
+  SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
   server::query::RegisterServerExtensions(engine.instance());
 
   sdb::app::InitProcess(argv[0]);
-  SDB_INFO(STARTUP, "executable memory: ", remap.remapped >> 20,
-           " MB of machine code remapped into anonymous huge-page memory, ",
-           remap.populated >> 20, " MB of read-only mappings pre-read",
-           remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
+  SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,
+            " MB of machine code remapped into anonymous huge-page memory, ",
+            remap.populated >> 20, " MB of read-only mappings pre-read",
+            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
   sdb::app::ShutdownGlobals();
 

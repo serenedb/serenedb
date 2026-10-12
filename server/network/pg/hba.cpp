@@ -1099,7 +1099,11 @@ void LoadPersistedHba() {
     return;  // no data directory configured -> keep the built-in default
   }
   std::error_code ec;
-  if (!fs::exists(fs::path{path}, ec) || ec) {
+  if (!fs::exists(fs::path{path}, ec)) {
+    if (ec) {
+      SDB_ERROR(GENERAL, "hba config file '", path,
+                "' could not be read: ", ec.message(), " -- keeping default");
+    }
     return;  // no config file -> keep the built-in default
   }
   std::string text;

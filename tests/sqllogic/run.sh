@@ -148,6 +148,7 @@ CLICKHOUSE_CONTAINER_NAME=""
 CLICKHOUSE_LOG_FILE=""
 CLICKHOUSE_IMAGE="clickhouse/clickhouse-server:24.8"
 TEST_NETWORK=""
+OWNED_TEST_NETWORK=""
 cancel_pid=""
 : "${ICEBERG_BACKEND:=local}"
 # Bounds the docker event query in report_failed_container to this run.
@@ -246,10 +247,28 @@ report_failed_container() {
 	fi
 }
 
-cleanup_test_network() {
+ensure_test_network() {
 	if [[ -n "$TEST_NETWORK" ]]; then
-		local net="$TEST_NETWORK"
-		TEST_NETWORK=""
+		return
+	fi
+	local net="${SHARED_TEST_NETWORK:-$1-serenedb-test-net-$$}" error=""
+	if ! docker network inspect "$net" >/dev/null 2>&1 &&
+		! error=$(docker network create "$net" 2>&1 >/dev/null) &&
+		! docker network inspect "$net" >/dev/null 2>&1; then
+		echo "ERROR: cannot create docker network $net: $error" >&2
+		exit 1
+	fi
+	TEST_NETWORK="$net"
+	if [[ -z "${SHARED_TEST_NETWORK:-}" ]]; then
+		OWNED_TEST_NETWORK="$net"
+	fi
+}
+
+cleanup_test_network() {
+	TEST_NETWORK=""
+	if [[ -n "$OWNED_TEST_NETWORK" ]]; then
+		local net="$OWNED_TEST_NETWORK"
+		OWNED_TEST_NETWORK=""
 		# Removed only after the containers that joined it are gone, otherwise
 		# docker errors with "network has active endpoints". cleanup_all calls
 		# this last for that reason.
@@ -405,8 +424,7 @@ launch_s3() {
 		export MINIO_HOST="$MINIO_CONTAINER_NAME"
 		export MINIO_PORT=9000
 	else
-		TEST_NETWORK="${PREFIX}-serenedb-test-net-$$"
-		docker network create "$TEST_NETWORK" >/dev/null
+		ensure_test_network "$PREFIX"
 		network_args=(--network "$TEST_NETWORK" -p 9000)
 		export MINIO_HOST="localhost"
 	fi
@@ -666,10 +684,7 @@ launch_ollama() {
 		export OLLAMA_HOST="$OLLAMA_CONTAINER_NAME"
 		export OLLAMA_PORT=11434
 	else
-		if [[ -z "$TEST_NETWORK" ]]; then
-			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
-			docker network create "$TEST_NETWORK" >/dev/null
-		fi
+		ensure_test_network "$prefix"
 		network_args=(--network "$TEST_NETWORK" -p 11434)
 		export OLLAMA_HOST="localhost"
 		export OLLAMA_PORT
@@ -722,10 +737,7 @@ launch_kev() {
 		export KEV_HOST="$KEV_CONTAINER_NAME"
 		export KEV_PORT=8009
 	else
-		if [[ -z "$TEST_NETWORK" ]]; then
-			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
-			docker network create "$TEST_NETWORK" >/dev/null
-		fi
+		ensure_test_network "$prefix"
 		network_args=(--network "$TEST_NETWORK" -p 8009)
 		export KEV_HOST="localhost"
 		export KEV_PORT
@@ -759,11 +771,14 @@ launch_kev() {
 	echo
 }
 
-# Launches a postgres 16 container, used by tests that ATTACH a real postgres
-# via the postgres_scanner DuckDB extension (filename suffix `_pgscan.`). Trust
-# auth + a single postgres role; per-test database scoping is the test's
-# responsibility (`CREATE DATABASE` / `ATTACH ... TYPE postgres`).
 launch_postgres() {
+	if [[ -n "${PGHOST:-}" && -n "${PGPORT:-}" ]]; then
+		echo "Using existing postgres at ${PGHOST}:${PGPORT}."
+		export PGUSER="${PGUSER:-postgres}"
+		export PGDATABASE="${PGDATABASE:-postgres}"
+		return 0
+	fi
+
 	local prefix
 	prefix="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)"
 	POSTGRES_CONTAINER_NAME="${prefix}-serenedb-test-postgres-$$"
@@ -775,10 +790,7 @@ launch_postgres() {
 		export PGHOST="$POSTGRES_CONTAINER_NAME"
 		export PGPORT=5432
 	else
-		if [[ -z "$TEST_NETWORK" ]]; then
-			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
-			docker network create "$TEST_NETWORK" >/dev/null
-		fi
+		ensure_test_network "$prefix"
 		network_args=(--network "$TEST_NETWORK" -p 5432)
 		export PGHOST="localhost"
 		export PGPORT
@@ -852,10 +864,7 @@ launch_clickhouse() {
 		export CHHOST="$CLICKHOUSE_CONTAINER_NAME"
 		export CHPORT=9000
 	else
-		if [[ -z "$TEST_NETWORK" ]]; then
-			TEST_NETWORK="${prefix}-serenedb-test-net-$$"
-			docker network create "$TEST_NETWORK" >/dev/null
-		fi
+		ensure_test_network "$prefix"
 		network_args=(--network "$TEST_NETWORK" -p 9000)
 		export CHHOST="localhost"
 		export CHPORT

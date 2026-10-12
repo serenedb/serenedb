@@ -53,7 +53,6 @@ Calendar	gregorian	The current calendar
 catalog_error_max_schemas	100	The maximum number of schemas in the catalog that the system will scan to generate the "did you mean..." error message.
 ch_binary_as_blob	off	Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR
 ch_connection_cache	on	Whether to reuse (pool) ClickHouse connections across statements; setting this to false bypasses the connection pool entirely (dynamic kill switch)
-ch_debug_show_queries	off	DEBUG SETTING: print all queries sent to ClickHouse to stdout
 ch_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 ch_order_pushdown	on	Push ORDER BY and LIMIT clauses to ClickHouse (default: true)
 ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
@@ -204,7 +203,6 @@ perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
 pg_connection_limit	<slt:ignore>	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
-pg_debug_show_queries	off	DEBUG SETTING: print all queries sent to Postgres to stdout
 pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
 pg_null_byte_replacement	NULL	When writing NULL bytes to Postgres, replace them with the given character
@@ -222,7 +220,7 @@ pg_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 pg_pool_max_lifetime_millis	0	Maximum number of milliseconds the connection can be kept open. This number is checked when the connection is taken from the pool and returned to the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_lifetime_millis=600000)"
 pg_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', wait_timeout_millis=60000)"
 pg_staleness_query	NULL	Custom query used in place of the default table staleness query when pg_staleness_query_enabled resolves to true. Must contain a ${SCHEMA} placeholder and return at least 3 columns (identity, name, revision marker). Empty (default) uses the built-in pg_class/xmin query.
-pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit. Defaults to the opposite of pg_use_information_schema_introspection when not explicitly set (off for pg protocol compatible databases that may not support the underlying query, on for Postgres).
+pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit (default: false).
 pg_statement_timeout_millis	NULL	Postgres statement timeout in milliseconds to set on scan connections
 pg_use_binary_copy	on	Whether or not to use BINARY copy to read data
 pg_use_ctid_scan	on	Whether or not to parallelize scanning using table ctids
@@ -389,7 +387,6 @@ Calendar	gregorian	The current calendar
 catalog_error_max_schemas	100	The maximum number of schemas in the catalog that the system will scan to generate the "did you mean..." error message.
 ch_binary_as_blob	off	Read ClickHouse String/FixedString columns as BLOB instead of VARCHAR
 ch_connection_cache	on	Whether to reuse (pool) ClickHouse connections across statements; setting this to false bypasses the connection pool entirely (dynamic kill switch)
-ch_debug_show_queries	off	DEBUG SETTING: print all queries sent to ClickHouse to stdout
 ch_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 ch_order_pushdown	on	Push ORDER BY and LIMIT clauses to ClickHouse (default: true)
 ch_pool_acquire_mode	force	How to acquire connections from the pool: 'force' (always connect, ignore pool limit), 'wait' (block until available), 'try' (fail immediately if unavailable) (default: force)
@@ -540,7 +537,6 @@ perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
 pg_connection_limit	<slt:ignore>	The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases.
-pg_debug_show_queries	off	DEBUG SETTING: print all queries sent to Postgres to stdout
 pg_experimental_filter_pushdown	on	Whether or not to use filter pushdown
 pg_idle_in_transaction_timeout_millis	NULL	Postgres idle in transaction timeout in milliseconds to set on scan connections
 pg_null_byte_replacement	NULL	When writing NULL bytes to Postgres, replace them with the given character
@@ -558,7 +554,7 @@ pg_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 pg_pool_max_lifetime_millis	0	Maximum number of milliseconds the connection can be kept open. This number is checked when the connection is taken from the pool and returned to the pool. When the connection pool reaper thread is enabled ('pg_pool_enable_reaper_thread' option), then this number is checked in background periodically. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_lifetime_millis=600000)"
 pg_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken. This option only applies to newly attached Postgres databases, to configure a database that is already attached use "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', wait_timeout_millis=60000)"
 pg_staleness_query	NULL	Custom query used in place of the default table staleness query when pg_staleness_query_enabled resolves to true. Must contain a ${SCHEMA} placeholder and return at least 3 columns (identity, name, revision marker). Empty (default) uses the built-in pg_class/xmin query.
-pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit. Defaults to the opposite of pg_use_information_schema_introspection when not explicitly set (off for pg protocol compatible databases that may not support the underlying query, on for Postgres).
+pg_staleness_query_enabled	off	Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit (default: false).
 pg_statement_timeout_millis	NULL	Postgres statement timeout in milliseconds to set on scan connections
 pg_use_binary_copy	on	Whether or not to use BINARY copy to read data
 pg_use_ctid_scan	on	Whether or not to parallelize scanning using table ctids

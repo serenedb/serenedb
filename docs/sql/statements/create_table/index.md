@@ -191,6 +191,10 @@ Two expressions that PostgreSQL rejects are accepted by SereneDB:
 -   the expression may **reference other generated columns**, not just regular columns of the same row;
 -   the expression is **not required to be immutable** — volatile functions such as `random()` are accepted.
 
+## Sort and Partition Keys
+
+The syntax below includes `SORTED BY (...)` and `PARTITIONED BY (...)`, but neither is supported yet. `CREATE TABLE` rejects a definition that uses either one, for search tables and regular tables alike, including `CREATE TABLE ... AS SELECT`.
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

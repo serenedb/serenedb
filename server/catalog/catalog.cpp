@@ -420,6 +420,14 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
+  if (!info.Base().partition_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::NotImplementedException("PARTITIONED BY is not supported")};
+  }
+  if (!info.Base().sort_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::NotImplementedException("SORTED BY is not supported")};
+  }
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
   auto unknown = absl::c_find_if(options, [search](const auto& option) {

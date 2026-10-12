@@ -1,0 +1,47 @@
+statement error
+CREATE TABLE skp (x INT) SORTED BY (x);
+----
+db error: ERROR: SORTED BY is not supported
+
+
+statement error
+CREATE TABLE skp (x INT) PARTITIONED BY (x);
+----
+db error: ERROR: PARTITIONED BY is not supported
+
+
+statement error
+CREATE TABLE skp (x INT) SORTED BY (x) WITH (storage = 'search');
+----
+db error: ERROR: SORTED BY is not supported
+
+
+statement error
+CREATE TABLE skp (x INT) PARTITIONED BY (x) SORTED BY (x) WITH (storage = 'search');
+----
+db error: ERROR: PARTITIONED BY is not supported
+
+
+statement error
+CREATE TABLE skp SORTED BY (x) AS SELECT 1 AS x;
+----
+db error: ERROR: SORTED BY is not supported
+
+
+statement error
+CREATE TABLE skp PARTITIONED BY (x) WITH (storage = 'search') AS SELECT 1 AS x;
+----
+db error: ERROR: PARTITIONED BY is not supported
+
+
+query
+SELECT count(*) AS tables FROM pg_class WHERE relname = 'skp';
+----
+tables
+0
+
+statement ok
+CREATE TABLE skp (x INT) WITH (storage = 'search');
+
+statement ok
+DROP TABLE skp;

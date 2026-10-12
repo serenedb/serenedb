@@ -33,30 +33,21 @@ namespace irs::probe {
 
 class DocsMask {
  public:
-  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
+  explicit DocsMask(const DocumentMask* mask) noexcept
     : _words{mask != nullptr ? mask->Words() : nullptr},
-      _count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount()) : 0},
-      _visible_end{visible_end} {}
+      _count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount()) : 0} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
-    : DocsMask{segment.docs_mask(), segment.Meta().visible_end} {}
+    : DocsMask{segment.docs_mask()} {}
 
   IRS_FORCE_INLINE doc_id_t Probe(doc_id_t target) const noexcept {
-    if (target >= _visible_end) [[unlikely]] {
-      return target;
-    }
     const auto word = target / kBits;
     if (word >= _count) [[unlikely]] {
-      return _visible_end;
+      return doc_limits::eof();
     }
     const auto rest = _words[word] & (~uint64_t{0} << (target % kBits));
-    const auto found = static_cast<doc_id_t>(
-      word * kBits + static_cast<doc_id_t>(std::countr_zero(rest)));
-    if (const auto end = uint64_t{word + 1} * kBits; end <= _visible_end)
-      [[likely]] {
-      return found;
-    }
-    return std::min(found, _visible_end);
+    return static_cast<doc_id_t>(word * kBits +
+                                 static_cast<doc_id_t>(std::countr_zero(rest)));
   }
 
  private:
@@ -64,7 +55,6 @@ class DocsMask {
 
   const uint64_t* _words;
   uint32_t _count;
-  doc_id_t _visible_end;
 };
 
 }  // namespace irs::probe

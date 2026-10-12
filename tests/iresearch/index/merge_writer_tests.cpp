@@ -103,8 +103,8 @@ void ValidateTerms(
 
     ASSERT_NE(expected_terms.end(), itr);
 
-    for (auto docs_itr =
-           tests::MaskPostings(segment, term_itr->postings(index_features));
+    for (auto docs_itr = tests::MaskPostings(
+           segment, term_itr->postings(index_features), index_features);
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1, itr->second.erase(docs_itr->Value()));
 

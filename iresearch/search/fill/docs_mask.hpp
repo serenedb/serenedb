@@ -38,19 +38,16 @@ namespace irs::fill {
 
 class DocsMask {
  public:
-  DocsMask(const DocumentMask* mask, doc_id_t visible_end) noexcept
-    : _it{mask, doc_limits::eof()},
+  explicit DocsMask(const DocumentMask* mask) noexcept
+    : _it{mask},
       _words{mask != nullptr ? mask->Words() : nullptr},
       _word_count{mask != nullptr ? static_cast<uint32_t>(mask->WordCount())
-                                  : 0},
-      _visible_end{visible_end} {}
+                                  : 0} {}
 
   explicit DocsMask(const SubReader& segment) noexcept
-    : DocsMask{segment.docs_mask(), segment.Meta().visible_end} {}
+    : DocsMask{segment.docs_mask()} {}
 
-  bool Empty() const noexcept {
-    return doc_limits::eof(_visible_end) && _it.Empty();
-  }
+  bool Empty() const noexcept { return _it.Empty(); }
 
   doc_id_t FillOr(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {
     const auto base = static_cast<int64_t>(min);
@@ -65,12 +62,7 @@ class DocsMask {
         detail::WordAt(_words, _word_count, base + int64_t{full} * kBits) &
         (~uint64_t{0} >> (kBits - rest));
     }
-    if (_visible_end < max) {
-      roaring::internal::bitset_set_range(
-        words, std::max(min, _visible_end) - min, max - min);
-      return max;
-    }
-    return std::min(_it.Seek(max), _visible_end);
+    return _it.Seek(max);
   }
 
   uint32_t FillLive(doc_id_t min, uint32_t count, uint32_t* IRS_RESTRICT out) {
@@ -96,7 +88,6 @@ class DocsMask {
   DocumentMask::Iterator _it;
   const uint64_t* _words;
   uint32_t _word_count;
-  doc_id_t _visible_end;
 };
 
 }  // namespace irs::fill

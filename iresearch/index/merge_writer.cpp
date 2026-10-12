@@ -71,8 +71,9 @@ class ProgressTracker {
     SDB_ASSERT(progress);
   }
 
-  bool operator()() {
-    if (_hits++ >= _count) {
+  bool operator()(size_t hits = 1) {
+    _hits += hits;
+    if (_hits > _count) {
       _hits = 0;
       _valid = (*_progress)();
     }
@@ -93,6 +94,7 @@ class CompoundPostings : public TermPostings {
   struct PostingsT {
     TermPostings::ptr it;
     const DocRemap* remap;
+    size_t source;
   };
   using IteratorsT = std::vector<PostingsT>;
 
@@ -102,72 +104,98 @@ class CompoundPostings : public TermPostings {
     : _progress(progress, kProgressStepDocs) {}
 
   template<typename Func>
-  void Reset(Func&& func) {
+  void Reset(Func&& func, IndexFeatures features) {
     func(_iterators);
-    _doc = doc_limits::invalid();
     _current_itr = 0;
-    _refresh.reset();
+    _at = 0;
+    _size = 0;
+    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
+    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
   }
+
+  void Clear() noexcept { _iterators.clear(); }
 
   size_t Size() const noexcept { return _iterators.size(); }
 
   bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
 
-  // Each source answers with its own positions, so every switch owes the
-  // consumer a fresh read of them.
-  void Subscribe(AttrRefresh refresh) final { _refresh = refresh; }
+  uint32_t NextDocs(doc_id_t* docs, uint32_t* freqs) final;
 
-  doc_id_t Next() final;
-
-  uint32_t GetFreq() const final {
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final {
     SDB_ASSERT(_current_itr < _iterators.size());
-    SDB_ASSERT(_iterators[_current_itr].it);
-    return _iterators[_current_itr].it->GetFreq();
+    _iterators[_current_itr].it->NextPositions(pos, offs_start, offs_len, n);
   }
 
  private:
-  std::optional<AttrRefresh> _refresh;
+  uint32_t NextLive(TermPostings& it, const DocRemap& remap, doc_id_t* docs,
+                    uint32_t* freqs);
+
   std::vector<PostingsT> _iterators;
   size_t _current_itr{0};
   ProgressTracker _progress;
+  doc_id_t _docs[doc_limits::kBlockSize];
+  uint32_t _freqs[doc_limits::kBlockSize];
+  uint32_t _at{0};
+  uint32_t _size{0};
+  bool _has_freq{false};
+  bool _has_pos{false};
 };
 
-doc_id_t CompoundPostings::Next() {
-  _progress();
-
-  if (Aborted()) {
-    _iterators.clear();
-    return _doc = doc_limits::eof();
-  }
-
-  for (bool notify = !doc_limits::valid(_doc); _current_itr < _iterators.size();
-       notify = true, ++_current_itr) {
-    auto& it_entry = _iterators[_current_itr];
-    auto& it = it_entry.it;
-    const auto& remap = *it_entry.remap;
-
-    if (!it) {
-      continue;
-    }
-
-    if (notify && _refresh) {
-      (*_refresh)(*it);
-    }
-
-    while (true) {
-      auto it_value = it->Next();
-      if (doc_limits::eof(it_value)) {
-        break;
+uint32_t CompoundPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
+  for (; _current_itr < _iterators.size(); ++_current_itr) {
+    auto& [it, remap, source] = _iterators[_current_itr];
+    uint32_t n = 0;
+    if (remap->id_map.empty()) {
+      n = it->NextDocs(docs, freqs);
+      const auto shift = remap->base_id - doc_limits::min();
+      for (uint32_t i = 0; i != n; ++i) {
+        docs[i] += shift;
       }
-      if (remap.IsMasked(it_value)) {
-        continue;
-      }
-      return _doc = remap.Remap(it_value);
+    } else {
+      n = NextLive(*it, *remap, docs, freqs);
     }
-    it.reset();
+    if (n != 0) {
+      if (!_progress(n)) {
+        _iterators.clear();
+        return 0;
+      }
+      return n;
+    }
   }
+  return 0;
+}
 
-  return _doc = doc_limits::eof();
+uint32_t CompoundPostings::NextLive(TermPostings& it, const DocRemap& remap,
+                                    doc_id_t* docs, uint32_t* freqs) {
+  while (true) {
+    if (_at == _size) {
+      _size = it.NextDocs(_docs, _freqs);
+      _at = 0;
+      if (_size == 0) {
+        return 0;
+      }
+    }
+    uint64_t skip = 0;
+    for (; _at != _size && remap.IsMasked(_docs[_at]); ++_at) {
+      if (_has_pos) {
+        skip += _freqs[_at];
+      }
+    }
+    if (skip != 0) {
+      it.SkipPositions(skip);
+    }
+    uint32_t n = 0;
+    for (; _at != _size && !remap.IsMasked(_docs[_at]); ++_at, ++n) {
+      docs[n] = remap.Remap(_docs[_at]);
+      if (_has_freq) {
+        freqs[n] = _freqs[_at];
+      }
+    }
+    if (n != 0) {
+      return n;
+    }
+  }
 }
 
 class CompoundTermIterator : public TermOnlyIterator {
@@ -187,6 +215,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   void Reset(const FieldMeta& meta) noexcept {
     _current_term = {};
     _meta = &meta;
+    _doc_itr.Clear();
     _term_iterator_mask.clear();
     _term_iterators.clear();
     _min_term.clear();
@@ -224,6 +253,7 @@ class CompoundTermIterator : public TermOnlyIterator {
   struct TermIteratorImpl {
     SeekTermIterator::ptr it;
     const DocRemap* remap;
+    mutable TermPostings::ptr postings;
   };
 
   bytes_view _current_term;
@@ -294,20 +324,27 @@ bool CompoundTermIterator::next() {
 TermPostings::ptr CompoundTermIterator::postings(
   IndexFeatures /*features*/) const {
   auto add_iterators = [this](CompoundPostings::IteratorsT& itrs) {
+    const auto* const empty = TermPostings::empty().get();
+    for (auto& entry : itrs) {
+      if (entry.it.get() != empty) {
+        _term_iterators[entry.source].postings = std::move(entry.it);
+      }
+    }
     itrs.clear();
     itrs.reserve(_term_iterator_mask.size());
     for (auto& itr_id : _term_iterator_mask) {
       auto& term_itr = _term_iterators[itr_id];
       SDB_ASSERT(term_itr.it);
-      auto it = term_itr.it->postings(Meta().index_features);
+      auto it = term_itr.it->ReusePostings(Meta().index_features,
+                                           std::move(term_itr.postings));
       SDB_ASSERT(it);
       if (it) [[likely]] {
-        itrs.emplace_back(std::move(it), term_itr.remap);
+        itrs.emplace_back(std::move(it), term_itr.remap, itr_id);
       }
     }
   };
 
-  _doc_itr.Reset(add_iterators);
+  _doc_itr.Reset(add_iterators, Meta().index_features);
   return memory::to_managed<TermPostings>(_doc_itr);
 }
 

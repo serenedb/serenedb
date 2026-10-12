@@ -117,7 +117,7 @@ bool Chainable(const Spec& spec) {
   if (spec.model != Model::None || spec.setup) {
     return false;
   }
-  auto tokenizer = Make(spec);
+  auto tokenizer = Make(spec, Context());
   if (!tokenizer) {
     return false;
   }
@@ -212,7 +212,7 @@ TEST(TokenizerChainFuzz, PipelineEqualsSequentialApplication) {
     ASSERT_NE(nullptr, chain);
     std::vector<Tokenizer::ptr> oracle;
     for (const auto* spec : stages) {
-      oracle.push_back(Make(*spec));
+      oracle.push_back(Make(*spec, Context()));
       ASSERT_NE(nullptr, oracle.back());
     }
     for (const auto& value : Values(stages, Seed() + iter, 4)) {
@@ -274,7 +274,7 @@ TEST(TokenizerChainFuzz, SingleStagePipelineIsTheStage) {
     SCOPED_TRACE(spec->name);
     const Spec* stages[] = {spec};
     auto chain = Build(Chain(stages));
-    auto alone = Make(*spec);
+    auto alone = Make(*spec, Context());
     ASSERT_NE(nullptr, chain);
     ASSERT_NE(nullptr, alone);
     EXPECT_EQ(alone->type(), chain->type());
@@ -296,7 +296,7 @@ TEST(TokenizerChainFuzz, UnionMergesEveryBranch) {
     ASSERT_NE(nullptr, merged);
     std::vector<Tokenizer::ptr> branches;
     for (const auto* spec : members) {
-      branches.push_back(Make(*spec));
+      branches.push_back(Make(*spec, Context()));
       ASSERT_NE(nullptr, branches.back());
     }
     for (const auto& value : Values(members, Seed() + iter, 2)) {

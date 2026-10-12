@@ -50,7 +50,8 @@ std::string index_meta::FileName(uint64_t gen) {
 
 bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
                               std::string& pending_filename,
-                              std::string& filename, uint64_t tick) {
+                              std::string& filename,
+                              const SourcePosition& position) {
   if (index_gen_limits::valid(_pending_gen)) {
     // prepare() was already called with no corresponding call to commit()
     return false;
@@ -81,16 +82,13 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
             obj.WriteProperty<std::string>(index_meta::kSegmentFieldFilename,
                                            "filename", segment.filename);
-            obj.WritePropertyWithDefault<uint32_t>(
-              index_meta::kSegmentFieldInvisibleCount, "invisible_count",
-              InvisibleCount(segment.meta), 0);
           });
         });
     }
     if (_payload) {
       meta_out.WriteObject(
         index_meta::kFieldPayload, "payload",
-        [&](duckdb::BinarySerializer& obj) { _payload(tick, obj); });
+        [&](duckdb::BinarySerializer& obj) { _payload(position, obj); });
     }
   });
 
@@ -110,7 +108,8 @@ bool IndexMetaWriter::commit() {
   const auto dst = index_meta::FileName(_pending_gen);
 
   if (!_dir->rename(src, dst)) {
-    rollback();
+    _pending_gen = index_gen_limits::invalid();
+    _dir = nullptr;
 
     throw IoError{absl::StrCat("Failed to rename file, src path: '", src,
                                "' dst path: '", dst, "'")};

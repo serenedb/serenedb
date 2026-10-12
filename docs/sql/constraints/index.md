@@ -69,6 +69,10 @@ A primary key or unique constraint is checked by every statement that changes th
 
 <SqlLogicTest id="sql/constraints/index/example_009" />
 
+The `constraint_check_mode` column of [`sdb_constraints()`](../../sql/functions/metadata.md#sdb_constraints) shows which of the two a constraint was declared with, and `DEFAULT` when it names neither:
+
+<SqlLogicTest id="sql/constraints/index/example_010" />
+
 ## Foreign Keys
 
 Foreign keys define a column, or set of columns, that refer to a primary key or unique constraint from _another_ table. The constraint enforces that the key exists in the other table.

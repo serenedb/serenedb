@@ -31,6 +31,10 @@ In the following example, we create a `GEOMETRY` column with the 7 different typ
 
 <SqlLogicTest id="sql/data_types/geometry/example_001" />
 
+Geometries can also be cast to and from `BLOB` (`bytea`) in ["Well-Known Binary" (WKB)](https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry#Well-known_binary) format: the cast to `BLOB` returns the same bytes as [`ST_AsWKB`](../../sql/functions/geometry.md#st_aswkb-function), and a `BLOB` that holds no valid WKB fails to cast to `GEOMETRY`.
+
+<SqlLogicTest id="sql/data_types/geometry/example_013" />
+
 ## Multi-Dimensional Geometries
 
 The `GEOMETRY` type is primarily used to model shapes in two dimensions (e.g. `X`/`Y` or `longitude`/`latitude`), but it also supports shapes with additional vertex dimensions such as `Z` for elevation or `M` for "measure", or both.

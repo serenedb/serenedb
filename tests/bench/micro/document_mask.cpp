@@ -172,11 +172,11 @@ class DocumentMaskArm {
     : _mask{MakeMask(deleted)} {}
 
   irs::probe::DocsMask Probes() const noexcept {
-    return irs::probe::DocsMask{&_mask, irs::doc_limits::eof()};
+    return irs::probe::DocsMask{&_mask};
   }
 
   irs::fill::DocsMask Fills() const noexcept {
-    return irs::fill::DocsMask{&_mask, irs::doc_limits::eof()};
+    return irs::fill::DocsMask{&_mask};
   }
 
   bool Test(doc_id_t doc) const noexcept { return _mask.Contains(doc); }

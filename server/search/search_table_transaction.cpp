@@ -403,7 +403,7 @@ void SearchTableTransaction::Commit() {
     for (size_t i = w.transactions.size(); i-- > 0;) {
       auto& trx = *w.transactions[i];
 
-      const bool committed = trx.Commit(tick);
+      const bool committed = trx.Commit(tick, {.offset = record_tick});
       SDB_FATAL_IF(
         SEARCH, !committed,
         "search-table commit: iresearch trx Commit failed for table ", table_id,

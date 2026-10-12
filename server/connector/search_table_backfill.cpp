@@ -110,7 +110,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
     *col_reader, source.projections, {}, &context, source.filter_states};
   auto it_mask = sub.MaskedDocs();
   const bool has_mask = sub.docs_mask() != nullptr;
-  const uint64_t docs = irs::VisibleCount(sub.Meta());
+  const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
     if (target.shard->TruncatedAfter(snapshot_tick)) {
@@ -361,14 +361,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
-
-  search::SearchTable::BuildClaim claim{shard};
-  if (!claim.Claimed()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                    ERR_MSG("an index build is already running on search "
-                            "table ",
-                            target.table_id));
-  }
+  SDB_ASSERT(shard.BuildInFlight(),
+             "RunSearchTableBackfill requires a held BuildClaim");
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
   // The statement pinned a reader of this shard at bind time and only drops it

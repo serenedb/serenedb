@@ -1004,41 +1004,6 @@ TEST_P(FormatTestCase, segment_meta_read_write) {
   }
 
   {
-    irs::SegmentMeta meta;
-    meta.name = "tailed_meta_name";
-    meta.docs_count = 453;
-    meta.live_docs_count = 397;
-    meta.byte_size = 666;
-    meta.version = 100;
-    meta.visible_end = 400;
-    meta.docs_mask = std::make_shared<irs::DocumentMask>([&] {
-      irs::DocumentMask docs_mask;
-      docs_mask.Add(42);
-      docs_mask.Add(100);
-      docs_mask.Trim();
-      return docs_mask;
-    }());
-    ASSERT_EQ(56, irs::RemovalCount(meta));
-    meta.files.emplace_back("file1");
-
-    std::string filename;
-
-    irs::segment_meta::Write(dir(), filename, meta);
-
-    {
-      irs::SegmentMeta read_meta;
-
-      irs::segment_meta::Read(dir(), read_meta, filename);
-      ASSERT_EQ(meta.docs_count, read_meta.docs_count);
-      ASSERT_EQ(451, read_meta.live_docs_count);
-      ASSERT_EQ(*meta.docs_mask, *read_meta.docs_mask);
-
-      ASSERT_EQ(2, irs::RemovalCount(read_meta));
-      ASSERT_EQ(irs::doc_limits::eof(), read_meta.visible_end);
-    }
-  }
-
-  {
     constexpr irs::doc_id_t kDocs = 30000;
 
     auto scattered = [](irs::doc_id_t first, irs::doc_id_t step) {

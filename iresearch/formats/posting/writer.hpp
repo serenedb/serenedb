@@ -169,9 +169,6 @@ class PostingsWriter final {
     doc_id_t docs_count;
   };
 
-  explicit PostingsWriter(bool volatile_attributes)
-    : _volatile_attributes{volatile_attributes} {}
-
   void Prepare(const FlushState& state);
   void BeginField(const FieldProperties& meta);
 
@@ -226,21 +223,6 @@ class PostingsWriter final {
     bool _has_vec{};
   };
 
-  struct Attributes {
-    PosAttr* pos{};
-    const OffsAttr* offs{};
-
-    void Reset(TermPostings& docs) noexcept {
-      if (auto* p = docs.Positions()) {
-        pos = p;
-        offs = irs::get<OffsAttr>(*pos);
-      } else {
-        pos = &PosAttr::empty();
-        offs = nullptr;
-      }
-    }
-  };
-
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
@@ -258,7 +240,9 @@ class PostingsWriter final {
   template<bool HasOffs>
   void PushPositions(const uint32_t* pos, const uint32_t* offs_start,
                      const uint32_t* offs_end, size_t n);
-  void AddPosition(uint32_t pos);
+  template<bool HasOffs>
+  void PushDeltas(TermPostings& docs, uint64_t n);
+  void FlushDocBlock(const PostingMeta& meta);
   void BeginDocInTerm(doc_id_t doc, uint32_t freq, PostingMeta& meta,
                       bool has_freq);
 
@@ -296,7 +280,6 @@ class PostingsWriter final {
   PayBuffer _pay;             // Payloads and offsets stream
   BlockGroup _pos_group;
   BlockGroup _pay_group;
-  Attributes _attrs;  // Set of attributes
   const NormProvider* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
   ScoreBoundWriter* _valid_writer{};  // Valid score bound writer
@@ -307,7 +290,8 @@ class PostingsWriter final {
   // HasVector).
   std::vector<doc_id_t> _term_docs;
   uint32_t _enc_buf[block_io::kEncWords];
-  bool _volatile_attributes;
+  doc_id_t _run_docs[doc_limits::kBlockSize];
+  uint32_t _run_freqs[doc_limits::kBlockSize];
 };
 
 inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
@@ -709,13 +693,41 @@ void PostingsWriter::PushPositions(const uint32_t* pos,
   }
 }
 
-inline void PostingsWriter::AddPosition(uint32_t pos) {
-  SDB_ASSERT(!_features.HasOffset() == !_attrs.offs);
-  if (_features.HasOffset()) {
-    PushPosition<true>(pos, _attrs.offs->start, _attrs.offs->end);
-  } else {
-    PushPosition<false>(pos);
+template<bool HasOffs>
+void PostingsWriter::PushDeltas(TermPostings& docs, uint64_t n) {
+  SDB_ASSERT(_features.HasPosition());
+  SDB_ASSERT(_features.HasOffset() == HasOffs);
+
+  while (n != 0) {
+    SDB_ASSERT(_pos.size < pos_limits::kBlockSize);
+    const auto take = static_cast<uint32_t>(
+      std::min<uint64_t>(n, pos_limits::kBlockSize - _pos.size));
+    if constexpr (HasOffs) {
+      SDB_ASSERT(_pos.size == _pay.size);
+      docs.NextPositions(_pos.buf + _pos.size, _pay.offs_start_buf + _pay.size,
+                         _pay.offs_len_buf + _pay.size, take);
+      _pay.size += take;
+    } else {
+      docs.NextPositions(_pos.buf + _pos.size, nullptr, nullptr, take);
+    }
+    _pos.size += take;
+
+    if (_pos.Full()) {
+      WritePosBlock();
+      if constexpr (HasOffs) {
+        WritePayBlock();
+      }
+    }
+    n -= take;
   }
+}
+
+inline void PostingsWriter::FlushDocBlock(const PostingMeta& meta) {
+  UpdateBounds();
+  WriteDocBlock(*_doc_out);
+  _doc.block_last = _doc.last;
+  _doc.size = 0;
+  AddBlock(meta, _doc.block_last);
 }
 
 inline void PostingsWriter::End() {
@@ -766,11 +778,7 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
   }
 
   if (_doc.Full()) {
-    UpdateBounds();
-    WriteDocBlock(*_doc_out);
-    _doc.block_last = _doc.last;
-    _doc.size = 0;
-    AddBlock(meta, _doc.block_last);
+    FlushDocBlock(meta);
   }
 
   if (has_freq) {
@@ -787,14 +795,6 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
 }
 
 inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
-  auto refresh = [&](TermPostings& attrs) noexcept { _attrs.Reset(attrs); };
-
-  if (!_volatile_attributes) {
-    refresh(docs);
-  } else {
-    docs.Subscribe(refresh);
-  }
-
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
@@ -804,32 +804,57 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
   }
   const bool has_freq = _features.HasFrequency();
   const bool has_pos = _features.HasPosition();
+  const bool has_offs = _features.HasOffset();
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;
 
-  while (true) {
-    const auto doc = docs.Next();
-    SDB_ASSERT(doc_limits::valid(doc));
-    if (doc_limits::eof(doc)) {
-      break;
+  while (const auto n = docs.NextDocs(_run_docs, _run_freqs)) {
+    SDB_ASSERT(n <= doc_limits::kBlockSize);
+    SDB_ASSERT(std::is_sorted(_run_docs, _run_docs + n, std::less_equal{}));
+    if (_doc.last >= _run_docs[0]) [[unlikely]] {
+      throw IndexError{
+        absl::StrCat("While beginning document in postings_writer, error: "
+                     "docs out of order '",
+                     _run_docs[0], "' < '", _doc.last, "'")};
     }
-    const uint32_t freq = has_freq ? docs.GetFreq() : 0;
     if (has_vec) {
-      _term_docs.push_back(doc);
+      _term_docs.insert(_term_docs.end(), _run_docs, _run_docs + n);
     }
 
-    BeginDocInTerm(doc, freq, meta, has_freq);
-
-    if (has_pos) {
-      SDB_ASSERT(_attrs.pos);
-      while (_attrs.pos->next()) {
-        SDB_ASSERT(pos_limits::valid(_attrs.pos->value()));
-        AddPosition(_attrs.pos->value());
+    for (uint32_t k = 0; k != n;) {
+      if (_doc.Full()) {
+        FlushDocBlock(meta);
       }
+      const auto take = std::min(doc_limits::kBlockSize - _doc.size, n - k);
+      auto* docs_out = _doc.docs + _doc.size;
+      std::copy_n(_run_docs + k, take, docs_out);
+      for (uint32_t i = 0; i != take; ++i) {
+        _docs.set(docs_out[i]);
+      }
+      uint64_t positions = 0;
+      if (has_freq) {
+        const auto* freqs = _run_freqs + k;
+        std::copy_n(freqs, take, _doc.freqs + _doc.size);
+        for (uint32_t i = 0; i != take; ++i) {
+          SDB_ASSERT(freqs[i] >= block_io::kFreqBias);
+          positions += freqs[i];
+        }
+      }
+      _doc.size += take;
+      _doc.last = docs_out[take - 1];
+
+      if (has_pos) {
+        if (has_offs) {
+          PushDeltas<true>(docs, positions);
+        } else {
+          PushDeltas<false>(docs, positions);
+        }
+      }
+      total_freq += static_cast<uint32_t>(positions);
+      k += take;
     }
-    ++docs_count;
-    total_freq += freq;
+    docs_count += n;
   }
 
   meta.docs_count = docs_count;
@@ -846,9 +871,6 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
   }
 }
 
-// Span fast path: the same per-doc protocol as Write, fed straight from
-// the term's row columns instead of per-doc iterator dispatch; the row
-// walk itself lives in TermPostings::VisitRuns.
 inline void PostingsWriter::WritePostings(const PostingRows& postings,
                                           PostingMeta& meta) {
   BeginTerm(meta);
@@ -861,9 +883,6 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
   const bool has_freq = _features.HasFrequency();
   const bool has_pos = _features.HasPosition();
   const bool has_offs = _features.HasOffset();
-
-  _attrs.pos = nullptr;
-  _attrs.offs = nullptr;
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;

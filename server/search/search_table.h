@@ -294,6 +294,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _is_new;
   bool _absent = false;
+  bool _on_disk = false;
   uint64_t _segment_memory_max;
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;

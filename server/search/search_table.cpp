@@ -141,6 +141,7 @@ void SearchTable::OpenWriter(bool in_memory) {
                                      in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
+  _on_disk = opened.on_disk;
 
   const bool reopen = opened.on_disk && !_is_new;
   const auto open_mode =
@@ -243,6 +244,9 @@ ResultWithTime SearchTable::RefreshUnsafe(
       const auto tick_before = _wal->CurrentTick();
       SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
       if (_writer->RefreshCommit()) {
+        if (_on_disk) {
+          catalog::SyncDirectory(Path());
+        }
         _wal->OnShardCommit(GetTableId(), CommittedTick());
         code = RefreshResult::Done;
       } else {

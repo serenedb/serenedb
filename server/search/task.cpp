@@ -145,9 +145,10 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
   const auto progress = [] { return !ShouldStop(); };
 
   bool empty_compaction = false;
+  irs::CompactionResult outcome;
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
     policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv(),
-    MergeOrigin::Background);
+    MergeOrigin::Background, &outcome);
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");
@@ -156,7 +157,8 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
               "ms while compacting Search index '", idx->GetId(),
               "': ", res.message());
   }
-  co_return !empty_compaction;
+  co_return res.ok() && !empty_compaction &&
+    outcome.error == irs::CompactionError::Ok;
 }
 
 // Fan out one CompactUnsafe per currently-free global slot. Each merge is

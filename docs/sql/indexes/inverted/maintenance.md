@@ -128,6 +128,7 @@ Background compaction runs on the server's background threads (`--background_thr
   - one table or index runs at most half as many large merges at a time as there are merge threads.
 - **Within a table.** A table's merges do not wait for each other, so a long merge does not hold back merges of the table's newer segments.
 - **Failures.** A merge that fails leaves its segments out of the next merges for a while, and that while grows with each failure in a row.
+- **Drops.** Dropping a table, an index or a database discards its queued merges and stops its running ones within a moment, so its files are removed without waiting for those merges to finish.
 
 `sdb_compact` needs the same privilege as `VACUUM` on the table (`MAINTAIN`). Its merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain.
 

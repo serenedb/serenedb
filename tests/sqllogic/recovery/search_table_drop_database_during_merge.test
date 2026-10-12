@@ -1,0 +1,62 @@
+control substitution on
+
+statement ok
+CREATE DATABASE searchdb;
+
+statement ok
+CREATE TABLE searchdb.public.docs (id INT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO searchdb.public.docs SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) searchdb.public.docs;
+
+statement ok
+INSERT INTO searchdb.public.docs SELECT i, 'owl cat' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) searchdb.public.docs;
+
+statement ok
+SET sdb_faults = 'park_compaction_run';
+
+statement ok
+ALTER TABLE searchdb.public.docs SET (compaction_interval = 100);
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-park_compaction_run:parked';
+
+statement ok
+DROP DATABASE searchdb;
+
+statement ok
+SET sdb_faults = 'park_compaction_run:release';
+
+query ok retry 40 backoff 250ms
+SELECT value AS running FROM sdb_metrics WHERE metric = 'compaction_active';
+----
+running
+0
+
+statement ok
+CREATE DATABASE searchdb;
+
+statement ok
+CREATE TABLE searchdb.public.docs (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search');
+
+statement ok
+INSERT INTO searchdb.public.docs VALUES (1, 'fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) searchdb.public.docs;
+
+query
+SELECT count(*) AS n FROM searchdb.public.docs;
+----
+n
+1
+
+statement ok
+DROP DATABASE searchdb;

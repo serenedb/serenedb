@@ -153,7 +153,7 @@ class StorageMergeJob final : public MergeJob {
     SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
     SDB_WAIT_ON_FAILURE("pause_compaction_run");
     SDB_PARK_ONCE_ON_FAILURE("park_compaction_run");
-    if (_storage->Dropped() || _ticket.Revoked() ||
+    if (_storage->Retired() || _ticket.Revoked() ||
         _storage->GetTasksSettings().compaction_interval_msec == 0) {
       co_return MergeOutcome::Cancelled;
     }
@@ -245,7 +245,7 @@ yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
       break;
     }
     auto idx = weak.lock();
-    if (!idx || idx->Dropped()) {
+    if (!idx || idx->Retired()) {
       break;
     }
     const bool nudged =
@@ -394,7 +394,7 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
   try {
     for (;;) {
       auto idx = weak.lock();
-      if (!idx || idx->Dropped()) {
+      if (!idx || idx->Retired()) {
         SDB_TRACE(SEARCH,
                   "maintenance target is deleted, ending compaction loop");
         break;

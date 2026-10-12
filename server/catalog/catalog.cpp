@@ -493,6 +493,7 @@ duckdb::idx_t SereneDBCatalog::DefaultSchemaOid() const {
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
+  _directory->MarkDetached();
   std::vector<duckdb::Identifier> servers;
   GetCatalogSet(duckdb::CatalogType::FOREIGN_SERVER_ENTRY)
     .Scan(

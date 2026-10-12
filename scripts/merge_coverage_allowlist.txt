@@ -32,3 +32,4 @@ server/search/compaction/merge_registry.cpp:49 the implicit default of an exhaus
 server/search/compaction/merge_registry.cpp:65 the return after an exhaustive switch over MergeOutcome
 server/search/compaction/merge_registry.cpp:69 the implicit default of an exhaustive switch over irs::CompactionError
 server/search/compaction/merge_registry.cpp:81 the return after an exhaustive switch over irs::CompactionError
+server/search/task.cpp:164-166 an index whose options cannot be pinned although its storage is not retired: only between RemoveIndex and OnDrop inside FinalizeCommit of its DROP INDEX

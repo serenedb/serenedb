@@ -110,6 +110,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   bool Dropped() const noexcept {
     return _dropped.load(std::memory_order_acquire);
   }
+  bool Retired() const noexcept { return Dropped() || _directory->Detached(); }
   std::filesystem::path Path() const {
     return _directory->StoragePath(GetTableId());
   }

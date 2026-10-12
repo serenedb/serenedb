@@ -30,6 +30,14 @@ cmf_add	integer, text	NULL	NULL	a,b
 cmf_pairs	integer	23,23,25	i,t,t	i,k,v
 
 
+query
+SELECT proname, proretset, prorows FROM pg_proc WHERE proname IN ('cmf_pairs', 'cmf_add') ORDER BY proname
+----
+proname	proretset	prorows
+cmf_add	f	0
+cmf_pairs	t	1000
+
+
 statement ok
 CREATE TABLE cmf_runes (id serial PRIMARY KEY, haste int DEFAULT NULL, regen int DEFAULT NULL::int, arcane text DEFAULT 'x', v int)
 

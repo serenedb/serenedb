@@ -528,6 +528,19 @@ def test_pg_cancel_terminate_unknown_pid():
         c.close()
 
 
+def test_pg_cancel_terminate_negative_pid():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    notices: list[str] = []
+    c.add_notice_handler(lambda d: notices.append(d.message_primary))
+    try:
+        with c.cursor() as cur:
+            assert cur.execute("select pg_cancel_backend(-1)").fetchone()[0] is False
+            assert cur.execute("select pg_terminate_backend(-1)").fetchone()[0] is False
+        assert notices == ["PID -1 is not a PostgreSQL backend process"] * 2, notices
+    finally:
+        c.close()
+
+
 def test_pg_terminate_backend_drops_connection():
     # pg_terminate_backend() really terminates: the victim's connection is
     # closed by the server, not merely its query cancelled. The close is

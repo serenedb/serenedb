@@ -24,8 +24,8 @@ ORDER BY attnum;
 attname	type	attnotnull
 pid	integer	f
 datid	oid	f
-usename	text	f
-datname	text	f
+usename	name	f
+datname	name	f
 state	text	f
 query	text	f
 backend_start_us	bigint	f

@@ -192,6 +192,37 @@ NULL	NULL	NULL	NULL	NULL
 
 
 statement ok
+CREATE TYPE size_test_composite AS (a int, b text)
+
+
+query
+SELECT pg_relation_size(c.oid) AS rel, pg_table_size(c.oid) AS tab,
+  pg_indexes_size(c.oid) AS idx, pg_total_relation_size(c.oid) AS total
+FROM pg_class c WHERE c.relname = 'size_test_composite';
+----
+rel	tab	idx	total
+0	0	0	0
+
+
+statement ok
+DROP TYPE size_test_composite
+
+
+statement error
+SELECT pg_relation_size('size_test'::regclass, 'bogus');
+----
+db error: ERROR: invalid fork name<slt:ignore>
+
+
+query
+SELECT pg_relation_size(4000000000, 'bogus') AS missing,
+  pg_relation_size('size_test'::regclass, 'vm') AS vm;
+----
+missing	vm
+NULL	0
+
+
+statement ok
 DROP VIEW size_test_view
 
 

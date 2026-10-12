@@ -173,6 +173,15 @@ datid	pid	usesysid	application_name	state	query	wait_event_type	wait_event	xact_
 
 
 query
+SELECT pg_typeof(client_addr)::text AS client_addr, pg_typeof(backend_xid)::text AS backend_xid,
+  pg_typeof(backend_xmin)::text AS backend_xmin
+FROM pg_stat_get_activity(pg_backend_pid())
+----
+client_addr	backend_xid	backend_xmin
+inet	xid	xid
+
+
+query
 SELECT * FROM pg_stat_get_subscription(NULL::oid) LIMIT 0
 ----
 subid	relid	pid	leader_pid	received_lsn	last_msg_send_time	last_msg_receipt_time	latest_end_lsn	latest_end_time	worker_type

@@ -32,6 +32,7 @@
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/static_strings.hpp>
 #include <utility>
 #include <yaclib/async/contract.hpp>
 #include <yaclib/coro/on.hpp>
@@ -41,6 +42,7 @@
 #include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "network/io_context.h"
+#include "pg/pg_types.h"
 #include "replication/settings.h"
 
 namespace sdb::replication {
@@ -371,7 +373,8 @@ void SubscriptionEngine::Disable(std::string_view database,
   if (!attached) {
     return;
   }
-  auto system = connector::MakeSystemConnection(database, attached->oid);
+  auto system = connector::MakeSystemConnection(
+    irs::StaticStrings::kDefaultUser, pg::kRootUser, database, attached->oid);
   auto& context = *system.conn->context;
   context.RunFunctionInTransaction([&] {
     auto& catalog = attached->GetCatalog().Cast<catalog::SereneDBCatalog>();

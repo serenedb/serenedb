@@ -76,6 +76,7 @@ inline constexpr auto kSearchTableMaintenanceSettings = std::to_array({
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
+  kCompactionPolicySetting,
 });
 
 inline constexpr auto kSearchTableSettings = std::to_array({
@@ -85,6 +86,7 @@ inline constexpr auto kSearchTableSettings = std::to_array({
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
+  kCompactionPolicySetting,
   kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
 });
@@ -96,6 +98,7 @@ inline constexpr auto kSearchTableOptions = std::to_array({
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
+  kCompactionPolicySetting,
   kRowGroupSizeSetting,
   kSegmentMemoryMaxSetting,
   kOptimizeTopKSetting,

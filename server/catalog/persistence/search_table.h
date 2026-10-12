@@ -35,6 +35,7 @@ struct SearchTableOptions {
   uint32_t compaction_max_segments{10};
   uint64_t compaction_max_segments_bytes{5368709120};
   uint64_t compaction_floor_segment_bytes{2097152};
+  std::string compaction_policy{"tier"};
   std::string optimize_top_k;
   irs::ColCodecParams codec;
 

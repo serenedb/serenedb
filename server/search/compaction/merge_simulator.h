@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <optional>
@@ -37,8 +38,15 @@ namespace sdb::search {
 
 class SimulatedSegment final : public irs::SubReader {
  public:
-  explicit SimulatedSegment(irs::SegmentInfo meta) noexcept
-    : _meta{std::move(meta)} {}
+  explicit SimulatedSegment(
+    irs::SegmentInfo meta,
+    std::optional<irs::SegmentRange> range = std::nullopt) noexcept
+    : _meta{std::move(meta)}, _range{range} {}
+
+  static std::optional<irs::SegmentRange> RangeOf(
+    const irs::SubReader& segment) noexcept {
+    return static_cast<const SimulatedSegment&>(segment)._range;
+  }
 
   const SimulatedSegment& operator*() const noexcept { return *this; }
 
@@ -52,6 +60,7 @@ class SimulatedSegment final : public irs::SubReader {
 
  private:
   irs::SegmentInfo _meta;
+  std::optional<irs::SegmentRange> _range;
 };
 
 struct SimulatedFlush {

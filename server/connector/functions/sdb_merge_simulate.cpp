@@ -402,12 +402,16 @@ uint64_t ReadPositive(const duckdb::TableFunctionBindInput& input,
 
 std::shared_ptr<const search::MergeSimulation> ReadOptions(
   const duckdb::TableFunctionBindInput& input) {
-  const auto& policy = NamedParameter(input, "policy");
-  if (!policy.IsNull() && policy.GetValue<std::string>() != "tier") {
-    ThrowInvalid("policy must be 'tier'");
-  }
   const catalog::persistence::SearchTableOptions defaults;
+  const auto& policy = NamedParameter(input, "policy");
+  const auto kind =
+    search::ParseMergePolicy(policy.IsNull() ? defaults.compaction_policy
+                                             : policy.GetValue<std::string>());
+  if (!kind) {
+    ThrowInvalid("policy must be 'tier' or 'adjacent'");
+  }
   search::TasksSettings settings;
+  settings.compaction_policy = *kind;
   settings.compaction_max_segments = ReadPositive(
     input, "compaction_max_segments", defaults.compaction_max_segments);
   settings.compaction_max_segments_bytes =
@@ -420,7 +424,8 @@ std::shared_ptr<const search::MergeSimulation> ReadOptions(
     input, "threads",
     static_cast<uint64_t>(search::SearchEngine::MaxConcurrentCompactions()));
   auto options = std::make_shared<search::MergeSimulation>();
-  options->policy = search::MakeTierPolicy(settings);
+  options->policy =
+    search::MakeMergePolicy(settings, search::SimulatedSegment::RangeOf);
   options->threads = threads;
   options->helpers_per_merge = threads / 2;
   options->bytes_per_second = static_cast<double>(ReadPositive(

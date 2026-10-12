@@ -96,7 +96,9 @@ void PlanBackground(const irs::IndexReader& reader,
       "background compaction is disabled (compaction_interval = 0)");
   }
   irs::CompactingSegments picked;
-  const auto policy = MakeTierPolicy(settings);
+  const auto policy = MakeMergePolicy(settings);
+  const auto reason =
+    absl::StrCat(MergePolicyName(settings.compaction_policy), " policy");
   for (size_t merge = 0; merge < request.merges; ++merge) {
     irs::Compaction candidates;
     policy(candidates, reader, picked);
@@ -107,7 +109,7 @@ void PlanBackground(const irs::IndexReader& reader,
     for (const auto* candidate : candidates) {
       picked.emplace(candidate->Meta().name);
     }
-    plan.merges.emplace_back(DescribeMerge("tier policy", candidates));
+    plan.merges.emplace_back(DescribeMerge(reason, candidates));
   }
   for (const auto& segment : reader) {
     const auto& meta = segment.Meta();
@@ -118,7 +120,7 @@ void PlanBackground(const irs::IndexReader& reader,
       .name = meta.name,
       .reason = meta.byte_size >= settings.compaction_max_segments_bytes
                   ? "at or above the merge size cap"
-                  : "not selected by the tier policy",
+                  : absl::StrCat("not selected by the ", reason),
     });
   }
 }

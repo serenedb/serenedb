@@ -21,8 +21,10 @@
 #pragma once
 
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/index/compaction/adjacent_run_policy.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
+#include <optional>
 
 #include "search/maintenance.h"
 
@@ -31,7 +33,13 @@ namespace sdb::search {
 class InvertedIndexStorage;
 class SearchTable;
 
+std::optional<irs::SegmentRange> RowIdRange(const irs::SubReader& segment);
+
 irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings);
+irs::CompactionPolicy MakeAdjacentPolicy(const TasksSettings& settings,
+                                         irs::SegmentRangeOf range_of);
+irs::CompactionPolicy MakeMergePolicy(
+  const TasksSettings& settings, irs::SegmentRangeOf range_of = RowIdRange);
 
 struct CompactionOptions {
   bool alive = false;

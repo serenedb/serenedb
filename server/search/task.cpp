@@ -201,7 +201,7 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
                   const std::shared_ptr<MergeScheduler::Relation>& relation) {
   const auto wanted = merges.Wanted(*relation);
   const auto blocked = merges.Blocked(*relation);
-  const auto policy = MakeTierPolicy(idx->GetTasksSettings());
+  const auto policy = MakeMergePolicy(idx->GetTasksSettings());
   auto reservation = idx->ReserveMerges(
     [&](const irs::IndexReader& index, const irs::CompactingSegments& reserved,
         irs::MergeGroups& groups) {

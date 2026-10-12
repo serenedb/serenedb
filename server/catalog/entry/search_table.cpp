@@ -139,6 +139,10 @@ SearchTableOptions ResolveOptions(const WithOptions& options) {
     .compaction_floor_segment_bytes =
       get64(kCompactionFloorSegmentBytesSetting),
   };
+  if (const auto constant = FindConstant(options, kCompactionPolicySetting)) {
+    result.compaction_policy =
+      constant->GetLiteral().ToValue().GetValue<std::string>();
+  }
   if (const auto constant = FindConstant(options, kOptimizeTopKSetting)) {
     result.optimize_top_k =
       constant->GetLiteral().ToValue().GetValue<std::string>();
@@ -601,6 +605,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
       duckdb::Value::UBIGINT(_options.compaction_max_segments_bytes));
   set(kCompactionFloorSegmentBytesSetting,
       duckdb::Value::UBIGINT(_options.compaction_floor_segment_bytes));
+  if (_options.compaction_policy != SearchTableOptions{}.compaction_policy) {
+    set(kCompactionPolicySetting, duckdb::Value{_options.compaction_policy});
+  }
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
   }

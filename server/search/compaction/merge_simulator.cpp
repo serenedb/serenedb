@@ -64,12 +64,17 @@ class SimulatedIndex final
     explicit Init(std::span<const Segment> segments) {
       readers.reserve(segments.size());
       for (const auto& segment : segments) {
-        const auto& reader = readers.emplace_back(irs::SegmentInfo{
-          .name = segment.name,
-          .docs_count = DocsOf(segment.docs),
-          .live_docs_count = DocsOf(segment.live_docs),
-          .byte_size = segment.bytes,
-        });
+        const auto& reader = readers.emplace_back(
+          irs::SegmentInfo{
+            .name = segment.name,
+            .docs_count = DocsOf(segment.docs),
+            .live_docs_count = DocsOf(segment.live_docs),
+            .byte_size = segment.bytes,
+          },
+          segment.rowid_min.transform([&](int64_t first) {
+            return irs::SegmentRange{.first = first,
+                                     .last = *segment.rowid_max};
+          }));
         docs_count += reader.docs_count();
         live_docs_count += reader.live_docs_count();
       }
@@ -182,7 +187,8 @@ SimulatedJob::SimulatedJob(Simulation& simulation, Relation& relation,
   _view.reserve(candidates.size());
   for (const auto* candidate : candidates) {
     _relation.reserved.emplace(candidate->Meta().name);
-    _view.emplace_back(&_segments.emplace_back(candidate->Meta()));
+    _view.emplace_back(&_segments.emplace_back(
+      static_cast<const SimulatedSegment&>(*candidate)));
   }
   _estimate = EstimateMerge(_view, simulation.Options().small_bytes);
 }

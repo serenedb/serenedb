@@ -224,7 +224,7 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the options it was created with, and `RESET (option, …)` returns them to their defaults.
 
-The background maintenance options are `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `RESET` returns them to the current session defaults. A change reaches the table's background tasks at once, including a shorter `refresh_interval` or `compaction_interval` while the task is waiting out the old one, and is undone if its transaction rolls back.
+The background maintenance options are `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes`, `compaction_floor_segment_bytes` and `compaction_policy` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `RESET` returns them to the current session defaults. A change reaches the table's background tasks at once, including a shorter `refresh_interval` or `compaction_interval` while the task is waiting out the old one, and is undone if its transaction rolls back.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 

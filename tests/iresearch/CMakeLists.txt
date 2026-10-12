@@ -89,6 +89,7 @@ set(iresearch-tests_sources
     ./index/field_meta_test.cpp
     ./index/inverter_oracle_test.cpp
     ./index/inverter_tests.cpp
+    ./index/compaction/adjacent_run_policy_tests.cpp
     ./index/compaction/flushed_segments_tests.cpp
     ./index/compaction/merge_ticket_tests.cpp
     ./index/merge/input_norms_tests.cpp

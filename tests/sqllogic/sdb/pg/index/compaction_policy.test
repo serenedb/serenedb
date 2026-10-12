@@ -1,0 +1,240 @@
+statement error
+CREATE TABLE cpe (id INT PRIMARY KEY) WITH (storage = 'search', compaction_policy = 'size')
+----
+db error: ERROR: invalid value for parameter "compaction_policy": "size": expected tier or adjacent
+
+
+statement ok
+CREATE TABLE cpt (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0, compaction_policy = 'adjacent')
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'cpt'
+----
+reloptions
+{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,compaction_policy=adjacent,row_group_size=122880,segment_memory_max=268435456}
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(1, 100) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(101, 200) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+query
+EXPLAIN CALL sdb_compact('cpt', mode := 'background')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────────────────────╮
+│ Table: public.cpt                                                                  │
+│ Mode: background                                                                   │
+│ Segments: 2                                                                        │
+│ Merges: 0                                                                          │
+│ Not Merged:                                                                        │
+│ _1 (not selected by the adjacent policy), _2 (not selected by the adjacent policy) │
+│ Notes:                                                                             │
+│ background compaction is disabled (compaction_interval = 0)                        │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT merge, outcome FROM sdb_compact('cpt', mode := 'background')
+----
+merge	outcome
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(201, 300) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(301, 400) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(401, 500) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(501, 600) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(601, 700) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+statement ok
+INSERT INTO cpt SELECT i, 'fox' FROM generate_series(701, 800) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) cpt
+
+
+query
+EXPLAIN CALL sdb_compact('cpt', mode := 'background')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ───────────────────────────────────────────╮
+│ Table: public.cpt                                           │
+│ Mode: background                                            │
+│ Segments: 8                                                 │
+│ Merges: 1                                                   │
+│ Merge 1:                                                    │
+│ 8 segments -> 1, adjacent policy                            │
+│ Merge 1 Inputs:                                             │
+│ _1, _2, _3, _4, _5, _6, _7, _8                              │
+│ Merge 1 Docs:                                               │
+│ 800 (800 live), rowid 1..800                                │
+│ Merge 1 Bytes: <slt:ignore>│
+│ Merge 1 Columns:                                            │
+│ 3, <slt:ignore>│
+│ Merge 1 Postings: 1 field                                   │
+│ Notes:                                                      │
+│ background compaction is disabled (compaction_interval = 0) │
+╰─────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT outcome, input_docs, output_docs
+FROM sdb_compact('cpt', mode := 'background')
+----
+outcome	input_docs	output_docs
+merged	800	800
+
+
+query
+SELECT count(*) AS segments, min(rowid_min) AS first, max(rowid_max) AS last
+FROM sdb_segments('cpt')
+----
+segments	first	last
+1	1	800
+
+
+statement ok
+ALTER TABLE cpt SET (compaction_policy = 'tier')
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'cpt'
+----
+reloptions
+{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
+
+
+statement ok
+ALTER TABLE cpt SET (compaction_policy = 'adjacent')
+
+
+statement ok
+ALTER TABLE cpt RESET (compaction_policy)
+
+
+query
+SELECT count(*) AS listed FROM pg_class
+WHERE relname = 'cpt' AND array_to_string(reloptions, ',') LIKE '%compaction_policy%'
+----
+listed
+0
+
+
+statement error
+CREATE INDEX cpt_idx ON cpt USING inverted (body) WITH (compaction_policy = 'adjacent')
+----
+db error: ERROR: compaction_policy is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (compaction_policy = ...).
+
+
+statement ok
+DROP TABLE cpt
+
+
+statement ok
+CREATE TABLE cpr (id INT, body TEXT)
+
+
+statement ok
+CREATE INDEX cpr_adjacent ON cpr USING inverted (body) WITH (compaction_policy = 'adjacent')
+
+
+statement ok
+CREATE INDEX cpr_default ON cpr USING inverted (body)
+
+
+query
+SELECT relname, array_to_string(reloptions, ',') LIKE '%compaction_policy=adjacent%' AS adjacent
+FROM pg_class WHERE relname IN ('cpr_adjacent', 'cpr_default') ORDER BY relname
+----
+relname	adjacent
+cpr_adjacent	t
+cpr_default	f
+
+
+statement ok
+ALTER INDEX cpr_default SET (compaction_policy = 'adjacent')
+
+
+statement ok
+ALTER INDEX cpr_adjacent RESET (compaction_policy)
+
+
+query
+SELECT relname, array_to_string(reloptions, ',') LIKE '%compaction_policy%' AS listed
+FROM pg_class WHERE relname IN ('cpr_adjacent', 'cpr_default') ORDER BY relname
+----
+relname	listed
+cpr_adjacent	f
+cpr_default	t
+
+
+statement ok
+ALTER INDEX cpr_default SET (compaction_policy = 'tier')
+
+
+query
+SELECT array_to_string(reloptions, ',') LIKE '%compaction_policy%' AS listed
+FROM pg_class WHERE relname = 'cpr_default'
+----
+listed
+f
+
+
+statement error
+ALTER INDEX cpr_default SET (compaction_policy = 'size')
+----
+db error: ERROR: invalid value for parameter "compaction_policy": "size": expected tier or adjacent
+
+
+statement ok
+DROP TABLE cpr

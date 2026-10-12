@@ -89,6 +89,7 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_writer.cpp
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
+    ./index/compaction/adjacent_run_policy.cpp
     ./index/compaction/merge_ticket.cpp
     ./index/directory_reader.cpp
     ./index/doc_removal.cpp

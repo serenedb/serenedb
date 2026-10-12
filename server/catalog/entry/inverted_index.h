@@ -119,6 +119,7 @@ inline constexpr auto kInvertedIndexSettings = std::to_array({
   kCompactionMaxSegmentsSetting,
   kCompactionMaxSegmentsBytesSetting,
   kCompactionFloorSegmentBytesSetting,
+  kCompactionPolicySetting,
 });
 
 std::vector<std::string> ParseKeyColumns(

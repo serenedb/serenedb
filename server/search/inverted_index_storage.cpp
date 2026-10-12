@@ -164,6 +164,8 @@ InvertedIndexStorage::InvertedIndexStorage(
     options.compaction_max_segments_bytes;
   _tasks_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
+  _tasks_settings.compaction_policy =
+    ParseMergePolicy(options.compaction_policy).value_or(MergePolicyKind::Tier);
 
   SDB_ASSERT(index_id != 0);
 
@@ -299,6 +301,8 @@ void InvertedIndexStorage::ApplyOptions(
     options.compaction_max_segments_bytes;
   _tasks_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
+  _tasks_settings.compaction_policy =
+    ParseMergePolicy(options.compaction_policy).value_or(MergePolicyKind::Tier);
 
   irs::SegmentOptions segment_options;
   segment_options.segment_count_max = 0;

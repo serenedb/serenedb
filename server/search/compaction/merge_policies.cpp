@@ -29,6 +29,7 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 
@@ -42,6 +43,29 @@ irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings) {
   tier.max_segments_bytes = settings.compaction_max_segments_bytes;
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
   return irs::index_utils::MakePolicy(tier);
+}
+
+std::optional<irs::SegmentRange> RowIdRange(const irs::SubReader& segment) {
+  const auto described = DescribeSegment(segment);
+  return described.rowid_min.transform([&](int64_t first) {
+    return irs::SegmentRange{.first = first, .last = *described.rowid_max};
+  });
+}
+
+irs::CompactionPolicy MakeAdjacentPolicy(const TasksSettings& settings,
+                                         irs::SegmentRangeOf range_of) {
+  irs::AdjacentRunOptions options;
+  options.max_segments = settings.compaction_max_segments;
+  options.max_bytes = settings.compaction_max_segments_bytes;
+  options.segment_cost = settings.compaction_floor_segment_bytes;
+  return irs::MakeAdjacentRunPolicy(options, std::move(range_of));
+}
+
+irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
+                                      irs::SegmentRangeOf range_of) {
+  return settings.compaction_policy == MergePolicyKind::Tier
+           ? MakeTierPolicy(settings)
+           : MakeAdjacentPolicy(settings, std::move(range_of));
 }
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {

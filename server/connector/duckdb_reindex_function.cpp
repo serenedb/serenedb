@@ -33,6 +33,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -101,7 +102,6 @@
 #include "planning/iceberg_multi_file_list.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
-#include "search/tick_domain.h"
 
 namespace sdb::connector {
 namespace {
@@ -312,9 +312,12 @@ bool CollectDeadRowPks(duckdb::ClientContext& context,
     // The caller demotes to a full rescan either way; without this the reason
     // is invisible, and a road that cannot be planned looks like one that
     // simply had nothing to remove.
-    SDB_WARN(SEARCH, "reindex \"", target.name,
-             "\": removing dead rows by key failed, falling back to a rescan: ",
-             error);
+    conn_ctx.AddNotice(SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_WARNING),
+      ERR_MSG(
+        "reindex \"", target.name,
+        "\": removing dead rows by key failed, falling back to a rescan: ",
+        error)));
     return false;
   };
   if (result->HasError()) {
@@ -835,11 +838,11 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
       remover.FinishImpl();
     }
     trx.RegisterFlush();
-    if (!trx.Commit(
-          search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                      ERR_MSG("REINDEX delta of \"", target.name,
-                              "\": failed to commit the removes"));
+    if (!trx.Commit()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+        ERR_MSG("REINDEX delta of \"", target.name,
+                "\": failed to commit the removes: out of memory"));
     }
   }
 
@@ -1284,7 +1287,7 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
                            database_id,
                            /*backend_pid=*/0,
                            [&](auto& notice) {
-                             SDB_INFO(SEARCH, "reindex \"", index_name,
+                             SDB_WARN(SEARCH, "reindex \"", index_name,
                                       "\": ", notice.errmsg);
                            }};
     session.Begin();
@@ -1307,7 +1310,7 @@ absl::StatusOr<bool> RunReindexTick(duckdb::DatabaseInstance& db,
     }
     return absl::InternalError(ex.message());
   } catch (const std::exception& ex) {
-    return absl::InternalError(ex.what());
+    return absl::InternalError(duckdb::ErrorData{ex}.RawMessage());
   }
 }
 

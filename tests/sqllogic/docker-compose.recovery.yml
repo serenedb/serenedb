@@ -19,6 +19,19 @@ services:
       timeout: 5s
       retries: 45
 
+  postgres:
+    image: ${PG_FIXTURE_IMAGE}
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_DB=postgres
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U postgres
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
   # recovery/*_catalog_iceberg* need MinIO + an Iceberg REST catalog: same
   # no-docker-socket reasoning as clickhouse above. run.sh's launchers skip
   # when the connection env below is preset.
@@ -81,6 +94,8 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
       minio-init:
         condition: service_completed_successfully
       iceberg-rest:
@@ -117,6 +132,10 @@ services:
       - CHHOST=clickhouse
       - CHPORT=9000
       - CHUSER=default
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=postgres
+      - PGDATABASE=postgres
       - MINIO_HOST=minio
       - MINIO_PORT=9000
       - MINIO_ACCESS_KEY=minioadmin

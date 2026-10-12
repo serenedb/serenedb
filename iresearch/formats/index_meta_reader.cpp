@@ -29,27 +29,29 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/formats/segment_meta_reader.hpp"
 #include "iresearch/store/directory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/serialization.hpp"
 
 namespace irs::index_meta {
+namespace {
 
-uint64_t ParseGeneration(std::string_view file) noexcept {
+uint64_t ParseGeneration(std::string_view file,
+                         std::string_view prefix) noexcept {
   uint64_t gen;
-  if (absl::ConsumePrefix(&file, kPrefix) && absl::SimpleAtoi(file, &gen)) {
+  if (absl::ConsumePrefix(&file, prefix) && absl::SimpleAtoi(file, &gen)) {
     return gen;
   }
   return index_gen_limits::invalid();
 }
 
-bool LastFile(const Directory& dir, std::string& out) {
+bool LastFile(const Directory& dir, std::string_view prefix, std::string& out) {
   uint64_t max_gen = index_gen_limits::invalid();
-  Directory::visitor_f visitor = [&out, &max_gen](std::string_view name) {
-    const uint64_t gen = ParseGeneration(name);
+  Directory::visitor_f visitor = [&](std::string_view name) {
+    const uint64_t gen = ParseGeneration(name, prefix);
 
     if (gen > max_gen) {
       out = name;
@@ -62,6 +64,66 @@ bool LastFile(const Directory& dir, std::string& out) {
   return index_gen_limits::valid(max_gen);
 }
 
+uint64_t ReadFile(const Directory& dir, std::string_view filename,
+                  MetaPayloadReader& payload,
+                  std::vector<IndexSegment>* segments) {
+  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
+
+  uint64_t cnt = 0;
+  format_utils::ReadFooter(
+    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
+      const auto version =
+        meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
+      if (const auto error = duckdb::StorageVersionError(version);
+          !error.empty()) [[unlikely]] {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("Index meta '", filename, "' has storage version ", version,
+                  " and cannot be read: ", error));
+      }
+      cnt = meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
+      meta_in.ReadOptionalList(
+        kFieldSegments, "segments",
+        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+            auto name =
+              obj.ReadProperty<std::string>(kSegmentFieldFilename, "filename");
+            if (segments != nullptr) {
+              segments->emplace_back().filename = std::move(name);
+            }
+          });
+        });
+      meta_in.ReadOptionalObject(
+        kFieldPayload, "payload", [&](duckdb::BinaryDeserializer& obj) {
+          if (!payload) [[unlikely]] {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                            ERR_MSG("Index meta '", filename,
+                                    "' has a payload but no reader for it"));
+          }
+          payload(obj);
+        });
+    });
+  return cnt;
+}
+
+}  // namespace
+
+uint64_t ParseGeneration(std::string_view file) noexcept {
+  return ParseGeneration(file, kPrefix);
+}
+
+uint64_t ParsePendingGeneration(std::string_view file) noexcept {
+  return ParseGeneration(file, kPendingPrefix);
+}
+
+bool LastFile(const Directory& dir, std::string& out) {
+  return LastFile(dir, kPrefix, out);
+}
+
+bool LastPendingFile(const Directory& dir, std::string& out) {
+  return LastFile(dir, kPendingPrefix, out);
+}
+
 void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
           MetaPayloadReader payload) {
   SDB_ASSERT(!IsNull(filename));
@@ -70,69 +132,21 @@ void Read(const Directory& dir, IndexMeta& meta, std::string_view filename,
   const auto gen = ParseGeneration(filename);
   SDB_ASSERT(index_gen_limits::valid(gen));
 
-  auto in = dir.open(filename, IOAdvice::SEQUENTIAL | IOAdvice::READONCE);
-
-  if (!in) {
-    throw IoError{absl::StrCat("Failed to open file, path: ", filename)};
-  }
-
-  uint64_t cnt = 0;
   std::vector<IndexSegment> segments;
-  std::vector<uint32_t> invisible;
-  format_utils::ReadFooter(
-    *in, filename, [&](duckdb::BinaryDeserializer& meta_in, uint64_t) {
-      const auto version =
-        meta_in.ReadProperty<uint64_t>(kFieldStorageVersion, "storage_version");
-      if (const auto error = duckdb::StorageVersionError(version);
-          !error.empty()) [[unlikely]] {
-        throw IndexError{absl::StrCat("Index meta '", filename,
-                                      "' has storage version ", version,
-                                      " and cannot be read: ", error)};
-      }
-      cnt = meta_in.ReadProperty<uint64_t>(kFieldSegCounter, "seg_counter");
-      meta_in.ReadOptionalList(
-        kFieldSegments, "segments",
-        [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
-          auto& segment = segments.emplace_back();
-          auto& invisible_count = invisible.emplace_back();
-          list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            segment.filename =
-              obj.ReadProperty<std::string>(kSegmentFieldFilename, "filename");
-            invisible_count = obj.ReadPropertyWithExplicitDefault<uint32_t>(
-              kSegmentFieldInvisibleCount, "invisible_count", 0);
-          });
-        });
-      meta_in.ReadOptionalObject(
-        kFieldPayload, "payload", [&](duckdb::BinaryDeserializer& obj) {
-          if (!payload) [[unlikely]] {
-            throw IndexError{
-              absl::StrCat("Index meta '", filename,
-                           "' has a payload but no reader for it")};
-          }
-          payload(obj);
-        });
-    });
+  const auto cnt = ReadFile(dir, filename, payload, &segments);
 
-  for (size_t i = 0; auto& segment : segments) {
+  for (auto& segment : segments) {
     segment_meta::Read(dir, segment.meta, segment.filename);
-
-    if (const auto count = invisible[i++]; count != 0) {
-      auto& info = segment.meta;
-      if (count > info.live_docs_count) [[unlikely]] {
-        throw IndexError{
-          absl::StrCat("Segment '", segment.filename, "' has invisible_count(",
-                       count, ") above live_docs_count(", info.live_docs_count,
-                       "), path: ", filename)};
-      }
-      info.live_docs_count -= count;
-      info.visible_end =
-        static_cast<doc_id_t>(doc_limits::min() + info.docs_count - count);
-    }
   }
 
   meta.gen = gen;
   meta.seg_counter = cnt;
   meta.segments = std::move(segments);
+}
+
+void ReadPayload(const Directory& dir, std::string_view filename,
+                 MetaPayloadReader payload) {
+  std::ignore = ReadFile(dir, filename, payload, nullptr);
 }
 
 }  // namespace irs::index_meta

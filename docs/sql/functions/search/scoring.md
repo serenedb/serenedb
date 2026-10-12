@@ -311,7 +311,7 @@ CREATE INDEX docs_idx ON docs
     WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ```
 
-Pruning engages only when the `ORDER BY` scorer **matches the one named in `optimize_top_k` exactly** and the filter is a single term or an `OR` of terms; otherwise the query still runs correctly, just without the optimization. `EXPLAIN` shows `Top: k, optimized` on the scan when pruning is active. See [Relevance ranking → Top-K queries and WAND pruning](../../indexes/inverted/ranking.md#top-k-queries-and-wand-pruning) for the full conditions.
+Pruning engages only when the `ORDER BY` scorer can use the score bounds the index stores for its `optimize_top_k` scorer and the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms or of such `OR`s (the latter when enough rows match), terms with `AND NOT` exclusions, one required term with optional scoring terms (`+fox quick`), or a phrase without slop. An `OR` prunes only when the scores of its terms add up: one that keeps the best score, such as a fuzzy match that expands to several terms or [`::merge('max')`](#merge), does not. Otherwise the query still runs correctly, just without the optimization. `EXPLAIN` shows `Top: k, optimized` on the scan when the scorer qualifies, whatever the filter. See [Relevance ranking → Top-K queries and WAND pruning](../../indexes/inverted/ranking.md#top-k-queries-and-wand-pruning) for the full conditions, including which scorers share score bounds.
 
 ## Cross-engine notes {#cross-engine-notes}
 

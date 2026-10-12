@@ -742,3 +742,9 @@ CREATE TEXT SEARCH DICTIONARY bad_with_option AS split_text() | stem_words('en_U
 
 statement error
 CREATE TEXT SEARCH DICTIONARY bad_reserved AS union(keyword(), generate_ngrams(2, 2));
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY bad_option_value AS split_text(case := 'x'::INTEGER);
+----
+db error: ERROR: split_text(): option "case": Could not convert string 'x' to INT32

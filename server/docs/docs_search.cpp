@@ -204,18 +204,15 @@ class SpanDirectory final : public irs::Directory {
                 const irs::ResourceManagementOptions& resource_manager) noexcept
     : Directory{resource_manager}, _files{files} {}
 
-  irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice) const noexcept final {
+  irs::IndexInput::ptr open(std::string_view name, irs::IOAdvice) const final {
     const auto* file = Find(name);
     if (!file) {
-      return nullptr;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                      ERR_MSG("could not open file \"", name,
+                              "\" of the documentation index: no such file"));
     }
-    try {
-      return std::make_unique<irs::BytesViewInput>(
-        irs::bytes_view{file->bytes.data(), file->bytes.size()});
-    } catch (...) {
-      return nullptr;
-    }
+    return std::make_unique<irs::BytesViewInput>(
+      irs::bytes_view{file->bytes.data(), file->bytes.size()});
   }
 
   bool exists(bool& result, std::string_view name) const noexcept final {
@@ -239,8 +236,10 @@ class SpanDirectory final : public irs::Directory {
 
   irs::DirectoryAttributes& attributes() noexcept final { return _attributes; }
 
-  irs::IndexOutput::ptr create(std::string_view) noexcept final {
-    return nullptr;
+  irs::IndexOutput::ptr create(std::string_view name) final {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("could not create file \"", name,
+                            "\": the documentation index is read-only"));
   }
 
   irs::IndexLock::ptr make_lock(std::string_view) noexcept final {

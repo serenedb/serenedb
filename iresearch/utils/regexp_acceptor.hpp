@@ -29,6 +29,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -111,6 +112,8 @@ class RegexpAcceptor {
   ~RegexpAcceptor();
 
   bool ok() const noexcept { return _start != nullptr && !_start->dead; }
+
+  std::string_view Error() const noexcept { return _error; }
 
   State Start() const noexcept { return _start; }
 
@@ -247,6 +250,7 @@ class RegexpAcceptor {
   std::vector<ExemptKey> _exempt;
   bstring _infix;
   std::vector<bstring> _literals;
+  std::string _error;
   bool _finite{false};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 

@@ -52,7 +52,7 @@ class AsyncDirectory final : public MMapDirectory {
     const ResourceManagementOptions& rm = ResourceManagementOptions::gDefault,
     size_t pool_size = 16, size_t queue_size = 1024, unsigned flags = 0);
 
-  IndexOutput::ptr create(std::string_view name) noexcept final;
+  IndexOutput::ptr create(std::string_view name) final;
   bool sync(std::span<const std::string_view> names) noexcept final;
 
  private:

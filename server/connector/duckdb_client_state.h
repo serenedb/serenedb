@@ -105,6 +105,9 @@ class SereneDBClientState final : public duckdb::ClientContextState {
                                 duckdb::idx_t wal_generation,
                                 duckdb::idx_t wal_end_offset) final;
 
+  void TransactionDurable(duckdb::AttachedDatabase& db,
+                          duckdb::ClientContext& context) final;
+
   void TransactionPreWalWrite(duckdb::AttachedDatabase& db,
                               duckdb::ClientContext& context) final;
 

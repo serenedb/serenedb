@@ -29,6 +29,8 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 
 namespace irs {
@@ -272,6 +274,14 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
                                           PatternKind kind) {
   SDB_ASSERT(kind != PatternKind::Fused);
   auto acceptor = PatternCache::Instance().Get(pattern, kind);
+  if (const auto error = acceptor->Error(); !error.empty()) {
+    if (kind == PatternKind::Wildcard) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                      ERR_MSG("pattern is too complex"));
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                    ERR_MSG("invalid regular expression: ", error));
+  }
   if (acceptor->Finite()) {
     return std::make_shared<const LiteralSetSource>(std::move(acceptor));
   }

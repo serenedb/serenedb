@@ -269,8 +269,8 @@ class FreqNormProducer {
     }
   }
 
-  IRS_NO_INLINE void ProduceBM25(uint32_t freq, uint32_t norm,
-                                 Entry& to) noexcept {
+  IRS_FORCE_INLINE void ProduceBM25(uint32_t freq, uint32_t norm,
+                                    Entry& to) noexcept {
     if constexpr (kAvgDL) {
       const auto cmp = CmpBm25(_avg_dl, _b, freq, norm, to.freq, to.norm);
       if (cmp <= 0) {

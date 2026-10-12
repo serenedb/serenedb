@@ -20,17 +20,20 @@
 
 #include "search/wal_recovery.h"
 
-#include <absl/cleanup/cleanup.h>
+#include <absl/algorithm/container.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
+#include <atomic>
 #include <chrono>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
@@ -44,7 +47,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
-#include "search/tick_domain.h"
 
 namespace sdb::search {
 namespace {
@@ -55,22 +57,28 @@ using BoundIndexHandle =
 struct FinishReplayTask final : duckdb::BaseExecutorTask {
   FinishReplayTask(duckdb::TaskExecutor& executor,
                    std::optional<BoundIndexHandle> index,
-                   std::shared_ptr<InvertedIndexStorage> storage)
+                   std::shared_ptr<InvertedIndexStorage> storage,
+                   std::atomic_size_t& replayed)
     : BaseExecutorTask{executor},
       index{std::move(index)},
-      storage{std::move(storage)} {}
+      storage{std::move(storage)},
+      replayed{replayed} {}
 
   void ExecuteTask() final {
-    if (index) {
-      (*index)->FinishReplay();
+    if (index && (*index)->FinishReplay()) {
+      replayed.fetch_add(1, std::memory_order_relaxed);
     }
-    storage->Refresh();
+    if (const auto status = storage->Refresh(); !status.ok()) {
+      SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
+               "' after WAL replay failed: ", status.message());
+    }
   }
 
   std::string TaskType() const final { return "InvertedFinishReplay"; }
 
   std::optional<BoundIndexHandle> index;
   std::shared_ptr<InvertedIndexStorage> storage;
+  std::atomic_size_t& replayed;
 };
 
 std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
@@ -112,37 +120,50 @@ std::optional<BoundIndexHandle> BoundIndexOf(
   return std::nullopt;
 }
 
+void SyncWal(duckdb::AttachedDatabase& db) {
+  auto& storage = db.GetStorageManager();
+  if (storage.InMemory()) {
+    return;
+  }
+  auto& fs = duckdb::FileSystem::GetFileSystem(db.GetDatabase());
+  if (auto wal =
+        fs.OpenFile(storage.GetWALPath(),
+                    duckdb::FileFlags::FILE_FLAGS_READ |
+                      duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS)) {
+    wal->Sync();
+  }
+}
+
 }  // namespace
 
 void InitInvertedIndexes() {
   const auto begin = std::chrono::steady_clock::now();
-  std::vector<std::shared_ptr<InvertedIndexStorage>> storages;
   std::vector<std::pair<std::optional<BoundIndexHandle>,
                         std::shared_ptr<InvertedIndexStorage>>>
     recovering;
+  std::vector<duckdb::reference<duckdb::AttachedDatabase>> databases;
   for (auto& index : InvertedIndexEntries()) {
     const auto& storage = index.get().Storage();
-    if (!storage) {
+    if (!storage || !index.get().info) {
       continue;
     }
-    TickDomain::Instance().SeedAtLeast(storage->GetRecoveryTick());
-    storages.emplace_back(storage);
-    if (!index.get().info) {
-      continue;
+    auto& db = index.get().catalog.GetAttached();
+    if (absl::c_none_of(databases, [&](const auto& synced) {
+          return &synced.get() == &db;
+        })) {
+      databases.emplace_back(db);
     }
-    storage->StartRecovery();
     recovering.emplace_back(BoundIndexOf(index.get()), storage);
   }
-  absl::Cleanup finish = [&] {
-    for (auto& storage : storages) {
-      storage->FinishCreation();
-    }
-  };
+  for (auto& db : databases) {
+    SyncWal(db);
+  }
   duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance())};
+  std::atomic_size_t replayed{0};
   for (auto& [index, storage] : recovering) {
-    executor.ScheduleTask(
-      duckdb::make_uniq<FinishReplayTask>(executor, std::move(index), storage));
+    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
+      executor, std::move(index), storage, replayed));
   }
   executor.WorkOnTasks();
   if (recovering.empty()) {
@@ -150,8 +171,14 @@ void InitInvertedIndexes() {
   }
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  SDB_INFO(SEARCH, "search index recovery: ", recovering.size(),
-           " inverted index(es) in ", absl::FormatDuration(duration));
+  if (const auto count = replayed.load(std::memory_order_relaxed); count != 0) {
+    SDB_INFO(SEARCH, "search index recovery: replayed the WAL into ", count,
+             " of ", recovering.size(), " inverted index(es) in ",
+             absl::FormatDuration(duration));
+  } else {
+    SDB_DEBUG(SEARCH, "search index recovery: ", recovering.size(),
+              " inverted index(es) in ", absl::FormatDuration(duration));
+  }
 }
 
 void StartInvertedIndexTasks() {

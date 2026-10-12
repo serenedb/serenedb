@@ -27,11 +27,11 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/storage/storage_info.hpp>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
@@ -50,7 +50,8 @@ std::string index_meta::FileName(uint64_t gen) {
 
 bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
                               std::string& pending_filename,
-                              std::string& filename, uint64_t tick) {
+                              std::string& filename,
+                              const SourcePosition& position) {
   if (index_gen_limits::valid(_pending_gen)) {
     // prepare() was already called with no corresponding call to commit()
     return false;
@@ -61,11 +62,6 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
   filename = index_meta::FileName(meta.gen);
 
   auto out = dir.create(pending_filename);
-
-  if (!out) {
-    throw IoError{
-      absl::StrCat("Failed to create file, path: ", pending_filename)};
-  }
 
   format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& meta_out) {
     meta_out.WriteProperty<uint64_t>(
@@ -81,16 +77,13 @@ bool IndexMetaWriter::prepare(Directory& dir, IndexMeta& meta,
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
             obj.WriteProperty<std::string>(index_meta::kSegmentFieldFilename,
                                            "filename", segment.filename);
-            obj.WritePropertyWithDefault<uint32_t>(
-              index_meta::kSegmentFieldInvisibleCount, "invisible_count",
-              InvisibleCount(segment.meta), 0);
           });
         });
     }
     if (_payload) {
       meta_out.WriteObject(
         index_meta::kFieldPayload, "payload",
-        [&](duckdb::BinarySerializer& obj) { _payload(tick, obj); });
+        [&](duckdb::BinarySerializer& obj) { _payload(position, obj); });
     }
   });
 
@@ -110,10 +103,12 @@ bool IndexMetaWriter::commit() {
   const auto dst = index_meta::FileName(_pending_gen);
 
   if (!_dir->rename(src, dst)) {
-    rollback();
+    _pending_gen = index_gen_limits::invalid();
+    _dir = nullptr;
 
-    throw IoError{absl::StrCat("Failed to rename file, src path: '", src,
-                               "' dst path: '", dst, "'")};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("Failed to rename file, src path: '", src,
+                            "' dst path: '", dst, "'"));
   }
 
   // only noexcept operations below

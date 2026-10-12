@@ -1,0 +1,524 @@
+statement ok
+CREATE TABLE mt_s (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', refresh_interval = 100, compaction_interval = 100)
+
+
+statement ok
+CREATE INDEX mt_s_idx ON mt_s USING inverted(body)
+
+
+statement error
+CREATE INDEX mt_s_bad ON mt_s USING inverted(body) WITH (compaction_interval = 0)
+----
+db error: ERROR: compaction_interval is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (compaction_interval = ...).
+
+
+statement error
+CREATE INDEX mt_s_bad ON mt_s USING inverted(body) WITH (segment_memory_max = 1048576)
+----
+db error: ERROR: segment_memory_max is a table option on a search-backed table
+HINT: Set it in CREATE TABLE ... WITH (storage = 'search', segment_memory_max = ...).
+
+
+statement error
+CREATE INDEX mt_s_bad ON mt_s USING inverted(body) WITH (segment_docs_max = 5)
+----
+db error: ERROR: segment_docs_max does not apply to an index on a search-backed table
+
+
+query
+SELECT reloptions FROM pg_class WHERE relname = 'mt_s_idx';
+----
+reloptions
+{}
+
+
+statement error
+ALTER INDEX mt_s_idx SET (refresh_interval = 0)
+----
+db error: ERROR: refresh_interval is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (refresh_interval = ...).
+
+
+statement error
+ALTER INDEX mt_s_idx RESET (compaction_interval)
+----
+db error: ERROR: compaction_interval is a table option on a search-backed table
+HINT: Change it with ALTER TABLE ... SET (compaction_interval = ...).
+
+
+statement ok
+ALTER TABLE mt_s SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(1, 10) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(11, 20) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(21, 30) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+sleep 1s
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
+----
+segments
+3
+
+
+statement ok
+ALTER TABLE mt_s SET (compaction_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
+----
+segments
+1
+
+
+statement ok
+ALTER TABLE mt_s SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(31, 40) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(41, 50) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+sleep 1s
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
+----
+segments
+3
+
+
+statement ok
+ALTER TABLE mt_s SET (compaction_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
+----
+segments
+1
+
+
+statement ok
+ALTER TABLE mt_s SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(51, 60) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(61, 70) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_s
+
+
+sleep 1s
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
+----
+segments
+3
+
+
+statement ok
+ALTER TABLE mt_s RESET (compaction_interval)
+
+
+query ok retry 60 backoff 200ms
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_s');
+----
+segments
+1
+
+
+statement ok
+ALTER TABLE mt_s SET (compaction_interval = 0, refresh_interval = 0)
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(101, 110) s(i)
+
+
+sleep 1s
+
+
+query
+SELECT count(*) FROM mt_s;
+----
+count
+70
+
+
+statement ok
+ALTER TABLE mt_s SET (refresh_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM mt_s;
+----
+count
+80
+
+
+statement ok
+ALTER TABLE mt_s SET (refresh_interval = 0)
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(111, 120) s(i)
+
+
+sleep 1s
+
+
+query
+SELECT count(*) FROM mt_s;
+----
+count
+80
+
+
+statement ok
+ALTER TABLE mt_s SET (refresh_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM mt_s;
+----
+count
+90
+
+
+statement ok
+ALTER TABLE mt_s SET (refresh_interval = 0)
+
+
+statement ok
+INSERT INTO mt_s SELECT i, 'fox' FROM generate_series(121, 130) s(i)
+
+
+sleep 1s
+
+
+query
+SELECT count(*) FROM mt_s;
+----
+count
+90
+
+
+statement ok
+ALTER TABLE mt_s RESET (refresh_interval)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM mt_s;
+----
+count
+100
+
+
+query
+SELECT count(*), sum(id) FROM mt_s_idx WHERE body @@ 'fox';
+----
+count	sum
+100	5950
+
+
+statement ok
+CREATE TABLE mt_t (id INT, body TEXT)
+
+
+statement ok
+CREATE INDEX mt_t_idx ON mt_t USING inverted(body) WITH (refresh_interval = 100, compaction_interval = 100)
+
+
+statement error
+ALTER TABLE mt_t SET (compaction_interval = 0)
+----
+db error: ERROR: SET (<options>) is not supported
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(1, 10) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(11, 20) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(21, 30) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+sleep 1s
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
+----
+segments
+3
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (compaction_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
+----
+segments
+1
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(31, 40) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(41, 50) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+sleep 1s
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
+----
+segments
+3
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (compaction_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
+----
+segments
+1
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (compaction_interval = 0)
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(51, 60) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(61, 70) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) mt_t
+
+
+sleep 1s
+
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
+----
+segments
+3
+
+
+statement ok
+ALTER INDEX mt_t_idx RESET (compaction_interval)
+
+
+query ok retry 60 backoff 200ms
+SELECT value AS segments FROM sdb_metrics
+WHERE metric = 'num_segments' AND relation_id = (SELECT oid FROM pg_class WHERE relname = 'mt_t_idx');
+----
+segments
+1
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (compaction_interval = 0, refresh_interval = 0)
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(101, 110) s(i)
+
+
+sleep 1s
+
+
+query
+SELECT count(*) FROM mt_t_idx;
+----
+count
+70
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (refresh_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM mt_t_idx;
+----
+count
+80
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (refresh_interval = 0)
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(111, 120) s(i)
+
+
+sleep 1s
+
+
+query
+SELECT count(*) FROM mt_t_idx;
+----
+count
+80
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (refresh_interval = 100)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM mt_t_idx;
+----
+count
+90
+
+
+statement ok
+ALTER INDEX mt_t_idx SET (refresh_interval = 0)
+
+
+statement ok
+INSERT INTO mt_t SELECT i, 'fox' FROM generate_series(121, 130) s(i)
+
+
+sleep 1s
+
+
+query
+SELECT count(*) FROM mt_t_idx;
+----
+count
+90
+
+
+statement ok
+ALTER INDEX mt_t_idx RESET (refresh_interval)
+
+
+query ok retry 60 backoff 200ms
+SELECT count(*) FROM mt_t_idx;
+----
+count
+100
+
+
+query
+SELECT count(*), sum(id) FROM mt_t_idx WHERE body @@ 'fox';
+----
+count	sum
+100	5950

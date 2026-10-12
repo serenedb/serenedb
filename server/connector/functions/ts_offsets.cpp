@@ -237,7 +237,7 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      });
     if (!ok) {
       THROW_SQL_ERROR(
-        ERR_MSG("Failed to insert field into IResearch document"));
+        ERR_MSG("could not index the text to highlight: ", doc.Error()));
     }
   });
 

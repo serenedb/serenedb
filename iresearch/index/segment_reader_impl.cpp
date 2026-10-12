@@ -195,12 +195,12 @@ IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {
   if (!_docs_mask) {
-    return memory::make_managed<SegmentAllDocs>(VisibleCount(_info));
+    return memory::make_managed<SegmentAllDocs>(_info.docs_count);
   }
   SDB_ASSERT(!_docs_mask->Empty());
 
   return memory::make_managed<SegmentLiveDocs>(
-    doc_limits::min(), doc_limits::min() + VisibleCount(_info), *_docs_mask);
+    doc_limits::min(), doc_limits::min() + _info.docs_count, *_docs_mask);
 }
 
 void SegmentReaderImpl::ColumnData::Open(const Directory& dir,

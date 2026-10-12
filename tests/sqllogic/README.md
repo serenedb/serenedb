@@ -206,9 +206,10 @@ Let's see typical usages.
 
 Tests under `any/pg/` also run against real PostgreSQL in the `validate-pg` job,
 so everything they use has to exist there too. `any/pg/geometry/` needs PostGIS,
-which the stock `postgres` images do not ship, so that job builds its own image
-from `fixtures/postgres/Dockerfile`: `postgres:18.6` plus the PostGIS package
-from the PGDG apt repo the base image already configures.
+which the stock `postgres` images do not ship, so that job runs
+`serenedb/serenedb-test-postgres`, built from `fixtures/postgres/Dockerfile` by the
+`build-images` workflow: `postgres:18.6` plus the PostGIS package from the PGDG apt repo
+the base image already configures. `fixtures/image_tag.sh` gives its tag.
 
 Installing the package does not enable it. A test that needs an extension asks
 for it itself, guarded so SereneDB -- where the same functionality is built in

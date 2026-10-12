@@ -91,7 +91,7 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
     duckdb::optional_ptr<duckdb::SelectionVector> non_deleted_sel) final;
   bool RemovalNeedsColumnValues() const final { return false; }
 
-  void FinishReplay();
+  bool FinishReplay();
 
   duckdb::IndexStorageInfo SerializeToDisk(
     duckdb::QueryContext context,
@@ -167,11 +167,11 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
                                              duckdb::idx_t count);
   void ReplayAppend(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
   void ReplayDelete(duckdb::DataChunk& chunk, duckdb::Vector& row_ids);
-  bool CommitReplay(ReplaySession& session,
-                    std::span<irs::IndexWriter::Transaction* const> trxs,
-                    const search::WalCursor* cursor);
-  bool CommitReplaySlots(ReplaySession& session,
-                         const search::WalCursor* cursor);
+  irs::SourcePosition ReplayPosition() const;
+  void CommitReplay(std::span<irs::IndexWriter::Transaction* const> trxs,
+                    const irs::SourcePosition& position);
+  void CommitReplaySlots(ReplaySession& session,
+                         const irs::SourcePosition& position);
 
   duckdb::idx_t _index_id = 0;
   duckdb::idx_t _table_oid = 0;

@@ -51,7 +51,6 @@ set(IResearch_core_sources
     ./analysis/wildcard_tokenizer.cpp
     ./analysis/html_strip_tokenizer.cpp
     ./analysis/filter_tokens_tokenizer.cpp
-    ./error/error.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp

@@ -26,10 +26,20 @@ The catalog log belongs to the whole instance: if a release refuses it or cannot
 
 ## Data directory
 
-A server keeps everything it stores under `engine_v1` in its data directory:
+A server keeps its catalog and its databases under `engine_v1` in its data directory:
 
 - `engine_v1/catalog.wal`: the catalog log.
 - `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, the write-ahead log of the database's search tables, and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`.
+
+Beside `engine_v1`, the root of the data directory holds:
+
+- `pg_hba.conf`: the [client authentication rules](../security/client_authentication.md#the-hba-ruleset) that `SET hba` writes, unless the `--hba_config` flag names another file.
+- `secrets/`: the [persistent secrets](../configuration/secrets_manager.md#persistent-secrets), unencrypted (the `secret_directory` setting).
+- `tmp/`: temporary files of queries that spill to disk (the `temp_directory` setting).
+- `extensions/`: the extension directory (the `extension_directory` setting).
+- `LOCK`: held while the server runs, so that a second server does not start on the same data directory.
+
+`engine_v1` holds neither the persistent secrets nor the authentication rules, so a copy of the data directory needs `pg_hba.conf` and `secrets/` as well. `tmp/`, `extensions/` and `LOCK` hold nothing a server needs when it starts again.
 
 Dropping a database, a table or an index removes its directory once no query uses it any more. If the server stops before that, or crashes while an object is being created, it removes the leftover directory when it starts again. A server refuses to start when the catalog log is missing but database directories hold data, instead of starting empty beside them.
 

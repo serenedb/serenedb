@@ -66,7 +66,6 @@
 #include "query/config_variable_names.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
-#include "search/tick_domain.h"
 
 namespace sdb::connector {
 namespace {
@@ -230,10 +229,10 @@ struct InvertedStoreIndex::ReplaySession {
       delete_trx{index.NewTransaction()},
       delete_writer{delete_trx} {
     auto& storage_manager = index.db.GetStorageManager();
-    const auto cursor = index._storage->GetRecoveryWalCursor();
-    if (cursor.generation ==
+    const auto& position = index._storage->PersistedPosition();
+    if (position.generation ==
         storage_manager.GetBlockManager().GetCheckpointIteration()) {
-      durable_offset = cursor.offset;
+      durable_offset = position.offset;
     }
     const auto count = ReplaySlots(
       index.db.GetDatabase(), storage_manager.GetWALPath(), durable_offset);
@@ -263,7 +262,7 @@ struct InvertedStoreIndex::ReplaySession {
   irs::IndexWriter::Transaction delete_trx;
   DuckDBSearchSinkDeleteWriter delete_writer;
   bool deleting = false;
-  uint64_t last_tick = 0;
+  bool replayed = false;
 };
 
 struct InvertedStoreIndex::LiveFeed {
@@ -594,9 +593,14 @@ InvertedStoreIndex::CopyInsertShared(query::Transaction& transaction,
   return op;
 }
 
-bool InvertedStoreIndex::CommitReplay(
-  ReplaySession& session, std::span<irs::IndexWriter::Transaction* const> trxs,
-  const search::WalCursor* cursor) {
+irs::SourcePosition InvertedStoreIndex::ReplayPosition() const {
+  return {db.GetStorageManager().GetBlockManager().GetCheckpointIteration(),
+          duckdb::DuckTransactionManager::Get(db).GetReplayCommitOffset()};
+}
+
+void InvertedStoreIndex::CommitReplay(
+  std::span<irs::IndexWriter::Transaction* const> trxs,
+  const irs::SourcePosition& position) {
   uint64_t queries = 0;
   for (auto* trx : trxs) {
     if (trx->GetQueries() != 0) {
@@ -605,29 +609,25 @@ bool InvertedStoreIndex::CommitReplay(
     }
   }
   if (queries == 0) {
-    return false;
+    return;
   }
-  session.last_tick = search::TickDomain::Instance().Next(queries + 1);
-  if (cursor) {
-    _storage->RecordFlushCursor(session.last_tick, *cursor);
-  }
+  const auto tick = _storage->NextTick(queries);
   for (auto* trx : trxs) {
     if (trx->GetQueries() != 0) {
-      SDB_ENSURE(trx->Commit(session.last_tick),
+      SDB_ENSURE(trx->Commit(tick, position),
                  "inverted index replay: commit failed for index ", _index_id);
     }
   }
-  return true;
 }
 
-bool InvertedStoreIndex::CommitReplaySlots(ReplaySession& session,
-                                           const search::WalCursor* cursor) {
+void InvertedStoreIndex::CommitReplaySlots(
+  ReplaySession& session, const irs::SourcePosition& position) {
   std::vector<irs::IndexWriter::Transaction*> trxs;
   trxs.reserve(session.slots.size());
   for (auto& slot : session.slots) {
     trxs.push_back(&slot->trx);
   }
-  return CommitReplay(session, trxs, cursor);
+  CommitReplay(trxs, position);
 }
 
 void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
@@ -636,9 +636,10 @@ void InvertedStoreIndex::ReplayAppend(duckdb::DataChunk& chunk,
   if (!session) {
     return;
   }
+  session->replayed = true;
   if (std::exchange(session->deleting, false)) {
     irs::IndexWriter::Transaction* deletes[] = {&session->delete_trx};
-    CommitReplay(*session, deletes, nullptr);
+    CommitReplay(deletes, ReplayPosition());
   }
   duckdb::DataChunk results;
   duckdb::Vector rows{duckdb::LogicalType::ROW_TYPE, nullptr, 0};
@@ -654,13 +655,14 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
   if (!session || count == 0) {
     return;
   }
+  session->replayed = true;
   if (!std::exchange(session->deleting, true)) {
     try {
       session->executor.WorkOnTasks();
     } catch (...) {
       return;
     }
-    CommitReplaySlots(*session, nullptr);
+    CommitReplaySlots(*session, ReplayPosition());
   }
   if (session->executor.HasError()) {
     return;
@@ -673,27 +675,25 @@ void InvertedStoreIndex::ReplayDelete(duckdb::DataChunk& chunk,
               [&](size_t i) { return data[fmt.sel->get_index(i)]; });
 }
 
-void InvertedStoreIndex::FinishReplay() {
+bool InvertedStoreIndex::FinishReplay() {
   if (!_replay) {
-    return;
+    return false;
   }
   auto& session = *_replay;
   session.executor.WorkOnTasks();
   auto& storage_manager = db.GetStorageManager();
-  const search::WalCursor cursor{
+  const irs::SourcePosition end{
     storage_manager.GetBlockManager().GetCheckpointIteration(),
     storage_manager.GetWALSize()};
-  bool committed = false;
   if (session.deleting) {
     irs::IndexWriter::Transaction* deletes[] = {&session.delete_trx};
-    committed = CommitReplay(session, deletes, &cursor);
+    CommitReplay(deletes, end);
   } else {
-    committed = CommitReplaySlots(session, &cursor);
+    CommitReplaySlots(session, end);
   }
-  if (!committed && session.last_tick != 0) {
-    _storage->RecordFlushCursor(session.last_tick, cursor);
-  }
+  const bool replayed = session.replayed;
   _replay.reset();
+  return replayed;
 }
 
 duckdb::ErrorData InvertedStoreIndex::AppendImpl(duckdb::DataChunk& chunk,

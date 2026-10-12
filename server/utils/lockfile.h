@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include <absl/status/status.h>
+
 namespace sdb {
 
 // Pid-locking primitives backed by fcntl(2) F_WRLCK / F_UNLCK on a small file
@@ -27,12 +29,11 @@ namespace sdb {
 // kernel-level.
 //
 // CreateLockFile: O_EXCL-create the file, write the pid, take an exclusive
-// fcntl lock. Returns true on success; failures are logged with the errno
-// detail.
+// fcntl lock.
 // VerifyLockFile: existing file? read the pid, check if that process is alive
-// (kill(pid, 0)), then try to acquire the lock. Returns false if held by a
-// live process; true if free or a stale leftover.
-bool CreateLockFile(const char* filename);
-bool VerifyLockFile(const char* filename);
+// (kill(pid, 0)), then try to acquire the lock. OK if free or a stale
+// leftover.
+absl::Status CreateLockFile(const char* filename);
+absl::Status VerifyLockFile(const char* filename);
 
 }  // namespace sdb

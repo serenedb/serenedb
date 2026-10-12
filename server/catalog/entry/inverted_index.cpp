@@ -95,7 +95,9 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
     parsed_expressions) {
   auto config = std::make_shared<InvertedIndexConfig>();
-  config->row_group_size = ResolveSettings(options).row_group_size;
+  if (const auto* row_group_size = FindOption(options, kRowGroupSizeSetting)) {
+    config->row_group_size = row_group_size->GetValue<uint32_t>();
+  }
   config->pk = data.pk;
   config->top_k_scorer = std::move(data.top_k_scorer);
   config->fields.reserve(data.fields.size());
@@ -168,11 +170,12 @@ bool IsKnownInvertedIndexOption(std::string_view name) {
 
 void BindInvertedIndexOptions(
   duckdb::ClientContext& context,
-  duckdb::case_insensitive_map_t<duckdb::Value>& options, bool view_backed) {
+  duckdb::case_insensitive_map_t<duckdb::Value>& options, bool view_backed,
+  bool search_table) {
   for (const auto name : kInvertedIndexSettings) {
     const auto it = options.find(name);
     if (it == options.end()) {
-      if (name == kReindexIntervalSetting && !view_backed) {
+      if (search_table || (name == kReindexIntervalSetting && !view_backed)) {
         continue;
       }
       context.TryGetCurrentSetting(duckdb::Identifier{name}, options[name]);
@@ -463,6 +466,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
       for (const auto& [name, value] :
            index_alter.Cast<duckdb::SetIndexOptionsInfo>().options) {
         RequireAlterableOption(name);
+        if (_search_table) {
+          RequireSearchTableIndexOption(name);
+        }
         RequireViewBackedOption(name, view_backed);
         new_options[name] = connector::ValidateSetting(context, name, value);
       }
@@ -472,6 +478,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
            index_alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
         const auto& name = identifier.GetIdentifierName();
         RequireAlterableOption(name);
+        if (_search_table) {
+          RequireSearchTableIndexOption(name);
+        }
         context.TryGetCurrentSetting(identifier, new_options[name]);
       }
       break;

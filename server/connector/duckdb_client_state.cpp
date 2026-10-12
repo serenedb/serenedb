@@ -266,12 +266,16 @@ void SereneDBClientState::TransactionPreCheckpoint(
       catalog::SereneDBCatalog::kStorageType) {
     return;
   }
-  // This commit's exact WAL position, captured under the WAL lock by the
-  // engine: with overlapping commits, reading the WAL size here would include
-  // later transactions' bytes and over-claim the recovery cursor (skipping
-  // their re-stream after a crash).
-  _connection_ctx->CommitSearch(
-    search::WalCursor{wal_generation, wal_end_offset}, db.oid);
+  _connection_ctx->StageSearch({wal_generation, wal_end_offset}, db.oid);
+}
+
+void SereneDBClientState::TransactionDurable(duckdb::AttachedDatabase& db,
+                                             duckdb::ClientContext&) {
+  if (db.GetCatalog().GetCatalogType() !=
+      catalog::SereneDBCatalog::kStorageType) {
+    return;
+  }
+  _connection_ctx->PublishSearch(db.oid);
 }
 
 void SereneDBClientState::TransactionPreWalWrite(duckdb::AttachedDatabase& db,
@@ -287,9 +291,7 @@ void SereneDBClientState::TransactionPreRollback(
 
 void SereneDBClientState::TransactionCommit(
   duckdb::MetaTransaction& transaction, duckdb::ClientContext& context) {
-  // Post-durability crash point: the engine commit is durable, search
-  // ticks are not yet -- recovery must rebuild the storage. Only write
-  // transactions crash.
+  // Post-durability crash point. Only write transactions crash.
   SDB_IF_FAILURE("crash_after_commit") {
     if (transaction.ModifiedDatabase()) {
       SDB_IMMEDIATE_ABORT();

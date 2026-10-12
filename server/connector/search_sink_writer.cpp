@@ -152,8 +152,8 @@ template<typename Func>
 void SearchSinkInsertBaseImpl::InvertField(const Field& field, Func&& func) {
   if (!_document->WithField(field.Id(), field.GetIndexFeatures(),
                             std::forward<Func>(func))) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
-                            " into IResearch document"));
+    THROW_SQL_ERROR(
+      ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
   }
 }
 
@@ -163,8 +163,8 @@ void SearchSinkInsertBaseImpl::InvertTokens(const Field& field,
                                             Func&& func) {
   if (!_document->WithTokens(field.Id(), field.GetIndexFeatures(), store,
                              std::forward<Func>(func))) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
-                            " into IResearch document"));
+    THROW_SQL_ERROR(
+      ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
   }
 }
 
@@ -173,8 +173,8 @@ void SearchSinkInsertBaseImpl::InvertEntryTokens(const Field& field,
                                                  Func&& func) {
   if (!_document->WithEntryTokens(field.Id(), field.GetIndexFeatures(),
                                   std::forward<Func>(func))) {
-    THROW_SQL_ERROR(ERR_MSG("Failed to insert field ", field.Id(),
-                            " into IResearch document"));
+    THROW_SQL_ERROR(
+      ERR_MSG("could not index field ", field.Id(), ": ", _document->Error()));
   }
 }
 

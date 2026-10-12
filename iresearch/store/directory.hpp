@@ -103,7 +103,7 @@ struct Directory : private util::Noncopyable {
   // Opens output stream associated with the file
   // name - name of the file to open
   // Returns output stream associated with the file with the specified name
-  virtual IndexOutput::ptr create(std::string_view name) noexcept = 0;
+  virtual IndexOutput::ptr create(std::string_view name) = 0;
 
   // Check whether the file specified by the given name exists
   // result - true if file already exists
@@ -134,7 +134,7 @@ struct Directory : private util::Noncopyable {
   // name - name of the file to open
   // Returns input stream associated with the file with the specified name
   virtual IndexInput::ptr open(std::string_view name,
-                               IOAdvice advice) const noexcept = 0;
+                               IOAdvice advice) const = 0;
 
   // Removes the file specified by the given name from directory
   // name - name of the file

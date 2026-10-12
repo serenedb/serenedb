@@ -37,6 +37,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "insert_field.hpp"
+#include "postings_cursor.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -971,6 +972,7 @@ TEST(InverterRejectTest, NonMonotonicPosLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0 + 1, {"charlie", "delta"}, {5, 3});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token positions", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1006,6 +1008,7 @@ TEST(InverterRejectTest, ZeroPosLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0 + 1, {"charlie", "delta"}, {0, 0});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token positions", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1040,6 +1043,7 @@ TEST(InverterRejectTest, OffsetRegressionLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0 + 1, {"charlie"}, {}, {{5, 3}});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token offsets", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1074,6 +1078,7 @@ TEST(InverterRejectTest, OffsetWraparoundLeavesLogUntouched) {
   const auto doc_slots = a->Log().DocTokens().Size();
   fill(doc0, {"bravo"}, {}, {{0, 400000000u}});
   ASSERT_FALSE(a->InvertBlock(*batch, {{runs}}));
+  ASSERT_EQ("the tokenizer produced invalid token offsets", a->Error());
   ASSERT_EQ(log_size, a->Log().Size());
   ASSERT_EQ(doc_slots, a->Log().DocTokens().Size());
 
@@ -1331,7 +1336,7 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
     auto terms = keyword_reader->iterator();
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("alpha"), terms->value());
-    auto docs = terms->postings(kKeywordFeatures);
+    auto docs = ::tests::Docs(terms->postings(kKeywordFeatures));
     ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
     ASSERT_FALSE(irs::doc_limits::eof(docs->Next()));
     ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
@@ -1348,7 +1353,7 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
   {
     auto terms = text_reader->iterator();
     ASSERT_TRUE(terms->seek(ToBytesView("fox")));
-    auto docs = terms->postings(kTextFeatures);
+    auto docs = ::tests::Docs(terms->postings(kTextFeatures), kTextFeatures);
     auto* pos = docs->Positions();
     ASSERT_NE(nullptr, pos);
 
@@ -1432,7 +1437,7 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
     auto terms = field->iterator();
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("t"), terms->value());
-    auto docs = terms->postings(kFeatures);
+    auto docs = ::tests::Docs(terms->postings(kFeatures), kFeatures);
     auto* pos = docs->Positions();
     ASSERT_NE(nullptr, pos);
     auto* offs = irs::GetMutable<OffsAttr>(pos);
@@ -1457,7 +1462,7 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
     ASSERT_NE(nullptr, field);
     auto terms = field->iterator();
     ASSERT_TRUE(terms->next());
-    auto docs = terms->postings(kFeatures);
+    auto docs = ::tests::Docs(terms->postings(kFeatures), kFeatures);
     doc_id_t expected = doc_limits::min();
     for (doc_id_t i = 0; i < kFreq1Docs; ++i, ++expected) {
       ASSERT_EQ(expected, docs->Next());
@@ -1589,13 +1594,13 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
     auto terms = keyword_reader->iterator();
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("a"), terms->value());
-    auto docs = terms->postings(IndexFeatures::None);
+    auto docs = ::tests::Docs(terms->postings(IndexFeatures::None));
     EXPECT_EQ(d, docs->Next());
     EXPECT_EQ(d + 3, docs->Next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(ToBytesView("c"), terms->value());
-    docs = terms->postings(IndexFeatures::None);
+    docs = ::tests::Docs(terms->postings(IndexFeatures::None));
     EXPECT_EQ(d + 2, docs->Next());
     EXPECT_EQ(d + 5, docs->Next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
@@ -1608,7 +1613,7 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
     auto terms = null_reader->iterator();
     ASSERT_TRUE(terms->next());
     EXPECT_EQ(irs::bytes_view{}, terms->value());
-    auto docs = terms->postings(IndexFeatures::None);
+    auto docs = ::tests::Docs(terms->postings(IndexFeatures::None));
     EXPECT_EQ(d + 1, docs->Next());
     EXPECT_EQ(d + 4, docs->Next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));

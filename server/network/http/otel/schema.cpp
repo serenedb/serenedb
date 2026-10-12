@@ -62,27 +62,30 @@ class Creator {
     return !result->HasError() && result->RowCount() == 1;
   }
 
-  bool Run(std::string_view sql) {
+  absl::Status Run(std::string_view sql) {
     auto result = _conn->Query(sql);
     if (result->HasError()) {
-      SDB_WARN(STARTUP, "OpenTelemetry schema: ", result->GetError());
-      return false;
+      return absl::FailedPreconditionError(result->GetError());
     }
-    return true;
+    return absl::OkStatus();
   }
 
-  bool Create() {
+  absl::Status Create() {
     const auto schema = network::http::SqlIdentifier(_schema);
-    if (!Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", schema)) ||
-        !Run(absl::StrCat("SET search_path TO ", schema))) {
-      return false;
+    if (auto status = Run(absl::StrCat("CREATE SCHEMA IF NOT EXISTS ", schema));
+        !status.ok()) {
+      return status;
+    }
+    if (auto status = Run(absl::StrCat("SET search_path TO ", schema));
+        !status.ok()) {
+      return status;
     }
     for (const auto statement : kSchemaStatements) {
-      if (!Run(statement)) {
-        return false;
+      if (auto status = Run(statement); !status.ok()) {
+        return status;
       }
     }
-    return true;
+    return absl::OkStatus();
   }
 
   absl::Status Check() {
@@ -134,10 +137,11 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
       return absl::NotFoundError("default database not found");
     }
     Creator bootstrap{name, oid};
-    if (!bootstrap.Run(absl::StrCat("CREATE DATABASE ",
-                                    network::http::SqlIdentifier(database)))) {
-      return absl::InternalError(
-        absl::StrCat("cannot create database '", database, "'"));
+    if (const auto status = bootstrap.Run(absl::StrCat(
+          "CREATE DATABASE ", network::http::SqlIdentifier(database)));
+        !status.ok()) {
+      return absl::InternalError(absl::StrCat(
+        "cannot create database '", database, "': ", status.message()));
     }
     if (!catalog::ReadDatabase(database, read)) {
       return absl::InternalError(absl::StrCat(
@@ -147,9 +151,11 @@ absl::Status EnsureSchema(std::string_view database, std::string_view schema) {
   }
   Creator creator{name, oid, schema};
   if (creator.Exists()) {
-    SDB_INFO(STARTUP, "OpenTelemetry schema already present in ", database, ".",
-             schema);
-  } else if (creator.Create()) {
+    SDB_DEBUG(STARTUP, "OpenTelemetry schema already present in ", database,
+              ".", schema);
+  } else if (auto created = creator.Create(); !created.ok()) {
+    return created;
+  } else {
     SDB_INFO(STARTUP, "OpenTelemetry schema created in ", database, ".",
              schema);
   }

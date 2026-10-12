@@ -460,7 +460,7 @@ QUERY PLAN
 │ Top: 3                                │
 │ Projections: pk                       │
 │ Column Filter: grp = 3                │
-│ ~43 rows                              │
+│ ~60 rows                              │
 ╰───────────────────────────────────────╯
 
 statement ok

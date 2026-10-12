@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_between_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -414,6 +415,10 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", qualified.Name().GetIdentifierName(),
                             "\" does not exist"));
+  }
+  if (input.binder) {
+    input.binder->GetStatementProperties().RegisterDBRead(
+      index->ParentCatalog(), context);
   }
   const auto& entry = irs::utils::downCast<catalog::InvertedIndexEntry>(*index);
   auto host = index->GetRelation(index->catalog.GetCatalogTransaction(context));

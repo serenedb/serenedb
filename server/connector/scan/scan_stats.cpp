@@ -35,7 +35,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
     return nullptr;
   }
   const auto& bind = input.bind_data->Cast<ScanBindData>();
-  if (!input.column_index.HasPrimaryIndex()) {
+  if (bind.plan_cache.cache_plan || !input.column_index.HasPrimaryIndex()) {
     return nullptr;
   }
   const auto column_index = input.column_index.GetPrimaryIndex();

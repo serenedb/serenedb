@@ -1,0 +1,293 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY pnr_dict AS split_text(case := 'lower')
+  WITH (frequency, position);
+
+statement ok
+CREATE TABLE pnr (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2]);
+
+statement ok
+CREATE INDEX pnr_idx ON pnr
+  USING inverted(pk, v, b pnr_dict, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE TABLE pnrs (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX pnrs_idx ON pnrs
+  USING inverted(pk, v, b pnr_dict, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO pnr SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100) t(i);
+
+statement ok
+INSERT INTO pnrs SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pnr;
+
+statement ok
+VACUUM (REFRESH_TABLE) pnrs;
+
+statement ok
+PREPARE pnr_count AS SELECT count(*) AS n FROM pnr_idx;
+
+statement ok
+PREPARE pnr_count_where AS SELECT count(*) AS n FROM pnr_idx WHERE v = 3;
+
+statement ok
+PREPARE pnr_count_param AS SELECT count(*) AS n FROM pnr_idx WHERE v = $1;
+
+statement ok
+PREPARE pnr_match AS SELECT pk FROM pnr_idx WHERE b @@ 'zeta' ORDER BY pk LIMIT 4;
+
+statement ok
+PREPARE pnr_top AS SELECT pk FROM pnr_idx WHERE b @@ 'zeta'
+  ORDER BY bm25(tableoid) DESC, pk LIMIT 3;
+
+statement ok
+PREPARE pnr_terms AS SELECT unnest(ts_dict_agg(b)) AS term FROM pnr_idx ORDER BY term;
+
+statement ok
+PREPARE pnr_offsets AS SELECT pk, ts_offsets(b) AS o FROM pnr_idx WHERE b @@ 'zeta'
+  ORDER BY pk LIMIT 2;
+
+statement ok
+PREPARE pnr_knn AS SELECT pk FROM pnr_idx ORDER BY emb <-> [150, 0]::FLOAT[2] LIMIT 2;
+
+statement ok
+PREPARE pnr_knn_where AS SELECT pk FROM pnr_idx WHERE v < 100
+  ORDER BY emb <-> [150, 0]::FLOAT[2] LIMIT 2;
+
+statement ok
+PREPARE pnrs_count AS SELECT count(*) AS n FROM pnrs;
+
+statement ok
+PREPARE pnrs_idx_count AS SELECT count(*) AS n FROM pnrs_idx WHERE v = 3;
+
+statement ok
+PREPARE pnrs_match AS SELECT pk FROM pnrs WHERE b @@ 'zeta' ORDER BY pk LIMIT 4;
+
+statement ok
+PREPARE pnrs_knn_where AS SELECT pk FROM pnrs WHERE v < 100
+  ORDER BY emb <-> [150, 0]::FLOAT[2] LIMIT 2;
+
+query
+EXECUTE pnr_count;
+----
+n
+100
+
+query
+EXECUTE pnr_count_where;
+----
+n
+10
+
+query
+EXECUTE pnr_count_param(3);
+----
+n
+10
+
+query
+EXECUTE pnr_match;
+----
+pk
+7
+
+query
+EXECUTE pnr_top;
+----
+pk
+7
+
+query
+EXECUTE pnr_terms;
+----
+term
+alpha
+zeta
+
+query
+EXECUTE pnr_offsets;
+----
+pk	o
+7	{0,4}
+
+query
+EXECUTE pnr_knn;
+----
+pk
+99
+98
+
+query
+EXECUTE pnr_knn_where;
+----
+pk
+99
+98
+
+query
+EXECUTE pnrs_count;
+----
+n
+100
+
+query
+EXECUTE pnrs_idx_count;
+----
+n
+10
+
+query
+EXECUTE pnrs_match;
+----
+pk
+7
+
+query
+EXECUTE pnrs_knn_where;
+----
+pk
+99
+98
+
+statement ok
+INSERT INTO pnr SELECT i, i, CASE WHEN i % 2 = 0 THEN 'zeta omega' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100, 200) t(i);
+
+statement ok
+INSERT INTO pnrs SELECT i, i, CASE WHEN i % 2 = 0 THEN 'zeta omega' ELSE 'alpha' END,
+  [i, 0]::FLOAT[2] FROM range(100, 200) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pnr;
+
+statement ok
+VACUUM (REFRESH_TABLE) pnrs;
+
+query
+EXECUTE pnr_count;
+----
+n
+200
+
+query
+EXECUTE pnr_count_where;
+----
+n
+10
+
+query
+EXECUTE pnr_count_param(103);
+----
+n
+1
+
+query
+EXECUTE pnr_match;
+----
+pk
+7
+100
+102
+104
+
+query
+EXECUTE pnr_top;
+----
+pk
+7
+100
+102
+
+query
+EXECUTE pnr_terms;
+----
+term
+alpha
+omega
+zeta
+
+query
+EXECUTE pnr_offsets;
+----
+pk	o
+7	{0,4}
+100	{0,4}
+
+query
+EXECUTE pnr_knn;
+----
+pk
+150
+149
+
+query
+EXECUTE pnr_knn_where;
+----
+pk
+99
+98
+
+query
+EXECUTE pnrs_count;
+----
+n
+200
+
+query
+EXECUTE pnrs_idx_count;
+----
+n
+10
+
+query
+EXECUTE pnrs_match;
+----
+pk
+7
+100
+102
+104
+
+query
+EXECUTE pnrs_knn_where;
+----
+pk
+99
+98
+
+statement ok
+DELETE FROM pnr WHERE pk = 7;
+
+statement ok
+VACUUM (REFRESH_TABLE) pnr;
+
+query
+EXECUTE pnr_match;
+----
+pk
+100
+102
+104
+106
+
+query
+EXECUTE pnr_count;
+----
+n
+199
+
+statement ok
+DROP TABLE pnr;
+
+statement ok
+DROP TABLE pnrs;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pnr_dict;

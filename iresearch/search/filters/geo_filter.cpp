@@ -38,6 +38,7 @@
 #include "iresearch/search/detail/geo_terms.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
+#include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/geo_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -127,11 +128,15 @@ QueryBuilder::ptr MakeQuery(const SubReader& segment, const PrepareContext& ctx,
     return QueryBuilder::Empty();
   }
   const auto store_field_id = options.store_field_id;
-  if (field_limits::valid(store_field_id)) {
-    const auto* col_reader = segment.GetColReader();
-    if (!col_reader || !col_reader->Column(store_field_id)) {
-      return QueryBuilder::Empty();
-    }
+  if (!field_limits::valid(store_field_id)) {
+    auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
+                                                   std::move(cells), boost);
+    query->SetStats(ctx.Record());
+    return query;
+  }
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader || !col_reader->Column(store_field_id)) {
+    return QueryBuilder::Empty();
   }
   return std::visit(
     [&]<typename Parser, typename Acceptor>(

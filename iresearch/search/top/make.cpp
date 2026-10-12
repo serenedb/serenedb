@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
@@ -171,6 +172,21 @@ Root::ptr Make(const AllQuery& query, const Context& ctx) {
 
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
   return MakeWildcardNGram(query, ctx);
+}
+
+Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
+  const auto record = query.Stats(ScoredOf(ctx));
+  const auto value = irs::detail::AllDocsScore(
+    query.Segment(), irs::detail::ScoreArgs{.scorer = record.scorer,
+                                            .stats = record.stats,
+                                            .fetcher = &ctx.fetcher,
+                                            .boost = query.Boost()});
+  if (ctx.table != nullptr) {
+    return irs::detail::MakeApprox<FilteredConstantWalk, Root::ptr>(
+      query, 0, ctx.table, value);
+  }
+  return irs::detail::MakeApprox<PlainConstantWalk, Root::ptr>(
+    query, 0, utils::Empty{}, value);
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

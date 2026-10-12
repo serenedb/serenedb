@@ -123,6 +123,14 @@ bool DispatchValueKind(duckdb::LogicalTypeId kind, F&& f) {
   return DispatchNumericKind<VARCHAR, BLOB, BOOLEAN>(kind, std::forward<F>(f));
 }
 
+[[noreturn]] void ThrowJsonComposite() {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
+    ERR_MSG("JSON expression indexed by an inverted index must point to "
+            "a primitive (string/number/boolean/null) leaf; got an "
+            "object or array"));
+}
+
 }  // namespace
 
 std::optional<SearchSinkInsertBaseImpl::DictionaryValues>
@@ -589,12 +597,7 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
               _null_docs.emplace_back(doc);
               break;
             case irs::JsonLeafKind::Composite:
-              THROW_SQL_ERROR(
-                ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
-                ERR_MSG(
-                  "JSON expression indexed by an inverted index must point to "
-                  "a primitive (string/number/boolean/null) leaf; got an "
-                  "object or array"));
+              ThrowJsonComposite();
             case irs::JsonLeafKind::None:
               break;
           }
@@ -630,6 +633,37 @@ void SearchSinkInsertBaseImpl::WriteJsonBatch(const duckdb::Vector& vec,
     });
   }
   FinishColumnBlocks(jpf.null_field);
+}
+
+void SearchSinkInsertBaseImpl::RejectJsonComposites(const duckdb::Vector& vec,
+                                                    duckdb::idx_t count) {
+  duckdb::UnifiedVectorFormat fmt;
+  vec.ToUnifiedFormat(count, fmt);
+  const auto* data =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
+  irs::analysis::ForEachValidRow(
+    fmt, static_cast<uint32_t>(count), [&](uint32_t, uint32_t idx) {
+      const auto json = AsView(data[idx]);
+      const auto first = json.find_first_not_of(" \t\n\r");
+      if (first != std::string_view::npos &&
+          (json[first] == '{' || json[first] == '[') &&
+          _json_reader.Read(json).kind == irs::JsonLeafKind::Composite) {
+        ThrowJsonComposite();
+      }
+      return true;
+    });
+}
+
+void SearchSinkInsertBaseImpl::SwitchExpressionImpl(
+  irs::field_id field_id, const duckdb::LogicalType& type,
+  const duckdb::Vector& vec, duckdb::idx_t count) {
+  if (type.IsJSONType()) {
+    const auto* entry = _entry_info_provider(field_id);
+    if (!entry || (entry->IsTokenized() && !entry->HasJsonLeafFields())) {
+      RejectJsonComposites(vec, count);
+    }
+  }
+  SwitchFieldImpl(field_id, type, vec, count);
 }
 
 // Emits term postings for one field; stores the value inline only when the
@@ -930,10 +964,9 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
         config->FindKey(key.field_id) != &key) {
       continue;
     }
-    const auto* entry = config->FindEntry(key.field_id);
     indexed_exprs.emplace_back(
       DeserializeBoundExpression(key.normalized_expression, context),
-      key.field_id, !entry || entry->IsTokenized());
+      key.field_id);
   }
   auto tokenizers =
     std::make_shared<catalog::IndexTokenizers>(context, catalog, *config);
@@ -973,11 +1006,10 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   }
   write_column(kGeneratedPKId, duckdb::LogicalType::BIGINT, gen_pk);
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
-    auto result =
-      EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
-                            column_ids, context, indexed_expr.check_leaves);
-    sink.SwitchFieldImpl(indexed_expr.field_id, result.GetType(), result,
-                         num_rows);
+    auto result = EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk,
+                                        table_id, column_ids, context);
+    sink.SwitchExpressionImpl(indexed_expr.field_id, result.GetType(), result,
+                              num_rows);
   }
   sink.FinishImpl();
 }

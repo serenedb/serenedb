@@ -180,7 +180,6 @@ class InvertedStoreIndex final : public duckdb::BoundIndex {
   std::shared_ptr<const InvertedIndexConfig> _config;
   catalog::IndexTokenizers _tokenizers;
   std::vector<irs::field_id> _fields;
-  std::vector<size_t> _leaf_checks;
   bool _has_predicate = false;
 
   std::unique_ptr<ReplaySession> _replay;

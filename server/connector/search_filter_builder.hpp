@@ -235,8 +235,6 @@ inline irs::field_id PickPerKindFieldId(const SearchColumnInfo& column_info,
   return column_info.field_id;
 }
 
-bool IsIndexOnlyPredicateName(std::string_view name);
-
 // True when the expression tree contains an optimizer-claimed index-only
 // predicate (`@@` or the match sugar) that cannot run as a scalar.
 bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);

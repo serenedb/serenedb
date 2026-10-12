@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -68,7 +67,7 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
       _store_field_id{store_field_id} {
     SDB_ASSERT(_cells);
     SDB_ASSERT(_cells->Kind() != QueryKind::Empty);
-    SDB_ASSERT(!HasCheck() || MakeCheck().possible);
+    SDB_ASSERT(irs::field_limits::valid(_store_field_id));
     this->_estimate_max = _cells->EstimateMax();
   }
 
@@ -86,28 +85,14 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
     }
   };
 
-  struct Check {
-    std::optional<Recipe> recipe;
-    bool possible = true;
-  };
-
   const QueryBuilder& Cells() const noexcept { return *_cells; }
 
-  bool HasCheck() const noexcept {
-    return irs::field_limits::valid(_store_field_id);
-  }
-
-  Check MakeCheck() const {
-    SDB_ASSERT(irs::field_limits::valid(_store_field_id));
+  Recipe MakeRecipe() const {
     const auto* col_reader = this->_segment.GetColReader();
-    if (!col_reader) {
-      return {.possible = false};
-    }
+    SDB_ASSERT(col_reader != nullptr);
     const auto* stored_field = col_reader->Column(_store_field_id);
-    if (!stored_field) {
-      return {.possible = false};
-    }
-    return {.recipe = Recipe{stored_field, col_reader, &_parser, &_acceptor}};
+    SDB_ASSERT(stored_field != nullptr);
+    return {stored_field, col_reader, &_parser, &_acceptor};
   }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}

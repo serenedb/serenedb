@@ -110,6 +110,10 @@ class SearchSinkInsertBaseImpl {
   void SwitchFieldImpl(irs::field_id field_id, const duckdb::LogicalType& type,
                        const duckdb::Vector& vec, duckdb::idx_t count);
 
+  void SwitchExpressionImpl(irs::field_id field_id,
+                            const duckdb::LogicalType& type,
+                            const duckdb::Vector& vec, duckdb::idx_t count);
+
   void AppendToColumn(irs::field_id field_id, const duckdb::LogicalType& type,
                       const duckdb::Vector& vec, duckdb::idx_t count);
 
@@ -212,6 +216,7 @@ class SearchSinkInsertBaseImpl {
                          duckdb::idx_t array_size);
 
   void WriteJsonBatch(const duckdb::Vector& vec, duckdb::idx_t count);
+  void RejectJsonComposites(const duckdb::Vector& vec, duckdb::idx_t count);
 
   irs::ColumnWriter* EnsureColumnWriter(irs::field_id field_id,
                                         const duckdb::LogicalType& type);
@@ -341,7 +346,7 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
 
   bool SwitchExpression(const ExpressionDescriptor& expr_desc,
                         const duckdb::Vector& vec, duckdb::idx_t count) final {
-    SwitchFieldImpl(expr_desc.field_id, expr_desc.type, vec, count);
+    SwitchExpressionImpl(expr_desc.field_id, expr_desc.type, vec, count);
     return false;
   }
 

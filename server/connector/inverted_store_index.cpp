@@ -59,7 +59,6 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
 #include "connector/duckdb_physical_create_index.h"
-#include "connector/index_expression.hpp"
 #include "connector/primary_key.h"
 #include "connector/search_sink_writer.hpp"
 #include "pg/connection_context.h"
@@ -425,15 +424,9 @@ InvertedStoreIndex::InvertedStoreIndex(
     _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
   for (const auto& key : _config->keys) {
-    if (_config->FindKey(key.field_id) != &key) {
-      continue;
+    if (_config->FindKey(key.field_id) == &key) {
+      _fields.emplace_back(key.field_id);
     }
-    const auto* entry = _config->FindEntry(key.field_id);
-    if (logical_types[_fields.size()].IsJSONType() &&
-        (!entry || entry->IsTokenized())) {
-      _leaf_checks.emplace_back(_fields.size());
-    }
-    _fields.emplace_back(key.field_id);
   }
   gBoundInvertedIndexes.fetch_add(1, std::memory_order_release);
 }
@@ -469,9 +462,6 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
     executor->Execute(chunk, results);
   } else {
     ExecuteExpressions(chunk, results);
-  }
-  for (const auto column : _leaf_checks) {
-    RejectJsonObjectArrayLeaves(results.data[column], total);
   }
   if (!_has_predicate) {
     return total;

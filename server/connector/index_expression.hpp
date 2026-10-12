@@ -24,10 +24,12 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
 #include <duckdb/planner/expression.hpp>
+#include <functional>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 
 #include "connector/column_id.h"
 
@@ -36,7 +38,6 @@ namespace sdb::connector {
 struct IndexedExpression {
   duckdb::unique_ptr<duckdb::Expression> normalized_expr;
   irs::field_id field_id = irs::field_limits::invalid();
-  bool check_leaves = true;
 };
 
 duckdb::unique_ptr<duckdb::Expression> DeserializeBoundExpression(
@@ -46,18 +47,16 @@ duckdb::Vector EvaluateExprOverChunk(const duckdb::Expression& bound_expr,
                                      duckdb::DataChunk& chunk,
                                      duckdb::idx_t table_id,
                                      std::span<const ColumnId> slot_to_col_id,
-                                     duckdb::ClientContext& context,
-                                     bool check_leaves);
+                                     duckdb::ClientContext& context);
+
+using StoredExpressionOf = std::function<std::string_view(ColumnId)>;
 
 // Rewrites binder-state noise so bytes match across binding contexts:
 // alias/query_location cleared, is_operator=false, column refs keyed by
 // stable catalog (table_id, col_id) instead of binder-allocated indices.
-std::string NormalizedExpression(const duckdb::Expression& expr,
-                                 duckdb::idx_t table_id,
-                                 std::span<const ColumnId> col_index_to_id,
-                                 duckdb::ClientContext& context);
-
-void RejectJsonObjectArrayLeaves(const duckdb::Vector& result,
-                                 duckdb::idx_t num_rows);
+std::string NormalizedExpression(
+  const duckdb::Expression& expr, duckdb::idx_t table_id,
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
+  const StoredExpressionOf& stored_expression = {});
 
 }  // namespace sdb::connector

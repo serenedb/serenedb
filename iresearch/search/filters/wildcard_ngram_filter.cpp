@@ -40,6 +40,7 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -93,11 +94,15 @@ QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
-  if (matcher) {
-    const auto* col_reader = segment.GetColReader();
-    if (!col_reader || !col_reader->Column(store_field_id)) {
-      return QueryBuilder::Empty();
-    }
+  if (!matcher) {
+    auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
+                                                   std::move(approx), boost);
+    query->SetStats(ctx.Record());
+    return query;
+  }
+  const auto* col_reader = segment.GetColReader();
+  if (!col_reader || !col_reader->Column(store_field_id)) {
+    return QueryBuilder::Empty();
   }
   auto query = memory::make_tracked<WildcardNGramQuery>(
     ctx.memory, segment, matcher, std::move(approx), store_field_id, boost);

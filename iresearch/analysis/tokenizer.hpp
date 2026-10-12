@@ -312,7 +312,8 @@ class TypedTokenizer : public Tokenizer {
     return filled;
   }
 
-  bool ScanWithProgress(const duckdb::string_t& value, ScanSink& sink,
+  template<typename Sink>
+  bool ScanWithProgress(const duckdb::string_t& value, Sink& sink,
                         BlockTraits known) {
     auto* impl = static_cast<Impl*>(this);
     const auto traits =

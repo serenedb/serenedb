@@ -184,3 +184,28 @@ ORDER BY id;
 ----
 id
 1
+
+statement ok
+CREATE TABLE jtok (id BIGINT PRIMARY KEY, doc JSON)
+  WITH (storage='search', compaction_interval=0);
+
+statement ok
+CREATE INDEX jtok_idx ON jtok USING inverted ((doc->'meta') ste_words);
+
+statement ok
+INSERT INTO jtok VALUES (1, '{"meta":"quick fox"}');
+
+statement error
+INSERT INTO jtok VALUES (2, '{"meta":{"a":1}}');
+----
+db error: ERROR: JSON expression indexed by an inverted index must point to a primitive (string/number/boolean/null) leaf; got an object or array
+
+
+statement ok
+VACUUM (REFRESH_TABLE) jtok;
+
+query
+SELECT id FROM jtok_idx WHERE (doc->'meta') @@ 'fox' ORDER BY id;
+----
+id
+1

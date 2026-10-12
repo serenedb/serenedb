@@ -70,7 +70,6 @@
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_index_utils.h"
-#include "connector/index_expression.hpp"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
 #include "connector/pg_logical_types.h"
@@ -135,7 +134,6 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   struct ExpressionSlot {
     irs::field_id field_id;
     duckdb::idx_t slot;
-    bool check_leaves;
   };
   std::vector<ExpressionSlot> expression_slots;
 
@@ -408,9 +406,7 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
         "the backfill projection and the index config disagree on "
         "a repeated key");
       if (writes) {
-        const auto* entry = config.FindEntry(key.field_id);
-        state->expression_slots.emplace_back(key.field_id, slot,
-                                             !entry || entry->IsTokenized());
+        state->expression_slots.emplace_back(key.field_id, slot);
       }
       ++slot;
     }
@@ -587,9 +583,6 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
   expression_values.clear();
   for (const auto& expression : gstate.expression_slots) {
     SDB_ASSERT(expression.slot < chunk.ColumnCount());
-    if (expression.check_leaves) {
-      RejectJsonObjectArrayLeaves(chunk.data[expression.slot], num_rows);
-    }
     expression_values.emplace_back(expression.field_id,
                                    &chunk.data[expression.slot]);
   }

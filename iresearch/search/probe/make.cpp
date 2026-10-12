@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/boolean_of.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
@@ -33,6 +34,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
+#include "iresearch/search/probe/constant_scored.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -188,6 +190,22 @@ Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx,
                                            .fetcher = ctx.fetcher,
                                            .boost = query.Boost()}),
     interrogations);
+}
+
+Node::ptr Make(const ApproxQuery& query, uint64_t interrogations) {
+  return detail::MakeApprox<Impl, Node::ptr>(query, interrogations);
+}
+
+Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
+               uint64_t interrogations) {
+  const auto record = query.Stats(ctx);
+  return detail::MakeApprox<ConstantScoredImpl, Node::ptr>(
+    query, interrogations,
+    detail::AllDocsScore(query.Segment(),
+                         detail::ScoreArgs{.scorer = record.scorer,
+                                           .stats = record.stats,
+                                           .fetcher = ctx.fetcher,
+                                           .boost = query.Boost()}));
 }
 
 }  // namespace irs::probe

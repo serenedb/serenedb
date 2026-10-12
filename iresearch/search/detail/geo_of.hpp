@@ -33,9 +33,8 @@
 
 namespace irs::detail {
 
-template<template<typename> typename Impl, typename Result,
-         bool kErasedCells = true, typename Parser, typename Acceptor,
-         typename... Prefix>
+template<template<typename> typename Impl, typename Result, typename Parser,
+         typename Acceptor, typename... Prefix>
 Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
                Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;
@@ -53,22 +52,12 @@ Result MakeGeo(const GeoQuery<Parser, Acceptor>& query, uint64_t interrogations,
     return {};
   }
   using Cells = std::conditional_t<kProbed, probe::Erased, lead::Erased>;
-  if constexpr (kErasedCells) {
-    if (!query.HasCheck()) {
-      return memory::make_managed<Impl<Cells>>(std::forward<Prefix>(prefix)...,
-                                               std::move(node));
-    }
-  } else {
-    SDB_ASSERT(query.HasCheck());
-  }
-  const auto check = query.MakeCheck();
-  SDB_ASSERT(check.recipe.has_value());
   using Slots =
     std::conditional_t<kProbed, probe::GeoSlotsDocs<Parser, Acceptor, Cells>,
                        lead::GeoSlotsDocs<Parser, Acceptor, Cells>>;
   return memory::make_managed<Impl<TwoPhaseFor<Result, Slots>>>(
     std::forward<Prefix>(prefix)..., std::piecewise_construct,
-    std::forward_as_tuple(std::move(node)), *check.recipe);
+    std::forward_as_tuple(std::move(node)), query.MakeRecipe());
 }
 
 }  // namespace irs::detail

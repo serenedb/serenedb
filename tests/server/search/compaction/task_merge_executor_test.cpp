@@ -40,10 +40,12 @@
 #include <limits>
 #include <numeric>
 #include <vector>
+#include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
+#include "search/compaction/pool_merge_executor.h"
 #include "search/compaction/task_merge_executor.h"
 
 namespace {
@@ -265,6 +267,80 @@ TEST_F(TaskMergeExecutorTest, StoppedMergeKeepsTheInputs) {
   EXPECT_FALSE(result);
   _writer->RefreshCommit();
   EXPECT_EQ(4, _writer->GetSnapshot().size());
+  EXPECT_EQ(before, Rows());
+}
+
+constexpr int kPoolSlots = 3;
+std::atomic<int> gPoolSlots{0};
+
+bool AcquirePoolSlot() noexcept {
+  auto cur = gPoolSlots.load();
+  while (cur < kPoolSlots) {
+    if (gPoolSlots.compare_exchange_weak(cur, cur + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void ReleasePoolSlot() noexcept { gPoolSlots.fetch_sub(1); }
+
+TEST_F(TaskMergeExecutorTest, PoolHelpersKeepEveryRowAndGiveTheirSlotsBack) {
+  const auto before = Rows();
+  auto pool = yaclib::MakeFairThreadPool(4);
+  search::PoolMergeExecutor executor{*pool, 8, AcquirePoolSlot,
+                                     ReleasePoolSlot};
+  ASSERT_TRUE(irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
+  pool->SoftStop();
+  pool->Wait();
+  EXPECT_EQ(0, gPoolSlots.load());
+  _writer->RefreshCommit();
+  EXPECT_EQ(1, _writer->GetSnapshot().size());
+  EXPECT_EQ(before, Rows());
+}
+
+TEST_F(TaskMergeExecutorTest, StoppedPoolDropsTheHelpers) {
+  const auto before = Rows();
+  auto pool = yaclib::MakeFairThreadPool(1);
+  pool->Stop();
+  pool->Wait();
+  search::PoolMergeExecutor executor{*pool, 4, AcquirePoolSlot,
+                                     ReleasePoolSlot};
+  ASSERT_TRUE(irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
+  EXPECT_EQ(0, gPoolSlots.load());
+  _writer->RefreshCommit();
+  EXPECT_EQ(before, Rows());
+}
+
+TEST_F(TaskMergeExecutorTest, PoolWithoutFreeSlotsRunsTheUnitsOnTheCaller) {
+  const auto before = Rows();
+  gPoolSlots = kPoolSlots;
+  auto pool = yaclib::MakeFairThreadPool(2);
+  search::PoolMergeExecutor executor{*pool, 4, AcquirePoolSlot,
+                                     ReleasePoolSlot};
+  ASSERT_TRUE(irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
+  EXPECT_EQ(kPoolSlots, gPoolSlots.load());
+  gPoolSlots = 0;
+  pool->SoftStop();
+  pool->Wait();
+  _writer->RefreshCommit();
+  EXPECT_EQ(before, Rows());
+}
+
+TEST_F(TaskMergeExecutorTest, PoolWithoutHelpersRunsTheUnitsOnTheCaller) {
+  const auto before = Rows();
+  auto pool = yaclib::MakeFairThreadPool(2);
+  search::PoolMergeExecutor executor{*pool, 0, AcquirePoolSlot,
+                                     ReleasePoolSlot};
+  ASSERT_TRUE(irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
+  EXPECT_EQ(0, gPoolSlots.load());
+  pool->SoftStop();
+  pool->Wait();
+  _writer->RefreshCommit();
   EXPECT_EQ(before, Rows());
 }
 

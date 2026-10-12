@@ -32,8 +32,9 @@
 #include "server/utils/number_of_cores.h"
 
 ABSL_FLAG(uint64_t, background_threads, 0,
-          "Number of background worker threads (drop / cleanup / maintenance "
-          "tasks; later object-store prefetch). 0 = auto-detect.");
+          "Number of background worker threads (refresh, cleanup and drop "
+          "tasks, background merges). Merges may use all but one of them, a "
+          "single merge at most half. 0 = max(2, logical cores / 4).");
 
 namespace sdb {
 

@@ -48,6 +48,7 @@
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/compaction/merge_policies.h"
+#include "search/compaction/pool_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/lifecycle.h"
@@ -124,6 +125,12 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
+bool AcquireMergeHelper() noexcept {
+  return GetSearchEngine().TryAcquireCompaction();
+}
+
+void ReleaseMergeHelper() noexcept { GetSearchEngine().ReleaseCompaction(); }
+
 template<class Storage>
 auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
                   SearchEngine& engine) -> yaclib::Future<bool> {
@@ -146,9 +153,13 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
 
   bool empty_compaction = false;
   irs::CompactionResult outcome;
+  PoolMergeExecutor executor{
+    BackgroundScheduler::instance().executor(),
+    static_cast<size_t>(SearchEngine::MaxConcurrentCompactions() / 2),
+    AcquireMergeHelper, ReleaseMergeHelper};
   auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
     policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv(),
-    MergeOrigin::Background, &outcome);
+    MergeOrigin::Background, &outcome, &executor);
   if (res.ok()) {
     SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
               "', took: ", time_ms, "ms");

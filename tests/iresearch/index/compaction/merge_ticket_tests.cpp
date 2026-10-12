@@ -26,6 +26,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <string>
 #include <thread>
 #include <utility>
@@ -396,6 +397,20 @@ TEST_F(MergeTicketTest, AFailedMergeIsAFailureAndReleased) {
   EXPECT_TRUE(ReservedNames().empty());
   EXPECT_FALSE(_writer->RefreshCommit());
   EXPECT_EQ(2, _writer->GetSnapshot().size());
+}
+
+TEST_F(MergeTicketTest, AThrowingUnitFailsTheMergeAndReleasesItsTicket) {
+  if (!irs::AddFailurePointDebugging("irs::MergeUnit")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  AddSegments(2);
+  auto reservation = Reserve({{0, 1}});
+  ASSERT_EQ(1, reservation.tickets.size());
+  EXPECT_ANY_THROW(Run(std::move(reservation.tickets[0])));
+  EXPECT_TRUE(irs::RemoveFailurePointDebugging("irs::MergeUnit"));
+  EXPECT_TRUE(ReservedNames().empty());
+  EXPECT_EQ(2, _writer->GetSnapshot().size());
+  EXPECT_EQ(1, Reserve({{0, 1}}).tickets.size());
 }
 
 TEST_F(MergeTicketTest, ARevokedTicketStaysReleasedAcrossRevocations) {

@@ -104,7 +104,7 @@ Each result row describes one merge:
 | Line | Meaning |
 |---|---|
 | `Segments`, `Merges` | Segments of the relation and merges planned |
-| `Merge N` | How many segments the merge combines into one, and why: `tier policy` for `background` (`tier policy, reduced byte budget` when the merge takes the last free merge slot), `compact to N segments` for `compact`, `listed segments` for `segments` |
+| `Merge N` | How many segments the merge combines into one, and why: `tier policy` for `background`, `compact to N segments` for `compact`, `listed segments` for `segments` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
 | `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |
@@ -116,7 +116,18 @@ Each result row describes one merge:
 
 `EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
 
-A merge runs as separate pieces of work: the norms of each indexed field, one after another, then every column and the postings of all indexed fields side by side, then the column file's footer, the vector indexes one at a time, and finally the index files. `CALL sdb_compact` and `VACUUM (COMPACT_*)` run these pieces on as many threads as the session may use (the `threads` setting), so a merge of a wide table finishes sooner on more threads. With several threads the step times of a merge add up to more than its `total_ms`. Background compaction runs on the server's background threads (`--background_threads`, see [Command Line Interface](../../../configuration/cli.mdx)) and never on the threads that run queries: merges may use all of them but one, and a single merge takes at most half, so merges of other tables keep threads to run on.
+A merge runs as separate pieces of work: the norms of each indexed field, one after another, then every column and the postings of all indexed fields side by side, then the column file's footer, the vector indexes one at a time, and finally the index files. `CALL sdb_compact` and `VACUUM (COMPACT_*)` run these pieces on as many threads as the session may use (the `threads` setting), so a merge of a wide table finishes sooner on more threads. With several threads the step times of a merge add up to more than its `total_ms`.
+
+Background compaction runs on the server's background threads (`--background_threads`, see [Command Line Interface](../../../configuration/cli.mdx)) and never on the threads that run queries. Merges may use all of these threads but one, the *merge threads*:
+
+- **One queue.** The background merges of all search tables and indexes wait in one queue. The merges that rewrite the fewest bytes for each segment they remove start first, and a merge gains priority the longer it waits.
+- **Small merges.** A merge that rewrites less than 64 MB keeps one merge thread for itself, so it never waits behind large merges.
+- **Large merges.** The limits below keep threads free for merges of other tables:
+  - large merges together take at most all merge threads but one;
+  - a single large merge takes about half of the background threads;
+  - one table or index runs at most half as many large merges at a time as there are merge threads.
+- **Within a table.** A table's merges do not wait for each other, so a long merge does not hold back merges of the table's newer segments.
+- **Failures.** A merge that fails leaves its segments out of the next merges for a while, and that while grows with each failure in a row.
 
 `sdb_compact` needs the same privilege as `VACUUM` on the table (`MAINTAIN`). Its merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain.
 

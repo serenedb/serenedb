@@ -1,0 +1,97 @@
+control substitution on
+
+statement ok
+CREATE TABLE pm (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+query
+SELECT count(*) AS segments FROM sdb_segments('pm');
+----
+segments
+4
+
+statement ok
+SET sdb_faults = 'compaction_lane_big';
+
+statement ok
+SET sdb_faults = 'park_compaction_run';
+
+statement ok
+ALTER TABLE pm SET (compaction_interval = 100);
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-park_compaction_run:parked';
+
+statement ok
+SET sdb_faults = '-compaction_lane_big';
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(401, 500) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(501, 600) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(601, 700) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+statement ok
+INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(701, 800) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pm;
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS segments FROM sdb_segments('pm');
+----
+segments
+5
+
+statement ok
+SET sdb_faults = 'park_compaction_run:release';
+
+query ok retry 40 backoff 250ms
+SELECT count(*) <= 2 AS merged FROM sdb_segments('pm');
+----
+merged
+t
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM pm;
+----
+n	s
+800	320400
+
+statement ok
+DROP TABLE pm;

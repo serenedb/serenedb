@@ -57,6 +57,8 @@ std::string_view MergeOutcomeName(MergeOutcome outcome) noexcept;
 
 MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept;
 
+bool Produced(MergeOutcome outcome) noexcept;
+
 struct MergeRecord {
   uint64_t id = 0;
   uint64_t relation_id = 0;
@@ -75,7 +77,7 @@ class MergeRegistry {
   static MergeRegistry& Instance();
 
   uint64_t Start(uint64_t relation_id, MergeOrigin origin);
-  void SetInputs(uint64_t id, const irs::Compaction& candidates);
+  void SetInputs(uint64_t id, irs::CompactionView candidates);
   void Finish(uint64_t id, MergeOutcome outcome, irs::MergeStats stats,
               std::string error);
 
@@ -98,6 +100,7 @@ class MergeRecorder {
   ~MergeRecorder();
 
   irs::CompactionPolicy Wrap(const irs::CompactionPolicy& policy);
+  void Begin(irs::CompactionView candidates);
   void Finish(irs::CompactionResult result);
   void Fail(std::string error);
 

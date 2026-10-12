@@ -53,6 +53,7 @@ add_executable(
     connector/writer_generations_test.cpp
     search/ann_build_pool_test.cpp
     search/compaction/merge_registry_test.cpp
+    search/compaction/merge_scheduler_test.cpp
     search/compaction/task_merge_executor_test.cpp
 )
 

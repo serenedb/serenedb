@@ -387,16 +387,42 @@ auto SearchTable::CompactUnsafeAsync(
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
   MergeOrigin origin, irs::CompactionResult* outcome,
   irs::MergeExecutor* executor) -> yaclib::Future<ResultWithTime> {
+  MergeRecorder recorder{GetTableId(), origin};
+  const auto recorded = recorder.Wrap(policy);
+  co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
+    return _writer->CompactAsync(recorded, field_options, progress, env,
+                                 executor);
+  });
+}
+
+auto SearchTable::RunMergeAsync(irs::MergeTicket ticket,
+                                const irs::MergeWriter::FlushProgress& progress,
+                                bool& empty_compaction,
+                                const irs::IndexFieldOptions* field_options,
+                                const irs::AnnBuildEnv* env, MergeOrigin origin,
+                                irs::CompactionResult* outcome,
+                                irs::MergeExecutor* executor)
+  -> yaclib::Future<ResultWithTime> {
+  MergeRecorder recorder{GetTableId(), origin};
+  recorder.Begin(ticket.Candidates());
+  co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
+    return _writer->RunMerge(std::move(ticket), field_options, progress, env,
+                             executor);
+  });
+}
+
+auto SearchTable::AwaitMerge(
+  MergeRecorder& recorder, bool& empty_compaction,
+  irs::CompactionResult* outcome,
+  absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
+  -> yaclib::Future<ResultWithTime> {
   const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
   auto result = absl::OkStatus();
-  MergeRecorder recorder{GetTableId(), origin};
-  const auto recorded = recorder.Wrap(policy);
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
-    auto res = co_await _writer->CompactAsync(recorded, field_options, progress,
-                                              env, executor);
+    auto res = co_await merge();
     if (res.error == irs::CompactionError::Fail) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));

@@ -1,0 +1,97 @@
+statement ok
+CREATE TABLE mrd (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 2);
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(401, 500) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(501, 600) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(601, 700) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(701, 800) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(801, 900) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+statement ok
+INSERT INTO mrd SELECT i, 'fox dog' FROM generate_series(901, 1000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mrd;
+
+query
+SELECT count(*) AS segments FROM sdb_segments('mrd');
+----
+segments
+10
+
+statement ok
+EXPLAIN SELECT * FROM sdb_compact('mrd');
+
+statement ok
+ALTER TABLE mrd SET (compaction_interval = 100);
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS segments FROM sdb_segments('mrd');
+----
+segments
+1
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM mrd;
+----
+n	s
+1000	500500
+
+query
+SELECT count(*) > 1 AS rounds FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'mrd')
+  AND origin = 'background' AND outcome IN ('merged', 'deferred');
+----
+rounds
+t
+
+statement ok
+DROP TABLE mrd;

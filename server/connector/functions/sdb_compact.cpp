@@ -138,8 +138,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
   search::MergeRoundRequest request{
     .mode = mode,
     .settings = &settings,
-    .free_slots = static_cast<size_t>(
-      std::max(1, search::GetSearchEngine().FreeCompactionSlots())),
+    .merges = search::GetSearchEngine().MergeRoundSize(),
     .target_segments = target_segments.value_or(gTargetSegments.Int(context)),
     .single_output = target.IsIndex(),
     .segments = segments,

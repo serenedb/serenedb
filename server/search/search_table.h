@@ -107,6 +107,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
   }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
+  }
   std::filesystem::path Path() const {
     return _directory->StoragePath(GetTableId());
   }
@@ -203,6 +206,17 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                           irs::CompactionResult* outcome = nullptr,
                           irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;
+  irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
+    return _writer->ReserveMerges(planner);
+  }
+  auto RunMergeAsync(irs::MergeTicket ticket,
+                     const irs::MergeWriter::FlushProgress& progress,
+                     bool& empty_compaction,
+                     const irs::IndexFieldOptions* field_options,
+                     const irs::AnnBuildEnv* env, MergeOrigin origin,
+                     irs::CompactionResult* outcome = nullptr,
+                     irs::MergeExecutor* executor = nullptr)
+    -> yaclib::Future<ResultWithTime>;
   ResultWithTime CleanupUnsafe();
 
   const std::optional<irs::ScorerOptions>& TopKScorer() const noexcept {
@@ -289,6 +303,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   void OpenWriter(bool in_memory);
   void RebuildConfig();
+  auto AwaitMerge(
+    MergeRecorder& recorder, bool& empty_compaction,
+    irs::CompactionResult* outcome,
+    absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
+    -> yaclib::Future<ResultWithTime>;
 
   duckdb::idx_t _table_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;

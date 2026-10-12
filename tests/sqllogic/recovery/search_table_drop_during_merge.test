@@ -1,0 +1,91 @@
+control substitution on
+
+statement ok
+CREATE TABLE dropped_ids (name TEXT, id BIGINT);
+
+statement ok
+CREATE TABLE mq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO dropped_ids SELECT 'mq', oid FROM pg_class WHERE relname = 'mq';
+
+statement ok
+SET sdb_faults = 'park_compaction_run';
+
+statement ok
+ALTER TABLE mq SET (compaction_interval = 100);
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-park_compaction_run:parked';
+
+statement ok
+DROP TABLE mq;
+
+statement ok
+SET sdb_faults = 'park_compaction_run:release';
+
+statement ok
+CREATE TABLE mr (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO mr SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr;
+
+statement ok
+INSERT INTO mr SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mr;
+
+statement ok
+INSERT INTO dropped_ids SELECT 'mr', oid FROM pg_class WHERE relname = 'mr';
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+statement ok
+ALTER TABLE mr SET (compaction_interval = 100);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS running FROM sdb_merges
+WHERE relation_id = (SELECT id FROM dropped_ids WHERE name = 'mr');
+----
+running
+1
+
+statement ok
+DROP TABLE mr;
+
+sleep 1s
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+query ok retry 40 backoff 250ms
+SELECT value AS running FROM sdb_metrics WHERE metric = 'compaction_active';
+----
+running
+0
+
+query
+SELECT count(*) AS tables FROM pg_class WHERE relname IN ('mq', 'mr');
+----
+tables
+0
+
+statement ok
+DROP TABLE dropped_ids;

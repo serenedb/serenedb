@@ -1,0 +1,80 @@
+control substitution on
+
+statement ok
+CREATE TABLE sf (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO sf SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sf;
+
+statement ok
+INSERT INTO sf SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sf;
+
+statement ok
+INSERT INTO sf SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sf;
+
+statement ok
+INSERT INTO sf SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sf;
+
+statement ok
+SET sdb_faults = 'SearchCompactionTask::lockInvertedIndexStorage';
+
+statement ok
+ALTER TABLE sf SET (compaction_interval = 100);
+
+sleep 2s
+
+query
+SELECT count(*) AS segments FROM sdb_segments('sf');
+----
+segments
+4
+
+statement ok
+SET sdb_faults = '-SearchCompactionTask::lockInvertedIndexStorage';
+
+statement ok
+SET sdb_faults = 'SearchCompactionTask::compactUnsafe';
+
+sleep 2s
+
+query
+SELECT count(*) AS segments FROM sdb_segments('sf');
+----
+segments
+4
+
+statement ok
+SET sdb_faults = '-SearchCompactionTask::compactUnsafe';
+
+statement ok
+SET sdb_faults = 'slow_search_task';
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS segments FROM sdb_segments('sf');
+----
+segments
+1
+
+statement ok
+SET sdb_faults = '-slow_search_task';
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM sf;
+----
+n	s
+400	80200
+
+statement ok
+DROP TABLE sf;

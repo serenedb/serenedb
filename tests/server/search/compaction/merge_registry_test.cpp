@@ -92,6 +92,16 @@ TEST(MergeRegistry, OutcomeOfMapsEveryCompactionError) {
             sdb::search::OutcomeOf(Result(irs::CompactionError::Cancelled, 2)));
 }
 
+TEST(MergeRegistry, OnlyMergedAndDeferredMergesProduceASegment) {
+  EXPECT_TRUE(sdb::search::Produced(MergeOutcome::Merged));
+  EXPECT_TRUE(sdb::search::Produced(MergeOutcome::Deferred));
+  EXPECT_FALSE(sdb::search::Produced(MergeOutcome::Nothing));
+  EXPECT_FALSE(sdb::search::Produced(MergeOutcome::Busy));
+  EXPECT_FALSE(sdb::search::Produced(MergeOutcome::Failed));
+  EXPECT_FALSE(sdb::search::Produced(MergeOutcome::Cancelled));
+  EXPECT_FALSE(sdb::search::Produced(MergeOutcome::Running));
+}
+
 TEST(MergeRegistry, NamesAreStable) {
   EXPECT_EQ("background",
             sdb::search::MergeOriginName(MergeOrigin::Background));

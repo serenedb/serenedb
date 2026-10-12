@@ -31,7 +31,7 @@ namespace sdb::search {
 class InvertedIndexStorage;
 class SearchTable;
 
-irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings, bool small);
+irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings);
 
 struct CompactionOptions {
   bool alive = false;

@@ -1,0 +1,66 @@
+control substitution on
+
+statement ok
+CREATE TABLE ci (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO ci SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ci;
+
+statement ok
+INSERT INTO ci SELECT i, 'owl cat' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ci;
+
+statement ok
+INSERT INTO ci SELECT i, 'fox cat' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ci;
+
+statement ok
+SET sdb_faults = 'park_compaction_run';
+
+statement ok
+ALTER TABLE ci SET (compaction_interval = 100);
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-park_compaction_run:parked';
+
+statement ok
+CREATE INDEX ci_idx ON ci USING inverted (body);
+
+statement ok
+SET sdb_faults = 'park_compaction_run:release';
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS segments FROM sdb_segments('ci');
+----
+segments
+1
+
+query
+SELECT count(*) AS n FROM ci_idx WHERE body = 'fox dog';
+----
+n
+100
+
+query
+SELECT count(*) AS n FROM ci_idx WHERE body IN ('owl cat', 'fox cat');
+----
+n
+200
+
+query
+SELECT count(*) AS merges FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'ci')
+  AND outcome = 'cancelled';
+----
+merges
+0
+
+statement ok
+DROP TABLE ci;

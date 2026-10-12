@@ -35,19 +35,12 @@
 namespace sdb::search {
 
 // Background compaction policy (the TieredMergePolicy analog), built per
-// target from its WITH-configured settings. `small` reduces the merge byte
-// budget when the global slot gate is nearly full so the pool keeps draining
-// under occupancy backpressure.
-irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings,
-                                     bool small) {
+// target from its WITH-configured settings.
+irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings) {
   irs::index_utils::CompactionTier tier;
   tier.max_segments = settings.compaction_max_segments;
   tier.max_segments_bytes = settings.compaction_max_segments_bytes;
   tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
-  if (small) {
-    tier.max_segments_bytes =
-      std::max(2 * tier.floor_segment_bytes, tier.max_segments_bytes / 2);
-  }
   return irs::index_utils::MakePolicy(tier);
 }
 

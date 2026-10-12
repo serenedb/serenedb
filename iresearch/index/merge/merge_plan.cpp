@@ -39,6 +39,7 @@
 #include "iresearch/index/merge/input_norms.hpp"
 #include "iresearch/index/merge/norms_unit.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -380,6 +381,10 @@ void MergePlan::SetWallNanos(uint64_t nanos) noexcept {
 bool MergePlan::RunUnit(size_t unit) {
   auto& s = *_state;
   SDB_ASSERT(unit < s.units.size());
+  SDB_WAIT_ON_FAILURE("pause_merge_unit");
+  SDB_IF_FAILURE("irs::MergeUnit") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   if (!s.progress()) {
     return false;
   }

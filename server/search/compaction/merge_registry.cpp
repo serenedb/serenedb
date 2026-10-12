@@ -81,6 +81,10 @@ MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept {
   return MergeOutcome::Failed;
 }
 
+bool Produced(MergeOutcome outcome) noexcept {
+  return outcome == MergeOutcome::Merged || outcome == MergeOutcome::Deferred;
+}
+
 MergeRegistry& MergeRegistry::Instance() {
   static MergeRegistry gInstance;
   return gInstance;
@@ -98,7 +102,7 @@ uint64_t MergeRegistry::Start(uint64_t relation_id, MergeOrigin origin) {
   return id;
 }
 
-void MergeRegistry::SetInputs(uint64_t id, const irs::Compaction& candidates) {
+void MergeRegistry::SetInputs(uint64_t id, irs::CompactionView candidates) {
   irs::MergeStats inputs;
   inputs.inputs.reserve(candidates.size());
   for (const auto* candidate : candidates) {
@@ -173,12 +177,16 @@ irs::CompactionPolicy MergeRecorder::Wrap(const irs::CompactionPolicy& policy) {
     [this, &policy](irs::Compaction& candidates, const irs::IndexReader& index,
                     const irs::CompactingSegments& compacting) {
       policy(candidates, index, compacting);
-      if (candidates.empty()) {
-        return;
-      }
-      Start();
-      MergeRegistry::Instance().SetInputs(_id, candidates);
+      Begin(candidates);
     };
+}
+
+void MergeRecorder::Begin(irs::CompactionView candidates) {
+  if (candidates.empty()) {
+    return;
+  }
+  Start();
+  MergeRegistry::Instance().SetInputs(_id, candidates);
 }
 
 void MergeRecorder::Finish(irs::CompactionResult result) {

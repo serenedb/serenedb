@@ -1,0 +1,86 @@
+control substitution on
+
+statement ok
+CREATE DATABASE mergedb;
+
+statement ok
+CREATE TABLE mergedb.public.docs (id INT, body TEXT);
+
+statement ok
+CREATE INDEX docs_idx ON mergedb.public.docs USING inverted (body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO mergedb.public.docs SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mergedb.public.docs;
+
+statement ok
+INSERT INTO mergedb.public.docs SELECT i, 'owl cat' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mergedb.public.docs;
+
+statement ok
+SET sdb_faults = 'irs::MergeUnit';
+
+query
+SELECT outcome FROM sdb_compact('mergedb.public.docs_idx', mode := 'compact');
+----
+outcome
+failed
+
+statement ok
+SET sdb_faults = '-irs::MergeUnit';
+
+statement ok
+SET sdb_faults = 'park_compaction_run';
+
+statement ok
+ALTER INDEX mergedb.public.docs_idx SET (compaction_interval = 100);
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-park_compaction_run:parked';
+
+query
+SELECT outcome FROM sdb_compact('mergedb.public.docs_idx', mode := 'compact');
+----
+outcome
+busy
+
+statement ok
+DROP DATABASE mergedb;
+
+statement ok
+SET sdb_faults = 'park_compaction_run:release';
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS running FROM sdb_merges;
+----
+running
+0
+
+query
+SELECT count(*) AS databases FROM pg_database WHERE datname = 'mergedb';
+----
+databases
+0
+
+statement ok
+CREATE DATABASE mergedb;
+
+statement ok
+CREATE TABLE mergedb.public.docs (id INT, body TEXT);
+
+statement ok
+INSERT INTO mergedb.public.docs VALUES (1, 'fox');
+
+query
+SELECT count(*) AS n FROM mergedb.public.docs;
+----
+n
+1
+
+statement ok
+DROP DATABASE mergedb;

@@ -85,8 +85,7 @@ StorageDirectory OpenStorageDirectory(
   bool in_memory, const irs::ResourceManagementOptions& resources);
 
 // Physical representation of a search index (InvertedIndex). Owns the
-// iresearch writer/reader and all mutable index state; lives in the
-// SearchEngine registry keyed by index_id, not in the catalog snapshot.
+// iresearch writer/reader and all mutable index state.
 class InvertedIndexStorage final
   : public std::enable_shared_from_this<InvertedIndexStorage> {
  public:
@@ -103,6 +102,9 @@ class InvertedIndexStorage final
   // shutdown or detach, where the directory must survive.
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
+  }
+  bool Dropped() const noexcept {
+    return _dropped.load(std::memory_order_acquire);
   }
   std::filesystem::path Path() const {
     return _directory->StoragePath(_index_id);
@@ -175,6 +177,19 @@ class InvertedIndexStorage final
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
                           irs::CompactionResult* outcome = nullptr,
                           irs::MergeExecutor* executor = nullptr)
+    -> yaclib::Future<ResultWithTime>;
+
+  irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
+    return _writer->ReserveMerges(planner);
+  }
+
+  auto RunMergeAsync(irs::MergeTicket ticket,
+                     const irs::MergeWriter::FlushProgress& progress,
+                     bool& empty_compaction,
+                     const irs::IndexFieldOptions* field_options,
+                     const irs::AnnBuildEnv* env, MergeOrigin origin,
+                     irs::CompactionResult* outcome = nullptr,
+                     irs::MergeExecutor* executor = nullptr)
     -> yaclib::Future<ResultWithTime>;
 
   ResultWithTime RefreshUnsafe(bool wait,
@@ -280,14 +295,11 @@ class InvertedIndexStorage final
   }
 
  private:
-  auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
-                         const irs::MergeWriter::FlushProgress& progress,
-                         bool& empty_compaction,
-                         const irs::IndexFieldOptions* field_options,
-                         const irs::AnnBuildEnv* env, MergeOrigin origin,
-                         irs::CompactionResult* outcome,
-                         irs::MergeExecutor* executor)
-    -> yaclib::Future<absl::Status>;
+  auto AwaitMerge(
+    MergeRecorder& recorder, bool& empty_compaction,
+    irs::CompactionResult* outcome,
+    absl::FunctionRef<yaclib::Future<irs::CompactionResult>()> merge)
+    -> yaclib::Future<ResultWithTime>;
   absl::Status RefreshUnsafeImpl(bool wait,
                                  const irs::ProgressReportCallback& progress,
                                  RefreshResult& code);

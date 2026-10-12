@@ -95,21 +95,18 @@ void PlanBackground(const irs::IndexReader& reader,
       "background compaction is disabled (compaction_interval = 0)");
   }
   irs::CompactingSegments picked;
-  const auto slots = std::max<size_t>(1, request.free_slots);
-  for (size_t slot = 0; slot < slots; ++slot) {
-    const bool small = slot + 1 == slots;
-    const auto policy = MakeTierPolicy(settings, small);
+  const auto policy = MakeTierPolicy(settings);
+  for (size_t merge = 0; merge < request.merges; ++merge) {
     irs::Compaction candidates;
     policy(candidates, reader, picked);
     if (candidates.empty() ||
         (candidates.size() == 1 && !HasDeletes(*candidates.front()))) {
-      continue;
+      break;
     }
     for (const auto* candidate : candidates) {
       picked.emplace(candidate->Meta().name);
     }
-    plan.merges.emplace_back(DescribeMerge(
-      small ? "tier policy, reduced byte budget" : "tier policy", candidates));
+    plan.merges.emplace_back(DescribeMerge("tier policy", candidates));
   }
   for (const auto& segment : reader) {
     const auto& meta = segment.Meta();

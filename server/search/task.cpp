@@ -21,10 +21,10 @@
 
 #include "task.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -36,7 +36,6 @@
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <vector>
-#include <yaclib/async/make.hpp>
 #include <yaclib/async/run.hpp>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -48,6 +47,7 @@
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/compaction/merge_policies.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/compaction/pool_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -132,82 +132,99 @@ bool AcquireMergeHelper() noexcept {
 void ReleaseMergeHelper() noexcept { GetSearchEngine().ReleaseCompaction(); }
 
 template<class Storage>
-auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
-                  SearchEngine& engine) -> yaclib::Future<bool> {
-  absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
-  SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
-  SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
-  // Pin the merge's field options for its whole lifetime (storage-specific, see
-  // PinCompactionOptions). A target found already dropped has nothing to merge.
-  auto opts = PinCompactionOptions(*idx);
-  if (!opts.alive) {
-    co_return false;
-  }
-  metrics::Scoped guard{metrics::Gauge::CompactionActive};
+class StorageMergeJob final : public MergeJob {
+ public:
+  StorageMergeJob(std::shared_ptr<Storage> storage,
+                  irs::MergeTicket ticket) noexcept
+    : _storage{std::move(storage)}, _ticket{std::move(ticket)} {}
 
-  const auto progress = [] { return !ShouldStop(); };
-
-  bool empty_compaction = false;
-  irs::CompactionResult outcome;
-  PoolMergeExecutor executor{
-    BackgroundScheduler::instance().executor(),
-    static_cast<size_t>(SearchEngine::MaxConcurrentCompactions() / 2),
-    AcquireMergeHelper, ReleaseMergeHelper};
-  auto [res, time_ms] = co_await idx->CompactUnsafeAsync(
-    policy, progress, empty_compaction, opts.field_options, &AnnBuildEnv(),
-    MergeOrigin::Background, &outcome, &executor);
-  if (res.ok()) {
-    SDB_TRACE(SEARCH, "successful compaction of Search index '", idx->GetId(),
-              "', took: ", time_ms, "ms");
-  } else {
-    SDB_DEBUG(SEARCH, "error after running for ", time_ms,
-              "ms while compacting Search index '", idx->GetId(),
-              "': ", res.message());
+  irs::CompactionView Candidates() const noexcept final {
+    return _ticket.Candidates();
   }
-  co_return res.ok() && !empty_compaction &&
-    outcome.error == irs::CompactionError::Ok;
-}
 
-// Fan out one CompactUnsafe per currently-free global slot. Each merge is
-// independent: the tier policy + the writer's _compacting exclusion set hand
-// every concurrent call a disjoint candidate window (overlap -> Fail -> no
-// work), so concurrency is bounded only by the slot gate; the smaller policy
-// when the gate is full keeps the pool draining. noexcept on purpose: a slot is
-// acquired here and released only by its child, so if Run/push_back threw (OOM)
-// the slot would leak into the gate count -- fail fast instead.
+  yaclib::Future<MergeOutcome> Run(const std::atomic_bool& stop,
+                                   size_t helpers) final {
+    SDB_IF_FAILURE("SearchCompactionTask::lockInvertedIndexStorage") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
+    SDB_IF_FAILURE("SearchCompactionTask::compactUnsafe") {
+      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+    }
+    SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
+    SDB_WAIT_ON_FAILURE("pause_compaction_run");
+    SDB_PARK_ONCE_ON_FAILURE("park_compaction_run");
+    if (_storage->Dropped() || _ticket.Revoked() ||
+        _storage->GetTasksSettings().compaction_interval_msec == 0) {
+      co_return MergeOutcome::Cancelled;
+    }
+    // Pin the merge's field options for its whole lifetime (storage-specific,
+    // see PinCompactionOptions). A target found already dropped has nothing to
+    // merge.
+    auto opts = PinCompactionOptions(*_storage);
+    if (!opts.alive) {
+      co_return MergeOutcome::Cancelled;
+    }
+    metrics::Scoped guard{metrics::Gauge::CompactionActive};
+    const irs::MergeWriter::FlushProgress progress = [&stop] {
+      return !stop.load(std::memory_order_relaxed);
+    };
+    PoolMergeExecutor executor{BackgroundScheduler::instance().executor(),
+                               helpers, AcquireMergeHelper, ReleaseMergeHelper};
+    bool empty_compaction = false;
+    irs::CompactionResult outcome;
+    auto [res, time_ms] = co_await _storage->RunMergeAsync(
+      std::move(_ticket), progress, empty_compaction, opts.field_options,
+      &AnnBuildEnv(), MergeOrigin::Background, &outcome, &executor);
+    if (!res.ok()) {
+      SDB_DEBUG(SEARCH, "error after running for ", time_ms,
+                "ms while compacting Search index '", _storage->GetId(),
+                "': ", res.message());
+      co_return MergeOutcome::Failed;
+    }
+    SDB_TRACE(SEARCH, "compaction of Search index '", _storage->GetId(),
+              "' took ", time_ms, "ms");
+    const auto merged = OutcomeOf(outcome);
+    if (Produced(merged)) {
+      _storage->BumpStalePressure();
+    }
+    co_return merged;
+  }
+
+ private:
+  std::shared_ptr<Storage> _storage;
+  irs::MergeTicket _ticket;
+};
+
 template<class Storage>
-std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
-  BackgroundScheduler& s, SearchEngine& engine,
-  const std::weak_ptr<Storage>& weak) noexcept {
-  std::vector<yaclib::FutureOn<bool>> runs;
-  while (!ShouldStop() && engine.TryAcquireCompaction()) {
-    const bool small = engine.FreeCompactionSlots() == 0;
-    runs.push_back(s.Run([&engine, weak, small]() -> yaclib::Future<bool> {
-      if (ShouldStop()) {
-        engine.ReleaseCompaction();
-        return yaclib::MakeFuture(false);
+size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
+                  const std::shared_ptr<MergeScheduler::Relation>& relation) {
+  const auto wanted = merges.Wanted(*relation);
+  const auto blocked = merges.Blocked(*relation);
+  const auto policy = MakeTierPolicy(idx->GetTasksSettings());
+  auto reservation = idx->ReserveMerges(
+    [&](const irs::IndexReader& index, const irs::CompactingSegments& reserved,
+        irs::MergeGroups& groups) {
+      irs::CompactingSegments taken = reserved;
+      for (const auto& name : blocked) {
+        taken.emplace(name);
       }
-      auto idx = weak.lock();
-      if (!idx) {
-        engine.ReleaseCompaction();
-        return yaclib::MakeFuture(false);
+      for (size_t i = 0; i != wanted; ++i) {
+        irs::Compaction candidates;
+        policy(candidates, index, taken);
+        if (candidates.empty()) {
+          break;
+        }
+        for (const auto* candidate : candidates) {
+          taken.emplace(candidate->Meta().name);
+        }
+        groups.emplace_back(std::move(candidates));
       }
-      SDB_IF_FAILURE("slow_search_task") { absl::SleepFor(absl::Seconds(5)); }
-      SDB_WAIT_ON_FAILURE("pause_compaction_run");
-      const auto& settings = idx->GetTasksSettings();
-      if (settings.compaction_interval_msec == 0) {
-        engine.ReleaseCompaction();
-        return yaclib::MakeFuture(false);
-      }
-      auto policy = MakeTierPolicy(settings, small);
-      return DoCompaction(std::move(idx), std::move(policy), engine);
-    }));
+    });
+  for (auto& ticket : reservation.tickets) {
+    merges.Enqueue(relation, std::make_unique<StorageMergeJob<Storage>>(
+                               idx, std::move(ticket)));
   }
-  return runs;
+  return reservation.tickets.size();
 }
 
 // Wait up to `total` for the timer OR a NudgeCompaction. OneShotEvent is a poor
@@ -228,7 +245,7 @@ yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
       break;
     }
     auto idx = weak.lock();
-    if (!idx) {
+    if (!idx || idx->Dropped()) {
       break;
     }
     const bool nudged =
@@ -361,27 +378,39 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
 }
 
 template<class Storage>
-yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
+yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
   auto& s = BackgroundScheduler::instance();
-  auto& engine = GetSearchEngine();
+  auto& merges = GetSearchEngine().Merges();
+  const std::weak_ptr<Storage> weak = storage;
+  const auto relation = merges.AddRelation(storage->GetId(), [weak] {
+    if (auto live = weak.lock()) {
+      live->NudgeCompaction();
+    }
+  });
+  storage.reset();
   auto backoff = Clock::duration::zero();
-  bool cascade = false;
+  auto last_interval = Clock::duration::zero();
+  bool triggered = false;
   try {
     for (;;) {
       auto idx = weak.lock();
-      if (!idx) {
+      if (!idx || idx->Dropped()) {
         SDB_TRACE(SEARCH,
                   "maintenance target is deleted, ending compaction loop");
         break;
       }
-      const auto& settings = idx->GetTasksSettings();
-      const auto interval = ToDuration(settings.compaction_interval_msec);
-      const bool enabled = interval > Clock::duration::zero();
+      const auto interval =
+        ToDuration(idx->GetTasksSettings().compaction_interval_msec);
       const auto base_gen = idx->CompactionGeneration();
-      idx.reset();
+      if (interval != last_interval) {
+        last_interval = interval;
+        backoff = Clock::duration::zero();
+      }
 
-      if (!enabled) {
-        cascade = false;
+      if (interval == Clock::duration::zero()) {
+        idx.reset();
+        merges.CancelQueued(*relation);
+        triggered = false;
         co_await s.Delay(kDisabledPoll);
         if (ShouldStop()) {
           break;
@@ -389,57 +418,23 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
         continue;
       }
 
-      // A productive tick re-evaluates immediately (Lucene MERGE_FINISHED
-      // cascade); otherwise wait the interval+backoff or a refresh nudge.
-      if (!cascade) {
-        co_await WaitForCompactionTrigger(s, weak, base_gen, interval,
-                                          interval + backoff);
-        if (ShouldStop()) {
-          break;
-        }
-        bool changed = true;
-        if (auto live = weak.lock()) {
-          changed =
-            ToDuration(live->GetTasksSettings().compaction_interval_msec) !=
-            interval;
-        }
-        if (changed) {
+      if (triggered) {
+        if (PlanMerges(idx, merges, relation) != 0) {
           backoff = Clock::duration::zero();
-          continue;
+        } else {
+          backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;
+          backoff = std::min(backoff, kMaxCompactionBackoff);
         }
       }
-      cascade = false;
+      idx.reset();
 
+      co_await WaitForCompactionTrigger(s, weak, base_gen, interval,
+                                        interval + backoff);
+      if (ShouldStop()) {
+        break;
+      }
       co_await yaclib::On(s.executor());
-      auto runs = LaunchCompactionFanout(s, engine, weak);
-      if (runs.empty()) {
-        // Gate full: every slot is busy elsewhere; wait for one to free up.
-        backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;
-        backoff = std::min(backoff, kMaxCompactionBackoff);
-        continue;
-      }
-
-      // Join the fan-out before looping/returning so no detached child touches
-      // the storage after this coroutine completes.
-      co_await yaclib::Await(runs.begin(), runs.end());
-
-      bool produced = false;
-      for (auto& run : runs) {
-        const auto r = std::move(run).Touch();
-        produced |= r.State() == yaclib::ResultState::Value && r.Value();
-      }
-      if (produced) {
-        // Re-evaluate at once and raise stale pressure so the refresh loop's
-        // cleanup tail reclaims the now-unreferenced merge inputs.
-        backoff = Clock::duration::zero();
-        cascade = true;
-        if (auto live = weak.lock()) {
-          live->BumpStalePressure();
-        }
-      } else {
-        backoff = backoff == Clock::duration::zero() ? interval : backoff * 2;
-        backoff = std::min(backoff, kMaxCompactionBackoff);
-      }
+      triggered = true;
     }
   } catch (const yaclib::ResultError<yaclib::StopError>&) {
     // The executor was stopped (serened shutting down) while the loop awaited a
@@ -448,14 +443,16 @@ yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
   } catch (const std::exception& ex) {
     SDB_ERROR(SEARCH, "compaction loop terminated by exception: ", ex.what());
   }
+  merges.CancelQueued(*relation);
+  merges.StopRunning(*relation);
   co_return {};
 }
 
 template yaclib::Future<> RefreshLoop(std::weak_ptr<InvertedIndexStorage>);
 template yaclib::Future<> CompactionCoordinator(
-  std::weak_ptr<InvertedIndexStorage>);
+  std::shared_ptr<InvertedIndexStorage>);
 template yaclib::Future<> RefreshLoop(std::weak_ptr<SearchTable>);
-template yaclib::Future<> CompactionCoordinator(std::weak_ptr<SearchTable>);
+template yaclib::Future<> CompactionCoordinator(std::shared_ptr<SearchTable>);
 
 namespace {
 

@@ -40,6 +40,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "scheduler/background_scheduler.h"
 #include "search/ann_build_pool.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table_recovery.h"
 #include "search/task.h"
@@ -53,6 +54,23 @@ ABSL_DECLARE_FLAG(bool, skip_search_recovery);
 namespace sdb::search {
 
 SearchEngine::SearchEngine() { gInstance = this; }
+
+SearchEngine::~SearchEngine() { gInstance = nullptr; }
+
+void SearchEngine::RequestStop() noexcept {
+  _stopping.store(true, std::memory_order_release);
+  _merges->Interrupt();
+}
+
+bool SearchEngine::TryAcquireCompaction() noexcept {
+  return _merges->TryAcquireHelper();
+}
+
+void SearchEngine::ReleaseCompaction() noexcept { _merges->ReleaseHelper(); }
+
+size_t SearchEngine::MergeRoundSize() const noexcept {
+  return _merges->RoundSize();
+}
 
 int SearchEngine::MaxConcurrentCompactions() noexcept {
   // The background pool is max(logical/4, 2) threads (--background_threads,
@@ -74,6 +92,11 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
 }
 
 void SearchEngine::start() {
+  const auto threads = static_cast<size_t>(MaxConcurrentCompactions());
+  _merges = std::make_unique<MergeScheduler>(
+    BackgroundScheduler::instance().executor(),
+    MergeScheduler::Options{.threads = threads,
+                            .helpers_per_merge = threads / 2});
   AnnBuildEnv();
   StartInvertedIndexTasks();
   if (!absl::GetFlag(FLAGS_skip_search_recovery)) {
@@ -88,6 +111,7 @@ void SearchEngine::start() {
 
 void SearchEngine::stop() {
   _stopping.store(true, std::memory_order_release);
+  _merges->Stop();
   _loops.Done();
   _loops.Wait();
 }

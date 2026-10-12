@@ -93,9 +93,6 @@ KNOWN_UNTESTED_SOURCE_FAULTS = {
     # Search commit crash/error injection points; recovery coverage pending.
     "Search::CrashAfterCommit",
     "Search::FailOnCommit",
-    # Search compaction task fault points; no recovery test drives compaction yet.
-    "SearchCompactionTask::compactUnsafe",
-    "SearchCompactionTask::lockInvertedIndexStorage",
     # Search refresh task fault points; cleanup/lock paths untested.
     "SearchRefreshTask::cleanupUnsafe",
     "SearchRefreshTask::lockInvertedIndexStorage",

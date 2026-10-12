@@ -291,4 +291,22 @@ irs::CompactionPolicy ExplicitPolicy(std::span<const std::string> names) {
   };
 }
 
+irs::MergeGroups PickMerges(const irs::CompactionPolicy& policy,
+                            const irs::IndexReader& index,
+                            irs::CompactingSegments taken, size_t wanted) {
+  irs::MergeGroups groups;
+  for (size_t merge = 0; merge != wanted; ++merge) {
+    irs::Compaction candidates;
+    policy(candidates, index, taken);
+    if (candidates.empty()) {
+      break;
+    }
+    for (const auto* candidate : candidates) {
+      taken.emplace(candidate->Meta().name);
+    }
+    groups.emplace_back(std::move(candidates));
+  }
+  return groups;
+}
+
 }  // namespace sdb::search

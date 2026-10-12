@@ -6,6 +6,7 @@ target_sources(
         compaction/merge_policies.cpp
         compaction/merge_registry.cpp
         compaction/merge_scheduler.cpp
+        compaction/merge_simulator.cpp
         compaction/pool_merge_executor.cpp
         compaction/task_merge_executor.cpp
         inverted_index_storage.cpp

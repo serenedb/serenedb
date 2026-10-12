@@ -33,4 +33,4 @@ server/search/compaction/merge_registry.cpp:98 the return after an exhaustive sw
 server/search/compaction/merge_registry.cpp:102 the implicit default of an exhaustive switch over irs::CompactionError
 server/search/compaction/merge_registry.cpp:114 the return after an exhaustive switch over irs::CompactionError
 server/pg/sdb_catalog/sdb_merges.cpp:200-203 every flushed segment carries the generated row key with its range, and a merge records its inputs before it can fail; only a merge whose policy never ran, which an allocation failure alone causes, has no range
-server/search/task.cpp:164-166 an index whose options cannot be pinned although its storage is not retired: only between RemoveIndex and OnDrop inside FinalizeCommit of its DROP INDEX
+server/search/task.cpp:165-167 an index whose options cannot be pinned although its storage is not retired: only between RemoveIndex and OnDrop inside FinalizeCommit of its DROP INDEX

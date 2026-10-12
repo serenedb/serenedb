@@ -46,6 +46,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/inverted_store_index.h"
 #include "scheduler/background_scheduler.h"
+#include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_scheduler.h"
 #include "search/compaction/pool_merge_executor.h"
@@ -205,20 +206,8 @@ size_t PlanMerges(const std::shared_ptr<Storage>& idx, MergeScheduler& merges,
     [&](const irs::IndexReader& index, const irs::CompactingSegments& reserved,
         irs::MergeGroups& groups) {
       irs::CompactingSegments taken = reserved;
-      for (const auto& name : blocked) {
-        taken.emplace(name);
-      }
-      for (size_t i = 0; i != wanted; ++i) {
-        irs::Compaction candidates;
-        policy(candidates, index, taken);
-        if (candidates.empty()) {
-          break;
-        }
-        for (const auto* candidate : candidates) {
-          taken.emplace(candidate->Meta().name);
-        }
-        groups.emplace_back(std::move(candidates));
-      }
+      taken.insert(blocked.begin(), blocked.end());
+      groups = PickMerges(policy, index, std::move(taken), wanted);
     });
   for (auto& ticket : reservation.tickets) {
     merges.Enqueue(relation, std::make_unique<StorageMergeJob<Storage>>(

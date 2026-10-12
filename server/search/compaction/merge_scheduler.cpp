@@ -133,6 +133,9 @@ void MergeScheduler::Drop(Queue& dropped) {
 }
 
 void MergeScheduler::UpdateGauges() const {
+  if (!_options.gauges) {
+    return;
+  }
   metrics::Set(metrics::Gauge::CompactionPending,
                static_cast<int64_t>(_queue.size()));
   metrics::Set(metrics::Gauge::CompactionThreads,

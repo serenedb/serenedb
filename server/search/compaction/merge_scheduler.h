@@ -69,6 +69,7 @@ class MergeScheduler {
     absl::Duration max_backoff = absl::Minutes(5);
     std::function<absl::Time()> now;
     MergeRegistry* registry = nullptr;
+    bool gauges = true;
   };
 
   class Relation {

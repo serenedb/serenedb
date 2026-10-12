@@ -145,6 +145,46 @@ Two system tables show the compaction of the current database's search tables an
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_007" />
 
+### Replaying a load with `sdb_merge_simulate` {#sdb-merge-simulate}
+
+`sdb_merge_simulate(trace [, ...])` replays the segments a load wrote and returns how background compaction would merge them, without reading or changing any table. The replay runs the server's own merge policy and merge queue on a simulated clock: a merge waits for a free merge thread, as it would in the background, and takes as long as rewriting its bytes needs at `merge_bytes_per_second` on each thread it holds. Cancelling the statement or reaching `statement_timeout` stops the replay.
+
+The trace is a subquery with one row per written segment, its columns matched by name. The flush rows of `sdb_compact_history` fit as they are, so a load on this server is its own trace:
+
+| Column | Meaning |
+|---|---|
+| `finished` | When the segment was written (required) |
+| `output_docs`, `output_bytes` | Documents and bytes of the segment (required) |
+| `output_live_docs` | Documents still live; all of them when the column is missing |
+| `relation_id` | The table or index the segment belongs to; the segments of all relations share the merge threads |
+| `rowid_min`, `rowid_max` | The range of row ids the segment holds |
+| `type` | Rows whose `type` is not `flush` are skipped, so all of `sdb_compact_history` can be passed |
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `policy` | `tier` | The merge policy; `tier` is the one background compaction uses |
+| `threads` | The server's merge threads | Merge threads: on a server, `--background_threads` minus one |
+| `merge_bytes_per_second` | `16777216` (16 MB) | Bytes one thread merges per second |
+| `compaction_max_segments`, `compaction_max_segments_bytes`, `compaction_floor_segment_bytes` | The table defaults | The policy's options, as in `CREATE TABLE ... WITH` |
+
+The result has one row per event, in time order: every replayed segment (`type` `flush`) and every simulated merge (`type` `merge`):
+
+| Column | Meaning |
+|---|---|
+| `event` | Number of the event, from 1 in time order |
+| `time_s` | Seconds since the first segment of the trace |
+| `relation_id`, `type`, `segment` | The relation, the event and the name of the new segment |
+| `inputs`, `input_bytes` | The merged segments and their bytes (merges only) |
+| `docs`, `live_docs`, `bytes`, `rowid_min`, `rowid_max` | The new segment; a merge drops deleted documents and keeps the bytes of the live ones |
+| `queued_s`, `started_s`, `threads`, `score`, `lane` | When a merge was queued and started, how many threads it had, and its score and lane as in `sdb_merges` |
+| `segments`, `segment_bytes` | Segments and bytes of the relation after the event |
+| `overlap` | How many of the relation's segments hold an average row id: `1` when their row-id ranges do not overlap |
+| `merges_queued`, `merges_running` | Merges waiting and running after the event, all relations together |
+
+Write amplification, how many times each written byte is rewritten by merges, is the merged bytes over the written ones. Here a load writes an 8 MB segment every second for 100 seconds and two threads merge:
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_008" />
+
 ## Refreshing view-backed indexes
 
 A [view- or external-data-backed index](./views.md) holds a snapshot of its source and does not track later changes on its own. `REINDEX INDEX <name>` refreshes it in one pass, incrementally for Iceberg tables and file globs, and the `reindex_interval` index option repeats that pass in the background. See [Refreshing the index](./views.md#refreshing-the-index).

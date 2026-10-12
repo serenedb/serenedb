@@ -51,6 +51,7 @@
 #include "connector/functions/otel.h"
 #include "connector/functions/ruleutils.h"
 #include "connector/functions/sdb_compact.h"
+#include "connector/functions/sdb_merge_simulate.h"
 #include "connector/functions/sdb_segments.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
@@ -347,6 +348,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterVacuumFunction(db);
 
   connector::RegisterSdbCompactFunction(db);
+
+  connector::RegisterSdbMergeSimulateFunction(db);
 
   connector::RegisterSdbSegmentsFunction(db);
 

@@ -12,6 +12,7 @@ target_sources(
         math.cpp
         otel.cpp
         sdb_compact.cpp
+        sdb_merge_simulate.cpp
         sdb_segments.cpp
         string.cpp
         system.cpp

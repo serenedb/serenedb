@@ -150,3 +150,21 @@ type	origin	outcome	input_docs	output_docs
 flush	NULL	NULL	NULL	1
 flush	NULL	NULL	NULL	1
 merge	sql	merged	2	2
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) FILTER (WHERE type = 'merge') AS merges,
+       round(sum(bytes) FILTER (WHERE type = 'merge')::DOUBLE
+             / sum(bytes) FILTER (WHERE type = 'flush'), 2) AS write_amplification,
+       max(segments) AS most_segments
+FROM sdb_merge_simulate(
+  (SELECT TIMESTAMPTZ '2026-01-01 00:00:00+00' + i * INTERVAL '1 second' AS finished,
+          100000 AS output_docs, 8388608 AS output_bytes
+   FROM generate_series(1, 100) s(i)),
+  threads := 2);
+----
+merges	write_amplification	most_segments
+57	5.62	28

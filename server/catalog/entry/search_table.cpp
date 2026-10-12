@@ -166,6 +166,7 @@ std::shared_ptr<const InvertedIndexConfig> PrimaryKeyConfig(
                            InvertedIndexField{{.indexed_term_dict = true}});
     config->keys.push_back({{.field_id = column, .column_id = column}, {}});
   }
+  config->BuildLookups();
   return config;
 }
 

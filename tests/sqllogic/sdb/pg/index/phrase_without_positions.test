@@ -1662,6 +1662,37 @@ statement ok
 DROP TABLE pwp_lists
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY pwp_norm AS split_text(case := 'lower') WITH (frequency, norm)
+
+statement ok
+CREATE TABLE pwp_score (id INTEGER PRIMARY KEY, body TEXT)
+
+statement ok
+INSERT INTO pwp_score VALUES
+    (1, 'quick brown fox jumps over the lazy dog and runs far away into the dark green forest'),
+    (2, 'brown quick fox fox fox')
+
+statement ok
+CREATE INDEX pwp_score_idx ON pwp_score USING inverted (id, body pwp_norm) INCLUDE (body)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_score
+
+query
+SELECT id FROM pwp_score_idx
+WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
+  AND (BM25(pwp_score_idx.tableoid) * 115)::TINYINT < 125
+----
+id
+1
+
+statement ok
+DROP TABLE pwp_score
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pwp_norm
+
+statement ok
 DROP TEXT SEARCH DICTIONARY pwp_words_pos
 
 statement ok

@@ -2381,3 +2381,38 @@ id	t
 1	[hello]
 2	[-]
 3	[]
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY twice_words AS split_text(case := 'lower') WITH (frequency, norm);
+
+statement ok
+CREATE TABLE twice (id INTEGER PRIMARY KEY, body TEXT);
+
+statement ok
+INSERT INTO twice VALUES (1, 'Quick Brown Fox'), (2, 'lazy dog');
+
+statement ok
+CREATE INDEX twice_both ON twice USING inverted (id, (lower(body)) twice_words, (lower(body)) included());
+
+statement ok
+CREATE INDEX twice_once ON twice USING inverted (id, (lower(body)) twice_words);
+
+statement ok
+INSERT INTO twice VALUES (3, 'Quick Red Fox');
+
+statement ok
+VACUUM (REFRESH_TABLE) twice;
+
+query
+SELECT id, round(BM25(twice_both.tableoid)::numeric, 4) AS s FROM twice_both WHERE lower(body) @@ 'fox' ORDER BY id;
+----
+id	s
+1	0.203
+3	0.203
+
+query
+SELECT id, round(BM25(twice_once.tableoid)::numeric, 4) AS s FROM twice_once WHERE lower(body) @@ 'fox' ORDER BY id;
+----
+id	s
+1	0.203
+3	0.203

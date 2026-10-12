@@ -132,6 +132,13 @@ struct CreateIndexGlobalState final : public duckdb::GlobalSinkState {
   // of every per-field answer the build needs.
   std::shared_ptr<const catalog::InvertedIndexConfig> config;
 
+  struct ExpressionSlot {
+    irs::field_id field_id;
+    duckdb::idx_t slot;
+    bool check_leaves;
+  };
+  std::vector<ExpressionSlot> expression_slots;
+
   std::optional<SearchBackfillTarget> search_backfill;
   search::SearchTable::BuildClaim build_claim;
 
@@ -381,6 +388,33 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
   auto& index_entry = created->Cast<catalog::InvertedIndexEntry>();
   state->tokenizers = index_entry.ResolveTokenizers(context);
   state->config = index_entry.Config();
+  // The pipeline's projection computed the indexed expressions into the slots
+  // after the scanned columns (see SereneDBCreateIndexPlan).
+  if (HasProjectedExpressions()) {
+    const auto& config = *state->config;
+    auto slot = _expression_slot_base.GetIndex();
+    for (size_t k = 0; k < config.keys.size(); ++k) {
+      const auto& expr = *_bound_expressions[k];
+      if (expr.GetExpressionClass() ==
+          duckdb::ExpressionClass::BOUND_COLUMN_REF) {
+        continue;
+      }
+      const auto& key = config.keys[k];
+      const bool writes = config.FindKey(key.field_id) == &key;
+      SDB_ASSERT(
+        writes == std::none_of(
+                    _bound_expressions.begin(), _bound_expressions.begin() + k,
+                    [&](const auto& earlier) { return earlier->Equals(expr); }),
+        "the backfill projection and the index config disagree on "
+        "a repeated key");
+      if (writes) {
+        const auto* entry = config.FindEntry(key.field_id);
+        state->expression_slots.emplace_back(key.field_id, slot,
+                                             !entry || entry->IsTokenized());
+      }
+      ++slot;
+    }
+  }
   return state;
 }
 
@@ -549,31 +583,15 @@ duckdb::SinkResultType SereneDBPhysicalCreateIndex::Sink(
     }
   }
 
-  // The pipeline's projection computed the indexed expressions into the slots
-  // after the scanned columns (see SereneDBCreateIndexPlan).
   auto& expression_values = lstate->expression_values;
   expression_values.clear();
-  if (HasProjectedExpressions()) {
-    const auto& config = *gstate.config;
-    const auto keys = std::span{config.keys};
-    const auto& unbound = _bound_expressions;
-    expression_values.reserve(keys.size());
-    auto slot = _expression_slot_base.GetIndex();
-    for (size_t k = 0; k < keys.size(); ++k) {
-      if (k < unbound.size() && unbound[k]->GetExpressionClass() ==
-                                  duckdb::ExpressionClass::BOUND_COLUMN_REF) {
-        continue;
-      }
-      SDB_ASSERT(slot < chunk.ColumnCount());
-      if (config.FirstKeyOf(k)) {
-        const auto* entry = config.FindEntry(keys[k].field_id);
-        if (!entry || entry->IsTokenized()) {
-          RejectJsonObjectArrayLeaves(chunk.data[slot], num_rows);
-        }
-        expression_values.push_back({keys[k].field_id, &chunk.data[slot]});
-      }
-      ++slot;
+  for (const auto& expression : gstate.expression_slots) {
+    SDB_ASSERT(expression.slot < chunk.ColumnCount());
+    if (expression.check_leaves) {
+      RejectJsonObjectArrayLeaves(chunk.data[expression.slot], num_rows);
     }
+    expression_values.emplace_back(expression.field_id,
+                                   &chunk.data[expression.slot]);
   }
 
   irs::CommitOnFlush commit_on_flush;

@@ -106,6 +106,12 @@ bool IsStandalone(const ByPhraseOptions& phrase) noexcept {
   });
 }
 
+bool HasPatternParts(const ByPhraseOptions& phrase) noexcept {
+  return absl::c_any_of(phrase, [](const auto& info) {
+    return ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion;
+  });
+}
+
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
                                std::span<const std::vector<bstring>> expanded,
                                std::span<const PhraseWordStat> words)

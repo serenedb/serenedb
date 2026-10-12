@@ -173,7 +173,8 @@ duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> FieldExpressions(
   const InvertedIndexConfig& config) {
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> fields;
   for (size_t i = 0; i < expressions.size(); ++i) {
-    if (i >= config.keys.size() || config.FirstKeyOf(i)) {
+    if (i >= config.keys.size() ||
+        config.FindKey(config.keys[i].field_id) == &config.keys[i]) {
       fields.emplace_back(expressions[i]->Copy());
     }
   }
@@ -423,6 +424,17 @@ InvertedStoreIndex::InvertedStoreIndex(
     _tokenizers{std::move(tokenizers)},
     _has_predicate{has_predicate} {
   SDB_ASSERT(_config);
+  for (const auto& key : _config->keys) {
+    if (_config->FindKey(key.field_id) != &key) {
+      continue;
+    }
+    const auto* entry = _config->FindEntry(key.field_id);
+    if (logical_types[_fields.size()].IsJSONType() &&
+        (!entry || entry->IsTokenized())) {
+      _leaf_checks.emplace_back(_fields.size());
+    }
+    _fields.emplace_back(key.field_id);
+  }
   gBoundInvertedIndexes.fetch_add(1, std::memory_order_release);
 }
 
@@ -448,7 +460,6 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
   if (bound_expressions.empty()) {
     return total;
   }
-  const auto keys = std::span{_config->keys};
   if (results.ColumnCount() == 0) {
     results.Initialize(duckdb::Allocator::DefaultAllocator(), logical_types);
   } else {
@@ -459,15 +470,8 @@ duckdb::idx_t InvertedStoreIndex::Evaluate(
   } else {
     ExecuteExpressions(chunk, results);
   }
-  for (size_t i = 0, column = 0; i < keys.size(); ++i) {
-    if (!_config->FirstKeyOf(i)) {
-      continue;
-    }
-    const auto* entry = _config->FindEntry(keys[i].field_id);
-    if (!entry || entry->IsTokenized()) {
-      RejectJsonObjectArrayLeaves(results.data[column], total);
-    }
-    ++column;
+  for (const auto column : _leaf_checks) {
+    RejectJsonObjectArrayLeaves(results.data[column], total);
   }
   if (!_has_predicate) {
     return total;
@@ -486,7 +490,6 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
                               duckdb::DataChunk& results, duckdb::Vector& rows,
                               duckdb::idx_t count) {
   if (count != 0) {
-    const auto keys = std::span{_config->keys};
     duckdb::UnifiedVectorFormat row_fmt;
     rows.ToUnifiedFormat(count, row_fmt);
     const auto* row_data =
@@ -498,11 +501,9 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
         primary_key::SignedKeyTerm(row_data[row_fmt.sel->get_index(i)]);
     }
     std::vector<ExpressionValue> values;
-    values.reserve(keys.size());
-    for (size_t i = 0; i < keys.size(); ++i) {
-      if (_config->FirstKeyOf(i)) {
-        values.emplace_back(keys[i].field_id, &results.data[values.size()]);
-      }
+    values.reserve(_fields.size());
+    for (size_t column = 0; column < _fields.size(); ++column) {
+      values.emplace_back(_fields[column], &results.data[column]);
     }
     FeedChunk(writer, count, PkChunk{.key_terms = key_views, .column = &rows},
               results, {}, values);

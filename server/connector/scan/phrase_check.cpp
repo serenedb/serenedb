@@ -18,8 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
-
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -55,13 +53,6 @@ struct PhraseCheckState final : duckdb::FunctionLocalState {
   irs::PhraseCheck check;
 };
 
-duckdb::unique_ptr<duckdb::FunctionLocalState> InitPhraseCheck(
-  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
-  duckdb::FunctionData* bind_data) {
-  return duckdb::make_uniq<PhraseCheckState>(
-    *bind_data->Cast<PhraseCheckBind>().data);
-}
-
 void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                  duckdb::Vector& result) {
   auto& check = duckdb::ExecuteFunctionState::GetFunctionState(state)
@@ -93,10 +84,7 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   if (!irs::IsStandalone(checked)) {
     return std::nullopt;
   }
-  const bool patterns = absl::c_any_of(checked, [](const auto& info) {
-    return irs::ByPhraseOptions::KindOf(info.part) == irs::SlotKind::Expansion;
-  });
-  if (checked.slop() != 0 && patterns &&
+  if (checked.slop() != 0 && irs::HasPatternParts(checked) &&
       tokens->tokenizer()->Traits().explicit_pos) {
     return std::nullopt;
   }
@@ -104,16 +92,15 @@ std::optional<DeferredCheck> DeferPhrase(irs::Filter::ptr& filter,
   if (!index) {
     return std::nullopt;
   }
-  auto data = std::make_shared<const PhraseCheckData>(
-    tokens, checked, options.word_separator(),
-    irs::PhraseWordStats(checked, ctx.reader, phrase.field_id()));
-  return Split(
-    filter, std::move(index), tokens->text, *type, "sdb_phrase_check",
-    CheckPhrase,
-    [&](std::shared_ptr<const irs::Filter>) {
-      return duckdb::make_uniq<PhraseCheckBind>(std::move(data));
-    },
-    InitPhraseCheck);
+  auto bind =
+    duckdb::make_uniq<PhraseCheckBind>(std::make_shared<const PhraseCheckData>(
+      tokens, checked, options.word_separator(),
+      irs::PhraseWordStats(checked, ctx.reader, phrase.field_id())));
+  std::shared_ptr<const irs::Filter> source =
+    std::exchange(filter, std::move(index));
+  return Split(std::move(source), tokens->text, *type, "sdb_phrase_check",
+               CheckPhrase, std::move(bind),
+               InitCheck<PhraseCheckState, PhraseCheckData>);
 }
 
 }  // namespace sdb::connector

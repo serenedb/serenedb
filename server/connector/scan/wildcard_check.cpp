@@ -56,11 +56,11 @@ std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,
   }
   auto index = std::make_unique<irs::ByWildcardNGram>(wildcard);
   index->mutable_options()->matcher = nullptr;
-  return Split(filter, std::move(index), options.store_field_id,
+  std::shared_ptr<const irs::Filter> source =
+    std::exchange(filter, std::move(index));
+  return Split(std::move(source), options.store_field_id,
                duckdb::LogicalType::BLOB, "sdb_wildcard_check", CheckWildcard,
-               [&](std::shared_ptr<const irs::Filter>) {
-                 return duckdb::make_uniq<WildcardCheckBind>(options.matcher);
-               });
+               duckdb::make_uniq<WildcardCheckBind>(options.matcher));
 }
 
 }  // namespace sdb::connector

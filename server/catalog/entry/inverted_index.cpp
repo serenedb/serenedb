@@ -46,7 +46,6 @@
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <span>
 #include <string>
 
 #include "catalog/catalog.h"
@@ -121,6 +120,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
                                 ? parsed_expressions[slot]->ToString()
                                 : std::string{});
   }
+  config->BuildLookups();
   return config;
 }
 
@@ -131,14 +131,6 @@ duckdb::shared_ptr<duckdb::IndexDataTableInfo> DataTableInfoOf(
   }
   return duckdb::make_shared_ptr<duckdb::IndexDataTableInfo>(
     table->Cast<duckdb::DuckTableEntry>().GetStorage().GetDataTableInfo());
-}
-
-const InvertedIndexKey* FindKey(const InvertedIndexConfig& config,
-                                irs::field_id field_id) noexcept {
-  const auto it = absl::c_find_if(
-    config.keys,
-    [&](const InvertedIndexKey& key) { return key.field_id == field_id; });
-  return it == config.keys.end() ? nullptr : &*it;
 }
 
 constexpr auto kCreateOnlyOptions = std::to_array({
@@ -352,77 +344,92 @@ IndexTokenizers::Bound IndexTokenizers::AcquireAll(
   return bound;
 }
 
-irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
-  std::string_view normalized) const noexcept {
-  if (normalized.empty()) {
-    return irs::field_limits::invalid();
-  }
-  const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {
-    return key.normalized_expression == normalized;
-  });
-  return it == keys.end() ? irs::field_limits::invalid() : it->field_id;
-}
-
-irs::field_id InvertedIndexConfig::FindTermFieldByExpression(
-  std::string_view normalized) const noexcept {
-  auto found = irs::field_limits::invalid();
-  if (normalized.empty()) {
-    return found;
-  }
-  for (const auto& key : keys) {
-    if (key.normalized_expression != normalized) {
+void InvertedIndexConfig::BuildLookups() {
+  _field_keys.clear();
+  _column_fields.clear();
+  _expressions.clear();
+  _owners.clear();
+  _stores_expressions = false;
+  const auto stored = [&](uint32_t key) {
+    return FindEntry(keys[key].field_id)->IsStored();
+  };
+  for (uint32_t i = 0; i < keys.size(); ++i) {
+    const auto& key = keys[i];
+    _field_keys.try_emplace(key.field_id, i);
+    if (irs::field_limits::valid(key.column_id)) {
+      _column_fields.try_emplace(key.column_id, key.field_id);
+    }
+    if (key.normalized_expression.empty()) {
       continue;
     }
+    auto& slots =
+      _expressions.try_emplace(key.normalized_expression).first->second;
+    if (slots.first == kNoKey) {
+      slots.first = i;
+    }
     const auto* entry = FindEntry(key.field_id);
-    if (!entry || !entry->IsTermDict()) {
+    if (!entry) {
       continue;
     }
     if (entry->IsStored()) {
-      return key.field_id;
+      _stores_expressions = true;
+      if (slots.stored == kNoKey) {
+        slots.stored = i;
+      }
     }
-    if (!irs::field_limits::valid(found)) {
-      found = key.field_id;
+    if (entry->IsTermDict() &&
+        (slots.term == kNoKey || (entry->IsStored() && !stored(slots.term)))) {
+      slots.term = i;
     }
   }
-  return found;
+  for (const auto& [owner, field] : fields) {
+    for (const auto id : {field.numeric_field_id, field.bool_field_id,
+                          field.null_field_id, field.synthetic_column}) {
+      if (irs::field_limits::valid(id)) {
+        _owners.try_emplace(id, owner);
+      }
+    }
+  }
+  _indexed = true;
 }
 
-irs::field_id InvertedIndexConfig::FindStoredFieldByExpression(
+InvertedIndexConfig::ExpressionSlots InvertedIndexConfig::SlotsOf(
   std::string_view normalized) const noexcept {
-  if (normalized.empty()) {
-    return irs::field_limits::invalid();
-  }
-  for (const auto& key : keys) {
-    if (key.normalized_expression != normalized) {
-      continue;
-    }
-    if (const auto* entry = FindEntry(key.field_id);
-        entry && entry->IsStored()) {
-      return key.field_id;
-    }
-  }
-  return irs::field_limits::invalid();
+  SDB_ASSERT(_indexed || keys.empty());
+  const auto it = _expressions.find(normalized);
+  return it == _expressions.end() ? ExpressionSlots{} : it->second;
 }
 
-bool InvertedIndexConfig::FirstKeyOf(size_t key) const noexcept {
-  return absl::c_none_of(std::span{keys}.first(key),
-                         [&](const InvertedIndexKey& earlier) {
-                           return earlier.field_id == keys[key].field_id;
-                         });
+irs::field_id InvertedIndexConfig::FindFieldIdByExpression(
+  std::string_view normalized) const noexcept {
+  const auto* key = KeyAt(SlotsOf(normalized).first);
+  return key ? key->field_id : irs::field_limits::invalid();
+}
+
+ExpressionKeys InvertedIndexConfig::FindExpressionKeys(
+  std::string_view normalized) const noexcept {
+  const auto slots = SlotsOf(normalized);
+  return {.term = KeyAt(slots.term), .stored = KeyAt(slots.stored)};
+}
+
+const InvertedIndexKey* InvertedIndexConfig::FindKey(
+  irs::field_id field_id) const noexcept {
+  SDB_ASSERT(_indexed || keys.empty());
+  const auto it = _field_keys.find(field_id);
+  return it == _field_keys.end() ? nullptr : &keys[it->second];
 }
 
 bool InvertedIndexConfig::StoresExpression(
   irs::field_id field_id) const noexcept {
-  const auto* key = FindKey(*this, field_id);
+  const auto* key = FindKey(field_id);
   const auto* entry = FindEntry(field_id);
   return key && !key->normalized_expression.empty() && entry &&
          entry->IsStored();
 }
 
 bool InvertedIndexConfig::StoresExpressions() const noexcept {
-  return absl::c_any_of(keys, [&](const InvertedIndexKey& key) {
-    return StoresExpression(key.field_id);
-  });
+  SDB_ASSERT(_indexed || keys.empty());
+  return _stores_expressions;
 }
 
 const InvertedIndexField* InvertedIndexConfig::FindEntry(
@@ -433,18 +440,16 @@ const InvertedIndexField* InvertedIndexConfig::FindEntry(
 
 irs::field_id InvertedIndexConfig::TermField(
   irs::field_id column_id) const noexcept {
-  const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {
-    return key.column_id == column_id;
-  });
-  return it == keys.end() ? column_id : it->field_id;
+  SDB_ASSERT(_indexed || keys.empty());
+  const auto it = _column_fields.find(column_id);
+  return it == _column_fields.end() ? column_id : it->second;
 }
 
 irs::field_id InvertedIndexConfig::ColumnOf(
   irs::field_id field_id) const noexcept {
-  const auto it = absl::c_find_if(keys, [&](const InvertedIndexKey& key) {
-    return key.field_id == field_id && irs::field_limits::valid(key.column_id);
-  });
-  return it == keys.end() ? field_id : it->column_id;
+  const auto* key = FindKey(field_id);
+  return key && irs::field_limits::valid(key->column_id) ? key->column_id
+                                                         : field_id;
 }
 
 InvertedIndexFieldLookup InvertedIndexConfig::LookupField(
@@ -452,15 +457,12 @@ InvertedIndexFieldLookup InvertedIndexConfig::LookupField(
   if (const auto* own = FindEntry(field_id)) {
     return {field_id, own};
   }
-  for (const auto& [owner, field] : fields) {
-    if (absl::c_linear_search(
-          std::array{field.numeric_field_id, field.bool_field_id,
-                     field.null_field_id, field.synthetic_column},
-          field_id)) {
-      return {owner, &field};
-    }
+  SDB_ASSERT(_indexed || fields.empty());
+  const auto it = _owners.find(field_id);
+  if (it == _owners.end()) {
+    return {};
   }
-  return {};
+  return {it->second, FindEntry(it->second)};
 }
 
 bool InvertedIndexConfig::IsKeywordField(
@@ -474,12 +476,12 @@ bool InvertedIndexConfig::IsKeywordField(
 
 duckdb::LogicalType InvertedIndexConfig::ExpressionType(
   irs::field_id field_id) const noexcept {
-  const auto* key = FindKey(*this, field_id);
+  const auto* key = FindKey(field_id);
   return key ? key->type : duckdb::LogicalType::INVALID;
 }
 
 std::string InvertedIndexConfig::ExpressionText(irs::field_id field_id) const {
-  const auto* key = FindKey(*this, field_id);
+  const auto* key = FindKey(field_id);
   return key ? key->expression_text : std::string{};
 }
 

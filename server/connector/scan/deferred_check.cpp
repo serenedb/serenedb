@@ -30,7 +30,6 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -52,11 +51,7 @@ std::optional<DeferredCheck> Defer(irs::Filter::ptr& filter,
   if (type == irs::Type<irs::ByPhrase>::id()) {
     return DeferPhrase(filter, ctx);
   }
-  if (type == irs::Type<irs::GeoFilter>::id() ||
-      type == irs::Type<irs::GeoDistanceFilter>::id()) {
-    return DeferGeo(filter, ctx);
-  }
-  return std::nullopt;
+  return DeferGeo(filter, ctx);
 }
 
 bool Spliceable(const irs::Filter& filter, const irs::BooleanFilter& parent) {
@@ -81,26 +76,24 @@ std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
   return std::nullopt;
 }
 
-DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
+DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
                     irs::field_id column, const duckdb::LogicalType& type,
                     std::string_view name, duckdb::scalar_function_t function,
-                    MakeCheckBind bind, duckdb::init_local_state_t init) {
-  std::shared_ptr<const irs::Filter> source = std::move(filter);
+                    duckdb::unique_ptr<duckdb::FunctionData> bind,
+                    duckdb::init_local_state_t init) {
   duckdb::ScalarFunction fn(duckdb::Identifier{name}, {type},
                             duckdb::LogicalType::BOOLEAN, std::move(function));
   fn.SetInitStateCallback(init);
+  fn.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> children;
   children.push_back(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL));
   auto expr = duckdb::make_uniq<duckdb::BoundFunctionExpression>(
-    duckdb::BoundScalarFunction(fn), std::move(children), bind(source));
-  DeferredCheck check{
+    duckdb::BoundScalarFunction(fn), std::move(children), std::move(bind));
+  return {
     .source = std::move(source),
     .column = column,
-    .type = type,
     .check = std::make_shared<const duckdb::ExpressionFilter>(std::move(expr))};
-  filter = std::move(index);
-  return check;
 }
 
 std::vector<DeferredCheck> DeferChecks(irs::Filter::ptr& root,
@@ -147,7 +140,6 @@ void AddDeferredChecks(ScanGlobalState& state,
     cf.field = check.column;
     cf.filter = check.check.get();
     cf.row_gather = true;
-    cf.type = check.type;
   }
   using ColFilter = ScanGlobalState::ColFilter;
   const bool can_throw =

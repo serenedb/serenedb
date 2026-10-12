@@ -261,6 +261,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
     merged->keys.insert(merged->keys.end(), index.config->keys.begin(),
                         index.config->keys.end());
   }
+  merged->BuildLookups();
   return merged;
 }
 

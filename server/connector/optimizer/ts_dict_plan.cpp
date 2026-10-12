@@ -1113,16 +1113,17 @@ bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
   const auto resolve_in = [&](const catalog::InvertedIndexConfig& index) {
     auto normalized = connector::NormalizeBoundExpression(
       expr, _found.bind_data->RelationId(), *_projected_ids, _context);
-    const auto serialized = connector::SerializeBoundExpression(*normalized);
-    const auto field_id = index.FindTermFieldByExpression(serialized);
-    if (!irs::field_limits::valid(field_id)) {
+    const auto* term =
+      index.FindExpressionKeys(connector::SerializeBoundExpression(*normalized))
+        .term;
+    if (!term) {
       return false;
     }
-    const auto* info = index.FindEntry(field_id);
-    if (!info || !irs::field_limits::valid(info->null_field_id)) {
+    const auto* info = index.FindEntry(term->field_id);
+    if (!irs::field_limits::valid(info->null_field_id)) {
       return false;
     }
-    key.field_id = field_id;
+    key.field_id = term->field_id;
     key.null_field_id = info->null_field_id;
     key.index = &index;
     return true;

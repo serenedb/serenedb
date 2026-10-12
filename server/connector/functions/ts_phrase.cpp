@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
@@ -160,12 +159,6 @@ void AddPhrase(BoolTarget parent, const FilterContext& ctx,
   *phrase.mutable_options() = std::move(options);
 }
 
-bool HasPatternParts(const irs::ByPhraseOptions& options) {
-  return absl::c_any_of(options, [](const auto& info) {
-    return irs::ByPhraseOptions::KindOf(info.part) == irs::SlotKind::Expansion;
-  });
-}
-
 bool HasPositions(const SearchColumnInfo& column_info) {
   return irs::IsSubsetOf(irs::PhraseQuery::kRequiredFeatures,
                          column_info.tokenizer.features);
@@ -249,7 +242,7 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
       ERR_HINT("Slop, interval gaps and pattern parts match unigrams; "
                "create the dictionary with `output_unigrams := true`."));
   }
-  if (shingle.Separator().empty() && HasPatternParts(options)) {
+  if (shingle.Separator().empty() && irs::HasPatternParts(options)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label,
@@ -262,21 +255,35 @@ void PlanShingles(const irs::analysis::ShingleTokenizer& shingle,
   CheckTokens(column_info, context, options, std::nullopt, true, label, kHint);
 }
 
+std::optional<irs::bstring> PlanPhrase(
+  const irs::analysis::ShingleTokenizer* shingle,
+  const SearchColumnInfo& column_info, irs::ByPhraseOptions& options,
+  std::string_view label, std::string_view hint,
+  duckdb::ClientContext& context) {
+  if (!shingle) {
+    if (options.size() > 1) {
+      CheckTokens(column_info, context, options, std::nullopt, false, label,
+                  hint);
+    }
+    return std::nullopt;
+  }
+  if (auto term = irs::ShingleTerm(*shingle, options)) {
+    return term;
+  }
+  PlanShingles(*shingle, column_info, options, label, context);
+  return std::nullopt;
+}
+
 void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 irs::ByPhraseOptions&& options, std::string_view label,
                 std::string_view hint) {
-  if (const auto* shingle = QueryShingle(ctx, column_info)) {
-    if (auto term = irs::ShingleTerm(*shingle, options)) {
-      AddTerm(MaybeNegated(parent, ctx, column_info),
-              PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
-              *term, ctx.boost);
-      return;
-    }
-    PlanShingles(*shingle, column_info, options, label, ctx.client_context);
-  } else if (options.size() > 1) {
-    CheckTokens(column_info, ctx.client_context, options, std::nullopt, false,
-                label, hint);
+  if (auto term = PlanPhrase(QueryShingle(ctx, column_info), column_info,
+                             options, label, hint, ctx.client_context)) {
+    AddTerm(MaybeNegated(parent, ctx, column_info),
+            PickPerKindFieldId(column_info, duckdb::LogicalTypeId::VARCHAR),
+            *term, ctx.boost);
+    return;
   }
   AddPhrase(parent, ctx, column_info, std::move(options));
 }
@@ -306,23 +313,17 @@ void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
     if (!column_info || options.empty()) {
       return;
     }
-    if (!shingle) {
-      if (options.size() > 1) {
-        CheckTokens(*column_info, context, options, std::nullopt, false,
-                    "to_tsquery", "or search for single words");
-      }
+    auto term = PlanPhrase(shingle, *column_info, options, "to_tsquery",
+                           "or search for single words", context);
+    if (!term) {
       return;
     }
-    if (auto term = irs::ShingleTerm(*shingle, options)) {
-      auto filter = std::make_unique<irs::ByTerm>();
-      *filter->mutable_field_id() = phrase.field_id();
-      filter->mutable_options()->term = std::move(*term);
-      filter->SetBoost(phrase.GetBoost());
-      filter->SetScorer(phrase.GetScorer());
-      child = std::move(filter);
-      return;
-    }
-    PlanShingles(*shingle, *column_info, options, "to_tsquery", context);
+    auto filter = std::make_unique<irs::ByTerm>();
+    *filter->mutable_field_id() = phrase.field_id();
+    filter->mutable_options()->term = std::move(*term);
+    filter->SetBoost(phrase.GetBoost());
+    filter->SetScorer(phrase.GetScorer());
+    child = std::move(filter);
   });
 }
 

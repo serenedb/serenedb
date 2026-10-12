@@ -31,11 +31,63 @@ TEST(InvertedIndexConfigTest, StoresExpressionNeedsAStoredField) {
                           .type = duckdb::LogicalType::VARCHAR,
                           .normalized_expression = "lower(title)"},
                          "lower(title)"});
+  config.BuildLookups();
   EXPECT_FALSE(config.StoresExpression(7));
   EXPECT_FALSE(config.StoresExpressions());
   config.fields.emplace(7, InvertedIndexField{{.store_values = true}});
+  config.BuildLookups();
   EXPECT_TRUE(config.StoresExpression(7));
   EXPECT_TRUE(config.StoresExpressions());
+}
+
+TEST(InvertedIndexConfigTest, LookupsFollowKeyOrder) {
+  constexpr irs::field_id kColumn = 1;
+  constexpr irs::field_id kNull = 5;
+  constexpr irs::field_id kTerms = 20;
+  constexpr irs::field_id kStored = 21;
+  constexpr irs::field_id kBoth = 22;
+  const auto key = [](irs::field_id field, irs::field_id column,
+                      std::string expression) {
+    return InvertedIndexKey{{.field_id = field,
+                             .column_id = column,
+                             .type = duckdb::LogicalType::VARCHAR,
+                             .normalized_expression = expression},
+                            expression};
+  };
+  InvertedIndexConfig config;
+  config.keys = {key(kColumn, kColumn, ""), key(kColumn, kColumn, ""),
+                 key(kTerms, irs::field_limits::invalid(), "e"),
+                 key(kStored, irs::field_limits::invalid(), "e"),
+                 key(kBoth, irs::field_limits::invalid(), "e")};
+  config.fields.emplace(
+    kColumn,
+    InvertedIndexField{{.null_field_id = kNull, .indexed_term_dict = true}});
+  config.fields.emplace(kTerms,
+                        InvertedIndexField{{.indexed_term_dict = true}});
+  config.fields.emplace(kStored, InvertedIndexField{{.store_values = true}});
+  config.fields.emplace(kBoth, InvertedIndexField{{.store_values = true,
+                                                   .indexed_term_dict = true}});
+  config.BuildLookups();
+
+  EXPECT_EQ(&config.keys[0], config.FindKey(kColumn));
+  EXPECT_EQ(&config.keys[2], config.FindKey(kTerms));
+  EXPECT_EQ(nullptr, config.FindKey(99));
+  EXPECT_EQ(kColumn, config.TermField(kColumn));
+  EXPECT_EQ(irs::field_id{42}, config.TermField(42));
+  EXPECT_EQ(kColumn, config.ColumnOf(kColumn));
+  EXPECT_EQ(kTerms, config.ColumnOf(kTerms));
+  EXPECT_EQ(kTerms, config.FindFieldIdByExpression("e"));
+  const auto expression = config.FindExpressionKeys("e");
+  EXPECT_EQ(&config.keys[4], expression.term);
+  EXPECT_EQ(&config.keys[3], expression.stored);
+  EXPECT_EQ(nullptr, config.FindExpressionKeys("f").term);
+  EXPECT_TRUE(config.StoresExpression(kStored));
+  EXPECT_FALSE(config.StoresExpression(kTerms));
+  EXPECT_TRUE(config.StoresExpressions());
+  const auto owner = config.LookupField(kNull);
+  EXPECT_EQ(kColumn, owner.entry_field_id);
+  EXPECT_EQ(config.FindEntry(kColumn), owner.entry);
+  EXPECT_EQ(nullptr, config.LookupField(77).entry);
 }
 
 }  // namespace

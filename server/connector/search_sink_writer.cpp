@@ -932,17 +932,15 @@ std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
   duckdb::Catalog& catalog, duckdb::ClientContext& context) {
   auto config = shard.Config();
   std::vector<IndexedExpression> indexed_exprs;
-  for (size_t i = 0; i < config->keys.size(); ++i) {
-    const auto& key = config->keys[i];
-    if (key.normalized_expression.empty() || !config->FirstKeyOf(i)) {
+  for (const auto& key : config->keys) {
+    if (key.normalized_expression.empty() ||
+        config->FindKey(key.field_id) != &key) {
       continue;
     }
     const auto* entry = config->FindEntry(key.field_id);
     indexed_exprs.emplace_back(
       DeserializeBoundExpression(key.normalized_expression, context),
-      key.field_id,
-      key.type.IsJSONType() && entry &&
-        irs::field_limits::valid(entry->synthetic_column));
+      key.field_id, !entry || entry->IsTokenized());
   }
   auto tokenizers =
     std::make_shared<catalog::IndexTokenizers>(context, catalog, *config);
@@ -984,7 +982,7 @@ void WriteKeyedChunk(SearchSinkInsertBaseImpl& sink, duckdb::DataChunk& chunk,
   for (const auto& indexed_expr : sink.IndexedExpressions()) {
     auto result =
       EvaluateExprOverChunk(*indexed_expr.normalized_expr, chunk, table_id,
-                            column_ids, context, indexed_expr.is_geojson);
+                            column_ids, context, indexed_expr.check_leaves);
     sink.SwitchFieldImpl(indexed_expr.field_id, result.GetType(), result,
                          num_rows);
   }

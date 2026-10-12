@@ -1137,10 +1137,12 @@ void DeriveKeys(
     }
     if (opclass.IsTokenizer()) {
       if (!fresh && field.indexed_term_dict) {
-        const std::string_view kind = bare_column ? "column" : "expression";
+        const auto [title, kind] = bare_column
+                                     ? std::pair{"Column", "column"}
+                                     : std::pair{"Expression", "expression"};
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-          ERR_MSG(bare_column ? "Column '" : "Expression '", label,
+          ERR_MSG(title, " '", label,
                   "' is listed more than once with a tokenizer opclass; the "
                   "catalog stores a single tokenizer per indexed ",
                   kind, ". Stack `included(...)` on the same ", kind,
@@ -1185,6 +1187,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
     generated_pk_type.id() != duckdb::LogicalTypeId::STRUCT,
     generated_pk_type == FileIndexRowNumberStructType());
   DeriveKeys(entry, context, relation, bound_expressions, *config);
+  config->BuildLookups();
   return config;
 }
 

@@ -74,6 +74,7 @@ struct PhraseWordStat {
 
 bool IsAnchored(const ByPhraseOptions& phrase) noexcept;
 bool IsStandalone(const ByPhraseOptions& phrase) noexcept;
+bool HasPatternParts(const ByPhraseOptions& phrase) noexcept;
 std::vector<PhraseWordStat> PhraseWordStats(
   const ByPhraseOptions& phrase, std::span<const TermReader* const> readers);
 std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,

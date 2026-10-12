@@ -456,8 +456,7 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
       if (col_id == kInvertedIndexScoreId) {
         continue;
       }
-      const auto* info = bind.relation.inverted_config->FindColumnInfo(col_id);
-      if (!info || !info->IsStored()) {
+      if (!bind.relation.Stores(col_id)) {
         has_lookup_filter = true;
         break;
       }

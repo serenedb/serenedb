@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb/common/types.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/planner/table_filter.hpp>
@@ -40,7 +38,6 @@ struct ScanGlobalState;
 struct DeferredCheck {
   std::shared_ptr<const irs::Filter> source;
   irs::field_id column;
-  duckdb::LogicalType type;
   std::shared_ptr<const duckdb::TableFilter> check;
 };
 
@@ -60,9 +57,13 @@ struct SharedCheckBind final : duckdb::FunctionData {
   std::shared_ptr<const T> data;
 };
 
-using MakeCheckBind =
-  absl::FunctionRef<duckdb::unique_ptr<duckdb::FunctionData>(
-    std::shared_ptr<const irs::Filter>)>;
+template<typename State, typename Data>
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitCheck(
+  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData* bind_data) {
+  return duckdb::make_uniq<State>(
+    *bind_data->Cast<SharedCheckBind<Data>>().data);
+}
 
 struct DeferContext {
   const irs::IndexReader& reader;
@@ -78,10 +79,10 @@ void AddDeferredChecks(ScanGlobalState& state,
 std::optional<duckdb::LogicalType> StoredType(const irs::IndexReader& reader,
                                               irs::field_id column);
 
-DeferredCheck Split(irs::Filter::ptr& filter, irs::Filter::ptr index,
+DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
                     irs::field_id column, const duckdb::LogicalType& type,
                     std::string_view name, duckdb::scalar_function_t function,
-                    MakeCheckBind bind,
+                    duckdb::unique_ptr<duckdb::FunctionData> bind,
                     duckdb::init_local_state_t init = nullptr);
 
 std::optional<DeferredCheck> DeferWildcard(irs::Filter::ptr& filter,

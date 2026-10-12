@@ -316,6 +316,14 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
   const Session& session, uint64_t oid);
 std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid);
 uint64_t ArrayElementOid(const Session& session, uint64_t oid);
+
+struct ReplicationOrigin {
+  duckdb::idx_t id;
+  std::string name;
+  uint64_t remote_lsn;
+};
+
+std::vector<ReplicationOrigin> ReplicationOrigins(duckdb::DatabaseInstance& db);
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
                           const duckdb::CatalogEntry& element);
 

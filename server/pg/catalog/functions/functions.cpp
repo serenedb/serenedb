@@ -60,6 +60,7 @@ void RegisterFunctions(duckdb::DatabaseInstance& db) {
   RegisterFormatTypeFunctions(loader);
   RegisterRegprocFunctions(loader);
   RegisterRuleutilsFunctions(loader);
+  RegisterSubscriptionFunctions(loader);
   RegisterInformationSchemaFunctions(loader);
 }
 

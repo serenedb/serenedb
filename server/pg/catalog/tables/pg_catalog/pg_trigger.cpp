@@ -20,6 +20,7 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <ranges>
 
 #include "pg/catalog/lookup.h"
@@ -72,6 +73,20 @@ int16_t TriggerType(const duckdb::TriggerCatalogEntry& trigger) {
   return type;
 }
 
+char Tgenabled(duckdb::TriggerFiring firing) {
+  switch (firing) {
+    case duckdb::TriggerFiring::ORIGIN:
+      return 'O';
+    case duckdb::TriggerFiring::DISABLED:
+      return 'D';
+    case duckdb::TriggerFiring::REPLICA:
+      return 'R';
+    case duckdb::TriggerFiring::ALWAYS:
+      return 'A';
+  }
+  SDB_UNREACHABLE();
+}
+
 struct Trigger {
   const duckdb::TableCatalogEntry& table;
   const duckdb::TriggerCatalogEntry& trigger;
@@ -90,6 +105,8 @@ class PgTrigger final : public SystemTableScan<kPgTriggerSql> {
     Col<"tgname">(
       [](const auto& row) -> const auto& { return row.trigger.name; }),
     Col<"tgtype">([](const auto& row) { return TriggerType(row.trigger); }),
+    Col<"tgenabled">(
+      [](const auto& row) { return Tgenabled(row.trigger.firing); }),
     Col<"tgattr">([](const auto& row) {
       return row.trigger.columns |
              std::views::transform(

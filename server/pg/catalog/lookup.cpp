@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_schema_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/replication_lsn_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -60,6 +61,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/entry/subscription.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
@@ -623,6 +625,35 @@ uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
   const auto entry = EntryByOid(session, element);
   return entry && entry->type == duckdb::CatalogType::TYPE_ENTRY ? element
                                                                  : kInvalidOid;
+}
+
+std::vector<ReplicationOrigin> ReplicationOrigins(
+  duckdb::DatabaseInstance& db) {
+  std::vector<ReplicationOrigin> origins;
+  for (const auto& database : duckdb::DatabaseManager::Get(db).GetDatabases()) {
+    auto& catalog = database->GetCatalog();
+    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+      continue;
+    }
+    catalog.Cast<duckdb::DuckCatalog>()
+      .GetCatalogSet(duckdb::CatalogType::SUBSCRIPTION_ENTRY)
+      .Scan([&](duckdb::CatalogEntry& entry) {
+        origins.emplace_back(ReplicationOrigin{
+          .id = entry.oid,
+          .name = absl::StrCat("pg_", entry.oid),
+          .remote_lsn =
+            entry.Cast<catalog::SubscriptionCatalogEntry>().RemoteLsn()});
+      });
+  }
+  catalog::ClusterOf(db)
+    .GetCatalogSet(duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY)
+    .Scan([&](duckdb::CatalogEntry& entry) {
+      origins.emplace_back(ReplicationOrigin{
+        .id = entry.oid,
+        .name = entry.name.GetIdentifierName(),
+        .remote_lsn = entry.Cast<duckdb::ReplicationLsnEntry>().RemoteLsn()});
+    });
+  return origins;
 }
 
 SubObject FindKeyIndex(const Session& session, uint64_t oid) {

@@ -209,22 +209,6 @@
   BEGIN ATOMIC
     SELECT NULL::int4, NULL::text, NULL::text, NULL::int4, NULL::text, NULL::text, NULL::int4, NULL::timestamptz, NULL::timestamptz, NULL::text, NULL::timestamptz, NULL::text, NULL::text, NULL::int4, NULL::text WHERE false;
   END;)"},
-{"pg_catalog", "pg_stat_get_subscription",
- R"(("subid" oid)
-  RETURNS TABLE("subid" oid,
-                "relid" oid,
-                "pid" int4,
-                "leader_pid" int4,
-                "received_lsn" text,
-                "last_msg_send_time" timestamptz,
-                "last_msg_receipt_time" timestamptz,
-                "latest_end_lsn" text,
-                "latest_end_time" timestamptz,
-                "worker_type" text)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-    SELECT NULL::oid, NULL::oid, NULL::int4, NULL::int4, NULL::text, NULL::timestamptz, NULL::timestamptz, NULL::text, NULL::timestamptz, NULL::text WHERE false;
-  END;)"},
 {"pg_catalog", "pg_get_replication_slots",
  R"(()
   RETURNS TABLE("slot_name" name,
@@ -292,33 +276,6 @@
   LANGUAGE SQL
   BEGIN ATOMIC
     SELECT NULL::text, NULL::text, NULL::text, NULL::int8, NULL::numeric, NULL::float8, NULL::int8, NULL::numeric, NULL::float8, NULL::int8, NULL::float8, NULL::int8, NULL::numeric, NULL::float8, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::float8, NULL::timestamptz WHERE false;
-  END;)"},
-{"pg_catalog", "pg_show_replication_origin_status",
- R"(()
-  RETURNS TABLE("local_id" oid,
-                "external_id" text,
-                "remote_lsn" text,
-                "local_lsn" text)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-    SELECT NULL::oid, NULL::text, NULL::text, NULL::text WHERE false;
-  END;)"},
-{"pg_catalog", "pg_stat_get_subscription_stats",
- R"(("subid" oid)
-  RETURNS TABLE("subid" oid,
-                "apply_error_count" int8,
-                "sync_error_count" int8,
-                "confl_insert_exists" int8,
-                "confl_update_origin_differs" int8,
-                "confl_update_exists" int8,
-                "confl_update_missing" int8,
-                "confl_delete_origin_differs" int8,
-                "confl_delete_missing" int8,
-                "confl_multiple_unique_conflicts" int8,
-                "stats_reset" timestamptz)
-  LANGUAGE SQL
-  BEGIN ATOMIC
-    SELECT NULL::oid, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::int8, NULL::timestamptz WHERE false;
   END;)"},
 {"pg_catalog", "pg_get_wait_events",
  R"(()

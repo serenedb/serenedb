@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+#include "pg/catalog/builtin/builtin.h"
+
 namespace duckdb {
 
 class ClientContext;
@@ -51,7 +53,9 @@ struct BuiltinFunction {
 class BuiltinFunctions {
  public:
   std::span<const BuiltinFunction> All() const noexcept { return _functions; }
-  const BuiltinFunction* Find(duckdb::idx_t oid) const;
+  const BuiltinFunction* Find(duckdb::idx_t oid) const {
+    return FindByOid(_functions, oid);
+  }
   std::span<const uint32_t> Named(std::string_view name) const;
 
  private:

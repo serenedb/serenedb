@@ -162,8 +162,8 @@ SDB_TABLES = {
     'sdb_progress': (402, (
         ('pid', 'int4'),
         ('datid', 'oid'),
-        ('usename', 'text'),
-        ('datname', 'text'),
+        ('usename', 'name'),
+        ('datname', 'name'),
         ('state', 'text'),
         ('query', 'text'),
         ('backend_start_us', 'int8'),

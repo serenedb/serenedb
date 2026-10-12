@@ -269,13 +269,13 @@ struct RenderedRule {
   uint32_t rule_number = 0;
   uint32_t line_number = 0;
   std::string file_name;  // the config file the ruleset was loaded from
-  std::string type;       // local / host / hostssl / ...
+  std::string_view type;  // local / host / hostssl / ...
   std::vector<std::string>
     databases;                     // database[] tokens (raw, incl. keywords)
   std::vector<std::string> roles;  // user_name[] tokens
   std::string address;             // CIDR base / keyword / hostname; "" if none
   std::string netmask;             // dotted/hex mask; "" unless a Mask rule
-  std::string auth_method;         // trust / scram-sha-256 / ...
+  std::string_view auth_method;    // trust / scram-sha-256 / ...
   std::vector<std::string> options;  // "name=value" entries
 };
 

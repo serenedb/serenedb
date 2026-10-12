@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
@@ -365,12 +366,15 @@ Session MakeSession(duckdb::ClientContext* context) {
     .context = context,
     .database = context ? SessionCatalog(*context).get() : nullptr,
     .transaction = std::nullopt,
+    .retriever = std::nullopt,
     .search_path = {},
     .reg_out = {},
+    .reg_out_texts = {},
     .reg_out_recent = {}};
   if (!context) {
     return session;
   }
+  session.retriever.emplace(*context);
   if (session.database) {
     session.transaction.emplace(
       session.database->GetCatalogTransaction(*context));
@@ -391,15 +395,17 @@ Session MakeSession(duckdb::ClientContext* context) {
   };
   const auto& search_path =
     *duckdb::ClientData::Get(*context).catalog_search_path;
+  const auto database =
+    duckdb::DatabaseManager::TryGetDefaultDatabase(*context);
   if (absl::c_none_of(search_path.GetResolvedSetPaths(),
                       [](const duckdb::CatalogSearchEntry& entry) {
                         return entry.GetSchema() ==
                                irs::StaticStrings::kPgCatalogSchema;
                       })) {
     add(irs::StaticStrings::kPgCatalogSchema);
+    session.retriever->SetSearchPath({duckdb::CatalogSearchEntry{
+      database, duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}}});
   }
-  const auto database =
-    duckdb::DatabaseManager::TryGetDefaultDatabase(*context);
   for (const auto& entry : search_path.Get()) {
     const auto& catalog = entry.GetCatalog();
     if (catalog.empty() || catalog == database.GetIdentifierName()) {
@@ -420,13 +426,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
     return nullptr;
   }
   return entry;
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> FindMember(
-  duckdb::CatalogTransaction transaction, duckdb::SchemaCatalogEntry& schema,
-  duckdb::CatalogType type, const duckdb::Identifier& name) {
-  return schema.Cast<duckdb::DuckSchemaEntry>().GetCatalogSet(type).GetEntry(
-    transaction, name);
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
@@ -480,25 +479,44 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindDatabaseById(
   return entry;
 }
 
-std::optional<ObjectName> RelationObject(const Session& session, uint64_t oid) {
-  if (auto entry = EntryByOid(session, oid)) {
-    if (CatalogClassOid(entry->type) != kPgClassTable) {
+std::optional<Relation> FindRelation(const Session& session, uint64_t oid) {
+  if (const auto entry = EntryByOid(session, oid)) {
+    if (CatalogClassOid(entry->type) != kPgClassTable &&
+        (entry->type != duckdb::CatalogType::TYPE_ENTRY ||
+         !duckdb::StructType::IsStruct(
+           entry->Cast<duckdb::TypeCatalogEntry>().user_type))) {
       return std::nullopt;
     }
-    return NameOf(*entry);
+    return Relation{entry, nullptr, nullptr, nullptr};
   }
-  if (const auto key = FindKeyIndex(session, oid); key.table) {
-    return ObjectName{key.table->ParentSchemaName().GetIdentifierName(),
-                      key.key_index->constraint_name};
-  }
-  if (const auto* table = FindSystemTable(oid)) {
-    return ObjectName{std::string{table->Sql().schema},
-                      std::string{table->Sql().name}};
+  if (const auto* system = FindSystemTable(oid)) {
+    return Relation{nullptr, nullptr, system, nullptr};
   }
   if (const auto* view = FindSystemView(oid)) {
-    return ObjectName{std::string{view->schema}, std::string{view->name}};
+    return Relation{nullptr, nullptr, nullptr, view};
+  }
+  if (const auto key = FindKeyIndex(session, oid); key.table) {
+    return Relation{key.table, key.key_index, nullptr, nullptr};
   }
   return std::nullopt;
+}
+
+ObjectName NameOf(duckdb::CatalogTransaction transaction,
+                  const Relation& relation) {
+  if (relation.key) {
+    return {
+      .schema =
+        relation.entry->ParentSchema(transaction).name.GetIdentifierName(),
+      .name = relation.key->constraint_name};
+  }
+  if (relation.entry) {
+    return NameOf(transaction, *relation.entry);
+  }
+  if (relation.system) {
+    return {.schema = relation.system->Sql().schema,
+            .name = relation.system->Sql().name};
+  }
+  return {.schema = relation.view->schema, .name = relation.view->name};
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
@@ -572,40 +590,35 @@ SystemText ArrayTypeNames::Of(const duckdb::CatalogEntry& element) {
 
 std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
   if (oid & kRowTypeOidBit) {
-    const auto relation = RowTypeRelation(oid);
-    auto object = RelationObject(session, relation);
     if (oid & kRowArrayTypeOidBit) {
-      if (auto entry = EntryByOid(session, relation); object && entry) {
-        object->name = ArrayTypeName(*session.transaction, *entry);
-      }
+      return std::nullopt;
     }
-    return object;
+    const auto relation = FindRelation(session, RowTypeRelation(oid));
+    if (!relation) {
+      return std::nullopt;
+    }
+    return NameOf(*session.transaction, *relation);
   }
-  if (oid <= std::numeric_limits<int32_t>::max()) {
+  if (oid < kMaxSystem) {
     if (const auto* builtin = FindBuiltinType(static_cast<int32_t>(oid))) {
-      return ObjectName{
-        std::string{FindSystemObject(kSystemNamespaces, builtin->nsp)->name},
-        std::string{builtin->name}};
+      return ObjectName{FindSystemObject(kSystemNamespaces, builtin->nsp)->name,
+                        builtin->name};
     }
   }
   if (auto entry = EntryByOid(session, oid);
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
-    return NameOf(*entry);
-  }
-  if (auto entry = EntryByOid(session, oid + 1);
-      entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
-    return ObjectName{entry->ParentSchemaName().GetIdentifierName(),
-                      ArrayTypeName(*session.transaction, *entry)};
+    return NameOf(*session.transaction, *entry);
   }
   return std::nullopt;
 }
 
 uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
   if (oid & kRowTypeOidBit) {
-    return oid & kRowArrayTypeOidBit ? oid & ~kRowArrayTypeOidBit : kInvalidOid;
+    return oid & kRowArrayTypeOidBit ? TypeElementOid(oid) : kInvalidOid;
   }
-  const auto entry = EntryByOid(session, oid + 1);
-  return entry && entry->type == duckdb::CatalogType::TYPE_ENTRY ? oid + 1
+  const auto element = TypeElementOid(oid);
+  const auto entry = EntryByOid(session, element);
+  return entry && entry->type == duckdb::CatalogType::TYPE_ENTRY ? element
                                                                  : kInvalidOid;
 }
 
@@ -681,7 +694,7 @@ std::optional<std::string_view> NextvalArgument(
   }
   const auto& function = expression.Cast<duckdb::FunctionExpression>();
   const auto& arguments = function.GetArguments();
-  if (function.FunctionName() != duckdb::Identifier{"nextval"} ||
+  if (function.FunctionName() != std::string_view{"nextval"} ||
       arguments.size() != 1) {
     return std::nullopt;
   }

@@ -187,20 +187,16 @@ duckdb::BoundCastInfo PgBlobToVarcharBind(duckdb::BindCastInput& input,
                                duckdb::make_uniq<ByteaOutCastData>(use_escape));
 }
 
-struct RegCastData : public duckdb::BoundCastData {
-  duckdb::ClientContext* ctx;
-  explicit RegCastData(duckdb::ClientContext* ctx) : ctx{ctx} {}
-  duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
-    return duckdb::make_uniq<RegCastData>(ctx);
-  }
-};
+duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegCast(
+  duckdb::CastLocalStateParameters& parameters) {
+  return duckdb::make_uniq<pg::SessionState>(parameters.context.get());
+}
 
 template<pg::RegKind Kind>
 bool PgVarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
                         duckdb::idx_t count, duckdb::CastParameters& params) {
-  const auto& data = params.cast_data->Cast<RegCastData>();
-  SDB_ASSERT(data.ctx);
-  const auto session = pg::MakeSession(data.ctx);
+  const auto& session = params.local_state->Cast<pg::SessionState>().session;
+  SDB_ASSERT(session.context);
   auto src = source.Values<duckdb::string_t>();
   auto* dst_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
   auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
@@ -220,8 +216,7 @@ bool PgVarcharToRegCast(duckdb::Vector& source, duckdb::Vector& result,
 template<pg::RegKind Kind>
 bool PgRegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
                         duckdb::idx_t count, duckdb::CastParameters& params) {
-  const auto session =
-    pg::MakeSession(params.cast_data->Cast<RegCastData>().ctx);
+  const auto& session = params.local_state->Cast<pg::SessionState>().session;
   auto src = source.Values<int64_t>();
   auto* dst_data = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
   auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
@@ -239,24 +234,18 @@ bool PgRegToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
-template<duckdb::cast_function_t Cast>
-duckdb::BoundCastInfo RegCastBind(duckdb::BindCastInput& input,
-                                  const duckdb::LogicalType&,
-                                  const duckdb::LogicalType&) {
-  return duckdb::BoundCastInfo(
-    Cast, duckdb::make_uniq<RegCastData>(input.context.get()));
-}
-
 template<pg::RegKind Kind>
 void RegisterRegCasts(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& reg) {
-  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, reg,
-                             RegCastBind<PgVarcharToRegCast<Kind>>, 50);
+  casts.RegisterCastFunction(
+    duckdb::LogicalType::VARCHAR, reg,
+    duckdb::BoundCastInfo(PgVarcharToRegCast<Kind>, nullptr, InitRegCast), 50);
   casts.RegisterCastFunction(
     duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), reg,
-    RegCastBind<PgVarcharToRegCast<Kind>>, 50);
-  casts.RegisterCastFunction(reg, duckdb::LogicalType::VARCHAR,
-                             RegCastBind<PgRegToVarcharCast<Kind>>, 50);
+    duckdb::BoundCastInfo(PgVarcharToRegCast<Kind>, nullptr, InitRegCast), 50);
+  casts.RegisterCastFunction(
+    reg, duckdb::LogicalType::VARCHAR,
+    duckdb::BoundCastInfo(PgRegToVarcharCast<Kind>, nullptr, InitRegCast), 50);
   casts.RegisterCastFunction(
     pg::OID(), reg,
     duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);

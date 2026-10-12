@@ -112,7 +112,7 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
   PgProc(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
     : SystemTableScan{context, input} {
     if (VisibleOnly()) {
-      _session = MakeSession(&context);
+      _session.emplace(MakeSession(&context));
     }
   }
 
@@ -151,6 +151,8 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       [](const auto& row) { return row.entry.permissions.owner; }),
     Col<"prolang">([](const auto&) { return kPgSqlLanguage; }),
     Col<"procost">([](const auto&) { return 100.0F; }),
+    Col<"prorows">(
+      [](const auto& row) { return ReturnsSet(row.macro) ? 1000.0F : 0.0F; }),
     Col<"prokind">(
       [](const auto& row) { return row.macro.is_procedure ? 'p' : 'f'; }),
     Col<"proisstrict">([](const auto&) { return false; }),

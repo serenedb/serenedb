@@ -76,7 +76,7 @@ char Volatility(duckdb::FunctionStability stability) {
 }
 
 struct BuiltinSource {
-  std::string schema;
+  std::string_view schema;
   std::string_view name;
   duckdb::CatalogType type;
   const duckdb::CatalogEntry* entry;
@@ -86,16 +86,16 @@ struct BuiltinSource {
 std::vector<BuiltinFunction> CollectBuiltinFunctions(
   duckdb::ClientContext& context) {
   std::vector<BuiltinSource> sources;
-  const auto collect = [&sources](duckdb::CatalogEntry& entry) {
-    sources.emplace_back(
-      BuiltinSource{.schema = entry.ParentSchemaName().GetIdentifierName(),
-                    .name = entry.name.GetIdentifierName(),
-                    .type = entry.type,
-                    .entry = &entry,
-                    .macro = nullptr});
-  };
   duckdb::Catalog::GetSystemCatalog(context).ScanSchemas(
     context, [&](duckdb::SchemaCatalogEntry& schema) {
+      const auto collect = [&](duckdb::CatalogEntry& entry) {
+        sources.emplace_back(
+          BuiltinSource{.schema = schema.name.GetIdentifierName(),
+                        .name = entry.name.GetIdentifierName(),
+                        .type = entry.type,
+                        .entry = &entry,
+                        .macro = nullptr});
+      };
       schema.Scan(context, duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
       schema.Scan(context, duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
       schema.Scan(context, duckdb::CatalogType::PRAGMA_FUNCTION_ENTRY, collect);
@@ -107,7 +107,7 @@ std::vector<BuiltinFunction> CollectBuiltinFunctions(
         schema.name, kind,
         [&](std::string_view name, const duckdb::CreateMacroInfo& info) {
           sources.emplace_back(
-            BuiltinSource{.schema = std::string{schema.name},
+            BuiltinSource{.schema = schema.name,
                           .name = name,
                           .type = kind == duckdb::MacroType::SCALAR_MACRO
                                     ? duckdb::CatalogType::MACRO_ENTRY
@@ -215,10 +215,6 @@ std::shared_ptr<const BuiltinFunctions> gBuiltins
 
 }  // namespace
 
-const BuiltinFunction* BuiltinFunctions::Find(duckdb::idx_t oid) const {
-  return FindByOid(_functions, oid);
-}
-
 std::span<const uint32_t> BuiltinFunctions::Named(std::string_view name) const {
   const auto it = _by_name.find(name);
   return it == _by_name.end() ? std::span<const uint32_t>{} : it->second;
@@ -239,8 +235,6 @@ std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   auto built = std::make_shared<BuiltinFunctions>();
   built->_version = version;
   built->_functions = CollectBuiltinFunctions(context);
-  SDB_ASSERT(built->_functions.empty() ||
-             built->_functions.back().oid < kMaxSystem);
   for (uint32_t i = 0; i < built->_functions.size(); ++i) {
     built->_by_name[built->_functions[i].name].emplace_back(i);
   }

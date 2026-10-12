@@ -148,7 +148,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
   PgType(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
     : SystemTableScan{context, input} {
     if (VisibleOnly()) {
-      _session = MakeSession(&context);
+      _session.emplace(MakeSession(&context));
     }
   }
 

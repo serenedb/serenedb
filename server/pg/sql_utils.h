@@ -44,6 +44,8 @@ void UnpackSqlState(T& buf, int sql_state) {
   }
 }
 
+bool RequiresQuotes(std::string_view ident);
+
 std::string QuoteIdentifier(std::string_view ident);
 std::string QuoteLiteral(std::string_view value);
 

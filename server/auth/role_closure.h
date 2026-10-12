@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
 #include <absl/synchronization/mutex.h>
 
 #include <algorithm>
@@ -57,6 +56,7 @@ struct RoleGraph {
   };
 
   irs::containers::FlatHashMap<duckdb::idx_t, Node> nodes;
+  irs::containers::FlatHashMap<std::string_view, duckdb::idx_t> by_name;
 
   const Node* Find(duckdb::idx_t role) const {
     auto it = nodes.find(role);
@@ -64,9 +64,8 @@ struct RoleGraph {
   }
 
   const decltype(nodes)::value_type* FindByName(std::string_view name) const {
-    const auto it = absl::c_find_if(
-      nodes, [&](const auto& entry) { return entry.second.name == name; });
-    return it == nodes.end() ? nullptr : &*it;
+    const auto it = by_name.find(name);
+    return it == by_name.end() ? nullptr : &*nodes.find(it->second);
   }
 
   std::string_view NameOf(duckdb::idx_t role) const {

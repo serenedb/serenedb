@@ -25,26 +25,31 @@
 namespace sdb::pg {
 
 void Register(duckdb::ExtensionLoader& loader, std::string_view schema,
+              duckdb::FunctionStability stability,
               duckdb::ScalarFunctionSet set) {
+  set.ApplyToFunctions([&](duckdb::ScalarFunction& function) {
+    function.SetStability(stability);
+  });
   duckdb::CreateScalarFunctionInfo info{std::move(set)};
   info.SetSchema(duckdb::Identifier{schema});
-  info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
+  info.on_conflict = schema == DEFAULT_SCHEMA
+                       ? duckdb::OnCreateConflict::ALTER_ON_CONFLICT
+                       : duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   loader.RegisterFunction(std::move(info));
 }
 
 void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
-                    std::string_view name,
+                    std::string_view name, duckdb::FunctionStability stability,
+                    duckdb::init_local_state_t init,
                     std::initializer_list<duckdb::ScalarFunction> functions) {
   duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
-  for (const auto& function : functions) {
-    set.AddFunction(function);
+  for (auto function : functions) {
+    if (init) {
+      function.SetInitStateCallback(init);
+    }
+    set.AddFunction(std::move(function));
   }
-  Register(loader, schema, std::move(set));
-}
-
-duckdb::ScalarFunction WithinQuery(duckdb::ScalarFunction function) {
-  function.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
-  return function;
+  Register(loader, schema, stability, std::move(set));
 }
 
 void RegisterFunctions(duckdb::DatabaseInstance& db) {

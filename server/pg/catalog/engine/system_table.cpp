@@ -55,16 +55,6 @@ duckdb::LogicalType SystemColumnType(int32_t oid) {
   return logical;
 }
 
-SystemTable::SystemTable(const SystemSql& sql, SystemScanFunctions functions,
-                         std::span<const SystemFact> facts,
-                         std::optional<SystemVisibility> visibility,
-                         std::span<const SystemTypeShape> type_shapes)
-  : _sql{sql},
-    _functions{functions},
-    _facts{facts},
-    _visibility{visibility},
-    _type_shapes{type_shapes} {}
-
 void SystemTable::Init() {
   for (const auto& column : _sql.columns) {
     auto type = SystemColumnType(column.type);

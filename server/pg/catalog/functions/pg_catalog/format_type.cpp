@@ -148,7 +148,7 @@ namespace {
 
 void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  const auto session = pg::MakeSession(&state.GetContext());
+  const auto& session = SessionOf(state);
   const auto oids = args.data[0].Values<int64_t>();
   const auto typmods = args.data[1].Values<int32_t>();
   auto writer =
@@ -164,7 +164,9 @@ void FormatTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       session, static_cast<uint64_t>(oid.GetValue()),
       typmod.IsValid() ? std::optional<int32_t>{typmod.GetValue()}
                        : std::nullopt);
-    writer.WriteValue(duckdb::string_t{text});
+    const auto view = AsView(text);
+    writer.WriteValue(
+      duckdb::string_t{view.data(), static_cast<uint32_t>(view.size())});
   }
 }
 
@@ -182,7 +184,8 @@ void RegisterFormatTypeFunctions(duckdb::ExtensionLoader& loader) {
   format_type_fn.SetNullHandling(
     duckdb::FunctionNullHandling::SPECIAL_HANDLING);
   RegisterScalar(loader, irs::StaticStrings::kPgCatalogSchema, "format_type",
-                 {format_type_fn});
+                 duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY,
+                 InitSession, {format_type_fn});
 }
 
 }  // namespace sdb::pg

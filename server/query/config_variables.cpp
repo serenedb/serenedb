@@ -1300,7 +1300,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::VARCHAR,
         "Shows the server version.",
-        [] { return duckdb::Value{"18.3"}; },
+        [] { return duckdb::Value{std::string{pg::kServerVersion}}; },
         nullptr,  // refused via kUnchangeableSettings
       },
     },
@@ -1309,7 +1309,10 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::INTEGER,
         "Shows the server version as an integer.",
-        [] { return duckdb::Value::INTEGER(180003); },
+        [] {
+          return duckdb::Value{std::string{pg::kServerVersionNum}}
+            .DefaultCastAs(duckdb::LogicalType::INTEGER);
+        },
         nullptr,  // refused via kUnchangeableSettings
       },
     },

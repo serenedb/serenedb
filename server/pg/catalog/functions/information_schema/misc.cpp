@@ -78,10 +78,7 @@ duckdb::optional<int32_t> Position(const R& attnums, int16_t column) {
 
 duckdb::optional<int32_t> IndexPosition(const Session& session, int64_t oid,
                                         int16_t column) {
-  if (oid <= 0) {
-    return duckdb::nullopt;
-  }
-  if (auto entry = EntryByOid(session, oid)) {
+  if (auto entry = EntryByOid(session, static_cast<uint64_t>(oid))) {
     if (entry->type != duckdb::CatalogType::INDEX_ENTRY) {
       return duckdb::nullopt;
     }
@@ -103,7 +100,7 @@ duckdb::optional<int32_t> IndexPosition(const Session& session, int64_t oid,
 void IndexPositionFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
-  const auto session = MakeSession(&state.GetContext());
+  const auto& session = SessionOf(state);
   duckdb::VariadicExecutor::Execute<int32_t, int64_t, int16_t>(
     args, result, [&](int64_t oid, int16_t column) {
       return IndexPosition(session, oid, column);
@@ -113,6 +110,7 @@ void IndexPositionFunction(duckdb::DataChunk& args,
 }  // namespace
 
 void RegisterInformationSchemaFunctions(duckdb::ExtensionLoader& loader) {
+  using enum duckdb::FunctionStability;
   const auto oid = OID();
   const auto text = duckdb::LogicalType::VARCHAR;
   const auto int2 = duckdb::LogicalType::SMALLINT;
@@ -121,35 +119,40 @@ void RegisterInformationSchemaFunctions(duckdb::ExtensionLoader& loader) {
     irs::StaticStrings::kInformationSchema;
 
   RegisterScalar(
-    loader, information_schema, "_pg_truetypid",
+    loader, information_schema, "_pg_truetypid", CONSISTENT,
     {duckdb::ScalarFunction{{oid, text, oid}, oid, TrueTypeFunction<int64_t>}});
-  RegisterScalar(loader, information_schema, "_pg_truetypmod",
+  RegisterScalar(loader, information_schema, "_pg_truetypmod", CONSISTENT,
                  {duckdb::ScalarFunction{
                    {int4, text, int4}, int4, TrueTypeFunction<int32_t>}});
   RegisterScalar(
-    loader, information_schema, "_pg_char_max_length",
+    loader, information_schema, "_pg_char_max_length", CONSISTENT,
     {duckdb::ScalarFunction{{oid, int4}, int4, TypmodFunction<CharMaxLength>}});
   RegisterScalar(loader, information_schema, "_pg_char_octet_length",
+                 CONSISTENT,
                  {duckdb::ScalarFunction{
                    {oid, int4}, int4, TypmodFunction<CharOctetLength>}});
   RegisterScalar(loader, information_schema, "_pg_numeric_precision",
+                 CONSISTENT,
                  {duckdb::ScalarFunction{
                    {oid, int4}, int4, TypmodFunction<NumericPrecision>}});
   RegisterScalar(loader, information_schema, "_pg_numeric_precision_radix",
+                 CONSISTENT,
                  {duckdb::ScalarFunction{
                    {oid, int4}, int4, TypmodFunction<NumericPrecisionRadix>}});
   RegisterScalar(
-    loader, information_schema, "_pg_numeric_scale",
+    loader, information_schema, "_pg_numeric_scale", CONSISTENT,
     {duckdb::ScalarFunction{{oid, int4}, int4, TypmodFunction<NumericScale>}});
   RegisterScalar(loader, information_schema, "_pg_datetime_precision",
+                 CONSISTENT,
                  {duckdb::ScalarFunction{
                    {oid, int4}, int4, TypmodFunction<DatetimePrecision>}});
   RegisterScalar(
-    loader, information_schema, "_pg_interval_type",
+    loader, information_schema, "_pg_interval_type", CONSISTENT,
     {duckdb::ScalarFunction{{oid, int4}, text, IntervalTypeFunction}});
-  RegisterScalar(loader, information_schema, "_pg_index_position",
-                 {WithinQuery(duckdb::ScalarFunction{
-                   {oid, int2}, int4, IndexPositionFunction})});
+  RegisterScalar(
+    loader, information_schema, "_pg_index_position", CONSISTENT_WITHIN_QUERY,
+    InitSession,
+    {duckdb::ScalarFunction{{oid, int2}, int4, IndexPositionFunction}});
 }
 
 }  // namespace sdb::pg

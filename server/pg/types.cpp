@@ -352,7 +352,6 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
     case LAMBDA:
       return {kUnknown, -1, -1};
   }
-  return {kUnknown, -1, -1};
 }
 
 }  // namespace

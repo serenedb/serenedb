@@ -46,15 +46,18 @@ bool ReservedKeyword(std::string_view ident) {
 
 }  // namespace
 
+bool RequiresQuotes(std::string_view ident) {
+  return ident.empty() || absl::ascii_isdigit(ident.front()) ||
+         !absl::c_all_of(ident,
+                         [](char c) {
+                           return absl::ascii_islower(c) ||
+                                  absl::ascii_isdigit(c) || c == '_';
+                         }) ||
+         ReservedKeyword(ident);
+}
+
 std::string QuoteIdentifier(std::string_view ident) {
-  const bool safe = !ident.empty() && !absl::ascii_isdigit(ident.front()) &&
-                    absl::c_all_of(ident,
-                                   [](char c) {
-                                     return absl::ascii_islower(c) ||
-                                            absl::ascii_isdigit(c) || c == '_';
-                                   }) &&
-                    !ReservedKeyword(ident);
-  if (safe) {
+  if (!RequiresQuotes(ident)) {
     return std::string{ident};
   }
   return duckdb::KeywordHelper::WriteQuotedAndEscaped(ident, '"');

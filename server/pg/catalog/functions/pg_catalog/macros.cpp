@@ -86,11 +86,11 @@ constexpr SystemMacro kMacros[] = {
                   THEN to_timestamp(S.query_start_us / 1000000.0) END AS query_start,
              to_timestamp(S.backend_start_us / 1000000.0) AS backend_start,
              NULL::TIMESTAMPTZ AS state_change,
-             NULL::TEXT AS client_addr,
+             NULL::INET AS client_addr,
              NULL::TEXT AS client_hostname,
              NULL::INTEGER AS client_port,
-             NULL::BIGINT AS backend_xid,
-             NULL::BIGINT AS backend_xmin,
+             NULL::XID AS backend_xid,
+             NULL::XID AS backend_xmin,
              'client backend' AS backend_type,
              NULL::BOOLEAN AS ssl,
              NULL::TEXT AS sslversion,
@@ -213,8 +213,6 @@ constexpr SystemMacro kMacros[] = {
 
   {"pg_catalog","atan2d",
    R"((y, x) AS degrees(atan2(y, x)))"},
-
-  // set_config: registered as C++ function in connector/functions/system.cpp
 
   // adbin / conbin already hold the deparsed expression rather than a node
   // tree, so deparsing it is handing it back.

@@ -35,29 +35,16 @@ namespace sdb::pg {
 //   inline LogicalType REGTYPE() { ... with BIGINT + alias "regtype" ... }
 //   inline bool IsRegtype(const LogicalType&) { ... }
 
-// Alias constant + Is* check (safe to include alongside Velox types)
-#define DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)      \
-  inline constexpr std::string_view k##Name##Alias = alias_str; \
-  inline bool Is##Name(const duckdb::LogicalType& type) {       \
-    return type.id() == duckdb::LogicalTypeId::BaseTypeId &&    \
-           type.GetAlias() == alias_str;                        \
-  }
-
-// Factory function (only safe where Velox types.h is NOT included)
-#define DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)     \
+#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId)       \
+  inline constexpr std::string_view k##Name##Alias = alias_str;   \
+  inline bool Is##Name(const duckdb::LogicalType& type) {         \
+    return type.id() == duckdb::LogicalTypeId::BaseTypeId &&      \
+           type.GetAlias() == alias_str;                          \
+  }                                                               \
   inline duckdb::LogicalType UPPER() {                            \
     return duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId) \
       .WithAlias(alias_str);                                      \
   }
-
-#ifdef SDB_PG_LOGICAL_TYPES_NO_FACTORY
-#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId) \
-  DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)
-#else
-#define DECLARE_PG_TYPE(UPPER, Name, alias_str, BaseTypeId) \
-  DECLARE_PG_TYPE_CHECK(Name, alias_str, BaseTypeId)        \
-  DECLARE_PG_TYPE_FACTORY(UPPER, alias_str, BaseTypeId)
-#endif
 
 // clang-format off
 DECLARE_PG_TYPE(OID,            Oid,            "oid",             BIGINT)
@@ -123,7 +110,6 @@ inline bool IsOidLike(const duckdb::LogicalType& type) {
 
 inline constexpr std::string_view kCtidAlias = "ctid";
 
-#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType CTID() {
   static const auto kType =
     duckdb::LogicalType::STRUCT(
@@ -132,7 +118,6 @@ inline duckdb::LogicalType CTID() {
       .WithAlias(std::string{kCtidAlias});
   return kType;
 }
-#endif
 
 inline constexpr std::string_view kInt2vectorAlias = "int2vector";
 inline constexpr std::string_view kOidvectorAlias = "oidvector";
@@ -147,7 +132,6 @@ inline bool IsOidvector(const duckdb::LogicalType& type) {
          type.GetAlias() == kOidvectorAlias;
 }
 
-#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType INT2VECTOR() {
   return duckdb::LogicalType::LIST(duckdb::LogicalType::SMALLINT)
     .WithAlias(std::string{kInt2vectorAlias});
@@ -157,7 +141,6 @@ inline duckdb::LogicalType OIDVECTOR() {
   return duckdb::LogicalType::LIST(OID()).WithAlias(
     std::string{kOidvectorAlias});
 }
-#endif
 
 inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
 
@@ -166,8 +149,6 @@ inline bool IsInet(const duckdb::LogicalType& type) {
          type.GetAlias() == kInetAlias;
 }
 
-#ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
-#endif
 
 }  // namespace sdb::pg

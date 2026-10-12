@@ -41,83 +41,117 @@
 #include <duckdb/parser/statement/execute_statement.hpp>
 #include <duckdb/parser/statement/set_statement.hpp>
 #include <duckdb/parser/statement/transaction_statement.hpp>
-#include <duckdb/parser/statement/vacuum_statement.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 
 #include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
 
-std::string_view CreateObjectTag(const duckdb::CreateInfo& info) {
-  using duckdb::CatalogType;
-  switch (info.type) {
-    case CatalogType::TABLE_ENTRY:
-      return "CREATE TABLE";
-    case CatalogType::VIEW_ENTRY:
-      return "CREATE VIEW";
-    case CatalogType::INDEX_ENTRY:
-      return "CREATE INDEX";
-    case CatalogType::SCHEMA_ENTRY:
-      return "CREATE SCHEMA";
-    case CatalogType::SEQUENCE_ENTRY:
-      return "CREATE SEQUENCE";
-    case CatalogType::TYPE_ENTRY:
-      return "CREATE TYPE";
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-      return info.Cast<duckdb::CreateMacroInfo>().is_procedure
-               ? "CREATE PROCEDURE"
-               : "CREATE FUNCTION";
-    case CatalogType::DATABASE_ENTRY:
-      return "CREATE DATABASE";
-    case CatalogType::TRIGGER_ENTRY:
-      return "CREATE TRIGGER";
-    case CatalogType::ROLE_ENTRY:
-      return "CREATE ROLE";
-    case CatalogType::FOREIGN_SERVER_ENTRY:
-      return "CREATE SERVER";
-    case CatalogType::TOKENIZER_ENTRY:
-      return "CREATE TEXT SEARCH DICTIONARY";
-    case CatalogType::JOB_ENTRY:
-      return "CREATE JOB";
-    default:
-      return "CREATE";
+struct ObjectTags {
+  std::string_view create;
+  std::string_view drop;
+  std::string_view alter;
+};
+
+ObjectTags TagsOf(duckdb::CatalogType type) {
+  using enum duckdb::CatalogType;
+  switch (type) {
+    case TABLE_ENTRY:
+      return {"CREATE TABLE", "DROP TABLE", "ALTER TABLE"};
+    case VIEW_ENTRY:
+      return {"CREATE VIEW", "DROP VIEW", "ALTER VIEW"};
+    case INDEX_ENTRY:
+      return {"CREATE INDEX", "DROP INDEX", "ALTER INDEX"};
+    case SCHEMA_ENTRY:
+      return {"CREATE SCHEMA", "DROP SCHEMA", "ALTER SCHEMA"};
+    case SEQUENCE_ENTRY:
+      return {"CREATE SEQUENCE", "DROP SEQUENCE", "ALTER SEQUENCE"};
+    case TYPE_ENTRY:
+      return {"CREATE TYPE", "DROP TYPE", "ALTER TYPE"};
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      return {"CREATE FUNCTION", "DROP FUNCTION", "ALTER FUNCTION"};
+    case DATABASE_ENTRY:
+      return {"CREATE DATABASE", "DROP DATABASE", "ALTER DATABASE"};
+    case TRIGGER_ENTRY:
+      return {"CREATE TRIGGER", "DROP TRIGGER", "ALTER TRIGGER"};
+    case ROLE_ENTRY:
+      return {"CREATE ROLE", "DROP ROLE", "ALTER ROLE"};
+    case FOREIGN_SERVER_ENTRY:
+      return {"CREATE SERVER", "DROP SERVER", "ALTER SERVER"};
+    case TOKENIZER_ENTRY:
+      return {"CREATE TEXT SEARCH DICTIONARY", "DROP TEXT SEARCH DICTIONARY",
+              "ALTER TEXT SEARCH DICTIONARY"};
+    case JOB_ENTRY:
+      return {"CREATE JOB", "DROP JOB", "ALTER JOB"};
+    case INVALID:
+    case PREPARED_STATEMENT:
+    case COLLATION_ENTRY:
+    case COORDINATE_SYSTEM_ENTRY:
+    case TABLE_FUNCTION_ENTRY:
+    case SCALAR_FUNCTION_ENTRY:
+    case AGGREGATE_FUNCTION_ENTRY:
+    case PRAGMA_FUNCTION_ENTRY:
+    case COPY_FUNCTION_ENTRY:
+    case WINDOW_FUNCTION_ENTRY:
+    case DELETED_ENTRY:
+    case RENAMED_ENTRY:
+    case SECRET_ENTRY:
+    case SECRET_TYPE_ENTRY:
+    case SECRET_FUNCTION_ENTRY:
+    case DEPENDENCY_ENTRY:
+      return {"CREATE", "DROP", "ALTER"};
   }
+  SDB_UNREACHABLE();
 }
 
-std::string_view DropObjectTag(const duckdb::DropInfo& info) {
-  using duckdb::CatalogType;
+std::string_view AlterTag(const duckdb::AlterInfo& info) {
+  using enum duckdb::AlterType;
   switch (info.type) {
-    case CatalogType::TABLE_ENTRY:
-      return "DROP TABLE";
-    case CatalogType::VIEW_ENTRY:
-      return "DROP VIEW";
-    case CatalogType::INDEX_ENTRY:
-      return "DROP INDEX";
-    case CatalogType::SCHEMA_ENTRY:
-      return "DROP SCHEMA";
-    case CatalogType::SEQUENCE_ENTRY:
-      return "DROP SEQUENCE";
-    case CatalogType::TYPE_ENTRY:
-      return "DROP TYPE";
-    case CatalogType::MACRO_ENTRY:
-    case CatalogType::TABLE_MACRO_ENTRY:
-      return info.is_procedure ? "DROP PROCEDURE" : "DROP FUNCTION";
-    case CatalogType::DATABASE_ENTRY:
-      return "DROP DATABASE";
-    case CatalogType::TRIGGER_ENTRY:
-      return "DROP TRIGGER";
-    case CatalogType::ROLE_ENTRY:
-      return "DROP ROLE";
-    case CatalogType::FOREIGN_SERVER_ENTRY:
-      return "DROP SERVER";
-    case CatalogType::TOKENIZER_ENTRY:
-      return "DROP TEXT SEARCH DICTIONARY";
-    case CatalogType::JOB_ENTRY:
-      return "DROP JOB";
-    default:
-      return "DROP";
+    case ALTER_TABLE:
+      return "ALTER TABLE";
+    case ALTER_VIEW:
+      return "ALTER VIEW";
+    case ALTER_SEQUENCE:
+    case CHANGE_OWNERSHIP:
+      return "ALTER SEQUENCE";
+    case ALTER_SCALAR_FUNCTION:
+    case ALTER_TABLE_FUNCTION:
+      return "ALTER FUNCTION";
+    case SET_COMMENT:
+    case SET_COLUMN_COMMENT:
+      return "COMMENT";
+    case ALTER_DATABASE:
+      return "ALTER DATABASE";
+    case ALTER_SCHEMA:
+      return "ALTER SCHEMA";
+    case ALTER_INDEX:
+      return "ALTER INDEX";
+    case ALTER_JOB:
+      return "ALTER JOB";
+    case ALTER_ROLE: {
+      const auto& role = info.Cast<duckdb::AlterRoleInfo>();
+      if (role.grant_role.empty()) {
+        return "ALTER ROLE";
+      }
+      return role.revoke ? "REVOKE ROLE" : "GRANT ROLE";
+    }
+    case ALTER_PERMISSIONS: {
+      const auto& permissions = info.Cast<duckdb::AlterPermissionsInfo>();
+      if (permissions.default_objtype != duckdb::CatalogType::INVALID) {
+        return "ALTER DEFAULT PRIVILEGES";
+      }
+      if (!permissions.new_owner.empty()) {
+        return TagsOf(permissions.entry_catalog_type).alter;
+      }
+      return permissions.revoke ? "REVOKE" : "GRANT";
+    }
+    case INVALID:
+    case REPLACE_DEFINITION:
+      return "ALTER";
   }
+  SDB_UNREACHABLE();
 }
 
 // `EXECUTE name` reports the underlying statement's tag in PG (e.g. a
@@ -233,7 +267,7 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
               create_stmt.info->Cast<duckdb::CreateTableInfo>().query) {
             return make("SELECT", true);
           }
-          return make(CreateObjectTag(*create_stmt.info));
+          return make(TagsOf(create_stmt.info->type).create);
         }
       }
       return make("CREATE");
@@ -247,7 +281,7 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
                           ? "DEALLOCATE ALL"
                           : "DEALLOCATE");
           }
-          return make(DropObjectTag(*drop_stmt.info));
+          return make(TagsOf(drop_stmt.info->type).drop);
         }
       }
       return make("DROP");
@@ -256,48 +290,7 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
       if (unbound) {
         const auto& alter_stmt = unbound->Cast<duckdb::AlterStatement>();
         if (alter_stmt.info) {
-          switch (alter_stmt.info->type) {
-            case duckdb::AlterType::ALTER_TABLE:
-              return make("ALTER TABLE");
-            case duckdb::AlterType::ALTER_VIEW:
-              return make("ALTER VIEW");
-            case duckdb::AlterType::ALTER_INDEX:
-              return make("ALTER INDEX");
-            case duckdb::AlterType::ALTER_SCALAR_FUNCTION:
-            case duckdb::AlterType::ALTER_TABLE_FUNCTION:
-              return make("ALTER FUNCTION");
-            case duckdb::AlterType::ALTER_SCHEMA:
-              return make("ALTER SCHEMA");
-            case duckdb::AlterType::ALTER_SEQUENCE:
-              return make("ALTER SEQUENCE");
-            case duckdb::AlterType::ALTER_DATABASE:
-              return make("ALTER DATABASE");
-            case duckdb::AlterType::ALTER_JOB:
-              return make("ALTER JOB");
-            case duckdb::AlterType::SET_COMMENT:
-            case duckdb::AlterType::SET_COLUMN_COMMENT:
-              return make("COMMENT");
-            case duckdb::AlterType::ALTER_PERMISSIONS: {
-              const auto& permissions =
-                alter_stmt.info->Cast<duckdb::AlterPermissionsInfo>();
-              if (!permissions.new_owner.empty()) {
-                break;
-              }
-              if (permissions.default_objtype != duckdb::CatalogType::INVALID) {
-                return make("ALTER DEFAULT PRIVILEGES");
-              }
-              return make(permissions.revoke ? "REVOKE" : "GRANT");
-            }
-            case duckdb::AlterType::ALTER_ROLE: {
-              const auto& role = alter_stmt.info->Cast<duckdb::AlterRoleInfo>();
-              if (!role.grant_role.empty()) {
-                return make(role.revoke ? "REVOKE ROLE" : "GRANT ROLE");
-              }
-              return make("ALTER ROLE");
-            }
-            default:
-              break;
-          }
+          return make(AlterTag(*alter_stmt.info));
         }
       }
       return make("ALTER");

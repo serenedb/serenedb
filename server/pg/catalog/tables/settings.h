@@ -27,6 +27,9 @@
 
 namespace sdb::pg {
 
+inline constexpr std::string_view kServerVersion = "18.3";
+inline constexpr std::string_view kServerVersionNum = "180003";
+
 struct Guc {
   std::string_view name;
   std::string_view setting;
@@ -317,19 +320,19 @@ inline constexpr Guc kGucs[] = {
    .context = "internal",
    .vartype = "string"},
   {.name = "server_version",
-   .setting = "18.3",
+   .setting = kServerVersion,
    .category = kPresetOptions,
    .short_desc = "Shows the server version.",
    .context = "internal",
    .vartype = "string"},
   {.name = "server_version_num",
-   .setting = "180003",
+   .setting = kServerVersionNum,
    .category = kPresetOptions,
    .short_desc = "Shows the server version as an integer.",
    .context = "internal",
    .vartype = "integer",
-   .min_val = "180003",
-   .max_val = "180003"},
+   .min_val = kServerVersionNum,
+   .max_val = kServerVersionNum},
   {.name = "standard_conforming_strings",
    .setting = "on",
    .category =

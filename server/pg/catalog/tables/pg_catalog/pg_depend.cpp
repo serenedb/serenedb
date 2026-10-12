@@ -292,7 +292,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
   void RuleRelation(const duckdb::ViewCatalogEntry& view,
                     duckdb::CatalogEntry& relation,
                     const RuleReferences& references) {
-    const auto schema = relation.ParentSchemaName();
+    const auto& schema = relation.ParentSchema(Transaction()).name;
     const auto names_relation = [&](const duckdb::BaseTableRef* table) {
       const auto& name = table->GetQualifiedName();
       return name.Name() == relation.name &&

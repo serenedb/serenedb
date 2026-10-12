@@ -67,7 +67,6 @@ struct InfoColumn {
   bool not_null;
   bool internal;
   mutable std::optional<ColumnTypeInfo> info;
-  mutable duckdb::Identifier udt_schema;
 
   const ColumnTypeInfo& Info() const {
     if (info) {
@@ -82,7 +81,7 @@ struct InfoColumn {
       auto entry = scan.FindById(described.oid);
       const auto array = !entry;
       if (array) {
-        entry = scan.FindById(described.oid + 1);
+        entry = scan.FindById(TypeElementOid(described.oid));
       }
       return info.emplace(ColumnTypeInfo{.described = described,
                                          .builtin = nullptr,
@@ -156,8 +155,7 @@ constexpr std::tuple kTypeColumns{
     if (!info.entry) {
       return std::nullopt;
     }
-    row.udt_schema = info.entry->ParentSchemaName();
-    return std::string_view{row.udt_schema.GetIdentifierName()};
+    return NameOf(row.scan.Transaction(), *info.entry).schema;
   }),
   Col<"udt_name">([](const auto& row) -> std::optional<SystemText> {
     const auto& info = row.Info();
@@ -259,7 +257,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
   void Row(const duckdb::TableCatalogEntry& table) {
     const bool visible = Visible(table.permissions);
-    const auto schema = table.ParentSchemaName();
+    const auto [schema, relation] = NameOf(Transaction(), table);
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     for (const auto& column :
@@ -273,16 +271,15 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
         {.scan = *this,
          .database = _database,
          .arrays = _arrays,
-         .schema = schema.GetIdentifierName(),
-         .relation = table.name.GetIdentifierName(),
+         .schema = schema,
+         .relation = relation,
          .name = column.Name().GetIdentifierName(),
          .position = static_cast<size_t>(Attnum(column)),
          .type = column.Type(),
          .column = &column,
          .not_null = !not_null.empty() && not_null[column.Logical().index],
          .internal = table.internal,
-         .info = {},
-         .udt_schema = {}});
+         .info = {}});
     }
   }
 
@@ -294,22 +291,21 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     if (!columns) {
       return;
     }
-    const auto schema = view.ParentSchemaName();
+    const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
       Emit<kViewColumn>(
         {.scan = *this,
          .database = _database,
          .arrays = _arrays,
-         .schema = schema.GetIdentifierName(),
-         .relation = view.name.GetIdentifierName(),
+         .schema = schema,
+         .relation = relation,
          .name = view.ColumnName(*columns, i).GetIdentifierName(),
          .position = i + 1,
          .type = columns->types[i],
          .column = nullptr,
          .not_null = false,
          .internal = false,
-         .info = {},
-         .udt_schema = {}});
+         .info = {}});
     }
   }
 

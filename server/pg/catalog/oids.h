@@ -107,6 +107,11 @@ inline constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
                                       : element_oid - 1;
 }
 
+inline constexpr uint64_t TypeElementOid(uint64_t array_oid) {
+  return array_oid & kRowTypeOidBit ? array_oid & ~kRowArrayTypeOidBit
+                                    : array_oid + 1;
+}
+
 inline constexpr uint64_t RowTypeOid(uint64_t relation_oid) {
   return relation_oid | kRowTypeOidBit;
 }

@@ -24,13 +24,17 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
-#include <duckdb/main/client_context.hpp>
 #include <span>
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/oids.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::pg {
 
 // Postgres stores date/time/timestamp from 2000-01-01

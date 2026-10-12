@@ -743,11 +743,6 @@ statement ok
 DROP TABLE sdbc_live
 
 
-# Compact groups are runs of segments in row id order, about equal in live
-# documents. A merged segment holding the oldest rows comes first although it
-# was written last, and when only as many segments are left as groups, each
-# of them gets a group of its own.
-
 statement ok
 CREATE TABLE sdbc_runs (id INT PRIMARY KEY, body TEXT)
 WITH (storage = 'search', compaction_interval = 0)
@@ -886,9 +881,6 @@ QUERY PLAN
 statement ok
 DROP TABLE sdbc_on
 
-
-# A segment at or above compaction_max_segments_bytes stays out of background
-# merges.
 
 statement ok
 CREATE TABLE sdbc_cap (id INT PRIMARY KEY, body TEXT)

@@ -20,7 +20,6 @@
 
 #include "connector/duckdb_vacuum_function.h"
 
-#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -48,6 +47,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
+#include "connector/query_deadline.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
@@ -257,36 +257,27 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     if (progress) {
       pg::ProgressMetrics::Add(progress->step, 1);
     }
-    return !context.IsInterrupted();
+    return StatementRunning(context);
   };
-  auto& engine = search::GetSearchEngine();
-  const bool slot = engine.TryAcquireCompaction();
-  absl::Cleanup release_slot = [&engine, slot] {
-    if (slot) {
-      engine.ReleaseCompaction();
-    }
-  };
+  const auto lease =
+    search::GetSearchEngine().Merges().TakeOver(inverted.MergeRelation());
   const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
 
   inverted.Refresh();
-  for (size_t pass = 0; pass < 8; ++pass) {
-    bool empty_compaction = false;
-    // The merge encodes against the index definition the step captured, which
-    // the step holds for the whole call.
-    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-      kPolicy, tick, empty_compaction, &field_options, env_ptr,
-      search::MergeOrigin::Vacuum, nullptr, &executor));
-    context.InterruptCheck();
-    if (!res.ok()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("compact_index: compaction failed: ", res.message()));
-    }
-    inverted.Refresh();
-    if (empty_compaction) {
-      break;
-    }
+  bool empty_compaction = false;
+  // The merge encodes against the index definition the step captured, which
+  // the step holds for the whole call.
+  const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
+    kPolicy, tick, empty_compaction, &field_options, env_ptr,
+    search::MergeOrigin::Vacuum, nullptr, &executor));
+  context.InterruptCheck();
+  context.DeadlineCheck();
+  if (!res.ok()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("compact_index: compaction failed: ", res.message()));
   }
+  inverted.Refresh();
 }
 
 // One unit of inverted-index maintenance: either an index refresh/compaction
@@ -511,7 +502,11 @@ void DispatchInverted(duckdb::ClientContext& context,
       } else {
         static constinit SettingRef gTargetSegments{
           "sdb_compact_target_segments"};
-        search->VacuumCompact(gTargetSegments.Int(context), &executor);
+        search->VacuumCompact(
+          gTargetSegments.Int(context),
+          [&context] { return StatementRunning(context); }, &executor);
+        context.InterruptCheck();
+        context.DeadlineCheck();
       }
     }
   }

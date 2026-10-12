@@ -107,11 +107,6 @@ MergeScheduler::MergeScheduler(yaclib::IExecutor& executor, Options options)
 
 MergeScheduler::~MergeScheduler() { Stop(); }
 
-std::shared_ptr<MergeScheduler::Relation> MergeScheduler::AddRelation(
-  uint64_t id, std::function<void()> nudge) {
-  return std::make_shared<Relation>(id, std::move(nudge));
-}
-
 size_t MergeScheduler::BigThreads() const noexcept {
   return _options.threads > 1 ? _options.threads - 1 : 1;
 }
@@ -126,6 +121,10 @@ absl::Time MergeScheduler::Now() const {
 
 bool MergeScheduler::NoneRunning() const { return _running.empty(); }
 
+bool MergeScheduler::NoneRunningFor(const Relation* relation) {
+  return relation->_running == 0;
+}
+
 bool MergeScheduler::Admits(const Entry& entry) const {
   if (entry.estimate.lane == MergeLane::Small) {
     return _threads < _options.threads || _small == 0;
@@ -136,7 +135,7 @@ bool MergeScheduler::Admits(const Entry& entry) const {
 
 size_t MergeScheduler::Wanted(const Relation& relation) const {
   absl::MutexLock lock{&_mutex};
-  if (_stopping) {
+  if (_stopping || relation._paused != 0) {
     return 0;
   }
   const auto round = RoundSize();
@@ -178,7 +177,7 @@ void MergeScheduler::Enqueue(const std::shared_ptr<Relation>& relation,
   entry->job = std::move(job);
   {
     absl::MutexLock lock{&_mutex};
-    if (!_stopping) {
+    if (!_stopping && relation->_paused == 0) {
       entry->id = _next_id++;
       entry->queued = Now();
       _queue.emplace_back(std::move(entry));
@@ -211,6 +210,64 @@ void MergeScheduler::StopRunning(const Relation& relation) {
       entry->stop.store(true, std::memory_order_relaxed);
     }
   }
+}
+
+MergeScheduler::Lease MergeScheduler::TakeOver(
+  const std::shared_ptr<Relation>& relation) {
+  Queue dropped;
+  {
+    absl::MutexLock lock{&_mutex};
+    ++relation->_paused;
+    dropped.reserve(relation->_queued);
+    for (auto it = _queue.begin(); it != _queue.end();) {
+      if ((*it)->relation != relation) {
+        ++it;
+        continue;
+      }
+      --relation->_queued;
+      dropped.emplace_back(std::move(*it));
+      it = _queue.erase(it);
+    }
+    for (const auto& [raw, entry] : _running) {
+      if (entry->relation == relation) {
+        entry->stop.store(true, std::memory_order_relaxed);
+      }
+    }
+    _mutex.Await(absl::Condition(&NoneRunningFor,
+                                 static_cast<const Relation*>(relation.get())));
+  }
+  return Lease{*this, relation};
+}
+
+MergeScheduler::Lease::Lease(Lease&& other) noexcept
+  : _scheduler{std::exchange(other._scheduler, nullptr)},
+    _relation{std::move(other._relation)} {}
+
+MergeScheduler::Lease& MergeScheduler::Lease::operator=(
+  Lease&& other) noexcept {
+  if (this != &other) {
+    Release();
+    _scheduler = std::exchange(other._scheduler, nullptr);
+    _relation = std::move(other._relation);
+  }
+  return *this;
+}
+
+MergeScheduler::Lease::~Lease() { Release(); }
+
+void MergeScheduler::Lease::Release() noexcept {
+  if (_scheduler == nullptr) {
+    return;
+  }
+  {
+    absl::MutexLock lock{&_scheduler->_mutex};
+    --_relation->_paused;
+  }
+  if (_relation->_nudge) {
+    _relation->_nudge();
+  }
+  _scheduler = nullptr;
+  _relation.reset();
 }
 
 void MergeScheduler::Interrupt() noexcept {

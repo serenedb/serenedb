@@ -179,6 +179,14 @@ MergeRun MergeTarget::Compact(const irs::CompactionPolicy& policy,
   return run;
 }
 
+search::MergeScheduler::Lease MergeTarget::TakeOver() const {
+  auto& merges = search::GetSearchEngine().Merges();
+  if (_table) {
+    return merges.TakeOver(_table->MergeRelation());
+  }
+  return merges.TakeOver(_index->MergeRelation());
+}
+
 void MergeTarget::Publish() const {
   if (_table) {
     search::RefreshResult code = search::RefreshResult::Undefined;

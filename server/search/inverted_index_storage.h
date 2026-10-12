@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
@@ -46,6 +47,7 @@
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
 #include "search/compaction/merge_registry.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
@@ -280,6 +282,8 @@ class InvertedIndexStorage final
     _stale_pressure.store(0, std::memory_order_relaxed);
   }
 
+  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
+
   void StartTasks() { _search.StartTasks(shared_from_this()); }
 
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
@@ -345,6 +349,8 @@ class InvertedIndexStorage final
   std::vector<std::vector<int64_t>> _delete_log;
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
+  absl::once_flag _merge_relation_once;
+  std::shared_ptr<MergeScheduler::Relation> _merge_relation;
   MaintenanceCounters _maintenance;
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};

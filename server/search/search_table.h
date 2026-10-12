@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -51,6 +52,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "search/compaction/merge_registry.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 #include "search/search_db_wal.h"
 #include "search/store_stats.h"
@@ -179,6 +181,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     _stale_pressure.store(0, std::memory_order_relaxed);
   }
 
+  const std::shared_ptr<MergeScheduler::Relation>& MergeRelation();
+
   // Launch this table's refresh + compaction loops (via SearchEngine). Call
   // once, after the table is open and recovery (if any) finalized.
   void StartTasks();
@@ -229,6 +233,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   void VacuumRefresh();
   void VacuumCompact(uint32_t target_segments,
+                     const irs::MergeWriter::FlushProgress& progress,
                      irs::MergeExecutor* executor = nullptr);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
@@ -352,6 +357,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   std::atomic<uint64_t> _compaction_gen{0};
   std::atomic<uint32_t> _stale_pressure{0};
+  absl::once_flag _merge_relation_once;
+  std::shared_ptr<MergeScheduler::Relation> _merge_relation;
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
   // spawn competing maintenance loops.

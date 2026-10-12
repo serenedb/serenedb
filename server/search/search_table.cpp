@@ -48,6 +48,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
@@ -218,6 +219,13 @@ void SearchTable::StartTasks() {
   // scheduler. Called only after recovery or CREATE/CTAS finalize, so a
   // background commit's WAL GC never races replay.
   GetSearchEngine().StartTasks(shared_from_this());
+}
+
+const std::shared_ptr<MergeScheduler::Relation>& SearchTable::MergeRelation() {
+  absl::call_once(_merge_relation_once, [this] {
+    _merge_relation = MakeMergeRelation(GetTableId(), weak_from_this());
+  });
+  return _merge_relation;
 }
 
 ResultWithTime SearchTable::RefreshUnsafe(
@@ -474,46 +482,30 @@ void SearchTable::VacuumRefresh() {
 }
 
 void SearchTable::VacuumCompact(uint32_t target_segments,
+                                const irs::MergeWriter::FlushProgress& progress,
                                 irs::MergeExecutor* executor) {
-  static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
-  const auto target = std::max<uint32_t>(1, target_segments);
+  const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
-  for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets(target);
-    {
-      const auto snapshot = _writer->GetSnapshot();
-      if (snapshot.size() <= target) {
-        break;
-      }
-      for (size_t i = 0; i < snapshot.size(); ++i) {
-        buckets[i % target].emplace_back(snapshot[i].Meta().name);
-      }
-    }
-    bool merged = false;
-    for (auto& names : buckets) {
-      const irs::CompactionPolicy bucket =
-        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
-                 const irs::CompactingSegments& busy) {
-          for (size_t i = 0; i < reader.size(); ++i) {
-            const auto& segment = reader[i];
-            const auto& name = segment.Meta().name;
-            if (!busy.contains(name) && absl::c_linear_search(names, name)) {
-              candidates.emplace_back(&segment);
-            }
-          }
-        };
-      bool empty = false;
-      CompactUnsafe(bucket, kProgress, empty, field_options.get(),
-                    MergeOrigin::Vacuum, executor);
-      merged |= !empty;
-    }
-    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
-    RefreshUnsafe(/*wait=*/true, nullptr, code);
-    if (!merged) {
+  const auto plan =
+    PlanMergeRound(_writer->GetSnapshot(),
+                   MergeRoundRequest{.mode = MergeMode::Compact,
+                                     .target_segments = target_segments});
+  for (const auto& planned : plan.merges) {
+    if (!progress()) {
       break;
     }
+    std::vector<std::string> names;
+    names.reserve(planned.inputs.size());
+    for (const auto& segment : planned.inputs) {
+      names.emplace_back(segment.name);
+    }
+    bool empty = false;
+    CompactUnsafe(ExplicitPolicy(names), progress, empty, field_options.get(),
+                  MergeOrigin::Vacuum, executor);
+    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
+    RefreshUnsafe(/*wait=*/true, nullptr, code);
   }
   CleanupUnsafe();
 }

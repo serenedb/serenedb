@@ -1,0 +1,279 @@
+control substitution on
+
+statement ok
+CREATE TABLE tv (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO tv SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tv;
+
+statement ok
+INSERT INTO tv SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tv;
+
+statement ok
+INSERT INTO tv SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tv;
+
+statement ok
+INSERT INTO tv SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tv;
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+statement ok
+ALTER TABLE tv SET (compaction_interval = 100);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS running FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tv');
+----
+running
+1
+
+connection vacuumer
+statement async ok
+VACUUM (COMPACT_TABLE) tv;
+
+connection default
+statement ok
+SELECT pg_sleep(1);
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+wait
+
+query
+SELECT origin, outcome FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tv')
+ORDER BY merge_id;
+----
+origin	outcome
+background	cancelled
+vacuum	merged
+
+query
+SELECT count(*) AS segments FROM sdb_segments('tv');
+----
+segments
+1
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM tv;
+----
+n	s
+400	80200
+
+statement ok
+CREATE TABLE tc (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO tc SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tc;
+
+statement ok
+INSERT INTO tc SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tc;
+
+statement ok
+INSERT INTO tc SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tc;
+
+statement ok
+INSERT INTO tc SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tc;
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+statement ok
+ALTER TABLE tc SET (compaction_interval = 100);
+
+query ok retry 40 backoff 250ms
+SELECT count(*) AS running FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tc');
+----
+running
+1
+
+connection compactor
+statement async ok
+SELECT * FROM sdb_compact('tc', mode := 'compact');
+
+connection default
+statement ok
+SELECT pg_sleep(1);
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+wait
+
+query
+SELECT origin, outcome FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tc')
+ORDER BY merge_id;
+----
+origin	outcome
+background	cancelled
+sql	merged
+
+query
+SELECT count(*) AS segments FROM sdb_segments('tc');
+----
+segments
+1
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM tc;
+----
+n	s
+400	80200
+
+statement ok
+CREATE TABLE tt (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO tt SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+INSERT INTO tt SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+INSERT INTO tt SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+INSERT INTO tt SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tt;
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+connection slow
+statement ok
+SET sdb_compact_target_segments = 2;
+
+connection slow
+statement ok
+SET statement_timeout = '500ms';
+
+connection slow
+statement async error canceling statement due to statement timeout
+VACUUM (COMPACT_TABLE) tt;
+
+connection default
+statement ok
+SELECT pg_sleep(2);
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+wait
+
+query
+SELECT count(*) AS segments FROM sdb_segments('tt');
+----
+segments
+4
+
+query
+SELECT origin, outcome FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tt')
+ORDER BY merge_id;
+----
+origin	outcome
+vacuum	cancelled
+
+statement ok
+CREATE TABLE tk (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO tk SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tk;
+
+statement ok
+INSERT INTO tk SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) tk;
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+connection canceled
+statement async error canceling statement due to user request
+VACUUM (COMPACT_TABLE) tk;
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT origin FROM sdb_merges
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk');
+----
+origin
+vacuum
+
+statement ok
+SELECT pg_cancel_backend(pid) FROM pg_stat_activity
+WHERE query LIKE 'VACUUM (COMPACT_TABLE) tk%';
+
+statement ok
+SET sdb_faults = '-pause_merge_unit';
+
+wait
+
+query
+SELECT count(*) AS segments FROM sdb_segments('tk');
+----
+segments
+2
+
+query
+SELECT origin, outcome FROM sdb_merge_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'tk')
+ORDER BY merge_id;
+----
+origin	outcome
+vacuum	cancelled
+
+statement ok
+DROP TABLE tv;
+
+statement ok
+DROP TABLE tc;
+
+statement ok
+DROP TABLE tt;
+
+statement ok
+DROP TABLE tk;

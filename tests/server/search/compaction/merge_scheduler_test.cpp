@@ -40,6 +40,7 @@
 namespace {
 
 using sdb::search::EstimateMerge;
+using sdb::search::MakeMergeRelation;
 using sdb::search::MergeJob;
 using sdb::search::MergeLane;
 using sdb::search::MergeOutcome;
@@ -130,9 +131,9 @@ class MergeSchedulerTest : public ::testing::Test {
     return std::make_unique<MergeScheduler>(executor, std::move(options));
   }
 
-  std::shared_ptr<MergeScheduler::Relation> Relation(MergeScheduler& scheduler,
-                                                     uint64_t id) {
-    return scheduler.AddRelation(id, [this, id] { ++_nudges[id]; });
+  std::shared_ptr<MergeScheduler::Relation> Relation(uint64_t id) {
+    return std::make_shared<MergeScheduler::Relation>(
+      id, [this, id] { ++_nudges[id]; });
   }
 
   void Enqueue(MergeScheduler& scheduler,
@@ -191,7 +192,7 @@ TEST(MergeEstimateTest, LanesAndScores) {
 
 TEST_F(MergeSchedulerTest, SmallMergesRunBesideABigOneOnOneThread) {
   auto scheduler = Make(1);
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   Enqueue(*scheduler, relation, "big", 512 * kMiB);
   Enqueue(*scheduler, relation, "small1", 8 * kMiB);
   Enqueue(*scheduler, relation, "small2", 8 * kMiB);
@@ -213,7 +214,7 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
   auto scheduler = Make(3);
   std::vector<std::shared_ptr<MergeScheduler::Relation>> relations;
   for (uint64_t id = 1; id <= 3; ++id) {
-    relations.emplace_back(Relation(*scheduler, id));
+    relations.emplace_back(Relation(id));
     Enqueue(*scheduler, relations.back(), "big" + std::to_string(id),
             512 * kMiB);
   }
@@ -236,8 +237,8 @@ TEST_F(MergeSchedulerTest, BigMergesLeaveAThreadForSmallOnes) {
 
 TEST_F(MergeSchedulerTest, ARelationTakesAtMostHalfTheThreadsForBigMerges) {
   auto scheduler = Make(4);
-  auto first = Relation(*scheduler, 1);
-  auto second = Relation(*scheduler, 2);
+  auto first = Relation(1);
+  auto second = Relation(2);
   EXPECT_EQ(3, scheduler->Wanted(*first));
   Enqueue(*scheduler, first, "a1", 512 * kMiB);
   Enqueue(*scheduler, first, "a2", 512 * kMiB);
@@ -260,10 +261,10 @@ TEST_F(MergeSchedulerTest, ARelationTakesAtMostHalfTheThreadsForBigMerges) {
 
 TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
   auto scheduler = Make(2);
-  auto blocker = Relation(*scheduler, 1);
-  auto first = Relation(*scheduler, 2);
-  auto second = Relation(*scheduler, 3);
-  auto third = Relation(*scheduler, 4);
+  auto blocker = Relation(1);
+  auto first = Relation(2);
+  auto second = Relation(3);
+  auto third = Relation(4);
   Enqueue(*scheduler, blocker, "blocker", 512 * kMiB);
   Enqueue(*scheduler, first, "huge", 64 * 1024 * kMiB, 2);
   Enqueue(*scheduler, second, "cheap", 256 * kMiB, 8);
@@ -292,9 +293,9 @@ TEST_F(MergeSchedulerTest, CheapMergesGoFirstAndWaitingOnesAge) {
 
 TEST_F(MergeSchedulerTest, CancelQueuedDropsOnlyThatRelation) {
   auto scheduler = Make(1);
-  auto blocker = Relation(*scheduler, 1);
-  auto first = Relation(*scheduler, 2);
-  auto second = Relation(*scheduler, 3);
+  auto blocker = Relation(1);
+  auto first = Relation(2);
+  auto second = Relation(3);
   Enqueue(*scheduler, blocker, "blocker", 512 * kMiB);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
   Enqueue(*scheduler, second, "b", 512 * kMiB);
@@ -313,8 +314,8 @@ TEST_F(MergeSchedulerTest, CancelQueuedDropsOnlyThatRelation) {
 
 TEST_F(MergeSchedulerTest, StopRunningRaisesOnlyThatRelationsFlags) {
   auto scheduler = Make(4);
-  auto first = Relation(*scheduler, 1);
-  auto second = Relation(*scheduler, 2);
+  auto first = Relation(1);
+  auto second = Relation(2);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
   Enqueue(*scheduler, second, "b", 512 * kMiB);
   scheduler->StopRunning(*first);
@@ -329,7 +330,7 @@ TEST_F(MergeSchedulerTest, StopRunningRaisesOnlyThatRelationsFlags) {
 
 TEST_F(MergeSchedulerTest, FailedMergesBlockTheirInputsWithGrowingBackoff) {
   auto scheduler = Make(2);
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 2);
   Complete("a", MergeOutcome::Failed);
   EXPECT_EQ(1, _nudges[1]);
@@ -362,7 +363,7 @@ TEST_F(MergeSchedulerTest, FailedMergesBlockTheirInputsWithGrowingBackoff) {
 
 TEST_F(MergeSchedulerTest, AThrowingJobFailsAndFreesItsThread) {
   auto scheduler = Make(1);
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   _board.throw_on_run = true;
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   EXPECT_TRUE(Destroyed("a"));
@@ -372,8 +373,8 @@ TEST_F(MergeSchedulerTest, AThrowingJobFailsAndFreesItsThread) {
 
 TEST_F(MergeSchedulerTest, HelpersComeFromTheBigMergesThreads) {
   auto scheduler = Make(4);
-  auto first = Relation(*scheduler, 1);
-  auto second = Relation(*scheduler, 2);
+  auto first = Relation(1);
+  auto second = Relation(2);
   Enqueue(*scheduler, first, "a", 512 * kMiB);
   EXPECT_TRUE(scheduler->TryAcquireHelper());
   EXPECT_TRUE(scheduler->TryAcquireHelper());
@@ -392,7 +393,7 @@ TEST_F(MergeSchedulerTest, HelpersComeFromTheBigMergesThreads) {
 
 TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
   auto scheduler = Make(1);
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   Enqueue(*scheduler, relation, "running", 512 * kMiB);
   Enqueue(*scheduler, relation, "queued", 512 * kMiB);
   EXPECT_FALSE(Started("queued"));
@@ -422,7 +423,7 @@ TEST_F(MergeSchedulerTest, StopDropsTheQueueAndWaitsForRunningMerges) {
 
 TEST_F(MergeSchedulerTest, AnyThrownValueFailsTheMerge) {
   auto scheduler = Make(1);
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   _board.throw_int_on_run = true;
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   EXPECT_TRUE(Destroyed("a"));
@@ -432,8 +433,8 @@ TEST_F(MergeSchedulerTest, AnyThrownValueFailsTheMerge) {
 
 TEST_F(MergeSchedulerTest, SmallMergesFillingTheThreadsHoldBackBigOnes) {
   auto scheduler = Make(3);
-  auto first = Relation(*scheduler, 1);
-  auto second = Relation(*scheduler, 2);
+  auto first = Relation(1);
+  auto second = Relation(2);
   Enqueue(*scheduler, first, "big1", 512 * kMiB);
   Enqueue(*scheduler, first, "small1", kMiB);
   Enqueue(*scheduler, second, "small2", kMiB);
@@ -449,7 +450,7 @@ TEST_F(MergeSchedulerTest, SmallMergesFillingTheThreadsHoldBackBigOnes) {
 
 TEST_F(MergeSchedulerTest, ADeferredMergeResetsTheFailureBackoff) {
   auto scheduler = Make(2);
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   Enqueue(*scheduler, relation, "a", 512 * kMiB, 1);
   Complete("a", MergeOutcome::Failed);
   Enqueue(*scheduler, relation, "b", 512 * kMiB, 1);
@@ -462,7 +463,7 @@ TEST_F(MergeSchedulerTest, ADeferredMergeResetsTheFailureBackoff) {
 
 TEST_F(MergeSchedulerTest, ARelationWithoutANudgeStillFinishes) {
   auto scheduler = Make(1);
-  auto relation = scheduler->AddRelation(9, {});
+  auto relation = std::make_shared<MergeScheduler::Relation>(9, nullptr);
   EXPECT_EQ(2, scheduler->RoundSize());
   Enqueue(*scheduler, relation, "a", 512 * kMiB);
   Complete("a", MergeOutcome::Merged);
@@ -470,15 +471,101 @@ TEST_F(MergeSchedulerTest, ARelationWithoutANudgeStillFinishes) {
   EXPECT_EQ(2, scheduler->Wanted(*relation));
 }
 
+TEST_F(MergeSchedulerTest, TakingARelationOverStopsItsMergesAndPausesIt) {
+  auto scheduler = Make(1);
+  auto first = Relation(1);
+  auto second = Relation(2);
+  Enqueue(*scheduler, first, "running", 512 * kMiB);
+  Enqueue(*scheduler, first, "queued", 512 * kMiB);
+  Enqueue(*scheduler, second, "other", 512 * kMiB);
+  EXPECT_FALSE(Started("other"));
+
+  std::atomic_bool taken{false};
+  MergeScheduler::Lease lease;
+  std::thread taker{[&] {
+    lease = scheduler->TakeOver(first);
+    taken = true;
+  }};
+  while (!_board.stops["running"]->load()) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds{50});
+  EXPECT_FALSE(taken.load());
+  Complete("running", MergeOutcome::Cancelled);
+  taker.join();
+  EXPECT_TRUE(taken.load());
+  EXPECT_TRUE(lease);
+  EXPECT_TRUE(Destroyed("queued"));
+  EXPECT_TRUE(Started("other"));
+
+  EXPECT_EQ(0, scheduler->Wanted(*first));
+  Enqueue(*scheduler, first, "late", 512 * kMiB);
+  EXPECT_TRUE(Destroyed("late"));
+  EXPECT_EQ(0, _nudges[1]);
+  lease = {};
+  EXPECT_EQ(1, _nudges[1]);
+  EXPECT_EQ(2, scheduler->Wanted(*first));
+  CompleteAll(MergeOutcome::Merged);
+}
+
+TEST_F(MergeSchedulerTest, ALeaseIsReleasedOnceWhereverItMoves) {
+  auto scheduler = Make(2);
+  auto relation = Relation(1);
+  auto lease = scheduler->TakeOver(relation);
+  EXPECT_TRUE(lease);
+  MergeScheduler::Lease moved{std::move(lease)};
+  EXPECT_FALSE(lease);
+  MergeScheduler::Lease assigned;
+  assigned = std::move(moved);
+  auto& self = assigned;
+  assigned = std::move(self);
+  EXPECT_TRUE(assigned);
+
+  auto nested = scheduler->TakeOver(relation);
+  assigned = {};
+  EXPECT_EQ(0, scheduler->Wanted(*relation));
+  EXPECT_EQ(1, _nudges[1]);
+  nested = {};
+  EXPECT_EQ(2, _nudges[1]);
+  EXPECT_EQ(scheduler->RoundSize(), scheduler->Wanted(*relation));
+
+  auto quiet = std::make_shared<MergeScheduler::Relation>(5, nullptr);
+  {
+    auto silent = scheduler->TakeOver(quiet);
+    EXPECT_EQ(0, scheduler->Wanted(*quiet));
+  }
+  EXPECT_EQ(scheduler->RoundSize(), scheduler->Wanted(*quiet));
+}
+
 TEST_F(MergeSchedulerTest, ADroppedSubmissionCountsAsCancelled) {
   auto scheduler = Make(1, yaclib::MakeInline(yaclib::StopTag{}));
-  auto relation = Relation(*scheduler, 1);
+  auto relation = Relation(1);
   Enqueue(*scheduler, relation, "a", 512 * kMiB);
   EXPECT_FALSE(Started("a"));
   EXPECT_TRUE(Destroyed("a"));
   EXPECT_EQ(0, _nudges[1]);
   EXPECT_EQ(1, scheduler->FreeThreads());
   EXPECT_EQ(2, scheduler->Wanted(*relation));
+}
+
+struct NudgedStorage {
+  void NudgeCompaction() noexcept { ++nudges; }
+
+  size_t nudges = 0;
+};
+
+TEST_F(MergeSchedulerTest, ARelationNudgesItsStorageOnlyWhileItLives) {
+  auto scheduler = Make(2);
+  auto storage = std::make_shared<NudgedStorage>();
+  const std::weak_ptr<NudgedStorage> weak = storage;
+  const auto relation = MakeMergeRelation(3, weak);
+  EXPECT_EQ(3, relation->Id());
+  scheduler->TakeOver(relation);
+  EXPECT_EQ(1, storage->nudges);
+  storage.reset();
+  scheduler->TakeOver(relation);
+  EXPECT_TRUE(weak.expired());
+  EXPECT_EQ(scheduler->RoundSize(), scheduler->Wanted(*relation));
 }
 
 }  // namespace

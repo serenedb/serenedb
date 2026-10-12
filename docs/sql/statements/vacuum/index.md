@@ -13,7 +13,7 @@ import DocCallout from "@site/src/components/DocCallout";
 
 ## Standard `VACUUM` and `ANALYZE`
 
-On a standard table `VACUUM` does no work — it is accepted purely for PostgreSQL compatibility.
+On a standard table `VACUUM` does no work -- it is accepted purely for PostgreSQL compatibility.
 
 The bare form:
 
@@ -37,13 +37,13 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.
 
-### Refreshing — `REFRESH_*`
+### Refreshing -- `REFRESH_*`
 
 Inverted indexes are eventually consistent: rows you `INSERT`, `UPDATE` or `DELETE` may not be visible to queries until the index is refreshed. `REFRESH_*` publishes pending writes to readers. After writing to an indexed table, refresh it so the new rows become searchable:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_007" />
 
-### Compacting — `COMPACT_*`
+### Compacting -- `COMPACT_*`
 
 `COMPACT_*` merges index segments to reclaim space and keep queries fast. It does not change query results:
 
@@ -51,9 +51,11 @@ Inverted indexes are eventually consistent: rows you `INSERT`, `UPDATE` or `DELE
 
 Inverted indexes and search tables also compact in the background by default (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `COMPACT_*` merges on demand, including when background compaction is disabled. A search table is merged into a single segment. Set `sdb_compact_target_segments` to `N` to stop at `N` segments instead: the segments are split into `N` disjoint groups and each group is merged into one segment, so no single merge holds the whole table. Each merge spreads its columns and postings over as many threads as the session may use (the `threads` setting).
 
+While `COMPACT_*` works on a table or an index, its background merges pause: those in progress stop, and none starts until `COMPACT_*` ends. Each merge becomes visible as soon as it finishes, so the disk holds at most one merge's extra copy at a time. Cancelling the statement or reaching `statement_timeout` stops the merge in progress and leaves its segments as they were; merges that finished before remain.
+
 <SqlLogicTest id="sql/statements/vacuum/index/example_011" />
 
-### Recomputing statistics — `RECOMPUTE_STATS_*`
+### Recomputing statistics -- `RECOMPUTE_STATS_*`
 
 `RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:
 
@@ -65,7 +67,7 @@ Each option applies at the scope named by its suffix and takes the matching obje
 
 | Scope | `REFRESH` | `COMPACT` | `RECOMPUTE_STATS` | Argument |
 |---|---|---|---|---|
-| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | — | index name |
+| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | -- | index name |
 | Table | `REFRESH_TABLE` | `COMPACT_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
 | Schema | `REFRESH_SCHEMA` | `COMPACT_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
 | Database | `REFRESH_DATABASE` | `COMPACT_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
@@ -94,4 +96,4 @@ To reclaim space, use the `CHECKPOINT` statement or compact the database by crea
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />
 
-See the [scope table](#scopes) for the valid `( … )` maintenance options and their arguments.
+See the [scope table](#scopes) for the valid `( ... )` maintenance options and their arguments.

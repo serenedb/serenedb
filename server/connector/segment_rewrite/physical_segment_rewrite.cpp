@@ -36,6 +36,8 @@
 #include <utility>
 #include <vector>
 
+#include "connector/query_deadline.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/compaction/merge_unit_run.h"
 
 namespace sdb::connector {
@@ -51,6 +53,7 @@ struct SegmentRewriteSourceState final : duckdb::GlobalSourceState {
 
   duckdb::idx_t threads;
   search::CompactionOptions options;
+  search::MergeScheduler::Lease lease;
   bool pinned = false;
   size_t next = 0;
   std::vector<ExecutedMerge> executed;
@@ -130,16 +133,6 @@ void FinishJob(SegmentRewriteSourceState& state) {
   state.finished = true;
   state.PreventBlocking();
   state.UnblockTasks();
-}
-
-bool DeadlinePassed(const duckdb::ClientContext& client) noexcept {
-  if (!client.query_deadline.IsValid()) {
-    return false;
-  }
-  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     std::chrono::steady_clock::now().time_since_epoch())
-                     .count();
-  return static_cast<duckdb::idx_t>(now) >= client.query_deadline.GetIndex();
 }
 
 double Millis(uint64_t nanos) { return static_cast<double>(nanos) / 1e6; }
@@ -239,6 +232,9 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
       state.pinned = true;
     }
     if (state.next < merges.size()) {
+      if (!state.lease) {
+        state.lease = _job->target.TakeOver();
+      }
       const auto& planned = merges[state.next];
       std::vector<std::string> names;
       names.reserve(planned.inputs.size());
@@ -247,7 +243,7 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
       }
       auto& client = context.client;
       const irs::MergeWriter::FlushProgress progress = [&client] {
-        return !client.IsInterrupted() && !DeadlinePassed(client);
+        return StatementRunning(client);
       };
       SegmentRewriteExecutor executor{state};
       auto run = _job->target.Compact(search::ExplicitPolicy(names), progress,

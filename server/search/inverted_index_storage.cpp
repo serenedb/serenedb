@@ -341,6 +341,14 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
   _storage->_reindex_cv.SignalAll();
 }
 
+const std::shared_ptr<MergeScheduler::Relation>&
+InvertedIndexStorage::MergeRelation() {
+  absl::call_once(_merge_relation_once, [this] {
+    _merge_relation = MakeMergeRelation(GetId(), weak_from_this());
+  });
+  return _merge_relation;
+}
+
 void InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;

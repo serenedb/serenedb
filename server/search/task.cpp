@@ -382,11 +382,7 @@ yaclib::Future<> CompactionCoordinator(std::shared_ptr<Storage> storage) {
   auto& s = BackgroundScheduler::instance();
   auto& merges = GetSearchEngine().Merges();
   const std::weak_ptr<Storage> weak = storage;
-  const auto relation = merges.AddRelation(storage->GetId(), [weak] {
-    if (auto live = weak.lock()) {
-      live->NudgeCompaction();
-    }
-  });
+  const auto relation = storage->MergeRelation();
   storage.reset();
   auto backoff = Clock::duration::zero();
   auto last_interval = Clock::duration::zero();

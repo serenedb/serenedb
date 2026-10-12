@@ -97,8 +97,31 @@ class MergeScheduler {
     size_t _queued = 0;
     size_t _running = 0;
     size_t _running_big = 0;
+    uint32_t _paused = 0;
     uint32_t _failures = 0;
     absl::flat_hash_map<std::string, absl::Time> _blocked;
+  };
+
+  class Lease {
+   public:
+    Lease() noexcept = default;
+    Lease(Lease&& other) noexcept;
+    Lease& operator=(Lease&& other) noexcept;
+    ~Lease();
+
+    explicit operator bool() const noexcept { return _scheduler != nullptr; }
+
+   private:
+    friend class MergeScheduler;
+
+    Lease(MergeScheduler& scheduler,
+          std::shared_ptr<Relation> relation) noexcept
+      : _scheduler{&scheduler}, _relation{std::move(relation)} {}
+
+    void Release() noexcept;
+
+    MergeScheduler* _scheduler = nullptr;
+    std::shared_ptr<Relation> _relation;
   };
 
   struct QueuedMerge {
@@ -117,9 +140,6 @@ class MergeScheduler {
   MergeScheduler(const MergeScheduler&) = delete;
   MergeScheduler& operator=(const MergeScheduler&) = delete;
 
-  std::shared_ptr<Relation> AddRelation(uint64_t id,
-                                        std::function<void()> nudge);
-
   size_t Wanted(const Relation& relation) const;
   std::vector<std::string> Blocked(Relation& relation) const;
   size_t FreeThreads() const;
@@ -128,6 +148,7 @@ class MergeScheduler {
                std::unique_ptr<MergeJob> job);
   void CancelQueued(const Relation& relation);
   void StopRunning(const Relation& relation);
+  Lease TakeOver(const std::shared_ptr<Relation>& relation);
   void Interrupt() noexcept;
   void Stop();
 
@@ -149,6 +170,7 @@ class MergeScheduler {
   size_t RelationCap() const noexcept;
   bool Admits(const Entry& entry) const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   bool NoneRunning() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  static bool NoneRunningFor(const Relation* relation);
   absl::Time Now() const;
   void Pump();
   yaclib::Future<> Execute(Entry& entry);
@@ -165,5 +187,16 @@ class MergeScheduler {
   Queue _queue ABSL_GUARDED_BY(_mutex);
   Running _running ABSL_GUARDED_BY(_mutex);
 };
+
+template<typename Storage>
+std::shared_ptr<MergeScheduler::Relation> MakeMergeRelation(
+  uint64_t id, std::weak_ptr<Storage> storage) {
+  return std::make_shared<MergeScheduler::Relation>(
+    id, [storage = std::move(storage)] {
+      if (auto live = storage.lock()) {
+        live->NudgeCompaction();
+      }
+    });
+}
 
 }  // namespace sdb::search

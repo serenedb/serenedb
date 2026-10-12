@@ -31,6 +31,7 @@
 
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_registry.h"
+#include "search/compaction/merge_scheduler.h"
 #include "search/maintenance.h"
 
 namespace duckdb {
@@ -70,6 +71,7 @@ class MergeTarget {
                    const irs::IndexFieldOptions* field_options,
                    search::MergeOrigin origin,
                    irs::MergeExecutor* executor = nullptr) const;
+  search::MergeScheduler::Lease TakeOver() const;
   void Publish() const;
 
  private:

@@ -119,6 +119,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   size_t buffered_docs() const noexcept { return _docs_context.size(); }
   bool initialized() const noexcept { return _initialized; }
   bool valid() const noexcept { return _valid; }
+  std::string_view Error() const noexcept { return _error; }
   void reset() noexcept;
   void reset(const SegmentMeta& meta);
 
@@ -166,6 +167,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     auto* slot = _fields.Emplace(id, index_features);
     if (!IsSubsetOf(index_features, slot->Meta().index_features)) [[unlikely]] {
       _valid = false;
+      _error = "the field was created with other index features";
       return nullptr;
     }
     return slot;
@@ -178,6 +180,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     }
     if (!func(slot)) [[unlikely]] {
       _valid = false;
+      _error = slot.Error();
       return false;
     }
     SDB_ASSERT(!doc_limits::valid(slot.LastDoc()) ||
@@ -251,6 +254,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;
   std::string _seg_name;
+  std::string _error;
   std::unique_ptr<burst_trie::FieldWriter> _field_writer;
   duckdb::DatabaseInstance& _db;
   // Non-owning fallback, owned by the IndexWriter; used when no override is

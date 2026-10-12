@@ -63,7 +63,7 @@ class MMapHandle : private util::Noncopyable {
 
   ~MMapHandle() noexcept { close(); }
 
-  bool open(const path_char_t* file) noexcept;
+  void open(const path_char_t* file);
   void close() noexcept;
 
   explicit operator bool() const noexcept { return _fd >= 0; }

@@ -36,7 +36,6 @@
 #include <span>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -45,6 +44,7 @@
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -61,11 +61,13 @@ struct TermPostings : memory::Managed {
 
   virtual void NextPositions(uint32_t* /*pos*/, uint32_t* /*offs_start*/,
                              uint32_t* /*offs_len*/, uint32_t /*n*/) {
-    throw IndexError{"term postings hold no positions"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("term postings hold no positions"));
   }
 
   virtual void SkipPositions(uint64_t /*n*/) {
-    throw IndexError{"term postings hold no positions"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("term postings hold no positions"));
   }
 };
 
@@ -427,7 +429,8 @@ struct TermOnlyIterator : Iterator<bytes_view, AttributeProvider> {
   virtual size_t NextTermsWithPostings(std::span<bytes_view> /*terms*/,
                                        std::span<PostingRows> /*postings*/,
                                        IndexFeatures /*features*/) {
-    throw IndexError{"term reader has no batched postings pull"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("term reader has no batched postings pull"));
   }
 };
 

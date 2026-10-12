@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/connection.hpp>
 #include <functional>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
@@ -46,7 +48,10 @@ struct Spec {
 
 const std::vector<Spec>& AllSpecs();
 
-irs::analysis::Tokenizer::ptr Make(const Spec& spec);
+duckdb::Connection Connect();
+
+irs::analysis::Tokenizer::ptr Make(const Spec& spec,
+                                   duckdb::ClientContext& ctx);
 
 bool ModelsAvailable();
 

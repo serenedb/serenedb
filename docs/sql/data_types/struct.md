@@ -10,13 +10,13 @@ Conceptually, a `STRUCT` column contains an ordered list of columns called “en
 
 `STRUCT`s are typically used to nest multiple columns into a single column, and the nested column can be of any type, including other `STRUCT`s and `LIST`s.
 
-`STRUCT`s are similar to PostgreSQL's `ROW` type. The key difference is that SereneDB `STRUCT`s require the same keys in each row of a `STRUCT` column. This allows SereneDB to provide significantly improved performance by fully utilizing its vectorized execution engine, and also enforces type consistency for improved correctness. SereneDB includes a `row` function as a special way to produce a `STRUCT`, but does not have a `ROW` data type. See an example below and the [`STRUCT` functions documentation](../../sql/functions/struct.md) for details.
+`STRUCT`s are similar to PostgreSQL's `ROW` type. The key difference is that SereneDB `STRUCT`s require the same keys in each row of a `STRUCT` column. This allows SereneDB to provide significantly improved performance by fully utilizing its vectorized execution engine, and also enforces type consistency for improved correctness. SereneDB's `row` function returns a [`TUPLE`](./tuple.md), a struct without field names, which casts to a `STRUCT` field by field, and `ROW(a INTEGER, b VARCHAR)` as a type is another way to write `STRUCT(a INTEGER, b VARCHAR)`. See an example below and the [`STRUCT` functions documentation](../../sql/functions/struct.md) for details.
 
 See the [data types overview](../../sql/data_types/index.md) for a comparison between nested data types.
 
 ## Creating Structs
 
-Structs can be created using the [`struct_pack(name := expr, ...)`](../../sql/functions/struct.md) function, the equivalent array notation `{'name': expr, ...}`, using a row variable, or using the `row` function.
+Structs can be created using the [`struct_pack(name := expr, ...)`](../../sql/functions/struct.md) function, the equivalent array notation `{'name': expr, ...}`, using a row variable, or by casting the [tuple](./tuple.md) that the `row` function returns.
 
 Create a struct using the `struct_pack` function. Note the lack of single quotes around the keys and the use of the `:=` operator:
 
@@ -118,8 +118,8 @@ Any extra parts (e.g., `.part4.part5`, etc.) are always treated as properties
 
 ## Creating Structs with the `row` Function
 
-The `row` function can be used to automatically convert multiple columns to a single struct column.
-When using `row` the keys will be empty strings allowing for easy insertion into a table with a struct column.
+The `row` function returns a [`TUPLE`](./tuple.md): a struct whose fields have no names.
+A tuple casts to a struct with the same number of fields, field by field in order, so `row` can fill a struct column.
 For example, inserting values into a struct column using the `row` function:
 
 <SqlLogicTest id="sql/data_types/struct/example_018" />
@@ -132,11 +132,11 @@ The following produces the same result as above:
 
 <SqlLogicTest id="sql/data_types/struct/example_020" />
 
-Initializing a column with the `row` function creates an unnamed struct (`record`) column:
+Initializing a column with the `row` function creates a `TUPLE` column:
 
 <SqlLogicTest id="sql/data_types/struct/example_021" />
 
-When casting between structs, the names of at least one field have to match. Therefore, the following query will fail:
+When casting between structs that have field names, the names of at least one field have to match. Therefore, the following query will fail:
 
 <SqlLogicTest id="sql/data_types/struct/example_022" />
 
@@ -144,13 +144,11 @@ A workaround for this is to use [`struct_pack`](#creating-structs) instead:
 
 <SqlLogicTest id="sql/data_types/struct/example_023" />
 
-The `row` function can be used to return unnamed structs. For example:
+The `row` function can combine values of different types. For example:
 
 <SqlLogicTest id="sql/data_types/struct/example_024" />
 
-This produces `(1, 2, a)`.
-
-If using multiple expressions when creating a struct, the `row` function is optional. The following query returns the same result as the previous one:
+With two or more values, `row` can be left out. The following query returns the same result as the previous one:
 
 <SqlLogicTest id="sql/data_types/struct/example_025" />
 

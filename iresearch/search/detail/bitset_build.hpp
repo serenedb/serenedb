@@ -27,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting/doc_input.hpp"
@@ -271,9 +270,7 @@ class PostingReader {
   Input& In() {
     if (_in == nullptr) [[unlikely]] {
       _owned = _doc->Reopen();
-      if (!_owned) [[unlikely]] {
-        throw IoError{"failed to reopen document input"};
-      }
+      SDB_ASSERT(_owned);
       _in = &irs::utils::downCast<Input>(*_owned);
     }
     return *_in;

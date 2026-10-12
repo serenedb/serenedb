@@ -10,6 +10,7 @@ target_sources(
         entry/inverted_index.cpp
         entry/role.cpp
         entry/search_table.cpp
+        entry/subscription.cpp
         entry/system_table.cpp
         entry/tokenizer.cpp
 )

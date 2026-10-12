@@ -612,6 +612,13 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
   return duckdb::DuckCatalog::CreateForeignServer(transaction, info);
 }
 
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
+  duckdb::CatalogTransaction transaction,
+  duckdb::CreateSubscriptionInfo& info) {
+  DeclareModified(transaction, *this);
+  return duckdb::DuckCatalog::CreateSubscription(transaction, info);
+}
+
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
@@ -629,7 +636,8 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
        info.type == duckdb::AlterType::ALTER_INDEX)) {
     RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
-  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
+  if (type != duckdb::CatalogType::FOREIGN_SERVER_ENTRY &&
+      type != duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
     duckdb::DuckCatalog::Alter(transaction, info);
     return;
   }
@@ -647,6 +655,13 @@ void SereneDBCatalog::DropForeignServer(duckdb::CatalogTransaction transaction,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   duckdb::DuckCatalog::DropForeignServer(transaction, info);
+}
+
+void SereneDBCatalog::DropSubscription(duckdb::CatalogTransaction transaction,
+                                       duckdb::DropInfo& info) {
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  duckdb::DuckCatalog::DropSubscription(transaction, info);
 }
 
 }  // namespace sdb::catalog

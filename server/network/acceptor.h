@@ -29,12 +29,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <cstring>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <optional>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
@@ -92,13 +96,22 @@ class Acceptor final : public AcceptorBase,
       _acceptor.bind(bind);
       ListenWith(opts);
       if (!abstract) {
-        if (opts.unix_mode) {
-          ::chmod(path.c_str(), static_cast<::mode_t>(*opts.unix_mode));
+        if (opts.unix_mode && ::chmod(path.c_str(), static_cast<::mode_t>(
+                                                      *opts.unix_mode)) != 0) {
+          SDB_FATAL(GENERAL, "cannot chmod unix socket '", path,
+                    "': ", std::strerror(errno));
         }
         if (!opts.unix_group.empty()) {
-          if (const struct group* gr = ::getgrnam(opts.unix_group.c_str());
-              gr != nullptr) {
-            ::chown(path.c_str(), static_cast<::uid_t>(-1), gr->gr_gid);
+          const struct group* gr = ::getgrnam(opts.unix_group.c_str());
+          if (gr == nullptr) {
+            SDB_FATAL(GENERAL, "cannot find group '", opts.unix_group,
+                      "' for unix socket '", path, "'");
+          }
+          if (::chown(path.c_str(), static_cast<::uid_t>(-1), gr->gr_gid) !=
+              0) {
+            SDB_FATAL(GENERAL, "cannot chown unix socket '", path,
+                      "' to group '", opts.unix_group,
+                      "': ", std::strerror(errno));
           }
         }
       }
@@ -107,12 +120,22 @@ class Acceptor final : public AcceptorBase,
       _acceptor.set_option(asio_ns::socket_base::reuse_address{true});
       if (bind.address().is_v6() && opts.v6_only) {
         _acceptor.set_option(asio_ns::ip::v6_only{true}, ec);
+        if (ec) {
+          SDB_FATAL(GENERAL, "cannot set IPV6_V6ONLY on ",
+                    bind.address().to_string(), ":", bind.port(), ": ",
+                    ec.message());
+        }
       }
 #ifdef SO_REUSEPORT
       if (opts.reuseport.value_or(false)) {
         using ReusePort =
           asio_ns::detail::socket_option::boolean<SOL_SOCKET, SO_REUSEPORT>;
         _acceptor.set_option(ReusePort{true}, ec);
+        if (ec) {
+          SDB_FATAL(GENERAL, "cannot set SO_REUSEPORT on ",
+                    bind.address().to_string(), ":", bind.port(), ": ",
+                    ec.message());
+        }
       }
 #endif
       _acceptor.bind(bind);
@@ -162,16 +185,21 @@ class Acceptor final : public AcceptorBase,
       }
       _deps.sessions->Done();
     };
+    bool accept_failing = false;
     while (_running) {
       auto connection = duckdb::make_shared_ptr<Session>(_deps, _pool.Next());
-      if (co_await AcceptInto(connection->Lowest()).NoThrow()) {
+      if (const auto ec = co_await AcceptInto(connection->Lowest()).NoThrow()) {
         // Accept failed: either a clean shutdown closed the acceptor, or a
         // transient error (e.g. fd exhaustion) -- drop this attempt and retry.
         if (!_running) {
           break;
         }
+        if (!std::exchange(accept_failing, true)) {
+          SDB_WARN(GENERAL, "accept failed: ", ec.message());
+        }
         continue;
       }
+      accept_failing = false;
       if (!_running) {
         // Stop() ran between the accept and this resume: drop the connection.
         break;

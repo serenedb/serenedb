@@ -72,6 +72,7 @@ std::string ConstraintName(const duckdb::TableCatalogEntry& table,
                            const duckdb::Constraint& constraint);
 
 std::string QuoteIdentifier(std::string_view ident);
+std::string QuoteLiteral(std::string_view value);
 
 struct KeyIndex {
   const duckdb::TableCatalogEntry* table = nullptr;

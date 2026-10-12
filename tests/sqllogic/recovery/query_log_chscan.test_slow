@@ -1,0 +1,50 @@
+control substitution on
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+SET logging_level = 'debug';
+
+
+statement ok
+ATTACH 'host=${CHHOST} port=${CHPORT} database=chtest' AS chlog (TYPE clickhouse);
+
+
+query
+SELECT count(*) AS n FROM chlog.chtest.vedernikoff;
+----
+n
+6
+
+
+query
+SELECT count(*) > 0 AS logged, bool_and(duration_ms >= 0) AS timed
+FROM duckdb_logs_parsed('ClickHouseQueryLog')
+WHERE connection_id = current_connection_id() AND query LIKE '%vedernikoff%';
+----
+logged	timed
+t	t
+
+
+statement error
+SELECT count(*) AS n FROM clickhouse_execute('host=${CHHOST} port=${CHPORT}',
+  'DROP TABLE default.no_such_table_qlog');
+----
+db error: ERROR: ClickHouse error executing statement: DB::Exception: Table default.no_such_table_qlog does not exist
+SQL: DROP TABLE default.no_such_table_qlog
+
+
+query
+SELECT count(*) AS n
+FROM duckdb_logs_parsed('ClickHouseQueryLog')
+WHERE connection_id = current_connection_id() AND query LIKE '%no_such_table_qlog%';
+----
+n
+1
+
+
+statement ok
+DETACH chlog;

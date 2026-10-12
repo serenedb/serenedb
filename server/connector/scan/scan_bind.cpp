@@ -476,7 +476,7 @@ duckdb::TableFunction BindSearchTableScan(
                             PinnedSearchReader(context, entry), nullptr));
   data->plan_cache.reacquire_snapshot = SearchTableReacquire(entry);
   data->score.prune = store->TopKScorer();
-  data->relation.inverted_config = store->Config();
+  data->relation.inverted_config = store->ScanConfig();
   data->relation.row_group_size =
     data->relation.inverted_config->row_group_size;
   bind_data = std::move(data);

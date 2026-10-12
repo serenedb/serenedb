@@ -857,8 +857,8 @@ void FieldWriter::Impl::EndField(field_id id, FieldProperties props,
   WriteStr(*_blocks_out, max_term);
   const bool ok = immutable_byte_fst::Write(fst, *_blocks_out, fst_stats);
   if (!ok) [[unlikely]] {
-    throw IndexError{
-      absl::StrCat("Failed to write term index for field id ", id)};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("Failed to write term index for field id ", id));
   }
   _blocks_out->WriteData(_inline.data(), _inline.size());
   if (!_inline.empty()) {
@@ -1666,13 +1666,7 @@ class TermIteratorBase {
   IndexInput& TermsInput() const {
     if (!_terms_in) {
       _terms_in = _terms_in_source->Reopen();  // reopen thread-safe stream
-
-      if (!_terms_in) {
-        // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH, "Failed to reopen terms input");
-
-        throw IoError("failed to reopen terms input");
-      }
+      SDB_ASSERT(_terms_in);
     }
 
     return *_terms_in;
@@ -2773,10 +2767,7 @@ class FieldReader::Impl {
       blocks_in.Seek(meta.body_offset);
       LoadFromMeta(id, meta, blocks_in);
       _fst = FST::Read(blocks_in, _owner->_resource_manager);
-      if (!_fst) {
-        throw IndexError{
-          absl::StrCat("Failed to read term index for field id ", id)};
-      }
+      SDB_ASSERT(_fst);
       _body_offset = meta.body_offset;
       MapInlineRegion(blocks_in);
       _body_end = InlineEnd();

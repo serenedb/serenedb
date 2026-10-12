@@ -1,0 +1,301 @@
+statement ok
+SELECT pg_replication_origin_drop(roname) FROM pg_replication_origin WHERE roname LIKE 'rorg%';
+
+
+query
+SELECT pg_replication_origin_oid('rorg_a') IS NULL AS missing;
+----
+missing
+t
+
+
+query
+SELECT pg_replication_origin_create('rorg_a') = pg_replication_origin_oid('rorg_a') AS created;
+----
+created
+t
+
+
+query
+SELECT o.roname, s.remote_lsn, s.local_lsn FROM pg_replication_origin o JOIN pg_replication_origin_status s ON s.local_id = o.roident WHERE o.roname = 'rorg_a';
+----
+roname	remote_lsn	local_lsn
+rorg_a	0/0	0/0
+
+
+query
+SELECT pg_replication_origin_progress('rorg_a', true) IS NULL AS unset;
+----
+unset
+t
+
+
+statement error
+SELECT pg_replication_origin_create('rorg_a');
+----
+db error: ERROR: duplicate key value violates unique constraint "pg_replication_origin_roname_index"
+DETAIL: Key (roname)=(rorg_a) already exists.
+
+
+statement error
+SELECT pg_replication_origin_create('pg_rorg');
+----
+db error: ERROR: replication origin name "pg_rorg" is reserved
+DETAIL: Origin names "any", "none", and names starting with "pg_" are reserved.
+
+
+statement error
+SELECT pg_replication_origin_create('none');
+----
+db error: ERROR: replication origin name "none" is reserved
+DETAIL: Origin names "any", "none", and names starting with "pg_" are reserved.
+
+
+statement ok
+SELECT pg_replication_origin_advance('rorg_a', '0/1A000');
+
+
+query
+SELECT pg_replication_origin_progress('rorg_a', false) AS lsn;
+----
+lsn
+0/1A000
+
+
+statement ok
+SELECT pg_replication_origin_advance('rorg_a', '0/500');
+
+
+query
+SELECT pg_replication_origin_progress('rorg_a', true) AS lsn, (SELECT remote_lsn FROM pg_replication_origin_status WHERE external_id = 'rorg_a') AS status;
+----
+lsn	status
+0/500	0/500
+
+
+statement error
+SELECT pg_replication_origin_advance('rorg_a', 'later');
+----
+db error: ERROR: invalid input syntax for type pg_lsn: "later"
+
+
+statement error
+SELECT pg_replication_origin_advance('rorg_missing', '0/1');
+----
+db error: ERROR: replication origin "rorg_missing" does not exist
+
+
+statement error
+SELECT pg_replication_origin_drop('rorg_missing');
+----
+db error: ERROR: replication origin "rorg_missing" does not exist
+
+
+query
+SELECT pg_replication_origin_session_is_setup() AS setup;
+----
+setup
+f
+
+
+statement error
+SELECT pg_replication_origin_session_progress(true);
+----
+db error: ERROR: no replication origin is configured
+
+
+statement error
+SELECT pg_replication_origin_xact_setup('0/600', now());
+----
+db error: ERROR: no replication origin is configured
+
+
+statement error
+SELECT pg_replication_origin_session_reset();
+----
+db error: ERROR: no replication origin is configured
+
+
+statement ok
+SELECT pg_replication_origin_session_setup('rorg_a');
+
+
+query
+SELECT pg_replication_origin_session_is_setup() AS setup, pg_replication_origin_session_progress(false) AS lsn;
+----
+setup	lsn
+t	0/500
+
+
+statement error
+SELECT pg_replication_origin_session_setup('rorg_a');
+----
+db error: ERROR: cannot setup replication origin when one is already setup
+
+
+connection other
+statement error
+SELECT pg_replication_origin_session_setup('rorg_a');
+----
+db error: ERROR: replication origin with ID <slt:ignore> is already active for PID <slt:ignore>
+
+
+connection other
+statement error
+SELECT pg_replication_origin_advance('rorg_a', '0/700');
+----
+db error: ERROR: replication origin with ID <slt:ignore> is already active for PID <slt:ignore>
+
+
+connection other
+statement error
+SELECT pg_replication_origin_drop('rorg_a');
+----
+db error: ERROR: could not drop replication origin with ID <slt:ignore>, in use by PID <slt:ignore>
+
+
+connection default
+statement ok
+CREATE TABLE rorg_t (id INTEGER);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/2000', now());
+
+
+statement ok
+INSERT INTO rorg_t VALUES (1);
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT pg_replication_origin_session_progress(true) AS lsn;
+----
+lsn
+0/2000
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/3000', now());
+
+
+statement ok
+INSERT INTO rorg_t VALUES (2);
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/4000', now());
+
+
+statement ok
+SELECT pg_replication_origin_xact_reset();
+
+
+statement ok
+INSERT INTO rorg_t VALUES (3);
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/1000', now());
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT pg_replication_origin_progress('rorg_a', true) AS lsn;
+----
+lsn
+0/2000
+
+
+statement ok
+SELECT pg_replication_origin_session_reset();
+
+
+query
+SELECT pg_replication_origin_session_is_setup() AS setup;
+----
+setup
+f
+
+
+connection other
+statement ok
+SELECT pg_replication_origin_session_setup('rorg_a');
+
+
+connection other
+statement ok
+SELECT pg_replication_origin_session_reset();
+
+
+connection default
+statement ok
+DROP ROLE IF EXISTS rorg_plain;
+
+
+statement ok
+CREATE ROLE rorg_plain LOGIN PASSWORD 'rorg_pw';
+
+
+connection plain user=rorg_plain password=rorg_pw
+statement error
+SELECT pg_replication_origin_create('rorg_b');
+----
+db error: ERROR: permission denied for function pg_replication_origin_create
+
+
+connection plain user=rorg_plain password=rorg_pw
+statement error
+SELECT pg_replication_origin_progress('rorg_a', true);
+----
+db error: ERROR: permission denied for function pg_replication_origin_progress
+
+
+connection default
+statement ok
+DROP ROLE rorg_plain;
+
+
+statement ok
+DROP TABLE rorg_t;
+
+
+statement ok
+SELECT pg_replication_origin_drop('rorg_a');
+
+
+query
+SELECT pg_replication_origin_oid('rorg_a') IS NULL AS missing, count(*) AS n FROM pg_replication_origin WHERE roname = 'rorg_a';
+----
+missing	n
+t	0

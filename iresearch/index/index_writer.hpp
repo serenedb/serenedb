@@ -236,6 +236,8 @@ class IndexWriter : private util::Noncopyable {
 
     explicit operator bool() const noexcept { return _writer.valid(); }
 
+    std::string_view Error() const noexcept { return _writer.Error(); }
+
     template<typename... Args>
     bool WithField(Args&&... args) const {
       return _writer.WithField(std::forward<Args>(args)...);
@@ -305,15 +307,6 @@ class IndexWriter : private util::Noncopyable {
         return true;
       }
       return CommitImpl(_writer->NextTick(_queries), {});
-    }
-
-    bool FlushAndCommit() noexcept {
-      try {
-        Flush();
-      } catch (...) {
-        return false;
-      }
-      return Commit();
     }
 
     std::span<const FlushedSegment> FlushAndFsync();
@@ -418,7 +411,7 @@ class IndexWriter : private util::Noncopyable {
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
 
-  bool AdoptSegment(std::string_view meta_file, uint64_t tick);
+  void AdoptSegment(std::string_view meta_file, uint64_t tick);
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:
@@ -451,7 +444,7 @@ class IndexWriter : private util::Noncopyable {
 
   uint64_t CurrentSegmentId() const noexcept;
 
-  bool ReplaceSegments(
+  void ReplaceSegments(
     std::span<const std::string_view> replaced,
     std::span<const std::string_view> adopted_metas,
     absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider);

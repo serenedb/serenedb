@@ -23,7 +23,6 @@
 #include <iterator>
 
 #include "iresearch/analysis/token_attributes.hpp"
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -71,9 +70,7 @@ class PostingsStream : public TermPostings {
       } else {
         if (!_file_in) {
           _file_in = doc_in.Reopen();
-          if (!_file_in) [[unlikely]] {
-            throw IoError{"failed to reopen document input"};
-          }
+          SDB_ASSERT(_file_in);
         }
         _file_in->Seek(meta.doc_start);
         _doc_in = _file_in.get();

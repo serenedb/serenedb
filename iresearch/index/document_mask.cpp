@@ -29,7 +29,8 @@
 #include <roaring/roaring.hh>
 #include <utility>
 
-#include "iresearch/error/error.hpp"
+#include "iresearch/utils/pg/errcodes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 
@@ -63,7 +64,8 @@ void DocumentMask::Assign(const roaring::api::bitset_t& other) {
   const auto bytes = other.arraysize * sizeof(uint64_t);
   auto* array = static_cast<uint64_t*>(roaring_malloc(bytes));
   if (array == nullptr) [[unlikely]] {
-    throw IllegalState{"Failed to allocate a copy of the document mask"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to allocate a copy of the document mask"));
   }
   std::memcpy(array, other.array, bytes);
   _bits.array = array;
@@ -83,8 +85,9 @@ DocumentMask DocumentMask::Read(const char* buf, size_t size) {
     try {
       return roaring::Roaring::readSafe(buf, size);
     } catch (const std::exception& e) {
-      throw IndexError{absl::StrCat("Corrupted document mask of ", size,
-                                    " byte(s): ", e.what())};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+        ERR_MSG("Corrupted document mask of ", size, " byte(s): ", e.what()));
     }
   }();
 
@@ -94,13 +97,15 @@ DocumentMask DocumentMask::Read(const char* buf, size_t size) {
 
     if (compressed.minimum() < doc_limits::min() || doc_limits::eof(max))
       [[unlikely]] {
-      throw IndexError{absl::StrCat("Invalid document id in a document mask, [",
-                                    compressed.minimum(), ", ", max, "]")};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                      ERR_MSG("Invalid document id in a document mask, [",
+                              compressed.minimum(), ", ", max, "]"));
     }
 
     if (!roaring::api::roaring_bitmap_to_bitset(&compressed.roaring,
                                                 &mask._bits)) [[unlikely]] {
-      throw IllegalState{"Failed to allocate the document mask"};
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                      ERR_MSG("Failed to allocate the document mask"));
     }
     mask._count = compressed.cardinality();
   }
@@ -124,7 +129,8 @@ roaring::Roaring DocumentMask::Compress() const {
 
 void DocumentMask::Merge(const DocumentMask& other) {
   if (!roaring::api::bitset_inplace_union(&_bits, &other._bits)) [[unlikely]] {
-    throw IllegalState{"Failed to grow the document mask while merging"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to grow the document mask while merging"));
   }
   _count = roaring::api::bitset_count(&_bits);
 }
@@ -143,7 +149,8 @@ void DocumentMask::Grow(size_t words) {
     return;
   }
   if (!roaring::api::bitset_grow(&_bits, words)) [[unlikely]] {
-    throw IllegalState{"Failed to grow the document mask"};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                    ERR_MSG("Failed to grow the document mask"));
   }
 }
 

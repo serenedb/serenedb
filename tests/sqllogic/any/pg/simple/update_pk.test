@@ -45,13 +45,14 @@ QUERY PLAN
 ╰───────────┬───────────╯
 ╭─ PROJECTION ──────────╮
 │ Projections: 200,     │
-│              200,     │
+│              200, a,  │
 │              rowid    │
 │ ~1 row                │
 ╰───────────┬───────────╯
 ╭─ SEQ_SCAN ┴───────────╮
 │ Table: single_pk      │
 │ Type: Sequential Scan │
+│ Projections: a        │
 │ Column Filter: a = 2  │
 │ ~1 row                │
 ╰───────────────────────╯

@@ -25,9 +25,9 @@
 
 #include <absl/container/flat_hash_map.h>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
 namespace irs {
@@ -208,7 +208,10 @@ class MemoryIndexOutput : public IndexOutput {
 
   void Flush() noexcept final { _file.Length(Position()); }
 
-  uint32_t Checksum() override { throw NotSupported{}; }
+  uint32_t Checksum() override {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("this memory output keeps no checksum"));
+  }
 
   uint64_t CloseImpl() noexcept final {
     // TODO(mbkkt) maybe we need reset?
@@ -237,7 +240,7 @@ class MemoryDirectory final : public Directory {
 
   DirectoryAttributes& attributes() noexcept final { return _attrs; }
 
-  IndexOutput::ptr create(std::string_view name) noexcept final;
+  IndexOutput::ptr create(std::string_view name) final;
 
   bool exists(bool& result, std::string_view name) const noexcept final;
 
@@ -247,8 +250,7 @@ class MemoryDirectory final : public Directory {
 
   bool mtime(std::time_t& result, std::string_view name) const noexcept final;
 
-  IndexInput::ptr open(std::string_view name,
-                       IOAdvice advice) const noexcept final;
+  IndexInput::ptr open(std::string_view name, IOAdvice advice) const final;
 
   bool remove(std::string_view name) noexcept final;
 

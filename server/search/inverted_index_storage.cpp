@@ -25,6 +25,7 @@
 #include <absl/time/time.h>
 
 #include <chrono>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -35,7 +36,6 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <filesystem>
-#include <iresearch/error/error.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
 #include <iresearch/index/column_info.hpp>
@@ -119,7 +119,10 @@ void ResolveCheckpointSave(irs::Directory& dir, duckdb::idx_t db_id) {
                                  [&](duckdb::BinaryDeserializer& in) {
                                    checkpoint = ReadStamp(in).checkpoint;
                                  });
-  } catch (const irs::IndexError&) {
+  } catch (const irs::SqlException& e) {
+    if (e.error().errcode != ERRCODE_INDEX_CORRUPTED) {
+      throw;
+    }
     checkpoint = 0;
   }
   if (checkpoint != 0) {
@@ -341,10 +344,10 @@ InvertedIndexStorage::ReindexClaim::~ReindexClaim() {
   _storage->_reindex_cv.SignalAll();
 }
 
-void InvertedIndexStorage::Refresh(
+absl::Status InvertedIndexStorage::Refresh(
   const irs::ProgressReportCallback& progress) {
   RefreshResult code = RefreshResult::Undefined;
-  std::ignore = RefreshUnsafe(/*wait=*/true, progress, code);
+  return RefreshUnsafe(/*wait=*/true, progress, code).res;
 }
 
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
@@ -372,7 +375,7 @@ absl::Status InvertedIndexStorage::CleanupUnsafeImpl() {
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while cleaning up Search index '", GetId(),
-                   "': ", e.what()));
+                   "': ", duckdb::ErrorData{e}.RawMessage()));
   } catch (...) {
     return absl::InternalError(absl::StrCat(
       "caught exception while cleaning up Search index '", GetId(), "'"));
@@ -423,9 +426,10 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
     const auto res =
       co_await _writer->CompactAsync(policy, field_options, progress, env);
     if (res.error == irs::CompactionError::Fail) {
-      co_return absl::InternalError(absl::StrCat(
-        "failure while executing compaction policy on Search index '", GetId(),
-        "'"));
+      SDB_DEBUG(SEARCH, "compaction of Search index '", GetId(),
+                "' merged nothing: cancelled, or every document was removed");
+      empty_compaction = true;
+      co_return absl::OkStatus();
     }
     if (res.error == irs::CompactionError::Busy) {
       co_return absl::OkStatus();
@@ -436,7 +440,7 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
     co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
                    "on Search index '",
-                   GetId(), "': ", e.what()));
+                   GetId(), "': ", duckdb::ErrorData{e}.RawMessage()));
   } catch (...) {
     co_return absl::InternalError(
       absl::StrCat("caught exception while executing compaction policy "
@@ -522,7 +526,7 @@ absl::Status InvertedIndexStorage::RefreshUnsafeImpl(
   } catch (const std::exception& e) {
     return absl::InternalError(
       absl::StrCat("caught exception while refreshing Search index '", GetId(),
-                   "': ", e.what()));
+                   "': ", duckdb::ErrorData{e}.RawMessage()));
   } catch (...) {
     return absl::InternalError(absl::StrCat(
       "caught exception while refreshing Search index '", GetId(), "'"));
@@ -630,9 +634,9 @@ void InvertedIndexStorage::FinishCheckpoint() {
   try {
     _writer->RefreshFinish();
   } catch (const std::exception& e) {
-    SDB_FATAL(
-      SEARCH, "inverted index ", _index_id,
-      " cannot commit the index save of a written checkpoint: ", e.what());
+    SDB_FATAL(SEARCH, "inverted index ", _index_id,
+              " cannot commit the index save of a written checkpoint: ",
+              duckdb::ErrorData{e}.RawMessage());
   }
   _pending_checkpoint = 0;
   _directory_dirty.store(true, std::memory_order_relaxed);
@@ -665,6 +669,15 @@ std::vector<int64_t> InvertedIndexStorage::TakeDeleteLog() {
     rows.insert(rows.end(), batch.begin(), batch.end());
   }
   return rows;
+}
+
+void ThrowIfRefreshFailed(const absl::Status& status,
+                          std::string_view index_name) {
+  if (!status.ok()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("failed to refresh index '", index_name,
+                            "': ", status.message()));
+  }
 }
 
 }  // namespace sdb::search

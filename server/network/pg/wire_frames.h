@@ -30,6 +30,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "pg/command_tag.h"
 #include "pg/serialize.h"
@@ -138,6 +139,19 @@ void WriteFatalResponse(message::Buffer& out,
 
 void WriteErrorResponse(message::Buffer& out,
                         const irs::pg::SqlErrorData& error);
+
+irs::pg::SqlErrorData ParseErrorResponse(std::string_view body);
+
+void WriteSslRequest(message::Buffer& out);
+void WriteStartupMessage(
+  message::Buffer& out,
+  std::span<const std::pair<std::string_view, std::string_view>> parameters);
+void WriteQuery(message::Buffer& out, std::string_view query);
+void WritePasswordMessage(message::Buffer& out, std::string_view password);
+void WriteSaslInitialResponse(message::Buffer& out, std::string_view mechanism,
+                              std::string_view data);
+void WriteSaslResponse(message::Buffer& out, std::string_view data);
+void WriteCopyData(message::Buffer& out, std::string_view data);
 
 void WriteNoticeResponse(message::Buffer& out,
                          const irs::pg::SqlErrorData& notice);

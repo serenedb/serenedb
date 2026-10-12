@@ -522,9 +522,9 @@ class IndexTestCase : public tests::IndexTestBase {
       irs::MemoryDirectory dir;
       auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
-      ASSERT_THROW(
+      ASSERT_SQL_ERROR(
         irs::DirectoryReader(dir, irs::tests::DefaultReaderOptions()),
-        irs::IndexNotFound);  // throws due to missing index
+        ERRCODE_UNDEFINED_FILE);  // throws due to missing index
 
       {
         size_t file_count = 0;
@@ -754,9 +754,10 @@ class IndexTestCase : public tests::IndexTestBase {
                                            irs::tests::DefaultWriterOptions());
       ASSERT_NE(nullptr, writer);
       // can't open another writer at the same time on the same directory
-      ASSERT_THROW(irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                          irs::tests::DefaultWriterOptions()),
-                   irs::LockObtainFailed);
+      ASSERT_SQL_ERROR(
+        irs::IndexWriter::Make(dir(), irs::kOmCreate,
+                               irs::tests::DefaultWriterOptions()),
+        ERRCODE_LOCK_NOT_AVAILABLE);
       ASSERT_EQ(0, writer->BufferedDocs());
     }
 
@@ -770,9 +771,10 @@ class IndexTestCase : public tests::IndexTestBase {
       AssertSnapshotEquality(*writer);
       irs::DirectoryCleaner::clean(dir());
       // can't open another writer at the same time on the same directory
-      ASSERT_THROW(irs::IndexWriter::Make(dir(), irs::kOmCreate,
-                                          irs::tests::DefaultWriterOptions()),
-                   irs::LockObtainFailed);
+      ASSERT_SQL_ERROR(
+        irs::IndexWriter::Make(dir(), irs::kOmCreate,
+                               irs::tests::DefaultWriterOptions()),
+        ERRCODE_LOCK_NOT_AVAILABLE);
       ASSERT_EQ(0, writer->BufferedDocs());
     }
 
@@ -845,13 +847,13 @@ class IndexTestCase : public tests::IndexTestBase {
 
   void WriterCheckOpenModes() {
     // APPEND to nonexisting index, shoud fail
-    ASSERT_THROW(irs::IndexWriter::Make(dir(), irs::kOmAppend,
-                                        irs::tests::DefaultWriterOptions()),
-                 irs::FileNotFound);
+    ASSERT_SQL_ERROR(irs::IndexWriter::Make(dir(), irs::kOmAppend,
+                                            irs::tests::DefaultWriterOptions()),
+                     ERRCODE_UNDEFINED_FILE);
     // read index in empty directory, should fail
-    ASSERT_THROW(
+    ASSERT_SQL_ERROR(
       (irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions())),
-      irs::IndexNotFound);
+      ERRCODE_UNDEFINED_FILE);
 
     // create empty index
     {
@@ -1039,9 +1041,9 @@ class IndexTestCase : public tests::IndexTestBase {
         writer->RefreshBegin());  // try to begin already opened transaction
 
       // index still does not exist
-      ASSERT_THROW(
+      ASSERT_SQL_ERROR(
         (irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions())),
-        irs::IndexNotFound);
+        ERRCODE_UNDEFINED_FILE);
 
       writer->RefreshAbort();  // rollback transaction
       writer->RefreshAbort();  // does nothing
@@ -1147,6 +1149,7 @@ class IndexTestCase : public tests::IndexTestBase {
       ASSERT_TRUE(tests::InsertField(doc, valid_field));
       ASSERT_FALSE(tests::InsertField(doc, invalid_field));
       ASSERT_FALSE(doc);
+      ASSERT_EQ("the field was created with other index features", doc.Error());
       // entire batch should be rollbacked
     }
     ASSERT_TRUE(InsertWithName(*writer, *doc3));
@@ -1379,7 +1382,10 @@ class IndexTestCase : public tests::IndexTestBase {
     // error while commiting index (during sync in index_meta_writer)
     {
       OverrideSyncDirectory override_dir(
-        dir(), [](const std::string_view&) -> bool { throw irs::IoError(); });
+        dir(), [](const std::string_view&) -> bool {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                          ERR_MSG("injected sync failure"));
+        });
 
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
@@ -1395,18 +1401,19 @@ class IndexTestCase : public tests::IndexTestBase {
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
       ASSERT_TRUE(InsertWithName(*writer, *doc3));
       ASSERT_TRUE(InsertWithName(*writer, *doc4));
-      ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
+      ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
     }
 
     // error while commiting index (during sync in index_writer)
     {
-      OverrideSyncDirectory override_dir(dir(),
-                                         [](const std::string_view& name) {
-                                           if (name.starts_with("_")) {
-                                             throw irs::IoError();
-                                           }
-                                           return false;
-                                         });
+      OverrideSyncDirectory override_dir(
+        dir(), [](const std::string_view& name) {
+          if (name.starts_with("_")) {
+            THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                            ERR_MSG("injected sync failure"));
+          }
+          return false;
+        });
 
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::GenericJsonFieldFactory);
@@ -1422,7 +1429,7 @@ class IndexTestCase : public tests::IndexTestBase {
       ASSERT_TRUE(InsertWithName(*writer, *doc2));
       ASSERT_TRUE(InsertWithName(*writer, *doc3));
       ASSERT_TRUE(InsertWithName(*writer, *doc4));
-      ASSERT_THROW(writer->RefreshCommit(), irs::IoError);
+      ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
     }
 
     // check index, it should be empty
@@ -11490,14 +11497,14 @@ TEST_P(IndexTestCase11, reader_of_payload_needs_payload_reader) {
     }};
   };
 
-  ASSERT_THROW(
+  ASSERT_SQL_ERROR(
     (irs::DirectoryReader{dir(), irs::tests::DefaultReaderOptions()}),
-    irs::IndexError);
+    ERRCODE_INTERNAL_ERROR);
 
   irs::DirectoryReader reader{dir(), irs::tests::DefaultReaderOptions(),
                               payload_reader()};
   ASSERT_EQ(1, reads);
-  ASSERT_THROW(reader.Reopen(), irs::IndexError);
+  ASSERT_SQL_ERROR(reader.Reopen(), ERRCODE_INTERNAL_ERROR);
   ASSERT_EQ(reader, reader.Reopen(payload_reader()));
   ASSERT_EQ(2, reads);
 }
@@ -11530,18 +11537,19 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
     });
   }
 
-  ASSERT_THROW(
+  ASSERT_SQL_ERROR(
     (irs::DirectoryReader{dir(), irs::tests::DefaultReaderOptions()}),
-    irs::IndexError);
-  ASSERT_THROW(open_writer(irs::kOmAppend), irs::IndexError);
-  ASSERT_THROW(open_writer(irs::kOmCreate | irs::kOmAppend), irs::IndexError);
+    ERRCODE_FEATURE_NOT_SUPPORTED);
+  ASSERT_SQL_ERROR(open_writer(irs::kOmAppend), ERRCODE_FEATURE_NOT_SUPPORTED);
+  ASSERT_SQL_ERROR(open_writer(irs::kOmCreate | irs::kOmAppend),
+                   ERRCODE_FEATURE_NOT_SUPPORTED);
   {
     std::string meta;
     ASSERT_TRUE(irs::index_meta::LastFile(dir(), meta));
     ASSERT_EQ(old_meta, meta);
     irs::IndexMeta index_meta;
-    ASSERT_THROW(irs::index_meta::Read(dir(), index_meta, meta),
-                 irs::IndexError);
+    ASSERT_SQL_ERROR(irs::index_meta::Read(dir(), index_meta, meta),
+                     ERRCODE_FEATURE_NOT_SUPPORTED);
   }
 
   auto writer = open_writer(irs::kOmCreate);

@@ -37,12 +37,6 @@ namespace {
 using namespace tests::fuzz;
 using irs::analysis::TokenizerPool;
 
-duckdb::ClientContext& Context() {
-  static thread_local auto* conn =
-    new duckdb::Connection{irs::DuckDBEngine::Instance().instance()};
-  return *conn->context;
-}
-
 std::vector<Result> Drive(irs::analysis::Tokenizer& tokenizer,
                           std::span<const std::string> values,
                           irs::TokenLayout layout) {
@@ -83,7 +77,8 @@ TEST(TokenizerLifecycle, PooledInstancesStayEquivalent) {
     ASSERT_TRUE(pool);
     ASSERT_EQ(nullptr, pool->Acquire());
 
-    auto first = Make(*spec);
+    auto conn = Connect();
+    auto first = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, first);
     const auto layout = DeclaredLayouts(first->Traits()).back();
     const auto baseline = Drive(*first, values, layout);
@@ -97,7 +92,7 @@ TEST(TokenizerLifecycle, PooledInstancesStayEquivalent) {
       ASSERT_NE(nullptr, borrowed) << "round " << round;
       ASSERT_EQ(raw, borrowed.get())
         << "the pool handed back a different instance";
-      borrowed->Bind(Context());
+      borrowed->Bind(*conn.context);
       if (spec->setup) {
         spec->setup(*borrowed);
       }
@@ -114,8 +109,9 @@ TEST(TokenizerLifecycle, PoolCapDropsExcessInstances) {
   duckdb::DuckDB db{nullptr};
   const auto* spec = SelectedSpecs().front();
   auto pool = duckdb::make_shared_ptr<TokenizerPool>(*db.instance, "cap", 2);
+  auto conn = Connect();
   for (size_t i = 0; i < 5; ++i) {
-    auto tokenizer = Make(*spec);
+    auto tokenizer = Make(*spec, *conn.context);
     ASSERT_NE(nullptr, tokenizer);
     pool->Release(std::move(tokenizer));
   }
@@ -130,7 +126,8 @@ TEST(TokenizerLifecycle, OnePoolPerDictionaryAcrossThreads) {
   const auto* spec = SelectedSpecs().front();
   const auto values = SpecCorpus(*spec, Seed(), 32);
 
-  auto reference = Make(*spec);
+  auto conn = Connect();
+  auto reference = Make(*spec, *conn.context);
   ASSERT_NE(nullptr, reference);
   const auto layout = DeclaredLayouts(reference->Traits()).back();
   const auto baseline = Drive(*reference, values, layout);
@@ -146,12 +143,13 @@ TEST(TokenizerLifecycle, OnePoolPerDictionaryAcrossThreads) {
         ++failures;
         return;
       }
+      auto worker_conn = Connect();
       for (size_t round = 0; round < 8; ++round) {
         auto borrowed = pool->Acquire();
         if (!borrowed) {
-          borrowed = Make(*spec);
+          borrowed = Make(*spec, *worker_conn.context);
         } else {
-          borrowed->Bind(Context());
+          borrowed->Bind(*worker_conn.context);
           if (spec->setup) {
             spec->setup(*borrowed);
           }

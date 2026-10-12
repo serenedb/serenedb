@@ -152,7 +152,7 @@ How much memory the engine may use and how many threads it runs.
 | `allocator_background_threads`                | Whether to enable the allocator background thread.                                                                                                                                                             | `BOOLEAN`   | `false`                                             |
 | `allocator_bulk_deallocation_flush_threshold` | If a bulk deallocation larger than this occurs, flush outstanding allocations.                                                                                                                                 | `VARCHAR`   | `512.0 MiB`                                         |
 | `allocator_flush_threshold`                   | Peak allocation threshold at which to flush the allocator after completing a task.                                                                                                                             | `VARCHAR`   | `128.0 MiB`                                         |
-| `async_threads` | The number of total async threads used by the system for tasks like I/O. | `BIGINT` | `64` |
+| `async_threads` | The number of total async threads used by the system for tasks like I/O; a session or transaction value caps the async threads its queries use (see [`SET`](../sql/statements/set/index.md#async-threads)). | `BIGINT` | `64` |
 | `block_allocator_memory`                      | Physical memory that the block allocator is allowed to use (this memory is never freed and cannot be reduced).                                                                                                 | `VARCHAR`   | `0 bytes`                                           |
 | `max_memory` | The maximum memory of the system (e.g. 1GB). | `VARCHAR` | 80% of RAM  |
 | `max_temp_directory_size`                     | The maximum amount of data stored inside the 'temp_directory' (when set) (e.g., 1GB)                                                                                                                           | `VARCHAR`   | `90% of available disk space`                       |
@@ -256,6 +256,17 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `table_function_identifier_conversion` | Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone`                                    | The current time zone                                                                                                                                                                                          | `VARCHAR`   | System (locale) timezone                            |
 
+#### Logical replication
+
+Server-wide settings of [subscriptions](../sql/statements/create_subscription/index.md). Only a superuser may set them, and a change applies to running subscriptions too.
+
+| Name                                          | Description                                                                                                                                                                                                    | Type        | Default value                                       |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------- |
+| `max_sync_workers_per_subscription` | How many tables one subscription copies at the same time during its initial synchronization, each over its own publisher connection (a walsender on the publisher). | `UINTEGER` | `2` |
+| `wal_receiver_status_interval` | How often a subscription reports its position to the publisher (seconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`). 0 disables the periodic reports. | `VARCHAR` | `10s` |
+| `wal_receiver_timeout` | A subscription whose publisher sends nothing for this long drops the connection and reconnects (milliseconds without a unit). 0 disables the timeout. | `VARCHAR` | `1min` |
+| `wal_retrieve_retry_interval` | How long a failed subscription waits before it reconnects (milliseconds without a unit). | `VARCHAR` | `5s` |
+
 #### Security
 
 Authentication, authorization and what the server is allowed to reach.
@@ -343,7 +354,6 @@ Settings for the PostgreSQL and ClickHouse connectors.
 | `pg_array_as_varchar` | Read Postgres arrays as varchar - enables reading mixed dimensional arrays. | `BOOLEAN` | `off` |
 | `pg_connection_cache` | Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases. | `BOOLEAN` | `on` |
 | `pg_connection_limit` | The maximum amount of concurrent Postgres connections. This option is deprecated, instead use "SET pg_pool_max_connections = 42" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=42)" for already attached Postgres databases. | `UBIGINT` | `32` |
-| `pg_debug_show_queries` | DEBUG SETTING: print all queries sent to Postgres to stdout. | `BOOLEAN` | `off` |
 | `pg_experimental_filter_pushdown` | Whether or not to use filter pushdown. | `BOOLEAN` | `on` |
 | `pg_null_byte_replacement` | When writing NULL bytes to Postgres, replace them with the given character. | `VARCHAR` |  |
 | `pg_oauth_token` | OAuth bearer token for PostgreSQL OAUTHBEARER authentication. Takes priority over the PGOAUTHTOKEN environment variable. | `VARCHAR` |  |
@@ -476,6 +486,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `on` |
 | `search_path`                        | Sets the default catalog search path as a comma-separated list of values                               | `VARCHAR` | `"$user", public`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `session_authorization` | Sets the current session's user name. | `VARCHAR` |  |
+| `session_replication_role` | Sets the session's behavior for triggers, as in PostgreSQL: `origin` (the default) and `local` fire the triggers enabled with `ENABLE TRIGGER`, `replica` fires only those enabled with `ENABLE REPLICA TRIGGER` and skips foreign key checks; `ENABLE ALWAYS` triggers fire in every role. Only superusers may change it. The apply worker of a subscription runs as `replica`. | `VARCHAR` | `origin` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `repeatable read` |
 
 #### Logging, metrics and profiling

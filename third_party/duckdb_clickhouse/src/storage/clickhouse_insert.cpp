@@ -12,7 +12,6 @@
 #include "duckdb/planner/operator/logical_create_table.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 
-#include <absl/strings/str_cat.h>
 #include <clickhouse/client.h>
 #include <clickhouse/block.h>
 #include <clickhouse/exceptions.h>
@@ -138,9 +137,7 @@ SinkResultType ClickHouseInsert::Sink(ExecutionContext &context, DataChunk &chun
 	block.RefreshRowCount();
 
 	try {
-		ClickHouseConnection::LogQuery(
-		    absl::StrCat("INSERT INTO ", gstate.qualified_table, " (", block.GetRowCount(), " rows)"));
-		connection.GetClient().Insert(gstate.qualified_table, block);
+		connection.Insert(context.client, gstate.qualified_table, block);
 	} catch (const clickhouse::Error &e) {
 		throw IOException("ClickHouse error during INSERT into %s: %s", gstate.qualified_table, e.what());
 	}
@@ -187,9 +184,6 @@ PhysicalOperator &ClickHouseCatalog::PlanInsert(ClientContext &context, Physical
                                                 LogicalInsert &op, optional_ptr<PhysicalOperator> plan) {
 	if (op.return_chunk) {
 		throw BinderException("RETURNING clause not supported for insertion into ClickHouse table");
-	}
-	if (op.on_conflict_info.action_type != OnConflictAction::THROW) {
-		throw BinderException("ON CONFLICT clause not supported for insertion into ClickHouse table");
 	}
 	D_ASSERT(plan);
 	auto &insert = planner.Make<ClickHouseInsert>(op, op.table, op.column_index_map);

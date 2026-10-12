@@ -119,11 +119,23 @@ std::vector<std::pair<uint64_t, std::filesystem::path>> EnumerateSegments(
   const std::filesystem::path& wal_dir) {
   std::vector<std::pair<uint64_t, std::filesystem::path>> out;
   std::error_code ec;
-  if (!std::filesystem::exists(wal_dir, ec)) {
+  std::filesystem::directory_iterator entries{wal_dir, ec};
+  if (ec == std::errc::no_such_file_or_directory) {
     return out;
   }
-  for (const auto& entry : std::filesystem::directory_iterator(wal_dir, ec)) {
-    if (ec || !entry.is_regular_file(ec)) {
+  if (ec) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("cannot list search WAL directory '",
+                            wal_dir.string(), "': ", ec.message()));
+  }
+  for (const auto& entry : entries) {
+    const bool regular = entry.is_regular_file(ec);
+    if (ec) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                      ERR_MSG("cannot stat search WAL file '",
+                              entry.path().string(), "': ", ec.message()));
+    }
+    if (!regular) {
       continue;
     }
     uint64_t first_tick = 0;
@@ -404,7 +416,8 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* frame, uint64_t size) {
   try {
     _active->Sync();  // commit point
   } catch (const std::exception& e) {
-    SDB_FATAL(SEARCH, "search WAL: failed to sync a commit record: ", e.what());
+    SDB_FATAL(SEARCH, "search WAL: failed to sync a commit record: ",
+              duckdb::ErrorData{e}.RawMessage());
   }
 
   if (_active->GetTotalWritten() > _seal_threshold) {
@@ -558,6 +571,10 @@ void SearchDbWal::RunGc() {
     }
     std::error_code ec;
     std::filesystem::remove(path, ec);
+    if (ec) {
+      SDB_WARN(SEARCH, "cannot remove search WAL file '", path.string(),
+               "': ", ec.message());
+    }
   }
 }
 

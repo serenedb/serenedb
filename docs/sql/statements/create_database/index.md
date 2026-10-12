@@ -57,6 +57,8 @@ Only the owner of a database, or a member of the owning role, can drop it. A dat
 
 A transaction that wrote to a database dropped by another session fails at commit.
 
+A database that has [subscriptions](../create_subscription/index.md) cannot be dropped; drop its subscriptions first.
+
 ## See also
 
 - [ATTACH / DETACH](../attach/index.md) — attach an existing database file

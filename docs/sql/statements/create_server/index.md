@@ -117,6 +117,14 @@ INSERT INTO orders.staging.import VALUES (1, 'first');
 
 Filter pushdown applies as it does for an attachment: equality, `IN` and other supported predicates are translated into the remote query rather than filtered locally.
 
+To see the queries sent to the remote, enable the `PostgresQueryLog` or `ClickHouseQueryLog` [log type](../../../configuration/logging/index.md#list-of-available-log-types) and read them, with their durations, from `sdb_logs_parsed`:
+
+```sql
+CALL enable_logging('ClickHouseQueryLog');
+SELECT id, val FROM analytics.events.pageviews ORDER BY id;
+SELECT query, duration_ms FROM sdb_logs_parsed('ClickHouseQueryLog');
+```
+
 ## Persistence and boot replay
 
 A foreign server is stored in the catalog, so it survives a restart — including an unclean one. On boot, SereneDB replays its foreign servers and re-connects each one, so queries through the server work again without any re-`ATTACH`:

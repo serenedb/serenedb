@@ -191,7 +191,7 @@ void Server::SetupAuth() {
   // (RBAC). A role with no stored password is trusted only over loopback (see
   // the HBA loopback-gated fallback in pg_wire_session / http auth).
   _credentials = std::make_unique<CatalogCredentialProvider>();
-  SDB_INFO(GENERAL, "network auth using per-role catalog passwords");
+  SDB_DEBUG(GENERAL, "network auth using per-role catalog passwords");
 
   // The static HTTP ApiKey / Bearer credentials have no catalog store yet, so
   // they authenticate as the bootstrap superuser.
@@ -203,12 +203,12 @@ void Server::SetupAuth() {
     }
     _api_key_validator = std::make_unique<network::http::FlagApiKeyValidator>(
       _api_key.substr(0, colon), _api_key.substr(colon + 1), token_user);
-    SDB_INFO(GENERAL, "network http ApiKey auth enabled");
+    SDB_DEBUG(GENERAL, "network http ApiKey auth enabled");
   }
   if (!_bearer_token.empty()) {
     _bearer_validator = std::make_unique<network::http::FlagBearerValidator>(
       _bearer_token, token_user);
-    SDB_INFO(GENERAL, "network http Bearer auth enabled");
+    SDB_DEBUG(GENERAL, "network http Bearer auth enabled");
   }
 
   network::pg::hba::LoadPersistedHba();
@@ -303,7 +303,7 @@ void Server::AddUnixListener(const network::ListenSpec& spec) {
   }
   acceptor->Start();
   _acceptors.push_back(std::move(acceptor));
-  SDB_INFO(GENERAL, "network listening on ", spec.url,
+  SDB_INFO(STARTUP, "listening on ", spec.url,
            " (unix:", spec.unix_abstract ? "@" + spec.unix_path : path, ")");
 }
 
@@ -377,7 +377,7 @@ void Server::AddListener(const network::ListenSpec& spec) {
   }
   acceptor->Start();
   _acceptors.push_back(std::move(acceptor));
-  SDB_INFO(GENERAL, "network listening on ", spec.url, " (",
+  SDB_INFO(STARTUP, "listening on ", spec.url, " (",
            spec.endpoint.address().to_string(), ":", spec.endpoint.port(),
            ssl ? ", tls" : "", ")");
 }

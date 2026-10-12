@@ -62,7 +62,7 @@ DatabasePathFeature::DatabasePathFeature()
   if (!std::filesystem::is_directory(_directory, ec)) {
     std::filesystem::create_directories(_directory, ec);
     if (!ec) {
-      SDB_INFO(GENERAL, "Created database directory: ", _directory);
+      SDB_INFO(STARTUP, "Created database directory: ", _directory);
     } else {
       SDB_FATAL(GENERAL, "Unable to create database directory '", _directory,
                 "': ", ec.message());
@@ -77,23 +77,8 @@ DatabasePathFeature::DatabasePathFeature()
   // remains is handled by VerifyLockFile on the next start.
   std::string lock_filename =
     utils::file_utils::BuildFilename(_directory, "LOCK");
-  if (!VerifyLockFile(lock_filename.c_str())) {
-    std::string other_pid;
-    try {
-      other_pid = utils::file_utils::Slurp(lock_filename);
-    } catch (...) {
-    }
-    if (other_pid.empty()) {
-      SDB_FATAL(
-        GENERAL,
-        "failed to read/write lockfile, please check the file permissions "
-        "of the lockfile '",
-        lock_filename, "'");
-    } else {
-      SDB_FATAL(GENERAL, "database is locked by process ", other_pid,
-                "; please stop it first and check that the lockfile '",
-                lock_filename, "' goes away.");
-    }
+  if (const auto status = VerifyLockFile(lock_filename.c_str()); !status.ok()) {
+    SDB_FATAL(GENERAL, status.message());
   }
   if (std::filesystem::exists(lock_filename, ec) && !ec) {
     std::filesystem::remove(lock_filename, ec);
@@ -102,9 +87,9 @@ DatabasePathFeature::DatabasePathFeature()
                 lock_filename, "': ", ec.message());
     }
   }
-  if (!CreateLockFile(lock_filename.c_str())) {
-    SDB_FATAL(GENERAL, "failed to lock the database directory using '",
-              lock_filename, "'");
+  if (const auto status = CreateLockFile(lock_filename.c_str()); !status.ok()) {
+    SDB_FATAL(GENERAL,
+              "failed to lock the database directory: ", status.message());
   }
 
   gInstance = this;

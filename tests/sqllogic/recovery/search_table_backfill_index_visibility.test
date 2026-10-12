@@ -1,0 +1,109 @@
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE biv (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO biv SELECT i, 't' || (i % 5) FROM generate_series(1, 5000) g(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) biv;
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+connection builder
+statement async ok
+CREATE INDEX biv_idx ON biv USING inverted (tag);
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'biv'::regclass;
+----
+tuples_done
+5000
+
+connection default
+query
+SELECT count(*) AS n FROM biv WHERE tag = 't1';
+----
+n
+1000
+
+connection default
+statement error
+CREATE INDEX biv_id_idx ON biv USING inverted (tag, id);
+----
+db error: ERROR: an index build is already running on search table <slt:ignore>
+
+
+connection default
+query
+SELECT count(*) AS n FROM biv WHERE tag = 't1';
+----
+n
+1000
+
+connection default
+query
+SELECT count(*) AS n FROM biv WHERE id % 5 = 1;
+----
+n
+1000
+
+connection default
+statement ok
+DELETE FROM biv WHERE tag = 't1';
+
+connection default
+statement ok
+UPDATE biv SET tag = 'moved' WHERE tag = 't2';
+
+connection default
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) biv;
+
+connection default
+query
+SELECT count(*) FILTER (WHERE tag = 't1') AS t1,
+       count(*) FILTER (WHERE tag = 't2') AS t2,
+       count(*) FILTER (WHERE tag = 'moved') AS moved
+FROM biv;
+----
+t1	t2	moved
+0	0	1000
+
+connection default
+query
+SELECT count(*) AS n FROM biv WHERE tag = 'moved';
+----
+n
+1000
+
+connection default
+query
+SELECT count(*) AS n FROM biv_idx WHERE tag @@ 'moved';
+----
+n
+1000
+
+connection default
+query
+SELECT indexname FROM pg_indexes WHERE tablename = 'biv' ORDER BY indexname;
+----
+indexname
+biv_idx
+biv_pkey
+
+connection default
+statement ok
+DROP TABLE biv;

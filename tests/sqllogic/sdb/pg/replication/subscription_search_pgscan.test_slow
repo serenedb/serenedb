@@ -1,0 +1,106 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rsrch_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name = ''rsrch_sub''');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rsrch_pub; DROP TABLE IF EXISTS rsrch_plain, rsrch_indexed, rsrch_inv; END $$');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rsrch_plain (id int PRIMARY KEY, body text); CREATE TABLE rsrch_indexed (id int PRIMARY KEY, body text); CREATE TABLE rsrch_inv (id int PRIMARY KEY, body text); INSERT INTO rsrch_plain SELECT g, ''doc '' || g FROM generate_series(1, 100) g; INSERT INTO rsrch_indexed SELECT g, ''doc '' || g FROM generate_series(1, 100) g; INSERT INTO rsrch_inv SELECT g, ''doc '' || g FROM generate_series(1, 100) g; CREATE PUBLICATION rsrch_pub FOR TABLE rsrch_plain, rsrch_indexed, rsrch_inv; END $$');
+
+
+statement ok
+CREATE TABLE rsrch_plain (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE TABLE rsrch_indexed (id INTEGER, body TEXT) WITH (storage = 'search');
+
+
+statement ok
+CREATE INDEX rsrch_indexed_body ON rsrch_indexed USING inverted (body);
+
+
+statement ok
+CREATE TABLE rsrch_inv (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX rsrch_inv_body ON rsrch_inv USING inverted (body);
+
+
+statement ok
+CREATE SUBSCRIPTION rsrch_sub CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rsrch_pub WITH (slot_name = 'rsrch_sub');
+
+
+query ok retry 240 backoff 250ms
+SELECT count(*) FILTER (WHERE r.srsubstate = 'r') AS ready FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid WHERE c.relname LIKE 'rsrch%';
+----
+ready
+3
+
+
+query ok retry 120 backoff 250ms
+SELECT (SELECT count(*) FROM rsrch_plain) AS plain, (SELECT count(*) FROM rsrch_indexed) AS indexed, (SELECT count(*) FROM rsrch_inv) AS inv;
+----
+plain	indexed	inv
+100	100	100
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY[''rsrch_plain'', ''rsrch_indexed'', ''rsrch_inv''] LOOP EXECUTE format(''UPDATE %I SET body = ''''edited'''' WHERE id = 7'', t); EXECUTE format(''DELETE FROM %I WHERE id = 50'', t); EXECUTE format(''INSERT INTO %I SELECT g, ''''new'''' FROM generate_series(101, 103) g'', t); END LOOP; END $$');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'INSERT INTO rsrch_inv VALUES (201, ''fresh'')');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'UPDATE rsrch_inv SET body = ''changed'' WHERE id = 201');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'INSERT INTO rsrch_inv VALUES (202, ''short'')');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DELETE FROM rsrch_inv WHERE id = 202');
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rsrch_inv VALUES (203, ''one''); UPDATE rsrch_inv SET body = ''two'' WHERE id = 203; END $$');
+
+
+query ok retry 120 backoff 250ms
+SELECT 'plain' AS tbl, count(*) AS n, string_agg(id || '=' || body, ',' ORDER BY id) FILTER (WHERE id IN (7, 50) OR id > 100) AS changed FROM rsrch_plain UNION ALL SELECT 'indexed', count(*), string_agg(id || '=' || body, ',' ORDER BY id) FILTER (WHERE id IN (7, 50) OR id > 100) FROM rsrch_indexed UNION ALL SELECT 'inv', count(*), string_agg(id || '=' || body, ',' ORDER BY id) FILTER (WHERE id IN (7, 50) OR id > 100) FROM rsrch_inv ORDER BY tbl;
+----
+tbl	n	changed
+indexed	102	7=edited,101=new,102=new,103=new
+inv	104	7=edited,101=new,102=new,103=new,201=changed,203=two
+plain	102	7=edited,101=new,102=new,103=new
+
+
+query ok retry 120 backoff 250ms
+SELECT count(*) AS hits FROM rsrch_indexed WHERE body @@ 'edited';
+----
+hits
+1
+
+
+statement ok
+DROP SUBSCRIPTION rsrch_sub;
+
+
+statement ok
+CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rsrch_pub; DROP TABLE rsrch_plain, rsrch_indexed, rsrch_inv; END $$');
+
+
+statement ok
+DETACH rsrch_${__DATABASE__};

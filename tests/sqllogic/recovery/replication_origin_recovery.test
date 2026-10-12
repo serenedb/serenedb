@@ -1,0 +1,91 @@
+control substitution on
+
+statement ok
+SELECT pg_replication_origin_drop(roname) FROM pg_replication_origin WHERE roname IN ('rorec_advanced', 'rorec_xact', 'rorec_dropped');
+
+statement ok
+SELECT pg_replication_origin_create('rorec_advanced');
+
+statement ok
+SELECT pg_replication_origin_create('rorec_xact');
+
+statement ok
+SELECT pg_replication_origin_create('rorec_dropped');
+
+statement ok
+SELECT pg_replication_origin_advance('rorec_advanced', '0/9000');
+
+statement ok
+SELECT pg_replication_origin_advance('rorec_advanced', '0/4000');
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT pg_replication_origin_advance('rorec_advanced', '0/F000');
+
+statement ok
+ROLLBACK;
+
+statement ok
+SELECT pg_replication_origin_drop('rorec_dropped');
+
+statement ok
+CREATE TABLE rorec_rows (id INTEGER);
+
+statement ok
+SELECT pg_replication_origin_session_setup('rorec_xact');
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT pg_replication_origin_xact_setup('0/7000', now());
+
+statement ok
+INSERT INTO rorec_rows VALUES (1);
+
+statement ok
+COMMIT;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT roname, pg_replication_origin_progress(roname, true) AS lsn FROM pg_replication_origin WHERE roname LIKE 'rorec%' ORDER BY roname;
+----
+roname	lsn
+rorec_advanced	0/4000
+rorec_xact	0/7000
+
+connection after_crash
+query
+SELECT pg_replication_origin_session_is_setup() AS setup, (SELECT count(*) FROM rorec_rows) AS n;
+----
+setup	n
+f	1
+
+connection after_crash
+statement ok
+SELECT pg_replication_origin_session_setup('rorec_xact');
+
+connection after_crash
+statement ok
+SELECT pg_replication_origin_session_reset();
+
+connection after_crash
+statement ok
+SELECT pg_replication_origin_drop('rorec_advanced');
+
+connection after_crash
+statement ok
+SELECT pg_replication_origin_drop('rorec_xact');
+
+connection after_crash
+statement ok
+DROP TABLE rorec_rows;

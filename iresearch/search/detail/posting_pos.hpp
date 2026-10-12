@@ -23,7 +23,6 @@
 #include <algorithm>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/block_index.hpp"
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"

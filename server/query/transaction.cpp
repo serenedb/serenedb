@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -240,7 +241,8 @@ void Transaction::Commit() {
     } catch (const std::exception& e) {
       _search_txn->Abort();
       Destroy();
-      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ", e.what()));
+      THROW_SQL_ERROR(ERR_MSG("Failed to commit search-table WAL: ",
+                              duckdb::ErrorData{e}.RawMessage()));
     }
   }
 
@@ -296,7 +298,10 @@ const duckdb::Vector& Transaction::FeedColumn(
 void Transaction::RefreshCreatedIndexes(duckdb::idx_t database) {
   for (const auto& [owner, storage] : _created_indexes) {
     if (owner == database) {
-      storage->Refresh();
+      if (const auto status = storage->Refresh(); !status.ok()) {
+        SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
+                 "' after its creation committed failed: ", status.message());
+      }
     }
   }
 }

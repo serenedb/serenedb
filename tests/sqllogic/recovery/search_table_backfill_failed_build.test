@@ -1,24 +1,9 @@
 # A search-table CREATE INDEX whose backfill FAILS without crashing.
 # Requires SDB_FAULT_INJECTION.
 #
-# Three things have to hold, and only the third needs a test to prove it.
-#
-# The planner can never serve a half-built index. The direct scan (FROM <idx>)
-# needs the catalog entry, which is uncommitted for the whole build; and
-# base-table pushdown resolves config entries by COLUMN id
-# (iresearch_plan.cpp, `config->find(field_id)` where field_id == col_id),
-# while a declared index's terms live under a separately allocated catalog oid,
-# so that road cannot reach them however far the build got.
-#
-# The shard's merged config is NOT transactional -- MergeIndexConfig applies it
-# immediately under the catalog mutex -- but SereneDBIndexEntry::Rollback calls
-# DropIndexArtifacts with a null context, so the deferred action runs inline
-# during the rollback and RebuildIndexConfig drops the dead term field.
-#
-# The third is what this pins: a failed build must release the build claim, the
-# compaction floor and the delete log, all of which are RAII and all of which
-# would silently break the NEXT attempt if any leaked. A retry that succeeds is
-# the assertion.
+# A failed build must release the build claim, the compaction floor and the
+# delete log, all of which are RAII and all of which would silently break the
+# NEXT attempt if any leaked. A retry that succeeds is the assertion.
 
 statement ok
 RESET sdb_faults;

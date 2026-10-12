@@ -264,6 +264,8 @@ struct RangeArgs {
 // All Parse*/Fill*/Extract*/Flatten*/Attach*/Emit* helpers below throw
 // THROW_SQL_ERROR on any failure -- callers don't need to wrap.
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func);
+// Phrase-part ranges compare verbatim bounds against indexed terms.
+// Standalone ranges instead analyze each bound with the column's tokenizer.
 void FillByRangeOptionsVarchar(const RangeArgs& args, irs::ByRangeOptions& out);
 
 // ts_levenshtein-as-part dispatch.

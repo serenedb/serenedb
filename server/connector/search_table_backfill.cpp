@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -250,12 +251,6 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
   size_t next = 0;
 };
 
-enum class SwapResult {
-  Swapped,
-  Failed,
-  Truncated,
-};
-
 // Rewrites one group of stale segments into fresh ones and swaps them in.
 // False once a truncate the snapshot misses stops the build.
 bool RebuildGroup(duckdb::ClientContext& context,
@@ -321,33 +316,36 @@ bool RebuildGroup(duckdb::ClientContext& context,
   SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
 
   bool truncated = false;
-  const bool replaced_ok = shard.ReplaceSegments(
-    replaced, adopted, [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
-      auto [rowids, truncate_tick] = shard.DrainDeleteLog();
-      if (truncate_tick > snapshot_tick) {
-        truncated = true;
-        return false;
-      }
-      removal = MakeRemoval(std::move(rowids));
-      return true;
-    });
-  const auto swapped = truncated     ? SwapResult::Truncated
-                       : replaced_ok ? SwapResult::Swapped
-                                     : SwapResult::Failed;
-  // Need explicit call here so on Publish we don't have pending transactions.
-  abort_all();
-  if (swapped == SwapResult::Truncated) {
-    Publish(shard);
-    return false;
-  }
-  if (swapped == SwapResult::Failed) {
-    // A source going missing is tolerated (it means everything in it was
-    // deleted), so what is left here is a codec or meta-file failure.
+  try {
+    shard.ReplaceSegments(
+      replaced, adopted,
+      [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
+        auto [rowids, truncate_tick] = shard.DrainDeleteLog();
+        if (truncate_tick > snapshot_tick) {
+          truncated = true;
+          return false;
+        }
+        removal = MakeRemoval(std::move(rowids));
+        return true;
+      });
+  } catch (const irs::SqlException& e) {
+    THROW_SQL_ERROR(
+      ERR_CODE(e.error().errcode),
+      ERR_MSG("search-table build: failed to swap in the rebuilt segments on "
+              "table ",
+              target.table_id, ": ", e.message()));
+  } catch (const std::exception& e) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INTERNAL_ERROR),
       ERR_MSG("search-table build: failed to swap in the rebuilt segments on "
               "table ",
-              target.table_id));
+              target.table_id, ": ", duckdb::ErrorData{e}.RawMessage()));
+  }
+  // Need explicit call here so on Publish we don't have pending transactions.
+  abort_all();
+  if (truncated) {
+    Publish(shard);
+    return false;
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
   Publish(shard);
@@ -361,14 +359,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress) {
   SDB_ASSERT(target.shard);
   auto& shard = *target.shard;
-
-  search::SearchTable::BuildClaim claim{shard};
-  if (!claim.Claimed()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                    ERR_MSG("an index build is already running on search "
-                            "table ",
-                            target.table_id));
-  }
+  SDB_ASSERT(shard.BuildInFlight(),
+             "RunSearchTableBackfill requires a held BuildClaim");
   const auto cancelled = [&] { return context.IsInterrupted(); };
 
   // The statement pinned a reader of this shard at bind time and only drops it

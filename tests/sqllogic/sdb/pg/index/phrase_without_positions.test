@@ -1659,6 +1659,101 @@ statement ok
 DROP TABLE pwp_lists
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY pwp_list_synonyms AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pwp_list_synonyms_pos AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE pwp_synonym_lists (id INTEGER PRIMARY KEY, tags VARCHAR[])
+
+statement ok
+INSERT INTO pwp_synonym_lists VALUES
+    (1, ['red', 'car parked']),
+    (2, ['red automobile', 'here']),
+    (3, ['auto', 'red']),
+    (4, ['red', 'paint', 'car']),
+    (5, [NULL, 'big red', 'auto']),
+    (6, ['red car', 'red']),
+    (7, NULL),
+    (8, [])
+
+statement ok
+CREATE INDEX pwp_synonym_lists_text ON pwp_synonym_lists USING inverted (id, tags pwp_list_synonyms) INCLUDE (tags)
+
+statement ok
+CREATE INDEX pwp_synonym_lists_pos ON pwp_synonym_lists USING inverted (id, tags pwp_list_synonyms_pos)
+
+statement ok
+VACUUM (REFRESH_TABLE) pwp_synonym_lists
+
+query
+SELECT id FROM pwp_synonym_lists_text WHERE tags @@ ts_phrase('red auto') ORDER BY id
+----
+id
+1
+2
+5
+6
+
+query
+SELECT id FROM pwp_synonym_lists_pos WHERE tags @@ ts_phrase('red auto') ORDER BY id
+----
+id
+1
+2
+5
+6
+
+query
+SELECT id FROM pwp_synonym_lists_text WHERE tags @@ ts_phrase('red auto') OR id = 0 ORDER BY id
+----
+id
+1
+2
+5
+6
+
+query
+SELECT id FROM pwp_synonym_lists_text WHERE tags @@ ts_phrase('auto red') ORDER BY id
+----
+id
+3
+6
+
+query
+SELECT id FROM pwp_synonym_lists_pos WHERE tags @@ ts_phrase('auto red') ORDER BY id
+----
+id
+3
+6
+
+query
+SELECT id FROM pwp_synonym_lists_text WHERE tags @@ ts_phrase('red car parked') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM pwp_synonym_lists_pos WHERE tags @@ ts_phrase('red car parked') ORDER BY id
+----
+id
+1
+
+statement ok
+DROP TABLE pwp_synonym_lists
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pwp_list_synonyms
+
+statement ok
+DROP TEXT SEARCH DICTIONARY pwp_list_synonyms_pos
+
+statement ok
 CREATE TEXT SEARCH DICTIONARY pwp_norm AS split_text(case := 'lower') WITH (frequency, norm)
 
 statement ok

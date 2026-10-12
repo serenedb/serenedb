@@ -35,7 +35,7 @@ Targeting a specific table, optionally with a column list, is also accepted and 
 
 ## Inverted Index Maintenance
 
-SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into three families.
+SereneDB extends `VACUUM` with options that maintain [inverted indexes](../create_index/index.md). A statement takes **at most one** of these options, and an extension option cannot be combined with standard options such as `ANALYZE`. The options fall into four families.
 
 ### Refreshing -- `REFRESH_*`
 
@@ -55,6 +55,19 @@ While `COMPACT_*` works on a table or an index, its background merges pause: tho
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_011" />
 
+### Optimizing -- `OPTIMIZE_*`
+
+`OPTIMIZE_*` brings a search table or an inverted index into the shape that serves queries best, without choosing a segment count:
+
+<SqlLogicTest id="sql/statements/vacuum/index/example_012" />
+
+- **About as many segments as query threads.** A column scan spreads one segment over many threads, but index work (term lookups, wildcard and prefix expansion, dictionary enumeration) uses one thread per segment, so the target is the number of threads the server runs queries on. A small table gets fewer, so that every segment holds at least four row groups (`row_group_size`) of rows.
+- **Contiguous and balanced.** The segments, in the order their rows were written, are split into runs of about as many live rows each, and each run is merged into one segment, so a filter on insertion order skips whole segments.
+- **No deleted rows.** A segment with deleted rows is rewritten even when the table already has no more segments than the target.
+- **Idempotent.** A second `OPTIMIZE_*` on an unchanged table merges nothing. Merges only combine segments, so a segment already larger than its share stays as it is.
+
+Background merges pause and resume, and cancelling works, as for `COMPACT_*`. [`sdb_compact(mode := 'optimize')`](../../indexes/inverted/maintenance.md#sdb-compact) shows what an optimize would merge, or runs it with a given segment count.
+
 ### Recomputing statistics -- `RECOMPUTE_STATS_*`
 
 `RECOMPUTE_STATS_*` recomputes the index statistics used for relevance scoring and planning:
@@ -65,13 +78,13 @@ While `COMPACT_*` works on a table or an index, its background merges pause: tho
 
 Each option applies at the scope named by its suffix and takes the matching object name as its argument:
 
-| Scope | `REFRESH` | `COMPACT` | `RECOMPUTE_STATS` | Argument |
-|---|---|---|---|---|
-| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | -- | index name |
-| Table | `REFRESH_TABLE` | `COMPACT_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
-| Schema | `REFRESH_SCHEMA` | `COMPACT_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
-| Database | `REFRESH_DATABASE` | `COMPACT_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
-| Everything | `REFRESH_ALL` | `COMPACT_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
+| Scope | `REFRESH` | `COMPACT` | `OPTIMIZE` | `RECOMPUTE_STATS` | Argument |
+|---|---|---|---|---|---|
+| Index | `REFRESH_INDEX` | `COMPACT_INDEX` | `OPTIMIZE_INDEX` | -- | index name |
+| Table | `REFRESH_TABLE` | `COMPACT_TABLE` | `OPTIMIZE_TABLE` | `RECOMPUTE_STATS_TABLE` | table name |
+| Schema | `REFRESH_SCHEMA` | `COMPACT_SCHEMA` | `OPTIMIZE_SCHEMA` | `RECOMPUTE_STATS_SCHEMA` | `[database.]schema` |
+| Database | `REFRESH_DATABASE` | `COMPACT_DATABASE` | `OPTIMIZE_DATABASE` | `RECOMPUTE_STATS_DATABASE` | database name |
+| Everything | `REFRESH_ALL` | `COMPACT_ALL` | `OPTIMIZE_ALL` | `RECOMPUTE_STATS_ALL` | *(none)* |
 
 `RECOMPUTE_STATS` additionally accepts a column scope, `RECOMPUTE_STATS_COLUMN`, whose argument is `[schema.]table.column`.
 

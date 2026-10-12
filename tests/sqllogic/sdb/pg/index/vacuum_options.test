@@ -268,6 +268,26 @@ statement ok
 VACUUM (COMPACT_DATABASE) ${__DATABASE__};
 
 
+statement ok
+VACUUM (OPTIMIZE_INDEX) docs_idx;
+
+
+statement ok
+VACUUM (OPTIMIZE_TABLE) public.docs;
+
+
+statement ok
+VACUUM (OPTIMIZE_SCHEMA) public;
+
+
+statement ok
+VACUUM (OPTIMIZE_SCHEMA) ${__DATABASE__}.s2;
+
+
+statement ok
+VACUUM (OPTIMIZE_DATABASE) ${__DATABASE__};
+
+
 # Query results survive compaction at every scope.
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('theta');
@@ -369,6 +389,18 @@ db error: ERROR: VACUUM (compact_database) requires an object name
 
 
 statement error
+VACUUM (OPTIMIZE_TABLE);
+----
+db error: ERROR: VACUUM (optimize_table) requires an object name
+
+
+statement error
+VACUUM (OPTIMIZE_TABLE, COMPACT_TABLE) docs;
+----
+db error: ERROR: VACUUM accepts at most one SereneDB option (got both 'optimize_table' and 'compact_table')
+
+
+statement error
 VACUUM (RECOMPUTE_STATS_TABLE);
 ----
 db error: ERROR: VACUUM (recompute_stats_table) requires an object name
@@ -395,6 +427,12 @@ db error: ERROR: VACUUM (compact_all) does not take an argument
 
 
 statement error
+VACUUM (OPTIMIZE_ALL) docs;
+----
+db error: ERROR: VACUUM (optimize_all) does not take an argument
+
+
+statement error
 VACUUM (RECOMPUTE_STATS_ALL) docs;
 ----
 db error: ERROR: VACUUM (recompute_stats_all) does not take an argument
@@ -405,25 +443,25 @@ db error: ERROR: VACUUM (recompute_stats_all) does not take an argument
 statement error
 VACUUM (REFRESH_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) expects a single database name
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|OPTIMIZE_DATABASE) expects a single database name
 
 
 statement error
 VACUUM (COMPACT_DATABASE) ${__DATABASE__}.public;
 ----
-db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) expects a single database name
+db error: ERROR: VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|OPTIMIZE_DATABASE) expects a single database name
 
 
 statement error
 VACUUM (REFRESH_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|OPTIMIZE_SCHEMA) expects [<database>.]<schema>
 
 
 statement error
 VACUUM (COMPACT_SCHEMA) ${__DATABASE__}.public.docs;
 ----
-db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects [<database>.]<schema>
+db error: ERROR: VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|OPTIMIZE_SCHEMA) expects [<database>.]<schema>
 
 
 # Catalog lookup failures, one per scope.

@@ -487,7 +487,7 @@ void SearchTable::VacuumRefresh() {
   CleanupUnsafe();
 }
 
-void SearchTable::VacuumCompact(uint32_t target_segments,
+void SearchTable::VacuumCompact(MergeMode mode, uint32_t target_segments,
                                 const irs::MergeWriter::FlushProgress& progress,
                                 irs::MergeExecutor* executor) {
   const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
@@ -496,8 +496,9 @@ void SearchTable::VacuumCompact(uint32_t target_segments,
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   const auto plan =
     PlanMergeRound(_writer->GetSnapshot(),
-                   MergeRoundRequest{.mode = MergeMode::Compact,
-                                     .target_segments = target_segments});
+                   MergeRoundRequest{.mode = mode,
+                                     .target_segments = target_segments,
+                                     .row_group_size = _row_group_size});
   for (const auto& planned : plan.merges) {
     if (!progress()) {
       break;

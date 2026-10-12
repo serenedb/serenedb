@@ -77,6 +77,7 @@ Each operation comes in a family scoped to a single index, a table, a schema, a 
 |---|---|---|
 | Refresh | `REFRESH_INDEX` · `REFRESH_TABLE` · `REFRESH_SCHEMA` · `REFRESH_DATABASE` · `REFRESH_ALL` | Publish pending writes to readers |
 | Compact | `COMPACT_INDEX` · `COMPACT_TABLE` · `COMPACT_SCHEMA` · `COMPACT_DATABASE` · `COMPACT_ALL` | Merge segments to reclaim space and speed queries |
+| Optimize | `OPTIMIZE_INDEX` · `OPTIMIZE_TABLE` · `OPTIMIZE_SCHEMA` · `OPTIMIZE_DATABASE` · `OPTIMIZE_ALL` | Merge segments into the shape that serves queries best: about one segment per query thread, contiguous, balanced and without deleted rows (see [VACUUM](../../statements/vacuum/index.md)) |
 | Recompute statistics | `RECOMPUTE_STATS_COLUMN` · `RECOMPUTE_STATS_TABLE` · `RECOMPUTE_STATS_SCHEMA` · `RECOMPUTE_STATS_DATABASE` · `RECOMPUTE_STATS_ALL` | Rebuild the term statistics used by relevance scoring and planning |
 
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_002" />
@@ -94,6 +95,7 @@ Recompute statistics after large changes in data distribution so that [relevance
 | `background` (default) | What one round of background compaction would merge, following the table's `compaction_*` options, even when background compaction is disabled |
 | `compact` | What `VACUUM (COMPACT_TABLE)` or `VACUUM (COMPACT_INDEX)` would merge: `target_segments` groups for a search table (default: the `sdb_compact_target_segments` setting), one segment for an index |
 | `segments` | Exactly the segments named in `segments := ['...', ...]`, as `sdb_segments` lists them |
+| `optimize` | The shape that serves queries best: about as many segments as the server has query threads, each a contiguous range of rows, balanced by live documents and without deleted documents. A small relation gets fewer, so that every segment holds at least four row groups (`row_group_size`) of rows; `target_segments` sets the count instead. A segment with deletes is rewritten even when the relation already has no more segments than the target, and a second run finds nothing to do. Merges only combine segments, so a segment already larger than its share stays as it is |
 
 Each result row describes one merge:
 
@@ -112,7 +114,7 @@ Each result row describes one merge:
 | Line | Meaning |
 |---|---|
 | `Segments`, `Merges` | Segments of the relation and merges planned |
-| `Merge N` | How many segments the merge combines into one, and why: `tier policy` or `adjacent policy` for `background`, `compact to N segments` for `compact`, `listed segments` for `segments` |
+| `Merge N` | How many segments the merge combines into one, and why: `tier policy` or `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
 | `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |

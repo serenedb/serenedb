@@ -51,6 +51,7 @@
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
+#include "search/compaction/merge_planner.h"
 #include "search/compaction/task_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
@@ -71,6 +72,7 @@ enum class Scope : uint8_t {
 enum class Action : uint8_t {
   Refresh,
   Compact,
+  Optimize,
   RecomputeStats,
 };
 
@@ -91,6 +93,11 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"compact_table", {Action::Compact, Scope::Table}},
     {"compact_index", {Action::Compact, Scope::Index}},
     {"compact_all", {Action::Compact, Scope::All}},
+    {"optimize_database", {Action::Optimize, Scope::Database}},
+    {"optimize_schema", {Action::Optimize, Scope::Schema}},
+    {"optimize_table", {Action::Optimize, Scope::Table}},
+    {"optimize_index", {Action::Optimize, Scope::Index}},
+    {"optimize_all", {Action::Optimize, Scope::All}},
     {"recompute_stats_table", {Action::RecomputeStats, Scope::Table}},
     {"recompute_stats_schema", {Action::RecomputeStats, Scope::Schema}},
     {"recompute_stats_database", {Action::RecomputeStats, Scope::Database}},
@@ -171,8 +178,9 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
     case Scope::Database: {
       if (!bind.schema.empty() || !bind.catalog.empty()) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                        ERR_MSG("VACUUM (REFRESH_DATABASE|COMPACT_DATABASE) "
-                                "expects a single database name"));
+                        ERR_MSG("VACUUM (REFRESH_DATABASE|COMPACT_DATABASE|"
+                                "OPTIMIZE_DATABASE) expects a single database "
+                                "name"));
       }
       out.database = bind.name;
     } break;
@@ -180,8 +188,8 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
       if (!bind.catalog.empty()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
-          ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA) expects "
-                  "[<database>.]<schema>"));
+          ERR_MSG("VACUUM (REFRESH_SCHEMA|COMPACT_SCHEMA|OPTIMIZE_SCHEMA) "
+                  "expects [<database>.]<schema>"));
       }
       out.database = bind.schema;
       out.schema = bind.name;
@@ -244,13 +252,42 @@ std::vector<duckdb::reference<duckdb::Catalog>> AttachedDatabases(
   return out;
 }
 
-void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
+uint32_t QueryThreads(duckdb::ClientContext& context) {
+  return static_cast<uint32_t>(
+    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
+}
+
+std::vector<irs::CompactionPolicy> IndexMergePolicies(
+  Action action, search::InvertedIndexStorage& inverted,
+  const irs::IndexFieldOptions& field_options, duckdb::ClientContext& context) {
+  if (action == Action::Compact) {
+    return {irs::index_utils::MakePolicy(
+      irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()})};
+  }
+  const auto plan = search::PlanMergeRound(
+    inverted.GetInvertedIndexSnapshot()->reader,
+    search::MergeRoundRequest{.mode = search::MergeMode::Optimize,
+                              .target_segments = QueryThreads(context),
+                              .row_group_size = field_options.row_group_size});
+  std::vector<irs::CompactionPolicy> policies;
+  policies.reserve(plan.merges.size());
+  for (const auto& planned : plan.merges) {
+    std::vector<std::string> names;
+    names.reserve(planned.inputs.size());
+    for (const auto& segment : planned.inputs) {
+      names.emplace_back(segment.name);
+    }
+    policies.emplace_back(search::ExplicitPolicy(names));
+  }
+  return policies;
+}
+
+void CompactInvertedStorage(Action action,
+                            search::InvertedIndexStorage& inverted,
                             const irs::IndexFieldOptions& field_options,
                             duckdb::ClientContext& context,
                             pg::ProgressMetrics* progress,
                             irs::MergeExecutor& executor) {
-  static const auto kPolicy = irs::index_utils::MakePolicy(
-    irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()});
   // Fired by the merge every ~16k docs: feeds the sub-index progress counter
   // and aborts the merge on user cancellation.
   const irs::MergeWriter::FlushProgress tick = [&context, progress] {
@@ -264,20 +301,23 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
   const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
 
   inverted.Refresh();
-  bool empty_compaction = false;
-  // The merge encodes against the index definition the step captured, which
-  // the step holds for the whole call.
-  const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-    kPolicy, tick, empty_compaction, &field_options, env_ptr,
-    search::MergeOrigin::Vacuum, nullptr, &executor));
-  context.InterruptCheck();
-  context.DeadlineCheck();
-  if (!res.ok()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INTERNAL_ERROR),
-      ERR_MSG("compact_index: compaction failed: ", res.message()));
+  for (const auto& policy :
+       IndexMergePolicies(action, inverted, field_options, context)) {
+    bool empty_compaction = false;
+    // The merge encodes against the index definition the step captured,
+    // which the step holds for the whole call.
+    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
+      policy, tick, empty_compaction, &field_options, env_ptr,
+      search::MergeOrigin::Vacuum, nullptr, &executor));
+    context.InterruptCheck();
+    context.DeadlineCheck();
+    if (!res.ok()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("compact_index: compaction failed: ", res.message()));
+    }
+    inverted.Refresh();
   }
-  inverted.Refresh();
 }
 
 // One unit of inverted-index maintenance: either an index refresh/compaction
@@ -357,8 +397,9 @@ void DispatchInverted(duckdb::ClientContext& context,
                       pg::ProgressMetrics* progress) {
   std::vector<InvertedStep> steps;
 
-  const std::string_view verb =
-    action == Action::Refresh ? "refresh" : "compact";
+  const std::string_view verb = action == Action::Refresh   ? "refresh"
+                                : action == Action::Compact ? "compact"
+                                                            : "optimize";
   auto walk = [&](duckdb::Catalog& database, std::string_view schema) {
     for (const duckdb::TableCatalogEntry& table :
          CollectMaintainTargets(context, database, schema)) {
@@ -489,8 +530,8 @@ void DispatchInverted(duckdb::ClientContext& context,
         }
         step.storage->Refresh(report);
       } else {
-        CompactInvertedStorage(*step.storage, *step.field_options, context,
-                               progress, executor);
+        CompactInvertedStorage(action, *step.storage, *step.field_options,
+                               context, progress, executor);
       }
       if (progress) {
         pg::ProgressMetrics::Add(progress->items_processed, 1);
@@ -502,8 +543,10 @@ void DispatchInverted(duckdb::ClientContext& context,
       } else {
         static constinit SettingRef gTargetSegments{
           "sdb_compact_target_segments"};
+        const bool optimize = action == Action::Optimize;
         search->VacuumCompact(
-          gTargetSegments.Int(context),
+          optimize ? search::MergeMode::Optimize : search::MergeMode::Compact,
+          optimize ? QueryThreads(context) : gTargetSegments.Int(context),
           [&context] { return StatementRunning(context); }, &executor);
         context.InterruptCheck();
         context.DeadlineCheck();
@@ -673,6 +716,7 @@ void VacuumExecute(duckdb::ClientContext& context,
   switch (verb->action) {
     case Action::Refresh:
     case Action::Compact:
+    case Action::Optimize:
       DispatchInverted(context, conn_ctx, verb->action, verb->scope, target,
                        progress);
       break;

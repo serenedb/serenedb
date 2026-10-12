@@ -86,6 +86,7 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
     target._table = search->Storage();
     target._relation_id = search->oid;
     target._name = QualifiedDisplayName(*search);
+    target._row_group_size = target._table->Config()->row_group_size;
     table = search;
   } else if (auto index_entry = duckdb::Catalog::GetEntry(
                context,
@@ -110,10 +111,12 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
       target._index = inverted->Storage();
       target._relation_id = inverted->oid;
       target._name = QualifiedDisplayName(*inverted);
+      target._row_group_size = inverted->Config()->row_group_size;
     } else if (inverted->SearchStore() && owner) {
       target._table = inverted->SearchStore();
       target._relation_id = owner->oid;
       target._name = QualifiedDisplayName(*owner);
+      target._row_group_size = target._table->Config()->row_group_size;
     }
   }
 

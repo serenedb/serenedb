@@ -128,3 +128,14 @@ VACUUM (COMPACT_TABLE) docs_store;
 
 statement ok
 RESET sdb_compact_target_segments;
+
+# DOCS_TEST: example_012
+statement ok
+DROP TABLE IF EXISTS events;
+
+statement ok
+CREATE TABLE events (id INTEGER PRIMARY KEY, body VARCHAR) WITH (storage = 'search');
+
+# DOCS_TEST_BODY
+statement ok
+VACUUM (OPTIMIZE_TABLE) events;

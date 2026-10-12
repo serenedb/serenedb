@@ -125,14 +125,8 @@ void PlanBackground(const irs::IndexReader& reader,
   }
 }
 
-void PlanCompact(const irs::IndexReader& reader,
-                 const MergeRoundRequest& request, MergeRoundPlan& plan) {
-  const auto target =
-    request.single_output ? 1U : std::max<uint32_t>(1, request.target_segments);
-  if (reader.size() <= target) {
-    plan.notes.emplace_back(absl::StrCat("already at most ", Segments(target)));
-    return;
-  }
+void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
+                   std::string_view reason, MergeRoundPlan& plan) {
   struct Placed {
     const irs::SubReader* segment;
     int64_t first_row;
@@ -169,8 +163,10 @@ void PlanCompact(const irs::IndexReader& reader,
     buckets[group].emplace_back(placed.segment);
     taken += placed.live_docs;
   }
-  const auto reason = absl::StrCat("compact to ", Segments(target));
   for (const auto& bucket : buckets) {
+    if (bucket.empty()) {
+      continue;
+    }
     if (bucket.size() == 1 && !HasDeletes(*bucket.front())) {
       plan.skipped.emplace_back(SkippedSegment{
         .name = bucket.front()->Meta().name,
@@ -178,8 +174,31 @@ void PlanCompact(const irs::IndexReader& reader,
       });
       continue;
     }
-    plan.merges.emplace_back(DescribeMerge(reason, bucket));
+    plan.merges.emplace_back(DescribeMerge(std::string{reason}, bucket));
   }
+}
+
+void PlanCompact(const irs::IndexReader& reader,
+                 const MergeRoundRequest& request, MergeRoundPlan& plan) {
+  const auto target =
+    request.single_output ? 1U : std::max<uint32_t>(1, request.target_segments);
+  if (reader.size() <= target) {
+    plan.notes.emplace_back(absl::StrCat("already at most ", Segments(target)));
+    return;
+  }
+  PlaceInGroups(reader, target, absl::StrCat("compact to ", Segments(target)),
+                plan);
+}
+
+void PlanOptimize(const irs::IndexReader& reader,
+                  const MergeRoundRequest& request, MergeRoundPlan& plan) {
+  const auto by_size =
+    reader.live_docs_count() /
+    std::max<uint64_t>(1, kOptimizeRowGroups * request.row_group_size);
+  const auto target = static_cast<uint32_t>(std::clamp<uint64_t>(
+    by_size, 1, std::max<uint32_t>(1, request.target_segments)));
+  PlaceInGroups(reader, target, absl::StrCat("optimize to ", Segments(target)),
+                plan);
 }
 
 void PlanSegments(const irs::IndexReader& reader,
@@ -209,13 +228,15 @@ std::string_view MergeModeName(MergeMode mode) noexcept {
       return "compact";
     case MergeMode::Segments:
       return "segments";
+    case MergeMode::Optimize:
+      return "optimize";
   }
   return "unknown";
 }
 
 std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept {
-  for (const auto mode :
-       {MergeMode::Background, MergeMode::Compact, MergeMode::Segments}) {
+  for (const auto mode : {MergeMode::Background, MergeMode::Compact,
+                          MergeMode::Segments, MergeMode::Optimize}) {
     if (MergeModeName(mode) == name) {
       return mode;
     }
@@ -261,6 +282,9 @@ MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
       break;
     case MergeMode::Segments:
       PlanSegments(reader, request, plan);
+      break;
+    case MergeMode::Optimize:
+      PlanOptimize(reader, request, plan);
       break;
   }
   return plan;

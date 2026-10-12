@@ -37,7 +37,10 @@ enum class MergeMode : uint8_t {
   Background = 0,
   Compact,
   Segments,
+  Optimize,
 };
+
+inline constexpr uint64_t kOptimizeRowGroups = 4;
 
 std::string_view MergeModeName(MergeMode mode) noexcept;
 std::optional<MergeMode> ParseMergeMode(std::string_view name) noexcept;
@@ -85,6 +88,7 @@ struct MergeRoundRequest {
   const TasksSettings* settings = nullptr;
   size_t merges = 1;
   uint32_t target_segments = 1;
+  uint32_t row_group_size = 0;
   bool single_output = false;
   std::span<const std::string> segments{};
 };

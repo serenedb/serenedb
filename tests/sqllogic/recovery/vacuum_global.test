@@ -139,6 +139,17 @@ statement ok
 VACUUM (COMPACT_ALL);
 
 
+statement ok
+VACUUM (OPTIMIZE_ALL);
+
+
+query
+SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
+----
+count
+3
+
+
 query
 SELECT count(*) FROM public.docs_idx WHERE body @@ ts_phrase('beta');
 ----

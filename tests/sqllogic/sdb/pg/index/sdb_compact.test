@@ -274,7 +274,7 @@ db error: ERROR: sdb_segments requires a relation name
 statement error
 SELECT * FROM sdb_compact('sdbc', mode := 'sideways')
 ----
-db error: ERROR: unknown sdb_compact mode "sideways": expected background, compact or segments
+db error: ERROR: unknown sdb_compact mode "sideways": expected background, compact, optimize or segments
 
 
 statement error
@@ -292,7 +292,7 @@ db error: ERROR: sdb_compact segments requires mode segments
 statement error
 SELECT * FROM sdb_compact('sdbc', target_segments := 2)
 ----
-db error: ERROR: sdb_compact target_segments requires mode compact
+db error: ERROR: sdb_compact target_segments requires mode compact or optimize
 
 
 statement error

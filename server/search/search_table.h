@@ -61,6 +61,8 @@
 
 namespace sdb::search {
 
+enum class MergeMode : uint8_t;
+
 class SearchTable final : public std::enable_shared_from_this<SearchTable> {
  public:
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
@@ -230,9 +232,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   StoreStats GetStats() const;
 
-  // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   void VacuumRefresh();
-  void VacuumCompact(uint32_t target_segments,
+  void VacuumCompact(MergeMode mode, uint32_t target_segments,
                      const irs::MergeWriter::FlushProgress& progress,
                      irs::MergeExecutor* executor = nullptr);
 

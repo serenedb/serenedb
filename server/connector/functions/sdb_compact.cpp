@@ -26,6 +26,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -77,9 +78,10 @@ search::MergeMode ReadMode(const duckdb::TableFunctionBindInput& input) {
   if (const auto mode = search::ParseMergeMode(name)) {
     return *mode;
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                  ERR_MSG("unknown sdb_compact mode \"", name,
-                          "\": expected background, compact or segments"));
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("unknown sdb_compact mode \"", name,
+            "\": expected background, compact, optimize or segments"));
 }
 
 std::optional<uint32_t> ReadTargetSegments(
@@ -118,10 +120,11 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("sdb_compact segments requires mode segments"));
   }
-  if (mode != search::MergeMode::Compact && target_segments) {
+  if (mode != search::MergeMode::Compact &&
+      mode != search::MergeMode::Optimize && target_segments) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("sdb_compact target_segments requires mode compact"));
+      ERR_MSG("sdb_compact target_segments requires mode compact or optimize"));
   }
 
   auto target = MergeTarget::Resolve(context, relation);
@@ -135,11 +138,17 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     }
   }
   const auto& settings = target.Settings();
+  const auto default_target =
+    mode == search::MergeMode::Optimize
+      ? static_cast<uint32_t>(
+          duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads())
+      : gTargetSegments.Int(context);
   search::MergeRoundRequest request{
     .mode = mode,
     .settings = &settings,
     .merges = search::GetSearchEngine().MergeRoundSize(),
-    .target_segments = target_segments.value_or(gTargetSegments.Int(context)),
+    .target_segments = target_segments.value_or(default_target),
+    .row_group_size = target.RowGroupSize(),
     .single_output = target.IsIndex(),
     .segments = segments,
   };

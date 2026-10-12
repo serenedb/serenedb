@@ -1,0 +1,429 @@
+statement ok
+SET profiling_renderer_settings = {'deterministic': true}
+
+
+statement ok
+CREATE TABLE opt (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(8193, 12288) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(12289, 16384) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(16385, 20480) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(20481, 24576) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(24577, 28672) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+statement ok
+INSERT INTO opt SELECT i, 'fox' FROM generate_series(28673, 32768) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+query
+EXPLAIN CALL sdb_compact('opt', mode := 'optimize', target_segments := 2)
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ───────────────────────╮
+│ Table: public.opt                       │
+│ Mode: optimize                          │
+│ Segments: 8                             │
+│ Merges: 2                               │
+│ Merge 1:                                │
+│ 4 segments -> 1, optimize to 2 segments │
+│ Merge 1 Inputs: _1, _2, _3, _4          │
+│ Merge 1 Docs:                           │
+│ 16384 (16384 live), rowid 1..16384      │
+│ Merge 1 Bytes: <slt:ignore>│
+│ Merge 1 Columns:                        │
+│ 3, <slt:ignore>│
+│ Merge 1 Postings: 1 field               │
+│ Merge 2:                                │
+│ 4 segments -> 1, optimize to 2 segments │
+│ Merge 2 Inputs: _5, _6, _7, _8          │
+│ Merge 2 Docs:                           │
+│ 16384 (16384 live), rowid 16385..32768  │
+│ Merge 2 Bytes: <slt:ignore>│
+│ Merge 2 Columns:                        │
+│ 3, <slt:ignore>│
+│ Merge 2 Postings: 1 field               │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('opt', mode := 'optimize', target_segments := 2)
+ORDER BY merge
+----
+merge	outcome	input_docs	output_docs
+1	merged	16384	16384
+2	merged	16384	16384
+
+
+query
+SELECT docs, rowid_min, rowid_max FROM sdb_segments('opt') ORDER BY rowid_min
+----
+docs	rowid_min	rowid_max
+16384	1	16384
+16384	16385	32768
+
+
+query
+SELECT merge, outcome FROM sdb_compact('opt', mode := 'optimize', target_segments := 2)
+----
+merge	outcome
+
+
+query
+SELECT merge, outcome FROM sdb_compact('opt', mode := 'optimize')
+----
+merge	outcome
+
+
+statement ok
+DELETE FROM opt WHERE id <= 100
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt
+
+
+query
+SELECT merge, outcome, input_docs, input_live_docs, output_docs
+FROM sdb_compact('opt', mode := 'optimize', target_segments := 2)
+----
+merge	outcome	input_docs	input_live_docs	output_docs
+1	merged	16384	16284	16284
+
+
+query
+SELECT docs, live_docs, rowid_min, rowid_max FROM sdb_segments('opt') ORDER BY rowid_min
+----
+docs	live_docs	rowid_min	rowid_max
+16284	16284	101	16384
+16384	16384	16385	32768
+
+
+query
+SELECT count(*) AS n FROM opt
+----
+n
+32668
+
+
+statement ok
+DROP TABLE opt
+
+
+statement ok
+CREATE TABLE opt_small (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO opt_small SELECT i, 'fox' FROM generate_series(1, 1000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_small
+
+
+statement ok
+INSERT INTO opt_small SELECT i, 'fox' FROM generate_series(1001, 2000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_small
+
+
+statement ok
+INSERT INTO opt_small SELECT i, 'fox' FROM generate_series(2001, 3000) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opt_small
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('opt_small', mode := 'optimize')
+----
+merge	outcome	input_docs	output_docs
+1	merged	3000	3000
+
+
+query
+SELECT count(*) AS segments, min(rowid_min) AS first, max(rowid_max) AS last
+FROM sdb_segments('opt_small')
+----
+segments	first	last
+1	1	3000
+
+
+statement ok
+DROP TABLE opt_small
+
+
+statement ok
+CREATE TABLE optr (id INT, body TEXT)
+
+
+statement ok
+CREATE INDEX optr_idx ON optr USING inverted (body) WITH (row_group_size = 2048, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO optr SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optr_idx
+
+
+statement ok
+INSERT INTO optr SELECT i, 'fox' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optr_idx
+
+
+statement ok
+INSERT INTO optr SELECT i, 'fox' FROM generate_series(8193, 12288) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optr_idx
+
+
+statement ok
+INSERT INTO optr SELECT i, 'fox' FROM generate_series(12289, 16384) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optr_idx
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('optr_idx', mode := 'optimize', target_segments := 2)
+ORDER BY merge
+----
+merge	outcome	input_docs	output_docs
+1	merged	8192	8192
+2	merged	8192	8192
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('optr_idx')
+----
+segments	docs
+2	16384
+
+
+statement ok
+DROP TABLE optr
+
+
+statement ok
+CREATE TABLE optv (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
+
+statement ok
+INSERT INTO optv SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) optv
+
+statement ok
+INSERT INTO optv SELECT i, 'fox' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) optv
+
+statement ok
+INSERT INTO optv SELECT i, 'fox' FROM generate_series(8193, 12288) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) optv
+
+statement ok
+INSERT INTO optv SELECT i, 'fox' FROM generate_series(12289, 16384) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) optv
+
+
+statement ok
+VACUUM (OPTIMIZE_TABLE) optv
+
+
+query
+SELECT docs, rowid_min, rowid_max FROM sdb_segments('optv') ORDER BY rowid_min
+----
+docs	rowid_min	rowid_max
+8192	1	8192
+8192	8193	16384
+
+
+query
+SELECT origin, count(*) AS merges FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'optv') AND type = 'merge'
+GROUP BY origin
+----
+origin	merges
+vacuum	2
+
+
+statement ok
+DROP TABLE optv
+
+
+statement ok
+CREATE TABLE optvr (id INT, body TEXT)
+
+
+statement ok
+CREATE INDEX optvr_idx ON optvr USING inverted (body) WITH (row_group_size = 2048, compaction_interval = 0)
+
+statement ok
+INSERT INTO optvr SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optvr_idx
+
+statement ok
+INSERT INTO optvr SELECT i, 'fox' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optvr_idx
+
+statement ok
+INSERT INTO optvr SELECT i, 'fox' FROM generate_series(8193, 12288) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optvr_idx
+
+statement ok
+INSERT INTO optvr SELECT i, 'fox' FROM generate_series(12289, 16384) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) optvr_idx
+
+
+statement ok
+VACUUM (OPTIMIZE_INDEX) optvr_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('optvr_idx')
+----
+segments	docs
+2	16384
+
+
+statement ok
+DROP TABLE optvr
+
+
+statement ok
+CREATE TABLE opts (id INT PRIMARY KEY, body TEXT)
+WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+CREATE INDEX opts_idx ON opts USING inverted (body)
+
+
+statement ok
+INSERT INTO opts SELECT i, 'fox' FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opts
+
+
+statement ok
+INSERT INTO opts SELECT i, 'fox' FROM generate_series(4097, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) opts
+
+
+query
+SELECT outcome, input_docs, output_docs
+FROM sdb_compact('opts_idx', mode := 'optimize', target_segments := 1)
+----
+outcome	input_docs	output_docs
+merged	8192	8192
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('opts')
+----
+segments
+1
+
+
+statement ok
+DROP TABLE opts

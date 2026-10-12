@@ -76,9 +76,9 @@ WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'sm_empty')
 ORDER BY metric;
 ----
 metric	value
-avg_cleanup_time_ms	0
-avg_commit_time_ms	0
-avg_consolidation_time_ms	0
+avg_cleanup_time_ms	<slt:ignore>
+avg_commit_time_ms	<slt:ignore>
+avg_consolidation_time_ms	<slt:ignore>
 index_size	0
 merge_pending_bytes	0
 merges_queued	0

@@ -153,7 +153,7 @@ query
 SELECT subbinary, suborigin, subdisableonerr, subsynccommit, subrunasowner, subfailover, subpasswordrequired, subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
 ----
 subbinary	suborigin	subdisableonerr	subsynccommit	subrunasowner	subfailover	subpasswordrequired	subskiplsn
-f	any	f	off	f	f	t	NULL
+f	any	f	off	f	f	t	0/0
 
 
 statement ok
@@ -347,7 +347,7 @@ query
 SELECT subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
 ----
 subskiplsn
-NULL
+0/0
 
 
 statement error

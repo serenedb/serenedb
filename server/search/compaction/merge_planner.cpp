@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <absl/numeric/int128.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -130,9 +131,41 @@ void PlanCompact(const irs::IndexReader& reader,
     plan.notes.emplace_back(absl::StrCat("already at most ", Segments(target)));
     return;
   }
+  struct Placed {
+    const irs::SubReader* segment;
+    int64_t first_row;
+    uint64_t live_docs;
+  };
+  std::vector<Placed> order;
+  order.reserve(reader.size());
+  absl::uint128 total = 0;
+  for (const auto& segment : reader) {
+    const auto& placed = order.emplace_back(Placed{
+      .segment = &segment,
+      .first_row = DescribeSegment(segment).rowid_min.value_or(0),
+      .live_docs = segment.live_docs_count(),
+    });
+    total += placed.live_docs;
+  }
+  std::stable_sort(order.begin(), order.end(),
+                   [](const Placed& lhs, const Placed& rhs) {
+                     return lhs.first_row < rhs.first_row;
+                   });
   std::vector<irs::Compaction> buckets(target);
-  for (size_t i = 0; i < reader.size(); ++i) {
-    buckets[i % target].emplace_back(&reader[i]);
+  size_t group = 0;
+  absl::uint128 taken = 0;
+  for (size_t i = 0; i < order.size(); ++i) {
+    const auto& placed = order[i];
+    if (!buckets[group].empty() && group + 1 < target) {
+      const bool middle_past_share =
+        (2 * taken + placed.live_docs) * target >= 2 * (group + 1) * total;
+      const bool one_per_group_left = order.size() - i == target - group - 1;
+      if (middle_past_share || one_per_group_left) {
+        ++group;
+      }
+    }
+    buckets[group].emplace_back(placed.segment);
+    taken += placed.live_docs;
   }
   const auto reason = absl::StrCat("compact to ", Segments(target));
   for (const auto& bucket : buckets) {

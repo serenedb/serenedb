@@ -15,12 +15,12 @@ iresearch/formats/hnsw/hnsw_writer.cpp:776-778 a donor is picked only with live 
 iresearch/formats/hnsw/hnsw_writer.cpp:935 BuildGraphFromMerge fails only on the impossible donor states above (706-715, 776-778)
 iresearch/formats/hnsw/hnsw_writer.cpp:959-961 a vector column exists only with rows
 iresearch/formats/hnsw/hnsw_writer.cpp:1014-1019 TurboQuant error correction is compiled off (kTurboQuantErrorCorrection), so RefineSamples is 0 for every quantizer
-server/search/compaction/merge_planner.cpp:102-103 the tier policy offers a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
-server/search/compaction/merge_planner.cpp:170 the implicit default of an exhaustive switch over MergeMode
-server/search/compaction/merge_planner.cpp:178 the return after an exhaustive switch over MergeMode
-server/search/compaction/merge_planner.cpp:198-202 every search-table and index segment carries the generated row key with its range
-server/search/compaction/merge_planner.cpp:209-211 every planned merge has documents
-server/search/compaction/merge_planner.cpp:220 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:103-104 the tier policy offers a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
+server/search/compaction/merge_planner.cpp:203 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:211 the return after an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:231-235 every search-table and index segment carries the generated row key with its range
+server/search/compaction/merge_planner.cpp:242-244 every planned merge has documents
+server/search/compaction/merge_planner.cpp:253 the implicit default of an exhaustive switch over MergeMode
 server/search/compaction/merge_policies.cpp:60-62 the index was dropped while its compaction options were being pinned
 server/connector/functions/sdb_segments.cpp:77-78 every search-table and index segment carries the generated row key with its range
 server/connector/segment_rewrite/segment_rewrite_job.cpp:65-75 every search-table and index segment carries the generated row key with its range

@@ -57,6 +57,8 @@ A segment holds at most 2,147,418,110 rows. A merge whose segments hold more liv
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).
 
+`CREATE INDEX` on a search table stops the merges of the table that are in progress, because the index build rewrites their segments anyway. Segments that existed when the build started are not merged until it finishes; segments written during the build merge as usual.
+
 <SqlLogicTest id="sql/indexes/inverted/maintenance/example_006" />
 
 ## Manual maintenance with `VACUUM`
@@ -90,7 +92,7 @@ Each result row describes one merge:
 | Column | Meaning |
 |---|---|
 | `merge` | Number of the merge within the call |
-| `outcome` | `merged`; `deferred` (merged, visible after the next commit); `nothing`; `busy` (a segment was being merged by another task); `failed` |
+| `outcome` | `merged`; `deferred` (merged, visible after the next commit); `nothing`; `busy` (a segment was being merged by another task); `failed`; `cancelled` (stopped before it finished, for example by a `TRUNCATE` or a `CREATE INDEX` on the table; its segments stay as they were) |
 | `inputs`, `input_docs`, `input_live_docs`, `input_bytes` | The merged segments, their documents, live documents and bytes |
 | `output`, `output_docs`, `output_bytes` | The new segment |
 | `total_ms` | Wall-clock time of the merge |

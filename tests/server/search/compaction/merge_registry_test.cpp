@@ -88,6 +88,8 @@ TEST(MergeRegistry, OutcomeOfMapsEveryCompactionError) {
             sdb::search::OutcomeOf(Result(irs::CompactionError::Ok, 2)));
   EXPECT_EQ(MergeOutcome::Nothing,
             sdb::search::OutcomeOf(Result(irs::CompactionError::Ok, 0)));
+  EXPECT_EQ(MergeOutcome::Cancelled,
+            sdb::search::OutcomeOf(Result(irs::CompactionError::Cancelled, 2)));
 }
 
 TEST(MergeRegistry, NamesAreStable) {
@@ -101,6 +103,8 @@ TEST(MergeRegistry, NamesAreStable) {
   EXPECT_EQ("nothing", sdb::search::MergeOutcomeName(MergeOutcome::Nothing));
   EXPECT_EQ("busy", sdb::search::MergeOutcomeName(MergeOutcome::Busy));
   EXPECT_EQ("failed", sdb::search::MergeOutcomeName(MergeOutcome::Failed));
+  EXPECT_EQ("cancelled",
+            sdb::search::MergeOutcomeName(MergeOutcome::Cancelled));
 }
 
 TEST(MergeRegistry, FinishedMergeMovesToHistory) {

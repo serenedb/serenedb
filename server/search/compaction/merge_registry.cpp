@@ -59,6 +59,8 @@ std::string_view MergeOutcomeName(MergeOutcome outcome) noexcept {
       return "busy";
     case MergeOutcome::Failed:
       return "failed";
+    case MergeOutcome::Cancelled:
+      return "cancelled";
   }
   return "unknown";
 }
@@ -67,6 +69,8 @@ MergeOutcome OutcomeOf(const irs::CompactionResult& result) noexcept {
   switch (result.error) {
     case irs::CompactionError::Fail:
       return MergeOutcome::Failed;
+    case irs::CompactionError::Cancelled:
+      return MergeOutcome::Cancelled;
     case irs::CompactionError::Busy:
       return MergeOutcome::Busy;
     case irs::CompactionError::Pending:

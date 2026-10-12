@@ -276,8 +276,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
       kPolicy, tick, empty_compaction, &field_options, env_ptr,
       search::MergeOrigin::Vacuum, nullptr, &executor));
+    context.InterruptCheck();
     if (!res.ok()) {
-      context.InterruptCheck();
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INTERNAL_ERROR),
         ERR_MSG("compact_index: compaction failed: ", res.message()));

@@ -24,6 +24,7 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 
 #include <atomic>
@@ -43,6 +44,7 @@
 #include "iresearch/formats/index_meta_reader.hpp"
 #include "iresearch/formats/index_meta_writer.hpp"
 #include "iresearch/index/column_info.hpp"
+#include "iresearch/index/compaction/merge_ticket.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/async_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
@@ -77,14 +79,22 @@ enum OpenMode {
 
 ENABLE_BITMASK_ENUM(OpenMode);
 
-using Compaction = std::vector<const SubReader*>;
-using CompactionView = std::span<const SubReader* const>;
-
 using CompactingSegments = absl::flat_hash_set<std::string_view>;
 
 using CompactionPolicy =
   std::function<void(Compaction& candidates, const IndexReader& index,
                      const CompactingSegments& compacting_segments)>;
+
+using MergeGroups = std::vector<Compaction>;
+
+using MergePlanner = absl::FunctionRef<void(const IndexReader& index,
+                                            const CompactingSegments& reserved,
+                                            MergeGroups& groups)>;
+
+struct MergeReservation {
+  std::vector<MergeTicket> tickets;
+  bool busy = false;
+};
 
 enum class CompactionError : uint32_t {
   Fail = 0,
@@ -94,6 +104,8 @@ enum class CompactionError : uint32_t {
   Pending,
 
   Busy,
+
+  Cancelled,
 };
 
 struct CompactionResult {
@@ -103,7 +115,10 @@ struct CompactionResult {
 
   MergeStats stats{};
 
-  operator bool() const noexcept { return error != CompactionError::Fail; }
+  operator bool() const noexcept {
+    return error != CompactionError::Fail &&
+           error != CompactionError::Cancelled;
+  }
 };
 
 struct SegmentOptions {
@@ -431,6 +446,13 @@ class IndexWriter : private util::Noncopyable {
                     const AnnBuildEnv* env, MergeExecutor* executor = nullptr)
     -> yaclib::Future<CompactionResult>;
 
+  MergeReservation ReserveMerges(MergePlanner planner);
+
+  auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
+                const MergeWriter::FlushProgress& progress,
+                const AnnBuildEnv* env, MergeExecutor* executor = nullptr)
+    -> yaclib::Future<CompactionResult>;
+
   bool AdoptSegment(std::string_view meta_file, uint64_t tick);
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
@@ -438,19 +460,25 @@ class IndexWriter : private util::Noncopyable {
     CompactionFloorGuard() = default;
     CompactionFloorGuard(IndexWriter& writer, uint64_t floor) noexcept
       : _writer{&writer}, _floor{floor} {}
+    explicit CompactionFloorGuard(IndexWriter& writer) noexcept
+      : _writer{&writer}, _pending{true} {}
     CompactionFloorGuard(CompactionFloorGuard&& rhs) noexcept
-      : _writer{std::exchange(rhs._writer, nullptr)}, _floor{rhs._floor} {}
+      : _writer{std::exchange(rhs._writer, nullptr)},
+        _floor{rhs._floor},
+        _pending{rhs._pending} {}
     CompactionFloorGuard& operator=(CompactionFloorGuard&& rhs) noexcept {
       if (this != &rhs) {
         Release();
         _writer = std::exchange(rhs._writer, nullptr);
         _floor = rhs._floor;
+        _pending = rhs._pending;
       }
       return *this;
     }
     ~CompactionFloorGuard() { Release(); }
 
-    bool Held() const noexcept { return _writer != nullptr; }
+    bool Held() const noexcept { return _writer != nullptr && !_pending; }
+    bool Pending() const noexcept { return _writer != nullptr && _pending; }
     uint64_t Floor() const noexcept { return _floor; }
 
    private:
@@ -458,6 +486,7 @@ class IndexWriter : private util::Noncopyable {
 
     IndexWriter* _writer = nullptr;
     uint64_t _floor = 0;
+    bool _pending = false;
   };
 
   CompactionFloorGuard ArmCompactionFloor();
@@ -508,6 +537,11 @@ class IndexWriter : private util::Noncopyable {
               std::shared_ptr<const DirectoryReaderImpl>&& committed_reader);
 
  private:
+  friend class MergeTicket;
+
+  void ReleaseTicket(MergeTicket::State& state) noexcept;
+  void RevokeTicketsLocked(bool clear) noexcept;
+
   struct CompactionContext : util::Noncopyable {
     std::shared_ptr<const DirectoryReaderImpl> compaction_reader;
     Compaction candidates;
@@ -792,7 +826,9 @@ class IndexWriter : private util::Noncopyable {
   struct {
     std::recursive_mutex lock;
     CompactingSegments segments;
+    absl::flat_hash_set<MergeTicket::State*> tickets;
     uint64_t floor = 0;
+    uint32_t floor_requests = 0;
   } _compacting;
   Directory& _dir;
   std::atomic<FlushContext*> _flush_context;

@@ -47,7 +47,11 @@ enum class MergeOutcome : uint8_t {
   Nothing,
   Busy,
   Failed,
+  Cancelled,
 };
+
+inline constexpr size_t kMergeOutcomeCount =
+  static_cast<size_t>(MergeOutcome::Cancelled) + 1;
 
 std::string_view MergeOutcomeName(MergeOutcome outcome) noexcept;
 

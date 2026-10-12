@@ -397,11 +397,12 @@ auto SearchTable::CompactUnsafeAsync(
     // merge never blocks the refresh chain.
     auto res = co_await _writer->CompactAsync(recorded, field_options, progress,
                                               env, executor);
-    if (!res) {
+    if (res.error == irs::CompactionError::Fail) {
       result = absl::InternalError(
         absl::StrCat("compaction failed for search table ", GetTableId()));
     } else {
-      empty_compaction = (res.size == 0);  // nothing merged -> idle round
+      empty_compaction =
+        res.size == 0 || res.error == irs::CompactionError::Cancelled;
     }
     if (outcome) {
       *outcome = res;

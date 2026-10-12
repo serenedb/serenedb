@@ -445,7 +445,7 @@ auto InvertedIndexStorage::CompactUnsafeImpl(
       co_return absl::OkStatus();
     }
 
-    empty_compaction = (size == 0);
+    empty_compaction = size == 0 || error == irs::CompactionError::Cancelled;
   } catch (const std::exception& e) {
     recorder.Fail(e.what());
     co_return absl::InternalError(

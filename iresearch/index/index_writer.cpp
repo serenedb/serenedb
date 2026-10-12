@@ -442,6 +442,11 @@ bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept {
   return true;
 }
 
+bool BelowFloor(std::string_view name, uint64_t floor) noexcept {
+  uint64_t id = 0;
+  return ParseSegmentId(name, id) && id <= floor;
+}
+
 uint64_t MaxSegmentId(const Directory& dir) {
   uint64_t max_id = 0;
   dir.visit([&max_id](std::string_view name) {
@@ -1306,9 +1311,8 @@ void IndexWriter::Clear(const SourcePosition& position) {
   ApplyFlush(std::move(to_commit));
   Finish();
 
-  // Clear compacting segments
   std::lock_guard lock{_compacting.lock};
-  _compacting.segments.clear();
+  RevokeTicketsLocked(/*clear=*/true);
 }
 
 IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
@@ -1428,108 +1432,144 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
+MergeReservation IndexWriter::ReserveMerges(MergePlanner planner) {
+  MergeReservation reservation;
+  std::lock_guard lock{_compacting.lock};
+  if (_compacting.floor_requests != 0) {
+    reservation.busy = true;
+    return reservation;
+  }
+  // hold a reference to the last committed state to prevent files from being
+  // deleted by a cleaner during the upcoming compaction
+  // use atomic_load(...) since Finish() may modify the pointer
+  auto snapshot = GetSnapshotImpl();
+  if (snapshot->size() == 0) {
+    return reservation;
+  }
+
+  MergeGroups groups;
+  const auto floor = _compacting.floor;
+  if (floor == 0) {
+    planner(*snapshot, _compacting.segments, groups);
+  } else {
+    CompactingSegments unavailable = _compacting.segments;
+    for (const auto& segment : *snapshot) {
+      if (BelowFloor(segment.Meta().name, floor)) {
+        unavailable.insert(segment.Meta().name);
+      }
+    }
+    planner(*snapshot, unavailable, groups);
+    for (auto& group : groups) {
+      std::erase_if(group, [floor](const SubReader* candidate) {
+        return BelowFloor(candidate->Meta().name, floor);
+      });
+    }
+  }
+
+  reservation.tickets.reserve(groups.size());
+  for (auto& group : groups) {
+    if (group.empty() ||
+        (group.size() == 1 && !HasRemovals(group.front()->Meta()))) {
+      continue;
+    }
+    if (absl::c_any_of(group, [this](const SubReader* candidate) {
+          return _compacting.segments.contains(candidate->Meta().name);
+        })) {
+      reservation.busy = true;
+      continue;
+    }
+#ifdef SDB_DEV
+    {
+      auto sorted = group;
+      absl::c_sort(sorted);
+      SDB_ASSERT(std::unique(sorted.begin(), sorted.end()) == sorted.end());
+      size_t found = 0;
+      for (const auto& segment : *snapshot) {
+        found += static_cast<size_t>(absl::c_binary_search(sorted, &segment));
+      }
+      SDB_ASSERT(found == sorted.size());
+    }
+#endif
+    auto state = std::make_unique<MergeTicket::State>();
+    state->snapshot = snapshot;
+    state->candidates = std::move(group);
+    _compacting.segments.reserve(_compacting.segments.size() +
+                                 state->candidates.size());
+    _compacting.tickets.reserve(_compacting.tickets.size() + 1);
+    for (const auto* candidate : state->candidates) {
+      _compacting.segments.emplace(candidate->Meta().name);
+    }
+    _compacting.tickets.emplace(state.get());
+    reservation.tickets.emplace_back(MergeTicket{*this, std::move(state)});
+  }
+  return reservation;
+}
+
+void IndexWriter::ReleaseTicket(MergeTicket::State& state) noexcept {
+  std::lock_guard lock{_compacting.lock};
+  if (state.registered) {
+    for (const auto* candidate : state.candidates) {
+      _compacting.segments.erase(candidate->Meta().name);
+    }
+    state.registered = false;
+  }
+  _compacting.tickets.erase(&state);
+}
+
+void IndexWriter::RevokeTicketsLocked(bool clear) noexcept {
+  for (auto* state : _compacting.tickets) {
+    state->revoked.store(true, std::memory_order_relaxed);
+    if (!state->registered || (state->running && !clear)) {
+      continue;
+    }
+    for (const auto* candidate : state->candidates) {
+      _compacting.segments.erase(candidate->Meta().name);
+    }
+    state->registered = false;
+  }
+  if (clear) {
+    _compacting.segments.clear();
+  }
+}
+
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
                                const MergeWriter::FlushProgress& progress,
                                const AnnBuildEnv* env, MergeExecutor* executor)
   -> yaclib::Future<CompactionResult> {
-  Compaction candidates;
-  const auto run_id = reinterpret_cast<uintptr_t>(&candidates);
-
-  decltype(_committed_reader) committed_reader;
-  // collect a list of compaction candidates
-  {
-    std::lock_guard lock{_compacting.lock};
-    // hold a reference to the last committed state to prevent files from being
-    // deleted by a cleaner during the upcoming compaction
-    // use atomic_load(...) since Finish() may modify the pointer
-    committed_reader = GetSnapshotImpl();
-
-    if (committed_reader->size() == 0) {
-      // nothing to compact
-      co_return CompactionResult{0, CompactionError::Ok};
-    }
-
-    // FIXME TODO remove from 'compacting_segments_' any segments in
-    // 'committed_state_' or 'pending_state_' to avoid data duplication
-    const auto floor = _compacting.floor;
-    if (floor == 0) {
-      policy(candidates, *committed_reader, _compacting.segments);
-    } else {
-      // Hide the backfill-protected segments from the policy
-      // TODO(Dronplane): maybe make it member and not refill every run?
-      CompactingSegments unavailable = _compacting.segments;
-      for (const auto& segment : *committed_reader) {
-        uint64_t id = 0;
-        const auto& name = segment.Meta().name;
-        if (ParseSegmentId(name, id) && id <= floor) {
-          unavailable.insert(name);
-        }
-      }
-      policy(candidates, *committed_reader, unavailable);
-
-      // TODO(Dronplane): should it be an assert?
-      std::erase_if(candidates, [floor](const SubReader* candidate) {
-        uint64_t id = 0;
-        return ParseSegmentId(candidate->Meta().name, id) && id <= floor;
-      });
-    }
-
-    switch (candidates.size()) {
-      case 0:  // nothing to compact
-        co_return CompactionResult{0, CompactionError::Ok};
-      case 1: {
-        const auto* candidate = candidates.front();
-        SDB_ASSERT(candidate != nullptr);
-        if (!HasRemovals(candidate->Meta())) {
-          // no removals, nothing to compact
-          co_return CompactionResult{0, CompactionError::Ok};
-        }
-      }
-    }
-
-    for (const auto* candidate : candidates) {
-      SDB_ASSERT(candidate != nullptr);
-      // TODO(mbkkt) Make this check assert in future
-      if (_compacting.segments.contains(candidate->Meta().name)) {
-        // A concurrent compaction already owns this candidate; not an error,
-        // the caller retries or lets the other compaction finish it.
-        co_return CompactionResult{0, CompactionError::Busy};
-      }
-    }
-
-    // register for compaction
-    _compacting.segments.reserve(_compacting.segments.size() +
-                                 candidates.size());
-    for (const auto* candidate : candidates) {
-      _compacting.segments.emplace(candidate->Meta().name);
-    }
+  auto reservation = ReserveMerges([&policy](const IndexReader& index,
+                                             const CompactingSegments& reserved,
+                                             MergeGroups& groups) {
+    policy(groups.emplace_back(), index, reserved);
+  });
+  if (reservation.tickets.empty()) {
+    co_return CompactionResult{
+      0, reservation.busy ? CompactionError::Busy : CompactionError::Ok};
   }
+  SDB_ASSERT(reservation.tickets.size() == 1);
+  co_return co_await RunMerge(std::move(reservation.tickets.front()),
+                              field_options, progress, env, executor);
+}
 
-  // unregisterer for all registered candidates
-  Finally unregister_segments = [&candidates, this]() noexcept {
-    if (candidates.empty()) {
-      return;
-    }
+auto IndexWriter::RunMerge(MergeTicket ticket,
+                           const IndexFieldOptions* field_options,
+                           const MergeWriter::FlushProgress& progress,
+                           const AnnBuildEnv* env, MergeExecutor* executor)
+  -> yaclib::Future<CompactionResult> {
+  auto owned = std::move(ticket);
+  SDB_ASSERT(owned._writer == this);
+  auto& state = *owned._state;
+  auto& candidates = state.candidates;
+  auto& committed_reader = state.snapshot;
+  const bool registered = [&] {
     std::lock_guard lock{_compacting.lock};
-    for (const auto* candidate : candidates) {
-      _compacting.segments.erase(candidate->Meta().name);
-    }
-  };
-
-  // validate candidates: no duplicates and all should be from committed reader
-#ifdef SDB_DEV
-  {
-    auto sorted = candidates;
-    absl::c_sort(sorted);
-    SDB_ASSERT(std::unique(sorted.begin(), sorted.end()) == sorted.end());
-    size_t found = 0;
-    for (const auto& segment : *committed_reader) {
-      found += static_cast<size_t>(absl::c_binary_search(sorted, &segment));
-    }
-    SDB_ASSERT(found == sorted.size());
+    state.running = state.registered;
+    return state.registered;
+  }();
+  if (!registered) {
+    co_return CompactionResult{0, CompactionError::Cancelled};
   }
-#endif
+  const auto run_id = reinterpret_cast<uintptr_t>(&state);
 
   SDB_TRACE(IRESEARCH, "Starting compaction id='", run_id, "':\n",
             ToString(candidates));
@@ -1555,12 +1595,24 @@ auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
   MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
 
+  std::atomic_bool stopped{false};
+  const MergeWriter::FlushProgress checked = [&state, &progress, &stopped] {
+    if ((!progress || progress()) &&
+        !state.revoked.load(std::memory_order_relaxed)) {
+      return true;
+    }
+    stopped.store(true, std::memory_order_relaxed);
+    return false;
+  };
+
   // We do not persist segment meta since some removals may come later
   const bool flushed =
-    co_await merger.Flush(compaction_segment.meta, progress, env, executor);
+    co_await merger.Flush(compaction_segment.meta, checked, env, executor);
   result.stats.profile = merger.Profile();
   if (!flushed) {
-    // Nothing to compact or compaction failure
+    if (stopped.load(std::memory_order_relaxed)) {
+      result.error = CompactionError::Cancelled;
+    }
     co_return result;
   }
   result.stats.output = compaction_segment.meta.name;
@@ -1760,20 +1812,27 @@ void IndexWriter::CompactionFloorGuard::Release() noexcept {
     return;
   }
   std::lock_guard lock{_writer->_compacting.lock};
-  _writer->_compacting.floor = 0;
+  if (_pending) {
+    SDB_ASSERT(_writer->_compacting.floor_requests != 0);
+    --_writer->_compacting.floor_requests;
+  } else {
+    _writer->_compacting.floor = 0;
+  }
   _writer = nullptr;
 }
 
 IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
   std::lock_guard lock{_compacting.lock};
+  if (_compacting.floor != 0) {
+    return {};  // already armed; one holder at a time
+  }
+  RevokeTicketsLocked(/*clear=*/false);
   if (!_compacting.segments.empty()) {
     // A compaction is between selecting candidates and minting its output id,
     // so it could still stamp a fresh id on segments below the floor we are
     // about to set. The caller should retry once it finishes.
-    return {};
-  }
-  if (_compacting.floor != 0) {
-    return {};  // already armed; one holder at a time
+    ++_compacting.floor_requests;
+    return CompactionFloorGuard{*this};
   }
   const auto floor = CurrentSegmentId();
   _compacting.floor = floor;

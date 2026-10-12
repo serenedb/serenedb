@@ -185,7 +185,7 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentRewriteParams(
 void AppendSegmentRewriteActuals(
   std::span<const ExecutedMerge> merges, bool zero_times,
   duckdb::InsertionOrderPreservingMap<std::string>& params) {
-  std::array<size_t, 6> outcomes{};
+  std::array<size_t, search::kMergeOutcomeCount> outcomes{};
   irs::MergeProfile total;
   uint64_t written = 0;
   for (const auto& merge : merges) {

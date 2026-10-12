@@ -714,17 +714,6 @@ class Enforcer {
     if (!_caller_closure.CanColumns(table.permissions, AclMode::Insert, acls)) {
       Denied(table);
     }
-    if (insert.on_conflict_info.set_columns.empty()) {
-      return;
-    }
-    std::vector<std::span<const duckdb::AclItem>> updated;
-    for (const auto index : insert.on_conflict_info.set_columns) {
-      updated.emplace_back(columns.GetColumn(index).Acl());
-    }
-    if (!_caller_closure.CanColumns(table.permissions, AclMode::Update,
-                                    updated)) {
-      Denied(table);
-    }
   }
 
   void CheckUpdate(duckdb::LogicalUpdate& update) {

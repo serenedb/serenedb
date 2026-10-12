@@ -752,7 +752,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
 
 ColumnReader::PointReader::PointReader(const ColReader& col_reader,
                                        const ColumnReader& col)
-  : _ctx{col_reader},
+  : _ctx{col_reader, true},
     _reader{&col},
     _blocks(col.DataRgCount()),
     _validity_blocks(col.Validity() ? col.Validity()->DataRgCount() : 0) {}

@@ -1,0 +1,250 @@
+statement ok
+SET application_name = 'before'
+
+
+statement ok
+EXPLAIN SELECT set_config('application_name', 'explained', false)
+
+
+query
+SELECT current_setting('application_name') AS app
+----
+app
+before
+
+
+statement ok
+PREPARE vol_config AS SELECT set_config('application_name', 'prepared', false)
+
+
+query
+SELECT current_setting('application_name') AS app
+----
+app
+before
+
+
+statement ok
+EXECUTE vol_config
+
+
+statement ok
+SET application_name = 'reset'
+
+
+statement ok
+EXECUTE vol_config
+
+
+query
+SELECT current_setting('application_name') AS app
+----
+app
+prepared
+
+
+statement ok
+DEALLOCATE vol_config
+
+
+statement ok
+PREPARE vol_regclass AS SELECT to_regclass('vol_table') IS NULL AS missing
+
+
+query
+EXECUTE vol_regclass
+----
+missing
+t
+
+
+statement ok
+CREATE TABLE vol_table (a int)
+
+
+query
+EXECUTE vol_regclass
+----
+missing
+f
+
+
+statement ok
+DEALLOCATE vol_regclass
+
+
+statement ok
+CREATE VIEW vol_view AS SELECT 1 AS a
+
+
+statement ok
+PREPARE vol_viewdef AS SELECT pg_get_viewdef('vol_view') LIKE '%2 AS a%' AS replaced
+
+
+query
+EXECUTE vol_viewdef
+----
+replaced
+f
+
+
+statement ok
+CREATE OR REPLACE VIEW vol_view AS SELECT 2 AS a
+
+
+query
+EXECUTE vol_viewdef
+----
+replaced
+t
+
+
+statement ok
+DEALLOCATE vol_viewdef
+
+
+statement ok
+PREPARE vol_setting AS SELECT current_setting('application_name') AS app, current_setting('application_name', true) AS missing_ok
+
+
+statement ok
+SET application_name = 'one'
+
+
+query
+EXECUTE vol_setting
+----
+app	missing_ok
+one	one
+
+
+statement ok
+SET application_name = 'two'
+
+
+query
+EXECUTE vol_setting
+----
+app	missing_ok
+two	two
+
+
+statement ok
+DEALLOCATE vol_setting
+
+
+statement ok
+CREATE ROLE vol_role
+
+
+statement ok
+PREPARE vol_user AS SELECT current_user = 'vol_role' AS cu, current_role = 'vol_role' AS cr, session_user = 'vol_role' AS su
+
+
+query
+EXECUTE vol_user
+----
+cu	cr	su
+f	f	f
+
+
+statement ok
+SET ROLE vol_role
+
+
+query
+EXECUTE vol_user
+----
+cu	cr	su
+t	t	f
+
+
+statement ok
+RESET ROLE
+
+
+statement ok
+DEALLOCATE vol_user
+
+
+statement ok
+DROP ROLE vol_role
+
+
+statement ok
+CREATE SCHEMA vol_schema
+
+
+statement ok
+CREATE TYPE vol_schema.mood AS ENUM ('ok')
+
+
+statement ok
+PREPARE vol_format AS SELECT format_type('vol_schema.mood'::regtype, NULL) AS name
+
+
+query
+EXECUTE vol_format
+----
+name
+vol_schema.mood
+
+
+statement ok
+SET search_path = vol_schema, public
+
+
+query
+EXECUTE vol_format
+----
+name
+mood
+
+
+statement ok
+RESET search_path
+
+
+statement ok
+DEALLOCATE vol_format
+
+
+query
+SELECT DISTINCT proname, provolatile FROM pg_proc
+WHERE proname IN ('set_config', 'to_regclass', 'pg_get_viewdef', 'format_type', 'current_user', 'num_nulls',
+  'width_bucket', 'pg_relation_size', 'pg_cancel_backend', 'pg_stat_get_numscans', 'pg_stat_get_xact_numscans',
+  'pg_get_userbyid', 'has_table_privilege', '_pg_char_max_length', '_pg_index_position')
+ORDER BY 1, 2
+----
+proname	provolatile
+_pg_char_max_length	i
+_pg_index_position	s
+current_user	s
+format_type	s
+has_table_privilege	s
+num_nulls	i
+pg_cancel_backend	v
+pg_get_userbyid	s
+pg_get_viewdef	s
+pg_relation_size	v
+pg_stat_get_numscans	s
+pg_stat_get_xact_numscans	v
+set_config	v
+to_regclass	s
+width_bucket	i
+
+
+statement ok
+DROP TYPE vol_schema.mood
+
+
+statement ok
+DROP SCHEMA vol_schema
+
+
+statement ok
+DROP VIEW vol_view
+
+
+statement ok
+DROP TABLE vol_table

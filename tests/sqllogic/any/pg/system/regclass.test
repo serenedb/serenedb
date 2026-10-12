@@ -70,3 +70,33 @@ t
 skipif pg-wire-extended
 statement ok
 DROP TABLE regclass_test_table;
+
+
+statement ok
+CREATE TABLE public.pg_class (a int)
+
+
+query
+SELECT 'pg_class'::regclass::oid = 1259 AS cast_catalog, to_regclass('pg_class')::oid = 1259 AS to_reg_catalog, 'public.pg_class'::regclass::oid <> 1259 AS qualified_user
+----
+cast_catalog	to_reg_catalog	qualified_user
+t	t	t
+
+
+statement ok
+SET search_path = public, pg_catalog
+
+
+query
+SELECT 'pg_class'::regclass::oid <> 1259 AS cast_user, to_regclass('pg_class')::oid <> 1259 AS to_reg_user
+----
+cast_user	to_reg_user
+t	t
+
+
+statement ok
+RESET search_path
+
+
+statement ok
+DROP TABLE public.pg_class

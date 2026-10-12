@@ -263,6 +263,31 @@ void ClusterCatalog::CompactCatalogLog() {
   }
 }
 
+duckdb::idx_t ClusterCatalog::SnapshotCatalogLog(
+  const std::filesystem::path& link) {
+  std::error_code ec;
+  duckdb::idx_t size = 0;
+  {
+    auto lock = GetAttached().GetStorageManager().GetCommitLock();
+    const auto log = CatalogLog();
+    if (!log) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                      ERR_MSG("the catalog log is not open"));
+    }
+    std::filesystem::create_hard_link(log->GetPath(), link, ec);
+    if (!ec) {
+      size = std::filesystem::file_size(link, ec);
+    }
+  }
+  if (ec) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("could not snapshot the catalog log as \"",
+                            link.string(), "\": ", ec.message()));
+  }
+  SyncDirectory(link.parent_path());
+  return size;
+}
+
 bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,
                                         duckdb::idx_t generation) {
   bool exists = false;

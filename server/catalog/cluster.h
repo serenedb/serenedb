@@ -31,6 +31,7 @@
 #include <duckdb/common/enums/database_modification_type.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -69,6 +70,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void OpenCatalogLog(duckdb::unique_ptr<duckdb::WriteAheadLog> log,
                       bool compactable);
   void MaybeCompactCatalogLog();
+  duckdb::idx_t SnapshotCatalogLog(const std::filesystem::path& link);
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
     duckdb::CreateRoleInfo& info) final {

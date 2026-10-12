@@ -20,7 +20,10 @@
 
 #include "catalog/database_directory.h"
 
+#include <absl/base/no_destructor.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -33,6 +36,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include "scheduler/background_scheduler.h"
 #include "server/utils/lifecycle.h"
@@ -59,16 +63,53 @@ void RemoveTree(const std::filesystem::path& path) {
   }
 }
 
-template<typename Removal>
+using Removal = absl::AnyInvocable<void()>;
+
+struct RemovalGate {
+  std::atomic_bool deferring{false};
+  absl::Mutex mutex;
+  std::vector<Removal> deferred ABSL_GUARDED_BY(mutex);
+};
+
+RemovalGate& Gate() {
+  static absl::NoDestructor<RemovalGate> gGate;
+  return *gGate;
+}
+
 void RunRemoval(Removal&& removal) {
+  if (auto& gate = Gate(); gate.deferring.load()) {
+    absl::MutexLock lock{&gate.mutex};
+    if (gate.deferring.load()) {
+      gate.deferred.push_back(std::move(removal));
+      return;
+    }
+  }
   if (lifecycle::IsStopping() || BackgroundScheduler::instance().IsStopping()) {
     removal();
     return;
   }
-  BackgroundScheduler::instance().Run(std::forward<Removal>(removal)).Detach();
+  BackgroundScheduler::instance().Run(std::move(removal)).Detach();
 }
 
 }  // namespace
+
+void DeferRemovals() {
+  [[maybe_unused]] const bool was_deferring = Gate().deferring.exchange(true);
+  SDB_ASSERT(!was_deferring);
+}
+
+void ResumeRemovals() {
+  std::vector<Removal> deferred;
+  {
+    auto& gate = Gate();
+    absl::MutexLock lock{&gate.mutex};
+    gate.deferring.store(false);
+    deferred.swap(gate.deferred);
+  }
+  for (auto& removal : deferred) {
+    RunRemoval(std::move(removal));
+  }
+}
 
 void SyncDirectory(const std::filesystem::path& directory) {
   const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);

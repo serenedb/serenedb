@@ -39,6 +39,9 @@ inline constexpr std::string_view kDataFile = "data.db";
 
 void SyncDirectory(const std::filesystem::path& directory);
 
+void DeferRemovals();
+void ResumeRemovals();
+
 class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
  public:
   explicit DatabaseDirectory(std::filesystem::path path);

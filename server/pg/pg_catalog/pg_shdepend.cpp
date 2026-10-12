@@ -46,7 +46,8 @@ uint64_t ClassOf(duckdb::CatalogType type) {
   if (type == SCHEMA_ENTRY || type == TABLE_ENTRY || type == VIEW_ENTRY ||
       type == SEQUENCE_ENTRY || type == TYPE_ENTRY || type == MACRO_ENTRY ||
       type == TABLE_MACRO_ENTRY || type == TOKENIZER_ENTRY ||
-      type == FOREIGN_SERVER_ENTRY || type == DATABASE_ENTRY) {
+      type == FOREIGN_SERVER_ENTRY || type == SUBSCRIPTION_ENTRY ||
+      type == DATABASE_ENTRY) {
     return CatalogClassOid(type);
   }
   return kInvalidOid;

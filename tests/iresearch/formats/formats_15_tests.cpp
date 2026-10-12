@@ -335,7 +335,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
-  irs::PostingsWriter writer{false};
+  irs::PostingsWriter writer;
   irs::PostingMeta posting_meta;
 
   {
@@ -415,9 +415,10 @@ void Format15TestCase::AssertPostingsWalk(irs::PostingsReader& reader,
                                           irs::IndexFeatures field_features,
                                           irs::IndexFeatures features,
                                           const irs::PostingMeta& meta) {
-  auto actual = reader.Postings(field_features, features, meta,
-                                HasScoreBounds(field_features));
-  ASSERT_NE(nullptr, actual);
+  auto postings = reader.Postings(field_features, features, meta,
+                                  HasScoreBounds(field_features));
+  ASSERT_NE(nullptr, postings);
+  auto actual = tests::Docs(std::move(postings), features);
 
   TestPostings expected{docs, features};
   const bool has_freq = irs::IndexFeatures::None != (features & kFreq);

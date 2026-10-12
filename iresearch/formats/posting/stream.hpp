@@ -46,11 +46,16 @@ class PostingsStream : public TermPostings {
                 IteratorTraits::Features());
 
  public:
+  PostingsStream() noexcept {}
+
   void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
                const IndexInput* pos_in, const IndexInput* pay_in,
                bool has_score_bounds) {
     SDB_ASSERT(meta.docs_count != 0);
 
+    _max_in_leaf = doc_limits::invalid();
+    _left_in_leaf = 0;
+    _left_in_list = 0;
     if (meta.docs_count == 1) {
       const auto doc = doc_limits::min() + meta.doc_delta;
       *(std::end(_docs) - 1) = doc;
@@ -60,7 +65,19 @@ class PostingsStream : public TermPostings {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      _doc_in = OpenDocInput(meta, doc_in);
+      if (meta.inline_size != 0) {
+        _inline_in.reset(meta.Inline());
+        _doc_in = &_inline_in;
+      } else {
+        if (!_file_in) {
+          _file_in = doc_in.Reopen();
+          if (!_file_in) [[unlikely]] {
+            throw IoError{"failed to reopen document input"};
+          }
+        }
+        _file_in->Seek(meta.doc_start);
+        _doc_in = _file_in.get();
+      }
 
       auto& in = In();
       PrefetchDocs(in, meta);
@@ -81,39 +98,36 @@ class PostingsStream : public TermPostings {
     }
   }
 
-  doc_id_t Next() final {
-    if (_left_in_leaf == 0) [[unlikely]] {
-      if (_left_in_list == 0) [[unlikely]] {
-        return _doc = doc_limits::eof();
+  uint32_t NextDocs(doc_id_t* docs, uint32_t* freqs) final {
+    if (_left_in_leaf == 0) {
+      if (_left_in_list == 0) {
+        return 0;
       }
       ReadLeaf(_max_in_leaf);
     }
-
-    if constexpr (IteratorTraits::Position()) {
-      const auto freq = *(std::end(_freqs) - _left_in_leaf);
-      _pos.Notify(freq, freq);
-      _pos.Clear();
-    }
-
-    _doc = *(std::end(_docs) - _left_in_leaf);
-    --_left_in_leaf;
-    return _doc;
-  }
-
-  uint32_t GetFreq() const final {
+    const auto n = _left_in_leaf;
+    std::copy_n(std::end(_docs) - n, n, docs);
     if constexpr (IteratorTraits::Frequency()) {
-      SDB_ASSERT(_left_in_leaf < doc_limits::kBlockSize);
-      return *(std::end(_freqs) - _left_in_leaf - 1);
+      std::copy_n(std::end(_freqs) - n, n, freqs);
+    }
+    _left_in_leaf = 0;
+    return n;
+  }
+
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final {
+    if constexpr (IteratorTraits::Position()) {
+      _pos.ReadDeltas(pos, offs_start, offs_len, n);
     } else {
-      return 0;
+      TermPostings::NextPositions(pos, offs_start, offs_len, n);
     }
   }
 
-  PosAttr* Positions() noexcept final {
+  void SkipPositions(uint64_t n) final {
     if constexpr (IteratorTraits::Position()) {
-      return &_pos;
+      _pos.SkipDeltas(n);
     } else {
-      return nullptr;
+      TermPostings::SkipPositions(n);
     }
   }
 
@@ -158,7 +172,9 @@ class PostingsStream : public TermPostings {
     IteratorTraits::Frequency(),
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
-  IndexInput::ptr _doc_in;
+  IndexInput::ptr _file_in;
+  BytesViewInput _inline_in;
+  IndexInput* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

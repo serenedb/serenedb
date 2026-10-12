@@ -1453,7 +1453,10 @@ bool VisitDirectory(const path_char_t* name,
 
   return !terminate;
 #else
-  DIR* dir = opendir(name);
+  struct DirDeleter {
+    void operator()(DIR* dir) const noexcept { closedir(dir); }
+  };
+  const std::unique_ptr<DIR, DirDeleter> dir{opendir(name)};
 
   if (!dir) {
     return false;
@@ -1462,7 +1465,7 @@ bool VisitDirectory(const path_char_t* name,
   struct dirent* direntry;
   bool terminate = false;
 
-  while (!terminate && (direntry = readdir(dir))) {
+  while (!terminate && (direntry = readdir(dir.get()))) {
     if (include_dot_dir ||
         !((direntry->d_name[0] == '.' && direntry->d_name[1] == '\0') ||
           (direntry->d_name[0] == '.' && direntry->d_name[1] == '.' &&
@@ -1470,8 +1473,6 @@ bool VisitDirectory(const path_char_t* name,
       terminate = !visitor(direntry->d_name);
     }
   }
-
-  closedir(dir);
 
   return !terminate;
 #endif

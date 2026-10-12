@@ -158,15 +158,4 @@ void DocumentMask::AddRange(doc_id_t first, doc_id_t last) {
   _count = roaring::api::bitset_count(&_bits);
 }
 
-void DocumentMask::Truncate(doc_id_t first) noexcept {
-  SDB_ASSERT(doc_limits::valid(first));
-  const size_t word = first / 64;
-  if (word >= _bits.arraysize) {
-    return;
-  }
-  _bits.array[word] &= (uint64_t{1} << (first % 64)) - 1;
-  std::fill(_bits.array + word + 1, _bits.array + _bits.arraysize, 0);
-  _count = roaring::api::bitset_count(&_bits);
-}
-
 }  // namespace irs

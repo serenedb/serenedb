@@ -101,7 +101,6 @@
 #include "planning/iceberg_multi_file_list.hpp"
 #include "search/inverted_index_storage.h"
 #include "search/task.h"
-#include "search/tick_domain.h"
 
 namespace sdb::connector {
 namespace {
@@ -835,8 +834,7 @@ void RunDelta(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
       remover.FinishImpl();
     }
     trx.RegisterFlush();
-    if (!trx.Commit(
-          search::TickDomain::Instance().Next(trx.GetQueries() + 1))) {
+    if (!trx.Commit()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                       ERR_MSG("REINDEX delta of \"", target.name,
                               "\": failed to commit the removes"));

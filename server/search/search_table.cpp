@@ -141,12 +141,12 @@ void SearchTable::OpenWriter(bool in_memory) {
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_writer = [this](uint64_t tick,
-                                              duckdb::BinarySerializer& out) {
-    const auto committed = std::max(CommittedTick(), tick);
-    _last_committed_tick.store(committed, std::memory_order_release);
-    out.WriteProperty<uint64_t>(kFieldTick, "tick", committed);
-  };
+  writer_options.meta_payload_writer =
+    [this](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
+      const auto committed = std::max(CommittedTick(), position.offset);
+      _last_committed_tick.store(committed, std::memory_order_release);
+      out.WriteProperty<uint64_t>(kFieldTick, "tick", committed);
+    };
   writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
     _last_committed_tick.store(ReadCommittedTick(in),
                                std::memory_order_release);

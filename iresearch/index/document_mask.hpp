@@ -50,17 +50,12 @@ class DocumentMask final {
    public:
     Iterator() = default;
 
-    explicit Iterator(const DocumentMask* mask,
-                      doc_id_t visible_end = doc_limits::eof()) noexcept
-      : _mask{mask}, _visible_end{visible_end} {}
+    explicit Iterator(const DocumentMask* mask) noexcept : _mask{mask} {}
 
-    bool Empty() const noexcept {
-      return doc_limits::eof(_visible_end) &&
-             (_mask == nullptr || _mask->Empty());
-    }
+    bool Empty() const noexcept { return _mask == nullptr || _mask->Empty(); }
 
     bool Contains(doc_id_t doc) const noexcept {
-      return doc >= _visible_end || (_mask != nullptr && _mask->Contains(doc));
+      return _mask != nullptr && _mask->Contains(doc);
     }
 
     doc_id_t Seek(doc_id_t target) noexcept {
@@ -71,10 +66,7 @@ class DocumentMask final {
       if (target <= _value) {
         return _value;
       }
-      if (target >= _visible_end) {
-        return _value = target;
-      }
-      return _value = std::min(Find(target), _visible_end);
+      return _value = Find(target);
     }
 
    private:
@@ -87,7 +79,6 @@ class DocumentMask final {
 
     const DocumentMask* _mask = nullptr;
     doc_id_t _value = doc_limits::invalid();
-    doc_id_t _visible_end = doc_limits::eof();
 #ifdef SDB_DEV
     doc_id_t _prev = doc_limits::invalid();
 #endif
@@ -134,7 +125,6 @@ class DocumentMask final {
   }
 
   void AddRange(doc_id_t first, doc_id_t last);
-  void Truncate(doc_id_t first) noexcept;
   void Merge(const DocumentMask& other);
 
   void Clear() noexcept {

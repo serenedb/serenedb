@@ -252,23 +252,6 @@ class SubReaderMock final : public irs::SubReader {
   irs::SegmentInfo _meta;
 };
 
-struct SyncRecorder : tests::DirectoryMock {
-  explicit SyncRecorder(irs::Directory& impl) : DirectoryMock(impl) {}
-
-  bool sync(std::span<const std::string_view> files) noexcept final {
-    if (std::exchange(fail_next_sync, false)) {
-      return false;
-    }
-    for (const auto file : files) {
-      synced.emplace_back(file);
-    }
-    return DirectoryMock::sync(files);
-  }
-
-  std::vector<std::string> synced;
-  bool fail_next_sync = false;
-};
-
 }  // namespace
 namespace tests {
 
@@ -702,16 +685,18 @@ class IndexTestCase : public tests::IndexTestBase {
               constexpr irs::IndexFeatures kFeatures =
                 irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                 irs::IndexFeatures::Offs;
-              irs::TermPostings::ptr act_docs_itr;
-              irs::TermPostings::ptr exp_docs_itr;
+              std::unique_ptr<tests::PostingsCursor> act_docs_itr;
+              std::unique_ptr<tests::PostingsCursor> exp_docs_itr;
 
               {
                 // wait for all threads to be registered
                 std::lock_guard lock(mutex);
 
                 // iterators are not thread-safe
-                act_docs_itr = act_term_itr->postings(kFeatures);
-                exp_docs_itr = exp_term_itr->postings(kFeatures);
+                act_docs_itr =
+                  tests::Docs(act_term_itr->postings(kFeatures), kFeatures);
+                exp_docs_itr =
+                  tests::Docs(exp_term_itr->postings(kFeatures), kFeatures);
               }
 
               auto* actual_pos = act_docs_itr->Positions();
@@ -1006,7 +991,8 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_NE(nullptr, terms);
         auto term_itr = terms->iterator();
         ASSERT_TRUE(term_itr->next());
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));
@@ -1023,7 +1009,8 @@ class IndexTestCase : public tests::IndexTestBase {
         ASSERT_NE(nullptr, terms);
         auto term_itr = terms->iterator();
         ASSERT_TRUE(term_itr->next());
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));
@@ -1111,7 +1098,7 @@ class IndexTestCase : public tests::IndexTestBase {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
@@ -2714,7 +2701,7 @@ TEST_P(IndexTestCase, document_context) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc4
@@ -2876,7 +2863,7 @@ TEST_P(IndexTestCase, document_context) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc4
@@ -3057,7 +3044,7 @@ TEST_P(IndexTestCase, document_context) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc4
@@ -3199,7 +3186,7 @@ TEST_P(IndexTestCase, document_context) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc4
@@ -3265,7 +3252,7 @@ TEST_P(IndexTestCase, document_context) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
@@ -3428,7 +3415,7 @@ TEST_P(IndexTestCase, document_context) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
@@ -3799,7 +3786,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc1
@@ -3922,7 +3909,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc1
@@ -4027,7 +4014,7 @@ TEST_P(IndexTestCase, doc_removal) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc3
@@ -4079,7 +4066,7 @@ TEST_P(IndexTestCase, doc_removal) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc3
@@ -5003,7 +4990,7 @@ TEST_P(IndexTestCase, refresh_reader) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc1
@@ -5036,7 +5023,7 @@ TEST_P(IndexTestCase, refresh_reader) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -5198,7 +5185,7 @@ TEST_P(IndexTestCase, refresh_reader) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc3
@@ -5373,7 +5360,8 @@ TEST_P(IndexTestCase, segment_column_user_system) {
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
 
-  for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  for (auto docs_itr =
+         tests::Docs(term_itr->postings(irs::IndexFeatures::None));
        !irs::doc_limits::eof(docs_itr->Next());) {
     ASSERT_EQ(1,
               expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -5501,7 +5489,7 @@ TEST_P(IndexTestCase, concurrent_compaction) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   while (!irs::doc_limits::eof(docs_itr->Next())) {
     ASSERT_EQ(1, names.erase(irs::tests::ReadStoredStr<std::string>(
                    values, docs_itr->Value())));
@@ -5629,7 +5617,7 @@ TEST_P(IndexTestCase, concurrent_compaction_dedicated_commit) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   while (!irs::doc_limits::eof(docs_itr->Next())) {
     ASSERT_EQ(1, names.erase(irs::tests::ReadStoredStr<std::string>(
                    values, docs_itr->Value())));
@@ -5759,7 +5747,7 @@ TEST_P(IndexTestCase, concurrent_compaction_two_phase_dedicated_commit) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   while (!irs::doc_limits::eof(docs_itr->Next())) {
     ASSERT_EQ(1, names.erase(irs::tests::ReadStoredStr<std::string>(
                    values, docs_itr->Value())));
@@ -5873,7 +5861,7 @@ TEST_P(IndexTestCase, concurrent_compaction_cleanup) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   while (!irs::doc_limits::eof(docs_itr->Next())) {
     ASSERT_EQ(1, names.erase(irs::tests::ReadStoredStr<std::string>(
                    values, docs_itr->Value())));
@@ -6008,7 +5996,7 @@ TEST_P(IndexTestCase, compact_single_segment) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -6165,7 +6153,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -6183,7 +6171,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -6201,7 +6189,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -6325,7 +6313,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -6343,7 +6331,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -6361,7 +6349,7 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc2
@@ -6481,7 +6469,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       {
         irs::tests::BlobPointReader values{segment, *column};
 
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));  // 'name' value in doc1
@@ -6629,7 +6618,8 @@ TEST_P(IndexTestCase, segment_compact_long_running) {
       {
         irs::tests::BlobPointReader values{segment, *column};
 
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));  // 'name' value in doc1
@@ -6951,7 +6941,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7041,7 +7031,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7062,7 +7052,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc3
@@ -7158,7 +7148,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7179,7 +7169,7 @@ TEST_P(IndexTestCase, segment_compact_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc3
@@ -7300,7 +7290,7 @@ TEST_P(IndexTestCase, compact_check_compacting_segments) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ(expected_name,
               irs::tests::ReadStoredStr<std::string_view>(
@@ -7468,7 +7458,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7581,7 +7571,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc3
@@ -7602,7 +7592,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7727,7 +7717,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc3
@@ -7748,7 +7738,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7769,7 +7759,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -7891,7 +7881,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       {
         irs::tests::BlobPointReader values{segment, *column};
 
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));  // 'name' value in doc3
@@ -8031,7 +8022,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       {
         irs::tests::BlobPointReader values{segment, *column};
 
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));  // 'name' value in doc3
@@ -8166,7 +8158,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
         {
           irs::tests::BlobPointReader values{segment, *column};
 
-          auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+          auto docs_itr =
+            tests::Docs(term_itr->postings(irs::IndexFeatures::None));
           ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
           ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                            values, docs_itr->Value()));  // 'name' value in doc3
@@ -8580,7 +8573,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       {
         irs::tests::BlobPointReader values{segment, *column};
 
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));  // 'name' value in doc1
@@ -8625,7 +8619,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -8746,7 +8740,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -8768,7 +8762,8 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       {
         irs::tests::BlobPointReader values{segment, *column};
 
-        auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+        auto docs_itr =
+          tests::Docs(term_itr->postings(irs::IndexFeatures::None));
         ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
         ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                          values, docs_itr->Value()));  // 'name' value in doc1
@@ -8932,7 +8927,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -8955,7 +8950,7 @@ TEST_P(IndexTestCase, segment_compact_pending_commit) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("E", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));  // 'name' value in doc1
@@ -9227,7 +9222,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc3
@@ -9271,7 +9266,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc3
@@ -9317,7 +9312,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc3
@@ -9363,7 +9358,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc3
@@ -9484,7 +9479,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9533,7 +9528,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9584,7 +9579,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9635,7 +9630,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9691,7 +9686,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9750,7 +9745,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9821,7 +9816,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9904,7 +9899,7 @@ TEST_P(IndexTestCase, segment_compact) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));  // 'name' value in doc2
@@ -9993,7 +9988,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10017,7 +10013,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10067,7 +10064,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10091,7 +10089,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10138,7 +10137,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           tests::Docs(term_itr->postings(irs::IndexFeatures::None));
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10184,7 +10184,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10207,7 +10208,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10258,7 +10260,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           tests::Docs(term_itr->postings(irs::IndexFeatures::None));
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10336,7 +10339,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
       const auto* column = segment.Column(kNameColumnId);
       ASSERT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10388,7 +10392,8 @@ TEST_P(IndexTestCase, segment_compact_policy) {
     const auto* column = segment.Column(kNameColumnId);
     ASSERT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
-    for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    for (auto docs_itr =
+           tests::Docs(term_itr->postings(irs::IndexFeatures::None));
          !irs::doc_limits::eof(docs_itr->Next());) {
       ASSERT_EQ(1,
                 expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10568,7 +10573,8 @@ TEST_P(IndexTestCase, segment_options) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10613,7 +10619,8 @@ TEST_P(IndexTestCase, segment_options) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10637,7 +10644,8 @@ TEST_P(IndexTestCase, segment_options) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10682,7 +10690,8 @@ TEST_P(IndexTestCase, segment_options) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10706,7 +10715,8 @@ TEST_P(IndexTestCase, segment_options) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -10763,7 +10773,8 @@ TEST_P(IndexTestCase, segment_options) {
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
 
-      for (auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      for (auto docs_itr =
+             tests::Docs(term_itr->postings(irs::IndexFeatures::None));
            !irs::doc_limits::eof(docs_itr->Next());) {
         ASSERT_EQ(
           1, expected_name.erase(irs::tests::ReadStoredStr<std::string_view>(
@@ -11189,14 +11200,14 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
   const tests::Document* doc1 = gen.next();
 
   auto writer_options = irs::tests::DefaultWriterOptions();
-  uint64_t payload_committed_tick{0};
+  uint64_t payload_offset{0};
   std::string input_payload = "first";
-  writer_options.meta_payload_writer =
-    [&payload_committed_tick, &input_payload](uint64_t tick,
-                                              duckdb::BinarySerializer& out) {
-      payload_committed_tick = tick;
-      out.WriteProperty<std::string>(0, "payload", input_payload);
-    };
+  writer_options.meta_payload_writer = [&payload_offset, &input_payload](
+                                         const irs::SourcePosition& position,
+                                         duckdb::BinarySerializer& out) {
+    payload_offset = position.offset;
+    out.WriteProperty<std::string>(0, "payload", input_payload);
+  };
   auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
 
   ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -11206,15 +11217,15 @@ TEST_P(IndexTestCase11, clean_writer_with_payload) {
     auto reader = writer->GetSnapshot();
     ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
   }
-  uint64_t expected_tick = 42;
+  uint64_t expected_offset = 42;
 
-  payload_committed_tick = 0;
+  payload_offset = 0;
   input_payload = "clear";
-  writer->Clear(expected_tick);
+  writer->Clear({.offset = expected_offset});
   {
     auto reader = writer->GetSnapshot();
     ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
-    ASSERT_EQ(payload_committed_tick, expected_tick);
+    ASSERT_EQ(payload_offset, expected_offset);
   }
 }
 
@@ -11267,22 +11278,22 @@ TEST_P(IndexTestCase11, initial_two_phase_commit_payload) {
                               &tests::GenericJsonFieldFactory);
 
   auto writer_options = irs::tests::DefaultWriterOptions();
-  uint64_t payload_committed_tick{0};
+  uint64_t payload_offset{0};
   std::string input_payload;
   uint64_t payload_calls_count{0};
   writer_options.meta_payload_writer =
-    [&payload_calls_count, &payload_committed_tick, &input_payload](
-      uint64_t tick, duckdb::BinarySerializer& out) {
+    [&payload_calls_count, &payload_offset, &input_payload](
+      const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       payload_calls_count++;
-      payload_committed_tick = tick;
+      payload_offset = position.offset;
       out.WriteProperty<std::string>(0, "payload", input_payload);
     };
   auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
 
   input_payload = "init";
-  payload_committed_tick = 42;
+  payload_offset = 42;
   ASSERT_TRUE(writer->RefreshBegin());
-  ASSERT_EQ(0, payload_committed_tick);
+  ASSERT_EQ(0, payload_offset);
 
   // transaction is already started
   payload_calls_count = 0;
@@ -11303,22 +11314,22 @@ TEST_P(IndexTestCase11, initial_commit_payload) {
                               &tests::GenericJsonFieldFactory);
 
   auto writer_options = irs::tests::DefaultWriterOptions();
-  uint64_t payload_committed_tick{0};
+  uint64_t payload_offset{0};
   std::string input_payload;
   uint64_t payload_calls_count{0};
   writer_options.meta_payload_writer =
-    [&payload_calls_count, &payload_committed_tick, &input_payload](
-      uint64_t tick, duckdb::BinarySerializer& out) {
+    [&payload_calls_count, &payload_offset, &input_payload](
+      const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       payload_calls_count++;
-      payload_committed_tick = tick;
+      payload_offset = position.offset;
       out.WriteProperty<std::string>(0, "payload", input_payload);
     };
   auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
 
   input_payload = "init";
-  payload_committed_tick = 42;
+  payload_offset = 42;
   writer->RefreshCommit();
-  ASSERT_EQ(0, payload_committed_tick);
+  ASSERT_EQ(0, payload_offset);
 
   auto reader = writer->GetSnapshot();
   ASSERT_EQ(input_payload, ReadMetaPayload(dir(), reader));
@@ -11337,14 +11348,14 @@ TEST_P(IndexTestCase11, commit_payload) {
   auto* doc0 = gen.next();
 
   auto writer_options = irs::tests::DefaultWriterOptions();
-  uint64_t payload_committed_tick{0};
+  uint64_t payload_offset{0};
   std::string input_payload;
   uint64_t payload_calls_count{0};
   writer_options.meta_payload_writer =
-    [&payload_calls_count, &payload_committed_tick, &input_payload](
-      uint64_t tick, duckdb::BinarySerializer& out) {
+    [&payload_calls_count, &payload_offset, &input_payload](
+      const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
       payload_calls_count++;
-      payload_committed_tick = tick;
+      payload_offset = position.offset;
       out.WriteProperty<std::string>(0, "payload", input_payload);
     };
   auto writer = open_writer(irs::kOmCreate, std::move(writer_options));
@@ -11372,7 +11383,7 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick - 10);
+      trx.Commit(expected_tick - 10, {.offset = expected_tick - 10});
     }
 
     // insert document (trx 0)
@@ -11385,14 +11396,14 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick);
+      trx.Commit(expected_tick, {.offset = expected_tick});
     }
 
-    payload_committed_tick = 0;
+    payload_offset = 0;
 
     input_payload = reader.Meta().filename;
     ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_EQ(expected_tick, payload_committed_tick);
+    ASSERT_EQ(expected_tick, payload_offset);
 
     // transaction is already started
     ASSERT_NE(0, payload_calls_count);
@@ -11423,7 +11434,7 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick - 10);
+      trx.Commit(expected_tick - 10, {.offset = expected_tick - 10});
     }
 
     // insert document (trx 0)
@@ -11436,15 +11447,15 @@ TEST_P(IndexTestCase11, commit_payload) {
         tests::InsertFields(doc, doc0->stored.begin(), doc0->stored.end());
         ASSERT_TRUE(doc);
       }
-      trx.Commit(expected_tick);
+      trx.Commit(expected_tick, {.offset = expected_tick});
     }
 
-    payload_committed_tick = 0;
+    payload_offset = 0;
 
     const auto committed_payload = input_payload;
     input_payload = reader.Meta().filename;
     ASSERT_TRUE(writer->RefreshBegin());
-    ASSERT_EQ(expected_tick, payload_committed_tick);
+    ASSERT_EQ(expected_tick, payload_offset);
 
     writer->RefreshAbort();
 
@@ -11464,7 +11475,7 @@ TEST_P(IndexTestCase11, commit_payload) {
 
 TEST_P(IndexTestCase11, reader_of_payload_needs_payload_reader) {
   auto writer_options = irs::tests::DefaultWriterOptions();
-  writer_options.meta_payload_writer = [](uint64_t,
+  writer_options.meta_payload_writer = [](const irs::SourcePosition&,
                                           duckdb::BinarySerializer& out) {
     out.WriteProperty<std::string>(0, "payload", "value");
   };
@@ -11546,390 +11557,6 @@ TEST_P(IndexTestCase11, create_over_unreadable_index) {
   ASSERT_EQ(1, reader.size());
   ASSERT_EQ(1, reader.docs_count());
   EXPECT_NE(old_segment, reader[0].Meta().name);
-  AssertSnapshotEquality(*writer);
-}
-
-TEST_P(IndexTestCase11, partial_commit_masks_tail_as_bound) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc0));
-    ASSERT_TRUE(insert(trx, *doc1));
-    trx.Commit(kVisibleTick);
-  }
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc2));
-    trx.Commit(kPendingTick);
-  }
-
-  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-
-  auto& segment = reader[0];
-  ASSERT_EQ(3, segment.Meta().docs_count);
-  ASSERT_EQ(2, segment.live_docs_count());
-
-  // The suffix is a bound on the segment, so it costs no mask file at all.
-  ASSERT_EQ(nullptr, segment.docs_mask());
-  ASSERT_EQ(irs::doc_limits::min() + 2, segment.Meta().visible_end);
-  ASSERT_EQ(1, irs::InvisibleCount(segment.Meta()));
-
-  auto it_mask = segment.MaskedDocs();
-  ASSERT_LT(irs::doc_limits::min(), it_mask.Seek(irs::doc_limits::min()));
-  ASSERT_LT(irs::doc_limits::min() + 1,
-            it_mask.Seek(irs::doc_limits::min() + 1));
-  ASSERT_EQ(irs::doc_limits::min() + 2,
-            it_mask.Seek(irs::doc_limits::min() + 2));
-
-  auto docs = segment.docs_iterator();
-  ASSERT_NE(nullptr, docs);
-  ASSERT_EQ(irs::doc_limits::min(), docs->Next());
-  ASSERT_EQ(irs::doc_limits::min() + 1, docs->Next());
-  ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
-}
-
-TEST_P(IndexTestCase11, partial_commit_completion_syncs_only_index_meta) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-
-  SyncRecorder recorder{directory};
-  auto writer = irs::IndexWriter::Make(recorder, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc0));
-    ASSERT_TRUE(insert(trx, *doc1));
-    trx.Commit(kVisibleTick);
-  }
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc2));
-    trx.Commit(kPendingTick);
-  }
-
-  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
-
-  std::string partial_meta;
-  {
-    auto reader =
-      irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    ASSERT_EQ(2, reader[0].live_docs_count());
-    ASSERT_EQ(1, irs::InvisibleCount(reader[0].Meta()));
-    partial_meta = reader.Meta().index_meta.segments[0].filename;
-  }
-
-  recorder.synced.clear();
-  ASSERT_TRUE(writer->RefreshCommit());
-
-  ASSERT_EQ(1, recorder.synced.size());
-  ASSERT_TRUE(recorder.synced.front().starts_with("pending_segments_"));
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(3, reader[0].live_docs_count());
-  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
-  ASSERT_EQ(partial_meta, reader.Meta().index_meta.segments[0].filename);
-  AssertSnapshotEquality(*writer);
-}
-
-TEST_P(IndexTestCase11, partial_commit_completion_rewrites_grown_mask) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-
-  SyncRecorder recorder{directory};
-  auto writer = irs::IndexWriter::Make(recorder, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kRemoveTick = 15;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc0));
-    ASSERT_TRUE(insert(trx, *doc1));
-    trx.Commit(kVisibleTick);
-  }
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc2));
-    trx.Commit(kPendingTick);
-  }
-
-  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
-
-  std::string partial_meta;
-  {
-    auto reader =
-      irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    partial_meta = reader.Meta().index_meta.segments[0].filename;
-  }
-
-  {
-    auto trx = writer->GetBatch();
-    trx.Remove(MakeByTerm(kNameFieldId, "A"));
-    trx.Commit(kRemoveTick);
-  }
-
-  recorder.synced.clear();
-  ASSERT_TRUE(writer->RefreshCommit());
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(3, reader[0].docs_count());
-  ASSERT_EQ(2, reader[0].live_docs_count());
-  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
-  const auto& rewritten = reader.Meta().index_meta.segments[0].filename;
-  ASSERT_NE(partial_meta, rewritten);
-  ASSERT_EQ(2, recorder.synced.size());
-  ASSERT_EQ(rewritten, recorder.synced[0]);
-  ASSERT_TRUE(recorder.synced[1].starts_with("pending_segments_"));
-  AssertSnapshotEquality(*writer);
-}
-
-TEST_P(IndexTestCase11, partial_commit_retried_after_failed_sync_syncs_data) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-
-  SyncRecorder recorder{directory};
-  auto writer = irs::IndexWriter::Make(recorder, irs::kOmCreate,
-                                       irs::tests::DefaultWriterOptions());
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc0));
-    ASSERT_TRUE(insert(trx, *doc1));
-    trx.Commit(kVisibleTick);
-  }
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc2));
-    trx.Commit(kPendingTick);
-  }
-
-  recorder.fail_next_sync = true;
-  ASSERT_THROW(writer->RefreshCommit({.tick = kVisibleTick}), irs::IoError);
-
-  recorder.synced.clear();
-  ASSERT_TRUE(writer->RefreshCommit());
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(3, reader[0].live_docs_count());
-  const auto& segment = reader.Meta().index_meta.segments[0];
-  ASSERT_FALSE(segment.meta.files.empty());
-  for (const auto& file : segment.meta.files) {
-    EXPECT_NE(recorder.synced.end(), std::ranges::find(recorder.synced, file))
-      << file << " was never synced";
-  }
-  EXPECT_NE(recorder.synced.end(),
-            std::ranges::find(recorder.synced, segment.filename));
-}
-
-TEST_P(IndexTestCase11, partial_commit_tail_survives_reopen) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-  auto* doc3 = gen.next();
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    {
-      auto trx = writer->GetBatch();
-      ASSERT_TRUE(insert(trx, *doc0));
-      ASSERT_TRUE(insert(trx, *doc1));
-      trx.Commit(kVisibleTick);
-    }
-    {
-      auto trx = writer->GetBatch();
-      ASSERT_TRUE(insert(trx, *doc2));
-      trx.Commit(kPendingTick);
-    }
-    ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
-  }
-
-  {
-    auto writer =
-      open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
-    {
-      auto trx = writer->GetBatch();
-      ASSERT_TRUE(insert(trx, *doc3));
-      ASSERT_TRUE(trx.Commit());
-    }
-    ASSERT_TRUE(writer->RefreshCommit());
-  }
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(2, reader.size());
-  ASSERT_EQ(4, reader.docs_count());
-  ASSERT_EQ(3, reader.live_docs_count());
-  ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
-  ASSERT_EQ(2, reader[0].live_docs_count());
-}
-
-TEST_P(IndexTestCase11, partial_commit_tail_compacts_after_reopen) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-  auto* doc3 = gen.next();
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-    {
-      auto trx = writer->GetBatch();
-      ASSERT_TRUE(insert(trx, *doc0));
-      ASSERT_TRUE(insert(trx, *doc1));
-      trx.Commit(kVisibleTick);
-    }
-    {
-      auto trx = writer->GetBatch();
-      ASSERT_TRUE(insert(trx, *doc2));
-      trx.Commit(kPendingTick);
-    }
-    ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
-  }
-
-  auto writer = open_writer(irs::kOmAppend, irs::tests::DefaultWriterOptions());
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc3));
-    ASSERT_TRUE(trx.Commit());
-  }
-  ASSERT_TRUE(writer->RefreshCommit());
-
-  ASSERT_TRUE(writer->Compact(
-    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
-  ASSERT_TRUE(writer->RefreshCommit());
-
-  auto reader =
-    irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(3, reader[0].docs_count());
-  ASSERT_EQ(3, reader[0].live_docs_count());
-  ASSERT_FALSE(irs::HasInvisible(reader[0].Meta()));
-  ASSERT_EQ(nullptr, reader[0].docs_mask());
-
-  auto* field = reader[0].field(kNameFieldId);
-  ASSERT_NE(nullptr, field);
-  for (auto term : {"A"sv, "B"sv, "D"sv}) {
-    EXPECT_EQ(
-      1, PostingMetaOf(*field, irs::ViewCast<irs::byte_type>(term)).docs_count)
-      << term;
-  }
-  EXPECT_EQ(
-    0, PostingMetaOf(*field, irs::ViewCast<irs::byte_type>("C"sv)).docs_count);
-  auto* same = reader[0].field(kSameFieldId);
-  ASSERT_NE(nullptr, same);
-  EXPECT_EQ(
-    3, PostingMetaOf(*same, irs::ViewCast<irs::byte_type>("xyz"sv)).docs_count);
   AssertSnapshotEquality(*writer);
 }
 
@@ -12150,69 +11777,6 @@ TEST_P(IndexTestCase11, docs_mask_chain_file_lifecycle) {
   ASSERT_EQ(nullptr, reader[0].docs_mask());
   ASSERT_EQ(reader[0].docs_count(), reader[0].live_docs_count());
   ASSERT_LT(reader[0].live_docs_count(), kDocs);
-}
-
-TEST_P(IndexTestCase11, partial_commit_segment_is_fenced_from_compaction) {
-  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
-                              &tests::GenericJsonFieldFactory);
-
-  auto& directory = dir();
-  auto* doc0 = gen.next();
-  auto* doc1 = gen.next();
-  auto* doc2 = gen.next();
-
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
-
-  constexpr uint64_t kVisibleTick = 10;
-  constexpr uint64_t kPendingTick = 20;
-
-  auto insert = [](auto& trx, const tests::Document& src) {
-    auto doc = trx.Insert();
-    tests::InsertFields(doc, src.indexed.begin(), src.indexed.end());
-    CaptureNameLikeFields(doc, src.indexed);
-    tests::InsertFields(doc, src.stored.begin(), src.stored.end());
-    return static_cast<bool>(doc);
-  };
-
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc0));
-    ASSERT_TRUE(insert(trx, *doc1));
-    trx.Commit(kVisibleTick);
-  }
-  {
-    auto trx = writer->GetBatch();
-    ASSERT_TRUE(insert(trx, *doc2));
-    trx.Commit(kPendingTick);
-  }
-
-  ASSERT_TRUE(writer->RefreshCommit({.tick = kVisibleTick}));
-
-  {
-    auto reader =
-      irs::DirectoryReader(directory, irs::tests::DefaultReaderOptions());
-    ASSERT_EQ(1, reader.size());
-    ASSERT_EQ(irs::doc_limits::min() + 2, reader[0].Meta().visible_end);
-  }
-
-  size_t seen = 0;
-  size_t fenced = 0;
-  auto policy = [&](irs::Compaction& candidates, const irs::IndexReader& index,
-                    const irs::CompactingSegments& compacting) {
-    for (size_t i = 0, size = index.size(); i != size; ++i) {
-      const auto& segment = index[i];
-      ++seen;
-      if (compacting.contains(segment.Meta().name)) {
-        ++fenced;
-        continue;
-      }
-      candidates.emplace_back(&segment);
-    }
-  };
-
-  writer->Compact(policy);
-  ASSERT_EQ(1, seen);
-  ASSERT_EQ(1, fenced);
 }
 
 TEST_P(IndexTestCase11, testExternalGeneration) {

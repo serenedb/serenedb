@@ -101,6 +101,36 @@ class PositionImpl final : public PosAttr {
     return true;
   }
 
+  void ReadDeltas(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                  uint32_t n) {
+    if (_pend_pos != 0) {
+      Skip(_pend_pos);
+      _pend_pos = 0;
+    }
+    while (n != 0) {
+      if (_buf_pos == pos_limits::kBlockSize) {
+        ReadBlock();
+        _buf_pos = 0;
+      }
+      const auto take = static_cast<uint32_t>(
+        std::min<uint64_t>(n, pos_limits::kBlockSize - _buf_pos));
+      std::copy_n(_pos_deltas + _buf_pos, take, pos);
+      pos += take;
+      if constexpr (IteratorTraits::Offset()) {
+        if (offs_start != nullptr) {
+          std::copy_n(_offs_start_deltas + _buf_pos, take, offs_start);
+          std::copy_n(_offs_lengths + _buf_pos, take, offs_len);
+          offs_start += take;
+          offs_len += take;
+        }
+      }
+      _buf_pos += take;
+      n -= take;
+    }
+  }
+
+  void SkipDeltas(uint64_t n) noexcept { _pend_pos += n; }
+
   void reset() final {
     Clear();
     if (_cookie.pos_group != std::numeric_limits<uint64_t>::max()) {
@@ -111,33 +141,35 @@ class PositionImpl final : public PosAttr {
   // prepares iterator to work
   template<typename InputType>
   void Prepare(const DocState& state) {
-    SDB_ASSERT(!_pos.in);
-    _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
-
     if (!_pos.in) {
-      // implementation returned wrong pointer
-      SDB_ERROR(IRESEARCH, "Failed to reopen positions input");
+      _pos.in = irs::utils::downCast<InputType>(*state.pos_in).Reopen();
 
-      throw IoError("failed to reopen positions input");
+      if (!_pos.in) {
+        // implementation returned wrong pointer
+        SDB_ERROR(IRESEARCH, "Failed to reopen positions input");
+
+        throw IoError("failed to reopen positions input");
+      }
+
+      _pos.view = block_io::View(*_pos.in);
     }
-
-    _pos.view = block_io::View(*_pos.in);
     _pos.hint.Arm(state.term_state->pos_start,
                   state.term_state->pos_start + PosExtent(*state.term_state));
     _enc_buf = state.enc_buf;
 
     if constexpr (IteratorTraits::Offset()) {
-      SDB_ASSERT(!_pay.in);
-      _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
-
       if (!_pay.in) {
-        // implementation returned wrong pointer
-        SDB_ERROR(IRESEARCH, "Failed to reopen payload input");
+        _pay.in = irs::utils::downCast<InputType>(*state.pay_in).Reopen();
 
-        throw IoError("failed to reopen payload input");
+        if (!_pay.in) {
+          // implementation returned wrong pointer
+          SDB_ERROR(IRESEARCH, "Failed to reopen payload input");
+
+          throw IoError("failed to reopen payload input");
+        }
+
+        _pay.view = block_io::View(*_pay.in);
       }
-
-      _pay.view = block_io::View(*_pay.in);
       _pay.hint.Arm(state.term_state->pay_start,
                     state.term_state->pay_start + PayExtent(*state.term_state));
     }

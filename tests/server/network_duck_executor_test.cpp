@@ -37,12 +37,12 @@ TEST(NetworkIoExecutor, ResumesOnIoThread) {
 
   const auto test_tid = std::this_thread::get_id();
   std::thread::id io_tid{};
-  auto future = [&]() -> yaclib::Future<> {
+  const auto resume_on_io = [&]() -> yaclib::Future<> {
     co_await yaclib::On(executor);
     io_tid = std::this_thread::get_id();
     co_return {};
-  }();
-  [[maybe_unused]] const auto result = std::move(future).Get();
+  };
+  [[maybe_unused]] const auto result = resume_on_io().Get();
 
   EXPECT_NE(io_tid, std::thread::id{});
   EXPECT_NE(io_tid, test_tid);

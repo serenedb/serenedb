@@ -354,7 +354,7 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
   ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                    values, docs_itr->Value()));
@@ -476,7 +476,7 @@ TEST(index_death_test_formats_15, index_meta_write_fail_1st_phase) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -615,7 +615,7 @@ TEST(index_death_test_formats_15, index_commit_fail_sync_1st_phase) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -728,7 +728,7 @@ TEST(index_death_test_formats_15, index_meta_write_failure_2nd_phase) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -848,7 +848,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -945,7 +945,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -964,7 +964,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1083,7 +1083,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1102,7 +1102,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1121,7 +1121,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("C", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1140,7 +1140,7 @@ TEST(index_death_test_formats_15, segment_meta_write_fail_deffered_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("D", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1201,7 +1201,7 @@ TEST(index_death_test_formats_15, postings_doc_reopen_fail) {
                irs::IoError);
   ASSERT_TRUE(dir.NoFailures());
 
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   size_t count = 0;
   while (!irs::doc_limits::eof(docs_itr->Next())) {
     ++count;
@@ -1335,7 +1335,7 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 
   ASSERT_TRUE(dir.NoFailures());
   // successful attempt
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
   ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                    values, docs_itr->Value()));
@@ -1439,7 +1439,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -1500,7 +1500,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1517,7 +1517,7 @@ TEST(index_death_test_formats_15,
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -1655,7 +1655,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -1778,7 +1778,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -2021,7 +2021,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -2036,7 +2036,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -2117,7 +2117,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -2132,7 +2132,7 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       ASSERT_NE(nullptr, terms);
       auto term_itr = terms->iterator();
       ASSERT_TRUE(term_itr->next());
-      auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+      auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
       ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
       ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
                        values, docs_itr->Value()));
@@ -2236,7 +2236,7 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -2404,7 +2404,7 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -2499,7 +2499,7 @@ TEST(index_death_test_formats_15, fails_in_exists) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -2653,7 +2653,7 @@ TEST(index_death_test_formats_15, fails_in_length) {
     ASSERT_NE(nullptr, terms);
     auto term_itr = terms->iterator();
     ASSERT_TRUE(term_itr->next());
-    auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+    auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
     ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
     ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                      values, docs_itr->Value()));
@@ -2729,7 +2729,7 @@ TEST(index_death_test_formats_15, columnstore_reopen_fail) {
   ASSERT_NE(nullptr, terms);
   auto term_itr = terms->iterator();
   ASSERT_TRUE(term_itr->next());
-  auto docs_itr = term_itr->postings(irs::IndexFeatures::None);
+  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
   ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
   ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
                    values, docs_itr->Value()));

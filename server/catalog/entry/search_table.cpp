@@ -196,6 +196,27 @@ TableEngine ReadStorageEngine(const WithOptions& options) {
             "\" must be 'transactional' or 'search', got \"", engine, "\""));
 }
 
+void RequireSearchTableIndexOption(std::string_view name) {
+  if (absl::c_contains(kSearchTableMaintenanceSettings, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option on a search-backed table"),
+      ERR_HINT("Change it with ALTER TABLE ... SET (", name, " = ...)."));
+  }
+  if (absl::c_contains(kSearchTableSettings, name)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " is a table option on a search-backed table"),
+      ERR_HINT("Set it in CREATE TABLE ... WITH (storage = 'search', ", name,
+               " = ...)."));
+  }
+  if (name == kSegmentDocsMaxSetting) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(name, " does not apply to an index on a search-backed table"));
+  }
+}
+
 SearchTableEntry::SearchTableEntry(
   duckdb::Catalog& catalog, duckdb::SchemaCatalogEntry& schema,
   duckdb::BoundCreateTableInfo& info, duckdb::CatalogTransaction transaction,

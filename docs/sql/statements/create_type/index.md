@@ -24,6 +24,10 @@ Create a simple `UNION` type:
 
 <SqlLogicTest id="sql/statements/create_type/index/example_003" />
 
+Create a [`TUPLE`](../../data_types/tuple.md) type, whose fields have no names:
+
+<SqlLogicTest id="sql/statements/create_type/index/example_005" />
+
 Create a type alias:
 
 <SqlLogicTest id="sql/statements/create_type/index/example_004" />

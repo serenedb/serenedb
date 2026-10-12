@@ -39,10 +39,11 @@ using namespace irs;
 
 TEST(index_meta_tests, memory_directory_read_write_15) {
   irs::MemoryDirectory dir;
-  irs::IndexMetaWriter writer{[](uint64_t tick, duckdb::BinarySerializer& out) {
-    EXPECT_EQ(42, tick);
-    out.WriteProperty<std::string>(0, "payload", "payload");
-  }};
+  irs::IndexMetaWriter writer{
+    [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
+      EXPECT_EQ(42, position.offset);
+      out.WriteProperty<std::string>(0, "payload", "payload");
+    }};
 
   // check that there are no files in a directory
   std::vector<std::string> files;
@@ -58,7 +59,8 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
   std::string filename;
   std::string tmp_filename;
 
-  ASSERT_TRUE(writer.prepare(dir, meta_orig, tmp_filename, filename, 42));
+  ASSERT_TRUE(
+    writer.prepare(dir, meta_orig, tmp_filename, filename, {.offset = 42}));
   ASSERT_EQ("segments_1", filename);
   ASSERT_EQ("pending_segments_1", tmp_filename);
 
@@ -91,56 +93,6 @@ TEST(index_meta_tests, memory_directory_read_write_15) {
 
   EXPECT_EQ(meta_orig, meta_read);
   EXPECT_EQ("payload", payload);
-}
-
-TEST(index_meta_tests, invisible_count_round_trip) {
-  irs::MemoryDirectory dir;
-
-  auto make_segment = [&](std::string_view name, irs::doc_id_t visible_end) {
-    irs::IndexSegment segment;
-    segment.meta.name = name;
-    segment.meta.version = 1;
-    segment.meta.docs_count = 10;
-    segment.meta.byte_size = 42;
-    segment.meta.visible_end = visible_end;
-    segment.meta.docs_mask = std::make_shared<irs::DocumentMask>([] {
-      irs::DocumentMask mask;
-      mask.Add(irs::doc_limits::min() + 1);
-      mask.Trim();
-      return mask;
-    }());
-    segment.meta.live_docs_count =
-      segment.meta.docs_count - irs::RemovalCount(segment.meta);
-    irs::segment_meta::Write(dir, segment.filename, segment.meta);
-    return segment;
-  };
-
-  irs::IndexMeta meta_orig;
-  meta_orig.segments.emplace_back(
-    make_segment("tailed", irs::doc_limits::min() + 7));
-  meta_orig.segments.emplace_back(
-    make_segment("whole", irs::doc_limits::eof()));
-
-  std::string filename;
-  std::string tmp_filename;
-  irs::IndexMetaWriter writer;
-  ASSERT_TRUE(writer.prepare(dir, meta_orig, tmp_filename, filename, 0));
-  ASSERT_TRUE(writer.commit());
-
-  irs::IndexMeta meta_read;
-  irs::index_meta::Read(dir, meta_read, filename);
-  ASSERT_EQ(2, meta_read.segments.size());
-
-  const auto& tailed = meta_read.segments[0].meta;
-  EXPECT_EQ(10, tailed.docs_count);
-  EXPECT_EQ(6, tailed.live_docs_count);
-  EXPECT_EQ(irs::doc_limits::min() + 7, tailed.visible_end);
-  EXPECT_EQ(3, irs::InvisibleCount(tailed));
-
-  const auto& whole = meta_read.segments[1].meta;
-  EXPECT_EQ(10, whole.docs_count);
-  EXPECT_EQ(9, whole.live_docs_count);
-  EXPECT_EQ(irs::doc_limits::eof(), whole.visible_end);
 }
 
 TEST(index_meta_tests, ctor) {
@@ -227,14 +179,16 @@ TEST(index_meta_tests, rejects_unknown_fields) {
 
 TEST(index_meta_tests, payload_is_read_whole) {
   irs::MemoryDirectory dir;
-  irs::IndexMetaWriter writer{[](uint64_t tick, duckdb::BinarySerializer& out) {
-    out.WriteProperty<uint64_t>(0, "tick", tick);
-    out.WriteProperty<std::string>(1, "name", "payload");
-  }};
+  irs::IndexMetaWriter writer{
+    [](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
+      out.WriteProperty<uint64_t>(0, "tick", position.offset);
+      out.WriteProperty<std::string>(1, "name", "payload");
+    }};
   irs::IndexMeta meta;
   std::string pending_filename;
   std::string filename;
-  ASSERT_TRUE(writer.prepare(dir, meta, pending_filename, filename, 7));
+  ASSERT_TRUE(
+    writer.prepare(dir, meta, pending_filename, filename, {.offset = 7}));
   ASSERT_TRUE(writer.commit());
 
   std::string message;

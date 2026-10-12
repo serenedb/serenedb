@@ -1,0 +1,101 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+query
+SELECT row(1, 'a') AS t, (1, 'a') AS u, typeof(row(1, 'a')) AS type;
+----
+t	u	type
+(1,a)	(1,a)	TUPLE(INTEGER, VARCHAR)
+
+# DOCS_TEST: example_002
+
+statement ok
+DROP TABLE IF EXISTS points;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE points (id INTEGER, p TUPLE(DOUBLE, DOUBLE));
+
+statement ok
+INSERT INTO points VALUES (1, row(1.5, 2.5)), (2, NULL), (3, row(NULL, 4));
+
+query
+SELECT id, p, p IS NULL AS is_null FROM points ORDER BY id;
+----
+id	p	is_null
+1	(1.5,2.5)	f
+2	NULL	t
+3	(,4)	f
+
+# DOCS_TEST: example_003
+
+statement ok
+DROP TABLE IF EXISTS pairs;
+
+statement ok
+DROP TYPE IF EXISTS pair;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE pair AS TUPLE(INTEGER, BIGINT);
+
+statement ok
+CREATE TABLE pairs (p pair);
+
+statement ok
+INSERT INTO pairs VALUES (row(1, 2));
+
+query
+SELECT p, typeof(p) AS type FROM pairs;
+----
+p	type
+(1,2)	TUPLE(INTEGER, BIGINT)
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, p[1] AS x, p[2] AS y, struct_extract(p, 2) AS also_y FROM points ORDER BY id;
+----
+id	x	y	also_y
+1	1.5	2.5	2.5
+2	NULL	NULL	NULL
+3	NULL	4	4
+
+statement error
+SELECT p[3] FROM points;
+----
+db error: ERROR: Key index 3 for struct_extract out of range - expected an index between 1 and 2
+
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT (row('a', 42)::STRUCT(v VARCHAR, i INTEGER)).v AS v, {'x': 1, 'y': 'b'}::TUPLE(INTEGER, VARCHAR) AS t;
+----
+v	t
+a	(1,b)
+
+statement error
+SELECT row(1, 2)::STRUCT(a INTEGER);
+----
+db error: ERROR: Type TUPLE(INTEGER, INTEGER) does not match with STRUCT(a INTEGER). Cannot cast STRUCTs of different size
+
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_BODY
+
+query
+SELECT pg_typeof(row(1, 'a'))::TEXT AS pg_type, row(1, 'a')::VARCHAR AS text;
+----
+pg_type	text
+record	(1, a)

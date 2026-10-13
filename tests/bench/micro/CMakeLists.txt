@@ -75,6 +75,11 @@ add_bench(split_by_non_alpha)
 add_bench(term_enumeration)
 add_bench(top_term_selector)
 add_bench(random)
+set_property(
+    SOURCE random.cpp TARGET_DIRECTORY serenedb-bench-micro
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS USE_PCG_RANDOM
+)
 add_bench(io_buffers)
 add_bench(fp_neg_zero_cmp)
 add_bench(uuid_print)

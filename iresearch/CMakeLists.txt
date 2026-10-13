@@ -528,6 +528,7 @@ target_link_libraries(
     PUBLIC ${FASTTEXT_LIBRARY_STATIC}
     PUBLIC sse2neon
     PUBLIC ${FAISS_LIB}
+    PUBLIC pcg
     PUBLIC re2
     PUBLIC roaring::roaring
     PUBLIC s2

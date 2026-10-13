@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <pcg_random.hpp>
 #include <span>
 #include <vector>
 
@@ -297,7 +298,7 @@ class HnswGraphWriter {
   std::vector<uint8_t> _processed;
 };
 
-uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept;
+uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept;
 
 template<VectorMetric M>
 void HnswComputeDistances(const float* q, const float* base, uint32_t d,

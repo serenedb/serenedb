@@ -26,7 +26,7 @@
 #include <cstring>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
-#include <random>
+#include <pcg_random.hpp>
 #include <span>
 #include <utility>
 #include <yaclib/async/make.hpp>
@@ -96,7 +96,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
 
   std::vector<float> train;
   size_t train_seen = 0;
-  absl::InsecureBitGen train_rng(std::seed_seq{kTrainSeed});
+  pcg32 train_rng{kTrainSeed};
 
   std::vector<uint32_t> doc_cluster;
   doc_cluster.reserve(rows);

@@ -621,7 +621,7 @@ std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
   const auto rows = valid.size();
   graph.Reset(rows, m);
 
-  uint64_t rng = seed;
+  pcg32 rng{seed};
   for (size_t i = 0; i < rows; ++i) {
     if (valid[i] != 0) {
       graph.SetLevel(static_cast<uint32_t>(i), HnswRandomLevel(rng, m));
@@ -734,7 +734,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   }
 
   graph.Reset(rows, m);
-  uint64_t rng = seed;
+  pcg32 rng{seed};
   for (size_t r = 0; r < src_rows; ++r) {
     if (remap[r] != kHnswInvalidNode &&
         src_graph.LevelOf(static_cast<uint32_t>(r)) != 0) {

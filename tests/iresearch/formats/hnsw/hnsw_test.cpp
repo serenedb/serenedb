@@ -614,7 +614,7 @@ std::vector<uint32_t> SelectReference(const SelectRefDist& dist,
 TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   for (const uint32_t m : {8U, 16U, 32U}) {
     constexpr size_t kDraws = 200000;
-    uint64_t rng = irs::kHnswBuildSeed;
+    pcg32 rng{irs::kHnswBuildSeed};
     size_t above = 0;
     double levels = 0;
     for (size_t i = 0; i < kDraws; ++i) {

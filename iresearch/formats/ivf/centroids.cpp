@@ -21,7 +21,7 @@
 #include "iresearch/formats/ivf/centroids.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/random/random.h>
+#include <absl/random/distributions.h>
 
 #include <algorithm>
 #include <array>
@@ -32,7 +32,7 @@
 #include <functional>
 #include <limits>
 #include <numeric>
-#include <random>
+#include <pcg_random.hpp>
 #include <utility>
 
 #include "iresearch/formats/ivf/clustering.hpp"
@@ -79,8 +79,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
                                         ReadContext& ctx, uint64_t n_train,
                                         uint32_t seed) {
   std::vector<float> sample(static_cast<size_t>(n_train) * d);
-  // TODO(codeworse): replace with PCG
-  absl::InsecureBitGen rng(std::seed_seq{seed});
+  pcg32 rng{seed};
   uint64_t seen = 0;
   const auto reservoir_sink = [&](uint64_t /*first*/, duckdb::idx_t n,
                                   const float* data,
@@ -93,8 +92,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
       if (seen < n_train) {
         std::memcpy(sample.data() + seen * d, v, d * sizeof(float));
       } else {
-        const uint64_t j =
-          std::uniform_int_distribution<uint64_t>{0, seen}(rng);
+        const uint64_t j = absl::Uniform<uint64_t>(rng, 0, seen + 1);
         if (j < n_train) {
           std::memcpy(sample.data() + j * d, v, d * sizeof(float));
         }
@@ -111,8 +109,10 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
   } else {
     std::vector<size_t> order(n_seg);
     std::iota(order.begin(), order.end(), size_t{0});
-    absl::InsecureBitGen seg_rng(std::seed_seq{seed});
-    std::shuffle(order.begin(), order.end(), seg_rng);
+    pcg32 seg_rng{seed};
+    for (size_t i = order.size(); i > 1; --i) {
+      std::swap(order[i - 1], order[absl::Uniform<size_t>(seg_rng, 0, i)]);
+    }
 
     ColumnReader::VectorScratch scratch{vector_column.Type()};
     auto scan = vector_column.InitScan(ctx);

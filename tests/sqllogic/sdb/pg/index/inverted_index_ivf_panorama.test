@@ -179,7 +179,7 @@ diff
 # The projected distance must be the scan's distance, not just the same ranking.
 query
 SELECT count(*) AS mismatched FROM (
-  SELECT i.pk, round(i.d::DOUBLE, 4) AS di, round(t.d::DOUBLE, 4) AS dt FROM
+  SELECT i.pk, i.d::DOUBLE AS di, t.d::DOUBLE AS dt FROM
     (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_l2_idx
        ORDER BY d LIMIT 20) i
@@ -187,7 +187,7 @@ SELECT count(*) AS mismatched FROM (
     (SELECT pk, emb <-> list_transform(range(64), j -> (1.0 / (j + 1))::FLOAT)::FLOAT[64] AS d
        FROM pn_l2) t
     USING (pk)
-) q WHERE di <> dt;
+) q WHERE abs(di - dt) > 1e-5;
 ----
 mismatched
 0

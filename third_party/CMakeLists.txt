@@ -351,6 +351,16 @@ if(ARCH_AMD64 AND DYNAMIC_ARCH)
 endif()
 
 ################################################################################
+### pcg, header-only, vendored by duckdb
+################################################################################
+add_library(pcg INTERFACE)
+target_include_directories(
+    pcg
+    SYSTEM
+    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/duckdb/third_party/pcg
+)
+
+################################################################################
 ### faiss library
 ################################################################################
 set(FAISS_OPT_LEVEL "dd")
@@ -368,6 +378,7 @@ target_compile_options(
         -Wno-sign-compare
         -Wno-suggest-destructor-override
 )
+target_link_libraries(${FAISS_LIB} PUBLIC pcg)
 
 ################################################################################
 ## snowball stemmer

@@ -20,6 +20,8 @@
 
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 
+#include <absl/random/distributions.h>
+
 #include <cmath>
 
 #include "iresearch/store/data_input.hpp"
@@ -103,18 +105,16 @@ HnswGraph HnswGraph::Deserialize(IndexInput& in) {
   g._max_level = static_cast<uint32_t>(in.ReadI32());
   ReadArray(in, g._levels);
   ReadArray(in, g._offsets);
-  ReadArray(in, g._neighbors);
+  ReadArray(in, g._base);
+  ReadArray(in, g._upper);
   return g;
 }
 
-uint32_t HnswRandomLevel(uint64_t& rng_state, uint32_t m) noexcept {
-  rng_state ^= rng_state << 13;
-  rng_state ^= rng_state >> 7;
-  rng_state ^= rng_state << 17;
+uint32_t HnswRandomLevel(pcg32& rng, uint32_t m) noexcept {
   const double u =
-    static_cast<double>(rng_state >> 11) / static_cast<double>(1ULL << 53);
+    absl::Uniform<double>(absl::IntervalOpenClosed, rng, 0.0, 1.0);
   const double factor = 1.0 / std::log(static_cast<double>(std::max(m, 2U)));
-  const double sample = -std::log(u > 0.0 ? u : 1e-12) * factor;
+  const double sample = -std::log(u) * factor;
   return std::min(static_cast<uint32_t>(std::lround(sample)) + 1,
                   kHnswMaxLevel);
 }

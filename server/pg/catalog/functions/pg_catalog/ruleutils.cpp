@@ -492,11 +492,26 @@ const duckdb::ParsedExpression* ParameterDefault(
 
 std::string Arguments(const pg::Session& session,
                       const duckdb::MacroFunction& macro, bool defaults) {
+  const auto& modes = macro.parameter_modes;
+  const auto count = modes.empty() ? macro.parameters.size() : modes.size();
   std::vector<std::string> arguments;
-  arguments.reserve(macro.parameters.size());
-  for (duckdb::idx_t i = 0; i < macro.parameters.size(); ++i) {
+  arguments.reserve(count);
+  duckdb::idx_t i = 0;
+  duckdb::idx_t output = 0;
+  for (duckdb::idx_t k = 0; k < count; ++k) {
+    const auto mode = modes.empty() ? 'i' : modes[k];
     std::vector<std::string> parts;
-    if (macro.is_procedure) {
+    if (mode == 'o') {
+      arguments.emplace_back(
+        absl::StrCat("OUT ", pg::QuoteIdentifier(macro.return_names[output]),
+                     " ", FormatType(session, macro.return_types[output])));
+      ++output;
+      continue;
+    }
+    if (mode == 'b') {
+      parts.emplace_back("INOUT");
+      ++output;
+    } else if (macro.is_procedure) {
       parts.emplace_back("IN");
     }
     const auto name = pg::MacroParameterName(macro, i);
@@ -512,6 +527,7 @@ std::string Arguments(const pg::Session& session,
       parts.emplace_back(absl::StrCat("DEFAULT ", value->ToString()));
     }
     arguments.emplace_back(absl::StrJoin(parts, " "));
+    ++i;
   }
   return absl::StrJoin(arguments, ", ");
 }
@@ -521,12 +537,13 @@ Definition FunctionResult(const pg::Session& session,
   if (macro.is_procedure || macro.return_types.empty()) {
     return std::nullopt;
   }
-  if (macro.type != duckdb::MacroType::TABLE_MACRO) {
-    return std::string{FormatType(session, macro.return_types.front())};
-  }
-  if (macro.return_names.empty()) {
-    return absl::StrCat("SETOF ",
-                        FormatType(session, macro.return_types.front()));
+  const bool set = macro.type == duckdb::MacroType::TABLE_MACRO;
+  if (!set || macro.return_names.empty() || !macro.parameter_modes.empty()) {
+    const std::string_view type =
+      macro.return_types.size() > 1
+        ? "record"
+        : FormatType(session, macro.return_types.front());
+    return set ? absl::StrCat("SETOF ", type) : std::string{type};
   }
   std::vector<std::string> columns;
   columns.reserve(macro.return_types.size());

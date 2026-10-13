@@ -20,6 +20,7 @@
 
 #include "connector/functions/string.h"
 
+#include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 #include <re2/re2.h>
 
@@ -742,11 +743,6 @@ size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
                              reinterpret_cast<const irs::byte_type*>(begin));
 }
 
-// ---------------------------------------------------------------------------
-// regexp_instr -- no DuckDB equivalent, needs C++
-// Ported from Velox PgRegexpInstr / PgRegexpInstr4.
-// ---------------------------------------------------------------------------
-
 // Bind data: caches the compiled RE2 when the pattern is a constant.
 struct RegexpBindData : public duckdb::FunctionData {
   std::unique_ptr<re2::RE2> compiled;  // non-null when pattern is constant
@@ -805,16 +801,6 @@ std::unique_ptr<re2::RE2> CompileConstantPattern(
   return nullptr;
 }
 
-duckdb::unique_ptr<duckdb::FunctionData> RegexpInstrBind(
-  duckdb::BindScalarFunctionInput& input) {
-  auto re = CompileConstantPattern(input);
-  if (re && !re->ok()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
-                    ERR_MSG("invalid regular expression: ", re->error()));
-  }
-  return duckdb::make_uniq<RegexpBindData>(std::move(re));
-}
-
 duckdb::unique_ptr<duckdb::FunctionData> RegexpMatchBind(
   duckdb::BindScalarFunctionInput& input) {
   auto re = CompileConstantPattern(input);
@@ -824,88 +810,278 @@ duckdb::unique_ptr<duckdb::FunctionData> RegexpMatchBind(
   return duckdb::make_uniq<RegexpBindData>(std::move(re));
 }
 
-void RegexpInstrFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
-  bool has_start_n = args.ColumnCount() == 4;
+struct PgRegexpFlags {
+  bool global = false;
+  bool case_insensitive = false;
+  bool newline_stop = false;
+  bool newline_anchor = false;
+  bool literal = false;
+};
 
-  auto local = duckdb::ExecuteFunctionState::GetFunctionState(state);
-  re2::RE2* compiled = local ? &local->Cast<RegexpLocalState>().re : nullptr;
-  const auto row_options = OwnedRegexOptions();
+PgRegexpFlags ParsePgRegexpFlags(std::string_view flags) {
+  PgRegexpFlags parsed;
+  for (const auto& option : flags) {
+    if (option == 'g') {
+      parsed.global = true;
+    } else if (option == 'c' || option == 'i') {
+      parsed.case_insensitive = option == 'i';
+    } else if (option == 'm' || option == 'n') {
+      parsed.newline_stop = true;
+      parsed.newline_anchor = true;
+    } else if (option == 'p' || option == 'w' || option == 's') {
+      parsed.newline_stop = option == 'p';
+      parsed.newline_anchor = option == 'w';
+    } else if (option == 'q' || option == 'e') {
+      parsed.literal = option == 'q';
+    } else if (option != 't') {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("invalid regular expression option: \"",
+                              std::string_view{&option, 1}, "\""));
+    }
+  }
+  return parsed;
+}
 
-  std::vector<duckdb::UnifiedVectorFormat> vdata(args.ColumnCount());
-  for (duckdb::idx_t c = 0; c < args.ColumnCount(); c++) {
-    args.data[c].ToUnifiedFormat(args.size(), vdata[c]);
+enum class PgRegexpKind : uint8_t {
+  Count,
+  Instr,
+  Substr,
+  Replace,
+};
+
+struct PgRegexpState final : duckdb::FunctionLocalState {
+  std::string pattern;
+  std::string flags_text;
+  PgRegexpFlags flags;
+  std::unique_ptr<re2::RE2> re;
+
+  const re2::RE2& Compile(std::string_view new_pattern,
+                          std::string_view new_flags) {
+    if (re && pattern == new_pattern && flags_text == new_flags) {
+      return *re;
+    }
+    flags = ParsePgRegexpFlags(new_flags);
+    auto options = OwnedRegexOptions();
+    options.set_case_sensitive(!flags.case_insensitive);
+    options.set_dot_nl(!flags.newline_stop);
+    options.set_literal(flags.literal);
+    re = std::make_unique<re2::RE2>(flags.newline_anchor && !flags.literal
+                                      ? absl::StrCat("(?m)", new_pattern)
+                                      : std::string{new_pattern},
+                                    options);
+    if (!re->ok()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
+                      ERR_MSG("invalid regular expression: ", re->error()));
+    }
+    pattern = new_pattern;
+    flags_text = new_flags;
+    return *re;
+  }
+};
+
+duckdb::unique_ptr<duckdb::FunctionLocalState> PgRegexpInitLocalState(
+  duckdb::ExpressionState&, const duckdb::BoundFunctionExpression&,
+  duckdb::FunctionData*) {
+  return duckdb::make_uniq<PgRegexpState>();
+}
+
+void CheckPgRegexpParameter(std::string_view name, int32_t value, bool valid) {
+  if (!valid) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": ", value));
+  }
+}
+
+struct PgRegexpMatcher {
+  const re2::RE2& re;
+  re2::StringPiece text;
+  size_t pos;
+  std::vector<re2::StringPiece> groups;
+
+  PgRegexpMatcher(const re2::RE2& re, std::string_view text, int32_t start)
+    : re{re},
+      text{text.data(), text.size()},
+      pos{
+        Utf8Advance(text.data(), text.size(), static_cast<size_t>(start - 1))},
+      groups(re.NumberOfCapturingGroups() + 1) {}
+
+  bool Next() {
+    if (pos > text.size() ||
+        !re.Match(text, pos, text.size(), re2::RE2::UNANCHORED, groups.data(),
+                  static_cast<int>(groups.size()))) {
+      return false;
+    }
+    pos = End(0);
+    if (groups[0].empty()) {
+      pos = Utf8NextCharPos(text.data(), text.size(), pos);
+    }
+    return true;
   }
 
-  auto result_data = duckdb::FlatVector::GetDataMutable<int64_t>(result);
+  bool NextNth(int32_t n) {
+    for (int32_t count = 0; count < n; ++count) {
+      if (!Next()) {
+        return false;
+      }
+    }
+    return true;
+  }
 
-  for (duckdb::idx_t row = 0; row < args.size(); row++) {
-    auto text_idx = vdata[0].sel->get_index(row);
-    auto pat_idx = vdata[1].sel->get_index(row);
-    if (!vdata[0].validity.RowIsValid(text_idx) ||
-        !vdata[1].validity.RowIsValid(pat_idx)) {
-      duckdb::FlatVector::ValidityMutable(result).SetInvalid(row);
+  size_t Begin(size_t group) const {
+    return groups[group].data() - text.data();
+  }
+  size_t End(size_t group) const { return Begin(group) + groups[group].size(); }
+  int32_t Position(size_t offset) const {
+    return static_cast<int32_t>(Utf8CharCount(text.data(), offset)) + 1;
+  }
+};
+
+void AppendPgReplacement(std::string& out, std::string_view replacement,
+                         const PgRegexpMatcher& match) {
+  for (size_t i = 0; i < replacement.size(); ++i) {
+    const auto c = replacement[i];
+    if (c != '\\' || i + 1 == replacement.size()) {
+      out.push_back(c);
       continue;
     }
+    const auto next = replacement[++i];
+    if (next >= '1' && next <= '9') {
+      const auto group = static_cast<size_t>(next - '0');
+      if (group < match.groups.size() && match.groups[group].data()) {
+        out.append(match.groups[group].data(), match.groups[group].size());
+      }
+    } else if (next == '&') {
+      out.append(match.groups[0].data(), match.groups[0].size());
+    } else if (next == '\\') {
+      out.push_back('\\');
+    } else {
+      out.push_back('\\');
+      out.push_back(next);
+    }
+  }
+}
 
-    auto text = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
-      vdata[0])[text_idx];
-    auto pattern =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(vdata[1])[pat_idx];
+template<PgRegexpKind Kind>
+void PgRegexpFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                      duckdb::Vector& result) {
+  using Result = std::conditional_t<Kind == PgRegexpKind::Count ||
+                                      Kind == PgRegexpKind::Instr,
+                                    int32_t, duckdb::string_t>;
+  constexpr std::string_view kName =
+    Kind == PgRegexpKind::Count   ? "regexp_count"
+    : Kind == PgRegexpKind::Instr ? "regexp_instr"
+                                  : "regexp_substr";
+  const auto arity = static_cast<int>(args.ColumnCount());
+  const int replacement_arg = Kind == PgRegexpKind::Replace ? 2 : -1;
+  const int start_arg = Kind == PgRegexpKind::Replace ? 3 : 2;
+  const int n_arg = Kind == PgRegexpKind::Count ? -1 : start_arg + 1;
+  const int endoption_arg = Kind == PgRegexpKind::Instr ? 4 : -1;
+  const int flags_arg = Kind == PgRegexpKind::Count   ? 3
+                        : Kind == PgRegexpKind::Instr ? 5
+                                                      : n_arg + 1;
+  const int subexpr_arg = Kind == PgRegexpKind::Instr    ? 6
+                          : Kind == PgRegexpKind::Substr ? 5
+                                                         : -1;
 
-    int64_t start_char = 1;
-    int64_t n = 1;
-    if (has_start_n) {
-      auto s_idx = vdata[2].sel->get_index(row);
-      auto n_idx = vdata[3].sel->get_index(row);
-      if (!vdata[2].validity.RowIsValid(s_idx) ||
-          !vdata[3].validity.RowIsValid(n_idx)) {
-        duckdb::FlatVector::ValidityMutable(result).SetInvalid(row);
+  auto& cache = duckdb::ExecuteFunctionState::GetFunctionState(state)
+                  ->Cast<PgRegexpState>();
+  std::vector<duckdb::UnifiedVectorFormat> columns(args.ColumnCount());
+  for (duckdb::idx_t c = 0; c < args.ColumnCount(); ++c) {
+    args.data[c].ToUnifiedFormat(args.size(), columns[c]);
+  }
+  const auto valid = [&](int column, duckdb::idx_t row) {
+    return columns[column].validity.RowIsValid(
+      columns[column].sel->get_index(row));
+  };
+  const auto text_at = [&](int column, duckdb::idx_t row) {
+    const auto& value = duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(
+      columns[column])[columns[column].sel->get_index(row)];
+    return std::string_view{value.GetData(), value.GetSize()};
+  };
+  const auto int_at = [&](int column, duckdb::idx_t row, int32_t fallback) {
+    if (column < 0 || column >= arity) {
+      return fallback;
+    }
+    return duckdb::UnifiedVectorFormat::GetData<int32_t>(
+      columns[column])[columns[column].sel->get_index(row)];
+  };
+
+  auto writer = duckdb::FlatVector::Writer<Result>(result, args.size());
+  std::string replaced;
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    bool null_row = false;
+    for (int column = 0; column < arity; ++column) {
+      null_row = null_row || !valid(column, row);
+    }
+    if (null_row) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto start = int_at(start_arg, row, 1);
+    CheckPgRegexpParameter("start", start, start > 0);
+    const auto n = int_at(n_arg, row, 1);
+    CheckPgRegexpParameter("n", n,
+                           Kind == PgRegexpKind::Replace ? n >= 0 : n > 0);
+    const auto endoption = int_at(endoption_arg, row, 0);
+    CheckPgRegexpParameter("endoption", endoption,
+                           endoption == 0 || endoption == 1);
+    const auto subexpr = int_at(subexpr_arg, row, 0);
+    CheckPgRegexpParameter("subexpr", subexpr, subexpr >= 0);
+    const auto& re = cache.Compile(
+      text_at(1, row), flags_arg < arity ? text_at(flags_arg, row) : "");
+    if constexpr (Kind != PgRegexpKind::Replace) {
+      if (cache.flags.global) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+          ERR_MSG(kName, "() does not support the \"global\" option"));
+      }
+    }
+    const auto text = text_at(0, row);
+    PgRegexpMatcher match{re, text, start};
+    if constexpr (Kind == PgRegexpKind::Count) {
+      int32_t count = 0;
+      while (match.Next()) {
+        ++count;
+      }
+      writer.WriteValue(count);
+    } else if constexpr (Kind == PgRegexpKind::Instr) {
+      const auto group = static_cast<size_t>(subexpr);
+      if (!match.NextNth(n) || group >= match.groups.size() ||
+          !match.groups[group].data()) {
+        writer.WriteValue(0);
         continue;
       }
-      start_char =
-        duckdb::UnifiedVectorFormat::GetData<int64_t>(vdata[2])[s_idx];
-      n = duckdb::UnifiedVectorFormat::GetData<int64_t>(vdata[3])[n_idx];
-    }
-
-    std::optional<re2::RE2> row_re;
-    re2::RE2* re = compiled;
-    if (!re) {
-      row_re.emplace(re2::StringPiece(pattern.GetData(), pattern.GetSize()),
-                     row_options);
-      if (!row_re->ok()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_REGULAR_EXPRESSION),
-          ERR_MSG("invalid regular expression: ", row_re->error()));
+      writer.WriteValue(
+        match.Position(endoption == 1 ? match.End(group) : match.Begin(group)));
+    } else if constexpr (Kind == PgRegexpKind::Substr) {
+      const auto group = static_cast<size_t>(subexpr);
+      if (!match.NextNth(n) || group >= match.groups.size() ||
+          !match.groups[group].data()) {
+        writer.WriteNull();
+        continue;
       }
-      re = &*row_re;
-    }
-
-    re2::StringPiece input(text.GetData(), text.GetSize());
-    re2::StringPiece match;
-    size_t pos = start_char > 1
-                   ? Utf8Advance(text.GetData(), text.GetSize(),
-                                 static_cast<size_t>(start_char - 1))
-                   : 0;
-    int64_t count = 0;
-
-    while (
-      re->Match(input, pos, text.GetSize(), re2::RE2::UNANCHORED, &match, 1)) {
-      ++count;
-      if (count == n) {
-        size_t byte_offset = match.data() - input.data();
-        result_data[row] =
-          static_cast<int64_t>(Utf8CharCount(text.GetData(), byte_offset)) + 1;
-        goto next_row;
+      writer.WriteValue(duckdb::StringVector::AddString(
+        result, match.groups[group].data(), match.groups[group].size()));
+    } else {
+      const auto target = n_arg < arity ? n : (cache.flags.global ? 0 : 1);
+      const auto replacement = text_at(replacement_arg, row);
+      replaced.clear();
+      size_t copied = 0;
+      for (int32_t count = 1; match.Next(); ++count) {
+        if (target != 0 && count != target) {
+          continue;
+        }
+        replaced.append(text, copied, match.Begin(0) - copied);
+        AppendPgReplacement(replaced, replacement, match);
+        copied = match.End(0);
+        if (target != 0) {
+          break;
+        }
       }
-      pos = match.data() + match.size() - input.data();
-      if (match.size() == 0) {
-        pos = Utf8NextCharPos(text.GetData(), text.GetSize(), pos);
-      }
+      replaced.append(text, copied);
+      writer.WriteValue(duckdb::StringVector::AddString(result, replaced));
     }
-    result_data[row] = 0;
-  next_row:;
   }
 }
 
@@ -1203,33 +1379,53 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
-  // regexp_count -- implemented as macro in default_functions.cpp
-
-  // regexp_instr(text, pattern) / regexp_instr(text, pattern, start, n)
   {
-    duckdb::ScalarFunctionSet regexp_instr_set("regexp_instr");
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
-      "regexp_instr",
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BIGINT,
-      RegexpInstrFunction,
-      RegexpInstrBind,
-      nullptr,
-      RegexpInitLocalState});
-    regexp_instr_set.AddFunction(duckdb::ScalarFunction{
-      "regexp_instr",
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::BIGINT, duckdb::LogicalType::BIGINT},
-      duckdb::LogicalType::BIGINT,
-      RegexpInstrFunction,
-      RegexpInstrBind,
-      nullptr,
-      RegexpInitLocalState});
-    loader.RegisterFunction(regexp_instr_set);
+    using Arguments = duckdb::vector<duckdb::LogicalType>;
+    const auto text = duckdb::LogicalType::VARCHAR;
+    const auto int4 = duckdb::LogicalType::INTEGER;
+    const auto add = [&](duckdb::ScalarFunctionSet& set, Arguments arguments,
+                         const duckdb::LogicalType& returns,
+                         duckdb::scalar_function_t function) {
+      set.AddFunction(duckdb::ScalarFunction{
+        set.name, std::move(arguments), returns, std::move(function), nullptr,
+        nullptr, PgRegexpInitLocalState});
+    };
+    duckdb::ScalarFunctionSet count{"regexp_count"};
+    for (auto arguments : {Arguments{text, text}, Arguments{text, text, int4},
+                           Arguments{text, text, int4, text}}) {
+      add(count, std::move(arguments), int4,
+          PgRegexpFunction<PgRegexpKind::Count>);
+    }
+    loader.RegisterFunction(count);
+    duckdb::ScalarFunctionSet instr{"regexp_instr"};
+    for (auto arguments :
+         {Arguments{text, text}, Arguments{text, text, int4},
+          Arguments{text, text, int4, int4},
+          Arguments{text, text, int4, int4, int4},
+          Arguments{text, text, int4, int4, int4, text},
+          Arguments{text, text, int4, int4, int4, text, int4}}) {
+      add(instr, std::move(arguments), int4,
+          PgRegexpFunction<PgRegexpKind::Instr>);
+    }
+    loader.RegisterFunction(instr);
+    duckdb::ScalarFunctionSet substr{"regexp_substr"};
+    for (auto arguments : {Arguments{text, text}, Arguments{text, text, int4},
+                           Arguments{text, text, int4, int4},
+                           Arguments{text, text, int4, int4, text},
+                           Arguments{text, text, int4, int4, text, int4}}) {
+      add(substr, std::move(arguments), text,
+          PgRegexpFunction<PgRegexpKind::Substr>);
+    }
+    loader.RegisterFunction(substr);
+    duckdb::ScalarFunctionSet replace{"regexp_replace"};
+    for (auto arguments : {Arguments{text, text, text, int4},
+                           Arguments{text, text, text, int4, int4},
+                           Arguments{text, text, text, int4, int4, text}}) {
+      add(replace, std::move(arguments), text,
+          PgRegexpFunction<PgRegexpKind::Replace>);
+    }
+    loader.RegisterFunction(replace);
   }
-
-  // regexp_substr, regexp_count -- implemented as macros in
-  // default_functions.cpp
 
   // similar_to_escape -- lives in duckdb (src/function/scalar/string/like.cpp),
   // next to like_escape and to the parser rewrite that emits the call.

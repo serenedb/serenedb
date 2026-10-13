@@ -182,12 +182,11 @@ ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
   SDB_ASSERT(row_group_size != 0);
   std::lock_guard lock{_mutex};
   auto& writer = PartOf(id, part).writer;
-  if (!writer) {
-    EnsureOut();
-    writer = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
-                                            skip_validity, row_group_size,
-                                            compression, false, codec_params);
-  }
+  SDB_ASSERT(!writer);
+  EnsureOut();
+  writer = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
+                                          skip_validity, row_group_size,
+                                          compression, false, codec_params);
   return *writer;
 }
 

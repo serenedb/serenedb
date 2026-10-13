@@ -303,15 +303,6 @@ Before the tests, [generate_iceberg_data.sh](generate_iceberg_data.sh) runs upst
 
 The suite then runs in three `unittest` calls: the extension's tests without the catalog directories in parallel, then, in upstream CI's order and with its `--order lex`, `catalog_test_config_setup` with upstream's `fixture.json`, and `catalog_custom_setup` (`FIXTURE_SERVER_AVAILABLE`). The catalog tests share one REST catalog, its namespaces and its table names, so they run sequentially and in that order: some count the requests or namespaces an earlier test leaves behind.
 
-## Changing a fork
-
-- **A bug:** first check whether upstream already fixed it
-  (`git log -S <symbol> upstream/main -- <file>`). If so, `git cherry-pick -x`
-  it. Syncing with upstream follows the update recipe above, not cherry-picks.
-- **No comments** in fork code, and no provenance markers ("SereneDB fork:").
-- Regeneration, commits, the fork PR and the gitlink bump:
-  ["When you change ..."](../../.claude/rules/third-party.md#when-you-change-).
-
 ## Traps
 
 - **Never pass `--test-temp-dir`.** It also flips `DeleteTestPath` off, which

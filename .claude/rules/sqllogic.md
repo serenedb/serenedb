@@ -18,9 +18,9 @@ paths:
   ```
 
   `<slt:ignore>` wildcards a volatile part (a "Did you mean" list, oids, generated names); use it sparingly, since an ignored part asserts nothing. The one exception to exact text is `any/pg/` when PostgreSQL and SereneDB word an error differently: a one-line `statement error <regex>` that matches both, or a `skipif`/`onlyif` pair.
-- Fill expectations with `run.sh ... --override` against a live server, then rerun without it and review the diff.
+- Fill expectations with `run.sh --override` only with `--test` naming the file you are writing, then check every result against PostgreSQL or the spec, not against what the build happens to return. A record you didn't write that changes is a failure to investigate.
 - `connection <name>` runs the next record on that named session, and only that record: repeat it before every record that needs it.
-- Retries: `statement ok retry 10 backoff 200ms`, `query ok retry 10 backoff 200ms`.
+- Retries (`statement ok retry 10 backoff 200ms`, `query ok retry 10 backoff 200ms`) only poll for a state the test waits on; they never absorb a wrong result.
 - Results must not depend on execution order: `ORDER BY` every multi-row result and round floating-point aggregates.
 - Each file runs in its own database, created per run under a unique name (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global: other files run against the same server at the same time, and the other wire engine reruns the file afterwards. Suffix their names with the database, `<name>_${__DATABASE__}`; for an ATTACH that is the alias (`AS <name>_${__DATABASE__}`), or the file name when there's no `AS`, since DuckDB then names the database after the file's basename.
 - Server-wide listings (`duckdb_tables()`, `duckdb_databases()`, `pg_database`, ...) also show other files' objects: filter them, e.g. `WHERE database_name = current_database()`.
@@ -36,7 +36,7 @@ Races are testable in sqllogic, so a concurrency bug still gets a test:
 - `wait` blocks until every background record has finished; a later synchronous record on a busy named connection waits for that connection only.
 - Records are dispatched in file order, and dispatching a record on a busy named connection first waits for that connection. To keep a step in flight while others run, put the steps that should overlap on different connections right after it, then `wait`.
 - `control max-async-connections N` caps parallel background records (default 10); `control always-async on` makes every record async.
-- There are no loops: widen a race window by repeating records.
+- There are no loops, and repeating records only widens a window: a race test parks a statement on a fault point (below), so it fails before the fix every time.
 - `tests/sqllogic/pg/simple/async.test` is a minimal example.
 
 ## Fault points

@@ -26,7 +26,7 @@ A page is user documentation, not a design note: its reader runs SereneDB and ne
 - **Engineering notes:** how a feature was tested, what CI checks, test file paths, "the worked example below verifies ...".
 - **Plans and guesses:** "currently", "not yet", "planned", "in a future release". State a limitation as it is today: "`X` is not supported".
 
-Check every sentence: could a user confirm it from SQL or a client, without the source? If not, delete it.
+Check every sentence: could a user observe it or rely on it, without the source? If not, delete it.
 
 Two kinds of pages are exempt in part: `docs/releases/` describes what changed between releases, and a benchmark page may explain why a result is what it is.
 

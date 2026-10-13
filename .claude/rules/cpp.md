@@ -16,7 +16,7 @@ paths:
 
 Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code, and to the DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) in DuckDB's own style: there DuckDB's formatting, naming, `template <class T>` and helpers (`D_ASSERT`, `make_uniq`, `StringUtil`, its exception types, logging and settings) stay, and our pre-commit C++ checks don't run, so nothing catches a slip.
 
-Style issues shouldn't block PRs -- anything not caught automatically can be fixed later. This is a living document.
+Formatting and naming nits shouldn't block PRs -- what the tools don't catch can be fixed later; the "never" and "forbidden" rules do block. This is a living document.
 
 ## Tools
 
@@ -67,7 +67,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Scop
 - POD-like types: use designated initializers `{.foo = 1, .bar = 2,}`
 - Default `operator==`/`<=>`/`=` and constructors when possible
 - Trailing comma required for multi-line initializer lists
-- Forbidden: `Type var{};` and `Type var = {};` -- just omit for default construction
+- A class type with a default constructor: `Type var;`, never `Type var{};` or `Type var = {};`. Scalars, pointers and trivial aggregates still get an initializer (`= 0`, `= nullptr`, `{}`): nothing zeroes them otherwise
 - Prefer `auto` with factory functions: `auto x = MakeFoo()`
 - `const` strongly recommended on methods, references, and pointees; on variables it's the author's call
 - Prefer `const auto*` over plain `auto` for pointers
@@ -183,7 +183,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - All of them take the `std::string_view` or `const char*` key you have wherever a key goes: `find`, `contains`, `count`, `operator[]`, `at`, `try_emplace`, `insert_or_assign`, `erase`. `std::map` and `std::set` take it in the lookups (`find`, `contains`, `count`, `lower_bound`, `equal_range`), because our patched libc++ makes `std::less<>` their default comparator, but not in `operator[]`, `at`, `try_emplace` or `erase`.
 - Never `find` followed by an insert of the same key: `try_emplace` or `operator[]` looks the key up once.
 - Key a map by `std::string_view` when the strings outlive it.
-- `absl::btree_*` over `std::set`/`std::map` when appropriate.
+- `absl::btree_*` over `std::set`/`std::map`, unless references or iterators must survive inserts and erases.
 
 ## noexcept
 
@@ -206,7 +206,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
   asks for them.
 - Prefer `emplace`-like functions; `emplace_back` takes aggregate members positionally.
 - A const/non-const accessor pair is one deducing-`this` template.
-- Add a virtual function, hook, field or setting only together with code outside its own file that uses it; delete a setting once nothing reads it.
+- Add a virtual function, hook, field or setting only together with the code that uses it; delete a setting once nothing reads it.
 - A new cap or limit is a SET variable read through `SettingRef` (`server/query/config.h`), not a constant; a new SereneDB-only one is named `sdb_<name>`.
 - Production headers carry no test-only accessors or helpers.
 - SQL the server issues itself is built with DuckDB's C++ API (statements and expressions), not as text for the parser, at least on hot paths. SQL from clients is handled by the parser: never detect or rewrite it with text or regex matching; patch the parser or transformer instead.

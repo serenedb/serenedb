@@ -65,20 +65,10 @@ Tools and benchmarks share binaries instead of each linking their own: `serenedb
 
 ### The embedded documentation index
 
-`docs/` is compiled into the binary together with a prebuilt search index of it. The read-only `sdb_docs` functions and the shell's `.docs` read that image straight from the binary, so the server indexes nothing at startup and leaves nothing in the datadir.
+`docs/` and a search index of it are built into `serened` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them. Every link rebuilds the index: the build runs the new binary with `--build_docs_index` and writes the result into it (`scripts/embed_docs_index.py`), so a `docs/` change needs only a rebuild and nothing is kept in sync by hand.
 
-The index cannot be produced from the sources the way the documentation text is, because building it needs the indexer that lives in the server being built. So `serened` builds it itself, right after it is linked:
-
-1. `scripts/generate_docs.py --corpus` writes the documentation text to a file in the build directory.
-2. `serened` is linked with an empty `.sdb_docs` section for the index (`server/docs/docs_index_image.cpp`); `server/docs/docs_index.ld` places it after `.bss`, alone in the last loadable segment.
-3. `serened <datadir> --build_docs_index=<out> --docs_corpus=<file>` boots it on a throwaway datadir, indexes the documentation and the catalog of the objects it documents, and writes them to `<out>/docs` and `<out>/objects`, each with a layout file naming its column and field ids. It then exits before any listener is started.
-4. `scripts/embed_docs_index.py` writes both directories into `.sdb_docs` of the binary that built them and grows the section and its segment to exactly their size. Nothing is loaded after that segment, so only the non-loaded sections behind it in the file move.
-
-macOS has no linker scripts, so there `serened` reserves a fixed 4 MiB region instead and step 4 fills it in place. If the index outgrows it, the macOS build fails and says so; raise `kCapacity` in `docs_index_image.cpp`.
-
-`serenedb-tests` is linked and embedded the same way, so the documentation tests run against what `serened` ships.
-
-Steps 3 and 4 run every time `serened` is linked, which includes every change to `docs/`. So the image always matches the server it lives in, and there is nothing to keep in sync by hand. To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`: that build carries no documentation, so `.docs` and `sdb_docs` have nothing to read.
+- To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
+- On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
 
 ### Launch
 

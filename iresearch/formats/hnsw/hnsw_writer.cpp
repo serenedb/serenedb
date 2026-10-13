@@ -1173,7 +1173,6 @@ void HnswWriter::Flush() {
   auto& out = _idx->BlocksOut();
   const uint64_t offset = out.Position();
 
-  out.WriteU32(kHnswFormatVersion);
   out.WriteU32(_d);
   out.WriteU32(static_cast<uint32_t>(_info.metric));
   out.WriteU32(static_cast<uint32_t>(_info.quant.kind));

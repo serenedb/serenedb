@@ -51,7 +51,6 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 HnswHeader HnswIndex::ReadHeader(IndexInput& in) {
   HnswHeader h;
-  h.version = static_cast<uint32_t>(in.ReadI32());
   h.d = static_cast<uint32_t>(in.ReadI32());
   h.metric = static_cast<VectorMetric>(in.ReadI32());
   h.quant = static_cast<VectorQuantization>(in.ReadI32());

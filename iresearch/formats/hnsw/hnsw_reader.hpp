@@ -34,7 +34,6 @@
 namespace irs {
 
 struct HnswHeader {
-  uint32_t version = 0;
   uint32_t d = 0;
   VectorMetric metric = VectorMetric::L2Sqr;
   VectorQuantization quant = VectorQuantization::None;

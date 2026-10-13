@@ -55,7 +55,7 @@ inline constexpr size_t kHnswInsertGranule = 256;
 // row the encoder silently clamps.
 inline constexpr uint64_t kHnswTrainSample = 262144;
 inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
-inline constexpr uint32_t kHnswFormatVersion = 1;
+inline constexpr size_t kHnswLinksPerLine = 64 / sizeof(uint32_t);
 inline constexpr uint64_t kHnswBuildSeed = 0x9E3779B97F4A7C15ULL;
 
 class HnswVisited {
@@ -207,8 +207,10 @@ class HnswGraph {
 
   std::span<const uint32_t> Neighbors(uint32_t node,
                                       uint32_t level) const noexcept {
-    const auto width = level == 0 ? _m0 : _m;
-    return {_neighbors.data() + Base(node, level), width};
+    if (level == 0) {
+      return {_base.data() + size_t{node} * _m0, _m0};
+    }
+    return {_upper.data() + Upper(node, level), _m};
   }
 
   void Serialize(DataOutput& out) const;
@@ -217,14 +219,16 @@ class HnswGraph {
  private:
   friend class HnswGraphWriter;
 
-  uint64_t Base(uint32_t node, uint32_t level) const noexcept {
+  uint64_t Upper(uint32_t node, uint32_t level) const noexcept {
+    SDB_ASSERT(level != 0);
     SDB_ASSERT(level < _levels[node]);
-    return _offsets[node] + (level == 0 ? 0 : _m0 + uint64_t{level - 1} * _m);
+    return _offsets[node] + uint64_t{level - 1} * _m;
   }
 
   std::vector<uint8_t> _levels;
   std::vector<uint64_t> _offsets;
-  std::vector<uint32_t> _neighbors;
+  std::vector<uint32_t> _base;
+  std::vector<uint32_t> _upper;
   uint32_t _entry = kHnswInvalidNode;
   uint32_t _max_level = 0;
   uint32_t _m = kHnswDefaultM;
@@ -274,8 +278,10 @@ class HnswGraphWriter {
   void SetEntryPoint(uint32_t node) noexcept { _graph._entry = node; }
 
   std::span<uint32_t> Neighbors(uint32_t node, uint32_t level) noexcept {
-    const auto width = level == 0 ? _graph._m0 : _graph._m;
-    return {_graph._neighbors.data() + _graph.Base(node, level), width};
+    if (level == 0) {
+      return {_graph._base.data() + size_t{node} * _graph._m0, _graph._m0};
+    }
+    return {_graph._upper.data() + _graph.Upper(node, level), _graph._m};
   }
 
   std::span<const uint32_t> Neighbors(uint32_t node,
@@ -371,6 +377,11 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
 
     if (nearest.size() >= ef && cur.score < nearest.front().score) {
       break;
+    }
+    if (!frontier.empty()) {
+      const auto* next = graph.Neighbors(frontier.front().node, level).data();
+      __builtin_prefetch(next, 0, 3);
+      __builtin_prefetch(next + kHnswLinksPerLine, 0, 3);
     }
 
     s.batch.clear();

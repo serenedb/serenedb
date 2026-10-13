@@ -42,6 +42,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/iterator.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -111,17 +112,24 @@ class LoserScoreCollector {
     }
   }
 
-  IRS_FORCE_INLINE void ConsumeWindow(score_t* scores, uint64_t* mask,
-                                      doc_id_t min,
-                                      size_t num_blocks) noexcept {
+  template<bool Keep = false>
+  IRS_FORCE_INLINE void ConsumeWindow(
+    score_t* scores, uint64_t* mask, doc_id_t min, size_t num_blocks,
+    utils::Need<Keep, const uint64_t*> keep) noexcept {
     const auto old_threshold = ScoreThreshold();
     auto new_threshold = old_threshold;
     for (size_t i = 0; i < num_blocks; ++i) {
       auto word = mask[i];
       if (word == 0) [[likely]] {
+        SDB_ASSERT(std::all_of(scores + i * BitsRequired<uint64_t>(),
+                               scores + (i + 1) * BitsRequired<uint64_t>(),
+                               [](score_t score) { return score == 0; }));
         continue;
       }
       mask[i] = 0;
+      if constexpr (Keep) {
+        word = keep[i];
+      }
 
       _count += std::popcount(word);
       auto* IRS_RESTRICT const score_base =

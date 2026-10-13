@@ -175,13 +175,15 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ## Strings and containers
 
-- `std::string_view` for strings owned elsewhere and `std::span` for arrays, almost everywhere; a `std::string` only where the value must outlive its source, and at a C API boundary that needs a terminating null.
-- Hash containers: `irs::containers::FlatHashMap`, `FlatHashSet`, `NodeHashMap` or `NodeHashSet` with `absl::Hash`, never `std::unordered_*` or `std::hash` (pre-commit `check-banned-calls` rejects `std::unordered_*` in `server/` and `iresearch/`). `absl::btree_*` over `std::set`/`std::map` when appropriate.
-- In the DuckDB family, `unordered_map` and `unordered_set` are `absl::node_hash_map` and `absl::node_hash_set` in our fork (references stay valid, as with the std ones), and `case_insensitive_map_t` and `case_insensitive_set_t` are built on them. The few `std::unordered_*` written out there are libc++'s.
-- Look up with the `std::string_view` or `const char*` you have, never a temporary `std::string`: `options[name]`, `options.find(name)`, `options.contains(name)`, never `options[std::string{name}]`. The absl and `irs::containers` containers and DuckDB's above take it wherever a key goes (`find`, `contains`, `count`, `operator[]`, `at`, `try_emplace`, `insert_or_assign`, `erase`). `std::map` and `std::set` take it in the lookups (`find`, `contains`, `count`, `lower_bound`, `equal_range`), because our patched libc++ makes `std::less<>` their default comparator, but not in `operator[]`, `at`, `try_emplace` or `erase`. libc++'s `std::unordered_*` take it nowhere.
+- Use views: `std::string_view` (and `std::span` for arrays) wherever the data is owned elsewhere. Own a `std::string` only where the value must outlive its source, or at a C API that needs a terminating null.
+- Never build a `std::string` just to pass a view on or look it up: `options[name]`, `options.find(name)`, never `options[std::string{name}]` or `options.find(std::string{name})`.
+- Hash containers and hashing are absl's: never `std::unordered_*` (pre-commit `check-banned-calls` rejects it in `server/` and `iresearch/`) or `std::hash`:
+  - in our code, `irs::containers::FlatHashMap` and `FlatHashSet` (`absl::flat_hash_map` and `flat_hash_set`), and `NodeHashMap` when references to elements must survive inserts;
+  - in the DuckDB family, `unordered_map` and `unordered_set` (`absl::node_hash_map` and `node_hash_set` in our fork), `case_insensitive_map_t` and `case_insensitive_set_t`.
+- All of them take the `std::string_view` or `const char*` key you have wherever a key goes: `find`, `contains`, `count`, `operator[]`, `at`, `try_emplace`, `insert_or_assign`, `erase`. `std::map` and `std::set` take it in the lookups (`find`, `contains`, `count`, `lower_bound`, `equal_range`), because our patched libc++ makes `std::less<>` their default comparator, but not in `operator[]`, `at`, `try_emplace` or `erase`.
 - Never `find` followed by an insert of the same key: `try_emplace` or `operator[]` looks the key up once.
 - Key a map by `std::string_view` when the strings outlive it.
-- Don't add an explicit `std::string{...}` conversion until the code fails to compile without it.
+- `absl::btree_*` over `std::set`/`std::map` when appropriate.
 
 ## noexcept
 

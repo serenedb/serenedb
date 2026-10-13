@@ -72,7 +72,7 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
 }
 
 void SearchEngine::start() {
-  StartInvertedIndexTasks();
+  StartSearchStorageTasks();
   SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 

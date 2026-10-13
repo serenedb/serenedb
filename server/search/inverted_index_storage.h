@@ -45,6 +45,7 @@
 #include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
+#include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
@@ -266,15 +267,11 @@ class InvertedIndexStorage final
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
 
   const irs::SourcePosition& PersistedPosition() const noexcept {
-    return _position;
+    return _durability.Position();
   }
 
-  void MarkOutOfSync() noexcept {
-    _out_of_sync.store(true, std::memory_order_relaxed);
-  }
-  bool IsOutOfSync() const noexcept {
-    return _out_of_sync.load(std::memory_order_relaxed);
-  }
+  void MarkOutOfSync() noexcept { _durability.MarkOutOfSync(); }
+  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
@@ -283,13 +280,6 @@ class InvertedIndexStorage final
                          const irs::IndexFieldOptions* field_options,
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
-  absl::Status RefreshUnsafeImpl(bool wait,
-                                 const irs::ProgressReportCallback& progress,
-                                 RefreshResult& code);
-  bool CanPersist() const;
-  uint64_t RunningCheckpoint(uint64_t generation) const;
-  void WaitForCheckpoint() const;
-  void SyncDirectory();
   void PublishSnapshot();
   absl::Status CleanupUnsafeImpl();
 
@@ -297,10 +287,9 @@ class InvertedIndexStorage final
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _absent = false;
-  bool _on_disk = false;
-  std::atomic<bool> _directory_dirty{true};
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
+  IndexDurability _durability;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
@@ -313,12 +302,7 @@ class InvertedIndexStorage final
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
   uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
   TasksSettings _tasks_settings;
-  absl::Mutex _refresh_mutex;
 
-  irs::SourcePosition _position;
-  uint64_t _checkpoint = 0;
-  uint64_t _pending_checkpoint = 0;
-  std::atomic<bool> _out_of_sync{false};
   duckdb::mutex _delete_log_mutex;
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{

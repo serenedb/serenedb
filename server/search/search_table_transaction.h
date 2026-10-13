@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
+#include <duckdb/storage/storage_lock.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -64,6 +65,9 @@ struct SearchShardWrites {
   // released when the transaction settles. -1 until it registers.
   int writer_slot = -1;
   bool truncate_claim = false;
+  duckdb::unique_ptr<duckdb::StorageLockKey> checkpoint_lock;
+  uint64_t first_tick = 0;
+  irs::SourcePosition position;
 };
 
 // Holds a query::Transaction's search-table (TableEngine::Search) state and
@@ -147,6 +151,9 @@ class SearchTableTransaction {
   bool Empty() const noexcept { return _writes.empty(); }
 
   void PrepareCommit(duckdb::ClientContext& context);
+  void Stage(const irs::SourcePosition& position,
+             duckdb::idx_t database) noexcept;
+  void Publish(duckdb::idx_t database) noexcept;
 
   void FlushPending(duckdb::ClientContext& context);
 

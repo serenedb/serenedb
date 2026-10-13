@@ -1,0 +1,124 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE tbi_src AS SELECT i FROM range(0, 600000) r(i);
+
+
+statement ok
+CREATE TABLE tbi (id BIGINT, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO tbi VALUES (-1, 'old');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tbi;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE tbi;
+
+
+statement ok
+INSERT INTO tbi SELECT i, 'live' FROM tbi_src;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) tbi;
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE tag = 'live') AS live FROM tbi;
+----
+n	live
+600000	600000
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+TRUNCATE tbi;
+
+
+statement ok
+INSERT INTO tbi SELECT i, 'replayed' FROM tbi_src;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE tag = 'replayed') AS replayed FROM tbi;
+----
+n	replayed
+600000	600000
+
+
+connection after_crash
+statement ok
+BEGIN;
+
+
+connection after_crash
+statement ok
+TRUNCATE tbi;
+
+
+connection after_crash
+statement ok
+INSERT INTO tbi SELECT i, repeat('buffered', 16) FROM range(0, 100000) r(i);
+
+
+connection after_crash
+statement ok
+COMMIT;
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash_2
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(*) FILTER (WHERE tag = repeat('buffered', 16)) AS buffered FROM tbi;
+----
+n	buffered
+100000	100000
+
+
+connection after_crash_2
+statement ok
+DROP TABLE tbi;

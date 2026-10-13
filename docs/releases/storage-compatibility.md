@@ -29,7 +29,7 @@ The catalog log belongs to the whole instance: if a release refuses it or cannot
 A server keeps its catalog and its databases under `engine_v1` in its data directory:
 
 - `engine_v1/catalog.wal`: the catalog log.
-- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, the write-ahead log of the database's search tables, and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`.
+- `engine_v1/<oid>/`: one database, named by its `pg_database.oid`. It holds the database file `data.db` with its write-ahead log, which also logs the changes of the database's search tables, and one directory for each search table and each inverted index on a table or view, named by the object's `pg_class.oid`.
 
 Beside `engine_v1`, the root of the data directory holds:
 

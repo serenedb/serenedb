@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
@@ -35,6 +36,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/persistence/search_table.h"
 #include "query/config_variable_names.h"
@@ -178,16 +180,13 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
     return this;
   }
 
-  void ReplayInsert(duckdb::ClientContext& context, duckdb::idx_t tick,
-                    duckdb::DataChunk& chunk,
+  void ReplayInsert(duckdb::ClientContext& context, duckdb::DataChunk& chunk,
                     duckdb::optional_idx row_start) final;
-  void ReplayDelete(duckdb::ClientContext& context, duckdb::idx_t tick,
+  void ReplayDelete(duckdb::ClientContext& context,
                     duckdb::DataChunk& chunk) final;
-  void ReplayTruncate(duckdb::ClientContext& context, duckdb::idx_t tick) final;
-  void ReplayAdoptSegments(duckdb::ClientContext& context, duckdb::idx_t tick,
+  void ReplayTruncate(duckdb::ClientContext& context) final;
+  void ReplayAdoptSegments(duckdb::ClientContext& context,
                            duckdb::vector<std::string> segments) final;
-  void FinishReplay() final;
-  void Checkpoint() final;
 
   const auto& Storage() const noexcept { return _storage; }
 
@@ -203,5 +202,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry,
   SearchTableOptions _options;
   duckdb::Identifier _pk_sequence;
 };
+
+std::vector<std::shared_ptr<search::SearchTable>> SearchTableStorages(
+  duckdb::DuckCatalog& catalog);
 
 }  // namespace sdb::catalog

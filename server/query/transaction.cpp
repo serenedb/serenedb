@@ -202,6 +202,9 @@ void Transaction::StageSearch(const irs::SourcePosition& position,
     entry.tick = entry.storage->NextTick(queries);
     entry.position = position;
   }
+  if (_search_txn) {
+    _search_txn->Stage(position, database);
+  }
 }
 
 void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
@@ -225,6 +228,9 @@ void Transaction::PublishSearch(duckdb::idx_t database) noexcept {
     }
   }
   absl::erase_if(_search_transactions, in_scope);
+  if (_search_txn) {
+    _search_txn->Publish(database);
+  }
 }
 
 void Transaction::Commit() {

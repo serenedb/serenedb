@@ -25,12 +25,16 @@
 
 #include <algorithm>
 #include <chrono>
+#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/storage/block_manager.hpp>
+#include <duckdb/storage/storage_manager.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -70,12 +74,6 @@ catalog::CompressionByColumn SearchTable::DeclaredCompression(
   return compression;
 }
 
-namespace {
-
-constexpr duckdb::field_id_t kFieldTick = 0;
-
-}  // namespace
-
 struct SearchTable::ReplaySession {
   struct PendingAdopt {
     std::string meta_file;
@@ -84,24 +82,22 @@ struct SearchTable::ReplaySession {
 
   irs::IndexWriter::Transaction trx;
   std::unique_ptr<connector::SearchSinkInsertBaseImpl> sink;
-  uint64_t max_tick = 0;
   std::vector<PendingAdopt> adopts;
 };
 
-uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
-  return payload.ReadProperty<uint64_t>(kFieldTick, "tick");
-}
-
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
-                         bool in_memory, duckdb::idx_t table_id, bool is_new,
+                         bool in_memory, duckdb::idx_t db_id,
+                         duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
-  : _table_id{table_id},
+  : _db_id{db_id},
+    _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
-    _compression{std::move(compression)} {
+    _compression{std::move(compression)},
+    _durability{db_id, absl::StrCat("search table ", table_id)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -138,6 +134,7 @@ void SearchTable::OpenWriter(bool in_memory) {
                                      in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
+  _durability.Open(Path(), opened.on_disk);
 
   const bool reopen = opened.on_disk && !_is_new;
   const auto open_mode =
@@ -146,9 +143,6 @@ void SearchTable::OpenWriter(bool in_memory) {
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
-  // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
-  // references, so Make() must not unlink them; FinishRecovery cleans up once
-  // replay is done. A new shard's directory is empty, so it keeps the default.
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
@@ -159,15 +153,16 @@ void SearchTable::OpenWriter(bool in_memory) {
 
   writer_options.meta_payload_writer =
     [this](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
-      const auto committed = std::max(CommittedTick(), position.offset);
-      _last_committed_tick.store(committed, std::memory_order_release);
-      out.WriteProperty<uint64_t>(kFieldTick, "tick", committed);
+      _durability.WritePayload(position, nullptr, out);
     };
-  writer_options.meta_payload_reader = [this](duckdb::BinaryDeserializer& in) {
-    _last_committed_tick.store(ReadCommittedTick(in),
-                               std::memory_order_release);
+  IndexStamp stamp;
+  writer_options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
+    stamp = IndexStamp::Read(in);
   };
 
+  if (reopen) {
+    _durability.ResolvePendingSave(*_dir);
+  }
   _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
 
   auto& db_manager =
@@ -188,10 +183,11 @@ void SearchTable::OpenWriter(bool in_memory) {
     }
   }
 
-  if (_is_new) {
+  if (reopen) {
+    _durability.Reopen(stamp.position);
+  } else {
     _writer->RefreshCommit();
   }
-  _writer->RaiseTick(CommittedTick());
 }
 
 void SearchTable::StartTasks() {
@@ -204,32 +200,10 @@ void SearchTable::StartTasks() {
 }
 
 ResultWithTime SearchTable::RefreshUnsafe(
-  bool wait, const irs::ProgressReportCallback& /*progress*/,
-  RefreshResult& code) {
+  bool wait, const irs::ProgressReportCallback& progress, RefreshResult& code) {
   const auto begin = std::chrono::steady_clock::now();
-  code = RefreshResult::NoChanges;
-  auto result = absl::OkStatus();
-  try {
-    std::unique_lock<absl::Mutex> lock{_refresh_mutex, std::try_to_lock};
-    if (!lock.owns_lock()) {
-      if (wait) {
-        lock.lock();
-      } else {
-        code = RefreshResult::InProgress;  // another refresh/VACUUM is running
-      }
-    }
-    if (lock.owns_lock()) {
-      _refresh_mutex.AssertHeld();
-      SDB_PARK_ONCE_ON_FAILURE("pause_search_refresh_after_tick");
-      if (_writer->RefreshCommit()) {
-        code = RefreshResult::Done;
-      }
-    }
-  } catch (const std::exception& e) {
-    result = absl::InternalError(
-      absl::StrCat("refresh failed for search table ", GetTableId(), ": ",
-                   duckdb::ErrorData{e}.RawMessage()));
-  }
+  auto result =
+    _durability.Refresh(*_writer, wait, progress, code, [] {}, [] {});
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
@@ -263,18 +237,16 @@ void SearchTable::DrainPriorWriters(absl::FunctionRef<bool()> cancelled) {
 void SearchTable::OpenDeleteLog() {
   absl::MutexLock lock{&_delete_log_mutex};
   _delete_log.clear();
-  _build_truncate_tick.store(0, std::memory_order_relaxed);
+  _build_truncate = {};
   _delete_log_open.store(true, std::memory_order_release);
 }
 
-void SearchTable::RecordTruncateForBuild(uint64_t tick) {
+void SearchTable::RecordTruncateForBuild(const irs::SourcePosition& position) {
   absl::MutexLock lock{&_delete_log_mutex};
   if (!_delete_log_open.load(std::memory_order_relaxed)) {
     return;
   }
-  if (_build_truncate_tick.load(std::memory_order_relaxed) < tick) {
-    _build_truncate_tick.store(tick, std::memory_order_release);
-  }
+  _build_truncate = std::max(_build_truncate, position);
 }
 
 void SearchTable::AppendDeleteLog(std::span<const int64_t> rows) {
@@ -457,6 +429,7 @@ ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
   auto result = absl::OkStatus();
   try {
+    _durability.SyncDirectory();
     irs::directory_utils::RemoveAllUnreferenced(*_dir);
   } catch (const std::exception& e) {
     result = absl::InternalError(
@@ -539,23 +512,24 @@ void SearchTable::Publish() {
   }
 }
 
-SearchTable::ReplaySession* SearchTable::BeginReplay(uint64_t tick) {
-  if (tick <= CommittedTick()) {
+SearchTable::ReplaySession* SearchTable::BeginReplay(
+  duckdb::AttachedDatabase& db) {
+  const auto offset =
+    duckdb::DuckTransactionManager::Get(db).GetReplayCommitOffset();
+  if (offset != 0 && offset < _durability.ReplayFrom(db)) {
     return nullptr;
   }
   if (!_replay) {
     _replay = std::make_unique<ReplaySession>(GetTransaction());
   }
-  _replay->max_tick = std::max(_replay->max_tick, tick);
   return _replay.get();
 }
 
 void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                duckdb::Catalog& catalog,
                                std::span<const connector::ColumnId> column_ids,
-                               uint64_t tick, duckdb::DataChunk& chunk,
-                               uint64_t row_start) {
-  auto* session = BeginReplay(tick);
+                               duckdb::DataChunk& chunk, uint64_t row_start) {
+  auto* session = BeginReplay(catalog.GetAttached());
   if (!session) {
     return;
   }
@@ -567,27 +541,28 @@ void SearchTable::ReplayInsert(duckdb::ClientContext& context,
                                     row_start, _table_id, context);
 }
 
-void SearchTable::ReplayDelete(uint64_t tick, duckdb::DataChunk& chunk) {
-  auto* session = BeginReplay(tick);
+void SearchTable::ReplayDelete(duckdb::AttachedDatabase& db,
+                               duckdb::DataChunk& chunk) {
+  auto* session = BeginReplay(db);
   if (!session) {
     return;
   }
   auto& rows = chunk.data[0];
-  rows.Flatten();
+  SDB_ASSERT(rows.GetVectorType() == duckdb::VectorType::FLAT_VECTOR);
   connector::RemoveGeneratedRows(
     session->trx, std::span<const int64_t>{
                     duckdb::FlatVector::GetData<int64_t>(rows), chunk.size()});
 }
 
-void SearchTable::ReplayTruncate(uint64_t tick) {
-  if (auto* session = BeginReplay(tick)) {
+void SearchTable::ReplayTruncate(duckdb::AttachedDatabase& db) {
+  if (auto* session = BeginReplay(db)) {
     session->trx.Remove(std::make_shared<irs::All>());
   }
 }
 
-void SearchTable::ReplayAdoptSegments(uint64_t tick,
+void SearchTable::ReplayAdoptSegments(duckdb::AttachedDatabase& db,
                                       std::vector<std::string> segments) {
-  auto* session = BeginReplay(tick);
+  auto* session = BeginReplay(db);
   if (!session) {
     return;
   }
@@ -596,37 +571,33 @@ void SearchTable::ReplayAdoptSegments(uint64_t tick,
   }
 }
 
-void SearchTable::FinishReplay() {
-  if (_replay) {
-    auto& session = *_replay;
-    session.sink.reset();
-    const uint64_t queries = session.trx.GetQueries();
-    SDB_FATAL_IF(SEARCH, session.max_tick <= queries,
-                 "search-table WAL recovery: tick ", session.max_tick,
-                 " cannot cover ", queries, " removals for table ", _table_id);
-    const uint64_t first_tick = session.max_tick - queries;
-    for (const auto& pending : session.adopts) {
-      const uint64_t tick = first_tick + pending.queries_before;
-      try {
-        AdoptSegment(pending.meta_file, tick, {.offset = session.max_tick});
-      } catch (const std::exception& e) {
-        SDB_FATAL(SEARCH,
-                  "search-table WAL recovery: failed to adopt segment '",
-                  pending.meta_file, "' for table ", _table_id, " tick=", tick,
-                  ": ", duckdb::ErrorData{e}.RawMessage());
-      }
-    }
-    const bool committed =
-      session.trx.Commit(session.max_tick, {.offset = session.max_tick});
-    SDB_FATAL_IF(SEARCH, !committed,
-                 "search-table WAL recovery: iresearch trx Commit failed for "
-                 "table ",
-                 _table_id, " tick=", session.max_tick);
-    _writer->RefreshCommit();
-    _writer->RaiseTick(session.max_tick);
-    _replay.reset();
+bool SearchTable::FinishReplay(duckdb::AttachedDatabase& db) {
+  if (!_replay) {
+    return false;
   }
-  FinishRecovery();
+  auto& session = *_replay;
+  session.sink.reset();
+  auto& storage = db.GetStorageManager();
+  const irs::SourcePosition end{
+    storage.GetBlockManager().GetCheckpointIteration(), storage.GetWALSize()};
+  const auto queries = session.trx.GetQueries();
+  const auto tick = NextTick(queries);
+  for (const auto& pending : session.adopts) {
+    try {
+      AdoptSegment(pending.meta_file, tick - queries + pending.queries_before,
+                   end);
+    } catch (const std::exception& e) {
+      SDB_FATAL(SEARCH, "search-table WAL recovery: failed to adopt segment '",
+                pending.meta_file, "' for table ", _table_id, ": ",
+                duckdb::ErrorData{e}.RawMessage());
+    }
+  }
+  SDB_FATAL_IF(SEARCH, !session.trx.Commit(tick, end),
+               "search-table WAL recovery: iresearch trx Commit failed for "
+               "table ",
+               _table_id);
+  _replay.reset();
+  return true;
 }
 
 }  // namespace sdb::search

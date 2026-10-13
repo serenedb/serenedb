@@ -103,7 +103,7 @@ void InitRowSource(duckdb::ClientContext& context,
 uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
                      RowSource& source, SearchSinkInsertBaseImpl& sink,
                      const SearchBackfillTarget& target,
-                     uint64_t snapshot_tick) {
+                     const irs::SourcePosition& snapshot) {
   const auto* col_reader = sub.GetColReader();
   SDB_ENSURE(col_reader, "search-table build: segment has no columnstore");
   FullScanner scanner{
@@ -113,7 +113,7 @@ uint64_t FeedSegment(duckdb::ClientContext& context, const irs::SubReader& sub,
   const uint64_t docs = sub.Meta().docs_count;
   uint64_t fed = 0;
   for (uint64_t row = 0; row < docs; row += STANDARD_VECTOR_SIZE) {
-    if (target.shard->TruncatedAfter(snapshot_tick)) {
+    if (target.shard->TruncatedAfter(snapshot)) {
       break;
     }
     const auto take = std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs - row);
@@ -195,19 +195,19 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
   FeedSliceTask(duckdb::TaskExecutor& executor_in,
                 duckdb::ClientContext& context_in,
                 const SearchBackfillTarget& target_in, Slice& slice_in,
-                uint64_t snapshot_tick_in, pg::ProgressMetrics* progress_in)
+                const irs::SourcePosition& snapshot_in,
+                pg::ProgressMetrics* progress_in)
     : BaseExecutorTask{executor_in},
       context{context_in},
       target{target_in},
       slice{slice_in},
-      snapshot_tick{snapshot_tick_in},
+      snapshot{snapshot_in},
       progress{progress_in} {}
 
   duckdb::TaskExecutionResult ExecuteTaskStep() final {
     if (next < slice.segments.size()) {
-      const auto fed =
-        FeedSegment(context, *slice.segments[next++], slice.source, *slice.sink,
-                    target, snapshot_tick);
+      const auto fed = FeedSegment(context, *slice.segments[next++],
+                                   slice.source, *slice.sink, target, snapshot);
       if (progress) {
         pg::ProgressMetrics::Add(progress->tuples_processed,
                                  static_cast<int64_t>(fed));
@@ -219,7 +219,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
       }
       return duckdb::TaskExecutionResult::TASK_NOT_FINISHED;
     }
-    if (target.shard->TruncatedAfter(snapshot_tick)) {
+    if (target.shard->TruncatedAfter(snapshot)) {
       return duckdb::TaskExecutionResult::TASK_FINISHED;
     }
     // On the worker, like SereneDBSearchInsert::Combine: serialising this tail
@@ -235,7 +235,7 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
   duckdb::ClientContext& context;
   const SearchBackfillTarget& target;
   Slice& slice;
-  uint64_t snapshot_tick;
+  irs::SourcePosition snapshot;
   pg::ProgressMetrics* progress;
   size_t next = 0;
 };
@@ -245,7 +245,8 @@ struct FeedSliceTask final : duckdb::BaseExecutorTask {
 bool RebuildGroup(duckdb::ClientContext& context,
                   const SearchBackfillTarget& target,
                   std::span<const irs::SubReader* const> group,
-                  uint64_t snapshot_tick, pg::ProgressMetrics* progress) {
+                  const irs::SourcePosition& snapshot,
+                  pg::ProgressMetrics* progress) {
   auto& shard = *target.shard;
   const auto slice_count = std::max<size_t>(
     1, std::min<size_t>(group.size(),
@@ -284,7 +285,7 @@ bool RebuildGroup(duckdb::ClientContext& context,
         continue;
       }
       executor.ScheduleTask(duckdb::make_uniq<FeedSliceTask>(
-        executor, context, target, *slice, snapshot_tick, progress));
+        executor, context, target, *slice, snapshot, progress));
     }
     executor.WorkOnTasks();
   }
@@ -309,8 +310,8 @@ bool RebuildGroup(duckdb::ClientContext& context,
     shard.ReplaceSegments(
       replaced, adopted,
       [&](irs::IndexWriter::QueryContext::FilterPtr& removal) {
-        auto [rowids, truncate_tick] = shard.DrainDeleteLog();
-        if (truncate_tick > snapshot_tick) {
+        auto [rowids, truncate] = shard.DrainDeleteLog();
+        if (truncate > snapshot) {
           truncated = true;
           return false;
         }
@@ -391,8 +392,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // bound nothing. A straddler that committed after the drain shows up on a
   // later pass as a sub-floor segment; loop until none do.
   for (;;) {
-    auto [reader, snapshot_tick] = shard.GetSnapshotWithTick();
-    if (shard.TruncatedAfter(snapshot_tick)) {
+    auto [reader, snapshot] = shard.GetSnapshotWithPosition();
+    if (shard.TruncatedAfter(snapshot)) {
       shard.Publish();
       break;
     }
@@ -420,7 +421,7 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                                static_cast<int64_t>(live));
       counted = true;
     }
-    if (!RebuildGroup(context, target, group, snapshot_tick, progress)) {
+    if (!RebuildGroup(context, target, group, snapshot, progress)) {
       break;
     }
     SDB_IF_FAILURE("crash_after_search_backfill_group") {

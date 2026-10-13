@@ -403,7 +403,7 @@ void InitCatalog(std::string_view directory) {
       db->GetStorageManager().FinishLoad(context);
     }
   }
-  search::InitInvertedIndexes();
+  search::RecoverSearchStorages();
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();

@@ -45,8 +45,10 @@
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/search_table.h"
 #include "connector/inverted_store_index.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 
 namespace sdb::search {
 namespace {
@@ -81,21 +83,54 @@ struct FinishReplayTask final : duckdb::BaseExecutorTask {
   std::atomic_size_t& replayed;
 };
 
-std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
-InvertedIndexEntries() {
-  std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
+struct FinishTableReplayTask final : duckdb::BaseExecutorTask {
+  FinishTableReplayTask(duckdb::TaskExecutor& executor,
+                        duckdb::AttachedDatabase& db,
+                        std::shared_ptr<SearchTable> table,
+                        std::atomic_size_t& replayed)
+    : BaseExecutorTask{executor},
+      db{db},
+      table{std::move(table)},
+      replayed{replayed} {}
+
+  void ExecuteTask() final {
+    if (table->FinishReplay(db)) {
+      replayed.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (const auto status = table->VacuumRefresh(); !status.ok()) {
+      SDB_WARN(SEARCH, "refresh of search table '", table->GetTableId(),
+               "' after WAL replay failed: ", status.message());
+    }
+  }
+
+  std::string TaskType() const final { return "SearchTableFinishReplay"; }
+
+  duckdb::AttachedDatabase& db;
+  std::shared_ptr<SearchTable> table;
+  std::atomic_size_t& replayed;
+};
+
+std::vector<duckdb::reference<catalog::SereneDBCatalog>> SereneDBCatalogs() {
+  std::vector<duckdb::reference<catalog::SereneDBCatalog>> catalogs;
   for (const auto& database :
        duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance())
          .GetDatabases()) {
     auto& catalog = database->GetCatalog();
-    if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-      continue;
+    if (catalog.GetCatalogType() == catalog::SereneDBCatalog::kStorageType) {
+      catalogs.emplace_back(catalog.Cast<catalog::SereneDBCatalog>());
     }
+  }
+  return catalogs;
+}
+
+std::vector<duckdb::reference<catalog::InvertedIndexEntry>>
+InvertedIndexEntries() {
+  std::vector<duckdb::reference<catalog::InvertedIndexEntry>> indexes;
+  for (auto& catalog : SereneDBCatalogs()) {
     std::vector<duckdb::reference<duckdb::SchemaCatalogEntry>> schemas;
-    catalog.Cast<catalog::SereneDBCatalog>().ScanSchemas(
-      [&](duckdb::SchemaCatalogEntry& schema) {
-        schemas.emplace_back(schema);
-      });
+    catalog.get().ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+      schemas.emplace_back(schema);
+    });
     for (auto& schema : schemas) {
       schema.get().Scan(
         duckdb::CatalogType::INDEX_ENTRY, [&](duckdb::CatalogEntry& entry) {
@@ -136,24 +171,36 @@ void SyncWal(duckdb::AttachedDatabase& db) {
 
 }  // namespace
 
-void InitInvertedIndexes() {
+void RecoverSearchStorages() {
   const auto begin = std::chrono::steady_clock::now();
   std::vector<std::pair<std::optional<BoundIndexHandle>,
                         std::shared_ptr<InvertedIndexStorage>>>
     recovering;
+  std::vector<std::pair<duckdb::reference<duckdb::AttachedDatabase>,
+                        std::shared_ptr<SearchTable>>>
+    tables;
   std::vector<duckdb::reference<duckdb::AttachedDatabase>> databases;
-  for (auto& index : InvertedIndexEntries()) {
-    const auto& storage = index.get().Storage();
-    if (!storage || !index.get().info) {
-      continue;
-    }
-    auto& db = index.get().catalog.GetAttached();
+  const auto add_database = [&](duckdb::AttachedDatabase& db) {
     if (absl::c_none_of(databases, [&](const auto& synced) {
           return &synced.get() == &db;
         })) {
       databases.emplace_back(db);
     }
+  };
+  for (auto& index : InvertedIndexEntries()) {
+    const auto& storage = index.get().Storage();
+    if (!storage || !index.get().info) {
+      continue;
+    }
+    add_database(index.get().catalog.GetAttached());
     recovering.emplace_back(BoundIndexOf(index.get()), storage);
+  }
+  for (auto& catalog : SereneDBCatalogs()) {
+    auto& db = catalog.get().GetAttached();
+    for (auto& table : catalog::SearchTableStorages(catalog.get())) {
+      add_database(db);
+      tables.emplace_back(db, std::move(table));
+    }
   }
   for (auto& db : databases) {
     SyncWal(db);
@@ -161,30 +208,44 @@ void InitInvertedIndexes() {
   duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(
     irs::DuckDBEngine::Instance().instance())};
   std::atomic_size_t replayed{0};
+  std::atomic_size_t replayed_tables{0};
   for (auto& [index, storage] : recovering) {
     executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
       executor, std::move(index), storage, replayed));
   }
+  for (auto& [db, table] : tables) {
+    executor.ScheduleTask(duckdb::make_uniq<FinishTableReplayTask>(
+      executor, db.get(), table, replayed_tables));
+  }
   executor.WorkOnTasks();
-  if (recovering.empty()) {
+  if (recovering.empty() && tables.empty()) {
     return;
   }
   const auto duration =
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
-  if (const auto count = replayed.load(std::memory_order_relaxed); count != 0) {
-    SDB_INFO(SEARCH, "search index recovery: replayed the WAL into ", count,
-             " of ", recovering.size(), " inverted index(es) in ",
+  const auto indexes = replayed.load(std::memory_order_relaxed);
+  const auto searched = replayed_tables.load(std::memory_order_relaxed);
+  if (indexes != 0 || searched != 0) {
+    SDB_INFO(SEARCH, "search recovery: replayed the WAL into ", indexes, " of ",
+             recovering.size(), " inverted index(es) and ", searched, " of ",
+             tables.size(), " search table(s) in ",
              absl::FormatDuration(duration));
   } else {
-    SDB_DEBUG(SEARCH, "search index recovery: ", recovering.size(),
-              " inverted index(es) in ", absl::FormatDuration(duration));
+    SDB_DEBUG(SEARCH, "search recovery: ", recovering.size(),
+              " inverted index(es) and ", tables.size(), " search table(s) in ",
+              absl::FormatDuration(duration));
   }
 }
 
-void StartInvertedIndexTasks() {
+void StartSearchStorageTasks() {
   for (auto& index : InvertedIndexEntries()) {
     if (const auto& storage = index.get().Storage()) {
       storage->StartTasks();
+    }
+  }
+  for (auto& catalog : SereneDBCatalogs()) {
+    for (auto& table : catalog::SearchTableStorages(catalog.get())) {
+      table->StartTasks();
     }
   }
 }

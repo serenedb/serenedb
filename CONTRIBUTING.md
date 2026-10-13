@@ -322,11 +322,18 @@ Blobs stored in catalog entries (tokenizer configs, the inverted index payload) 
 
 ### Search tables in the write-ahead log
 
-A commit logs each search table it changed into its database's write-ahead log, inside the same commit as the rest of the transaction: `USE_TABLE` with the table's oid and the commit's `tick`, then the changes in the order they were made. `ADOPT_SEGMENTS` names the meta files of segments flushed and fsynced before the commit, `INSERT_TUPLE` carries the rows still buffered and, in its `row_start` field (id 16486), the generated key of its first row, one `DELETE_TUPLE` per removing statement carries the generated keys it removed, and `TRUNCATE_TABLE` empties the table. Replay applies a table's entries only when their `tick` is above the one its last refresh made durable, and a checkpoint refreshes every search table before it drops the log. Each table counts its ticks in its own index writer, which continues above that durable tick when the table opens again and above the highest tick a replay applied.
+A commit logs each search table it changed into its database's write-ahead log, inside the same commit as the rest of the transaction: `USE_TABLE` with the table's oid, then the changes in the order they were made. `ADOPT_SEGMENTS` names the meta files of segments flushed and fsynced before the commit, `INSERT_TUPLE` carries the rows still buffered and, in its `row_start` field (id 16486), the generated key of its first row, one `DELETE_TUPLE` per removing statement carries the generated keys it removed, and `TRUNCATE_TABLE` empties the table.
 
-A transaction whose buffered rows for a table exceed 4 MiB at commit writes them as a segment before the commit instead of inline, so `ADOPT_SEGMENTS` carries them. The entries after `USE_TABLE` are serialized before the commit takes DuckDB's commit lock, straight into one buffer (`WALEntryBuffer`); under the lock the commit only reserves the `tick`, writes `USE_TABLE` and appends that buffer (`WriteAheadLog::WriteEntries`).
+A transaction whose buffered rows for a table exceed 4 MiB at commit writes them as a segment before the commit instead of inline, so `ADOPT_SEGMENTS` carries them. The entries after `USE_TABLE` are serialized before the commit takes DuckDB's commit lock, straight into one buffer (`WALEntryBuffer`); under the lock the commit only writes `USE_TABLE` and appends that buffer (`WriteAheadLog::WriteEntries`).
 
-An autocommit `TRUNCATE` that clears the index holds the database's shared checkpoint lock from before its entry is written until the index is cleared, because nothing else makes a checkpoint's refresh wait for the clear: without it, a checkpoint could drop the entry first and a crash would bring the rows back.
+Search tables and inverted indexes share one durability model, `search::IndexDurability`:
+
+- Under the commit lock, after the commit's WAL write, a transaction registers its index transactions with their writers and takes their ticks (`TransactionPreCheckpoint`); once the WAL is synced it commits them at the commit's WAL position (`TransactionDurable`). Registration makes a refresh wait for them, so a refresh saves a prefix of the log.
+- Each saved index meta records the highest WAL position it holds, as the checkpoint iteration and the offset. Replay skips the entries below that offset when the iteration is still the database's, and replays the whole log otherwise.
+- Boot finishes the replays once every database has loaded (`search::RecoverSearchStorages`) and syncs each write-ahead log first, so the end-of-log position a replay saves is never past what the log durably holds.
+- A checkpoint saves every index in two phases: before the new database header is written, as a pending meta tagged with the checkpoint's iteration; after the header, by committing it. An index that opens with a pending meta commits it when the database file reached that iteration and discards it otherwise.
+
+An autocommit `TRUNCATE` that clears the index holds the database's shared checkpoint lock from before its entry is written until the index is cleared. The clear writes its meta directly instead of through a refresh, so nothing else makes a checkpoint wait for it: a checkpoint could save the rows, drop the entry, and a crash would bring them back.
 
 ## VSCode Setup
 

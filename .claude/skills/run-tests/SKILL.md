@@ -1,6 +1,6 @@
 ---
 name: run-tests
-description: Run SereneDB tests locally and read a red CI run - pick the suites that cover a change, run them the way CI does, and find the failing records in CI logs. Use when running tests, choosing which tests to run, or looking into a CI failure.
+description: Run SereneDB tests locally - pick the suites that cover a change and run them the way CI does - and, when the user asks, find the failing records of a red CI run. Use when running tests, choosing which tests to run, or when the user asks to look into a CI failure.
 ---
 
 # Running SereneDB tests

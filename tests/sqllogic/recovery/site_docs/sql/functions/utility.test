@@ -96,6 +96,14 @@ SELECT hash('🌊') AS hash;
 hash
 12255790945742965276
 
+# DOCS_TEST: hash_city64
+# DOCS_TEST_BODY
+query
+SELECT hash_city64('🌊') AS hash_city64;
+----
+hash_city64
+15517191736451674290
+
 # DOCS_TEST: if
 # DOCS_TEST_BODY
 query

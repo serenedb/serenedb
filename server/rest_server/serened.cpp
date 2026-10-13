@@ -36,6 +36,7 @@
 #include <string>
 #include <utility>
 
+#include "backup/backup_session.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "docs/docs_bootstrap.h"
@@ -128,6 +129,7 @@ int RunServer(int argc, char** argv) {
         // goes down.
         stop("network", [&] { network.stop(); });
       }
+      backup::BackupSession::Instance().End();
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }

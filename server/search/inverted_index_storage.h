@@ -185,6 +185,7 @@ class InvertedIndexStorage final
 
   void PrepareCheckpoint(uint64_t iteration);
   void FinishCheckpoint();
+  bool HasPendingCheckpoint();
 
   uint64_t NextTick(uint64_t queries) noexcept {
     return _writer->NextTick(queries);

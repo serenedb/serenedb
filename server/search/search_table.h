@@ -206,7 +206,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   // Synchronous maintenance for explicit VACUUM (REFRESH_* / COMPACT_*).
   [[nodiscard]] absl::Status VacuumRefresh();
-  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments);
+  [[nodiscard]] absl::Status VacuumCompact(uint32_t target_segments,
+                                           absl::FunctionRef<bool()> cancelled);
 
   [[nodiscard]] std::optional<unsigned> RegisterWriter() {
     return _writers.Register();

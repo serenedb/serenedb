@@ -50,6 +50,7 @@
 #include <vector>
 
 #include "catalog/database_directory.h"
+#include "storage_engine/search_engine.h"
 
 namespace sdb::search {
 namespace {
@@ -539,6 +540,9 @@ uint64_t SearchDbWal::MinCommittedTick() {
 }
 
 void SearchDbWal::RunGc() {
+  if (IsBackupActive()) {
+    return;
+  }
   uint64_t min_tick = MinCommittedTick();
   if (min_tick == 0) {
     return;  // nothing durable everywhere yet

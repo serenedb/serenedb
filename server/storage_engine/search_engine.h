@@ -21,6 +21,10 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+#include <absl/status/status.h>
+#include <absl/synchronization/mutex.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -119,7 +123,20 @@ class SearchEngine final {
     return std::max(0, MaxConcurrentCompactions() - cur);
   }
 
+  bool IsBackupActive() const noexcept {
+    return _backup_active.load(std::memory_order_acquire);
+  }
+  bool TryBeginMaintenance();
+  void EndMaintenance();
+  void BeginBackup() noexcept;
+  void EndBackup();
+  bool WaitForBackupEnd(absl::FunctionRef<bool()> cancelled);
+
  private:
+  absl::Mutex _backup_mutex;
+  absl::CondVar _backup_cv;
+  std::atomic<bool> _backup_active{false};
+  std::atomic<int> _maintenance{0};
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
@@ -130,6 +147,38 @@ class SearchEngine final {
 };
 
 inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
+
+inline bool IsBackupActive() noexcept {
+  const auto* engine = SearchEngine::gInstance;
+  return engine && engine->IsBackupActive();
+}
+
+class [[nodiscard]] MaintenanceClaim {
+ public:
+  MaintenanceClaim() : _engine{SearchEngine::gInstance} {
+    if (_engine && !_engine->TryBeginMaintenance()) {
+      _engine = nullptr;
+      _held = false;
+    }
+  }
+  MaintenanceClaim(const MaintenanceClaim&) = delete;
+  MaintenanceClaim& operator=(const MaintenanceClaim&) = delete;
+  ~MaintenanceClaim() {
+    if (_engine) {
+      _engine->EndMaintenance();
+    }
+  }
+
+  explicit operator bool() const noexcept { return _held; }
+
+ private:
+  SearchEngine* _engine;
+  bool _held = true;
+};
+
+inline absl::Status BackupInProgressError() {
+  return absl::UnavailableError("a backup is in progress");
+}
 
 inline uint32_t AnnAcquireWorkers(uint32_t want) noexcept {
   return GetSearchEngine().AcquireAnnWorkers(want);

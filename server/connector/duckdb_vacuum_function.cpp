@@ -270,8 +270,19 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured, which
     // the step holds for the whole call.
-    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-      kPolicy, tick, empty_compaction, &field_options, env_ptr));
+    auto compact = [&] {
+      return irs::GetBlocking(
+               inverted.CompactUnsafeAsync(kPolicy, tick, empty_compaction,
+                                           &field_options, env_ptr))
+        .res;
+    };
+    auto res = compact();
+    while (absl::IsUnavailable(res)) {
+      if (!engine.WaitForBackupEnd([&] { return context.IsInterrupted(); })) {
+        context.InterruptCheck();
+      }
+      res = compact();
+    }
     if (!res.ok()) {
       context.InterruptCheck();
       THROW_SQL_ERROR(
@@ -508,8 +519,10 @@ void DispatchInverted(duckdb::ClientContext& context,
       const auto status =
         action == Action::Refresh
           ? search->VacuumRefresh()
-          : search->VacuumCompact(gTargetSegments.Int(context));
+          : search->VacuumCompact(gTargetSegments.Int(context),
+                                  [&] { return context.IsInterrupted(); });
       if (!status.ok()) {
+        context.InterruptCheck();
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INTERNAL_ERROR),
           ERR_MSG("failed to ",

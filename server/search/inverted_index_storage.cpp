@@ -245,6 +245,9 @@ InvertedIndexStorage::InvertedIndexStorage(
   if (reopen) {
     ResolveCheckpointSave(*_dir, _db_id);
   }
+  if (IsBackupActive()) {
+    writer_options.cleanup_on_open = false;
+  }
   _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
 
   if (!reopen) {
@@ -359,6 +362,10 @@ StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
 }
 
 ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
+  const MaintenanceClaim maintenance;
+  if (!maintenance) {
+    return {absl::OkStatus(), 0};
+  }
   auto begin = std::chrono::steady_clock::now();
   auto result = CleanupUnsafeImpl();
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -388,12 +395,23 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
+  empty_compaction = false;
+  const MaintenanceClaim maintenance;
+  if (!maintenance) {
+    co_return ResultWithTime{BackupInProgressError(), 0};
+  }
+  const irs::MergeWriter::FlushProgress interruptible = [&progress] {
+    return !IsBackupActive() && progress();
+  };
   auto begin = std::chrono::steady_clock::now();
-  auto result = co_await CompactUnsafeImpl(policy, progress, empty_compaction,
-                                           field_options, env);
+  auto result = co_await CompactUnsafeImpl(
+    policy, interruptible, empty_compaction, field_options, env);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
+  if (result.ok() && empty_compaction && IsBackupActive()) {
+    co_return ResultWithTime{BackupInProgressError(), time_ms};
+  }
   _maintenance.RecordCompaction(result, empty_compaction, time_ms);
   co_return ResultWithTime{std::move(result), time_ms};
 }
@@ -591,6 +609,11 @@ void InvertedIndexStorage::PublishSnapshot() {
             "', segments '", reader_size, "', docs count '", docs_count,
             "', live docs count '", live_docs_count, "', wal position '",
             _position.generation, ":", _position.offset, "'");
+}
+
+bool InvertedIndexStorage::HasPendingCheckpoint() {
+  std::lock_guard lock{_refresh_mutex};
+  return _pending_checkpoint != 0;
 }
 
 void InvertedIndexStorage::PrepareCheckpoint(uint64_t iteration) {

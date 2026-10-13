@@ -50,6 +50,7 @@ target_include_directories(
 )
 
 add_subdirectory(auth)
+add_subdirectory(backup)
 add_subdirectory(catalog)
 add_subdirectory(connector)
 add_subdirectory(docs)

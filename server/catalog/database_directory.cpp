@@ -93,7 +93,7 @@ void RunRemoval(Removal&& removal) {
 
 }  // namespace
 
-void DeferRemovals() {
+void DeferRemovals() noexcept {
   [[maybe_unused]] const bool was_deferring = Gate().deferring.exchange(true);
   SDB_ASSERT(!was_deferring);
 }

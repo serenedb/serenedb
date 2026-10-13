@@ -430,14 +430,21 @@ auto SearchTable::CompactUnsafeAsync(
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env)
   -> yaclib::Future<ResultWithTime> {
-  const auto begin = std::chrono::steady_clock::now();
   empty_compaction = false;
+  const MaintenanceClaim maintenance;
+  if (!maintenance) {
+    co_return ResultWithTime{BackupInProgressError(), 0};
+  }
+  const irs::MergeWriter::FlushProgress interruptible = [&progress] {
+    return !IsBackupActive() && progress();
+  };
+  const auto begin = std::chrono::steady_clock::now();
   auto result = absl::OkStatus();
   try {
     // iresearch serializes Compact against refresh/DML internally, so a long
     // merge never blocks the refresh chain.
     const auto res =
-      co_await _writer->CompactAsync(policy, field_options, progress, env);
+      co_await _writer->CompactAsync(policy, field_options, interruptible, env);
     if (!res) {
       SDB_DEBUG(SEARCH, "compaction of search table ", GetTableId(),
                 " merged nothing: cancelled, or every document was removed");
@@ -454,11 +461,18 @@ auto SearchTable::CompactUnsafeAsync(
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)
       .count();
+  if (result.ok() && empty_compaction && IsBackupActive()) {
+    co_return ResultWithTime{BackupInProgressError(), time_ms};
+  }
   _maintenance.RecordCompaction(result, empty_compaction, time_ms);
   co_return ResultWithTime{std::move(result), time_ms};
 }
 
 ResultWithTime SearchTable::CleanupUnsafe() {
+  const MaintenanceClaim maintenance;
+  if (!maintenance) {
+    return {absl::OkStatus(), 0};
+  }
   const auto begin = std::chrono::steady_clock::now();
   auto result = absl::OkStatus();
   try {
@@ -484,8 +498,11 @@ absl::Status SearchTable::VacuumRefresh() {
   return CleanupUnsafe().res;
 }
 
-absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
-  static const irs::MergeWriter::FlushProgress kProgress = [] { return true; };
+absl::Status SearchTable::VacuumCompact(uint32_t target_segments,
+                                        absl::FunctionRef<bool()> cancelled) {
+  const irs::MergeWriter::FlushProgress progress = [&cancelled] {
+    return !cancelled();
+  };
   const auto target = std::max<uint32_t>(1, target_segments);
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
@@ -517,10 +534,19 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
           }
         };
       bool empty = false;
-      if (auto res =
-            CompactUnsafe(bucket, kProgress, empty, field_options.get()).res;
-          !res.ok()) {
+      auto res =
+        CompactUnsafe(bucket, progress, empty, field_options.get()).res;
+      while (absl::IsUnavailable(res)) {
+        if (!GetSearchEngine().WaitForBackupEnd(cancelled)) {
+          return absl::CancelledError("compaction cancelled");
+        }
+        res = CompactUnsafe(bucket, progress, empty, field_options.get()).res;
+      }
+      if (!res.ok()) {
         return res;
+      }
+      if (cancelled()) {
+        return absl::CancelledError("compaction cancelled");
       }
       merged |= !empty;
     }

@@ -1675,38 +1675,40 @@ struct NestedAdapter<ValueSink> {
 void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
                uint64_t addr_hi, uint64_t addr_lo, uint16_t mask) {
   if (type == INET_IP_ADDRESS_V6) {
-    addr_hi ^= (uint64_t{1} << 63);  // re-apply IPv6 sort-order flip
+    addr_hi ^= kInetV6SortBit;
   }
   auto& entries = duckdb::StructVector::GetEntries(vec);
-  Out<uint8_t>(entries[0])[row] = static_cast<uint8_t>(type);
+  Out<uint8_t>(entries[kInetIpTypeChild])[row] = static_cast<uint8_t>(type);
   duckdb::hugeint_t stored;
   stored.lower = addr_lo;
   stored.upper = static_cast<int64_t>(addr_hi);
-  Out<duckdb::hugeint_t>(entries[1])[row] = stored;
-  Out<uint16_t>(entries[2])[row] = mask;
+  Out<duckdb::hugeint_t>(entries[kInetAddressChild])[row] = stored;
+  Out<uint16_t>(entries[kInetMaskChild])[row] = mask;
 }
 
 template<bool Cidr>
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
-  if (data.size() < 4) {
+  InetWireHeader header;
+  if (data.size() < sizeof(header)) {
     return false;
   }
-  const auto family = static_cast<uint8_t>(data[0]);
-  const auto bits = static_cast<uint8_t>(data[1]);
-  const auto nb = static_cast<uint8_t>(data[3]);
-  const bool is_v6 = family == 3;
-  if ((!is_v6 && family != 2) || nb != (is_v6 ? 16 : 4) || bits > nb * 8 ||
-      data.size() != size_t{4} + nb) {
+  std::memcpy(&header, data.data(), sizeof(header));
+  const bool is_v6 = header.family == kPgsqlAfInet6;
+  if ((!is_v6 && header.family != kPgsqlAfInet) ||
+      header.size != (is_v6 ? kInetWireV6Size : kInetWireV4Size) ||
+      header.bits > header.size * CHAR_BIT ||
+      data.size() != sizeof(header) + header.size) {
     return false;
   }
-  const char* addr = data.data() + 4;
+  const char* addr = data.data() + sizeof(header);
   INET_IPAddress inet;
-  inet.mask = bits;
+  inet.mask = header.bits;
   if (is_v6) {
     inet.type = INET_IP_ADDRESS_V6;
     inet.address.upper = absl::big_endian::Load<uint64_t>(addr);
-    inet.address.lower = absl::big_endian::Load<uint64_t>(addr + 8);
+    inet.address.lower =
+      absl::big_endian::Load<uint64_t>(addr + sizeof(uint64_t));
   } else {
     inet.type = INET_IP_ADDRESS_V4;
     inet.address.upper = 0;

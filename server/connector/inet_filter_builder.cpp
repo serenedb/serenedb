@@ -39,6 +39,11 @@ namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kSortKeyFunction = "inet_sort_key";
+constexpr std::string_view kContainedByOp = "<<=";
+constexpr std::string_view kContainedByFunction =
+  "subnet_contained_by_or_equals";
+constexpr std::string_view kContainsOp = ">>=";
+constexpr std::string_view kContainsFunction = "subnet_contains_or_equals";
 
 const duckdb::Expression& PeelCidrCast(const duckdb::Expression& expr) {
   if (!duckdb::BoundCastExpression::IsCast(expr) ||
@@ -195,9 +200,13 @@ void AddContainedBy(BoolTarget target, const SearchColumnInfo& column,
     --level;
   }
   if (level == 0) {
-    AddByteRange(group, field, inet_terms::ExactPrefixOf(value.v6, network),
-                 inet_terms::ExactUpperOf(value.v6, broadcast));
-  } else if (inet_terms::LevelBits(value.v6, level) == bits) {
+    AddByteRange(
+      group, field,
+      inet_terms::ExactPrefixOf(value.v6, network, static_cast<uint16_t>(bits)),
+      inet_terms::ExactUpperOf(value.v6, broadcast));
+    return;
+  }
+  if (inet_terms::LevelBits(value.v6, level) == bits) {
     AddTerm(group, field, inet_terms::LevelTermOf(value.v6, level, network),
             irs::kNoBoost, &irs::ForceConstScore());
   } else {
@@ -205,10 +214,13 @@ void AddContainedBy(BoolTarget target, const SearchColumnInfo& column,
                  inet_terms::LevelTermOf(value.v6, level, network),
                  inet_terms::LevelTermOf(value.v6, level, broadcast));
   }
-  AddByteRange(
-    {group.node, irs::Occur::MustNot}, field,
-    inet_terms::MaskTermOf(value.v6, 0),
-    inet_terms::MaskTermOf(value.v6, static_cast<uint8_t>(bits - 1)));
+  const auto min_mask = inet_terms::MinMaskOf(value.v6, network);
+  if (min_mask < bits) {
+    AddByteRange(
+      {group.node, irs::Occur::MustNot}, field,
+      inet_terms::MaskTermOf(value.v6, static_cast<uint8_t>(min_mask)),
+      inet_terms::MaskTermOf(value.v6, static_cast<uint8_t>(bits - 1)));
+  }
 }
 
 void AddContains(BoolTarget target, const SearchColumnInfo& column,
@@ -216,12 +228,13 @@ void AddContains(BoolTarget target, const SearchColumnInfo& column,
   auto& filter = AddFilter<irs::ByPrefixes>(target);
   *filter.mutable_field_id() = column.field_id;
   filter.SetScorer(&irs::ForceConstScore());
-  auto& prefixes = filter.mutable_options()->prefixes;
+  std::vector<irs::bstring> prefixes;
   prefixes.reserve(value.NetworkBits() + 1);
   for (uint32_t bits = 0; bits <= value.NetworkBits(); ++bits) {
     prefixes.push_back(inet_terms::ExactPrefixOf(
       value.v6, inet_terms::Network(value, bits), static_cast<uint16_t>(bits)));
   }
+  filter.mutable_options()->SetPrefixes(std::move(prefixes));
 }
 
 }  // namespace
@@ -319,9 +332,9 @@ std::optional<absl::Status> TryFromInetFunction(
   const duckdb::BoundFunctionExpression& func) {
   const std::string_view name = func.Function().GetName().GetIdentifierName();
   bool contained;
-  if (name == "<<=" || name == "subnet_contained_by_or_equals") {
+  if (name == kContainedByOp || name == kContainedByFunction) {
     contained = true;
-  } else if (name == ">>=" || name == "subnet_contains_or_equals") {
+  } else if (name == kContainsOp || name == kContainsFunction) {
     contained = false;
   } else {
     return std::nullopt;

@@ -236,6 +236,18 @@ bool SearchSinkInsertBaseImpl::InvertDictionary(
   return true;
 }
 
+struct SearchSinkInsertBaseImpl::InetBatch {
+  std::array<duckdb::UnifiedVectorFormat, pg::kInetChildCount> fields;
+  irs::TokenBatch tokens;
+  std::array<irs::DocRun, irs::TokenBatch::kCapacity / inet_terms::kV4BaseTerms>
+    runs;
+  std::array<uint8_t, irs::TokenBatch::kCapacity / inet_terms::kV6BaseTerms *
+                        inet_terms::kV6LongTermBytes>
+    bytes;
+};
+
+SearchSinkInsertBaseImpl::~SearchSinkInsertBaseImpl() = default;
+
 SearchSinkInsertBaseImpl::SearchSinkInsertBaseImpl(
   irs::IndexWriter::Transaction& trx, TokenizerProvider&& tokenizer_provider,
   EntryInfoProvider&& entry_info_provider, PkPolicy pk_policy,
@@ -396,9 +408,9 @@ void SearchSinkInsertBaseImpl::WriteInetColumn(const Field& field,
   auto& batch = *_inet_batch;
   const auto& entries = duckdb::StructVector::GetEntries(vec);
   auto& [types, addresses, masks] = batch.fields;
-  entries[0].ToUnifiedFormat(types);
-  entries[1].ToUnifiedFormat(addresses);
-  entries[2].ToUnifiedFormat(masks);
+  entries[pg::kInetIpTypeChild].ToUnifiedFormat(types);
+  entries[pg::kInetAddressChild].ToUnifiedFormat(addresses);
+  entries[pg::kInetMaskChild].ToUnifiedFormat(masks);
   const auto* type_data = duckdb::UnifiedVectorFormat::GetData<uint8_t>(types);
   const auto* address_data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(addresses);
@@ -425,7 +437,8 @@ void SearchSinkInsertBaseImpl::WriteInetColumn(const Field& field,
           return ok;
         };
         const auto add = [&](uint32_t row, uint8_t ip_type,
-                             duckdb::hugeint_t address, uint16_t mask) {
+                             duckdb::hugeint_t address,
+                             uint16_t mask) IRS_NO_INLINE {
           if (terms + inet_terms::kMaxTermsPerValue >
                 irs::TokenBatch::kCapacity &&
               !flush()) {
@@ -433,7 +446,7 @@ void SearchSinkInsertBaseImpl::WriteInetColumn(const Field& field,
           }
           auto upper = static_cast<uint64_t>(address.upper);
           if (ip_type == inet_terms::kV6Type) {
-            upper ^= uint64_t{1} << 63;
+            upper ^= pg::kInetV6SortBit;
           }
           const auto written =
             inet_terms::WriteTerms(ip_type, upper, address.lower, mask,

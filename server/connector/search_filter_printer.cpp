@@ -125,6 +125,10 @@ std::string TermValue(bytes_view term, Kind kind) {
   return TermToString(term);
 }
 
+std::string PrefixValue(bytes_view prefix, Kind kind) {
+  return kind == Kind::Inet ? TermValue(prefix, kind) : TermToString(prefix);
+}
+
 std::string TermValue(const bstring& term, Kind kind) {
   return TermValue(bytes_view{term}, kind);
 }
@@ -470,10 +474,8 @@ struct FilterPrinter {
       const auto& f = downCast<const ByPrefix>(filter);
       ExplainNode node{"Starts With"};
       node.attributes["Field"] = FieldName(f.field_id());
-      const auto kind = FieldKind(f.field_id());
-      node.attributes["Prefix"] = kind == Kind::Inet
-                                    ? TermValue(f.options().term, kind)
-                                    : TermToString(f.options().term);
+      node.attributes["Prefix"] =
+        PrefixValue(f.options().term, FieldKind(f.field_id()));
       return node;
     }
     if (type == Type<ByPrefixes>::id()) {
@@ -481,15 +483,13 @@ struct FilterPrinter {
       ExplainNode node{"Starts With Any"};
       node.attributes["Field"] = FieldName(f.field_id());
       const auto kind = FieldKind(f.field_id());
-      const auto& prefixes = f.options().prefixes;
-      const auto render = [&](const bstring& term) {
-        return kind == Kind::Inet ? TermValue(term, kind) : TermToString(term);
-      };
+      const auto prefixes = f.options().Prefixes();
       node.attributes["Prefixes"] =
         prefixes.empty()
           ? std::string{"0"}
-          : absl::StrCat(prefixes.size(), ", ", render(prefixes.front()),
-                         " .. ", render(prefixes.back()));
+          : absl::StrCat(prefixes.size(), ", ",
+                         PrefixValue(prefixes.front(), kind), " .. ",
+                         PrefixValue(prefixes.back(), kind));
       return node;
     }
     if (type == Type<ByNestedFilter>::id()) {

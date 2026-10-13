@@ -53,6 +53,18 @@ constexpr uint64_t OidFromSql(int64_t value) {
 
 constexpr int64_t OidToSql(uint64_t oid) { return static_cast<int64_t>(oid); }
 
+inline constexpr uint8_t kPgsqlAfInet = 2;
+inline constexpr uint8_t kPgsqlAfInet6 = 3;
+inline constexpr uint8_t kInetWireV4Size = sizeof(uint32_t);
+inline constexpr uint8_t kInetWireV6Size = 2 * sizeof(uint64_t);
+
+struct InetWireHeader {
+  uint8_t family;
+  uint8_t bits;
+  uint8_t is_cidr;
+  uint8_t size;
+};
+
 // Postgres' PUBLIC pseudo-role. It is not a role id at all: 0 is the oid no
 // pg_authid row can carry, which is what lets an acl item name "everybody".
 inline constexpr duckdb::idx_t kPublicGrantee = 0;

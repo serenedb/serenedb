@@ -22,7 +22,9 @@
 
 #include "prefix_filter.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
+#include <iterator>
 #include <span>
 #include <vector>
 
@@ -67,13 +69,7 @@ class ByPrefixesIterator : public WrappedTermIterator {
  public:
   ByPrefixesIterator(const TermReader& reader,
                      std::span<const bstring> prefixes)
-    : WrappedTermIterator{reader.iterator()}, _prefixes{prefixes} {
-    if (!std::ranges::is_sorted(_prefixes)) {
-      _sorted.assign(prefixes.begin(), prefixes.end());
-      std::ranges::sort(_sorted);
-      _prefixes = _sorted;
-    }
-  }
+    : WrappedTermIterator{reader.iterator()}, _prefixes{prefixes} {}
 
   bool next() final {
     if (_started) {
@@ -104,7 +100,6 @@ class ByPrefixesIterator : public WrappedTermIterator {
   }
 
  private:
-  std::vector<bstring> _sorted;
   std::span<const bstring> _prefixes;
   size_t _current{0};
   bool _started{false};
@@ -114,12 +109,29 @@ struct PrefixesAcceptor {
   std::span<const bstring> prefixes;
 
   bool operator()(bytes_view term) const noexcept {
-    return std::ranges::any_of(
-      prefixes, [&](bytes_view prefix) { return term.starts_with(prefix); });
+    const auto it = absl::c_upper_bound(
+      prefixes, term, [](bytes_view lhs, bytes_view rhs) { return lhs < rhs; });
+    return it != prefixes.begin() && term.starts_with(*std::prev(it));
   }
 };
 
 }  // namespace
+
+void ByPrefixesFilterOptions::SetPrefixes(std::vector<bstring> prefixes) {
+  absl::c_sort(prefixes);
+  size_t kept = 0;
+  for (size_t i = 0; i < prefixes.size(); ++i) {
+    if (kept != 0 && bytes_view{prefixes[i]}.starts_with(prefixes[kept - 1])) {
+      continue;
+    }
+    if (kept != i) {
+      prefixes[kept] = std::move(prefixes[i]);
+    }
+    ++kept;
+  }
+  prefixes.resize(kept);
+  _prefixes = std::move(prefixes);
+}
 
 QueryBuilder::ptr ByPrefix::PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const {
@@ -188,7 +200,7 @@ QueryBuilder::ptr ByPrefixes::PrepareSegment(const SubReader& segment,
     sub_ctx.memory, segment, sub_ctx.memory, sub_ctx.boost,
     ScoreMergeType::Sum);
   MultiTermVisitor mtv{sub_ctx, query->State(), *reader};
-  ByPrefixesIterator terms{*reader, options().prefixes};
+  ByPrefixesIterator terms{*reader, options().Prefixes()};
   if (!terms.next()) {
     return QueryBuilder::Empty();
   }
@@ -207,12 +219,12 @@ PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
 }
 
 TermPredicate::ptr ByPrefixes::CompileTermPredicate() const {
-  return MakeTermPredicate(PrefixesAcceptor{options().prefixes});
+  return MakeTermPredicate(PrefixesAcceptor{options().Prefixes()});
 }
 
 TermIterator::ptr ByPrefixes::CompileTermIterator(
   const TermReader& reader) const {
-  return memory::make_managed<ByPrefixesIterator>(reader, options().prefixes);
+  return memory::make_managed<ByPrefixesIterator>(reader, options().Prefixes());
 }
 
 }  // namespace irs

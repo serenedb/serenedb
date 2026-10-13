@@ -904,7 +904,7 @@ void ValidateInvertedIndexKey(std::string_view label,
   }
   if (pg::IsInetOrCidr(type)) {
     if (!opclass.name.empty()) {
-      const auto type_name = pg::IsCidr(type) ? "CIDR" : "INET";
+      const auto& type_name = type.GetAlias();
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                       ERR_MSG("Column '", label, "' has type ", type_name,
                               " and can not use the "

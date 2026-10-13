@@ -73,10 +73,11 @@ irs::ByPrefixes MakePrefixesFilter(
   irs::field_id field, const std::vector<std::string_view>& prefixes) {
   irs::ByPrefixes q;
   *q.mutable_field_id() = field;
+  std::vector<irs::bstring> terms;
   for (const auto prefix : prefixes) {
-    q.mutable_options()->prefixes.emplace_back(
-      irs::ViewCast<irs::byte_type>(prefix));
+    terms.emplace_back(irs::ViewCast<irs::byte_type>(prefix));
   }
+  q.mutable_options()->SetPrefixes(std::move(terms));
   return q;
 }
 
@@ -426,6 +427,28 @@ TEST_P(PrefixFilterTestCase, by_prefixes_scored) {
   auto filter = MakePrefixesFilter(kPrefixId, {"a"});
   filter.SetScorer(order.front().get());
   CheckQuery(filter, order, Docs{31, 32, 1, 4, 16, 21, 26, 29}, rdr);
+}
+
+TEST(ByPrefixesOptionsTest, SetPrefixesKeepsSortedUncoveredPrefixes) {
+  const auto prefixes_of = [](const std::vector<std::string_view>& input) {
+    std::vector<irs::bstring> terms;
+    for (const auto prefix : input) {
+      terms.emplace_back(irs::ViewCast<irs::byte_type>(prefix));
+    }
+    irs::ByPrefixesOptions options;
+    options.SetPrefixes(std::move(terms));
+    std::vector<std::string> result;
+    for (const auto& prefix : options.Prefixes()) {
+      result.emplace_back(irs::ViewCast<char>(irs::bytes_view{prefix}));
+    }
+    return result;
+  };
+  EXPECT_EQ((std::vector<std::string>{}), prefixes_of({}));
+  EXPECT_EQ((std::vector<std::string>{"a", "b", "c"}),
+            prefixes_of({"b", "ab", "a", "b", "abc", "c"}));
+  EXPECT_EQ((std::vector<std::string>{""}), prefixes_of({"x", "", "y"}));
+  EXPECT_EQ((std::vector<std::string>{"ab", "ac", "b"}),
+            prefixes_of({"b", "ac", "ab", "abz", "acz"}));
 }
 
 TEST_P(PrefixFilterTestCase, visit) {

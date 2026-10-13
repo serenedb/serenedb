@@ -58,4 +58,6 @@ Unlike PostgreSQL, abbreviated input such as `'10'` for `10.0.0.0/8` is not acce
 
 `host`, `network`, `broadcast`, `netmask` and `family` take an `INET` value. Adding an integer to an `INET` value, or subtracting one, moves the address.
 
+`inet_sort_key(ip)` returns a `BLOB` that compares byte by byte in the order described in [Ordering](#ordering). Use it to carry the `INET` order into a context that compares bytes, such as a key built for another system.
+
 <SqlLogicTest id="sql/data_types/inet/example_004" />

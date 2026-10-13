@@ -1146,7 +1146,8 @@ size_t AcceptorRank(const Filter& filter) noexcept {
   if (type == Type<ByTerm>::id()) {
     return kTermRank;
   }
-  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+  if (type == Type<ByPrefix>::id() || type == Type<ByPrefixes>::id() ||
+      type == Type<ByRange>::id()) {
     return 2;
   }
   if (type == Type<AutomatonFilter>::id() ||

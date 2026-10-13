@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <span>
 #include <vector>
 
 #include "iresearch/index/iterators.hpp"
@@ -83,21 +84,23 @@ class ByPrefix : public FilterWithField<ByPrefixOptions> {
 
 class ByPrefixes;
 
-struct ByPrefixesFilterOptions {
-  std::vector<bstring> prefixes;
+class ByPrefixesFilterOptions {
+ public:
+  void SetPrefixes(std::vector<bstring> prefixes);
 
-  bool operator==(const ByPrefixesFilterOptions& rhs) const noexcept {
-    return prefixes == rhs.prefixes;
-  }
+  std::span<const bstring> Prefixes() const noexcept { return _prefixes; }
+
+  bool operator==(const ByPrefixesFilterOptions&) const = default;
+
+ private:
+  std::vector<bstring> _prefixes;
 };
 
 struct ByPrefixesOptions : ByPrefixesFilterOptions {
   using FilterType = ByPrefixes;
   using filter_options = ByPrefixesFilterOptions;
 
-  bool operator==(const ByPrefixesOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs);
-  }
+  bool operator==(const ByPrefixesOptions&) const = default;
 };
 
 class ByPrefixes : public FilterWithField<ByPrefixesOptions> {

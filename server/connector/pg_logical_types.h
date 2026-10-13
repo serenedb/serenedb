@@ -132,6 +132,13 @@ inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
 
 inline constexpr std::string_view kCidrAlias = duckdb::CIDR_TYPE_NAME;
 
+inline constexpr duckdb::idx_t kInetIpTypeChild = 0;
+inline constexpr duckdb::idx_t kInetAddressChild = 1;
+inline constexpr duckdb::idx_t kInetMaskChild = 2;
+inline constexpr duckdb::idx_t kInetChildCount = 3;
+
+inline constexpr uint64_t kInetV6SortBit = uint64_t{1} << 63;
+
 inline bool IsInet(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::STRUCT &&
          type.GetAlias() == kInetAlias;

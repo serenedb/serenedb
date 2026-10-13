@@ -81,10 +81,8 @@ duckdb::unique_ptr<duckdb::Expression> FoldConstantCasts(
 class ChunkBindingResolver final : public duckdb::ColumnBindingResolver {
  public:
   ChunkBindingResolver(duckdb::vector<duckdb::ColumnBinding> b,
-                       duckdb::vector<duckdb::LogicalType> t) {
-    bindings = std::move(b);
-    types = std::move(t);
-  }
+                       duckdb::vector<duckdb::LogicalType> t)
+    : duckdb::ColumnBindingResolver(std::move(b), std::move(t)) {}
   void Resolve(duckdb::unique_ptr<duckdb::Expression>& expr) {
     VisitExpression(&expr);
   }

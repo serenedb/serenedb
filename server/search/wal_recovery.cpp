@@ -21,6 +21,8 @@
 #include "search/wal_recovery.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
+#include <absl/strings/str_join.h>
 #include <absl/time/clock.h>
 #include <absl/time/time.h>
 
@@ -40,6 +42,7 @@
 #include <iresearch/utils/log.hpp>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -225,14 +228,21 @@ void RecoverSearchStorages() {
     absl::FromChrono(std::chrono::steady_clock::now() - begin);
   const auto indexes = replayed.load(std::memory_order_relaxed);
   const auto searched = replayed_tables.load(std::memory_order_relaxed);
+  std::vector<std::string> kinds;
+  if (!recovering.empty()) {
+    kinds.push_back(
+      absl::StrCat(indexes, " of ", recovering.size(), " inverted index(es)"));
+  }
+  if (!tables.empty()) {
+    kinds.push_back(
+      absl::StrCat(searched, " of ", tables.size(), " search table(s)"));
+  }
+  const auto replayed_into = absl::StrJoin(kinds, " and ");
   if (indexes != 0 || searched != 0) {
-    SDB_INFO(SEARCH, "search recovery: replayed the WAL into ", indexes, " of ",
-             recovering.size(), " inverted index(es) and ", searched, " of ",
-             tables.size(), " search table(s) in ",
-             absl::FormatDuration(duration));
+    SDB_INFO(SEARCH, "search index recovery: replayed the WAL into ",
+             replayed_into, " in ", absl::FormatDuration(duration));
   } else {
-    SDB_DEBUG(SEARCH, "search recovery: ", recovering.size(),
-              " inverted index(es) and ", tables.size(), " search table(s) in ",
+    SDB_DEBUG(SEARCH, "search index recovery: ", replayed_into, " in ",
               absl::FormatDuration(duration));
   }
 }

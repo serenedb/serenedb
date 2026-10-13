@@ -45,8 +45,6 @@ inline constexpr std::string_view kCompactionMaxSegmentsBytesSetting =
   "compaction_max_segments_bytes";
 inline constexpr std::string_view kCompactionFloorSegmentBytesSetting =
   "compaction_floor_segment_bytes";
-inline constexpr std::string_view kCompactionPolicySetting =
-  "compaction_policy";
 inline constexpr std::string_view kRecoveryReplayDepthSetting =
   "recovery_replay_depth";
 

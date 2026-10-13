@@ -506,6 +506,18 @@ INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/
 statement ok
 VACUUM (REFRESH_TABLE) bg_merge;
 
+statement ok
+INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(80000, 100000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) bg_merge;
+
+statement ok
+INSERT INTO bg_merge SELECT a, 'https://example.org/section/' || (a % 500) || '/page?id=' || (a % 7) FROM range(100000, 120000) t(a);
+
+statement ok
+VACUUM (REFRESH_TABLE) bg_merge;
+
 query ok retry 300 backoff 100ms
 SELECT count(*) < 4 AS merged, bool_or(compression = 'DICT_FSST') AS objective
 FROM pragma_storage_info('bg_merge') WHERE column_name = 'url' AND segment_type <> 'VALIDITY';
@@ -517,7 +529,7 @@ query
 SELECT count(*), count(DISTINCT url) FROM bg_merge;
 ----
 count	count
-80000	3500
+120000	3500
 
 statement ok
 DROP TABLE bg_merge;

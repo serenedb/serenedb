@@ -58,7 +58,6 @@
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
-#include "search/maintenance.h"
 
 namespace sdb {
 
@@ -1044,9 +1043,8 @@ constexpr std::pair<std::string_view, VariableDescription>
       {
         LogicalTypeId::UBIGINT,
         "Byte budget of one background compaction of an inverted index or "
-        "search table (the tier target size). WITH "
-        "(compaction_max_segments_bytes = ...) overrides it per index or "
-        "table. Default 5368709120 (5GB).",
+        "search table. WITH (compaction_max_segments_bytes = ...) overrides "
+        "it per index or table. Default 5368709120 (5GB).",
         [] {
           return duckdb::Value::UBIGINT(
             catalog::InvertedIndexSettings{}.compaction_max_segments_bytes);
@@ -1067,29 +1065,6 @@ constexpr std::pair<std::string_view, VariableDescription>
             catalog::InvertedIndexSettings{}.compaction_floor_segment_bytes);
         },
         RejectZero<"compaction_floor_segment_bytes">,
-      },
-    },
-    {
-      kCompactionPolicySetting,
-      {
-        LogicalTypeId::VARCHAR,
-        "How background compaction of an inverted index or search table picks "
-        "segments to merge: 'tier' merges segments of similar size, "
-        "'adjacent' merges runs of neighbouring segments in insertion order. "
-        "WITH (compaction_policy = ...) overrides it per index or table. "
-        "Default 'tier'.",
-        [] {
-          return duckdb::Value{
-            std::string{catalog::InvertedIndexSettings{}.compaction_policy}};
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (!search::ParseMergePolicy(value.ToString())) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-              ERR_MSG("invalid value for parameter \"compaction_policy\": \"",
-                      value.ToString(), "\": expected tier or adjacent"));
-          }
-        },
       },
     },
     {

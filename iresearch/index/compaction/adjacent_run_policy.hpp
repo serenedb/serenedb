@@ -43,7 +43,7 @@ struct AdjacentRunOptions {
   uint64_t max_bytes = uint64_t{5} << 30;
   uint64_t max_docs = std::numeric_limits<uint64_t>::max();
   uint64_t segment_cost = uint64_t{2} << 20;
-  double base = 5;
+  double base = 6;
   double min_base = 2;
   size_t relax_from = 10;
   size_t relax_to = 50;

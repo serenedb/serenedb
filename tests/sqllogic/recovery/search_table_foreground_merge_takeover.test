@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-CREATE TABLE tv (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE tv (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 4);
 
 statement ok
 INSERT INTO tv SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
@@ -75,7 +75,7 @@ n	s
 400	80200
 
 statement ok
-CREATE TABLE tc (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE tc (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 4);
 
 statement ok
 INSERT INTO tc SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
@@ -149,7 +149,7 @@ n	s
 400	80200
 
 statement ok
-CREATE TABLE tt (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE tt (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 4);
 
 statement ok
 INSERT INTO tt SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
@@ -214,7 +214,7 @@ origin	outcome
 vacuum	cancelled
 
 statement ok
-CREATE TABLE tk (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE tk (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 4);
 
 statement ok
 INSERT INTO tk SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);

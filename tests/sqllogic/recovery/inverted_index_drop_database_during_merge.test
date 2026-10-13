@@ -8,7 +8,7 @@ CREATE TABLE mergedb.public.docs (id INT, body TEXT);
 
 statement ok
 CREATE INDEX docs_idx ON mergedb.public.docs USING inverted (body)
-  WITH (refresh_interval = 0, compaction_interval = 0);
+  WITH (refresh_interval = 0, compaction_interval = 0, compaction_max_segments = 2);
 
 statement ok
 INSERT INTO mergedb.public.docs SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);

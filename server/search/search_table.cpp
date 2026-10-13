@@ -110,8 +110,6 @@ void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
     options.compaction_max_segments_bytes;
   _maint_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
-  _maint_settings.compaction_policy =
-    ParseMergePolicy(options.compaction_policy).value_or(MergePolicyKind::Tier);
   {
     std::unique_lock lock(_table_lock);
     if (_codec_params != options.codec) {

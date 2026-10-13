@@ -384,7 +384,7 @@ merge	sql	merged	200	200
 
 # The planner keeps a group of one segment without deletes as it is, merges a
 # listed segment only when there is something to merge, and leaves a segment
-# out of a background round when the tier policy picks nothing.
+# out of a background round when the adjacent policy picks nothing.
 
 statement ok
 CREATE TABLE sdbc_plan (id BIGINT PRIMARY KEY, vec FLOAT[3], body TEXT)
@@ -501,7 +501,7 @@ QUERY PLAN
 │ Segments: 1                                                 │
 │ Merges: 0                                                   │
 │ Not Merged:                                                 │
-│ _5 (not selected by the tier policy)                        │
+│ _5 (not selected by the adjacent policy)                    │
 │ Notes:                                                      │
 │ background compaction is disabled (compaction_interval = 0) │
 │ Actual Outcome: nothing ran                                 │
@@ -642,7 +642,7 @@ DROP TABLE sdbc_many
 
 statement ok
 CREATE TABLE sdbc_live (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0)
+WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 2)
 
 
 statement ok
@@ -879,14 +879,14 @@ query
 EXPLAIN CALL sdb_compact('sdbc_on')
 ----
 QUERY PLAN
-╭─ SEGMENT_REWRITE ────────────────────╮
-│ Table: public.sdbc_on                │
-│ Mode: background                     │
-│ Segments: 1                          │
-│ Merges: 0                            │
-│ Not Merged:                          │
-│ _1 (not selected by the tier policy) │
-╰──────────────────────────────────────╯
+╭─ SEGMENT_REWRITE ────────────────────────╮
+│ Table: public.sdbc_on                    │
+│ Mode: background                         │
+│ Segments: 1                              │
+│ Merges: 0                                │
+│ Not Merged:                              │
+│ _1 (not selected by the adjacent policy) │
+╰──────────────────────────────────────────╯
 
 
 statement ok

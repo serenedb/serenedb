@@ -210,7 +210,7 @@ The `DROP CONSTRAINT` clause removes a named `CHECK` constraint from a table:
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_034" />
 
-`DROP CONSTRAINT` (and `RENAME CONSTRAINT`) operate on named `CHECK` constraints. Index-backed constraints — those created by `PRIMARY KEY` and `UNIQUE` — cannot be dropped this way.
+`DROP CONSTRAINT` (and `RENAME CONSTRAINT`) operate on named `CHECK` constraints. Index-backed constraints -- those created by `PRIMARY KEY` and `UNIQUE` -- cannot be dropped this way.
 
 ## `ADD CONSTRAINT`
 
@@ -222,17 +222,17 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE` or `PRIMARY KEY` constraint
 
 ## `SET` / `RESET` storage options
 
-For a table created with `WITH (storage = 'search')`, `SET (option = value, …)` changes the options it was created with, and `RESET (option, …)` returns them to their defaults.
+For a table created with `WITH (storage = 'search')`, `SET (option = value, ...)` changes the options it was created with, and `RESET (option, ...)` returns them to their defaults.
 
-The background maintenance options are `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes`, `compaction_floor_segment_bytes` and `compaction_policy` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `RESET` returns them to the current session defaults. A change reaches the table's background tasks at once, including a shorter `refresh_interval` or `compaction_interval` while the task is waiting out the old one, and is undone if its transaction rolls back.
+The background maintenance options are `refresh_interval`, `compaction_interval`, `cleanup_interval_step`, `compaction_max_segments`, `compaction_max_segments_bytes` and `compaction_floor_segment_bytes` (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `RESET` returns them to the current session defaults. A change reaches the table's background tasks at once, including a shorter `refresh_interval` or `compaction_interval` while the task is waiting out the old one, and is undone if its transaction rolls back.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_036" />
 
 `row_group_size`, `segment_memory_max` and `optimize_top_k` are fixed at `CREATE TABLE`. An inverted index on the table does not prevent the change. The current values are listed in `pg_class.reloptions`. `SET` and `RESET` of storage options are supported only for search tables.
 
-## `ALTER COLUMN … SET COMPRESSION`
+## `ALTER COLUMN ... SET COMPRESSION`
 
-`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore codecs (`dict_lz4`, `dict_zstd`, `lz4`, `dict_fsst`, `fsst`, `zxc`, …) only on search tables, and a level only on codecs that take one.
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation: the columnstore codecs (`dict_lz4`, `dict_zstd`, `lz4`, `dict_fsst`, `fsst`, `zxc`, ...) only on search tables, and a level only on codecs that take one.
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_038" />
 

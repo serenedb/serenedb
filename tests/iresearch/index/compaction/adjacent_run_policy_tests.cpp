@@ -107,7 +107,7 @@ class AdjacentRunPolicyTest : public ::testing::Test {
     return names;
   }
 
-  irs::AdjacentRunOptions options;
+  irs::AdjacentRunOptions options{.base = 5};
 };
 
 std::vector<Spec> Equal(size_t count, uint64_t bytes) {
@@ -124,6 +124,13 @@ std::vector<Spec> Equal(size_t count, uint64_t bytes) {
 
 using Names = std::vector<std::string>;
 
+TEST_F(AdjacentRunPolicyTest, TheDefaultBaseIsSix) {
+  options = irs::AdjacentRunOptions{};
+  EXPECT_EQ(Names{}, Pick(Equal(5, 10 * kMiB)));
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4", "s5"}),
+            Pick(Equal(6, 10 * kMiB)));
+}
+
 TEST_F(AdjacentRunPolicyTest, NeedsBaseSegmentsOfEqualSize) {
   EXPECT_EQ(Names{}, Pick(Equal(4, 10 * kMiB)));
   EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(Equal(5, 10 * kMiB)));
@@ -139,6 +146,14 @@ TEST_F(AdjacentRunPolicyTest, TakesAtMostMaxSegments) {
   options.max_segments = 6;
   EXPECT_EQ((Names{"s3", "s4", "s5", "s6", "s7", "s8"}),
             Pick(Equal(9, 10 * kMiB)));
+}
+
+TEST_F(AdjacentRunPolicyTest, ANarrowMergeWidthLowersTheBase) {
+  options.max_segments = 2;
+  EXPECT_EQ((Names{"s2", "s3"}), Pick(Equal(4, 10 * kMiB)));
+  auto specs = Equal(2, 10 * kMiB);
+  specs[0].bytes = 30 * kMiB;
+  EXPECT_EQ(Names{}, Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, KeepsABigSegmentOutOfSmallMerges) {
@@ -189,12 +204,14 @@ TEST_F(AdjacentRunPolicyTest, NeverPassesTheMergeDocLimit) {
 
 TEST_F(AdjacentRunPolicyTest, LongRunsRelaxTheBalanceRule) {
   auto specs = Equal(10, 10 * kMiB);
-  specs[0].bytes = 30 * kMiB;
-  options.max_segments = 2;
+  for (size_t i = 1; i < specs.size(); i += 2) {
+    specs[i].bytes = 20 * kMiB;
+  }
+  options.max_segments = 4;
   EXPECT_EQ(Names{}, Pick(specs));
   options.relax_from = 2;
   options.relax_to = 10;
-  EXPECT_EQ((Names{"s8", "s9"}), Pick(specs));
+  EXPECT_EQ((Names{"s6", "s7", "s8", "s9"}), Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, TiesGoToTheNewestSegments) {
@@ -205,6 +222,13 @@ TEST_F(AdjacentRunPolicyTest, TiesGoToTheNewestSegments) {
 TEST_F(AdjacentRunPolicyTest, SmallSegmentsCountTheSegmentCost) {
   EXPECT_EQ(Names{}, Pick(Equal(4, kMiB / 10)));
   EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(Equal(5, kMiB / 10)));
+}
+
+TEST_F(AdjacentRunPolicyTest, SegmentsBelowTheFloorCountAsEqual) {
+  auto specs = Equal(5, kMiB / 10);
+  specs[1].bytes = kMiB / 8;
+  specs[3].bytes = kMiB / 9;
+  EXPECT_EQ((Names{"s0", "s1", "s2", "s3", "s4"}), Pick(specs));
 }
 
 TEST_F(AdjacentRunPolicyTest, LiveBytesDecideTheBalance) {

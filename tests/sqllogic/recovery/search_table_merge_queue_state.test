@@ -7,7 +7,7 @@ statement ok
 CREATE INDEX mq_plain_idx ON mq_plain (id);
 
 statement ok
-CREATE TABLE mq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE mq (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 4);
 
 statement ok
 INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
@@ -34,7 +34,7 @@ statement ok
 VACUUM (REFRESH_TABLE) mq;
 
 statement ok
-CREATE TABLE mq_nudge (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE mq_nudge (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 2);
 
 statement ok
 INSERT INTO mq_nudge VALUES (1, 'owl');
@@ -148,6 +148,12 @@ VACUUM (REFRESH_TABLE) mq;
 
 statement ok
 INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(501, 600) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) mq;
+
+statement ok
+INSERT INTO mq SELECT i, 'fox dog' FROM generate_series(601, 700) s(i);
 
 statement ok
 VACUUM (REFRESH_TABLE) mq;

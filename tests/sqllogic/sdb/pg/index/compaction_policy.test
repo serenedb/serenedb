@@ -1,19 +1,6 @@
-statement error
-CREATE TABLE cpe (id INT PRIMARY KEY) WITH (storage = 'search', compaction_policy = 'size')
-----
-db error: ERROR: invalid value for parameter "compaction_policy": "size": expected tier or adjacent
-
-
 statement ok
 CREATE TABLE cpt (id INT PRIMARY KEY, body TEXT)
-WITH (storage = 'search', compaction_interval = 0, compaction_policy = 'adjacent')
-
-
-query
-SELECT reloptions FROM pg_class WHERE relname = 'cpt'
-----
-reloptions
-{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,compaction_policy=adjacent,row_group_size=122880,segment_memory_max=268435456}
+WITH (storage = 'search', compaction_interval = 0)
 
 
 statement ok
@@ -143,98 +130,4 @@ segments	first	last
 
 
 statement ok
-ALTER TABLE cpt SET (compaction_policy = 'tier')
-
-
-query
-SELECT reloptions FROM pg_class WHERE relname = 'cpt'
-----
-reloptions
-{refresh_interval=1000,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
-
-
-statement ok
-ALTER TABLE cpt SET (compaction_policy = 'adjacent')
-
-
-statement ok
-ALTER TABLE cpt RESET (compaction_policy)
-
-
-query
-SELECT count(*) AS listed FROM pg_class
-WHERE relname = 'cpt' AND array_to_string(reloptions, ',') LIKE '%compaction_policy%'
-----
-listed
-0
-
-
-statement error
-CREATE INDEX cpt_idx ON cpt USING inverted (body) WITH (compaction_policy = 'adjacent')
-----
-db error: ERROR: compaction_policy is a table option on a search-backed table
-HINT: Change it with ALTER TABLE ... SET (compaction_policy = ...).
-
-
-statement ok
 DROP TABLE cpt
-
-
-statement ok
-CREATE TABLE cpr (id INT, body TEXT)
-
-
-statement ok
-CREATE INDEX cpr_adjacent ON cpr USING inverted (body) WITH (compaction_policy = 'adjacent')
-
-
-statement ok
-CREATE INDEX cpr_default ON cpr USING inverted (body)
-
-
-query
-SELECT relname, array_to_string(reloptions, ',') LIKE '%compaction_policy=adjacent%' AS adjacent
-FROM pg_class WHERE relname IN ('cpr_adjacent', 'cpr_default') ORDER BY relname
-----
-relname	adjacent
-cpr_adjacent	t
-cpr_default	f
-
-
-statement ok
-ALTER INDEX cpr_default SET (compaction_policy = 'adjacent')
-
-
-statement ok
-ALTER INDEX cpr_adjacent RESET (compaction_policy)
-
-
-query
-SELECT relname, array_to_string(reloptions, ',') LIKE '%compaction_policy%' AS listed
-FROM pg_class WHERE relname IN ('cpr_adjacent', 'cpr_default') ORDER BY relname
-----
-relname	listed
-cpr_adjacent	f
-cpr_default	t
-
-
-statement ok
-ALTER INDEX cpr_default SET (compaction_policy = 'tier')
-
-
-query
-SELECT array_to_string(reloptions, ',') LIKE '%compaction_policy%' AS listed
-FROM pg_class WHERE relname = 'cpr_default'
-----
-listed
-f
-
-
-statement error
-ALTER INDEX cpr_default SET (compaction_policy = 'size')
-----
-db error: ERROR: invalid value for parameter "compaction_policy": "size": expected tier or adjacent
-
-
-statement ok
-DROP TABLE cpr

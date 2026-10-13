@@ -85,7 +85,7 @@ SereneDB has a [Secrets manager](../sql/statements/create_secret/index.md), whic
 
 Configuration options come with different default [scopes](../sql/statements/set/index.md#scopes): `GLOBAL` and `LOCAL`. Each scope is listed below, grouped by the part of the system the option affects.
 
-To search the reference rather than read it, query the catalog — every option on this page is a `setting` object:
+To search the reference rather than read it, query the catalog -- every option on this page is a `setting` object:
 
 ```sql
 SELECT name, summary FROM sdb_docs.objects
@@ -104,8 +104,7 @@ Background maintenance of inverted indexes, and the knobs the search and vector 
 | `compaction_floor_segment_bytes` | Inverted-index segments below this size count as equal-sized for compaction candidate selection. Per-index WITH (compaction_floor_segment_bytes = ...) overrides. Default 2097152 (2MB). | `UBIGINT` | `2097152` |
 | `compaction_interval` | Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000. | `UINTEGER` | `1000` |
 | `compaction_max_segments` | Maximum inverted-index segments merged by one background compaction. Per-index WITH (compaction_max_segments = ...) overrides. Default 10. | `UINTEGER` | `10` |
-| `compaction_max_segments_bytes` | Byte budget of one background inverted-index compaction (the tier target size). Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB). | `UBIGINT` | `5368709120` |
-| `compaction_policy` | How background compaction picks segments to merge: `tier` merges segments of similar size, `adjacent` merges runs of neighbouring segments in insertion order. Per-index or per-table WITH (compaction_policy = ...) overrides. Default `tier`. | `VARCHAR` | `tier` |
+| `compaction_max_segments_bytes` | Byte budget of one background inverted-index compaction. Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB). | `UBIGINT` | `5368709120` |
 | `refresh_interval` | Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000. | `UINTEGER` | `1000` |
 | `reindex_interval` | Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0. | `UINTEGER` | `0` |
 | `sdb_disable_top_k_optimization` | When true, the optimizer skips pulling `ORDER BY <scorer>(...) DESC LIMIT k` into the inverted-index scan, so block-max score pruning never engages. Default: false (optimization on). | `BOOLEAN` | `off` |

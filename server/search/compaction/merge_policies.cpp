@@ -24,7 +24,6 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/index_utils.hpp>
 #include <utility>
 
 #include "catalog/catalog.h"
@@ -35,16 +34,6 @@
 
 namespace sdb::search {
 
-// Background compaction policy (the TieredMergePolicy analog), built per
-// target from its WITH-configured settings.
-irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings) {
-  irs::index_utils::CompactionTier tier;
-  tier.max_segments = settings.compaction_max_segments;
-  tier.max_segments_bytes = settings.compaction_max_segments_bytes;
-  tier.floor_segment_bytes = settings.compaction_floor_segment_bytes;
-  return irs::index_utils::MakePolicy(tier);
-}
-
 std::optional<irs::SegmentRange> RowIdRange(const irs::SubReader& segment) {
   const auto described = DescribeSegment(segment);
   return described.rowid_min.transform([&](int64_t first) {
@@ -52,20 +41,13 @@ std::optional<irs::SegmentRange> RowIdRange(const irs::SubReader& segment) {
   });
 }
 
-irs::CompactionPolicy MakeAdjacentPolicy(const TasksSettings& settings,
-                                         irs::SegmentRangeOf range_of) {
+irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
+                                      irs::SegmentRangeOf range_of) {
   irs::AdjacentRunOptions options;
   options.max_segments = settings.compaction_max_segments;
   options.max_bytes = settings.compaction_max_segments_bytes;
   options.segment_cost = settings.compaction_floor_segment_bytes;
   return irs::MakeAdjacentRunPolicy(options, std::move(range_of));
-}
-
-irs::CompactionPolicy MakeMergePolicy(const TasksSettings& settings,
-                                      irs::SegmentRangeOf range_of) {
-  return settings.compaction_policy == MergePolicyKind::Tier
-           ? MakeTierPolicy(settings)
-           : MakeAdjacentPolicy(settings, std::move(range_of));
 }
 
 CompactionOptions PinCompactionOptions(InvertedIndexStorage& idx) {

@@ -1,7 +1,7 @@
 control substitution on
 
 statement ok
-CREATE TABLE pm (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE pm (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 2);
 
 statement ok
 INSERT INTO pm SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);

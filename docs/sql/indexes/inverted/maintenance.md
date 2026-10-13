@@ -41,20 +41,19 @@ An inverted index on a search table has no storage or background tasks of its ow
 
 ## Background compaction
 
-Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments into larger ones, so a table loaded in many small batches does not keep one segment per batch. Four more `WITH` options shape each merge:
+Compaction is on by default, for inverted indexes and search tables alike: every `compaction_interval` milliseconds a background task merges segments into larger ones, so a table loaded in many small batches does not keep one segment per batch. Three more `WITH` options shape each merge:
 
 | Option | Default | Controls |
 |---|---|---|
-| `compaction_policy` | `tier` | How segments are picked: `tier` or `adjacent`, see below |
 | `compaction_max_segments` | `10` | Segments merged by one background compaction |
 | `compaction_max_segments_bytes` | `5368709120` (5 GB) | Size budget of one background compaction |
 | `compaction_floor_segment_bytes` | `2097152` (2 MB) | Segments smaller than this count as equal-sized when choosing what to merge |
 
 The session settings of the same names hold the defaults a new index or search table takes.
 
-`compaction_policy = 'tier'` merges segments of similar size, wherever they are in the table. `compaction_policy = 'adjacent'` merges runs of neighbouring segments in the order their rows were written, so every segment holds a contiguous range of rows and a filter on insertion order skips whole segments:
+Background compaction merges runs of neighbouring segments in the order their rows were written, so every segment holds a contiguous range of rows and a filter on insertion order skips whole segments:
 
-- A run merges only when it is balanced: together its segments are at least five times the size of the largest one, with `compaction_floor_segment_bytes` added to the size of every segment. Small segments therefore merge in groups of five or more, and each row is rewritten a few times however large the table grows.
+- A run merges only when it is balanced: together its segments are at least six times the size of the largest one (or `compaction_max_segments` times, when that is smaller), where a segment smaller than `compaction_floor_segment_bytes` counts as that size. Small segments therefore merge in groups of six or more, and each row is rewritten a few times however large the table grows.
 - Among the balanced runs of at most `compaction_max_segments` segments and `compaction_max_segments_bytes` bytes, the one that rewrites the fewest bytes for each segment it removes goes first; on a tie, the newest.
 - When merges fall behind and more than ten neighbouring segments wait, the balance rule relaxes step by step, down to twice the largest segment at fifty.
 - A segment with more than a quarter of its rows deleted is rewritten on its own when nothing else is to merge.
@@ -114,14 +113,14 @@ Each result row describes one merge:
 | Line | Meaning |
 |---|---|
 | `Segments`, `Merges` | Segments of the relation and merges planned |
-| `Merge N` | How many segments the merge combines into one, and why: `tier policy` or `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed` |
+| `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
 | `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |
 | `Merge N Columns` | Columns stored in the inputs, internal ones included: how many, their size and the largest one |
 | `Merge N Postings` | Indexed fields whose postings the merge combines |
 | `Merge N ANN` | Vector columns whose ANN index the merge builds |
-| `Not Merged` | Segments left out, with the reason: `not selected by the tier policy` (or `adjacent policy`), `at or above the merge size cap` or `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) |
+| `Not Merged` | Segments left out, with the reason: `not selected by the adjacent policy`, `at or above the merge size cap` or `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) |
 | `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, or the only listed segment has no deletes |
 
 `EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
@@ -185,10 +184,9 @@ The trace is a subquery with one row per written segment, its columns matched by
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `policy` | The table default | The merge policy, `tier` or `adjacent`, as `compaction_policy` above |
 | `threads` | The server's merge threads | Merge threads: on a server, `--background_threads` minus one |
 | `merge_bytes_per_second` | `16777216` (16 MB) | Bytes one thread merges per second |
-| `compaction_max_segments`, `compaction_max_segments_bytes`, `compaction_floor_segment_bytes` | The table defaults | The policy's options, as in `CREATE TABLE ... WITH` |
+| `compaction_max_segments`, `compaction_max_segments_bytes`, `compaction_floor_segment_bytes` | The table defaults | The compaction options, as in `CREATE TABLE ... WITH` |
 
 The result has one row per event, in time order: every replayed segment (`type` `flush`) and every simulated merge (`type` `merge`):
 

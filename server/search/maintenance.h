@@ -25,36 +25,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
-#include <string_view>
 
 // Background-maintenance vocabulary shared by the maintained iresearch stores
 // (InvertedIndexStorage, SearchTable) and the loops in search/task.h that drive
 // them.
 namespace sdb::search {
-
-enum class MergePolicyKind : uint8_t {
-  Tier = 0,
-  Adjacent,
-};
-
-inline constexpr std::string_view kTierPolicyName = "tier";
-inline constexpr std::string_view kAdjacentPolicyName = "adjacent";
-
-inline std::optional<MergePolicyKind> ParseMergePolicy(
-  std::string_view name) noexcept {
-  if (name == kTierPolicyName) {
-    return MergePolicyKind::Tier;
-  }
-  if (name == kAdjacentPolicyName) {
-    return MergePolicyKind::Adjacent;
-  }
-  return std::nullopt;
-}
-
-inline std::string_view MergePolicyName(MergePolicyKind kind) noexcept {
-  return kind == MergePolicyKind::Tier ? kTierPolicyName : kAdjacentPolicyName;
-}
 
 // Maintenance cadence, read by the background loops while an ALTER rewrites it.
 struct TasksSettings {
@@ -65,7 +40,6 @@ struct TasksSettings {
   std::atomic_size_t compaction_max_segments{};
   std::atomic_size_t compaction_max_segments_bytes{};
   std::atomic_size_t compaction_floor_segment_bytes{};
-  std::atomic<MergePolicyKind> compaction_policy{MergePolicyKind::Tier};
 };
 
 enum class RefreshResult {

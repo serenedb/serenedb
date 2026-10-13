@@ -395,11 +395,8 @@ void CompactIndex(irs::IndexWriter& writer, irs::Directory& dir) {
   auto before = writer.GetSnapshot();
   std::cout << "Before compaction: " << before.size() << " segment(s)\n";
 
-  // Tier-based compaction merges segments of similar size.
-  irs::index_utils::CompactionTier tier_opts;
-  tier_opts.min_segments = 1;
-  tier_opts.max_segments = 10;
-  auto policy = irs::index_utils::MakePolicy(tier_opts);
+  auto policy =
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount{});
 
   writer.Compact(policy);
   writer.RefreshCommit();

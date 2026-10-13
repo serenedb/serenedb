@@ -45,7 +45,6 @@ struct InvertedIndexSettings {
   uint32_t compaction_max_segments{10};
   uint64_t compaction_max_segments_bytes{5368709120};
   uint64_t compaction_floor_segment_bytes{2097152};
-  std::string compaction_policy{"tier"};
 
   bool operator==(const InvertedIndexSettings& rhs) const = default;
 };

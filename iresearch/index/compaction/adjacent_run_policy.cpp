@@ -67,7 +67,8 @@ long double BaseFor(const AdjacentRunOptions& options, size_t run) noexcept {
                  (static_cast<long double>(options.relax_to) -
                   static_cast<long double>(options.relax_from)),
                0.0L, 1.0L);
-  return options.base - (options.base - options.min_base) * relax;
+  return std::min(options.base - (options.base - options.min_base) * relax,
+                  static_cast<long double>(options.max_segments));
 }
 
 void ConsiderRun(std::span<const Candidate> segments, size_t begin, size_t end,
@@ -77,13 +78,15 @@ void ConsiderRun(std::span<const Candidate> segments, size_t begin, size_t end,
   const auto cost = static_cast<long double>(options.segment_cost);
   for (auto first = begin; first != end; ++first) {
     long double bytes = 0;
+    long double floored = 0;
     long double largest = 0;
     uint64_t docs = 0;
     const auto last = std::min(end, first + options.max_segments);
     for (auto next = first; next != last; ++next) {
       const auto& segment = segments[next];
       bytes += segment.bytes;
-      largest = std::max(largest, segment.bytes);
+      floored += std::max(segment.bytes, cost);
+      largest = std::max(largest, std::max(segment.bytes, cost));
       docs += segment.live_docs;
       if (bytes > static_cast<long double>(options.max_bytes) ||
           docs > options.max_docs) {
@@ -91,7 +94,7 @@ void ConsiderRun(std::span<const Candidate> segments, size_t begin, size_t end,
       }
       const auto count = next - first + 1;
       const auto total = bytes + cost * static_cast<long double>(count);
-      if (count < 2 || total < base * (largest + cost)) {
+      if (count < 2 || floored < base * largest) {
         continue;
       }
       const auto score = total / (static_cast<long double>(count) - 1.9L);

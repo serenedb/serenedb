@@ -35,9 +35,6 @@ class SearchTable;
 
 std::optional<irs::SegmentRange> RowIdRange(const irs::SubReader& segment);
 
-irs::CompactionPolicy MakeTierPolicy(const TasksSettings& settings);
-irs::CompactionPolicy MakeAdjacentPolicy(const TasksSettings& settings,
-                                         irs::SegmentRangeOf range_of);
 irs::CompactionPolicy MakeMergePolicy(
   const TasksSettings& settings, irs::SegmentRangeOf range_of = RowIdRange);
 

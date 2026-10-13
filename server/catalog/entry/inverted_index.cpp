@@ -161,14 +161,6 @@ void RequireAlterableOption(std::string_view name) {
   }
 }
 
-void DropDefaultPolicy(duckdb::case_insensitive_map_t<duckdb::Value>& options) {
-  const auto it = options.find(kCompactionPolicySetting);
-  if (it != options.end() &&
-      it->second.ToString() == InvertedIndexSettings{}.compaction_policy) {
-    options.erase(it);
-  }
-}
-
 }  // namespace
 
 bool IsKnownInvertedIndexOption(std::string_view name) {
@@ -192,7 +184,6 @@ void BindInvertedIndexOptions(
       it->second = connector::ValidateSetting(context, name, it->second);
     }
   }
-  DropDefaultPolicy(options);
 }
 
 InvertedIndexSettings ResolveSettings(
@@ -201,7 +192,6 @@ InvertedIndexSettings ResolveSettings(
     return options.find(name)->second;
   };
   const auto reindex = options.find(kReindexIntervalSetting);
-  const auto policy = options.find(kCompactionPolicySetting);
   return {
     .row_group_size = get(kRowGroupSizeSetting).GetValue<uint32_t>(),
     .refresh_interval_ms = get(kRefreshIntervalSetting).GetValue<uint32_t>(),
@@ -219,9 +209,6 @@ InvertedIndexSettings ResolveSettings(
       get(kCompactionMaxSegmentsBytesSetting).GetValue<uint64_t>(),
     .compaction_floor_segment_bytes =
       get(kCompactionFloorSegmentBytesSetting).GetValue<uint64_t>(),
-    .compaction_policy = policy == options.end()
-                           ? InvertedIndexSettings{}.compaction_policy
-                           : policy->second.ToString(),
   };
 }
 
@@ -504,7 +491,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::AlterEntry(
     default:
       return duckdb::CatalogEntry::AlterEntry(transaction, info);
   }
-  DropDefaultPolicy(new_options);
   if (_storage) {
     connector::RunAtCommit(
       context, [storage = _storage, settings = ResolveSettings(new_options)] {

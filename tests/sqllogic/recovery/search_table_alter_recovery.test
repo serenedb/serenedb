@@ -20,10 +20,6 @@ statement ok
 ALTER TABLE alr SET (refresh_interval = 200);
 
 statement ok
-CREATE TABLE alr_policy (id INTEGER PRIMARY KEY)
-  WITH (storage = 'search', compaction_policy = 'adjacent');
-
-statement ok
 CREATE TABLE alr_tx (a INTEGER, b INTEGER);
 
 statement ok
@@ -57,15 +53,6 @@ SELECT reloptions FROM pg_class WHERE relname = 'alr';
 ----
 reloptions
 {refresh_interval=200,compaction_interval=0,cleanup_interval_step=1,compaction_max_segments=10,compaction_max_segments_bytes=5368709120,compaction_floor_segment_bytes=2097152,row_group_size=122880,segment_memory_max=268435456}
-
-connection after_crash
-query
-SELECT relname, array_to_string(reloptions, ',') LIKE '%compaction_policy=adjacent%' AS adjacent
-FROM pg_class WHERE relname IN ('alr', 'alr_policy') ORDER BY relname;
-----
-relname	adjacent
-alr	f
-alr_policy	t
 
 # The background refresh runs at the altered interval, and the new rows are
 # written with the altered codec.

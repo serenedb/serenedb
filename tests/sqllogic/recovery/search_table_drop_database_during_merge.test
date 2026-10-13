@@ -5,7 +5,7 @@ CREATE DATABASE searchdb;
 
 statement ok
 CREATE TABLE searchdb.public.docs (id INT PRIMARY KEY, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (storage = 'search', compaction_interval = 0, compaction_max_segments = 2);
 
 statement ok
 INSERT INTO searchdb.public.docs SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);

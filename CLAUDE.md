@@ -39,7 +39,8 @@ say it is unknown.
 
 - Build and run only what the task needs: the touched targets and the tests that
 cover the change. Full sqllogic/recovery suites, benchmarks and sanitizer
-builds only when the user asks; CI runs the suites.
+builds only when the user asks. CI only once the change passes locally, and only
+when the user asks (`.claude/rules/ci.md`).
 
 - C++ symbols are looked up with the LSP tool (`clangd-lsp` plugin), not grep:
 `goToDefinition`, `findReferences`, `incomingCalls`, `goToImplementation` for

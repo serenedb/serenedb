@@ -14,7 +14,7 @@ paths:
 
 # CI
 
-Claude changes nothing in CI unless the user asks: not the workflows, `scripts/ci/`, the CI images, their fixtures or the dependency manifests they install from. It doesn't start CI runs on its own either (Trigger Jobs, `gh workflow run`).
+Claude leaves CI alone until the user asks: it changes nothing in CI (the workflows, `scripts/ci/`, the CI images, their fixtures or the dependency manifests they install from), starts no runs (Trigger Jobs, `gh workflow run`) and doesn't look at runs or their results. A change first passes locally ([testing.md](testing.md)); CI comes after that.
 
 ## What CI runs
 

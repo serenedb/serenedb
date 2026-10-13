@@ -164,8 +164,11 @@ CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
     }
     if (!_producing && !_finished && !_aborted &&
         _pushed - _taken < produce_below) {
-      _producing = true;
-      return CopyTake::Produce;
+      if (!Full()) {
+        _producing = true;
+        return CopyTake::Produce;
+      }
+      _produce_waiter = true;
     }
     if (TakeReady(max, out)) {
       return CopyTake::Batches;
@@ -228,7 +231,9 @@ CopyBatch* CopyInBatches::Next() {
 void CopyInBatches::Done(uint64_t seq) {
   std::vector<std::unique_ptr<CopyBatch>> finished;
   std::vector<message::Chain> chunks;
+  std::vector<duckdb::InterruptState> wake;
   bool space = false;
+  bool produce = false;
   {
     Guard guard{_blocked.lock};
     _done[seq - _watermark] = 1;
@@ -243,13 +248,22 @@ void CopyInBatches::Done(uint64_t seq) {
       chunks.emplace_back(std::move(_released.front().chunks));
       _released.pop_front();
     }
-    if (_space_waiter && !Full()) {
-      _space_waiter = false;
-      space = true;
+    if (!Full()) {
+      space = std::exchange(_space_waiter, false);
+      produce = std::exchange(_produce_waiter, false);
+      if (produce) {
+        wake = _blocked.TakeBlockedTasks();
+      }
     }
   }
   if (space) {
     _space.Set();
+  }
+  if (produce) {
+    _changed.notify_all();
+  }
+  for (const auto& task : wake) {
+    task.Callback();
   }
 }
 

@@ -122,6 +122,7 @@ class CopyInBatches {
   bool _finished = false;
   bool _aborted = false;
   bool _producing = false;
+  bool _produce_waiter = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
 };

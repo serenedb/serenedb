@@ -599,22 +599,6 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
   output.SetChildCardinality(n);
 }
 
-void AppendJsonString(std::string& out, std::string_view text) {
-  out.push_back('"');
-  for (const char c : text) {
-    if (c == '"' || c == '\\') {
-      out.push_back('\\');
-      out.push_back(c);
-    } else if (static_cast<uint8_t>(c) < 0x20) {
-      absl::StrAppend(&out, "\\u00",
-                      absl::Hex{static_cast<uint8_t>(c), absl::kZeroPad2});
-    } else {
-      out.push_back(c);
-    }
-  }
-  out.push_back('"');
-}
-
 // ES caps _id at 512 bytes; the empty string is rejected the same way.
 void ValidateDocId(std::string_view id) {
   if (id.empty()) {
@@ -1064,7 +1048,7 @@ class EarliestFailure {
 struct EsBulkState final : duckdb::GlobalTableFunctionState {
   std::string_view body;
   const char* limit = nullptr;
-  std::vector<std::string>* items = nullptr;
+  std::vector<std::vector<EsBulkItem>>* items = nullptr;
   size_t chunks = 0;
   std::atomic<size_t> next{0};
   std::vector<size_t> starts;
@@ -1123,7 +1107,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
     state->ends.resize(state->chunks);
     state->failure.Resize(state->chunks);
     if (state->items != nullptr) {
-      state->items->assign(state->chunks, std::string{});
+      state->items->assign(state->chunks, {});
     }
     return state;
   }
@@ -1155,7 +1139,7 @@ struct EsBulkLocalState final : duckdb::LocalTableFunctionState {
   size_t chunk = 0;
   size_t pos = 0;
   size_t end = 0;
-  std::string* items = nullptr;
+  std::vector<EsBulkItem>* items = nullptr;
   simdjson::ondemand::parser action_parser;
   simdjson::ondemand::parser doc_parser;
   std::array<char, kEsDocIdSize> generated_id{};
@@ -1232,6 +1216,7 @@ void WriteBulkPair(EsBulkLocalState& local, const EsWriteBindData& data,
 
   std::string_view op;
   std::string_view id;
+  std::string_view id_token;
   for (auto field : action) {
     std::string_view key;
     if (field.unescaped_key().get(key) != simdjson::SUCCESS || !op.empty()) {
@@ -1255,9 +1240,15 @@ void WriteBulkPair(EsBulkLocalState& local, const EsWriteBindData& data,
         malformed("malformed parameters");
       }
       if (param_key == "_id") {
-        if (param.value().get_string().get(id) != simdjson::SUCCESS) {
+        simdjson::ondemand::value value;
+        if (param.value().get(value) != simdjson::SUCCESS) {
           malformed("_id must be a string");
         }
+        id_token = value.raw_json_token();
+        if (value.get_string().get(id) != simdjson::SUCCESS) {
+          malformed("_id must be a string");
+        }
+        id_token = id_token.substr(0, id_token.rfind('"') + 1);
         ValidateDocId(id);
       } else if (param_key == "_index") {
         std::string_view explicit_index;
@@ -1293,18 +1284,14 @@ void WriteBulkPair(EsBulkLocalState& local, const EsWriteBindData& data,
   }
   WriteDocRow(data, doc, id, doc_line, output, row);
 
-  if (auto* sink = local.items) {
-    if (!sink->empty()) {
-      sink->push_back(',');
+  if (auto* items = local.items) {
+    auto& item = items->emplace_back();
+    item.create = op == "create";
+    if (id_token.empty()) {
+      item.generated = local.generated_id;
+    } else {
+      item.id = id_token;
     }
-    absl::StrAppend(sink, "{\"", op, "\":{\"_index\":");
-    AppendJsonString(*sink, data.index);
-    absl::StrAppend(sink, ",\"_id\":");
-    AppendJsonString(*sink, id);
-    absl::StrAppend(
-      sink, R"(,"_version":1,"result":"created","_shards":{"total":1,)"
-            R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
-            R"("status":201}})");
   }
 }
 

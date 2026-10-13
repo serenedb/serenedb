@@ -122,6 +122,41 @@ std::string FirstActionIndex(std::string_view body, size_t capacity) {
   return {};
 }
 
+constexpr size_t kBulkResponseFlushBytes = 64 << 10;
+constexpr size_t kBulkItemReserve = 4 << 10;
+constexpr std::string_view kBulkItemHead = R"({")";
+constexpr std::string_view kBulkItemIndex = R"(":{"_index":)";
+constexpr std::string_view kBulkItemId = R"(,"_id":)";
+constexpr std::string_view kBulkItemTail =
+  R"(,"_version":1,"result":"created","_shards":{"total":1,)"
+  R"("successful":1,"failed":0},"_seq_no":0,"_primary_term":1,)"
+  R"("status":201}})";
+
+std::string_view BulkOp(const connector::EsBulkItem& item) {
+  return item.create ? "create" : "index";
+}
+
+size_t BulkItemSize(const connector::EsBulkItem& item, std::string_view index) {
+  const size_t id =
+    item.id.empty() ? item.generated.size() + 2 : item.id.size();
+  return kBulkItemHead.size() + BulkOp(item).size() + kBulkItemIndex.size() +
+         index.size() + kBulkItemId.size() + id + kBulkItemTail.size();
+}
+
+void AppendBulkItem(std::string& out, const connector::EsBulkItem& item,
+                    std::string_view index) {
+  absl::StrAppend(&out, kBulkItemHead, BulkOp(item), kBulkItemIndex, index,
+                  kBulkItemId);
+  if (item.id.empty()) {
+    absl::StrAppend(
+      &out, "\"",
+      std::string_view{item.generated.data(), item.generated.size()}, "\"");
+  } else {
+    out.append(item.id);
+  }
+  out.append(kBulkItemTail);
+}
+
 // POST|PUT [/{index}]/_bulk
 class BulkHandler final : public HttpHandler {
  public:
@@ -150,7 +185,7 @@ class BulkHandler final : public HttpHandler {
       WriteSqlError(writer, *prepared.error, index);
       co_return {};
     }
-    std::vector<std::string> items;
+    std::vector<std::vector<connector::EsBulkItem>> items;
     const connector::EsBulkInput input{
       .body = body, .capacity = padded.size(), .items = &items};
     auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
@@ -169,30 +204,36 @@ class BulkHandler final : public HttpHandler {
     const std::string head = absl::StrCat("{\"took\":", TookMs(start),
                                           ",\"errors\":false,\"items\":[");
     static constexpr std::string_view kTail = "]}";
+    simdjson::builder::string_builder index_json;
+    index_json.escape_and_append_with_quotes(index);
+    const std::string_view index_token = index_json.view().value();
     size_t length = head.size() + kTail.size();
-    size_t parts = 0;
-    for (const auto& part : items) {
-      if (!part.empty()) {
-        length += part.size();
-        ++parts;
+    size_t count = 0;
+    for (const auto& chunk : items) {
+      for (const auto& item : chunk) {
+        length += BulkItemSize(item, index_token);
       }
+      count += chunk.size();
     }
-    const size_t commas = parts == 0 ? 0 : parts - 1;
-    length += commas;
+    length += count == 0 ? 0 : count - 1;
     writer.WriteHead(HttpStatus::Ok, kJsonContentType, length, kProductHeader);
-    writer.Write(head);
+    std::string staging = head;
+    staging.reserve(kBulkResponseFlushBytes + kBulkItemReserve);
     bool first = true;
-    for (const auto& part : items) {
-      if (part.empty()) {
-        continue;
+    for (const auto& chunk : items) {
+      for (const auto& item : chunk) {
+        if (!std::exchange(first, false)) {
+          staging.push_back(',');
+        }
+        AppendBulkItem(staging, item, index_token);
+        if (staging.size() >= kBulkResponseFlushBytes) {
+          writer.Write(staging);
+          staging.clear();
+        }
       }
-      if (!first) {
-        writer.Write(",");
-      }
-      writer.Write(part);
-      first = false;
     }
-    writer.Write(kTail);
+    staging.append(kTail);
+    writer.Write(staging);
     writer.Finish();
     co_return {};
   }

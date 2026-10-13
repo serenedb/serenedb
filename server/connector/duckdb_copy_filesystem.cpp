@@ -287,4 +287,15 @@ duckdb::FileType SereneDBCopyFileSystem::GetFileType(
   return duckdb::FileType::FILE_TYPE_FIFO;
 }
 
+void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
+  auto chain = buffer.ReleaseChain();
+  for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
+    const auto data = chunk->Data(chunk->GetEnd());
+    if (!data.empty()) {
+      handle.Write(const_cast<uint8_t*>(data.data()),
+                   static_cast<duckdb::idx_t>(data.size()));
+    }
+  }
+}
+
 }  // namespace sdb::connector

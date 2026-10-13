@@ -41,9 +41,9 @@
 #include <string_view>
 #include <vector>
 
-#include "connector/copy_byte_source.h"
 #include "connector/copy_from_batches.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "pg/connection_context.h"
 #include "pg/serialize.h"
 #include "server/utils/message_buffer.h"

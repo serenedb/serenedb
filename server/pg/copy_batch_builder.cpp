@@ -38,7 +38,7 @@ constexpr int32_t kNullFieldLength = -1;
 
 [[noreturn]] void ThrowFormat(std::string_view message) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                  ERR_MSG("COPY FROM STDIN: ", message));
+                  ERR_MSG("COPY FROM: ", message));
 }
 
 }  // namespace

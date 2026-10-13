@@ -249,11 +249,14 @@ def test_bulk_index_and_create(conn, index):
         '{"title":"A Time to Kill","year":1989,"published":612918000000}\n'
         '{"index":{"_id":"3","_index":"%s"}}\n'
         '{"title":"The Firm","unmapped_extra":"source only"}\n'
+        '{"index":{"_id" : "q\\"uo\\\\te\\u00e9" }}\n'
+        '{"title":"Escaped"}\n'
     ) % index
     status, body = _bulk(conn, index, payload, refresh=True)
     assert status == 200
     assert body["errors"] is False
-    assert len(body["items"]) == 3
+    assert len(body["items"]) == 4
+    assert body["items"][3]["index"]["_id"] == 'q"uo\\teé'
     first = body["items"][0]["index"]
     assert first["_id"] == "1"
     assert first["status"] == 201
@@ -264,7 +267,7 @@ def test_bulk_index_and_create(conn, index):
 
     status, body = _request(conn, "GET", f"/{index}/_count")
     assert status == 200
-    assert body["count"] == 3
+    assert body["count"] == 4
 
 
 def test_bulk_errors(conn, index):

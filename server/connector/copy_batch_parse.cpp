@@ -261,9 +261,9 @@ duckdb::idx_t CopyBatchParser::ParseBinary(duckdb::DataChunk& output,
     const auto fields =
       static_cast<int16_t>(absl::big_endian::Load16(data.data() + _pos));
     if (static_cast<size_t>(fields) != columns) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("COPY FROM STDIN: row has ", fields,
-                              " fields, expected ", columns));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
+        ERR_MSG("COPY FROM: row has ", fields, " fields, expected ", columns));
     }
     const char* p = data.data() + _pos + kFieldCountBytes;
     for (duckdb::idx_t column = 0; column < columns; ++column) {
@@ -278,8 +278,7 @@ duckdb::idx_t CopyBatchParser::ParseBinary(duckdb::DataChunk& output,
       if (!_deserializers[column](_dctx, {p, static_cast<size_t>(len)}, sink)) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
-          ERR_MSG("COPY FROM STDIN: invalid binary value in column ",
-                  column + 1));
+          ERR_MSG("COPY FROM: invalid binary value in column ", column + 1));
       }
       p += len;
     }

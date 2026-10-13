@@ -24,7 +24,6 @@
 
 #include <array>
 #include <cstdint>
-#include <cstring>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -39,9 +38,9 @@
 #include <string>
 #include <vector>
 
-#include "connector/copy_byte_source.h"
 #include "connector/copy_from_batches.h"
 #include "connector/duckdb_client_state.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"

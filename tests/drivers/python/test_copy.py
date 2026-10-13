@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import threading
 import uuid
 from pathlib import Path
 
@@ -538,5 +540,114 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
                 _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
                            tmp_path)
             assert _count(cur, table_name, storage) == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+_RANGE = 8 << 20
+
+
+def _boundary_payload(header: bool) -> tuple[bytes, list[int]]:
+    head = b"x\tlabel\n" if header else b""
+    rows = []
+    lengths = []
+    pos = len(head)
+    for x, row_sep in enumerate((_RANGE - 1, 2 * _RANGE, 3 * _RANGE + 1)):
+        prefix = b"%d\t" % x
+        length = row_sep - pos - len(prefix)
+        rows.append(prefix + b"y" * length + b"\n")
+        lengths.append(length)
+        pos = row_sep + 1
+    for x in range(3, 8):
+        rows.append(b"%d\tz\n" % x)
+        lengths.append(1)
+    return head + b"".join(rows), lengths
+
+
+def _assert_lengths(cur, table: str, storage: str,
+                    lengths: list[int]) -> None:
+    assert _count(cur, table, storage) == len(lengths)
+    cur.execute(f'SELECT x, length(label) FROM public."{table}" ORDER BY x')
+    assert cur.fetchall() == list(enumerate(lengths))
+    _assert_insertion_order(cur, table, storage, len(lengths))
+
+
+@pytest.mark.parametrize("header", [False, True], ids=["plain", "header"])
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+def test_text_file_rows_on_range_boundaries(conn: psycopg.Connection,
+                                            table_name: str, storage: str,
+                                            header: bool,
+                                            tmp_path: Path) -> None:
+    payload, lengths = _boundary_payload(header)
+    options = "FORMAT TEXT, HEADER" if header else "FORMAT TEXT"
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
+        try:
+            _copy_from(cur, table_name, payload, options, "file", tmp_path)
+            _assert_lengths(cur, table_name, storage, lengths)
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
+def test_text_copy_from_named_pipe(conn: psycopg.Connection, table_name: str,
+                                   storage: str, tmp_path: Path) -> None:
+    pipe = tmp_path / "rows.pipe"
+    os.mkfifo(pipe)
+    writer = threading.Thread(target=pipe.write_bytes,
+                              args=(b"x\tlabel\n" + _text_rows(_ROWS),),
+                              daemon=True)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
+                    f" {storage}")
+        try:
+            writer.start()
+            cur.execute(f"COPY public.\"{table_name}\" FROM '{pipe}' "
+                        "(FORMAT TEXT, HEADER)")
+            writer.join(timeout=60)
+            assert _count(cur, table_name, storage) == _ROWS
+            _assert_insertion_order(cur, table_name, storage, _ROWS)
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("setting", ["async_threads", "read_ahead_depth"])
+@pytest.mark.parametrize("fmt", ["text", "binary"])
+def test_file_copy_without_read_ahead(conn: psycopg.Connection,
+                                      table_name: str, setting: str, fmt: str,
+                                      tmp_path: Path) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f"SET {setting} = 0")
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            if fmt == "text":
+                payload, lengths = _boundary_payload(False)
+                _copy_from(cur, table_name, payload, "FORMAT TEXT", "file",
+                           tmp_path)
+                _assert_lengths(cur, table_name, "", lengths)
+            else:
+                _copy_from(cur, table_name, _binary_rows(cur, _ROWS),
+                           "FORMAT BINARY", "file", tmp_path)
+                assert _count(cur, table_name, "") == _ROWS
+                _assert_insertion_order(cur, table_name, "", _ROWS)
+        finally:
+            cur.execute(f"RESET {setting}")
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize(
+    "payload,options",
+    [(b"", "FORMAT TEXT"), (b"x\tlabel\n", "FORMAT TEXT, HEADER"),
+     (b"x\tlabel", "FORMAT TEXT, HEADER")],
+    ids=["empty", "header_only", "header_without_newline"])
+def test_text_file_copy_without_rows(conn: psycopg.Connection,
+                                     table_name: str, payload: bytes,
+                                     options: str, tmp_path: Path) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_from(cur, table_name, payload, options, "file", tmp_path)
+            assert _count(cur, table_name, "") == 0
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')

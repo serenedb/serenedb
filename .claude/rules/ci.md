@@ -14,6 +14,8 @@ paths:
 
 # CI
 
+Claude changes nothing in CI unless the user asks: not the workflows, `scripts/ci/`, the CI images, their fixtures or the dependency manifests they install from. It doesn't start CI runs on its own either (Trigger Jobs, `gh workflow run`).
+
 ## What CI runs
 
 - Every push to a PR runs `auto | pre-commit`: every hook on every file. A PR from a fork can't change `.github/workflows/` (`protect-workflows.yml` fails it).

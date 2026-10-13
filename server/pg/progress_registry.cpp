@@ -133,15 +133,44 @@ void ProgressSource::BeginQuery(std::string query_text) {
     absl::MutexLock lock{&mu};
     query = std::move(query_text);
   }
-  query_start_us.store(duckdb::Timestamp::GetCurrentTimestamp().value,
-                       std::memory_order_relaxed);
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  if (const auto idle =
+        now - state_change_us.exchange(now, std::memory_order_relaxed);
+      in_transaction_block && idle > 0) {
+    idle_in_transaction_time_us.fetch_add(idle, std::memory_order_relaxed);
+  }
+  query_start_us.store(now, std::memory_order_relaxed);
 }
 
 void ProgressSource::EndQuery() {
   // PG keeps the last statement's text visible with state=idle; only the
   // start timestamp is cleared.
-  query_start_us.store(0, std::memory_order_relaxed);
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  if (const auto start = query_start_us.exchange(0, std::memory_order_relaxed);
+      start != 0 && now > start) {
+    active_time_us.fetch_add(now - start, std::memory_order_relaxed);
+  }
+  state_change_us.store(now, std::memory_order_relaxed);
 }
+
+namespace {
+
+void AddSessionStats(DatabaseStats& stats, const ProgressSource& source,
+                     int64_t until_us) {
+  stats.xact_commit += source.xact_commit.load(std::memory_order_relaxed);
+  stats.xact_rollback += source.xact_rollback.load(std::memory_order_relaxed);
+  if (!source.client_backend) {
+    return;
+  }
+  ++stats.sessions;
+  stats.session_time_us +=
+    std::max<int64_t>(until_us - source.backend_start_us, 0);
+  stats.active_time_us += source.active_time_us.load(std::memory_order_relaxed);
+  stats.idle_in_transaction_time_us +=
+    source.idle_in_transaction_time_us.load(std::memory_order_relaxed);
+}
+
+}  // namespace
 
 void ProgressSource::Detach() {
   absl::MutexLock lock{&mu};
@@ -154,8 +183,30 @@ void ProgressRegistry::Register(std::shared_ptr<ProgressSource> source) {
 }
 
 void ProgressRegistry::Unregister(const ProgressSource* source) {
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
   absl::MutexLock lock{&_mu};
+  AddSessionStats(_ended_stats[source->datid], *source, now);
   _sources.erase(source);
+}
+
+DatabaseStats ProgressRegistry::GetDatabaseStats(int64_t datid) const {
+  absl::MutexLock lock{&_mu};
+  DatabaseStats stats;
+  if (const auto it = _ended_stats.find(datid); it != _ended_stats.end()) {
+    stats = it->second;
+  }
+  for (const auto& [_, source] : _sources) {
+    if (source->datid == datid) {
+      AddSessionStats(stats, *source,
+                      source->state_change_us.load(std::memory_order_relaxed));
+    }
+  }
+  return stats;
+}
+
+void ProgressRegistry::ForgetDatabase(int64_t datid) {
+  absl::MutexLock lock{&_mu};
+  _ended_stats.erase(datid);
 }
 
 size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,

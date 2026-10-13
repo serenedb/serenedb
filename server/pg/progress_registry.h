@@ -141,6 +141,7 @@ struct ProgressMetrics {
 struct ProgressSource {
   int32_t pid{0};
   int64_t datid{0};
+  bool client_backend{false};
   std::string user;
   std::string database;
   int64_t backend_start_us{0};
@@ -150,11 +151,26 @@ struct ProgressSource {
   duckdb::ClientContext* ctx{nullptr};
 
   std::atomic<int64_t> query_start_us{0};
+  std::atomic<int64_t> state_change_us{0};
+  std::atomic<int64_t> active_time_us{0};
+  std::atomic<int64_t> idle_in_transaction_time_us{0};
+  std::atomic<int64_t> xact_commit{0};
+  std::atomic<int64_t> xact_rollback{0};
+  bool in_transaction_block{false};
   ProgressMetrics metrics;
 
   void BeginQuery(std::string query_text);
   void EndQuery();
   void Detach();
+};
+
+struct DatabaseStats {
+  int64_t xact_commit{0};
+  int64_t xact_rollback{0};
+  int64_t sessions{0};
+  int64_t session_time_us{0};
+  int64_t active_time_us{0};
+  int64_t idle_in_transaction_time_us{0};
 };
 
 struct ProgressSnapshot {
@@ -197,6 +213,9 @@ class ProgressRegistry {
 
   std::vector<ProgressSnapshot> GetSnapshots() const;
 
+  DatabaseStats GetDatabaseStats(int64_t datid) const;
+  void ForgetDatabase(int64_t datid);
+
   size_t OtherSessions(int64_t datid, int32_t pid, absl::Duration wait) const;
 
  private:
@@ -204,6 +223,7 @@ class ProgressRegistry {
   irs::containers::FlatHashMap<const ProgressSource*,
                                std::shared_ptr<ProgressSource>>
     _sources;
+  irs::containers::FlatHashMap<int64_t, DatabaseStats> _ended_stats;
 };
 
 }  // namespace sdb::pg

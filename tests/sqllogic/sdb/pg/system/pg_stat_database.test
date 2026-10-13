@@ -1,0 +1,160 @@
+statement ok
+DROP TABLE IF EXISTS rubick_stat_gone_oid;
+
+
+statement ok
+DROP DATABASE IF EXISTS rubick_stat_db;
+
+
+statement ok
+DROP DATABASE IF EXISTS rubick_stat_gone;
+
+
+statement ok
+CREATE DATABASE rubick_stat_db;
+
+
+connection c_rubick_a database=rubick_stat_db
+statement ok
+CREATE TABLE stat_before AS
+SELECT xact_commit, xact_rollback, sessions, session_time, active_time, idle_in_transaction_time
+FROM pg_stat_database WHERE datname = current_database();
+
+
+connection c_rubick_a database=rubick_stat_db
+statement ok
+BEGIN;
+
+
+connection c_rubick_a database=rubick_stat_db
+statement ok
+SELECT 1;
+
+
+connection c_rubick_a database=rubick_stat_db
+statement ok
+ROLLBACK;
+
+
+connection c_rubick_a database=rubick_stat_db
+statement ok
+BEGIN;
+
+
+connection c_rubick_a database=rubick_stat_db
+statement ok
+COMMIT;
+
+
+connection c_rubick_b database=rubick_stat_db
+statement ok
+SELECT 1;
+
+
+connection c_rubick_a database=rubick_stat_db
+skipif pg-wire-extended
+query
+SELECT d.xact_commit - b.xact_commit AS commits
+FROM pg_stat_database d, stat_before b
+WHERE d.datname = current_database();
+----
+commits
+3
+
+
+connection c_rubick_a database=rubick_stat_db
+onlyif pg-wire-extended
+query
+SELECT d.xact_commit - b.xact_commit AS commits
+FROM pg_stat_database d, stat_before b
+WHERE d.datname = current_database();
+----
+commits
+7
+
+
+connection c_rubick_a database=rubick_stat_db
+query
+SELECT d.xact_rollback - b.xact_rollback AS rollbacks,
+       d.sessions - b.sessions AS new_sessions,
+       d.session_time > b.session_time AS session_time_grew,
+       d.active_time > b.active_time AS active_time_grew,
+       d.idle_in_transaction_time > b.idle_in_transaction_time AS idle_in_transaction_grew,
+       d.session_time >= d.active_time + d.idle_in_transaction_time AS session_covers_states
+FROM pg_stat_database d, stat_before b
+WHERE d.datname = current_database();
+----
+rollbacks	new_sessions	session_time_grew	active_time_grew	idle_in_transaction_grew	session_covers_states
+1	1	t	t	t	t
+
+
+connection c_rubick_a database=rubick_stat_db
+statement error
+SELECT 1 / 0;
+----
+db error: ERROR: <slt:ignore>
+
+
+connection c_rubick_a database=rubick_stat_db
+query
+SELECT d.xact_rollback - b.xact_rollback AS rollbacks
+FROM pg_stat_database d, stat_before b
+WHERE d.datname = current_database();
+----
+rollbacks
+2
+
+
+query
+SELECT xact_commit, xact_rollback, sessions, session_time, active_time, idle_in_transaction_time
+FROM pg_stat_database WHERE datid = 0;
+----
+xact_commit	xact_rollback	sessions	session_time	active_time	idle_in_transaction_time
+0	0	0	0	0	0
+
+
+query
+SELECT pg_stat_get_db_xact_commit(NULL) AS null_in, pg_stat_get_db_xact_commit(999999999) AS unknown,
+       pg_stat_get_db_session_time(999999999) AS unknown_time;
+----
+null_in	unknown	unknown_time
+NULL	0	0
+
+
+statement ok
+CREATE DATABASE rubick_stat_gone;
+
+
+statement ok
+CREATE TABLE rubick_stat_gone_oid AS SELECT oid FROM pg_database WHERE datname = 'rubick_stat_gone';
+
+
+statement ok
+CREATE JOB rubick_stat_gone.main.rubick_stat_job AFTER 1 HOUR AS SELECT 1;
+
+
+statement ok
+EXECUTE JOB rubick_stat_gone.main.rubick_stat_job;
+
+
+query
+SELECT pg_stat_get_db_xact_commit(oid) > 0 AS job_committed, pg_stat_get_db_sessions(oid) AS client_sessions
+FROM rubick_stat_gone_oid;
+----
+job_committed	client_sessions
+t	0
+
+
+statement ok
+DROP DATABASE rubick_stat_gone;
+
+
+query
+SELECT pg_stat_get_db_xact_commit(oid) AS commits FROM rubick_stat_gone_oid;
+----
+commits
+0
+
+
+statement ok
+DROP TABLE rubick_stat_gone_oid;

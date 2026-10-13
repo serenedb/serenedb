@@ -437,8 +437,8 @@ bool PgWireSession<Kind>::SetupConnection() {
   _connection_ctx = std::make_shared<ConnectionContext>(
     *_conn->context, user, role, DatabaseName(), database_id, &this->_send,
     static_cast<int32_t>(_cancel_key >> 32), _cancel);
-  _client_state =
-    &connector::SereneDBClientState::Register(*_conn->context, _connection_ctx);
+  _client_state = &connector::SereneDBClientState::Register(
+    *_conn->context, _connection_ctx, true);
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;
@@ -832,7 +832,9 @@ void PgWireSession<Kind>::CommitAndReportReady() {
   // overlay, so reporting afterwards tells the client the value it actually
   // keeps (and a set-then-reverted SET LOCAL nets to no message).
   ReportChangedParameters();
-  WriteReadyForQuery(this->_send, _txn_state->StatusByte());
+  const auto status = _txn_state->StatusByte();
+  _client_state->progress_source->in_transaction_block = status != 'I';
+  WriteReadyForQuery(this->_send, status);
   this->KickSend();
 }
 

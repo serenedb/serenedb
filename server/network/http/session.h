@@ -199,8 +199,8 @@ class HttpSession final
         absl::MutexLock lock{&_cancel_token->mu};
         _cancel_token->ctx = _conn->context.get();
       }
-      connector::SereneDBClientState::Register(*_conn->context,
-                                               _connection_ctx);
+      connector::SereneDBClientState::Register(*_conn->context, _connection_ctx,
+                                               true);
       connector::SetDefaultSearchPath(*_conn->context, dbname);
       _conn_user = _user;
     }

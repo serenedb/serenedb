@@ -14,7 +14,7 @@ paths:
 
 # C++ Code Style
 
-Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code, and to the DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) in DuckDB's own style: there DuckDB's formatting, naming, `template <class T>` and helpers (`D_ASSERT`, `make_uniq`, `StringUtil`, its exception types, logging and settings) stay, and our pre-commit C++ checks don't run, so nothing catches a slip.
+Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code, and to the DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) in DuckDB's own style: there DuckDB's formatting, naming, `template <class T>`, `override` and helpers (`D_ASSERT`, `make_uniq`, `StringUtil`, its exception types, logging and settings) stay, and our pre-commit C++ checks don't run, so nothing catches a slip.
 
 Formatting and naming nits shouldn't block PRs -- what the tools don't catch can be fixed later; the "never" and "forbidden" rules do block. This is a living document.
 

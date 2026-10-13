@@ -1,5 +1,7 @@
 # Branching, commits, PRs
 
+These are for pull requests to this repository; a fork's PR under `third_party/` follows [third-party.md](third-party.md).
+
 - **Branch from `main`**, one focused change per PR.
 - **Branch name:** `<author>/<topic>` (e.g. `mbkkt/fix-view-indexes-recovery`). Topic is free-form.
 - **Conventional commit prefix** in the PR title: `feat:`, `fix:`, `perf:` (most common), or one of `refactor:`, `chore:`, `docs:`, `test:`, `ci:`, `build:`, `style:`, `misc:`. Don't invent new ones -- if none fit, ask.

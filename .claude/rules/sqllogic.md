@@ -6,7 +6,7 @@ paths:
 
 # Writing sqllogic tests
 
-- Write bare `query`, without type letters. Expected results start with the column-name header line.
+- Write bare `query`, without type letters, even where siblings have them. Expected results start with the column-name header line.
 - A multiline `statement error` or `query error` block ends only at two empty lines: with one, it swallows the next record. Query results end at the first empty line.
 - New error records use the block form, matched as exact text, even where siblings use the one-line `statement error <regex>`, which accepts any message containing the regex:
 

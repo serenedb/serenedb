@@ -24,8 +24,8 @@ them.
 - Before filing an issue or writing a fix, check that it isn't already there:
 search open and recently closed issues and PRs
 (`gh issue list --state all --search <words>`,
-`gh pr list --state all --search <words>`). The same problem already filed: add your findings to
-that issue instead of opening another. A PR already fixes it: link the PR
+`gh pr list --state all --search <words>`). The same problem already filed: add
+your findings to that issue instead of opening another. A PR already fixes it: link the PR
 instead of fixing it again (a stale one: ask whether to wait, build on it or
 fix it here). Only related: go ahead, mention the related issue in yours and
 leave a cross-reference on it.
@@ -42,8 +42,8 @@ say it is unknown.
 
 - Build and run only what the task needs: the touched targets and the tests that
 cover the change. Full sqllogic/recovery suites, the DuckDB suites, stress,
-benchmarks and sanitizer builds only when the user asks. CI only once the change passes locally, and only
-when the user asks (`.claude/rules/ci.md`).
+benchmarks and sanitizer builds only when the user asks. CI only once the
+change passes locally, and only when the user asks (`.claude/rules/ci.md`).
 
 - C++ symbols are looked up with the LSP tool (`clangd-lsp` plugin), not grep:
 `goToDefinition`, `findReferences`, `incomingCalls`, `goToImplementation` for
@@ -57,7 +57,8 @@ tool is deferred: load it with ToolSearch (`select:LSP`). If ToolSearch finds
 none, the plugin is missing
 (`claude plugin install clangd-lsp@claude-plugins-official`); an LSP error that
 the server can't start means `clangd` itself is missing. Ask the user to
-install what is missing. clangd reads `build/compile_commands.json`.
+install what is missing. clangd reads `build/compile_commands.json`; without
+one there, use grep.
 
 - Repo-wide knowledge goes into the repo, not into personal memory, which is
 per machine and invisible to the team. What every contributor needs goes into
@@ -106,8 +107,9 @@ style; opening it also loads the test rules from `.claude/rules/`.
 
 ## Local smoke server
 
-Pick a free `<port>` (`ss -ltn | grep :<port>` prints nothing) and a fresh data
-dir (`mktemp -d`). Note the pid the start prints: it is how you check and stop
+Start a server this way, not as `CONTRIBUTING.md` "Launch" does (a fixed port
+and data dir assume a machine of your own). Pick a free `<port>`
+(`ss -ltn | grep :<port>` prints nothing) and a fresh data dir (`mktemp -d`). Note the pid the start prints: it is how you check and stop
 your server, since another session can take the port between your check and the
 bind. Stop it when you're done, so nobody inherits a stale serened.
 

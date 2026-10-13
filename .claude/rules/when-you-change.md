@@ -8,7 +8,7 @@ Each of these changes has a follow-up step that nothing runs for you.
 - **A new C++ file:** add it to `target_sources` in its directory's `CMakeLists.txt`. `scripts/find_unused_sources.py` lists the files nothing compiles.
 - **A setting:** it is defined in `server/query/config_variables.cpp` and documented in the table in `docs/configuration/overview.md`.
 - **A serened command-line flag:** `python3 tests/drivers/python/cli_help.py override --bin <build dir>/bin/serened` rewrites the reference that `docs/configuration/cli.mdx` renders; the python driver suite fails until it matches.
-- **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`): `scripts/otel/schema.py generate`. Its conformance fixtures (`resources/otel/conformance/*.json`): `scripts/otel/fixtures.py generate`.
+- **The OpenTelemetry schema** (`resources/otel/otel_schema.sql`): `scripts/otel/schema.py generate`. Its conformance fixtures (`resources/otel/conformance/*/*.json`): `scripts/otel/fixtures.py generate` writes the `.pb` beside each.
 - **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`, then `python3 scripts/generate_system_table_claims.py` regenerates the test that pins it.
 - **A python driver test file:** add it to the list in `tests/drivers/python/run.sh`, or no suite runs it.
 - **Other generated sources:** the word-break and case tables in `iresearch/` come from `scripts/generate_unicode_tables.py`, `third_party/libstemmer_c` from `scripts/update_libstemmer.sh`, and the PostgreSQL views and functions in `server/pg/system_views.h` and `server/pg/system_functions.h` from `scripts/update_system_catalog.py`.

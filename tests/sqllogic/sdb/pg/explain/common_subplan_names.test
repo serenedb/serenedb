@@ -1,0 +1,12 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE csn_t AS SELECT range AS a, range % 5 AS b FROM range(100)
+
+query
+EXPLAIN SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT (SELECT max(a) + (SELECT 1) FROM csn_t WHERE b = 0)) FROM csn_t WHERE b = 1)) FROM csn_t WHERE b = 2)) FROM csn_t WHERE b = 3)) FROM csn_t WHERE b = 4)) FROM csn_t WHERE b = 0)) FROM csn_t WHERE b = 1)) FROM csn_t WHERE b = 2)
+----
+165 values hashing to 0bfdd688500064bc5e92d22f8542b6c6
+
+statement ok
+DROP TABLE csn_t

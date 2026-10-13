@@ -418,3 +418,16 @@ SELECT greatest(*COLUMNS(*) + 1) AS result
 FROM (SELECT 1 AS a, 2 AS b, 3 AS c);
 ----
 db error: ERROR: No function matches the given name and argument types '+(INTEGER, INTEGER, INTEGER, INTEGER_LITERAL)'. <slt:ignore>
+
+
+# DOCS_TEST: example_027
+
+# DOCS_TEST_BODY
+
+query
+SELECT (struct_pack(x := i, y := i * 10)).*
+FROM generate_series(1, 2) AS t(i);
+----
+x	y
+1	10
+2	20

@@ -31,6 +31,10 @@ For example:
 
 <SqlLogicTest id="sql/expressions/star/index/example_003" />
 
+A parenthesized expression that returns a struct, such as a function call, expands the same way, as in PostgreSQL's `(expression).*`. The expression is evaluated once per row:
+
+<SqlLogicTest id="sql/expressions/star/index/example_027" />
+
 ### `EXCLUDE` Clause
 
 `EXCLUDE` allows you to exclude specific columns from the `*` expression.

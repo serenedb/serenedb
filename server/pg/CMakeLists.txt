@@ -21,6 +21,8 @@ target_sources(
         catalog/functions/pg_catalog/ruleutils.cpp
         catalog/functions/pg_catalog/subscription.cpp
         catalog/lookup.cpp
+        catalog/table_functions/pg_catalog/pg_hba_file_rules.cpp
+        catalog/table_functions/pg_catalog/pg_show_all_settings.cpp
         catalog/tables/information_schema/columns.cpp
         catalog/tables/information_schema/sql_implementation_info.cpp
         catalog/tables/information_schema/sql_parts.cpp
@@ -51,7 +53,6 @@ target_sources(
         catalog/tables/pg_catalog/pg_replication_origin.cpp
         catalog/tables/pg_catalog/pg_rewrite.cpp
         catalog/tables/pg_catalog/pg_sequence.cpp
-        catalog/tables/pg_catalog/pg_settings.cpp
         catalog/tables/pg_catalog/pg_shdepend.cpp
         catalog/tables/pg_catalog/pg_subscription.cpp
         catalog/tables/pg_catalog/pg_subscription_rel.cpp
@@ -62,31 +63,9 @@ target_sources(
         catalog/tables/sdb/sdb_metrics.cpp
         catalog/tables/sdb/sdb_progress.cpp
         catalog/tables/sdb/sdb_settings.cpp
-        catalog/views/information_schema/attributes.cpp
-        catalog/views/information_schema/check_constraints.cpp
-        catalog/views/information_schema/column_options.cpp
-        catalog/views/information_schema/column_privileges.cpp
-        catalog/views/information_schema/element_types.cpp
-        catalog/views/information_schema/foreign_data_wrapper_options.cpp
-        catalog/views/information_schema/foreign_server_options.cpp
-        catalog/views/information_schema/foreign_table_options.cpp
-        catalog/views/information_schema/key_column_usage.cpp
-        catalog/views/information_schema/parameters.cpp
-        catalog/views/information_schema/routine_privileges.cpp
-        catalog/views/information_schema/table_privileges.cpp
-        catalog/views/information_schema/triggered_update_columns.cpp
         catalog/views/information_schema/triggers.cpp
-        catalog/views/information_schema/udt_privileges.cpp
-        catalog/views/information_schema/usage_privileges.cpp
-        catalog/views/pg_catalog/pg_publication_tables.cpp
-        catalog/views/pg_catalog/pg_stat_activity.cpp
-        catalog/views/pg_catalog/pg_stat_progress_analyze.cpp
-        catalog/views/pg_catalog/pg_stat_progress_basebackup.cpp
-        catalog/views/pg_catalog/pg_stat_progress_cluster.cpp
-        catalog/views/pg_catalog/pg_stat_progress_copy.cpp
         catalog/views/pg_catalog/pg_stat_progress_create_index.cpp
-        catalog/views/pg_catalog/pg_stat_progress_create_table_as.cpp
-        catalog/views/pg_catalog/pg_stat_progress_vacuum.cpp
+        catalog/views/sdb/pg_stat_progress_create_table_as.cpp
         command_tag.cpp
         connection_context.cpp
         types.cpp

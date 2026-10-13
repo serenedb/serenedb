@@ -25,6 +25,7 @@
 namespace duckdb {
 
 class DatabaseInstance;
+class DuckCatalog;
 
 }  // namespace duckdb
 namespace sdb::catalog {
@@ -32,13 +33,20 @@ namespace sdb::catalog {
 class SystemTableEntry;
 
 }  // namespace sdb::catalog
+namespace sdb::pg {
+
+class SystemTable;
+
+}  // namespace sdb::pg
 namespace sdb::connector {
 
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
-catalog::SystemTableEntry& BoundSystemTable(
+duckdb::DuckCatalog& BoundSystemCatalog(
+  const duckdb::TableFunctionInitInput& input);
+const pg::SystemTable& BoundSystemTable(
   const duckdb::TableFunctionInitInput& input);
 
 void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db);

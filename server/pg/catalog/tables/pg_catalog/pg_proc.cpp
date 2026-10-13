@@ -76,29 +76,63 @@ duckdb::idx_t ArgumentOid(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::UNKNOWN ? 0 : Type2Oid(type);
 }
 
+bool HasOutputArguments(const duckdb::MacroFunction& macro) {
+  return ReturnsTable(macro) || !macro.parameter_modes.empty();
+}
+
+struct Argument {
+  char mode;
+  size_t input;
+  size_t output;
+};
+
+Argument ArgumentAt(const duckdb::MacroFunction& macro, size_t i) {
+  const auto inputs = macro.parameters.size();
+  if (macro.parameter_modes.empty()) {
+    return i < inputs ? Argument{'i', i, 0} : Argument{'t', 0, i - inputs};
+  }
+  Argument argument{macro.parameter_modes[i], 0, 0};
+  for (size_t k = 0; k < i; ++k) {
+    argument.input += macro.parameter_modes[k] != 'o';
+    argument.output += macro.parameter_modes[k] != 'i';
+  }
+  return argument;
+}
+
+size_t ArgumentCount(const duckdb::MacroFunction& macro) {
+  if (!macro.parameter_modes.empty()) {
+    return macro.parameter_modes.size();
+  }
+  return macro.parameters.size() +
+         (ReturnsTable(macro) ? macro.return_names.size() : 0);
+}
+
+auto Arguments(const duckdb::MacroFunction& macro) {
+  return std::views::iota(size_t{0}, ArgumentCount(macro)) |
+         std::views::transform(
+           [&macro](size_t i) { return ArgumentAt(macro, i); });
+}
+
 auto AllArgTypes(const duckdb::MacroFunction& macro) {
-  const auto inputs = macro.types.size();
-  return std::views::iota(size_t{0}, inputs + macro.return_types.size()) |
-         std::views::transform([&macro, inputs](size_t i) -> duckdb::idx_t {
-           return i < inputs ? ArgumentOid(macro.types[i])
-                             : Type2Oid(macro.return_types[i - inputs]);
+  return Arguments(macro) |
+         std::views::transform([&macro](Argument argument) -> duckdb::idx_t {
+           return argument.mode == 'o' || argument.mode == 't'
+                    ? Type2Oid(macro.return_types[argument.output])
+                    : ArgumentOid(macro.types[argument.input]);
          });
 }
 
 auto ArgModes(const duckdb::MacroFunction& macro) {
-  const auto inputs = macro.types.size();
-  return std::views::iota(size_t{0}, inputs + macro.return_types.size()) |
-         std::views::transform(
-           [inputs](size_t i) { return i < inputs ? 'i' : 't'; });
+  return Arguments(macro) |
+         std::views::transform([](Argument argument) { return argument.mode; });
 }
 
 auto ArgNames(const duckdb::MacroFunction& macro) {
-  const auto inputs = macro.parameters.size();
-  const auto outputs = ReturnsTable(macro) ? macro.return_names.size() : 0;
-  return std::views::iota(size_t{0}, inputs + outputs) |
-         std::views::transform([&macro, inputs](size_t i) -> std::string_view {
-           return i < inputs ? MacroParameterName(macro, i)
-                             : std::string_view{macro.return_names[i - inputs]};
+  return Arguments(macro) |
+         std::views::transform([&macro](Argument argument) -> std::string_view {
+           return argument.mode == 'o' || argument.mode == 't'
+                    ? std::string_view{macro.return_names[argument.output]}
+                    : MacroParameterName(macro, argument.input);
          });
 }
 
@@ -171,19 +205,21 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
       if (row.macro.return_types.empty()) {
         return kInvalidOid;
       }
-      return ReturnsTable(row.macro) ? kRecord
-                                     : Type2Oid(row.macro.return_types[0]);
+      return row.macro.return_types.size() == 1
+               ? Type2Oid(row.macro.return_types[0])
+               : kRecord;
     }),
     Col<"proargtypes">([](const auto& row) {
       return row.macro.types | std::views::transform(ArgumentOid);
     }),
     Col<"proallargtypes">([](const auto& row) {
-      return ReturnsTable(row.macro) ? std::optional{AllArgTypes(row.macro)}
-                                     : std::nullopt;
+      return HasOutputArguments(row.macro)
+               ? std::optional{AllArgTypes(row.macro)}
+               : std::nullopt;
     }),
     Col<"proargmodes">([](const auto& row) {
-      return ReturnsTable(row.macro) ? std::optional{ArgModes(row.macro)}
-                                     : std::nullopt;
+      return HasOutputArguments(row.macro) ? std::optional{ArgModes(row.macro)}
+                                           : std::nullopt;
     }),
     Col<"proargnames">([](const auto& row) {
       auto names = ArgNames(row.macro);

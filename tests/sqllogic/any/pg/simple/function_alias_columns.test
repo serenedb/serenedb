@@ -57,9 +57,6 @@ statement ok
 CREATE FUNCTION sf_setof() RETURNS SETOF INT LANGUAGE sql AS $$ SELECT 1 UNION ALL SELECT 2 $$;
 
 
-# serenedb: a base-type function is bound as a scalar macro, so the alias resolves to the
-# row instead of the column, and only the first row is produced.
-skipif serenedb
 query
 SELECT a FROM sf_setof() AS a ORDER BY 1;
 ----
@@ -68,7 +65,6 @@ a
 2
 
 
-skipif serenedb
 query
 SELECT * FROM sf_setof() AS a ORDER BY 1;
 ----
@@ -81,7 +77,6 @@ statement ok
 CREATE FUNCTION sc_scalar(i INT) RETURNS INT LANGUAGE sql AS $$ SELECT i + 1 $$;
 
 
-skipif serenedb
 query
 SELECT x FROM sc_scalar(41) AS x;
 ----
@@ -91,7 +86,6 @@ x
 
 # a set-returning function produces a result set, not just its first row
 
-skipif serenedb
 query
 SELECT * FROM sf_setof() ORDER BY 1;
 ----
@@ -109,7 +103,6 @@ sf_setof
 2
 
 
-skipif serenedb
 query
 SELECT count(*) AS n FROM sf_setof();
 ----
@@ -117,7 +110,6 @@ n
 2
 
 
-skipif serenedb
 query
 SELECT s.i, f.a FROM (SELECT 1 AS i) s, LATERAL (SELECT * FROM sf_setof() AS a) f ORDER BY 2;
 ----
@@ -126,7 +118,6 @@ i	a
 1	2
 
 
-skipif serenedb
 query
 SELECT proretset FROM pg_proc WHERE proname = 'sf_setof';
 ----

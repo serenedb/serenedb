@@ -1,0 +1,120 @@
+statement ok
+DROP SCHEMA IF EXISTS fno CASCADE;
+
+
+statement ok
+CREATE SCHEMA fno;
+
+
+statement ok
+CREATE FUNCTION fno.split(IN a int, OUT b int, OUT c text) LANGUAGE sql AS 'SELECT a + 1, a::text';
+
+
+statement ok
+CREATE FUNCTION fno.doubled(a int, OUT b bigint) LANGUAGE sql AS 'SELECT a * 2';
+
+
+statement ok
+CREATE FUNCTION fno.swap(INOUT a int, OUT b text) LANGUAGE sql AS 'SELECT a * 10, a::text';
+
+
+statement ok
+CREATE FUNCTION fno.rec(a int, OUT b int, OUT c int) RETURNS record LANGUAGE sql AS 'SELECT a, a + 1';
+
+
+statement ok
+CREATE FUNCTION fno.upto(a int, OUT n int) RETURNS SETOF int LANGUAGE sql AS 'SELECT * FROM generate_series(1, a)';
+
+
+statement ok
+CREATE FUNCTION fno.pairs(a int, OUT x int, OUT y text) RETURNS SETOF record LANGUAGE sql AS 'SELECT g, g::text FROM generate_series(1, a) g';
+
+
+statement ok
+CREATE FUNCTION fno.unnamed(int, OUT int, OUT text) LANGUAGE sql AS 'SELECT $1, $1::text';
+
+
+query
+SELECT * FROM fno.split(5);
+----
+b	c
+6	5
+
+
+query
+SELECT fno.split(5) AS s, (fno.split(5)).c AS c;
+----
+s	c
+(6,5)	5
+
+
+query
+SELECT fno.doubled(4) AS d, pg_typeof(fno.doubled(4)) AS t;
+----
+d	t
+8	bigint
+
+
+query
+SELECT * FROM fno.doubled(4);
+----
+b
+8
+
+
+query
+SELECT * FROM fno.swap(2);
+----
+a	b
+20	2
+
+
+query
+SELECT * FROM fno.rec(1);
+----
+b	c
+1	2
+
+
+query
+SELECT * FROM fno.upto(3) ORDER BY 1;
+----
+n
+1
+2
+3
+
+
+query
+SELECT * FROM fno.pairs(2) ORDER BY 1;
+----
+x	y
+1	1
+2	2
+
+
+query
+SELECT * FROM fno.unnamed(3);
+----
+column1	column2
+3	3
+
+
+query
+SELECT p.proname, p.prorettype::regtype::text AS rettype, p.proretset, p.pronargs, array_to_string(p.proallargtypes::regtype[], ',') AS alltypes, array_to_string(p.proargmodes, ',') AS modes, array_to_string(p.proargnames, ',') AS names, pg_get_function_arguments(p.oid) AS args, pg_get_function_result(p.oid) AS result FROM pg_proc p WHERE p.pronamespace = 'fno'::regnamespace AND p.proname <> 'unnamed' ORDER BY 1;
+----
+proname	rettype	proretset	pronargs	alltypes	modes	names	args	result
+doubled	bigint	f	1	integer,bigint	i,o	a,b	a integer, OUT b bigint	bigint
+pairs	record	t	1	integer,integer,text	i,o,o	a,x,y	a integer, OUT x integer, OUT y text	SETOF record
+rec	record	f	1	integer,integer,integer	i,o,o	a,b,c	a integer, OUT b integer, OUT c integer	record
+split	record	f	1	integer,integer,text	i,o,o	a,b,c	a integer, OUT b integer, OUT c text	record
+swap	record	f	1	integer,text	b,o	a,b	INOUT a integer, OUT b text	record
+upto	integer	t	1	integer,integer	i,o	a,n	a integer, OUT n integer	SETOF integer
+
+
+statement error OUT and INOUT arguments aren't allowed in TABLE functions
+CREATE FUNCTION fno.bad(a int, OUT b int) RETURNS TABLE(c int) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+DROP SCHEMA fno CASCADE;

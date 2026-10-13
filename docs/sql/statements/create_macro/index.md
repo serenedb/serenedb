@@ -84,6 +84,24 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_015" />
 
+### SQL Functions
+
+`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_036" />
+
+`RETURNS SETOF <type>` returns every row of the body. Called in `FROM`, the function's column is named after the function:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_037" />
+
+`RETURNS TABLE` names and types the columns:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_038" />
+
+An `OUT` parameter is a column of the result and an `INOUT` parameter is both an argument and a column. A function with one output returns that type, one with several returns a record of them, and `RETURNS SETOF` with outputs returns every row. Called in `FROM`, a record function returns its outputs as columns:
+
+<SqlLogicTest id="sql/statements/create_macro/index/example_039" />
+
 ## Overloading
 
 It is possible to overload a macro based on the types or the number of its parameters; this works for both scalar and table macros.

@@ -369,3 +369,65 @@ statement error
 SELECT * FROM range(scalar_sub());
 ----
 db error: ERROR: Table function cannot contain subqueries
+
+
+# DOCS_TEST: example_036
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION add_one(a int) RETURNS bigint LANGUAGE sql AS 'SELECT a + 1';
+
+query
+SELECT add_one(1) AS result, pg_typeof(add_one(1)) AS type;
+----
+result	type
+2	bigint
+
+# DOCS_TEST: example_037
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION evens(n int) RETURNS SETOF int LANGUAGE sql AS 'SELECT g FROM generate_series(2, n, 2) g';
+
+query
+SELECT * FROM evens(6);
+----
+evens
+2
+4
+6
+
+# DOCS_TEST: example_038
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION numbered(n int) RETURNS TABLE (i int, label text) LANGUAGE sql AS 'SELECT g, ''#'' || g FROM generate_series(1, n) g';
+
+query
+SELECT * FROM numbered(2);
+----
+i	label
+1	#1
+2	#2
+
+# DOCS_TEST: example_039
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE FUNCTION split_name(full_name text, OUT first_name text, OUT last_name text) LANGUAGE sql AS $$SELECT split_part(full_name, ' ', 1), split_part(full_name, ' ', 2)$$;
+
+query
+SELECT * FROM split_name('Ada Lovelace');
+----
+first_name	last_name
+Ada	Lovelace
+
+query
+SELECT split_name('Ada Lovelace') AS name;
+----
+name
+(Ada,Lovelace)

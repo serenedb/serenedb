@@ -2,26 +2,36 @@
 paths:
   - "third_party/**"
   - ".gitmodules"
+  - "cmake/OptimizeForArchitecture.cmake"
+  - "cmake/UpdateModule.cmake"
 ---
 
 # Third-party dependencies
 
-Dependencies are git submodules under `third_party/`, usually forks under `github.com/serenedb`, so build fixes can go into the fork. `third_party/CMakeLists.txt` builds them from source (`sdb_update_module` + `add_subdirectory`), so every file gets the same compiler, flags and standard library as our own code. Configure a dependency there with `set(<OPTION> <value> CACHE <type> "" FORCE)` before its `add_subdirectory`.
+Dependencies live under `third_party/`, mostly as git submodules on forks under `github.com/serenedb`, so build fixes can go into the fork. Discuss a new one with the maintainers first; [`third_party/README.md`](../../third_party/README.md) has the rules for adding and updating one, and every new one goes into `third_party/LICENSES.md`. `third_party/CMakeLists.txt` builds them from source (`sdb_update_module` + `add_subdirectory`), so every file gets the same compiler, flags and standard library as our own code. Configure a dependency there with `set(<OPTION> <value> CACHE <type> "" FORCE)` before its `add_subdirectory`.
 
-- **One ISA baseline.** `cmake/OptimizeForArchitecture.cmake` puts the baseline into `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`: Haswell features on amd64, `-march=armv8-a+crc+crypto` on arm64. A dependency must not add its own `-march`, `-mcpu`, `-mtune` or `-mno-*` to the whole library: a later `-march` replaces ours, and a lower one drops below it. Turn such options off (`ZXC_NATIVE_ARCH OFF`, zlib-ng's `WITH_NATIVE_INSTRUCTIONS OFF`, `DUCKDB_OPTIMIZATION_PROFILE NONE`) or fix the fork.
+- **One ISA baseline.** `cmake/OptimizeForArchitecture.cmake` computes the baseline and `CMakeLists.txt` adds it to `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS`: the Haswell features (`-mavx2`, `-mbmi2`, `-mf16c`, ...) on amd64, `-march=armv8-a+crc+crypto` on arm64. A dependency must not add its own `-march`, `-mcpu`, `-mtune` or `-mno-*` to the whole library: it overrides ours, and a lower level drops below it. Turn such options off (`ZXC_NATIVE_ARCH OFF`, zlib-ng's `WITH_NATIVE_INSTRUCTIONS OFF`, `DUCKDB_OPTIMIZATION_PROFILE NONE`) or fix the fork.
 - **Runtime dispatch above it.** If a library can pick faster code for the CPU it runs on (AVX-512, SVE), enable that instead of building the whole library for one fixed level: OpenBLAS `DYNAMIC_ARCH` with a `DYNAMIC_LIST`, faiss `FAISS_OPT_LEVEL=dd`, zlib-ng `WITH_RUNTIME_CPU_DETECTION`. Flags above the baseline belong only on the kernels that the library reaches after a CPU check. For a header-only library that picks its backend at compile time, call the backends behind our own check, as `iresearch/analysis/text/sz/stringzilla.hpp` does for StringZilla.
 - **One C++ standard.** C++ builds with `CMAKE_CXX_STANDARD` (`-std=c++26`); the LLVM runtimes are the only exception. Pass it through the library's own variable when it has one (`SIMDUTF_CXX_STANDARD ${CMAKE_CXX_STANDARD}`). Otherwise remove the library's own `CMAKE_CXX_STANDARD` in the fork, as was done for ada. A dependency must not set `CMAKE_BUILD_TYPE` either.
-- **Check `compile_commands.json`** after adding or updating a dependency. Every file should carry the baseline and `-std=c++26`; only the dispatched kernels may go above the baseline:
+- **Check `compile_commands.json`** after adding or updating a dependency. Every C++ file should carry the baseline and `-std=c++26`; only the dispatched kernels may go above the baseline:
 
   ```bash
   jq -r '.[] | select(.file | contains("third_party/<name>/")) | .command' build/compile_commands.json \
-    | grep -oE -- '-std=[^ ]+|-m(arch|cpu|tune)=[^ ]+|-mno-[^ ]+' | grep -v frame-pointer | sort | uniq -c
+    | grep -oE -- '-std=[^ ]+|-m[^ ]+' | grep -v frame-pointer | sort | uniq -c
   ```
 
-## Adding a dependency
+## The DuckDB family
 
-- Discuss with maintainers before adding new dependencies
-- To add a new dependency: fork to `serenedb/`, add submodule, update `.gitmodules`
+The duckdb submodules, `database-connector` and `duckdb_clickhouse` are formatted and regenerated only through `scripts/duckdb_family.sh` (`--help` lists its modes), which runs DuckDB's own `format.py`, generators and Makefile targets with their pinned tools: never run a generator, `format.py` or clang-format there by hand. Our C++ rules apply there too, in DuckDB's own style ([cpp.md](cpp.md)). Other submodules have no formatter: match the surrounding code by hand and never run a formatter over their files.
+
+## When you change ...
+
+Each of these has a follow-up step that nothing runs for you.
+
+- **DuckDB-family code:** `scripts/duckdb_family.sh format` before every commit (pre-commit `format-duckdb` runs it on staged files), and `format --check --range <a>..<b> <dir>` before pushing a series: every commit, merges included, is formatted on its own.
+- **The DuckDB fork's grammar** (`third_party/duckdb/src/parser/peg/grammar/`) or a source of its generated code (settings, serialization, enum_util, functions, metrics, storage info, the C API, the json enums): `scripts/duckdb_family.sh regen` runs DuckDB's generators in DuckDB's order and builds the `regen:` commit, a DuckDB update's or a pull request's own; `regen --check` proves it is current. Generated files are never edited by hand.
+- **A fork under `third_party/`:** the change is a PR in that fork against its current `vYYYY.MM.DD` branch, with the hand-written change in its own commits; in duckdb the pull request ends with its own `regen:` commit. After the fork PR merges, serenedb moves the gitlink in a commit of its own: pre-commit `check-submodule-pointers` rejects a gitlink that no version branch contains or that is older than main's.
+- **`third_party/libstemmer_c`:** it is generated by `scripts/update_libstemmer.sh`.
 
 ## Working with Submodules
 
@@ -36,8 +46,10 @@ git checkout <your-branch>
 
 This configures the submodule to fetch all branches (persists for your local clone) and lets you work with it like a normal repo -- `git push`, `git pull`, `git branch`, etc. will all work as expected.
 
-To apply this to every submodule at once, run from the repo root:
+A cmake reconfigure checks the gitlink out over a clean submodule (`AUTO_UPDATE_MODULES`, on in every preset): configure with `-DAUTO_UPDATE_MODULES=OFF` while a submodule is on a work branch.
+
+To apply this to every submodule at once, run from the repo root (it fetches the full history of each, `third_party/llvm-project` included):
 
 ```bash
-git submodule foreach --recursive 'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && git fetch origin --unshallow'
+git submodule foreach 'git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" && (git fetch origin --unshallow || git fetch origin)'
 ```

@@ -1,6 +1,6 @@
 <!--
 PR title will become the squash commit message.
-Use conventional commits: feat:, fix:, refactor:, test:, docs:, chore:
+Start it with a conventional commit prefix (.claude/rules/pull-requests.md lists them).
 
 This description becomes the commit body -- explain *why*, not *what*.
 -->

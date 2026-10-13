@@ -1,13 +1,20 @@
 ---
 paths:
   - "iresearch/formats/**"
+  - "iresearch/index/directory_reader*"
+  - "iresearch/index/index_writer*"
+  - "iresearch/utils/serialization.hpp"
   - "iresearch/utils/serializer.hpp"
   - "server/catalog/boot.*"
+  - "server/catalog/cluster.*"
   - "server/catalog/database_directory.*"
   - "server/catalog/persistence/**"
   - "server/connector/duckdb_storage_extension.*"
   - "server/connector/file_manifest.*"
+  - "server/connector/index_expression.*"
+  - "server/search/inverted_index_storage.*"
   - "server/search/search_db_wal.*"
+  - "server/search/search_table.*"
   - "third_party/duckdb/src/common/serializer/**"
   - "third_party/duckdb/src/include/duckdb/common/serializer/**"
   - "third_party/duckdb/src/include/duckdb/storage/**"
@@ -16,7 +23,7 @@ paths:
 
 # Storage compatibility
 
-These rules cover everything SereneDB writes: database files and their write-ahead logs, the search-table WAL and search index directories.
+These rules cover everything SereneDB writes: database files and their write-ahead logs, the catalog log (`engine_v1/catalog.wal`), the search-table WAL and search index directories.
 
 Files are not reproducible byte for byte, and making them so is not a goal. The same data and statements can write different bytes: hash tables iterate in a different order in every process, and parallel builds, checkpoints, refreshes and merges run in a different order every time. Compatibility is about what a reader gets back, so compatibility tests compare contents, never the bytes of a file.
 
@@ -27,7 +34,7 @@ Only two places record a storage version, a `serenedb_vN` value of DuckDB's `Sto
 - The headers of each database file (`engine_v1/<oid>/data.db`). The file's write-ahead log and the database's search-table WAL follow it.
 - `segments_N` of each search index directory. The directory's other files are only reached through it.
 
-SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`duckdb::StorageVersionError`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
+SereneDB always writes `SERENEDB_LATEST`, and only into its own databases (`CREATE DATABASE`): an `ATTACH` of a DuckDB database refuses a SereneDB storage version, and nothing attaches a SereneDB database by path. A reader opens the versions from `SERENEDB_VERSION_LOWER` to `SERENEDB_VERSION_UPPER` and refuses the rest: a higher one as written by a newer release, a lower one as older than it reads (`IsReadableStorageVersion` for a database file, `duckdb::StorageVersionError` for `segments_N`; the constants are in `third_party/duckdb/src/include/duckdb/storage/storage_info.hpp`).
 
 Most changes need no new version:
 
@@ -36,7 +43,7 @@ Most changes need no new version:
 - **New value** of an enum or a variant, or a new codec: append it. An older release refuses data that uses a value it does not know. A new compression method is added this way: older releases refuse the `.col` block or the column segment that uses it.
 - **Never** reuse a field id, reorder struct members, or change a default, a type or what a field means.
 
-Add a `serenedb_vN` only for a change that older releases would misread instead of refusing, or to stop reading old data. Add it to `third_party/duckdb/src/storage/version_map.json` and run `scripts/generate_storage_info.py` there; `SERENEDB_LATEST` and `SERENEDB_VERSION_UPPER` follow it, and older releases refuse everything the new one writes. To stop reading the data of earlier releases, also point `SERENEDB_VERSION_LOWER` at the new value; data below it has to be upgraded through an earlier release first. Keeping older database files readable (`SERENEDB_VERSION_LOWER` below `SERENEDB_LATEST`) takes one more change, which a `static_assert` in `RequestSereneDBStorageVersion` asks for: attach raises such a file only in memory, so it has to be checkpointed before anything writes to its logs. Make a version change in its own PR and list it in the release notes. A value is never reused.
+Add a `serenedb_vN` only for a change that older releases would misread instead of refusing, or to stop reading old data. Add it to `third_party/duckdb/src/storage/version_map.json` and run `scripts/duckdb_family.sh regen`; `SERENEDB_LATEST` and `SERENEDB_VERSION_UPPER` follow it, and older releases refuse everything the new one writes. To stop reading the data of earlier releases, also point `SERENEDB_VERSION_LOWER` at the new value; data below it has to be upgraded through an earlier release first. Keeping older database files readable (`SERENEDB_VERSION_LOWER` below `SERENEDB_LATEST`) takes one more change, which a `static_assert` in `RequestSereneDBStorageVersion` asks for: attach raises such a file only in memory, so it has to be checkpointed before anything writes to its logs. Make a version change in its own PR and list it in the release notes. A value is never reused.
 
 ## Search index files
 
@@ -64,7 +71,7 @@ A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`
 - **Catalog.** Objects in a DuckDB file get no owner or privileges (`StoresPermissions` in `server/auth/enforce.cpp`).
 - **In-memory databases** have a SereneDB storage version, so they take every SereneDB feature.
 
-`tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image; see [tests/duckdb/README.md](../../tests/duckdb/README.md).
+`tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image. A change to what a DuckDB file holds also follows "Changing the DuckDB on-disk format" in [tests/duckdb/README.md](../../tests/duckdb/README.md).
 
 ## Data directory
 
@@ -87,4 +94,4 @@ Blobs stored in catalog entries (tokenizer configs, the inverted index payload),
 
 ## Search-table WAL
 
-The WAL of a database's search tables is a series of segments in the database's directory, `search.wal.<first tick>` with the tick as 16 hex digits. Each frame is `[u64 size][u64 checksum][record]`. The record is a `BinarySerializer` object holding `tick` and then its sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame and the leading `tick` field never change.
+The WAL of a database's search tables is a series of segments in the database's directory, `search.wal.<first tick>` with the tick as 16 hex digits. Each frame is `[u64 size][u32 crc32c][u64 tick][record]`, the CRC32C covering the tick and the record. The record is a `BinarySerializer` object holding the sections and their ops, each with their own field ids. It records no storage version: the WAL belongs to one database and follows that database's file. The frame header never changes.

@@ -2,8 +2,9 @@
 
 ## Rules
 
-- Don't write comments unless explicitly asked to. When a comment is outdated,
-or your change makes it outdated, remove it unless asked to keep it.
+- Don't write comments unless explicitly asked to; for you this overrides
+"Comments" in `.claude/rules/cpp.md`. When a comment is outdated, or your change
+makes it outdated, remove it unless asked to keep it.
 
 - Don't use python/sed for normal code editing or reading, only for real
 scripting changes.
@@ -21,8 +22,9 @@ memory are claims. Read the implementation and its callers before relying on
 them.
 
 - Before filing an issue or writing a fix, check that it isn't already there:
-search open and recently closed issues and PRs (`gh search issues`,
-`gh pr list --search`). The same problem already filed: add your findings to
+search open and recently closed issues and PRs
+(`gh issue list --state all --search <words>`,
+`gh pr list --state all --search <words>`). The same problem already filed: add your findings to
 that issue instead of opening another. A PR already fixes it: link the PR
 instead of fixing it again. Only related: go ahead, mention the related issue in
 yours and leave a cross-reference on it.
@@ -44,8 +46,9 @@ builds only when the user asks; CI runs the suites.
 the overrides of a virtual, `hover` for types. grep stays the tool for strings,
 SQL, tests, error messages and non-C++ files. clangd starts at the first LSP
 call of a session and loads its index for about 5 seconds (minutes in a fresh
-checkout): repeat an empty or short first answer before trusting it. No LSP
-tool means the plugin is missing
+checkout): repeat an empty or short first answer before trusting it. The LSP
+tool is deferred: load it with ToolSearch (`select:LSP`). If ToolSearch finds
+none, the plugin is missing
 (`claude plugin install clangd-lsp@claude-plugins-official`); an LSP error that
 the server can't start means `clangd` itself is missing. Install what is
 missing, or ask the user to. clangd reads `build/compile_commands.json`.
@@ -77,33 +80,19 @@ created.
 
 ## Formatting
 
-serenedb's own code and the DuckDB family are never formatted by hand: run the
-tools below and commit what they produce. Other submodules have no formatter
-set up; there, match the surrounding code by hand, and never run a formatter
-over their files.
+Code is never formatted by hand: serenedb's own code goes through pre-commit
+(`.clang-format`), the submodules as `.claude/rules/third-party.md` says.
 
-- serenedb's own code: `.clang-format` through pre-commit (see `.claude/rules/cpp.md`).
-  Before saying done, run `pre-commit run --files <changed files>`: it also
-  rewrites typographic Unicode (arrows, the multiplication sign, em/en dashes,
-  ellipsis, curly quotes) to ASCII, rejects `/tmp` in sqllogic tests and checks
-  the license header. As a git hook it stashes unstaged changes, so in a
-  checkout another session also edits, use `--files`.
-- The DuckDB family (the duckdb submodules, `database-connector`,
-  `duckdb_clickhouse`): `scripts/duckdb_family.sh`, which runs DuckDB's own
-  format.py, generators and Makefile targets with their pinned tools; `--help`
-  describes every mode. Never run a generator, format.py or clang-format there
-  by hand.
-  - `format` before every commit, and `format --check --range <a>..<b> <dir>`
-    before pushing a series: every commit, merges included, formatted on its
-    own.
-  - `regen` builds the duckdb fork's `regen:` commit, a DuckDB update's one or
-    a pull request's own, with DuckDB's generators in DuckDB's order;
-    `regen --check` proves it is current.
+Before saying done, run `pre-commit run --files <changed files>`: it also
+rewrites typographic Unicode (arrows, the multiplication sign, em/en dashes,
+ellipsis, curly quotes) to ASCII, rejects `/tmp` in sqllogic tests and checks
+the license header. It skips `docs/` and `resources/`. As a git hook it stashes
+unstaged changes, so in a checkout another session also edits, use `--files`.
 
 ## Before writing tests
 
-- Sqllogic: read a sibling `.test` first and match its style.
-- gtest / microbench: mirror an existing one in the same `tests/<area>/` subtree.
+Read a sibling test in the same `tests/<area>/` directory first and mirror its
+style; opening it also loads the test rules from `.claude/rules/`.
 
 ## Local smoke server
 
@@ -114,7 +103,7 @@ agent doesn't inherit a stale serened.
 ```bash
 # Backgrounded server logs land in the file you redirect to. DuckDB's
 # LogManager writes to in-memory storage by default; query
-# `SELECT * FROM duckdb_logs()` or the `sdb_log` catalog view from psql.
+# `SELECT * FROM duckdb_logs` (or `sdb_logs`) from psql.
 ./build/bin/serened ./build_data_<purpose> --listen='postgres://0.0.0.0:<port>' \
   >/tmp/$USER-serened-<port>.log 2>&1 &
 

@@ -25,16 +25,16 @@ git submodule update --init --depth 1 --jobs=$(nproc)
 
 ### Build prerequisites
 
-- Compiler: clang-21 / clang++-21
+- Compiler: clang-23 / clang++-23
 - Build system: Ninja
-- CMake >= 3.26
+- CMake >= 3.28
 
 We support a single toolchain and only upgrade forward.
 
 ### Build
 
 ```bash
-cmake --preset lldb -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
+cmake --preset lldb -DCMAKE_C_COMPILER=clang-23 -DCMAKE_CXX_COMPILER=clang++-23
 cd build/
 ninja
 ```
@@ -90,16 +90,15 @@ Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 ## Guides
 
-Everything else has a page of its own under `.claude/rules/`. Claude Code loads a page when it opens a file the page covers, and "When you change ..." and "Branching, commits, PRs" at the start of every session.
+Everything else has a page of its own under `.claude/rules/`. Claude Code loads a page when it opens a file the page covers, and "Branching, commits, PRs" at the start of every session. The pages for C++, tests and third-party code end with "When you change ...": the follow-up step each kind of change needs.
 
-- [Tests](.claude/rules/testing.md): where a test goes, when a change needs one, how to run every suite, and what CI runs.
+- [Tests](.claude/rules/testing.md): where a test goes, when a change needs one, and how to run every suite.
 - [Writing sqllogic tests](.claude/rules/sqllogic.md), races included.
-- [CI workflows and images](.claude/rules/ci.md): running a workflow locally, and adding a dependency to the CI images.
-- [C++ Code Style](.claude/rules/cpp.md), performance included.
-- [Documentation](.claude/rules/docs.md): what a change documents in `docs/`, and SQL examples that run as tests.
+- [CI](.claude/rules/ci.md): what CI runs and how to read a red run, running a workflow locally, and adding a dependency to the CI images.
+- [C++ Code Style](.claude/rules/cpp.md), for our code and the DuckDB family, performance included.
+- [Documentation](.claude/rules/docs.md): what a change documents in `docs/`, what stays out, and SQL examples that run as tests.
 - [Storage compatibility](.claude/rules/storage.md): changing anything SereneDB writes to disk.
-- [Third-party dependencies](.claude/rules/third-party.md): how they are built, adding one, and working inside a submodule.
-- [When you change ...](.claude/rules/when-you-change.md): the follow-up step each kind of change needs.
+- [Third-party dependencies](.claude/rules/third-party.md): how they are built, the DuckDB family's formatting and generators, forks, and working inside a submodule.
 - [Branching, commits, PRs](.claude/rules/pull-requests.md)
 
 ---

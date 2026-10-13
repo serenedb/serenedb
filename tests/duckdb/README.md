@@ -310,7 +310,7 @@ The suite then runs in three `unittest` calls: the extension's tests without the
   it. Syncing with upstream follows the update recipe above, not cherry-picks.
 - **No comments** in fork code, and no provenance markers ("SereneDB fork:").
 - Regeneration, commits, the fork PR and the gitlink bump:
-  ["When you change ..."](../../.claude/rules/when-you-change.md).
+  ["When you change ..."](../../.claude/rules/third-party.md#when-you-change-).
 
 ## Traps
 

@@ -1371,15 +1371,15 @@ statement ok
 SELECT isfinite(DATE '2020-01-01');
 
 # op_datetime: justify_days
-statement error
+statement ok
 SELECT justify_days(INTERVAL '35 days');
 
 # op_datetime: justify_hours
-statement error
+statement ok
 SELECT justify_hours(INTERVAL '27 hours');
 
 # op_datetime: justify_interval
-statement error
+statement ok
 SELECT justify_interval(INTERVAL '1 mon -1 hour');
 
 # op_datetime: localtime
@@ -1395,7 +1395,7 @@ statement ok
 SELECT make_date(2020,1,1);
 
 # op_datetime: make_interval
-statement error
+statement ok
 SELECT make_interval(1,2,3,4,5,6,7);
 
 # op_datetime: make_time

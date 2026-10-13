@@ -32,7 +32,10 @@ namespace sdb::network::http {
 namespace {
 
 // https://github.com/lz4/lz4/blob/dev/lib/lz4frame.h
-inline constexpr size_t kSlice = kOutBlock;
+inline constexpr size_t kMaxWrite = 64 * 1024;
+inline constexpr size_t kBlockHeader = 4;
+inline constexpr size_t kEndMark = 4;
+inline constexpr size_t kSlice = kMaxWrite - kBlockHeader - kEndMark;
 
 constexpr LZ4F_CustomMem kMemory{CodecPool::Allocate, nullptr, CodecPool::Free,
                                  nullptr};
@@ -67,6 +70,7 @@ Lz4Encoder::Lz4Encoder(int level)
     _out_size{std::max(LZ4F_compressBound(kSlice, &_prefs),
                        LZ4F_compressBound(0, &_prefs))} {
   SDB_ASSERT(kLz4Levels.Contains(level));
+  SDB_ASSERT(_out_size <= kMaxWrite);
   if (_cctx == nullptr) {
     ThrowCodecError("lz4", "cannot initialize the encoder");
   }
@@ -83,25 +87,26 @@ void Lz4Encoder::Encode(std::string_view in, bool finish,
   }
   while (!in.empty()) {
     if (_pending_size == 0 && in.size() >= kSlice) {
-      Compress(in.substr(0, kSlice), out);
+      Compress(in.substr(0, kSlice), in.size() >= 2 * kSlice, out);
       in.remove_prefix(kSlice);
       continue;
     }
     if (!_pending) {
-      _pending.emplace(kSlice);
+      _pending.emplace(2 * kSlice);
     }
     const auto take = std::min(kSlice - _pending_size, in.size());
-    std::memcpy(_pending->Data() + _pending_size, in.data(), take);
+    std::memcpy(PendingData() + _pending_size, in.data(), take);
     _pending_size += take;
     in.remove_prefix(take);
     if (_pending_size == kSlice) {
-      Compress(Pending(), out);
+      Compress(Pending(), true, out);
+      _pending_half ^= 1;
       _pending_size = 0;
     }
   }
   if (finish) {
     if (_pending_size != 0) {
-      Compress(Pending(), out);
+      Compress(Pending(), false, out);
       _pending_size = 0;
     }
     out.Write(_out_size, [&](uint8_t* dst) {
@@ -123,14 +128,20 @@ void Lz4Encoder::EncodeAll(std::string_view in, message::Writer& out) {
   });
 }
 
-std::string_view Lz4Encoder::Pending() const noexcept {
-  return {reinterpret_cast<const char*>(_pending->Data()), _pending_size};
+uint8_t* Lz4Encoder::PendingData() const noexcept {
+  return _pending->Data() + _pending_half * kSlice;
 }
 
-void Lz4Encoder::Compress(std::string_view slice, message::Writer& out) {
+std::string_view Lz4Encoder::Pending() const noexcept {
+  return {reinterpret_cast<const char*>(PendingData()), _pending_size};
+}
+
+void Lz4Encoder::Compress(std::string_view slice, bool stable,
+                          message::Writer& out) {
+  const LZ4F_compressOptions_t options{.stableSrc = stable ? 1U : 0U};
   out.Write(_out_size, [&](uint8_t* dst) {
     return Check(LZ4F_compressUpdate(_cctx.get(), dst, _out_size, slice.data(),
-                                     slice.size(), nullptr));
+                                     slice.size(), &options));
   });
 }
 

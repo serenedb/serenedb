@@ -1022,6 +1022,30 @@ TEST(NetworkHttpCompression, SmallWritesCompressLikeOneWrite) {
   }
 }
 
+TEST(NetworkHttpCompression, EncoderDoesNotReadWritesAfterTheyReturn) {
+  const auto body = Payload(1 << 20);
+  for (const auto token : kCodings) {
+    const auto coding = FindContentCoding(token);
+    ASSERT_NE(coding, ContentCoding::Unknown) << token;
+    ContentEncoder kept_encoder{coding, kNoLevel};
+    ContentEncoder reused_encoder{coding, kNoLevel};
+    EncodedBody kept;
+    EncodedBody reused;
+    std::string scratch;
+    std::string_view rest = body;
+    while (!rest.empty()) {
+      const auto part = rest.substr(0, 100 * 1024);
+      rest.remove_prefix(part.size());
+      kept_encoder.Encode(part, rest.empty(), kept.Out());
+      scratch.assign(part);
+      reused_encoder.Encode(scratch, rest.empty(), reused.Out());
+      std::fill(scratch.begin(), scratch.end(), 'x');
+    }
+    EXPECT_TRUE(reused.Bytes() == kept.Bytes()) << token;
+    EXPECT_EQ(Decode(token, reused.Bytes()), body) << token;
+  }
+}
+
 TEST(NetworkHttpCompression, DefaultZstdContextsFitAPooledBlock) {
   const auto body = Payload(8 << 20);
   std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> cctx{ZSTD_createCCtx(),

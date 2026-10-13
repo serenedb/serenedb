@@ -112,10 +112,43 @@ Request bodies may be compressed with any coding the HTTP listener supports —
 `Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
 before the payload is decoded.
 
-A request body is at most 20 MiB, the OpenTelemetry Collector's default
-`max_request_body_size`, and a larger one answers `413`. The limit applies to
-the body after decompression too. A listener that also serves other APIs
-(`?api=otel&api=es`) applies the largest of their limits to every request.
+A request body is at most 100 MiB, and a larger one answers `413`. The limit
+applies to the body after decompression too. A listener that also serves other
+APIs (`?api=otel&api=es`) applies the largest of their limits to every request.
+
+### Batching
+
+Send few large requests rather than many small ones. Each export is one
+transaction with a fixed cost, and a large one is parsed and inserted on
+several threads, so throughput grows with the request size up to the 100 MiB
+limit. SDKs export small batches, so put an OpenTelemetry Collector in front
+of SereneDB as a batching proxy: the SDKs send to the collector, and its
+`batch` processor merges their exports into large requests to SereneDB:
+
+```yaml
+processors:
+  batch:
+    send_batch_size: 50000
+    send_batch_max_size: 100000
+    timeout: 5s
+
+exporters:
+  otlphttp:
+    endpoint: http://serenedb:4318
+    auth:
+      authenticator: basicauth
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+The batch sizes count items (log records, spans or metric data points), not
+bytes: keep `send_batch_max_size` low enough that a request stays under
+100 MiB after decompression.
 
 Errors of the export itself use `google.rpc.Status`, encoded the same way as
 the request: `400` for an undecodable payload.

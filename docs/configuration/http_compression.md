@@ -75,9 +75,8 @@ is authenticated, before it reaches the endpoint, so every API accepts
 compressed bodies the same way. The field may list up to two codings in the
 order they were applied (`Content-Encoding: gzip, zstd`); `identity` is
 ignored, and the tokens are case-insensitive. A decompressed body is held to
-the same size limit as an uncompressed one: 100 MiB for `es`, 20 MiB for
-`otel` and 4 MiB for `mcp`, and the largest of them on a listener that serves
-several. A `zstd` body must use a
+the same size limit as an uncompressed one: 100 MiB for `es` and `otel`, and
+4 MiB for `mcp`, and the largest of them on a listener that serves several. A `zstd` body must use a
 window of at most 8 MiB, the limit RFC 8878 sets for HTTP: levels 1 to 19
 fit, while `--ultra` levels and frames made with `--long` or a larger
 `--window` are rejected.

@@ -200,13 +200,15 @@ class Lz4Encoder : irs::util::Noncopyable {
     void operator()(LZ4F_cctx* cctx) const noexcept;
   };
 
+  uint8_t* PendingData() const noexcept;
   std::string_view Pending() const noexcept;
-  void Compress(std::string_view slice, message::Writer& out);
+  void Compress(std::string_view slice, bool stable, message::Writer& out);
 
   std::unique_ptr<LZ4F_cctx, Deleter> _cctx;
   LZ4F_preferences_t _prefs;
   size_t _out_size;
   std::optional<CodecBytes> _pending;
+  size_t _pending_half = 0;
   size_t _pending_size = 0;
   bool _started = false;
 };

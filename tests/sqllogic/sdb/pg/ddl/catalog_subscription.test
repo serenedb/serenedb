@@ -393,6 +393,36 @@ ALTER SUBSCRIPTION cs_renamed OWNER TO CURRENT_USER;
 
 
 statement ok
+BEGIN;
+
+
+statement ok
+CREATE ROLE cs_txn_owner;
+
+
+statement ok
+ALTER SUBSCRIPTION cs_renamed OWNER TO cs_txn_owner;
+
+
+query
+SELECT r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'cs_renamed';
+----
+rolname
+cs_txn_owner
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT r.rolname = current_user AS current_owner FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'cs_renamed';
+----
+current_owner
+t
+
+
+statement ok
 DROP ROLE cs_owner;
 
 

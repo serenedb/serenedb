@@ -955,14 +955,14 @@ void AlterSubscription(ConnectionContext& conn_ctx, std::string_view name,
     }
     definition->SetName(duckdb::Identifier{argument});
   } else if (action == "owner") {
-    const auto& roles = *auth::RolesOf(&context);
+    const auto roles = auth::RolesOf(&context);
     std::optional<duckdb::idx_t> owner;
     if (argument == "CURRENT_USER" || argument == "CURRENT_ROLE") {
       owner = conn_ctx.GetRoleId();
     } else if (argument == "SESSION_USER") {
       owner = conn_ctx.GetSessionRoleId();
     } else {
-      for (const auto& [id, node] : roles.nodes) {
+      for (const auto& [id, node] : roles->nodes) {
         if (node.name == argument) {
           owner = id;
           break;

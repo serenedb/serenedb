@@ -299,6 +299,10 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], args.data[2], result, args.size(),
     [](duckdb::interval_t stride, duckdb::timestamp_t source,
        duckdb::timestamp_t origin) -> duckdb::timestamp_t {
+      if (!origin.IsFinite()) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                        ERR_MSG("origin out of range"));
+      }
       if (stride.micros <= 0 && stride.days <= 0 && stride.months <= 0) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("stride must be greater than zero"));
@@ -330,6 +334,86 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 
       return duckdb::timestamp_t(orig_us + bin);
     });
+}
+
+constexpr int32_t kDaysPerMonth = 30;
+constexpr int64_t kMicrosPerDay = 86400'000'000LL;
+
+int32_t AddIntervalField(int32_t field, int64_t delta) {
+  const auto sum = static_cast<int64_t>(field) + delta;
+  if (sum < std::numeric_limits<int32_t>::min() ||
+      sum > std::numeric_limits<int32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
+                    ERR_MSG("interval out of range"));
+  }
+  return static_cast<int32_t>(sum);
+}
+
+void MonthsFromDays(duckdb::interval_t& span) {
+  const auto months = span.days / kDaysPerMonth;
+  span.days -= months * kDaysPerMonth;
+  span.months = AddIntervalField(span.months, months);
+}
+
+void DaysFromMicros(duckdb::interval_t& span) {
+  const auto days = span.micros / kMicrosPerDay;
+  span.micros -= days * kMicrosPerDay;
+  span.days = AddIntervalField(span.days, days);
+}
+
+void AlignDaysToMicros(duckdb::interval_t& span) {
+  if (span.days > 0 && span.micros < 0) {
+    span.micros += kMicrosPerDay;
+    --span.days;
+  } else if (span.days < 0 && span.micros > 0) {
+    span.micros -= kMicrosPerDay;
+    ++span.days;
+  }
+}
+
+duckdb::interval_t JustifyDays(duckdb::interval_t span) {
+  MonthsFromDays(span);
+  if (span.months > 0 && span.days < 0) {
+    span.days += kDaysPerMonth;
+    --span.months;
+  } else if (span.months < 0 && span.days > 0) {
+    span.days -= kDaysPerMonth;
+    ++span.months;
+  }
+  return span;
+}
+
+duckdb::interval_t JustifyHours(duckdb::interval_t span) {
+  DaysFromMicros(span);
+  AlignDaysToMicros(span);
+  return span;
+}
+
+duckdb::interval_t JustifyInterval(duckdb::interval_t span) {
+  if ((span.days > 0 && span.micros > 0) ||
+      (span.days < 0 && span.micros < 0)) {
+    MonthsFromDays(span);
+  }
+  DaysFromMicros(span);
+  MonthsFromDays(span);
+  if (span.months > 0 &&
+      (span.days < 0 || (span.days == 0 && span.micros < 0))) {
+    span.days += kDaysPerMonth;
+    --span.months;
+  } else if (span.months < 0 &&
+             (span.days > 0 || (span.days == 0 && span.micros > 0))) {
+    span.days -= kDaysPerMonth;
+    ++span.months;
+  }
+  AlignDaysToMicros(span);
+  return span;
+}
+
+template<duckdb::interval_t (*Justify)(duckdb::interval_t)>
+void JustifyFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                     duckdb::Vector& result) {
+  duckdb::UnaryExecutor::Execute<duckdb::interval_t, duckdb::interval_t>(
+    args.data[0], result, args.size(), Justify);
 }
 
 }  // namespace
@@ -432,6 +516,22 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     func.SetBucketRewriteCallback(duckdb::DateBinBucketRewrite);
     loader.RegisterFunction(func);
   }
+
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"justify_days",
+                           {duckdb::LogicalType::INTERVAL},
+                           duckdb::LogicalType::INTERVAL,
+                           JustifyFunction<JustifyDays>});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"justify_hours",
+                           {duckdb::LogicalType::INTERVAL},
+                           duckdb::LogicalType::INTERVAL,
+                           JustifyFunction<JustifyHours>});
+  loader.RegisterFunction(
+    duckdb::ScalarFunction{"justify_interval",
+                           {duckdb::LogicalType::INTERVAL},
+                           duckdb::LogicalType::INTERVAL,
+                           JustifyFunction<JustifyInterval>});
 
   {
     duckdb::ScalarFunction func{

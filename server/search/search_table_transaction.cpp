@@ -290,7 +290,8 @@ void SearchTableTransaction::AddSearchTruncate(
   changes.applied_ops = changes.ops.size();
   if (!clears) {
     auto& trx = *w.transactions.emplace_back(
-      std::make_unique<irs::IndexWriter::Transaction>(shard->GetTransaction()));
+      std::make_unique<irs::IndexWriter::Transaction>(
+        shard->GetTransaction(/*exclusive_segment=*/true)));
     trx.Remove(std::make_shared<irs::All>());
   }
 }

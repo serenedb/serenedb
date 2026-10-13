@@ -25,7 +25,7 @@ git submodule update --init --depth 1 --jobs=$(nproc)
 
 ### Build prerequisites
 
-- Compiler: clang-23 / clang++-23
+- Compiler: clang-21 / clang++-21 (CI's build image has clang-23)
 - Build system: Ninja
 - CMake >= 3.28
 
@@ -34,7 +34,7 @@ We support a single toolchain and only upgrade forward.
 ### Build
 
 ```bash
-cmake --preset lldb -DCMAKE_C_COMPILER=clang-23 -DCMAKE_CXX_COMPILER=clang++-23
+cmake --preset lldb -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21
 cd build/
 ninja
 ```
@@ -42,7 +42,7 @@ ninja
 Additional build presets are defined in `CMakePresets.json`:
 - `lldb` -- Debug build (`build/`), works with lldb, gdb, or any debugger
 - `clangd` -- RelWithDebInfo build (`build_clangd/`), works well with the clangd language server in VSCode
-- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked
+- `asan`, `tsan`, `msan` -- RelWithDebInfo builds (`build_asan/`, `build_tsan/`, `build_msan/`) under AddressSanitizer, ThreadSanitizer and MemorySanitizer with origin tracking, on the system allocator, dynamically linked and without io_uring
 - `bench` -- Release build (`build_bench/`), static linking, configured like the release packages; no frame pointers
 - `perf` -- RelWithDebInfo build (`build_perf/`), static linking, `-O3` with frame pointers, for profiling
 

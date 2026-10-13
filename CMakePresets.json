@@ -56,7 +56,8 @@
         "STATIC_EXECUTABLES": "Off",
         "SDB_SANITIZE": "Address",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS"
+        "SDB_ALLOC": "SYS",
+        "SDB_IOURING": "Off"
       }
     },
     {
@@ -70,7 +71,8 @@
         "STATIC_EXECUTABLES": "Off",
         "SDB_SANITIZE": "Thread",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS"
+        "SDB_ALLOC": "SYS",
+        "SDB_IOURING": "Off"
       }
     },
     {
@@ -84,7 +86,8 @@
         "STATIC_EXECUTABLES": "Off",
         "SDB_SANITIZE": "MemoryWithOrigins",
         "SDB_DEV": "On",
-        "SDB_ALLOC": "SYS"
+        "SDB_ALLOC": "SYS",
+        "SDB_IOURING": "Off"
       }
     },
     {

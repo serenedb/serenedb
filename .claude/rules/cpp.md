@@ -115,7 +115,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - `SDB_ASSERT` and `SDB_ENSURE` are debug checks of invariants: they fire in dev builds (`SDB_DEV`: the `lldb`, `clangd` and sanitizer presets). `SDB_ENSURE` also throws an internal error in other builds, but nothing relies on that: a condition that can really fail gets real handling.
 - `SDB_VERIFY` crashes in every build.
 - Prefer an `SDB_ASSERT` to a comment about an invariant; reach for `SDB_ENSURE` or `SDB_VERIFY` only when the guarantee is genuinely hard to follow locally.
-- The assert's expression is the documentation. Skip the message when it would just translate the expression into English (`SDB_ASSERT(i < n)` is enough). Add one only when the failure scenario isn't visible in the expression: a domain rule, an unusual comparison shape (e.g. `"running sum overflow"` for `a + b >= a`), or a design constraint the comparison enforces.
+- Write `SDB_ASSERT(cond)` without a message: the expression is the documentation.
 
 ## Async
 

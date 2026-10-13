@@ -25,11 +25,11 @@ git submodule update --init --depth 1 --jobs=$(nproc)
 
 ### Build prerequisites
 
-- Compiler: clang-21 / clang++-21 (CI's build image has clang-23)
+- Compiler: clang-21 / clang++-21; CI builds with clang-23, so code must compile with both
 - Build system: Ninja
 - CMake >= 3.28
 
-We support a single toolchain and only upgrade forward.
+The toolchain only moves forward.
 
 ### Build
 

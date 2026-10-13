@@ -4,7 +4,8 @@
 
 - Don't write comments unless explicitly asked to; the license block and
 `# DOCS_TEST:` markers are required, not comments in this sense. When a comment
-is outdated, or your change makes it outdated, remove it unless asked to keep it.
+is outdated, or your change makes it outdated, remove it unless asked to keep
+it.
 
 - Don't use python/sed for normal code editing or reading, only for real
 scripting changes.
@@ -25,9 +26,9 @@ them.
 search open and recently closed issues and PRs
 (`gh issue list --state all --search <words>`,
 `gh pr list --state all --search <words>`). The same problem already filed: add
-your findings to that issue instead of opening another. A PR already fixes it: link the PR
-instead of fixing it again (a stale one: ask whether to wait, build on it or
-fix it here). Only related: go ahead, mention the related issue in yours and
+your findings to that issue instead of opening another. A PR already fixes it:
+link the PR instead of fixing it again (a stale one: ask whether to wait, build
+on it or fix it here). Only related: go ahead, mention the related issue in yours and
 leave a cross-reference on it.
 
 - Post, file or comment on GitHub only after the user agrees to the text.
@@ -109,9 +110,10 @@ style; opening it also loads the test rules from `.claude/rules/`.
 
 Start a server this way, not as `CONTRIBUTING.md` "Launch" does (a fixed port
 and data dir assume a machine of your own). Pick a free `<port>`
-(`ss -ltn | grep :<port>` prints nothing) and a fresh data dir (`mktemp -d`). Note the pid the start prints: it is how you check and stop
-your server, since another session can take the port between your check and the
-bind. Stop it when you're done, so nobody inherits a stale serened.
+(`ss -ltn | grep :<port>` prints nothing) and a fresh data dir (`mktemp -d`).
+Note the pid the start prints: it is how you check and stop your server, since
+another session can take the port between your check and the bind. Stop it
+when you're done, so nobody inherits a stale serened.
 
 ```bash
 # The log lands in the file you redirect to. DuckDB's LogManager writes to

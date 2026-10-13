@@ -44,6 +44,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
+#include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
@@ -67,7 +68,9 @@ namespace {
 constexpr irs::field_id kStoreId = 1;
 constexpr irs::field_id kPlainId = 2;
 constexpr irs::field_id kPositionalId = 3;
+constexpr irs::field_id kNormBase = 16;
 constexpr size_t kSegmentDocs = 10000;
+constexpr size_t kTopK = 10;
 
 class Instructions {
  public:
@@ -98,6 +101,11 @@ class Instructions {
  private:
   int _fd = -1;
 };
+
+const irs::BM25& Bm25() {
+  static const irs::BM25 kScorer;
+  return kScorer;
+}
 
 const std::vector<std::string>& Docs() {
   static const auto docs = [] {
@@ -191,17 +199,20 @@ const Index& IndexOf(size_t dictionary) {
   irs::IndexWriterOptions writer_opts;
   writer_opts.db = db;
   writer_opts.reader_options.db = db;
+  writer_opts.reader_options.scorer = &Bm25();
+  writer_opts.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
   auto writer =
     irs::IndexWriter::Make(*index->dir, irs::kOmCreate, std::move(writer_opts));
   auto plain_tokens = spec.make();
   auto positional_tokens = spec.make();
   Field plain{.tokenizer = plain_tokens.get(),
               .id = kPlainId,
-              .features = irs::IndexFeatures::Freq};
-  Field positional{
-    .tokenizer = positional_tokens.get(),
-    .id = kPositionalId,
-    .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
+              .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Norm};
+  Field positional{.tokenizer = positional_tokens.get(),
+                   .id = kPositionalId,
+                   .features = irs::IndexFeatures::Freq |
+                               irs::IndexFeatures::Pos |
+                               irs::IndexFeatures::Norm};
   duckdb::Vector one{duckdb::LogicalType::VARCHAR, 1};
   for (size_t begin = 0; begin < docs.size(); begin += kSegmentDocs) {
     auto batch = writer->GetBatch();
@@ -328,9 +339,8 @@ uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
 
 double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
               uint64_t& hits) {
-  static const irs::BM25 kScorer;
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
-  irs::PreparedCollector collector{filter, kScorer, stats, 1};
+  irs::PreparedCollector collector{filter, Bm25(), stats, 1};
   std::vector<irs::QueryBuilder::ptr> queries;
   for (const auto& segment : reader) {
     queries.emplace_back(
@@ -343,7 +353,7 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
       continue;
     }
     irs::ColumnArgsFetcher fetcher;
-    auto node = query->PlanLead({.scorer = &kScorer, .fetcher = &fetcher});
+    auto node = query->PlanLead({.scorer = &Bm25(), .fetcher = &fetcher});
     if (!node) {
       continue;
     }
@@ -361,6 +371,19 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
   return total;
 }
 
+std::vector<irs::score_t> Top(const irs::DirectoryReader& reader,
+                              const irs::Filter& filter) {
+  std::vector<irs::ScoreDoc> hits(kTopK);
+  irs::ExecuteTopK(reader, filter, Bm25(), kTopK, true, hits);
+  std::vector<irs::score_t> scores;
+  for (const auto& hit : hits) {
+    if (!irs::doc_limits::eof(hit.doc)) {
+      scores.emplace_back(hit.score);
+    }
+  }
+  return scores;
+}
+
 struct Case {
   size_t dictionary;
   std::string text;
@@ -375,6 +398,7 @@ std::vector<std::unique_ptr<Case>>& Cases() {
 void Check(const Case& c) {
   const auto& index = IndexOf(c.dictionary);
   std::optional<std::pair<uint64_t, double>> expected;
+  std::vector<irs::score_t> expected_top;
   for (const auto& mode : kModes) {
     const auto filter = MakeFilter(c.dictionary, c.phrase, mode);
     uint64_t hits = 0;
@@ -385,9 +409,21 @@ void Check(const Case& c) {
                    kDictionaries[c.dictionary].name, c.text.c_str(), mode.name,
                    count, hits);
     }
+    auto top = Top(index.reader, *filter);
     if (!expected) {
       expected.emplace(hits, score);
+      expected_top = std::move(top);
       continue;
+    }
+    const auto same_top = std::ranges::equal(
+      expected_top, top, [](irs::score_t lhs, irs::score_t rhs) {
+        return std::abs(lhs - rhs) <= 1e-4f * (1 + std::abs(lhs));
+      });
+    if (!same_top) {
+      std::fprintf(stderr, "[mismatch] %s '%s' %s: top %zu vs %zu, first %f\n",
+                   kDictionaries[c.dictionary].name, c.text.c_str(), mode.name,
+                   top.size(), expected_top.size(),
+                   top.empty() ? 0.0 : static_cast<double>(top.front()));
     }
     if (expected->first != hits ||
         std::abs(expected->second - score) > 1e-3 * (1 + expected->second)) {
@@ -535,6 +571,14 @@ void RegisterAll() {
             benchmark::DoNotOptimize(Scored(index.reader, *filter, hits));
             return hits;
           });
+        })
+        ->Unit(benchmark::kMillisecond);
+      benchmark::RegisterBenchmark(
+        (prefix + "/" + mode.name + "/top").c_str(),
+        [c = c.get(), &mode](benchmark::State& state) {
+          const auto& index = IndexOf(c->dictionary);
+          const auto filter = MakeFilter(c->dictionary, c->phrase, mode);
+          Measure(state, [&] { return Top(index.reader, *filter).size(); });
         })
         ->Unit(benchmark::kMillisecond);
     }

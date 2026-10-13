@@ -78,6 +78,45 @@ inline std::unique_ptr<AnchorFreqs> MakeAnchorFreqs(
                       });
 }
 
+class PhraseRows {
+ public:
+  PhraseRows(const TokenPhraseQuery& query, bool count)
+    : _ctx{*query.Segment().GetColReader()},
+      _column{&query.Column()},
+      _state{_column->InitScan(_ctx)},
+      _out{_column->Type()},
+      _check{query.Compiled(), query.Tokens(), count} {}
+
+  PhraseRows(PhraseRows&&) = delete;
+  PhraseRows& operator=(PhraseRows&&) = delete;
+
+  size_t Gather(std::span<const doc_id_t> hits) {
+    auto n = hits.size();
+    while (n != 0 && hits[n - 1] - doc_limits::min() >= _column->RowCount()) {
+      --n;
+    }
+    if (n == 0) {
+      return 0;
+    }
+    auto& out = _out.Reset();
+    column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
+                                0);
+    _check.Bind(out, n);
+    return n;
+  }
+
+  bool Check(size_t row, PhraseVerdict& verdict, uint32_t anchors) {
+    return _check.Check(row, verdict, anchors);
+  }
+
+ private:
+  ReadContext _ctx;
+  const ColumnReader* _column;
+  ColumnReader::ScanState _state;
+  ColumnReader::VectorScratch _out;
+  PhraseCheck _check;
+};
+
 template<typename Approx, bool Sloppy>
 class TokenPhraseSlots {
  public:
@@ -87,11 +126,7 @@ class TokenPhraseSlots {
   TokenPhraseSlots(std::piecewise_construct_t, ApproxArgs&& approx,
                    const TokenPhraseQuery& query, bool count)
     : _approx{std::make_from_tuple<Approx>(std::forward<ApproxArgs>(approx))},
-      _ctx{*query.Segment().GetColReader()},
-      _column{&query.Column()},
-      _state{_column->InitScan(_ctx)},
-      _out{_column->Type()},
-      _check{query.Compiled(), query.Tokens(), count},
+      _rows{query, count},
       _anchors{MakeAnchorFreqs(query)} {}
 
   TokenPhraseSlots(TokenPhraseSlots&&) = delete;
@@ -130,11 +165,11 @@ class TokenPhraseSlots {
     _verdict = {};
     if constexpr (requires(Approx& approx) { approx.Next(); }) {
       SDB_ASSERT(_pos < _hits.size() && _hits[_pos] == doc);
-      if (_pos < _rows) {
-        _check.Check(_pos, _verdict, AnchorsAt(doc));
+      if (_pos < _gathered) {
+        _rows.Check(_pos, _verdict, AnchorsAt(doc));
       }
-    } else if (Gather({&doc, 1}) != 0) {
-      _check.Check(0, _verdict, AnchorsAt(doc));
+    } else if (_rows.Gather({&doc, 1}) != 0) {
+      _rows.Check(0, _verdict, AnchorsAt(doc));
     }
     return _verdict.freq != 0;
   }
@@ -164,38 +199,19 @@ class TokenPhraseSlots {
       }
       _hits.emplace_back(doc);
     }
-    _rows = Gather(_hits);
+    _gathered = _rows.Gather(_hits);
     return first;
   }
 
   uint32_t AnchorsAt(doc_id_t doc) { return _anchors ? _anchors->At(doc) : 0; }
 
-  size_t Gather(std::span<const doc_id_t> hits) {
-    auto n = hits.size();
-    while (n != 0 && hits[n - 1] - doc_limits::min() >= _column->RowCount()) {
-      --n;
-    }
-    if (n == 0) {
-      return 0;
-    }
-    auto& out = _out.Reset();
-    column_internal::GatherRows(*_column, _state, DocRows{hits.first(n)}, out,
-                                0);
-    _check.Bind(out, n);
-    return n;
-  }
-
   Approx _approx;
-  ReadContext _ctx;
-  const ColumnReader* _column;
-  ColumnReader::ScanState _state;
-  ColumnReader::VectorScratch _out;
-  PhraseCheck _check;
+  PhraseRows _rows;
   std::unique_ptr<AnchorFreqs> _anchors;
   PhraseVerdict _verdict;
   std::vector<doc_id_t> _hits;
   size_t _pos = 0;
-  size_t _rows = 0;
+  size_t _gathered = 0;
   size_t _batch = 1;
   bool _end = false;
 };

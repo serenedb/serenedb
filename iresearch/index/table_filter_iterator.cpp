@@ -138,10 +138,7 @@ const irs::ColumnReader* ColFilterChain::WindowColumn() const noexcept {
 
 bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
   for (auto& c : _cols) {
-    // A children-backed column filters on a compact decode whose scan state
-    // ends past the window -- it cannot double as the slot's materialization;
-    // the caller scans it as a plain projected column instead.
-    if (c.field == field && !c.nested && c.extract_path.empty()) {
+    if (c.field == field && c.extract_path.empty()) {
       c.output_slots.push_back(slot);
       return true;
     }
@@ -150,13 +147,14 @@ bool ColFilterChain::AttachOutputSlot(irs::field_id field, duckdb::idx_t slot) {
 }
 
 void ColFilterChain::FinishBind() {
-  // Filter-only columns (not projected, which includes every children-backed
-  // column -- see AttachOutputSlot) decode into a cache-owned scratch just to
-  // evaluate the predicate.
+  // Filter-only columns (not projected) decode into a cache-owned scratch just
+  // to evaluate the predicate.
   for (auto& c : _cols) {
     if (c.output_slots.empty()) {
       c.scratch = &_states->Scratch(
         *c.filter, c.extract ? *c.extract_type : c.reader->Type());
+    } else if (c.nested) {
+      c.gathered.Initialize(STANDARD_VECTOR_SIZE);
     }
   }
   // Reordering must not evaluate a throwing expression on rows an earlier
@@ -229,21 +227,30 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
         }
         gather_span = sel.get_index(survivors - 1) + 1;
       }
-      auto& scratch = f.scratch->Reset();
+      const bool projected = !f.output_slots.empty();
+      if (projected) {
+        for (duckdb::idx_t k = 0; k < survivors; ++k) {
+          f.gathered.set_index(k, sel.get_index(k));
+        }
+        f.gathered_count = survivors;
+      }
+      const auto& rows = projected ? f.gathered : sel;
+      auto& values =
+        projected ? output->data[f.output_slots.front()] : f.scratch->Reset();
       if (f.list_like) {
-        duckdb::ListVector::SetListSize(scratch, 0);
+        duckdb::ListVector::SetListSize(values, 0);
       }
       if (f.extract) {
-        f.extract->MaterializeSelected(anchor, sel, survivors, scratch);
+        f.extract->MaterializeSelected(anchor, rows, survivors, values);
       } else if (gather_span <= STANDARD_VECTOR_SIZE) {
-        f.reader->GatherDense(f.scan, anchor, sel, survivors, gather_span,
-                              scratch);
+        f.reader->GatherDense(f.scan, anchor, rows, survivors, gather_span,
+                              values);
       } else {
-        f.reader->GatherScatter(f.scan, anchor, sel, survivors, scratch, 0);
+        f.reader->GatherScatter(f.scan, anchor, rows, survivors, values, 0);
       }
       duckdb::SelectionVector compact;
       duckdb::idx_t approved = survivors;
-      duckdb::ColumnSegment::FilterSelection(compact, scratch, *f.state,
+      duckdb::ColumnSegment::FilterSelection(compact, values, *f.state,
                                              survivors, approved);
       for (duckdb::idx_t k = 0; k < approved; ++k) {
         sel.set_index(k, sel.get_index(compact.get_index(k)));
@@ -471,7 +478,18 @@ void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,
       continue;
     }
     auto& first = output.data[f.output_slots.front()];
-    if (f.deferred) {
+    if (f.nested) {
+      if (survivors != 0 && survivors != f.gathered_count) {
+        duckdb::SelectionVector map{survivors};
+        for (duckdb::idx_t k = 0, j = 0; k < survivors; ++k, ++j) {
+          while (f.gathered.get_index(j) != sel.get_index(k)) {
+            ++j;
+          }
+          map.set_index(k, j);
+        }
+        first.Slice(map, survivors);
+      }
+    } else if (f.deferred) {
       if (survivors != 0) {
         if (span <= STANDARD_VECTOR_SIZE) {
           f.reader->GatherDense(f.scan, anchor, sel, survivors, span, first);

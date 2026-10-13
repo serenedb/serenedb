@@ -799,6 +799,7 @@ inline constexpr irs::field_id kStoreId = 1;
 inline constexpr irs::field_id kPlainId = 2;
 inline constexpr irs::field_id kPositionalId = 3;
 inline constexpr irs::field_id kDecoyId = 4;
+inline constexpr irs::field_id kNormBase = 16;
 
 void ExpectFamilies(const tests::Families& expected,
                     const tests::Families& actual) {
@@ -836,8 +837,11 @@ std::shared_ptr<const irs::PhraseTokens> Tokens(
 struct Layout {
   size_t segment_docs = std::numeric_limits<size_t>::max();
   irs::IndexFeatures plain = irs::IndexFeatures::Freq;
+  irs::IndexFeatures positional =
+    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
   bool decoy = false;
   size_t stored = std::numeric_limits<size_t>::max();
+  const irs::Scorer* bounds = nullptr;
 };
 
 class Index : public tests::FamilyIndex {
@@ -845,17 +849,19 @@ class Index : public tests::FamilyIndex {
   template<typename Words>
   Index(std::span<const std::string> docs, std::type_identity<Words>,
         Layout layout = {}) {
-    auto writer = irs::IndexWriter::Make(_dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto options = irs::tests::DefaultWriterOptions();
+    options.reader_options.scorer = layout.bounds;
+    options.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
+    auto writer =
+      irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
     EXPECT_NE(nullptr, writer);
     Words plain;
     Words positional;
     tests::AnalyzedField plain_field{
       .analyzer = &plain, .id = kPlainId, .features = layout.plain};
-    tests::AnalyzedField positional_field{
-      .analyzer = &positional,
-      .id = kPositionalId,
-      .features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos};
+    tests::AnalyzedField positional_field{.analyzer = &positional,
+                                          .id = kPositionalId,
+                                          .features = layout.positional};
     for (size_t begin = 0; begin < docs.size(); begin += layout.segment_docs) {
       auto ctx = writer->GetBatch();
       const auto end = std::min(docs.size(), begin + layout.segment_docs);
@@ -1732,6 +1738,187 @@ TEST(TokenPhraseIndexTest, table_filters_narrow_count_and_top) {
     top->Run(kFirst, end, collector);
     EXPECT_EQ(2U, collector.TotalMatches());
     EXPECT_EQ(2U, collector.AcceptedCount());
+  }
+}
+
+struct Top {
+  std::vector<irs::score_t> scores;
+  uint64_t reached = 0;
+};
+
+Top TopOf(const Index& index, const irs::Filter& filter,
+          const irs::Scorer& scorer, bool prune,
+          irs::detail::TableFilter* table = nullptr, size_t k = tests::kTop) {
+  MaxMemoryCounter counter;
+  tests::PreparedFilter prepared{filter, index.Reader(), &scorer, counter};
+  std::vector<irs::ScoreDoc> hits(k);
+  std::atomic<irs::score_t> threshold{
+    std::numeric_limits<irs::score_t>::lowest()};
+  irs::LoserScoreCollector collector{threshold, hits};
+  for (size_t i = 0; i != prepared.size(); ++i) {
+    const auto* query = prepared.Query(i);
+    if (!query || irs::QueryBuilder::IsEmpty(*query)) {
+      continue;
+    }
+    collector.SetSegment(static_cast<uint32_t>(i));
+    irs::ColumnArgsFetcher fetcher;
+    auto top = query->PlanTop({.scorer = scorer,
+                               .fetcher = fetcher,
+                               .table = table,
+                               .prune = prune,
+                               .k = static_cast<uint32_t>(k)});
+    top->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
+  }
+  Top out{.reached = collector.TotalMatches()};
+  for (size_t j = 0; j != collector.AcceptedCount(); ++j) {
+    out.scores.push_back(hits[j].score);
+  }
+  absl::c_sort(out.scores, std::greater<>{});
+  return out;
+}
+
+void ExpectSameTop(const Top& expected, const Top& actual) {
+  ASSERT_EQ(expected.scores.size(), actual.scores.size());
+  for (size_t i = 0; i != expected.scores.size(); ++i) {
+    EXPECT_FLOAT_EQ(expected.scores[i], actual.scores[i]) << i;
+  }
+}
+
+Layout Bounded(const irs::Scorer& scorer) {
+  return {.segment_docs = 1500,
+          .plain = irs::IndexFeatures::Freq | irs::IndexFeatures::Norm,
+          .positional = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
+                        irs::IndexFeatures::Norm,
+          .bounds = &scorer};
+}
+
+std::vector<std::string> RandomDocs(std::span<const std::string_view> words,
+                                    size_t count) {
+  std::mt19937 rng{20261013};
+  std::vector<std::string> docs(count);
+  for (auto& doc : docs) {
+    doc = RandomText(rng, words, 1 + rng() % 48);
+  }
+  return docs;
+}
+
+TEST(TokenPhraseIndexTest, pruned_top_prunes_only_anchor_bounded_phrases) {
+  constexpr std::string_view kWords[] = {"ab", "ac", "b", "c", "d"};
+  const auto docs = RandomDocs(kWords, 4000);
+  const irs::BM25 scorer;
+  const Index index{docs, std::type_identity<DenseWords>{}, Bounded(scorer)};
+  const auto phrase = [](std::initializer_list<std::string_view> words) {
+    irs::ByPhraseOptions out;
+    for (const auto word : words) {
+      if (word.ends_with('*')) {
+        out.push_back<irs::ByPrefixOptions>().term =
+          Bytes(word.substr(0, word.size() - 1));
+      } else {
+        out.push_back<irs::ByTermOptions>().term = Bytes(word);
+      }
+    }
+    return out;
+  };
+  auto skip = phrase({"ab"});
+  PushTerm(skip, "c", 2, 2);
+  auto set = phrase({"b"});
+  auto& terms = set.push_back<irs::TermSetOptions>().terms;
+  terms.emplace(Bytes("ab"));
+  terms.emplace(Bytes("d"));
+  auto gap = phrase({"ab"});
+  PushTerm(gap, "b", 1, 3);
+  auto sloppy = phrase({"ab", "c"});
+  sloppy.set_slop(1);
+  const std::pair<irs::ByPhraseOptions, bool> cases[] = {
+    {phrase({"ab", "b"}), true}, {phrase({"c", "ab", "b"}), true},
+    {phrase({"b", "b"}), true},  {phrase({"b", "a*"}), true},
+    {std::move(skip), true},     {std::move(set), true},
+    {std::move(gap), false},     {std::move(sloppy), false},
+  };
+  DeadRange table{irs::doc_limits::min(), irs::doc_limits::min() + 100};
+  for (const auto& [options, prunes] : cases) {
+    SCOPED_TRACE(Describe(options));
+    const auto checked =
+      Lowered(PhraseOn(kPlainId, options, Tokens<DenseWords>()));
+    const auto positional = Lowered(PhraseOn(kPositionalId, options));
+    for (auto* filter : {static_cast<irs::detail::TableFilter*>(nullptr),
+                         static_cast<irs::detail::TableFilter*>(&table)}) {
+      SCOPED_TRACE(filter != nullptr);
+      const auto full = TopOf(index, *checked, scorer, false, filter);
+      const auto pruned = TopOf(index, *checked, scorer, true, filter);
+      ASSERT_EQ(tests::kTop, full.scores.size());
+      ExpectSameTop(full, pruned);
+      ExpectSameTop(full, TopOf(index, *positional, scorer, true, filter));
+      if (prunes) {
+        EXPECT_LT(pruned.reached, full.reached);
+      } else {
+        EXPECT_EQ(pruned.reached, full.reached);
+      }
+    }
+  }
+}
+
+irs::Filter::ptr Shaped(irs::ByPhrase phrase, irs::field_id field,
+                        size_t shape) {
+  if (shape == 0) {
+    return Lowered(std::move(phrase));
+  }
+  auto root = std::make_unique<irs::BooleanFilter>();
+  const auto occur = shape == 1 ? irs::Occur::Must : irs::Occur::Should;
+  root->Add(std::make_unique<irs::ByPhrase>(std::move(phrase)), occur);
+  root->Add(irs::TermClause{.field = field, .term = irs::bstring{Bytes("d")}},
+            occur);
+  if (occur == irs::Occur::Should) {
+    root->SetMinShouldMatch(1);
+  }
+  irs::Filter::ptr out = std::move(root);
+  irs::Optimize(out);
+  return out;
+}
+
+TEST(TokenPhraseIndexTest, pruned_top_matches_full_ranking_on_random_phrases) {
+  constexpr std::string_view kWords[] = {"ab", "ac", "b", "c", "d", "e"};
+  const auto docs = RandomDocs(kWords, 4000);
+  const irs::BM25 scorer;
+  const Index index{docs, std::type_identity<DenseWords>{}, Bounded(scorer)};
+  DeadRange table{irs::doc_limits::min() + 200, irs::doc_limits::min() + 900};
+  constexpr size_t kTops[] = {1, tests::kTop, 50};
+  std::mt19937 rng{1013};
+  size_t pruned = 0;
+  for (size_t i = 0; i != 200; ++i) {
+    const auto options = RandomPhrase(rng, kWords);
+    const auto shape = i % 3;
+    const auto k = kTops[(i / 3) % std::size(kTops)];
+    auto* filter = i % 2 == 0 ? nullptr : &table;
+    SCOPED_TRACE(absl::StrCat(Describe(options), " shape=", shape, " k=", k,
+                              " table=", filter != nullptr));
+    const auto checked = Shaped(
+      PhraseOn(kPlainId, options, Tokens<DenseWords>()), kPlainId, shape);
+    const auto positional =
+      Shaped(PhraseOn(kPositionalId, options), kPositionalId, shape);
+    const auto full = TopOf(index, *checked, scorer, false, filter, k);
+    const auto top = TopOf(index, *checked, scorer, true, filter, k);
+    ExpectSameTop(full, top);
+    ExpectSameTop(full, TopOf(index, *positional, scorer, false, filter, k));
+    pruned += top.reached < full.reached;
+  }
+  EXPECT_LT(10U, pruned);
+}
+
+TEST(TokenPhraseIndexTest, pruned_top_keeps_stacked_positions_unpruned) {
+  constexpr std::string_view kWords[] = {"a", "b", "a|b", "c", "b|c"};
+  const auto docs = RandomDocs(kWords, 3000);
+  const irs::BM25 scorer;
+  const Index index{docs, std::type_identity<StackedWords>{}, Bounded(scorer)};
+  for (const auto& options : {Phrase("a b"), Phrase("b c a")}) {
+    SCOPED_TRACE(Describe(options));
+    const auto checked =
+      Lowered(PhraseOn(kPlainId, options, Tokens<StackedWords>()));
+    const auto full = TopOf(index, *checked, scorer, false);
+    const auto pruned = TopOf(index, *checked, scorer, true);
+    ASSERT_EQ(tests::kTop, full.scores.size());
+    ExpectSameTop(full, pruned);
+    EXPECT_EQ(pruned.reached, full.reached);
   }
 }
 

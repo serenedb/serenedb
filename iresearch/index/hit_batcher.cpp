@@ -134,6 +134,9 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     if (!p.IsExtract() &&
         _filters.AttachOutputSlot(static_cast<irs::field_id>(p.column_id),
                                   p.output_slot)) {
+      if (_rg_col == nullptr) {
+        _rg_col = r;
+      }
       continue;
     }
     auto& c = _columns.emplace_back();

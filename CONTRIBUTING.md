@@ -101,7 +101,6 @@ Everything else has a page of its own under `.claude/rules/`. Claude Code loads 
 - [Third-party dependencies](.claude/rules/third-party.md): how they are built, adding one, and working inside a submodule.
 - [When you change ...](.claude/rules/when-you-change.md): the follow-up step each kind of change needs.
 - [Branching, commits, PRs](.claude/rules/pull-requests.md)
-- [VSCode Setup](.claude/rules/vscode.md)
 
 ---
 

@@ -1458,11 +1458,16 @@ bool ClaimSearchConjuncts(
     scan.plan_cache.deferred = std::move(deferred.claim);
   }
 
+  const bool has_clauses = absl::c_any_of(
+    irs::kAllOccur,
+    [&](irs::Occur occur) { return root_and->Size(occur) != 0; });
   irs::Filter::ptr root = std::move(root_and);
   connector::EnsureIncludeSides(*root);
-  irs::Optimize(root, {.scored = scan.score.text.has_value(),
-                       .analyzed_fields = std::move(analyzed_fields),
-                       .null_markers = &null_markers});
+  if (has_clauses) {
+    irs::Optimize(root, {.scored = scan.score.text.has_value(),
+                         .analyzed_fields = std::move(analyzed_fields),
+                         .null_markers = &null_markers});
+  }
   if (scan.offsets.requests.empty() && !scan.score.vector) {
     connector::DeferWildcardVerify(*root);
   }

@@ -190,6 +190,23 @@ cds_owner	a
 cds_owner	o
 
 
+statement ok
+CREATE TABLE cds_pinned(a INTEGER)
+
+
+query
+SELECT count(*) AS n FROM sdb_catalog_sets()
+WHERE entry_type = 'Dependency'
+  AND name = (SELECT oid::VARCHAR FROM pg_class WHERE relname = 'cds_pinned')
+----
+n
+0
+
+
+statement ok
+DROP TABLE cds_pinned
+
+
 statement error
 DROP ROLE cds_owner
 ----

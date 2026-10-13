@@ -67,6 +67,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
 
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeRoleEntry(
     duckdb::CreateRoleInfo& info) final;
+  bool IsPinnedEntry(const duckdb::CatalogEntry& entry) const final;
   duckdb::unique_ptr<duckdb::InCatalogEntry> MakeDatabaseEntry(
     duckdb::CreateDatabaseInfo& info) final {
     return duckdb::make_uniq<DatabaseCatalogEntry>(*this, info);

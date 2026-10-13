@@ -279,7 +279,7 @@ A DuckDB file must hold only what DuckDB reads, so SereneDB-only state (stored g
 
 Three things about the postgres fixture are non-obvious:
 
-- **It uses our `config/postgres_scanner.json`, not upstream's
+- **It runs without a test-config of its own, not with upstream's
   `attach_postgres.json`.** Upstream's config is for the inverse scenario
   (running DuckDB *core's* suite against postgres-as-storage); its
   `on_new_connection: USE pgdb;` breaks duckdb_postgres' own tests.

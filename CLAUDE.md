@@ -66,22 +66,18 @@ style.
 
 ## Local smoke server
 
-Start a server this way, not as `CONTRIBUTING.md` "Launch" does. Pick a free
-`<port>` (`ss -ltn | grep :<port>` prints nothing) and a fresh data dir
-(`mktemp -d`). Note the pid the start prints: it is how you check and stop your
-server, since another session can take the port between your check and the bind.
-Stop it when you're done.
+Start serened on a free port (`ss -ltnH "sport = :<port>"` prints nothing) with
+a fresh data dir (`mktemp -d`). When you're done, stop it by its pid and remove
+the data dir.
 
 ```bash
-# DuckDB's LogManager writes to in-memory storage by default; query
-# `SELECT * FROM duckdb_logs` (or `sdb_logs`) from psql.
-./build/bin/serened <datadir> --listen='postgres://0.0.0.0:<port>' \
+./build/bin/serened <datadir> --listen='postgres://127.0.0.1:<port>' \
   >/tmp/$USER-serened-<port>.log 2>&1 & echo $!
-
-# A busy port or a retired flag makes serened exit; only the log says why.
-kill -0 <pid> && psql -h 127.0.0.1 -p <port> -U postgres -d postgres -c 'SELECT 1'
-
-# when finished
+kill -0 <pid> && psql -h 127.0.0.1 -p <port> -U postgres -d postgres -c '<sql>'
 kill <pid>
-rm -rf <datadir>    # only if you don't need the datadir afterwards
+rm -rf <datadir>
 ```
+
+psql is refused until the server is up: retry while `kill -0 <pid>` succeeds.
+Once it fails, serened has exited, and the log file says why. The server logs
+to that file; `--log_level=debug` adds detail.

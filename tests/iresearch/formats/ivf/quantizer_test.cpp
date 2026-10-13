@@ -2243,7 +2243,41 @@ TEST(hnsw_pq_quantizer_test, gathered_matches_block) {
                             kNoPrune, gathered.data() + off);
   }
   for (size_t i = 0; i < n; ++i) {
-    EXPECT_EQ(gathered[i], block[ids[i]]) << i;
+    EXPECT_NEAR(gathered[i], block[ids[i]],
+                1e-4f * (1.f + std::fabs(block[ids[i]])))
+      << i;
+  }
+}
+
+TEST(hnsw_pq_quantizer_test, gathered_matches_block_at_every_batch_size) {
+  constexpr uint32_t d = 96;
+  constexpr size_t n = 400;
+  const auto points = MakeSpread(d, n, 73);
+  const std::vector<float> centroid(d, 0.f);
+  const auto query = MakeSpread(d, 1, 79);
+  for (const VectorMetric metric :
+       {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+    for (const uint32_t pq_m : {96U, 48U, 24U}) {
+      const auto f = BuildPqCodes(d, pq_m, metric, points, n);
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<score_t> block(n);
+      reader->ComputeBlock(f.codes, kNoPrune, block.data());
+      std::vector<uint32_t> ids(n);
+      std::vector<score_t> gathered(n);
+      for (size_t batch = 1; batch <= 70; ++batch) {
+        for (size_t i = 0; i < batch; ++i) {
+          ids[i] = static_cast<uint32_t>((i * 37 + batch * 11) % n);
+        }
+        reader->ComputeGathered(f.codes.data(), f.record_size,
+                                std::span<const uint32_t>{ids}.first(batch),
+                                kNoPrune, gathered.data());
+        for (size_t i = 0; i < batch; ++i) {
+          EXPECT_NEAR(gathered[i], block[ids[i]],
+                      1e-4f * (1.f + std::fabs(block[ids[i]])))
+            << "pq_m=" << pq_m << " batch=" << batch << " i=" << i;
+        }
+      }
+    }
   }
 }
 

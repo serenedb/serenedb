@@ -721,9 +721,17 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   void ComputeGathered(const byte_type* base, uint32_t record_size,
                        std::span<const uint32_t> ids, score_t /*threshold*/,
                        score_t* out) final {
-    ScoreGatheredRows(base, record_size, ids, out, [this](const byte_type* r) {
-      return Score(reinterpret_cast<const uint8_t*>(r));
-    });
+    for (size_t s = 0; s < ids.size(); s += kSlice) {
+      const auto slice = ids.subspan(s, std::min(kSlice, ids.size() - s));
+      const size_t grouped = Grouped(slice.size());
+      if (grouped != 0) {
+        ScoreGrouped(base, record_size, slice.first(grouped), out + s);
+      }
+      for (size_t k = grouped; k < slice.size(); ++k) {
+        out[s + k] = Score(reinterpret_cast<const uint8_t*>(
+          base + static_cast<size_t>(slice[k]) * record_size));
+      }
+    }
   }
 
   bool Decode(const byte_type* code, float* out) const final {
@@ -816,6 +824,72 @@ class ProductQuantizer8Reader final : public QuantizerReader {
         out[i] = -(terms[from] + terms[ids[i]] - 2.f * dot);
       } else {
         out[i] = dot;
+      }
+    }
+  }
+
+  static constexpr size_t kGroup = 8;
+  static constexpr size_t kHalfGroup = kGroup / 2;
+  static constexpr size_t kSlice = 64;
+  static constexpr size_t kChunk = 32;
+  static constexpr size_t kLine = 64;
+
+  static size_t Grouped(size_t n) noexcept {
+    return n / kGroup * kGroup + (n % kGroup >= kHalfGroup ? kHalfGroup : 0);
+  }
+
+  template<size_t G>
+  static void ScoreRows(const uint8_t* const* rows, float* acc, const float* l,
+                        size_t m0, size_t m1) noexcept {
+    const uint8_t* r[G];
+    float a[G];
+    for (size_t g = 0; g < G; ++g) {
+      r[g] = rows[g];
+      a[g] = acc[g];
+    }
+    for (size_t m = m0; m < m1; ++m, l += kPq8Ksub) {
+      for (size_t g = 0; g < G; ++g) {
+        a[g] += l[r[g][m]];
+      }
+    }
+    for (size_t g = 0; g < G; ++g) {
+      acc[g] = a[g];
+    }
+  }
+
+  void ScoreGrouped(const byte_type* base, uint32_t record_size,
+                    std::span<const uint32_t> ids, score_t* out) const {
+    const uint8_t* rows[kSlice];
+    float acc[kSlice];
+    const size_t n = ids.size();
+    for (size_t k = 0; k < n; ++k) {
+      rows[k] = reinterpret_cast<const uint8_t*>(
+        base + static_cast<size_t>(ids[k]) * record_size);
+      acc[k] = 0.f;
+      __builtin_prefetch(rows[k], 0, 3);
+    }
+    const float* lut = _cur->Lut();
+    for (size_t m0 = 0; m0 < _m; m0 += kChunk) {
+      const size_t m1 = std::min(_m, m0 + kChunk);
+      if (m0 % kLine == 0 && m0 + kLine < _m) {
+        for (size_t k = 0; k < n; ++k) {
+          __builtin_prefetch(rows[k] + m0 + kLine, 0, 3);
+        }
+      }
+      const float* l = lut + m0 * kPq8Ksub;
+      size_t k = 0;
+      for (; k + kGroup <= n; k += kGroup) {
+        ScoreRows<kGroup>(rows + k, acc + k, l, m0, m1);
+      }
+      if (k < n) {
+        ScoreRows<kHalfGroup>(rows + k, acc + k, l, m0, m1);
+      }
+    }
+    for (size_t k = 0; k < n; ++k) {
+      if constexpr (M == VectorMetric::L2Sqr) {
+        out[k] = -acc[k];
+      } else {
+        out[k] = acc[k];
       }
     }
   }

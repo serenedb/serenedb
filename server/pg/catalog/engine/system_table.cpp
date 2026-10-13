@@ -104,10 +104,9 @@ duckdb::LogicalType SystemRowType(const SystemSql& sql) {
 SystemScan::SystemScan(duckdb::ClientContext& context,
                        duckdb::TableFunctionInitInput& input)
   : _context{context},
-    _database{
-      connector::BoundSystemTable(input).catalog.Cast<duckdb::DuckCatalog>()},
+    _database{connector::BoundSystemCatalog(input)},
     _transaction{_database.GetCatalogTransaction(context)},
-    _table{connector::BoundSystemTable(input).Table()} {
+    _table{connector::BoundSystemTable(input)} {
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {

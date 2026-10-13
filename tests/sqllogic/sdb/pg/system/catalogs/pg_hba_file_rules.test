@@ -86,6 +86,13 @@ db error: ERROR: permission denied for <slt:ignore>
 
 
 connection c_zeus_hba user=zeus_hba_bolt password=thundergods_wrath
+statement error
+SELECT count(*) FROM pg_hba_file_rules();
+----
+db error: ERROR: permission denied for <slt:ignore>
+
+
+connection c_zeus_hba user=zeus_hba_bolt password=thundergods_wrath
 query
 SELECT has_table_privilege('pg_hba_file_rules', 'SELECT') AS readable;
 ----

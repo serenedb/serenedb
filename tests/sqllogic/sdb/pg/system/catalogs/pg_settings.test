@@ -14,6 +14,14 @@ v	pg_catalog
 
 
 query
+SELECT pg_get_viewdef('pg_catalog.pg_settings'::regclass) LIKE '%pg_show_all_settings()%' AS from_function,
+       (SELECT count(*) FROM pg_show_all_settings()) = (SELECT count(*) FROM pg_settings) AS same_rows;
+----
+from_function	same_rows
+t	t
+
+
+query
 SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
 FROM pg_attribute
 WHERE attrelid = 'pg_settings'::regclass AND attnum > 0

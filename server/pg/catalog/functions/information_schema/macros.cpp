@@ -30,6 +30,10 @@ constexpr SystemMacro kMacros[] = {
   // TODO(mbkkt): rewrite once parser supports PG-style OUT params
   {"information_schema", "_pg_expandarray",
    R"((arr) AS TABLE SELECT unnest AS x, ordinality AS n FROM unnest(arr) WITH ORDINALITY)"},
+  {"information_schema", "_pg_truetypid",
+   R"((att, typ) AS CASE WHEN typ.typtype = 'd' THEN typ.typbasetype ELSE att.atttypid END)"},
+  {"information_schema", "_pg_truetypmod",
+   R"((att, typ) AS CASE WHEN typ.typtype = 'd' THEN typ.typtypmod ELSE att.atttypmod END)"},
   // clang-format on
 };
 

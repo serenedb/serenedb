@@ -50,6 +50,7 @@ struct StaticView {
   std::shared_ptr<const duckdb::CreateViewInfo> info;
   duckdb::Permissions permissions;
   duckdb::idx_t oid = 0;
+  std::string_view options;
   std::shared_ptr<ViewBinding> binding;
 };
 using StaticFunction = std::shared_ptr<const duckdb::CreateMacroInfo>;
@@ -63,6 +64,7 @@ void InitSystemFunctions(duckdb::Parser& parser);
 const SystemTable* GetSystemTable(std::string_view schema,
                                   std::string_view name);
 const SystemTable* FindSystemTable(duckdb::idx_t oid);
+std::span<SystemTable* const> SystemTableFunctions();
 const StaticView* GetSystemView(std::string_view schema, std::string_view name);
 const StaticView* FindSystemView(duckdb::idx_t oid);
 bool IsSystemRelation(std::string_view schema, std::string_view name);

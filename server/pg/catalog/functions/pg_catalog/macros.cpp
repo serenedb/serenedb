@@ -26,9 +26,6 @@ namespace {
 constexpr SystemMacro kMacros[] = {
 #include "pg/catalog/generated/function_stubs.gen.inc"
   // clang-format off
-  {"pg_catalog", "pg_show_all_settings",
-   R"(() AS TABLE SELECT * FROM pg_catalog.pg_settings)"},
-
   {"pg_catalog", "pg_get_keywords",
    R"(() AS TABLE
       SELECT word,
@@ -65,11 +62,6 @@ constexpr SystemMacro kMacros[] = {
              0::BIGINT AS generic_plans,
              0::BIGINT AS custom_plans
       FROM sdb_prepared_statements() AS P)"},
-
-  // Function form of the pg_hba_file_rules relation (PG exposes both); serves
-  // the same live HBA ruleset.
-  {"pg_catalog", "pg_hba_file_rules",
-   R"(() AS TABLE SELECT * FROM pg_catalog.pg_hba_file_rules)"},
 
   {"pg_catalog", "pg_stat_get_activity",
    R"((target_pid) AS TABLE

@@ -34,16 +34,6 @@
 namespace sdb::pg {
 namespace {
 
-template<typename T>
-void TrueTypeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                      duckdb::Vector& result) {
-  duckdb::VariadicExecutor::Execute<T, T, duckdb::string_t, T>(
-    args, result, [](T value, duckdb::string_t typtype, T base) {
-      return typtype.GetSize() == 1 && typtype.GetData()[0] == 'd' ? base
-                                                                   : value;
-    });
-}
-
 using TypmodFn = std::optional<int32_t> (*)(int64_t, int32_t);
 
 template<TypmodFn Fn>
@@ -118,12 +108,6 @@ void RegisterInformationSchemaFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view information_schema =
     irs::StaticStrings::kInformationSchema;
 
-  RegisterScalar(
-    loader, information_schema, "_pg_truetypid", CONSISTENT,
-    {duckdb::ScalarFunction{{oid, text, oid}, oid, TrueTypeFunction<int64_t>}});
-  RegisterScalar(loader, information_schema, "_pg_truetypmod", CONSISTENT,
-                 {duckdb::ScalarFunction{
-                   {int4, text, int4}, int4, TrueTypeFunction<int32_t>}});
   RegisterScalar(
     loader, information_schema, "_pg_char_max_length", CONSISTENT,
     {duckdb::ScalarFunction{{oid, int4}, int4, TypmodFunction<CharMaxLength>}});

@@ -88,6 +88,29 @@ std::string_view ViewSql(const SystemView& view) {
   return written == std::end(kSystemViewSql) ? view.sql : written->sql;
 }
 
+void AddSystemView(duckdb::Parser& parser, const SystemView& view) {
+  auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
+  info->SetSchema(duckdb::Identifier{view.schema});
+  info->SetViewName(duckdb::Identifier{view.name});
+  info->sql = ViewSql(view);
+  info->temporary = true;
+  info->internal = true;
+  parser.statements.clear();
+  info->query = duckdb::CreateViewInfo::ParseSelect(parser, info->sql);
+  const auto& stored = gViews.emplace_back(StaticView{
+    .schema = view.schema,
+    .name = view.name,
+    .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
+    .permissions = SystemPermissions(view.superuser_only),
+    .oid = view.oid,
+    .options = view.options,
+    .binding = std::make_shared<ViewBinding>(),
+  });
+  gViewsByName.emplace(Key{view.schema, view.name}, &stored);
+  gViewsByOid.emplace(view.oid, &stored);
+  gRelationNames.emplace(view.schema, view.name);
+}
+
 duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   duckdb::Parser& parser, const SystemMacro& macro) {
   auto sql =
@@ -151,8 +174,9 @@ void InitSystemTables() {
         *sql,
         SystemScanFunctions{&SystemScanInit<SystemEmptyScan>,
                             &SystemScanRun<SystemEmptyScan>},
-        std::span<const SystemFact>{}, std::nullopt,
-        std::span<const SystemTypeShape>{});
+        SystemEmptyScan::kFacts, SystemEmptyScan::kVisibility,
+        SystemEmptyScan::kTypeShapes, SystemEmptyScan::kColumnKeys,
+        SystemEmptyScan::kRows, SystemEmptyScan::kSuperuserOnly);
       gTables.emplace_back(table);
       gTablesByOid.emplace(sql->oid, table);
     }
@@ -162,6 +186,9 @@ void InitSystemTables() {
     gTablesByName.emplace(Key{table->Sql().schema, table->Sql().name}, table);
     gRelationNames.emplace(table->Sql().schema, table->Sql().name);
   }
+  for (auto* table : kSystemTableFunctions) {
+    table->Init();
+  }
   for (auto& type : ExternalTypeList()) {
     if (std::string_view{type.name} == kPgStatisticSql.name) {
       type.type = SystemRowType(kPgStatisticSql).WithAlias(type.name);
@@ -170,27 +197,12 @@ void InitSystemTables() {
 }
 
 void InitSystemViews(duckdb::Parser& parser) {
-  gViews.reserve(std::size(kExternalViews));
+  gViews.reserve(std::size(kExternalViews) + std::size(kSdbViews));
   for (const auto& view : kExternalViews) {
-    auto info = duckdb::make_uniq<duckdb::CreateViewInfo>();
-    info->SetSchema(duckdb::Identifier{view.schema});
-    info->SetViewName(duckdb::Identifier{view.name});
-    info->sql = ViewSql(view);
-    info->temporary = true;
-    info->internal = true;
-    parser.statements.clear();
-    info->query = duckdb::CreateViewInfo::ParseSelect(parser, info->sql);
-    const auto& stored = gViews.emplace_back(StaticView{
-      .schema = view.schema,
-      .name = view.name,
-      .info = std::shared_ptr<const duckdb::CreateViewInfo>{info.release()},
-      .permissions = SystemPermissions(view.superuser_only),
-      .oid = view.oid,
-      .binding = std::make_shared<ViewBinding>(),
-    });
-    gViewsByName.emplace(Key{view.schema, view.name}, &stored);
-    gViewsByOid.emplace(view.oid, &stored);
-    gRelationNames.emplace(view.schema, view.name);
+    AddSystemView(parser, view);
+  }
+  for (const auto* view : kSdbViews) {
+    AddSystemView(parser, *view);
   }
 }
 
@@ -227,6 +239,10 @@ const SystemTable* GetSystemTable(std::string_view schema,
 const SystemTable* FindSystemTable(duckdb::idx_t oid) {
   const auto it = gTablesByOid.find(oid);
   return it == gTablesByOid.end() ? nullptr : it->second;
+}
+
+std::span<SystemTable* const> SystemTableFunctions() {
+  return kSystemTableFunctions;
 }
 
 const StaticView* GetSystemView(std::string_view schema,

@@ -80,3 +80,8 @@ row_group_id	row_count
 statement ok
 DROP TABLE range_layout
 
+query
+WITH d AS MATERIALIZED (SELECT i FROM range(1000000) r(i)) SELECT (SELECT sum(i) FROM d) AS s, (SELECT i FROM d LIMIT 1) AS f
+----
+s	f
+499999500000	0

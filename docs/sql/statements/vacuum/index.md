@@ -89,6 +89,8 @@ Each option applies at the scope named by its suffix and takes the matching obje
 
 `RECOMPUTE_STATS` additionally accepts a column scope, `RECOMPUTE_STATS_COLUMN`, whose argument is `[schema.]table.column`.
 
+An inverted index on a search table keeps its terms in the table's own storage, so `REFRESH_INDEX`, `COMPACT_INDEX` and `OPTIMIZE_INDEX` on such an index do what `REFRESH_TABLE`, `COMPACT_TABLE` and `OPTIMIZE_TABLE` do on the table.
+
 Object names may be qualified, for example `VACUUM (REFRESH_TABLE) mydb.public.articles`. The `*_ALL` scopes are instance-wide and take no argument.
 
 ### Combining options

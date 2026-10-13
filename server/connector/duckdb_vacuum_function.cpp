@@ -440,18 +440,12 @@ void DispatchInverted(duckdb::ClientContext& context,
                                 duckdb::Identifier{target.schema},
                                 duckdb::Identifier{target.object}}},
         duckdb::OnEntryNotFound::RETURN_NULL);
-      duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
-      const catalog::InvertedIndexEntry* inverted = nullptr;
-      std::shared_ptr<search::InvertedIndexStorage> storage;
-      if (entry) {
-        index = &entry->Cast<duckdb::IndexCatalogEntry>();
-        inverted =
-          dynamic_cast<const catalog::InvertedIndexEntry*>(index.get());
-        if (inverted) {
-          storage = inverted->Storage();
-        }
-      }
-      if (!storage) {
+      const auto* inverted =
+        entry ? dynamic_cast<const catalog::InvertedIndexEntry*>(entry.get())
+              : nullptr;
+      auto storage = inverted ? inverted->Storage() : nullptr;
+      auto search = inverted ? inverted->SearchStore() : nullptr;
+      if (!storage && !search) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
           ERR_MSG("relation \"", target.object, "\" does not exist"));
@@ -459,12 +453,16 @@ void DispatchInverted(duckdb::ClientContext& context,
       // An index has no owner of its own; maintenance rides on its
       // relation (a table, or a view for view-backed indexes).
       auto relation =
-        index->GetRelation(index->catalog.GetCatalogTransaction(context));
+        inverted->GetRelation(inverted->catalog.GetCatalogTransaction(context));
       if (relation && !MayMaintain(conn_ctx, relation->permissions,
                                    relation->name.GetIdentifierName(), verb)) {
         return;
       }
-      steps.emplace_back(std::move(storage), inverted->Config(), nullptr);
+      if (storage) {
+        steps.emplace_back(std::move(storage), inverted->Config(), nullptr);
+      } else {
+        steps.emplace_back(nullptr, nullptr, std::move(search));
+      }
     } break;
     case Scope::Table: {
       auto entry = duckdb::Catalog::GetEntry(

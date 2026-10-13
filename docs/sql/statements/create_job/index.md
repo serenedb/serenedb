@@ -86,7 +86,7 @@ A body can run another job with `EXECUTE JOB`: that job runs in a session of its
 
 ## Monitoring
 
-`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory and starts over when the server restarts. Notices and warnings that a run raises, scheduled or started with `EXECUTE JOB`, go to the server log as warnings prefixed with the job's name.
+`sdb_jobs()` lists the jobs visible to the session with their schedule (`schedule`, `schedule_kind`, `schedule_interval`, `schedule_offset`, `schedule_randomize`), their `body` and full `CREATE JOB` statement (`sql`), and their run state: `running`, `next_run`, `last_start`, `last_finish`, `last_status` (`success` or `failed`), `last_error`, `run_count` and `failure_count`. `sdb_job_runs()` returns the most recent runs of all jobs (up to [`sdb_job_history_size`](../../../configuration/overview.md#logging-metrics-and-profiling), 1024 by default), with `trigger` set to `schedule` or `manual`. Run state is kept in memory only: a restart empties `sdb_job_runs()`, resets `running`, the `last_*` columns, `run_count` and `failure_count`, and computes `next_run` again from the schedule. Notices and warnings that a run raises, scheduled or started with `EXECUTE JOB`, go to the server log as warnings prefixed with the job's name.
 
 <SqlLogicTest id="sql/statements/create_job/index/example_004" />
 
@@ -97,6 +97,8 @@ A job runs **as its owner**, the role that created it, in a session of its own: 
 <SqlLogicTest id="sql/statements/create_job/index/example_005" />
 
 The job session starts with the job's schema first on the search path and reads **global** settings; session settings of the role that created the job do not apply.
+
+A search path holds only top-level schemas, so a job in a nested schema (`CREATE JOB outer.inner.job ...`) cannot have its own schema on it: an unqualified name in its body is looked up in a top-level schema named like the job's schema (`inner`), not in `outer.inner`. Qualify the names in the body of such a job (`INSERT INTO outer.inner.events ...`).
 
 ## Jobs in other databases
 

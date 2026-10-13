@@ -1,0 +1,35 @@
+query
+SELECT len(range(10000000)) AS n
+----
+n
+10000000
+
+statement ok
+CREATE MACRO lv_twice_len(l) AS len(l) + len(l)
+
+statement ok
+CREATE MACRO lv_either_len(c, l) AS CASE WHEN c THEN len(l) ELSE -len(l) END
+
+query
+SELECT lv_twice_len(range(10000000)) AS n
+----
+n
+20000000
+
+query
+SELECT lv_either_len(false, range(10000000)) AS n
+----
+n
+-10000000
+
+query
+SELECT lv_twice_len(range(3)) AS n
+----
+n
+6
+
+statement ok
+DROP MACRO lv_either_len
+
+statement ok
+DROP MACRO lv_twice_len

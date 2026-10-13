@@ -20,13 +20,8 @@
 
 #pragma once
 
-#include <algorithm>
-#include <cstddef>
-#include <cstring>
+#include <cstdint>
 #include <duckdb/common/file_system.hpp>
-#include <memory>
-#include <string_view>
-#include <vector>
 
 #include "server/utils/message_buffer.h"
 
@@ -45,84 +40,5 @@ inline void DrainToHandle(message::Buffer& buffer, duckdb::FileHandle& handle) {
     }
   }
 }
-
-// Zero-copy byte source for a COPY FROM stream: a decoder reads STRAIGHT out of
-// the source's current view. `View()` returns the bytes on hand (blocking /
-// refilling when empty; empty == clean EOF). `Next(n)` consumes within the
-// current view. `Fill(dst, len)` copies a value that straddles a view boundary
-// into `dst` -- the only copies are the unavoidable across-boundary stitch.
-// Shared by the binary (PGCOPY) and text COPY FROM table functions.
-struct ByteSource {
-  virtual ~ByteSource() = default;
-  // Current view; blocks/refills if empty. Empty == clean EOF.
-  virtual std::string_view View() = 0;
-  // Consume `n` bytes of the current view (n <= View().size()).
-  virtual void Next(size_t n) = 0;
-  // Copy exactly `len` bytes into `dst`, spanning views as needed. Returns the
-  // number actually copied (< len only at premature EOF).
-  size_t Fill(char* dst, size_t len) {
-    size_t done = 0;
-    while (done < len) {
-      auto v = View();
-      if (v.empty()) {
-        break;
-      }
-      const auto take = std::min(len - done, v.size());
-      std::memcpy(dst + done, v.data(), take);
-      done += take;
-      Next(take);
-    }
-    return done;
-  }
-  // Block until EOF, releasing remaining bytes.
-  virtual void DrainToEof() = 0;
-};
-
-// file source: one block-buffered read per `kBlock`, hands views
-// straight into the block (zero-copy) and refills when exhausted. A value/row
-// that straddles two blocks is pulled across them via Fill / the decoder's
-// accumulator (no field-level scratch).
-class HandleByteSource final : public ByteSource {
- public:
-  explicit HandleByteSource(duckdb::unique_ptr<duckdb::FileHandle> handle)
-    : _handle{std::move(handle)}, _block(kBlock) {}
-
-  std::string_view View() final {
-    if (_view.empty()) {
-      const auto read = FillBlock();
-      _view = {_block.data(), static_cast<size_t>(read)};
-    }
-    return _view;
-  }
-
-  void Next(size_t n) final { _view.remove_prefix(n); }
-
-  void DrainToEof() final {
-    _view = {};
-    while (FillBlock() != 0) {
-    }
-  }
-
- private:
-  static constexpr size_t kBlock = 64u * 1024;
-
-  // Read one full block into `_block`; returns bytes read (0 = EOF).
-  int64_t FillBlock() {
-    int64_t total = 0;
-    while (total < static_cast<int64_t>(kBlock)) {
-      const auto read = _handle->Read(
-        _block.data() + total, static_cast<duckdb::idx_t>(kBlock - total));
-      if (read <= 0) {
-        break;
-      }
-      total += read;
-    }
-    return total;
-  }
-
-  duckdb::unique_ptr<duckdb::FileHandle> _handle;
-  std::vector<char> _block;
-  std::string_view _view;
-};
 
 }  // namespace sdb::connector

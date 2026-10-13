@@ -72,6 +72,7 @@ enum class CopyTake : uint8_t {
   Batches,
   End,
   Blocked,
+  Produce,
 };
 
 class CopyInBatches {
@@ -92,7 +93,8 @@ class CopyInBatches {
   bool Aborted() const;
 
   CopyTake Take(duckdb::TableFunctionInput& input, size_t max,
-                std::vector<CopyBatch*>& out);
+                std::vector<CopyBatch*>& out, size_t produce_below = 0);
+  void Produced();
   bool TryTake(size_t max, std::vector<CopyBatch*>& out);
   CopyBatch* Next();
   void Done(uint64_t seq);
@@ -119,6 +121,7 @@ class CopyInBatches {
   std::exception_ptr _error;
   bool _finished = false;
   bool _aborted = false;
+  bool _producing = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
 };

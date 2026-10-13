@@ -310,6 +310,34 @@ TEST(PgCopyInBatches, TakeHandsOutBatches) {
   }
 }
 
+TEST(PgCopyInBatches, TakeGrantsProduceToOneConsumerAtATime) {
+  CopyInBatches queue;
+  auto input = NoInput();
+  std::vector<CopyBatch*> taken;
+  ASSERT_EQ(queue.Take(input, 1, taken, 1), CopyTake::Produce);
+  CopyTake waited = CopyTake::Blocked;
+  std::thread waiter{[&] {
+    auto waiter_input = NoInput();
+    std::vector<CopyBatch*> mine;
+    waited = queue.Take(waiter_input, 1, mine, 1);
+  }};
+  queue.Produced();
+  waiter.join();
+  EXPECT_EQ(waited, CopyTake::Produce);
+  queue.Push(MakeBatch("0"), {});
+  queue.Push(MakeBatch("1"), {});
+  queue.Produced();
+  ASSERT_EQ(queue.Take(input, 1, taken, 2), CopyTake::Batches);
+  ASSERT_EQ(queue.Take(input, 1, taken, 2), CopyTake::Produce);
+  queue.Finish();
+  queue.Produced();
+  ASSERT_EQ(queue.Take(input, 1, taken, 2), CopyTake::Batches);
+  EXPECT_EQ(queue.Take(input, 1, taken, 2), CopyTake::End);
+  for (auto* batch : taken) {
+    queue.Done(batch->seq);
+  }
+}
+
 TEST(PgCopyInBatches, FailRethrowsToConsumers) {
   CopyInBatches queue;
   queue.Push(MakeBatch("0"), {});

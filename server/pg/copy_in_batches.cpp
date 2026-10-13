@@ -153,13 +153,19 @@ bool CopyInBatches::TakeReady(size_t max, std::vector<CopyBatch*>& out) {
 }
 
 CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
-                             std::vector<CopyBatch*>& out) {
+                             std::vector<CopyBatch*>& out,
+                             size_t produce_below) {
   UniqueLock lock{_blocked.lock};
   for (;;) {
     if (_error) {
       auto error = _error;
       lock.unlock();
       std::rethrow_exception(error);
+    }
+    if (!_producing && !_finished && !_aborted &&
+        _pushed - _taken < produce_below) {
+      _producing = true;
+      return CopyTake::Produce;
     }
     if (TakeReady(max, out)) {
       return CopyTake::Batches;
@@ -175,6 +181,19 @@ CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
       return CopyTake::Blocked;
     }
     _changed.wait(lock);
+  }
+}
+
+void CopyInBatches::Produced() {
+  std::vector<duckdb::InterruptState> wake;
+  {
+    Guard guard{_blocked.lock};
+    _producing = false;
+    wake = _blocked.TakeBlockedTasks();
+  }
+  _changed.notify_all();
+  for (const auto& task : wake) {
+    task.Callback();
   }
 }
 

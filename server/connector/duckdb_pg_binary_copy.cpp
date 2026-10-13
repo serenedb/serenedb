@@ -22,12 +22,9 @@
 
 #include <absl/base/internal/endian.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -36,7 +33,6 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
@@ -45,11 +41,9 @@
 
 #include "connector/copy_byte_source.h"
 #include "connector/copy_from_batches.h"
-#include "connector/copy_from_blocks.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
-#include "pg/deserialize.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 #include "server/utils/message_buffer.h"
@@ -62,11 +56,6 @@ namespace {
 constexpr std::array<uint8_t, 19> kPgCopyHeader{
   'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
   0x00, 0,   0,   0,   0,   0,   0,    0,    0};
-
-constexpr size_t kFieldCountBytes = sizeof(int16_t);
-constexpr size_t kFieldLengthBytes = sizeof(int32_t);
-constexpr int16_t kTrailerFieldCount = -1;
-constexpr int32_t kNullFieldLength = -1;
 
 struct PgBinaryCopyBindData final : public duckdb::FunctionData {
   explicit PgBinaryCopyBindData(duckdb::vector<duckdb::LogicalType> types)
@@ -215,427 +204,33 @@ duckdb::CopyFunctionExecutionMode ExecutionMode(bool, bool) {
 
 struct PgBinaryCopyFromBindData final : public duckdb::TableFunctionData {
   PgBinaryCopyFromBindData(duckdb::vector<duckdb::LogicalType> types,
-                           std::string path, bool parallel)
-    : sql_types{std::move(types)},
-      file_path{std::move(path)},
-      parallel{parallel} {}
+                           std::string path)
+    : sql_types{std::move(types)}, file_path{std::move(path)} {}
   duckdb::vector<duckdb::LogicalType> sql_types;
   std::string file_path;
-  bool parallel;
-  bool from_stdin = false;
   bool ordered = false;
-};
-
-// PGCOPY header: 11-byte signature, int32 flags, int32 header-extension
-// length, then `ext` extension bytes. Returns false for an empty stream.
-bool ReadHeader(ByteSource& source) {
-  char header[19];
-  const auto got = source.Fill(header, sizeof(header));
-  if (got == 0) {
-    return false;
-  }
-  if (got < sizeof(header) ||
-      std::memcmp(header, kPgCopyHeader.data(), 11) != 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                    ERR_MSG("COPY FROM STDIN: invalid PGCOPY signature"));
-  }
-  // Flags word (bytes 11..14): the WITH-OIDS bit is unsupported and any other
-  // high-16-bit (critical) flag is from a newer format we cannot read; PG
-  // rejects both rather than misparsing the body.
-  const auto flags = absl::big_endian::Load32(header + 11);
-  if ((flags & (1U << 16)) != 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-      ERR_MSG("COPY FROM STDIN: invalid COPY file header (WITH OIDS)"));
-  }
-  if (((flags & ~(1U << 16)) >> 16) != 0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                    ERR_MSG("COPY FROM STDIN: unrecognized critical flags in "
-                            "COPY file header"));
-  }
-  auto ext = static_cast<int32_t>(absl::big_endian::Load32(header + 15));
-  if (ext < 0) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-      ERR_MSG("COPY FROM STDIN: invalid COPY file header (missing length)"));
-  }
-  while (ext > 0) {
-    auto v = source.View();
-    if (v.empty()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("COPY FROM STDIN: truncated PGCOPY header"));
-    }
-    const auto take = std::min<int32_t>(ext, static_cast<int32_t>(v.size()));
-    source.Next(static_cast<size_t>(take));
-    ext -= take;
-  }
-  return true;
-}
-
-size_t WalkTuples(std::string_view data, size_t pos, size_t columns,
-                  bool& trailer) {
-  for (;;) {
-    if (data.size() - pos < kFieldCountBytes) {
-      return pos;
-    }
-    const auto fields =
-      static_cast<int16_t>(absl::big_endian::Load16(data.data() + pos));
-    if (fields == kTrailerFieldCount) {
-      trailer = true;
-      return pos;
-    }
-    if (static_cast<size_t>(fields) != columns) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("COPY FROM STDIN: row has ", fields,
-                              " fields, expected ", columns));
-    }
-    size_t p = pos + kFieldCountBytes;
-    for (size_t column = 0; column < columns; ++column) {
-      if (data.size() - p < kFieldLengthBytes) {
-        return pos;
-      }
-      const auto len =
-        static_cast<int32_t>(absl::big_endian::Load32(data.data() + p));
-      p += kFieldLengthBytes;
-      if (len == kNullFieldLength) {
-        continue;
-      }
-      if (len < 0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                        ERR_MSG("COPY FROM STDIN: negative field length"));
-      }
-      if (data.size() - p < static_cast<size_t>(len)) {
-        return pos;
-      }
-      p += static_cast<size_t>(len);
-    }
-    pos = p;
-  }
-}
-
-struct PgBinaryCopyFromGlobalState final : public CopyFromGlobalState {
-  std::string carry;
-  bool header_done = false;
-
- protected:
-  std::string CutBlock() final {
-    if (finished || !SkipHeader()) {
-      return {};
-    }
-    std::string data = std::exchange(carry, {});
-    size_t complete = 0;
-    bool trailer = false;
-    for (;;) {
-      complete = WalkTuples(data, complete, deserializers.size(), trailer);
-      if (trailer || complete >= kCopyBlockBytes || Pull(data).empty()) {
-        break;
-      }
-    }
-    if (trailer) {
-      ExpectEndAfterTrailer(data.size() - complete);
-    } else if (!finished) {
-      carry.assign(data, complete);
-    } else if (complete != data.size()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("COPY FROM STDIN: truncated row"));
-    }
-    data.resize(complete);
-    return data;
-  }
-
- private:
-  bool SkipHeader() {
-    if (header_done) {
-      return true;
-    }
-    header_done = true;
-    if (!ReadHeader(*source)) {
-      finished = true;
-      return false;
-    }
-    source->View();
-    return true;
-  }
-
-  void ExpectEndAfterTrailer(size_t left) {
-    // PG requires the protocol EOF (CopyDone) to follow the trailer
-    // immediately: any bytes between it and CopyDone are an error.
-    char after_marker;
-    if (left != 2 || source->Fill(&after_marker, 1) != 0) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-        ERR_MSG("COPY FROM STDIN: received copy data after EOF marker"));
-    }
-    finished = true;
-  }
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::ClientContext& context, duckdb::CopyFromFunctionBindInput& input,
   duckdb::vector<duckdb::Identifier>&,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
-  const bool from_stdin = input.info.file_path == kCopyStdinPath;
   auto result = duckdb::make_uniq<PgBinaryCopyFromBindData>(
-    expected_types, input.info.file_path,
-    !from_stdin && ParallelCopyFrom(context, input));
-  if (from_stdin) {
-    result->from_stdin = true;
-    BindCopyFromBatches(context, input, "binary", result->ordered);
-  }
+    expected_types, input.info.file_path);
+  result->ordered = BindCopyFrom(context, input, true);
   return result;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind = input.bind_data->Cast<PgBinaryCopyFromBindData>();
-  if (bind.from_stdin) {
-    return duckdb::make_uniq<CopyFromBatchesGlobalState>(
-      context, RequireCopyInBatches(context, "binary"),
-      pg::CopyInTarget{
-        .binary = true,
-        .types = {bind.sql_types.begin(), bind.sql_types.end()},
-      },
-      bind.ordered);
-  }
-  auto result = duckdb::make_uniq<PgBinaryCopyFromGlobalState>();
-  result->source = std::make_unique<HandleByteSource>(
-    duckdb::FileSystem::GetFileSystem(context).OpenFile(
-      bind.file_path, duckdb::FileFlags::FILE_FLAGS_READ));
-  result->deserializers.reserve(bind.sql_types.size());
-  for (const auto& type : bind.sql_types) {
-    result->deserializers.emplace_back(
-      sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
-        type, sdb::pg::VarFormat::Binary));
-  }
-  if (bind.parallel) {
-    result->StartParallel(context);
-  }
-  return result;
-}
-
-duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitLocalFrom(
-  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput& input,
-  duckdb::GlobalTableFunctionState*) {
-  if (input.bind_data->Cast<PgBinaryCopyFromBindData>().from_stdin) {
-    return duckdb::make_uniq<CopyFromBatchesLocalState>();
-  }
-  return duckdb::make_uniq<CopyFromLocalState>();
-}
-
-void ScanSerial(duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
-  auto& g = input.global_state->Cast<PgBinaryCopyFromGlobalState>();
-  const auto& bind = input.bind_data->Cast<PgBinaryCopyFromBindData>();
-  auto& source = *g.source;
-  if (g.finished) {
-    output.SetCardinality(0);
-    return;
-  }
-
-  if (!g.header_done) {
-    if (!ReadHeader(source)) {
-      g.finished = true;
-      output.SetCardinality(0);
-      return;
-    }
-    g.header_done = true;
-  }
-
-  const auto columns = bind.sql_types.size();
-  sdb::pg::DeserializeContext dctx;
-  std::string
-    field;  // a field that straddles a frame boundary, or the fallback
-  duckdb::idx_t row = 0;
-  for (; row < STANDARD_VECTOR_SIZE; ++row) {
-    // Fast path: the whole row (int16 count + every int32-len-prefixed field)
-    // lies in the current window. Walk the field lengths once (no decode) to
-    // confirm it fits and find the row end, then decode each field straight
-    // from the window -- no per-field Fill/View/Next virtual call, one
-    // Next per row. Any anomaly (too little in window, trailer, count
-    // mismatch, bad or straddling length, EOF) drops to the slow path below,
-    // which owns the cross-frame stitching and all error/trailer handling.
-    if (const auto win = source.View(); win.size() >= 2) {
-      const char* const base = win.data();
-      const char* const limit = base + win.size();
-      const char* p = base + 2;
-      bool in_window = static_cast<int16_t>(absl::big_endian::Load16(base)) ==
-                       static_cast<int16_t>(columns);
-      for (size_t c = 0; in_window && c < columns; ++c) {
-        if (limit - p < 4) {
-          in_window = false;
-          break;
-        }
-        const auto len = static_cast<int32_t>(absl::big_endian::Load32(p));
-        p += 4;
-        if (len == -1) {
-          continue;
-        }
-        if (len < 0 || limit - p < len) {
-          in_window = false;
-          break;
-        }
-        p += len;
-      }
-      if (in_window) {
-        const char* q = base + 2;
-        for (duckdb::idx_t column = 0; column < columns; ++column) {
-          const auto len = static_cast<int32_t>(absl::big_endian::Load32(q));
-          q += 4;
-          auto& vec = output.data[column];
-          if (len == -1) {
-            duckdb::FlatVector::SetNull(vec, row, true);
-            continue;
-          }
-          sdb::pg::VectorSink sink{vec, row};
-          if (!g.deserializers[column](dctx, {q, static_cast<size_t>(len)},
-                                       sink)) {
-            THROW_SQL_ERROR(
-              ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
-              ERR_MSG("COPY FROM STDIN: invalid binary value in column ",
-                      column + 1));
-          }
-          q += len;
-        }
-        source.Next(static_cast<size_t>(p - base));
-        continue;
-      }
-    }
-
-    // Slow path: field-by-field with cross-frame stitching, plus the trailer /
-    // EOF-marker / error handling the fast path defers here.
-    // Row header: int16 field count.
-    char count_bytes[2];
-    const auto got = source.Fill(count_bytes, sizeof(count_bytes));
-    if (got == 0) {  // end of stream without an explicit -1 trailer
-      g.finished = true;
-      break;
-    }
-    if (got < 2) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("COPY FROM STDIN: truncated row header"));
-    }
-    const auto fields =
-      static_cast<int16_t>(absl::big_endian::Load16(count_bytes));
-    if (fields == -1) {  // PGCOPY trailer
-      // PG requires the protocol EOF (CopyDone) to follow the trailer
-      // immediately: any bytes between it and CopyDone are an error.
-      char after_marker;
-      if (source.Fill(&after_marker, 1) != 0) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-          ERR_MSG("COPY FROM STDIN: received copy data after EOF marker"));
-      }
-      g.finished = true;
-      break;
-    }
-    if (static_cast<size_t>(fields) != columns) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                      ERR_MSG("COPY FROM STDIN: row has ", fields,
-                              " fields, expected ", columns));
-    }
-    for (duckdb::idx_t column = 0; column < columns; ++column) {
-      char len_bytes[4];
-      if (source.Fill(len_bytes, sizeof(len_bytes)) < 4) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                        ERR_MSG("COPY FROM STDIN: truncated field length"));
-      }
-      const auto len =
-        static_cast<int32_t>(absl::big_endian::Load32(len_bytes));
-      auto& vec = output.data[column];
-      if (len == -1) {  // SQL NULL
-        duckdb::FlatVector::SetNull(vec, row, true);
-        continue;
-      }
-      if (len < 0) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                        ERR_MSG("COPY FROM STDIN: negative field length"));
-      }
-      const auto ulen = static_cast<size_t>(len);
-
-      // One contiguous span of the field: the recv-buffer view when it holds
-      // the whole field (zero-copy), else stitched across the frame boundary.
-      const auto fn = g.deserializers[column];
-      auto v = source.View();
-      const char* span;
-      bool advance_after = false;
-      if (v.size() >= ulen) {
-        span = v.data();
-        advance_after = true;
-      } else {
-        field.resize(ulen);
-        if (source.Fill(field.data(), ulen) < ulen) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-                          ERR_MSG("COPY FROM STDIN: truncated field value"));
-        }
-        span = field.data();
-      }
-      sdb::pg::VectorSink sink{vec, row};
-      const bool ok = fn(dctx, {span, ulen}, sink);
-      if (advance_after) {
-        source.Next(ulen);
-      }
-      if (!ok) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
-          ERR_MSG("COPY FROM STDIN: invalid binary value in column ",
-                  column + 1));
-      }
-    }
-  }
-  // SetChildCardinality (not SetCardinality): fork vectors carry their own
-  // v_size, and a downstream size-deriving op (e.g. a LIKE/prefix filter on the
-  // scanned chunk) reads it. SetCardinality sets only chunk.count, leaving the
-  // column vectors at v_size 0 -> "Mismatch in input vector sizes".
-  output.SetChildCardinality(row);
-}
-
-void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
-              duckdb::DataChunk& output) {
-  if (input.bind_data->Cast<PgBinaryCopyFromBindData>().from_stdin) {
-    ScanCopyFromBatches(context, input, output);
-    return;
-  }
-  if (!input.bind_data->Cast<PgBinaryCopyFromBindData>().parallel) {
-    ScanSerial(input, output);
-    return;
-  }
-  auto& g = input.global_state->Cast<PgBinaryCopyFromGlobalState>();
-  auto& local = input.local_state->Cast<CopyFromLocalState>();
-  const auto columns = g.deserializers.size();
-  duckdb::idx_t row = 0;
-  while (row < STANDARD_VECTOR_SIZE) {
-    if (local.Exhausted()) {
-      if (row != 0 || local.Claim(g, input) != TakeResult::Item) {
-        break;
-      }
-      continue;
-    }
-    const char* p = local.block.data.data() + local.pos + kFieldCountBytes;
-    for (duckdb::idx_t column = 0; column < columns; ++column) {
-      const auto len = static_cast<int32_t>(absl::big_endian::Load32(p));
-      p += kFieldLengthBytes;
-      auto& vec = output.data[column];
-      if (len == kNullFieldLength) {
-        duckdb::FlatVector::SetNull(vec, row, true);
-        continue;
-      }
-      sdb::pg::VectorSink sink{vec, row};
-      if (!g.deserializers[column](local.dctx, {p, static_cast<size_t>(len)},
-                                   sink)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INVALID_BINARY_REPRESENTATION),
-          ERR_MSG("COPY FROM STDIN: invalid binary value in column ",
-                  column + 1));
-      }
-      p += len;
-    }
-    local.pos = static_cast<size_t>(p - local.block.data.data());
-    ++row;
-  }
-  // SetChildCardinality (not SetCardinality): fork vectors carry their own
-  // v_size, and a downstream size-deriving op (e.g. a LIKE/prefix filter on the
-  // scanned chunk) reads it. SetCardinality sets only chunk.count, leaving the
-  // column vectors at v_size 0 -> "Mismatch in input vector sizes".
-  output.SetChildCardinality(row);
+  return InitCopyFromGlobal(
+    context, bind.file_path,
+    pg::CopyInTarget{
+      .binary = true,
+      .types = {bind.sql_types.begin(), bind.sql_types.end()},
+    },
+    bind.ordered);
 }
 
 }  // namespace
@@ -653,9 +248,8 @@ void RegisterPgBinaryCopyFunction(duckdb::DatabaseInstance& db) {
   func.execution_mode = ExecutionMode;
   func.copy_from_bind = BindFrom;
   func.copy_from_function =
-    duckdb::TableFunction("pg_binary_copy_from", {}, ScanFrom,
-                          /*bind=*/nullptr, InitGlobalFrom, InitLocalFrom);
-  func.copy_from_function.get_partition_data = CopyFromPartitionData;
+    duckdb::TableFunction("pg_binary_copy_from", {}, ScanCopyFrom,
+                          /*bind=*/nullptr, InitGlobalFrom, InitCopyFromLocal);
   loader.RegisterFunction(std::move(func));
 }
 

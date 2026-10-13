@@ -343,7 +343,7 @@ def _threads() -> int:
 
 def test_large_bulk_reports_the_first_of_many_failing_lines(conn, index):
     if _threads() < 2:
-        pytest.skip("the morsels of a _bulk load only race on 2+ threads")
+        pytest.skip("the batches of a _bulk load only race on 2+ threads")
     good = '{"index":{}}\n{"year":1}\n'
     bad = '{"delete":{"_id":"x"}}\n{"year":1}\n'
     failing = {120_000, 122_885, 245_765}

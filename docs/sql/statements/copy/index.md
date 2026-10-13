@@ -107,6 +107,8 @@ Read the contents of a file provided as parameter of a prepared statement into t
 
 Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` in the `text` and `binary` formats parses rows on several threads, up to the `threads` setting, while the client is still sending them. Rows keep their input order when [`preserve_insertion_order`](../../../configuration/overview.md) is `true`, the default; when it is `false`, and for search tables, rows may be stored in any order. A client that sends slowly does not keep threads busy: they run other queries until more data arrives. The initial table copy of a [subscription](../create_subscription/index.md) loads rows the same way.
 
+`COPY ... FROM 'file'` in the `text` and `binary` formats also parses rows on several threads, with the same ordering rules. A `text` file is split into byte ranges that threads read and parse independently. A `binary` file has no row delimiter, so it is read ahead in order by one asynchronous I/O task at a time, on the pool sized by the `async_threads` setting; the task cuts it at row boundaries while the other threads parse the pieces already cut; the same happens for a `text` file that cannot be read at an offset, such as a named pipe.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />

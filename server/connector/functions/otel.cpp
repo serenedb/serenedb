@@ -405,10 +405,8 @@ struct RecordPosition {
   auto operator<=>(const RecordPosition&) const = default;
 };
 
-inline constexpr size_t kMorselRows = 8 * STANDARD_VECTOR_SIZE;
-
 template<typename Source>
-std::vector<RecordPosition> SplitIntoMorsels(
+std::vector<RecordPosition> SplitIntoBatches(
   const typename Source::Request& request) {
   std::vector<RecordPosition> bounds{RecordPosition{}};
   size_t rows = 0;
@@ -417,7 +415,7 @@ std::vector<RecordPosition> SplitIntoMorsels(
     for (size_t s = 0; s < scopes.size(); ++s) {
       const auto& records = scopes[s].records;
       for (size_t i = 0; i < records.size(); ++i) {
-        if (rows >= kMorselRows) {
+        if (rows >= STANDARD_VECTOR_SIZE) {
           bounds.emplace_back(r, s, i);
           rows = 0;
         }
@@ -885,11 +883,11 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
   duckdb::idx_t MaxThreads() const final { return bounds.size() - 1; }
 
   std::optional<typename Source::Cursor> Claim() {
-    const size_t morsel = next.fetch_add(1, std::memory_order_relaxed);
-    if (morsel + 1 >= bounds.size()) {
+    const size_t batch = next.fetch_add(1, std::memory_order_relaxed);
+    if (batch + 1 >= bounds.size()) {
       return std::nullopt;
     }
-    return typename Source::Cursor{request, bounds[morsel], bounds[morsel + 1]};
+    return typename Source::Cursor{request, bounds[batch], bounds[batch + 1]};
   }
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
@@ -908,7 +906,7 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
                 "OTLP/HTTP endpoint"));
     }
     state->request = request;
-    state->bounds = SplitIntoMorsels<Source>(*request);
+    state->bounds = SplitIntoBatches<Source>(*request);
     return state;
   }
 };

@@ -1402,7 +1402,6 @@ bool ClaimSearchConjuncts(
   duckdb::ClientContext& context) {
   auto& [getter, expr_getter, analyzed_fields, null_markers, column_id] =
     getters;
-  (void)column_id;
 
   auto root_and = std::make_unique<irs::BooleanFilter>();
   bool any_claimed = false;
@@ -1410,7 +1409,7 @@ bool ClaimSearchConjuncts(
   // Parameters are read at execution only by a vector-scored scan, the one
   // whose plan is worth caching; a text-scored one keeps duckdb's rebind.
   DeferredClaimBuilder deferred;
-  deferred.column_id = &getters.column_id;
+  deferred.column_id = &column_id;
   DeferredClaimBuilder* const deferred_ptr =
     scan.score.vector && !scan.score.text ? &deferred : nullptr;
   const auto range_modes = DecideColumnRanges(filters, getter, context);

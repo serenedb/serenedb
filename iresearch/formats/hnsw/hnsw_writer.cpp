@@ -1111,10 +1111,6 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
       std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
       EffectiveQuantMetric(_info.metric), /*row_major=*/true);
   }
-  if (!stats) {
-    _codes.clear();
-    _codes.shrink_to_fit();
-  }
 
   const auto m = _info.m;
   const auto ef = _info.ef_construction;
@@ -1186,12 +1182,7 @@ void HnswWriter::Flush() {
       out.WriteData(reinterpret_cast<const byte_type*>(_centroid.data()),
                     _centroid.size() * sizeof(float));
     }
-    if (!_codes.empty()) {
-      out.WriteData(_codes.data(), _codes.size());
-    } else {
-      _qw->Encode(out, _vectors.data(), _rows);
-      _qw->Finish(out);
-    }
+    out.WriteData(_codes.data(), _codes.size());
   } else {
     out.WriteData(reinterpret_cast<const byte_type*>(_vectors.data()),
                   static_cast<size_t>(_rows) * _d * sizeof(float));

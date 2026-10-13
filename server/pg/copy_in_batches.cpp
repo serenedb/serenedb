@@ -26,11 +26,16 @@
 namespace sdb::pg {
 
 using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
-using UniqueLock = duckdb::annotated_unique_lock<duckdb::annotated_mutex>;
 
 namespace {
 
 constexpr uint64_t kWindowFactor = 16;
+
+void Wake(const std::vector<duckdb::InterruptState>& waiters) {
+  for (const auto& waiter : waiters) {
+    waiter.Callback();
+  }
+}
 
 }  // namespace
 
@@ -43,7 +48,7 @@ bool CopyInBatches::Full() const {
 }
 
 bool CopyInBatches::NeedSpace() {
-  Guard guard{_blocked.lock};
+  Guard guard{_waiters.lock};
   if (_aborted || !Full()) {
     return false;
   }
@@ -51,15 +56,21 @@ bool CopyInBatches::NeedSpace() {
   return true;
 }
 
+size_t CopyInBatches::RetainedBytes() const {
+  Guard guard{_waiters.lock};
+  return _retained_bytes;
+}
+
 void CopyInBatches::Push(std::unique_ptr<CopyBatch> batch,
                          message::Chain released) {
-  std::vector<duckdb::InterruptState> wake;
+  std::vector<duckdb::InterruptState> waiters;
   {
-    Guard guard{_blocked.lock};
+    Guard guard{_waiters.lock};
     if (_aborted) {
       return;
     }
     batch->seq = _pushed;
+    _retained_bytes += batch->bytes;
     _window.emplace_back(std::move(batch));
     _done.emplace_back(0);
     if (released.head != nullptr) {
@@ -67,77 +78,128 @@ void CopyInBatches::Push(std::unique_ptr<CopyBatch> batch,
     }
     ++_pushed;
     ++_outstanding;
-    wake = _blocked.TakeBlockedTasks();
-    for (size_t i = 1; i < wake.size(); ++i) {
-      _blocked.BlockTask(wake[i]);
-    }
-    wake.resize(std::min<size_t>(wake.size(), 1));
+    waiters = TakeOneWaiter();
   }
-  _changed.notify_one();
-  for (const auto& task : wake) {
-    task.Callback();
-  }
+  Wake(waiters);
 }
 
 void CopyInBatches::Release(message::Chain released) {
   if (released.head == nullptr) {
     return;
   }
-  Guard guard{_blocked.lock};
+  Guard guard{_waiters.lock};
   if (_pushed != _watermark) {
     _released.emplace_back(_pushed - 1, std::move(released));
   }
 }
 
 void CopyInBatches::Finish() {
-  std::vector<duckdb::InterruptState> wake;
+  std::vector<duckdb::InterruptState> waiters;
   {
-    Guard guard{_blocked.lock};
+    Guard guard{_waiters.lock};
     _finished = true;
-    wake = _blocked.TakeBlockedTasks();
+    waiters = _waiters.TakeBlockedTasks();
   }
-  _changed.notify_all();
-  for (const auto& task : wake) {
-    task.Callback();
-  }
+  Wake(waiters);
 }
 
 void CopyInBatches::Fail(std::exception_ptr error) {
-  std::vector<duckdb::InterruptState> wake;
+  std::vector<duckdb::InterruptState> waiters;
   {
-    Guard guard{_blocked.lock};
+    Guard guard{_waiters.lock};
     if (!_error) {
       _error = std::move(error);
     }
-    wake = _blocked.TakeBlockedTasks();
+    waiters = _waiters.TakeBlockedTasks();
   }
-  _changed.notify_all();
-  for (const auto& task : wake) {
-    task.Callback();
-  }
+  Wake(waiters);
 }
 
 void CopyInBatches::Abort() {
-  std::vector<duckdb::InterruptState> wake;
+  std::vector<duckdb::InterruptState> waiters;
   bool space = false;
   {
-    Guard guard{_blocked.lock};
+    Guard guard{_waiters.lock};
     _aborted = true;
     space = std::exchange(_space_waiter, false);
-    wake = _blocked.TakeBlockedTasks();
+    waiters = _waiters.TakeBlockedTasks();
   }
-  _changed.notify_all();
-  for (const auto& task : wake) {
-    task.Callback();
-  }
+  Wake(waiters);
   if (space) {
     _space.Set();
   }
 }
 
 bool CopyInBatches::Aborted() const {
-  Guard guard{_blocked.lock};
+  Guard guard{_waiters.lock};
   return _aborted;
+}
+
+CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
+                             std::vector<CopyBatch*>& out) {
+  Lock lock{_waiters.lock};
+  for (;;) {
+    ThrowIfFailed(lock);
+    if (TakeReady(max, out)) {
+      return CopyTake::Batches;
+    }
+    if (_finished || _aborted) {
+      return CopyTake::End;
+    }
+    if (CanPark(input) && _waiters.BlockTask(*input.interrupt_state)) {
+      input.async_result = duckdb::AsyncResultType::BLOCKED;
+      return CopyTake::Blocked;
+    }
+    WaitForPush(lock);
+  }
+}
+
+bool CopyInBatches::TryTake(size_t max, std::vector<CopyBatch*>& out) {
+  Lock lock{_waiters.lock};
+  ThrowIfFailed(lock);
+  return TakeReady(max, out);
+}
+
+CopyBatch* CopyInBatches::Next() {
+  Lock lock{_waiters.lock};
+  for (;;) {
+    ThrowIfFailed(lock);
+    if (_taken != _pushed) {
+      return _window[_taken++ - _watermark].get();
+    }
+    if (_finished || _aborted) {
+      return nullptr;
+    }
+    WaitForPush(lock);
+  }
+}
+
+void CopyInBatches::Done(uint64_t seq) {
+  std::vector<std::unique_ptr<CopyBatch>> finished;
+  std::vector<message::Chain> chunks;
+  bool space = false;
+  {
+    Guard guard{_waiters.lock};
+    _done[seq - _watermark] = 1;
+    --_outstanding;
+    while (!_done.empty() && _done.front() != 0) {
+      _done.pop_front();
+      _retained_bytes -= _window.front()->bytes;
+      finished.emplace_back(std::move(_window.front()));
+      _window.pop_front();
+      ++_watermark;
+    }
+    while (!_released.empty() && _released.front().seq < _watermark) {
+      chunks.emplace_back(std::move(_released.front().chunks));
+      _released.pop_front();
+    }
+    if (!Full()) {
+      space = std::exchange(_space_waiter, false);
+    }
+  }
+  if (space) {
+    _space.Set();
+  }
 }
 
 bool CopyInBatches::TakeReady(size_t max, std::vector<CopyBatch*>& out) {
@@ -152,119 +214,36 @@ bool CopyInBatches::TakeReady(size_t max, std::vector<CopyBatch*>& out) {
   return true;
 }
 
-CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
-                             std::vector<CopyBatch*>& out,
-                             size_t produce_below) {
-  UniqueLock lock{_blocked.lock};
-  for (;;) {
-    if (_error) {
-      auto error = _error;
-      lock.unlock();
-      std::rethrow_exception(error);
-    }
-    if (!_producing && !_finished && !_aborted &&
-        _pushed - _taken < produce_below) {
-      if (!Full()) {
-        _producing = true;
-        return CopyTake::Produce;
-      }
-      _produce_waiter = true;
-    }
-    if (TakeReady(max, out)) {
-      return CopyTake::Batches;
-    }
-    if (_finished || _aborted) {
-      return CopyTake::End;
-    }
-    if (input.interrupt_state &&
-        input.results_execution_mode ==
-          duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR &&
-        _blocked.BlockTask(*input.interrupt_state)) {
-      input.async_result = duckdb::AsyncResultType::BLOCKED;
-      return CopyTake::Blocked;
-    }
-    _changed.wait(lock);
+std::vector<duckdb::InterruptState> CopyInBatches::TakeOneWaiter() {
+  auto waiters = _waiters.TakeBlockedTasks();
+  for (size_t i = 1; i < waiters.size(); ++i) {
+    _waiters.BlockTask(waiters[i]);
   }
+  waiters.resize(std::min<size_t>(waiters.size(), 1));
+  return waiters;
 }
 
-void CopyInBatches::Produced() {
-  std::vector<duckdb::InterruptState> wake;
-  {
-    Guard guard{_blocked.lock};
-    _producing = false;
-    wake = _blocked.TakeBlockedTasks();
-  }
-  _changed.notify_all();
-  for (const auto& task : wake) {
-    task.Callback();
-  }
+bool CopyInBatches::CanPark(const duckdb::TableFunctionInput& input) {
+  return input.interrupt_state &&
+         input.results_execution_mode ==
+           duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR;
 }
 
-bool CopyInBatches::TryTake(size_t max, std::vector<CopyBatch*>& out) {
-  UniqueLock lock{_blocked.lock};
+void CopyInBatches::ThrowIfFailed(Lock& lock) {
   if (_error) {
     auto error = _error;
     lock.unlock();
     std::rethrow_exception(error);
   }
-  return TakeReady(max, out);
 }
 
-CopyBatch* CopyInBatches::Next() {
-  UniqueLock lock{_blocked.lock};
-  for (;;) {
-    if (_error) {
-      auto error = _error;
-      lock.unlock();
-      std::rethrow_exception(error);
-    }
-    if (_taken != _pushed) {
-      return _window[_taken++ - _watermark].get();
-    }
-    if (_finished || _aborted) {
-      return nullptr;
-    }
-    _changed.wait(lock);
-  }
-}
-
-void CopyInBatches::Done(uint64_t seq) {
-  std::vector<std::unique_ptr<CopyBatch>> finished;
-  std::vector<message::Chain> chunks;
-  std::vector<duckdb::InterruptState> wake;
-  bool space = false;
-  bool produce = false;
-  {
-    Guard guard{_blocked.lock};
-    _done[seq - _watermark] = 1;
-    --_outstanding;
-    while (!_done.empty() && _done.front() != 0) {
-      _done.pop_front();
-      finished.emplace_back(std::move(_window.front()));
-      _window.pop_front();
-      ++_watermark;
-    }
-    while (!_released.empty() && _released.front().seq < _watermark) {
-      chunks.emplace_back(std::move(_released.front().chunks));
-      _released.pop_front();
-    }
-    if (!Full()) {
-      space = std::exchange(_space_waiter, false);
-      produce = std::exchange(_produce_waiter, false);
-      if (produce) {
-        wake = _blocked.TakeBlockedTasks();
-      }
-    }
-  }
-  if (space) {
-    _space.Set();
-  }
-  if (produce) {
-    _changed.notify_all();
-  }
-  for (const auto& task : wake) {
-    task.Callback();
-  }
+void CopyInBatches::WaitForPush(Lock& lock) {
+  auto signal = duckdb::make_shared_ptr<duckdb::InterruptDoneSignalState>();
+  _waiters.BlockTask(duckdb::InterruptState{
+    duckdb::weak_ptr<duckdb::InterruptDoneSignalState>{signal}});
+  lock.unlock();
+  signal->Await();
+  lock.lock();
 }
 
 }  // namespace sdb::pg

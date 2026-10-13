@@ -324,46 +324,32 @@ struct BlockingInput {
   duckdb::TableFunctionInput input{nullptr, nullptr, nullptr};
 };
 
-TEST(PgCopyInBatches, TakeGrantsProduceToOneConsumerAtATime) {
+TEST(PgCopyInBatches, EmptyQueueParksTaskUntilPush) {
   CopyInBatches queue;
-  auto input = NoInput();
+  BlockingInput consumer;
   std::vector<CopyBatch*> taken;
-  ASSERT_EQ(queue.Take(input, 1, taken, 1), CopyTake::Produce);
-  BlockingInput second;
-  std::vector<CopyBatch*> mine;
-  ASSERT_EQ(queue.Take(second.input, 1, mine, 1), CopyTake::Blocked);
-  queue.Produced();
-  second.signal->Await();
-  ASSERT_EQ(queue.Take(second.input, 1, mine, 1), CopyTake::Produce);
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
   queue.Push(MakeBatch("0"), {});
-  queue.Push(MakeBatch("1"), {});
-  queue.Produced();
-  ASSERT_EQ(queue.Take(input, 1, taken, 2), CopyTake::Batches);
-  ASSERT_EQ(queue.Take(input, 1, taken, 2), CopyTake::Produce);
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
   queue.Finish();
-  queue.Produced();
-  ASSERT_EQ(queue.Take(input, 1, taken, 2), CopyTake::Batches);
-  EXPECT_EQ(queue.Take(input, 1, taken, 2), CopyTake::End);
-  for (auto* batch : taken) {
-    queue.Done(batch->seq);
-  }
+  EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+  queue.Done(taken.front()->seq);
 }
 
-TEST(PgCopyInBatches, FullQueueGrantsProduceAfterDone) {
-  CopyInBatches queue{2};
-  queue.Push(MakeBatch("0"), {});
-  queue.Push(MakeBatch("1"), {});
+TEST(PgCopyInBatches, RetainedBytesCountUntilBatchesAreFreedInOrder) {
+  CopyInBatches queue;
+  queue.Push(MakeBatch("abc"), {});
+  queue.Push(MakeBatch("de"), {});
+  EXPECT_EQ(queue.RetainedBytes(), 5);
   auto input = NoInput();
   std::vector<CopyBatch*> taken;
-  ASSERT_EQ(queue.Take(input, 1, taken, 4), CopyTake::Batches);
-  ASSERT_EQ(queue.Take(input, 1, taken, 4), CopyTake::Batches);
-  BlockingInput waiter;
-  std::vector<CopyBatch*> mine;
-  ASSERT_EQ(queue.Take(waiter.input, 1, mine, 4), CopyTake::Blocked);
-  queue.Done(taken[0]->seq);
-  waiter.signal->Await();
-  EXPECT_EQ(queue.Take(waiter.input, 1, mine, 4), CopyTake::Produce);
+  ASSERT_EQ(queue.Take(input, 2, taken), CopyTake::Batches);
+  EXPECT_EQ(queue.RetainedBytes(), 5);
   queue.Done(taken[1]->seq);
+  EXPECT_EQ(queue.RetainedBytes(), 5);
+  queue.Done(taken[0]->seq);
+  EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
 TEST(PgCopyInBatches, FailRethrowsToConsumers) {

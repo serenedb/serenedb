@@ -26,9 +26,11 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/async_memory_governor.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/async_result.hpp>
 #include <duckdb/parallel/scan_read_ahead.hpp>
+#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <exception>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -75,60 +77,121 @@ pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
   return *batches;
 }
 
-class CopyFileFeeder {
+class CopyFileReader {
  public:
-  CopyFileFeeder(std::unique_ptr<duckdb::FileHandle> file, bool binary,
-                 size_t capacity)
+  CopyFileReader(duckdb::ClientContext& context,
+                 std::unique_ptr<duckdb::FileHandle> file, bool binary)
     : _file{std::move(file)},
       _builder{binary ? pg::CopyBatchFormat::Binary
                       : pg::CopyBatchFormat::Text},
-      _batches{capacity},
-      _chunk(pg::kCopyBatchBytes, '\0') {}
+      _memory{context},
+      _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) * kOrderedRun *
+                    pg::kCopyBatchBytes},
+      _executor{context, duckdb::TaskSchedulerType::ASYNC},
+      _chunk(pg::kCopyBatchBytes, '\0') {
+    UpdateBudget();
+  }
+
+  ~CopyFileReader() {
+    _ended.store(true, std::memory_order_release);
+    _executor.CancelAndDrain();
+  }
 
   pg::CopyInBatches& Batches() noexcept { return _batches; }
 
-  void Produce(size_t batches) {
-    try {
-      while (batches != 0) {
-        const auto got =
-          static_cast<size_t>(_file->Read(_chunk.data(), _chunk.size()));
-        if (got == 0) {
-          _builder.Finish();
-          if (_builder.HasRows()) {
-            _batches.Push(_builder.Take(), {});
-          }
-          _batches.Finish();
-          break;
-        }
-        _builder.Feed({_chunk.data(), got}, false);
-        if (_builder.Ready()) {
-          _batches.Push(_builder.Take(), {});
-          --batches;
-        }
-      }
-    } catch (...) {
-      _batches.Fail(std::current_exception());
+  void Resume() {
+    if (_ended.load(std::memory_order_acquire) || !HasRoom() ||
+        _reading.exchange(true, std::memory_order_acq_rel)) {
+      return;
     }
-    _batches.Produced();
+    _executor.ScheduleTask(duckdb::make_uniq<ReadTask>(_executor, *this));
   }
 
  private:
+  class ReadTask final : public duckdb::BaseExecutorTask {
+   public:
+    ReadTask(duckdb::TaskExecutor& executor, CopyFileReader& reader)
+      : BaseExecutorTask{executor}, _reader{reader} {}
+
+    void ExecuteTask() final { _reader.Read(); }
+
+   private:
+    CopyFileReader& _reader;
+  };
+
+  bool HasRoom() const {
+    const size_t budget =
+      std::max(_budget.load(std::memory_order_relaxed), pg::kCopyBatchBytes);
+    return _batches.RetainedBytes() < budget;
+  }
+
+  void UpdateBudget() {
+    const size_t budget =
+      _memory.IsActive() ? _memory.BackpressureBudget() : _fixed_budget;
+    _budget.store(budget, std::memory_order_relaxed);
+  }
+
+  bool KeepReading() {
+    return !_ended.load(std::memory_order_acquire) && HasRoom() &&
+           !_reading.exchange(true, std::memory_order_acq_rel);
+  }
+
+  void Read() {
+    do {
+      ReadWhileRoom();
+      _reading.store(false, std::memory_order_release);
+    } while (KeepReading());
+  }
+
+  void ReadWhileRoom() {
+    try {
+      while (!_ended.load(std::memory_order_acquire) && HasRoom()) {
+        ReadBatch();
+      }
+    } catch (...) {
+      _ended.store(true, std::memory_order_release);
+      _batches.Fail(std::current_exception());
+    }
+  }
+
+  void ReadBatch() {
+    while (!_builder.Ready()) {
+      const auto got =
+        static_cast<size_t>(_file->Read(_chunk.data(), _chunk.size()));
+      if (got == 0) {
+        FinishFile();
+        return;
+      }
+      _builder.Feed({_chunk.data(), got}, false);
+    }
+    Push(_builder.Take());
+  }
+
+  void FinishFile() {
+    _builder.Finish();
+    if (_builder.HasRows()) {
+      Push(_builder.Take());
+    }
+    _ended.store(true, std::memory_order_release);
+    _batches.Finish();
+  }
+
+  void Push(std::unique_ptr<pg::CopyBatch> batch) {
+    _batches.Push(std::move(batch), {});
+    _memory.UpdateReservation(_batches.RetainedBytes());
+    UpdateBudget();
+  }
+
   std::unique_ptr<duckdb::FileHandle> _file;
   pg::CopyBatchBuilder _builder;
   pg::CopyInBatches _batches;
+  duckdb::ManagedAsyncMemoryGovernor _memory;
+  const size_t _fixed_budget;
+  std::atomic<size_t> _budget{0};
+  std::atomic_bool _reading{false};
+  std::atomic_bool _ended{false};
+  duckdb::TaskExecutor _executor;
   std::string _chunk;
-};
-
-class CopyFileReadTask final : public duckdb::AsyncTask {
- public:
-  CopyFileReadTask(CopyFileFeeder& feeder, size_t batches)
-    : _feeder{feeder}, _batches{batches} {}
-
-  void Execute() final { _feeder.Produce(_batches); }
-
- private:
-  CopyFileFeeder& _feeder;
-  size_t _batches;
 };
 
 enum class CopyFromSource : uint8_t {
@@ -163,16 +226,15 @@ struct BatchesGlobalState final : public CopyFromGlobalState {
                      pg::CopyInTarget target, bool ordered)
     : CopyFromGlobalState{CopyFromSource::Batches, std::move(target), ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
-      read_ahead_batches{max_threads * (ordered ? kOrderedRun : 1)},
-      feeder{std::in_place, std::move(file), this->target.binary,
-             read_ahead_batches},
-      queue{feeder->Batches()} {}
+      reader{std::in_place, context, std::move(file), this->target.binary},
+      queue{reader->Batches()} {
+    reader->Resume();
+  }
 
   duckdb::idx_t MaxThreads() const final { return max_threads; }
 
   duckdb::idx_t max_threads;
-  size_t read_ahead_batches = 0;
-  std::optional<CopyFileFeeder> feeder;
+  std::optional<CopyFileReader> reader;
   pg::CopyInBatches& queue;
 };
 
@@ -224,31 +286,6 @@ duckdb::OperatorPartitionData CopyFromPartitionData(
     input.local_state->Cast<CopyFromLocalState>().batch_index};
 }
 
-bool TakeRun(duckdb::TableFunctionInput& input, BatchesGlobalState& g,
-             size_t max, std::vector<pg::CopyBatch*>& out) {
-  for (;;) {
-    switch (g.queue.Take(input, max, out, (g.read_ahead_batches + 1) / 2)) {
-      case pg::CopyTake::Batches:
-        return true;
-      case pg::CopyTake::Produce:
-        if (input.results_execution_mode ==
-            duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
-          duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>> tasks;
-          tasks.emplace_back(duckdb::make_uniq<CopyFileReadTask>(
-            *g.feeder, g.read_ahead_batches));
-          input.async_result = duckdb::AsyncResult{
-            std::move(tasks), duckdb::TaskSchedulerType::ASYNC};
-          return false;
-        }
-        g.feeder->Produce(g.read_ahead_batches);
-        break;
-      case pg::CopyTake::End:
-      case pg::CopyTake::Blocked:
-        return false;
-    }
-  }
-}
-
 void ScanBatches(duckdb::ClientContext& context,
                  duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<BatchesGlobalState>();
@@ -267,7 +304,8 @@ void ScanBatches(duckdb::ClientContext& context,
           if (g.ordered || !g.queue.TryTake(1, l.run)) {
             break;
           }
-        } else if (!TakeRun(input, g, g.ordered ? kOrderedRun : 1, l.run)) {
+        } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
+                   pg::CopyTake::Batches) {
           break;
         }
         l.batch_index = l.run.front()->seq;
@@ -278,6 +316,9 @@ void ScanBatches(duckdb::ClientContext& context,
     if (parser.Exhausted()) {
       g.queue.Done(parser.Seq());
       parser.Stop();
+      if (g.reader) {
+        g.reader->Resume();
+      }
     }
   }
   output.SetChildCardinality(row);

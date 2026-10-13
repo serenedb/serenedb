@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -72,7 +71,6 @@ enum class CopyTake : uint8_t {
   Batches,
   End,
   Blocked,
-  Produce,
 };
 
 class CopyInBatches {
@@ -85,6 +83,7 @@ class CopyInBatches {
   bool NeedSpace();
   auto SpaceReady(yaclib::IExecutor& io) noexcept { return _space.AwaitOn(io); }
   void ResetSpace() noexcept { _space.Reset(); }
+  size_t RetainedBytes() const;
   void Push(std::unique_ptr<CopyBatch> batch, message::Chain released);
   void Release(message::Chain released);
   void Finish();
@@ -93,23 +92,29 @@ class CopyInBatches {
   bool Aborted() const;
 
   CopyTake Take(duckdb::TableFunctionInput& input, size_t max,
-                std::vector<CopyBatch*>& out, size_t produce_below = 0);
-  void Produced();
+                std::vector<CopyBatch*>& out);
   bool TryTake(size_t max, std::vector<CopyBatch*>& out);
   CopyBatch* Next();
   void Done(uint64_t seq);
 
  private:
+  using Lock = duckdb::annotated_unique_lock<duckdb::annotated_mutex>;
+
   struct Released {
     uint64_t seq;
     message::Chain chunks;
   };
 
-  bool TakeReady(size_t max, std::vector<CopyBatch*>& out);
-  bool Full() const;
+  static bool CanPark(const duckdb::TableFunctionInput& input);
 
-  duckdb::StateWithBlockableTasks _blocked;
-  std::condition_variable_any _changed;
+  bool Full() const;
+  bool TakeReady(size_t max, std::vector<CopyBatch*>& out);
+  std::vector<duckdb::InterruptState> TakeOneWaiter()
+    DUCKDB_REQUIRES(_waiters.lock);
+  void ThrowIfFailed(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
+  void WaitForPush(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
+
+  duckdb::StateWithBlockableTasks _waiters;
   const uint64_t _capacity;
   std::deque<std::unique_ptr<CopyBatch>> _window;
   std::deque<uint8_t> _done;
@@ -118,11 +123,10 @@ class CopyInBatches {
   uint64_t _taken = 0;
   uint64_t _watermark = 0;
   uint64_t _outstanding = 0;
+  size_t _retained_bytes = 0;
   std::exception_ptr _error;
   bool _finished = false;
   bool _aborted = false;
-  bool _producing = false;
-  bool _produce_waiter = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
 };

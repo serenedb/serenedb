@@ -472,7 +472,6 @@ bool PgWireSession<Kind>::SetupConnection() {
       }
     };
 
-  _conn->context->session_user.assign(UserName());
   connector::SetDefaultSearchPath(*_conn->context, DatabaseName());
 
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},

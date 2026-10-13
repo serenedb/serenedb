@@ -376,7 +376,6 @@ SystemConnection MakeSystemConnection(std::string_view user, duckdb::idx_t role,
   system.ctx = std::make_shared<ConnectionContext>(
     context, user, role, database, database_id, nullptr, 0, nullptr);
   SereneDBClientState::Register(context, system.ctx);
-  context.session_user.assign(irs::StaticStrings::kDefaultUser);
   SetDefaultSearchPath(context, database);
   return system;
 }

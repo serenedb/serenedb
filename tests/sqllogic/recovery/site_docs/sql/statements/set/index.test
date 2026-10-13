@@ -98,3 +98,22 @@ threads
 
 statement ok
 COMMIT;
+
+# DOCS_TEST: example_012
+
+# DOCS_TEST_BODY
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+SET LOCAL async_threads = 0;
+
+query
+SHOW async_threads;
+----
+async_threads
+0
+
+statement ok
+COMMIT;

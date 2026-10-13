@@ -1,0 +1,68 @@
+statement ok
+DROP DATABASE IF EXISTS shd_sub_db;
+
+
+statement ok
+DROP ROLE IF EXISTS shd_sub_owner;
+
+
+statement ok
+CREATE ROLE shd_sub_owner;
+
+
+statement ok
+CREATE DATABASE shd_sub_db;
+
+
+connection c_shd database=shd_sub_db
+statement ok
+CREATE SUBSCRIPTION shd_sub CONNECTION 'host=localhost dbname=mydb password=x' PUBLICATION shd_pub WITH (connect = false, slot_name = NONE);
+
+
+connection c_shd database=shd_sub_db
+statement ok
+ALTER SUBSCRIPTION shd_sub OWNER TO shd_sub_owner;
+
+
+connection c_shd database=shd_sub_db
+query
+SELECT s.deptype, s.dbid = (SELECT oid FROM pg_database WHERE datname = 'shd_sub_db') AS in_shd_sub_db,
+       s.objid = (SELECT oid FROM pg_subscription WHERE subname = 'shd_sub') AS is_shd_sub
+FROM pg_shdepend s
+JOIN pg_authid a ON a.oid = s.refobjid
+WHERE a.rolname = 'shd_sub_owner' AND s.classid = 'pg_subscription'::regclass;
+----
+deptype	in_shd_sub_db	is_shd_sub
+o	t	t
+
+
+connection c_shd database=shd_sub_db
+statement ok
+DROP SUBSCRIPTION shd_sub;
+
+
+connection default
+query
+SELECT count(*) AS n FROM pg_shdepend s
+JOIN pg_authid a ON a.oid = s.refobjid
+WHERE a.rolname = 'shd_sub_owner';
+----
+n
+0
+
+
+connection default
+query
+SELECT count(*) > 0 AS terminated FROM pg_stat_activity
+WHERE datname = 'shd_sub_db' AND pg_terminate_backend(pid);
+----
+terminated
+t
+
+
+statement ok retry 40 backoff 250ms
+DROP DATABASE shd_sub_db;
+
+
+statement ok
+DROP ROLE shd_sub_owner;

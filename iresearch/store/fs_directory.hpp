@@ -44,7 +44,7 @@ class FSDirectory : public Directory {
   using Directory::attributes;
   DirectoryAttributes& attributes() noexcept final { return _attrs; }
 
-  IndexOutput::ptr create(std::string_view name) noexcept override;
+  IndexOutput::ptr create(std::string_view name) override;
 
   bool exists(bool& result, std::string_view name) const noexcept override;
 
@@ -54,8 +54,7 @@ class FSDirectory : public Directory {
 
   bool mtime(std::time_t& result, std::string_view name) const noexcept final;
 
-  IndexInput::ptr open(std::string_view name,
-                       IOAdvice advice) const noexcept override;
+  IndexInput::ptr open(std::string_view name, IOAdvice advice) const override;
 
   bool remove(std::string_view name) noexcept override;
 

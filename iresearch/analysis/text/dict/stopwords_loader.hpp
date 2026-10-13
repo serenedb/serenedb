@@ -29,10 +29,7 @@ namespace irs::analysis::dict {
 inline constexpr char kStopwordPathEnvVariable[] =
   "IRESEARCH_TEXT_STOPWORD_PATH";
 
-bool LoadStopwords(StringSet<std::string>& buf, std::string_view language,
+void LoadStopwords(StringSet<std::string>& buf, std::string_view language,
                    std::string_view path = {});
-
-bool ResolveStopwords(StringSet<std::string>& buf, std::string_view language,
-                      std::string_view path, bool explicit_set);
 
 }  // namespace irs::analysis::dict

@@ -69,14 +69,8 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
               " requires SereneDB client state (not registered)"));
   }
   auto& conn = state->GetConnectionContext();
-  auto* send = conn.GetSendBuffer();
-  if (!send) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("COPY ", path,
-              " requires a PG wire connection (transport not attached)"));
-  }
-  return {conn.GetSideChannel<pg::CopyInBridge>(), send, *state};
+  return {conn.GetSideChannel<pg::CopyInBridge>(), conn.GetSendBuffer(),
+          *state};
 }
 
 }  // namespace
@@ -183,6 +177,12 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);
+    if (!plumbing.send_buffer) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("COPY ", path,
+                " requires a PG wire connection (transport not attached)"));
+    }
     return duckdb::make_uniq<CopyOutFileHandle>(*this, *plumbing.send_buffer);
   }
   THROW_SQL_ERROR(
@@ -213,10 +213,12 @@ void SereneDBCopyFileSystem::Write(duckdb::FileHandle& handle, void* buffer,
                   ERR_MSG("Positional write not supported for COPY TO STDOUT"));
 }
 
-bool SereneDBCopyFileSystem::FileExists(
-  const std::string& filename,
-  duckdb::optional_ptr<duckdb::FileOpener> opener) {
-  return filename == kDevStdin || filename == kDevStdout;
+duckdb::FileExistence SereneDBCopyFileSystem::TryFileExists(
+  const std::string& filename, duckdb::optional_ptr<duckdb::FileOpener> opener,
+  duckdb::optional_ptr<duckdb::ErrorData> error) {
+  return filename == kDevStdin || filename == kDevStdout
+           ? duckdb::FileExistence::EXISTS
+           : duckdb::FileExistence::MISSING;
 }
 
 duckdb::vector<duckdb::OpenFileInfo> SereneDBCopyFileSystem::Glob(

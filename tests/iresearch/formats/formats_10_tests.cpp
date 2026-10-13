@@ -1111,7 +1111,8 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
       irs::PostingsReader reader;
       reader.prepare(irs::ReaderState{.dir = dir.get(), .meta = &meta},
                      irs::IndexFeatures::None);
-    } catch (const irs::IndexError& e) {
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
       message = e.what();
     }
     return message;

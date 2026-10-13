@@ -27,10 +27,10 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 
@@ -68,9 +68,7 @@ inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
     return std::make_unique<BytesViewInput>(meta.Inline());
   }
   auto in = doc_in.Reopen();
-  if (!in) [[unlikely]] {
-    throw IoError{"failed to reopen document input"};
-  }
+  SDB_ASSERT(in);
   in->Seek(meta.doc_start);
   return in;
 }

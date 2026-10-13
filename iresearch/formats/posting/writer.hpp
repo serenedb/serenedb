@@ -771,10 +771,11 @@ IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,
                                                             PostingMeta& meta,
                                                             bool has_freq) {
   if (_doc.last >= doc) [[unlikely]] {
-    throw IndexError{
-      absl::StrCat("While beginning document in postings_writer, error: "
-                   "docs out of order '",
-                   doc, "' < '", _doc.last, "'")};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("While beginning document in postings_writer, error: "
+              "docs out of order '",
+              doc, "' < '", _doc.last, "'"));
   }
 
   if (_doc.Full()) {
@@ -813,10 +814,11 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta) {
     SDB_ASSERT(n <= doc_limits::kBlockSize);
     SDB_ASSERT(std::is_sorted(_run_docs, _run_docs + n, std::less_equal{}));
     if (_doc.last >= _run_docs[0]) [[unlikely]] {
-      throw IndexError{
-        absl::StrCat("While beginning document in postings_writer, error: "
-                     "docs out of order '",
-                     _run_docs[0], "' < '", _doc.last, "'")};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INTERNAL_ERROR),
+        ERR_MSG("While beginning document in postings_writer, error: "
+                "docs out of order '",
+                _run_docs[0], "' < '", _doc.last, "'"));
     }
     if (has_vec) {
       _term_docs.insert(_term_docs.end(), _run_docs, _run_docs + n);

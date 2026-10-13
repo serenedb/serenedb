@@ -450,7 +450,7 @@ def test_recompute_stats_progress(obs, faults, va_schema, driver):
         obs, fault_name=ANALYZE_FAULT, use_fault=faults, run=run,
         view_sql=(
             f"SELECT phase, relid = {relid}, child_tables_total "
-            f"FROM pg_stat_progress_analyze"),
+            f"FROM pg_stat_progress_analyze WHERE child_tables_done > 0"),
         expect=("computing statistics", True, 1),
         empty_sql="SELECT count(*) FROM pg_stat_progress_analyze")
 

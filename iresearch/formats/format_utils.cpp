@@ -31,7 +31,6 @@
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <limits>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
@@ -67,17 +66,19 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
                       const FooterReader* read) {
   const uint64_t length = in.Length();
   if (length < kTrailerLen) {
-    throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
-                                  " bytes is too short for a trailer")};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG("footer: '", name, "' of ", length,
+                            " bytes is too short for a trailer"));
   }
   const uint64_t trailer_offset = length - kTrailerLen;
   in.Seek(trailer_offset);
   const auto footer_expected_crc32c = static_cast<uint32_t>(in.ReadI32());
   const auto footer_len = static_cast<uint32_t>(in.ReadI32());
   if (footer_len > trailer_offset) {
-    throw IndexError{absl::StrCat("footer: '", name, "' of ", length,
-                                  " bytes claims a footer of ", footer_len,
-                                  " bytes")};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+      ERR_MSG("footer: '", name, "' of ", length, " bytes claims a footer of ",
+              footer_len, " bytes"));
   }
   Footer footer{.data_len = trailer_offset - footer_len};
   bstring footer_buf;
@@ -90,8 +91,9 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
   Crc32c footer_actual_crc32c;
   footer_actual_crc32c.process_bytes(footer_data, footer_len);
   if (footer_actual_crc32c.checksum() != footer_expected_crc32c) {
-    throw IndexError{
-      absl::StrCat("footer: '", name, "' does not match its checksum")};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+      ERR_MSG("footer: '", name, "' does not match its checksum"));
   }
   duckdb::MemoryStream stream{const_cast<byte_type*>(footer_data), footer_len};
   duckdb::BinaryDeserializer deserializer{stream};
@@ -108,10 +110,10 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
     }
     deserializer.End();
   } catch (const duckdb::SerializationException& e) {
-    throw IndexError{
-      absl::StrCat("footer: '", name,
-                   "' cannot be read: ", duckdb::ErrorData{e}.RawMessage(),
-                   "; it was written by a newer release of SereneDB")};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("footer: '", name, "' cannot be read: ",
+                            duckdb::ErrorData{e}.RawMessage(),
+                            "; it was written by a newer release of SereneDB"));
   }
   return footer;
 }
@@ -138,10 +140,6 @@ void PrepareOutput(std::string& str, IndexOutput::ptr& out,
 
   FileName(str, state.name, ext);
   out = state.dir->create(str);
-
-  if (!out) {
-    throw IoError{absl::StrCat("Failed to create file, path: ", str)};
-  }
 }
 
 }  // namespace irs::format_utils

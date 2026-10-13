@@ -58,23 +58,11 @@ inline int GetPosixMadvice(IOAdvice advice) {
 }
 
 std::shared_ptr<MMapHandle> OpenHandle(const path_char_t* file, IOAdvice advice,
-                                       IResourceManager& rm) noexcept {
+                                       IResourceManager& rm) {
   SDB_ASSERT(file);
 
-  std::shared_ptr<MMapHandle> handle;
-
-  try {
-    handle = std::make_shared<MMapHandle>(rm);
-  } catch (...) {
-    return nullptr;
-  }
-
-  if (!handle->open(file)) {
-    SDB_ERROR(IRESEARCH,
-              absl::StrCat("Failed to open mmapped input file, path: ",
-                           file_utils::ToStr(file)));
-    return nullptr;
-  }
+  auto handle = std::make_shared<MMapHandle>(rm);
+  handle->open(file);
 
   if (0 == handle->size()) {
     return handle;
@@ -95,15 +83,9 @@ std::shared_ptr<MMapHandle> OpenHandle(const path_char_t* file, IOAdvice advice,
 
 std::shared_ptr<MMapHandle> OpenHandle(const std::filesystem::path& dir,
                                        std::string_view name, IOAdvice advice,
-                                       IResourceManager& rm) noexcept {
-  try {
-    const auto path = dir / name;
-
-    return OpenHandle(path.c_str(), advice, rm);
-  } catch (...) {
-  }
-
-  return nullptr;
+                                       IResourceManager& rm) {
+  const auto path = dir / name;
+  return OpenHandle(path.c_str(), advice, rm);
 }
 
 #ifdef __linux__
@@ -217,24 +199,13 @@ MMapDirectory::MMapDirectory(std::filesystem::path path,
   : FSDirectory{std::move(path), std::move(attrs), rm} {}
 
 IndexInput::ptr MMapDirectory::open(std::string_view name,
-                                    IOAdvice advice) const noexcept {
+                                    IOAdvice advice) const {
   if (IOAdvice::DirectRead == (advice & IOAdvice::DirectRead)) {
     return FSDirectory::open(name, advice);
   }
 
-  auto handle =
-    OpenHandle(path(), name, advice, *ResourceManager().file_descriptors);
-
-  if (!handle) {
-    return nullptr;
-  }
-
-  try {
-    return std::make_unique<MMapIndexInput>(std::move(handle));
-  } catch (...) {
-  }
-
-  return nullptr;
+  return std::make_unique<MMapIndexInput>(
+    OpenHandle(path(), name, advice, *ResourceManager().file_descriptors));
 }
 
 }  // namespace irs

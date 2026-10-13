@@ -27,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/error/error.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
@@ -77,10 +76,6 @@ void IdxWriter::EnsureOut() {
     return;
   }
   _impl->out = _impl->dir->create(_impl->filename);
-  if (!_impl->out) {
-    throw IoError{
-      absl::StrCat("Failed to create index file, path: ", _impl->filename)};
-  }
 }
 
 IndexOutput& IdxWriter::BlocksOut() {

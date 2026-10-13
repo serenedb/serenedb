@@ -560,9 +560,10 @@ AddIncomingResult AddIncoming(
         if (!MapRemovals(mappings, *incoming.compaction_ctx.merger,
                          docs_mask)) {
           // Compacted segment has docs missing from 'segments'
-          SDB_WARN(IRESEARCH, "Failed to finish merge for segment '", meta.name,
-                   "', due to removed documents still present "
-                   "the compaction candidates");
+          SDB_DEBUG(IRESEARCH, "Failed to finish merge for segment '",
+                    meta.name,
+                    "', due to removed documents still present "
+                    "the compaction candidates");
 
           continue;  // Skip this particular compaction
         }
@@ -814,8 +815,9 @@ IndexWriter::Transaction::FlushAndFsync() {
     files.emplace_back(entry.filename);
   }
   if (!segment->dir.sync(files)) {
-    throw IoError{absl::StrCat("Failed to sync ", files.size(), " file(s) of ",
-                               flushed.size(), " flushed segment(s)")};
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("Failed to sync ", files.size(), " file(s) of ",
+                            flushed.size(), " flushed segment(s)"));
   }
   for (auto& entry : flushed) {
     entry.meta_on_disk = true;
@@ -906,9 +908,6 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
     try {
       segment.Flush();
     } catch (...) {
-      SDB_ERROR(IRESEARCH, "while flushing segment '",
-                segment.writer_meta.meta.name,
-                "', error: failed to flush segment");
       // TODO(mbkkt) What the goal are we want to achieve
       //  with keeping already flushed data?
       segment.Reset(true);
@@ -916,7 +915,8 @@ void IndexWriter::Transaction::UpdateSegment(bool disable_flush,
     }
     if (commit_on_flush) {
       if (!Commit()) {
-        throw IllegalState{"commit-on-flush failed"};
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+                        ERR_MSG("commit-on-flush failed: out of memory"));
       }
       commit_on_flush->committed = true;
       SDB_WAIT_ON_FAILURE("pause_create_index_between_batches");
@@ -1067,6 +1067,9 @@ void IndexWriter::SegmentContext::Flush() {
   };
 
   DocumentMask docs_mask;
+  SDB_IF_FAILURE("IndexWriter::Flush") {
+    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+  }
   writer->flush(writer_meta, docs_mask);
   if (writer_meta.meta.live_docs_count == 0) {
     return;
@@ -1282,7 +1285,9 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
     lock_ref = dir.attributes().refs().add(kWriteLockName);
 
     if (!lock || !lock->try_lock()) {
-      throw LockObtainFailed(kWriteLockName);
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_LOCK_NOT_AVAILABLE),
+                      ERR_MSG("could not obtain the index write lock '",
+                              kWriteLockName, "'"));
     }
   }
 
@@ -1300,7 +1305,8 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, OpenMode mode,
         meta.filename.clear();  // Empty index meta -> new index
       }
     } else if (!index_exists) {
-      throw FileNotFound{meta.filename};  // no segments file found
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                      ERR_MSG("the directory holds no index to open"));
     } else {
       index_meta::Read(dir, meta.index_meta, meta.filename,
                        std::move(options.meta_payload_reader));
@@ -1649,32 +1655,23 @@ CompactionResult IndexWriter::Compact(
                                /*env=*/nullptr));
 }
 
-bool IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
+void IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
   IndexSegment segment;
   segment.filename = meta_file;
-  try {
-    segment_meta::Read(_dir, segment.meta, meta_file);
-  } catch (const std::exception& e) {
-    SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", meta_file,
-             "': ", e.what());
-    return false;
-  }
+  segment_meta::Read(_dir, segment.meta, meta_file);
   if (segment.meta.live_docs_count == 0) {
-    return true;  // Nothing to adopt
+    return;  // Nothing to adopt
   }
 
   auto meta_ref = directory_utils::Reference(_dir, segment.filename);
   if (!meta_ref) {
-    SDB_WARN(IRESEARCH, "Cannot adopt segment meta '", segment.filename,
-             "': failed to reference it");
-    return false;
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("cannot adopt segment meta '", segment.filename,
+                            "': it does not exist"));
   }
 
   auto adopted_reader =
     SegmentReaderImpl::Open(_dir, segment.meta, GetSnapshotImpl()->Options());
-  if (!adopted_reader) {
-    return false;
-  }
 
   [[maybe_unused]] uint64_t id = 0;
   SDB_ASSERT(ParseSegmentId(segment.meta.name, id) &&
@@ -1691,8 +1688,6 @@ bool IndexWriter::AdoptSegment(std::string_view meta_file, uint64_t tick) {
 
   flush->incoming.emplace_back(std::move(segment), tick, std::move(refs),
                                std::move(adopted_reader));
-
-  return true;
 }
 
 void IndexWriter::CompactionFloorGuard::Release() noexcept {
@@ -1720,12 +1715,12 @@ IndexWriter::CompactionFloorGuard IndexWriter::ArmCompactionFloor() {
   return {*this, floor};
 }
 
-bool IndexWriter::ReplaceSegments(
+void IndexWriter::ReplaceSegments(
   std::span<const std::string_view> replaced,
   std::span<const std::string_view> adopted_metas,
   absl::FunctionRef<bool(QueryContext::FilterPtr&)> removal_provider) {
   if (replaced.empty() && adopted_metas.empty()) {
-    return true;
+    return;
   }
 
   // Open every replacement before touching the flush context, so a failure
@@ -1740,29 +1735,18 @@ bool IndexWriter::ReplaceSegments(
   for (const auto meta_file : adopted_metas) {
     Adopted entry;
     entry.segment.filename = meta_file;
-    try {
-      segment_meta::Read(_dir, entry.segment.meta, meta_file);
-    } catch (const std::exception& e) {
-      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '", meta_file,
-               "': ", e.what());
-      return false;
-    }
+    segment_meta::Read(_dir, entry.segment.meta, meta_file);
     if (entry.segment.meta.live_docs_count == 0) {
       continue;  // nothing to adopt; the sources are still replaced
     }
     auto meta_ref = directory_utils::Reference(_dir, entry.segment.filename);
     if (!meta_ref) {
-      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '",
-               entry.segment.filename, "': failed to reference it");
-      return false;
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                      ERR_MSG("cannot replace with segment meta '",
+                              entry.segment.filename, "': it does not exist"));
     }
     entry.reader = SegmentReaderImpl::Open(_dir, entry.segment.meta,
                                            GetSnapshotImpl()->Options());
-    if (!entry.reader) {
-      SDB_WARN(IRESEARCH, "Cannot replace with segment meta '",
-               entry.segment.filename, "': failed to open it");
-      return false;
-    }
     entry.refs.emplace_back(std::move(meta_ref));
     adopted.push_back(std::move(entry));
   }
@@ -1770,9 +1754,9 @@ bool IndexWriter::ReplaceSegments(
   _commit_lock.ForgetDeadlockInfo();
   std::shared_lock commit_lock{_commit_lock};
   if (_pending_state.Valid()) {
-    SDB_WARN(IRESEARCH,
-             "Cannot replace segments while a begun commit is not finished");
-    return false;
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("cannot replace segments while a begun commit is not finished"));
   }
 
   // Pin the committed state: the candidate names are masked as string_views
@@ -1805,7 +1789,7 @@ bool IndexWriter::ReplaceSegments(
 
   QueryContext::FilterPtr removal;
   if (!removal_provider(removal)) {
-    return true;
+    return;
   }
 
   auto flush = GetFlushContext();
@@ -1841,7 +1825,6 @@ bool IndexWriter::ReplaceSegments(
   for (const auto name : masked) {
     segment_mask.emplace(name);
   }
-  return true;
 }
 
 IndexWriter::FlushContextPtr IndexWriter::GetFlushContext() const noexcept
@@ -2090,8 +2073,10 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   // Execute 1st phase of index meta transaction
   if (!_writer.prepare(dir, to_commit.index_meta, to_commit.filename,
                        index_meta_file, context.position)) {
-    throw IllegalState{absl::StrCat(
-      "Failed to write index metadata for index: ", index_meta_file)};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("Failed to write index metadata for index: ", index_meta_file,
+              ": a previous commit is still pending"));
   }
 
   // The 1st phase of the transaction successfully finished here,
@@ -2109,8 +2094,9 @@ void IndexWriter::ApplyFlush(PendingContext&& context) {
   context.files_to_sync.emplace_back(to_commit.filename);
 
   if (!dir.sync(context.files_to_sync)) {
-    throw IoError{
-      absl::StrCat("Failed to sync files for index: ", index_meta_file)};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("Failed to sync files for index: ", index_meta_file));
   }
 
   // Update file name so that directory reader holds a reference
@@ -2157,7 +2143,9 @@ void IndexWriter::Finish() {
   };
 
   if (!_writer.commit()) [[unlikely]] {
-    throw IllegalState{"Failed to commit index metadata"};
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("Failed to commit index metadata: no commit is prepared"));
   }
 
   // noexcept part!

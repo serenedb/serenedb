@@ -28,6 +28,7 @@
 #include <chrono>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/connection.hpp>
@@ -242,11 +243,12 @@ void RunSearchTableRecovery() {
         const uint64_t tick = first_tick + pending.queries_before;
         // A durable record claims these documents: failing to reopen them is
         // data loss, not something to skip.
-        const bool adopted = info.search->AdoptSegment(pending.meta_file, tick);
-        SDB_FATAL_IF(SEARCH, !adopted,
-                     "search-table WAL recovery: failed to adopt segment '",
-                     pending.meta_file, "' for table ", table_id,
-                     " tick=", tick);
+        try {
+          info.search->AdoptSegment(pending.meta_file, tick);
+        } catch (const std::exception& e) {
+          SDB_FATAL(SEARCH, "search-table WAL recovery: table ", table_id,
+                    " tick=", tick, ": ", duckdb::ErrorData{e}.RawMessage());
+        }
       }
 
       // A failed commit during replay leaves the index inconsistent with the

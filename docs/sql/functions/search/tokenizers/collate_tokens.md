@@ -36,9 +36,7 @@ Use this template when you need locale-correct sorting or equality over an index
 
 The locale's tailoring is honored: keys built under `sv` order `å` after `z`, keys built under `en` before it, so a key is only meaningful next to keys built with the same locale. Keys order the same way as the collation of the `COLLATE` clause with the same name, and as the ICU collator of the locale did; their bytes are not the bytes ICU produced, so an index built with an earlier version has to be rebuilt. Because the collator is left at the locale's default settings, strings that differ only in case or only in accents produce different keys.
 
-Offsets always cover the whole value: start `0`, end the value's length in bytes. Positions are implicit, so the single token of a scalar value sits at the first position. An empty value still yields one token — the locale's key for the empty string — while a `NULL` value yields none. Malformed UTF-8 is not rejected: illegal bytes are collated as `U+FFFD`.
-
-A value is dropped, with no token emitted for it, when its sort key would reach the 32768-byte limit; the server logs `Collated token exceeds maximum allowed length of 32768 bytes`. Other values in the same batch are unaffected.
+Offsets always cover the whole value: start `0`, end the value's length in bytes. Positions are implicit, so the single token of a scalar value sits at the first position. An empty value still yields one token — the locale's key for the empty string — while a `NULL` value yields none. Malformed UTF-8 is not rejected: illegal bytes are collated as `U+FFFD`. A long value gets its key like any other, however many bytes the key takes.
 
 ## Examples
 

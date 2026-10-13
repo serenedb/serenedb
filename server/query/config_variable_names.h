@@ -45,5 +45,13 @@ inline constexpr std::string_view kCompactionFloorSegmentBytesSetting =
   "compaction_floor_segment_bytes";
 inline constexpr std::string_view kRecoveryReplayDepthSetting =
   "recovery_replay_depth";
+inline constexpr std::string_view kWalReceiverTimeoutSetting =
+  "wal_receiver_timeout";
+inline constexpr std::string_view kWalReceiverStatusIntervalSetting =
+  "wal_receiver_status_interval";
+inline constexpr std::string_view kWalRetrieveRetryIntervalSetting =
+  "wal_retrieve_retry_interval";
+inline constexpr std::string_view kMaxSyncWorkersPerSubscriptionSetting =
+  "max_sync_workers_per_subscription";
 
 }  // namespace sdb

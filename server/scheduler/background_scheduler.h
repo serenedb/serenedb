@@ -26,6 +26,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <duckdb/common/types/timestamp.hpp>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <yaclib/async/future.hpp>
@@ -42,8 +44,8 @@ namespace sdb {
 // The single background work pool: drop tasks today, and (later) search
 // refresh/compaction/cleanup and object-store prefetch. One fair yaclib thread
 // pool so blocking / latency-tolerant work stays off the io threads (which only
-// do socket IO) and off the DuckDB cpu pool (which runs queries). Sized by
-// --server_background_threads. Eventually merges into DuckDB's async pool.
+// do socket IO) and off the DuckDB cpu pool (which runs queries). Eventually
+// merges into DuckDB's async pool.
 //
 // Delays reuse the network io workers' asio timers: arming a steady_timer there
 // is free and the fire callback only re-enqueues onto this pool, so io threads
@@ -83,6 +85,8 @@ class BackgroundScheduler final {
   // Completes after `d` (best-effort; immediate once CancelDelays() has run,
   // parked until OpenDelays() while the io pool has never been up).
   yaclib::Future<> Delay(clock::duration d);
+
+  void RunAt(duckdb::timestamp_t at, std::function<void()> task);
 
   // Startup: the io pool is up, so Delay can arm real timers. Releases every
   // waiter parked during boot. Called once, after Server::StartIoPool().

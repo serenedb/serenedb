@@ -29,6 +29,7 @@
 #include <chrono>
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -250,7 +251,6 @@ class Loader {
         database, database_id, nullptr, 0, nullptr)},
       _docs{docs} {
     connector::SereneDBClientState::Register(*_conn->context, _ctx);
-    _conn->context->session_user.assign(irs::StaticStrings::kDefaultUser);
     connector::SetDefaultSearchPath(*_conn->context, database);
   }
 
@@ -374,7 +374,7 @@ std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
     return image;
   } catch (const std::exception& e) {
     SDB_ERROR(STARTUP, "cannot build the docs index in database \"", name,
-              "\": ", e.what());
+              "\": ", duckdb::ErrorData{e}.RawMessage());
     return {};
   }
 }

@@ -1,0 +1,148 @@
+control substitution on
+
+statement ok
+ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rgen_${__DATABASE__} (TYPE postgres);
+
+
+statement ok
+CALL postgres_execute('rgen_${__DATABASE__}', 'SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots WHERE slot_name LIKE ''rgen\_%''');
+
+
+statement ok
+CALL postgres_execute('rgen_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION IF EXISTS rgen_pub_stored; DROP PUBLICATION IF EXISTS rgen_pub_bad; DROP PUBLICATION IF EXISTS rgen_pub_none; DROP PUBLICATION IF EXISTS rgen_pub_badsync; DROP TABLE IF EXISTS rgen_plain, rgen_bad, rgen_local, rgen_badsync; END $$');
+
+
+statement ok
+CALL postgres_execute('rgen_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rgen_plain (id int PRIMARY KEY, a int, g int GENERATED ALWAYS AS (a * 2) STORED); CREATE TABLE rgen_bad (id int PRIMARY KEY, a int, g int GENERATED ALWAYS AS (a * 2) STORED); CREATE TABLE rgen_local (id int PRIMARY KEY, a int, g int GENERATED ALWAYS AS (a * 2) STORED); CREATE TABLE rgen_badsync (id int PRIMARY KEY, a int, g int GENERATED ALWAYS AS (a * 2) STORED); INSERT INTO rgen_badsync (id, a) VALUES (1, 10); INSERT INTO rgen_plain (id, a) VALUES (1, 10), (2, 20); INSERT INTO rgen_bad (id, a) VALUES (1, 10); INSERT INTO rgen_local (id, a) VALUES (1, 10), (2, 20); CREATE PUBLICATION rgen_pub_stored FOR TABLE rgen_plain WITH (publish_generated_columns = stored); CREATE PUBLICATION rgen_pub_bad FOR TABLE rgen_bad WITH (publish_generated_columns = stored); CREATE PUBLICATION rgen_pub_none FOR TABLE rgen_local WITH (publish_generated_columns = none); CREATE PUBLICATION rgen_pub_badsync FOR TABLE rgen_badsync WITH (publish_generated_columns = stored); END $$');
+
+
+statement ok
+CREATE TABLE rgen_plain (id INTEGER PRIMARY KEY, a INTEGER, g INTEGER);
+
+
+statement ok
+CREATE TABLE rgen_bad (id INTEGER PRIMARY KEY, a INTEGER, g INTEGER GENERATED ALWAYS AS (a * 3));
+
+
+statement ok
+CREATE TABLE rgen_local (id INTEGER PRIMARY KEY, a INTEGER, g INTEGER GENERATED ALWAYS AS (a * 3));
+
+
+statement ok
+CREATE TABLE rgen_badsync (id INTEGER PRIMARY KEY, a INTEGER, g INTEGER GENERATED ALWAYS AS (a * 3));
+
+
+statement ok
+CREATE SUBSCRIPTION rgen_sub_stored CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rgen_pub_stored WITH (slot_name = 'rgen_sub_stored');
+
+
+statement ok
+CREATE SUBSCRIPTION rgen_sub_none CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rgen_pub_none WITH (slot_name = 'rgen_sub_none');
+
+
+statement ok
+CREATE SUBSCRIPTION rgen_sub_bad CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rgen_pub_bad WITH (slot_name = 'rgen_sub_bad', copy_data = false);
+
+
+statement ok
+CREATE SUBSCRIPTION rgen_sub_badsync CONNECTION 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' PUBLICATION rgen_pub_badsync WITH (slot_name = 'rgen_sub_badsync');
+
+
+query ok retry 240 backoff 250ms
+SELECT c.relname, r.srsubstate FROM pg_subscription_rel r JOIN pg_class c ON c.oid = r.srrelid WHERE c.relname LIKE 'rgen%' ORDER BY c.relname;
+----
+relname	srsubstate
+rgen_bad	r
+rgen_badsync	i
+rgen_local	r
+rgen_plain	r
+
+
+query
+SELECT id, a, g FROM rgen_plain ORDER BY id;
+----
+id	a	g
+1	10	20
+2	20	40
+
+
+query
+SELECT id, a, g FROM rgen_local ORDER BY id;
+----
+id	a	g
+1	10	30
+2	20	60
+
+
+statement ok
+CALL postgres_execute('rgen_${__DATABASE__}', 'DO $$ BEGIN INSERT INTO rgen_plain (id, a) VALUES (3, 30); UPDATE rgen_plain SET a = 11 WHERE id = 1; INSERT INTO rgen_local (id, a) VALUES (3, 30); UPDATE rgen_local SET a = 11 WHERE id = 1; INSERT INTO rgen_bad (id, a) VALUES (2, 20); END $$');
+
+
+query ok retry 240 backoff 250ms
+SELECT id, a, g FROM rgen_plain ORDER BY id;
+----
+id	a	g
+1	11	22
+2	20	40
+3	30	60
+
+
+query ok retry 240 backoff 250ms
+SELECT id, a, g FROM rgen_local ORDER BY id;
+----
+id	a	g
+1	11	33
+2	20	60
+3	30	90
+
+
+query ok retry 240 backoff 250ms
+SELECT apply_error_count >= 1 AS failed FROM pg_stat_subscription_stats WHERE subname = 'rgen_sub_bad';
+----
+failed
+t
+
+
+query
+SELECT count(*) AS n FROM rgen_bad;
+----
+n
+0
+
+
+query ok retry 240 backoff 250ms
+SELECT sync_error_count >= 1 AS failed FROM pg_stat_subscription_stats WHERE subname = 'rgen_sub_badsync';
+----
+failed
+t
+
+
+query
+SELECT count(*) AS n FROM rgen_badsync;
+----
+n
+0
+
+
+statement ok
+DROP SUBSCRIPTION rgen_sub_badsync;
+
+
+statement ok
+DROP SUBSCRIPTION rgen_sub_bad;
+
+
+statement ok
+DROP SUBSCRIPTION rgen_sub_stored;
+
+
+statement ok
+DROP SUBSCRIPTION rgen_sub_none;
+
+
+statement ok
+CALL postgres_execute('rgen_${__DATABASE__}', 'DO $$ BEGIN DROP PUBLICATION rgen_pub_stored; DROP PUBLICATION rgen_pub_bad; DROP PUBLICATION rgen_pub_none; DROP PUBLICATION rgen_pub_badsync; DROP TABLE rgen_plain, rgen_bad, rgen_local, rgen_badsync; END $$');
+
+
+statement ok
+DETACH rgen_${__DATABASE__};

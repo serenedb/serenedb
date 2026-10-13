@@ -23,7 +23,6 @@
 
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
-#include <iresearch/error/error.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
@@ -170,7 +169,8 @@ TEST(index_meta_tests, rejects_unknown_fields) {
   try {
     irs::IndexMeta meta;
     irs::index_meta::Read(dir, meta, name);
-  } catch (const irs::IndexError& e) {
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
     message = e.what();
   }
   EXPECT_NE(std::string::npos, message.find("written by a newer release"))
@@ -195,7 +195,8 @@ TEST(index_meta_tests, payload_is_read_whole) {
   try {
     irs::IndexMeta read;
     irs::index_meta::Read(dir, read, filename);
-  } catch (const irs::IndexError& e) {
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INTERNAL_ERROR);
     message = e.what();
   }
   EXPECT_NE(std::string::npos,
@@ -204,11 +205,12 @@ TEST(index_meta_tests, payload_is_read_whole) {
 
   {
     irs::IndexMeta read;
-    ASSERT_THROW(irs::index_meta::Read(dir, read, filename,
-                                       [](duckdb::BinaryDeserializer& in) {
-                                         in.ReadProperty<uint64_t>(0, "tick");
-                                       }),
-                 irs::IndexError);
+    ASSERT_SQL_ERROR(irs::index_meta::Read(dir, read, filename,
+                                           [](duckdb::BinaryDeserializer& in) {
+                                             in.ReadProperty<uint64_t>(0,
+                                                                       "tick");
+                                           }),
+                     ERRCODE_FEATURE_NOT_SUPPORTED);
   }
 
   irs::IndexMeta read;

@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/error_data.hpp>
 #include <exception>
 #include <functional>
 #include <iresearch/search/filters/filter_optimizer.hpp>
@@ -43,9 +44,12 @@
 #include "network/pg/hba.h"
 #include "network/server.h"
 #include "query/server_engine.h"
+#include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
 #include "scheduler/background_scheduler.h"
+#include "scheduler/job_scheduler.h"
 #include "server/utils/app_server.h"
+#include "server/utils/build.h"
 #include "server/utils/init.h"
 #include "storage_engine/search_engine.h"
 
@@ -79,6 +83,8 @@ int RunServer(int argc, char** argv) {
     BackgroundScheduler background;
     search::SearchEngine search;
     Server network;
+    std::optional<replication::SubscriptionEngine> subscriptions;
+    JobScheduler jobs;
 
     // Lifecycle is two explicit, flat lists: bring features UP in dependency
     // order, then take them DOWN in a dependency order that is deliberately
@@ -91,7 +97,8 @@ int RunServer(int argc, char** argv) {
     // afterwards still see a live SearchEngine. DuckDBEngine brackets all of
     // this from main(). The up_* flags let DOWN skip whatever never came UP
     // (start() threw).
-    bool up_background = false, up_search = false, up_network = false;
+    bool up_background = false, up_search = false, up_subscriptions = false,
+         up_network = false;
 
     absl::Cleanup down = [&]() noexcept {
       irs::CrashHandler::SetState("stopping");
@@ -99,7 +106,8 @@ int RunServer(int argc, char** argv) {
         try {
           fn();
         } catch (const std::exception& ex) {
-          SDB_ERROR(GENERAL, "exception stopping ", what, ": ", ex.what());
+          SDB_ERROR(GENERAL, "exception stopping ", what, ": ",
+                    duckdb::ErrorData{ex}.RawMessage());
         } catch (...) {
           SDB_ERROR(GENERAL, "unknown exception stopping ", what);
         }
@@ -114,17 +122,24 @@ int RunServer(int argc, char** argv) {
         // stretched refresh timer (up to 5x the interval) expires.
         background.CancelDelays();
       }
+      if (up_subscriptions) {
+        stop("subscriptions signal", [&] { subscriptions->RequestStop(); });
+      }
       if (up_network) {
         // Listeners close and every session is terminated: its in-flight query
         // interrupted, its socket closed by its own writer.
         stop("network signal", [&] { network.RequestStop(); });
       }
       // Joins, in dependency order.
+      if (up_subscriptions) {
+        stop("subscriptions", [&] { subscriptions->stop(); });
+      }
       if (up_network) {
         // Sessions complete against the fully-live engine, then the io pool
         // goes down.
         stop("network", [&] { network.stop(); });
       }
+      stop("jobs", [&] { jobs.Stop(); });
       if (up_search) {
         stop("search", [&] { search.stop(); });
       }
@@ -135,6 +150,7 @@ int RunServer(int argc, char** argv) {
       // than left to the DuckDB destructor in main(): an inverted index vetoes
       // it unless it can read its definition.
       stop("storage", [&] { irs::DuckDBEngine::Instance().CloseDatabases(); });
+      SDB_INFO(GENERAL, "SereneDB is shut down");
     };
 
     irs::CrashHandler::SetState("starting");
@@ -153,14 +169,18 @@ int RunServer(int argc, char** argv) {
     background.OpenDelays();
     search.start();
     up_search = true;
+    jobs.Start();
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
     }
+    subscriptions.emplace(*network.IoPool());
+    subscriptions->start();
+    up_subscriptions = true;
     // Accept connections only once the indexes are loaded and loops are
     // running.
     network.StartListeners();
 
-    SDB_INFO(GENERAL, "SereneDB is ready for business. Have fun!");
+    SDB_INFO(STARTUP, "SereneDB is ready for business. Have fun!");
 
     irs::CrashHandler::SetState("running");
     server.wait();
@@ -169,8 +189,8 @@ int RunServer(int argc, char** argv) {
     // gLogger is still up (Shutdown runs in main() after RunServer
     // returns), but go through SDB_ERROR so the line lands in the same
     // duckdb_logs() store as everything else.
-    SDB_ERROR(GENERAL,
-              "serened terminated because of an exception: ", ex.what());
+    SDB_ERROR(GENERAL, "serened terminated because of an exception: ",
+              duckdb::ErrorData{ex}.RawMessage());
   } catch (...) {
     SDB_ERROR(GENERAL,
               "serened terminated because of an exception of unknown type");
@@ -223,13 +243,14 @@ int main(int argc, char* argv[]) {
                        : irs::ExecutableRemap{.skipped = "disabled"};
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize(&server::query::ConfigureServerDBConfig);
+  SDB_INFO(STARTUP, "starting SereneDB ", SERENEDB_VERSION);
   server::query::RegisterServerExtensions(engine.instance());
 
   sdb::app::InitProcess(argv[0]);
-  SDB_INFO(STARTUP, "executable memory: ", remap.remapped >> 20,
-           " MB of machine code remapped into anonymous huge-page memory, ",
-           remap.populated >> 20, " MB of read-only mappings pre-read",
-           remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
+  SDB_DEBUG(STARTUP, "executable memory: ", remap.remapped >> 20,
+            " MB of machine code remapped into anonymous huge-page memory, ",
+            remap.populated >> 20, " MB of read-only mappings pre-read",
+            remap.skipped.empty() ? "" : "; remap skipped: ", remap.skipped);
   int rc = RunServer(argc, argv);
   sdb::app::ShutdownGlobals();
 

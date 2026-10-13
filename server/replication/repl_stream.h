@@ -1,0 +1,146 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <atomic>
+#include <chrono>
+#include <span>
+#include <yaclib/algo/one_shot_event.hpp>
+#include <yaclib/exe/executor.hpp>
+
+#include "network/cpu_resumer.h"
+#include "replication/pgoutput.h"
+
+namespace sdb::replication {
+
+class ReplStream {
+ public:
+  static bool IsIdle(const PgOutputMessage* message) noexcept {
+    return std::holds_alternative<StreamStopMessage>(*message);
+  }
+
+  bool Publish(std::span<const PgOutputMessage> messages) noexcept {
+    if (_aborted.load(std::memory_order_acquire)) {
+      return false;
+    }
+    _end = messages.data() + messages.size();
+    _fresh = true;
+    _msg.store(messages.data(), std::memory_order_seq_cst);
+    Wake();
+    return true;
+  }
+  auto Drained(yaclib::IExecutor& io) noexcept { return _consumed.AwaitOn(io); }
+  bool IsDrained() noexcept { return _consumed.Ready(); }
+  void ResetDrained() noexcept {
+    _consumed.Reset();
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+  }
+  void Finish() noexcept {
+    if (_aborted.load(std::memory_order_acquire) ||
+        _eof.exchange(true, std::memory_order_seq_cst)) {
+      return;
+    }
+    Wake();
+  }
+  bool Aborted() const noexcept {
+    return _aborted.load(std::memory_order_acquire);
+  }
+
+  void SetTask(network::CpuResumer* task) noexcept { _task = task; }
+  void ScanActive(bool active) noexcept {
+    if (active) {
+      if (_ready.Ready()) {
+        _ready.Reset();
+      }
+      _armed = false;
+    }
+    _scan_active.store(active, std::memory_order_seq_cst);
+  }
+
+  bool Ready() const noexcept {
+    return _msg.load(std::memory_order_seq_cst) != nullptr ||
+           _eof.load(std::memory_order_seq_cst);
+  }
+  const PgOutputMessage* Current() const noexcept {
+    return _msg.load(std::memory_order_acquire);
+  }
+  std::span<const PgOutputMessage> TakeFresh() noexcept {
+    if (!_fresh) {
+      return {};
+    }
+    _fresh = false;
+    const auto* begin = _msg.load(std::memory_order_acquire);
+    return {begin, _end};
+  }
+  void Replace(std::span<const PgOutputMessage> messages) noexcept {
+    _end = messages.data() + messages.size();
+    _msg.store(messages.data(), std::memory_order_relaxed);
+  }
+  const PgOutputMessage* PeekFor(std::chrono::microseconds timeout) noexcept {
+    if (_armed) {
+      if (!_ready.WaitFor(timeout)) {
+        return nullptr;
+      }
+      _ready.Reset();
+      _armed = false;
+    }
+    return _msg.load(std::memory_order_acquire);
+  }
+  void Advance() noexcept {
+    const auto* next = _msg.load(std::memory_order_relaxed) + 1;
+    if (next != _end) {
+      _msg.store(next, std::memory_order_relaxed);
+      return;
+    }
+    _msg.store(nullptr, std::memory_order_release);
+    _armed = true;
+    _consumed.Set();
+  }
+  void Abort() noexcept {
+    _aborted.store(true, std::memory_order_release);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (!_consumed.Ready()) {
+      _consumed.Set();
+    }
+  }
+
+ private:
+  void Wake() noexcept {
+    if (_scan_active.load(std::memory_order_seq_cst)) {
+      _ready.Set();
+    } else if (_task != nullptr) {
+      _task->RequestRun();
+    }
+  }
+
+  std::atomic<const PgOutputMessage*> _msg{nullptr};
+  const PgOutputMessage* _end = nullptr;
+  bool _fresh = false;
+  std::atomic<bool> _eof{false};
+  bool _armed = false;
+  std::atomic<bool> _aborted{false};
+  std::atomic<bool> _scan_active{false};
+  network::CpuResumer* _task = nullptr;
+  yaclib::OneShotEvent _ready;
+  yaclib::OneShotEvent _consumed;
+};
+
+}  // namespace sdb::replication

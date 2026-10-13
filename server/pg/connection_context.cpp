@@ -85,7 +85,9 @@ ConnectionContext::ConnectionContext(
     _send_buffer{send_buffer},
     _login_role_id{role_id},
     _session_role_id{role_id},
-    _effective_role_id{role_id} {}
+    _effective_role_id{role_id} {
+  duckdb_ctx.session_user = user;
+}
 
 namespace {
 

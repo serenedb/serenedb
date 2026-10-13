@@ -82,7 +82,7 @@ void SearchEngine::start() {
   // search-table background loops -- never while recovery is still rebuilding a
   // table, or a background commit's WAL GC could reclaim un-replayed chunks.
   StartSearchTableMaintenance();
-  SDB_INFO(SEARCH, "Search maintenance: per-index refresh/compaction loops");
+  SDB_DEBUG(SEARCH, "Search maintenance: per-index refresh/compaction loops");
 }
 
 void SearchEngine::stop() {
@@ -98,9 +98,6 @@ void SearchEngine::StartTasks(const std::shared_ptr<Storage>& storage) {
   }
   _loops.Consume(RefreshLoop<Storage>(storage),
                  CompactionCoordinator<Storage>(storage));
-  if constexpr (std::is_same_v<Storage, InvertedIndexStorage>) {
-    _loops.Consume(ReindexLoop(storage));
-  }
 }
 
 template void SearchEngine::StartTasks(

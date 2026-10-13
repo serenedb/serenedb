@@ -417,6 +417,23 @@ def test_binder_error_sqlstates():
         c.close()
 
 
+def test_job_error_sqlstates():
+    job = f"rfq_job_{os.getpid()}"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cases = [
+                ("SELECT * FROM execute_job(NULL)", "22004"),
+                (f'CREATE JOB "{job}" EVERY 1 HOUR OFFSET 2 HOURS AS SELECT 1', "22023"),
+            ]
+            for sql, code in cases:
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == code, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        c.close()
+
+
 def test_array_csv_roundtrip():
     # Arrays survive a CSV copy round-trip: csv-out emits no spurious header
     # (PG default), and the input cast accepts both PG {..} and DuckDB [..].
@@ -597,6 +614,37 @@ def test_standalone_commit_rollback_no_txn_warns_25p01():
             cur.execute("ROLLBACK")
         assert [s for s, _ in diags] == ["25P01", "25P01"], diags
         assert all("there is no transaction in progress" in m for _, m in diags), diags
+    finally:
+        c.close()
+
+
+def test_engine_warning_reaches_the_client_as_a_notice():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    try:
+        with c.cursor() as cur:
+            cur.execute("SET profiling_mode = 'standard'")
+        assert [s for s, _ in diags] == ["WARNING"], diags
+        assert "profiling_mode setting is deprecated" in diags[0][1], diags
+    finally:
+        c.close()
+
+
+def test_offset_without_guaranteed_order_warns():
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    diags: list[tuple] = []
+    c.add_notice_handler(lambda d: diags.append((d.severity, d.message_primary)))
+    grouped = "SELECT k, count(*) FROM (VALUES ('a'), ('b'), ('a')) t(k) GROUP BY k"
+    try:
+        with c.cursor() as cur:
+            cur.execute(grouped + " ORDER BY k OFFSET 1")
+            assert cur.fetchall() == [("b", 1)]
+            assert diags == [], diags
+            cur.execute(grouped + " OFFSET 1")
+            assert len(cur.fetchall()) == 1
+        assert [s for s, _ in diags] == ["WARNING"], diags
+        assert "row order is not guaranteed" in diags[0][1], diags
     finally:
         c.close()
 

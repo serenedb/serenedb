@@ -1,11 +1,13 @@
 #define DUCKDB_BUILD_LOADABLE_EXTENSION
 #include "duckdb.hpp"
 
+#include "duckdb/logging/log_manager.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_context_state.hpp"
 #include "duckdb/planner/extension_callback.hpp"
 
+#include "clickhouse_logging.hpp"
 #include "clickhouse_scanner.hpp"
 #include "clickhouse_scanner_extension.hpp"
 #include "clickhouse_filter_pushdown.hpp"
@@ -46,10 +48,6 @@ public:
 	}
 };
 
-static void SetClickHouseDebugQueryPrint(ClientContext &context, SetScope scope, Value &parameter) {
-	ClickHouseConnection::DebugSetPrintQueries(BooleanValue::Get(parameter));
-}
-
 static void SetClickHouseConnectionCache(ClientContext &context, SetScope scope, Value &parameter) {
 	ClickHouseConnection::SetConnectionCache(BooleanValue::Get(parameter));
 }
@@ -85,8 +83,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	auto &config = DBConfig::GetConfig(loader.GetDatabaseInstance());
 	StorageExtension::Register(config, "clickhouse", make_shared_ptr<ClickHouseStorageExtension>());
 
-	config.AddExtensionOption("ch_debug_show_queries", "DEBUG SETTING: print all queries sent to ClickHouse to stdout",
-	                          LogicalType::BOOLEAN, Value::BOOLEAN(false), SetClickHouseDebugQueryPrint);
+	loader.GetDatabaseInstance().GetLogManager().RegisterLogType(make_uniq<ClickHouseQueryLogType>());
 
 	config.AddExtensionOption("ch_connection_cache",
 	                          "Whether to reuse (pool) ClickHouse connections across statements; setting this to "

@@ -41,8 +41,11 @@ struct PgSubscriptionRel {
   Oid srsubid;
   Oid srrelid;
   Srsubstate srsubstate;
-  PgLsn srsublsn;
+  Text srsublsn;
 };
 // NOLINTEND
+
+template<>
+MaterializedData SystemTableSnapshot<PgSubscriptionRel>::GetTableData();
 
 }  // namespace sdb::pg

@@ -20,6 +20,7 @@
 
 #include "search/search_table_transaction.h"
 
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -378,7 +379,8 @@ void SearchTableTransaction::Commit() {
         w.shard->Clear(tick);
       } catch (const std::exception& e) {
         SDB_FATAL(SEARCH, "search-table commit: Clear failed for table ",
-                  table_id, " tick=", tick, ": ", e.what());
+                  table_id, " tick=", tick, ": ",
+                  duckdb::ErrorData{e}.RawMessage());
       }
     }
   });

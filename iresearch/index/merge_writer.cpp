@@ -51,7 +51,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/directory_utils.hpp"
-#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
@@ -487,17 +486,8 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 }
 
 doc_id_t ComputeDocIds(DocIdMapT& doc_id_map, const SubReader& reader,
-                       doc_id_t next_id) noexcept {
-  try {
-    doc_id_map.resize(reader.docs_count() + doc_limits::min(),
-                      doc_limits::eof());
-  } catch (...) {
-    SDB_ERROR(
-      IRESEARCH,
-      "Failed to resize merge_writer::doc_id_map to accommodate element: ",
-      reader.docs_count() + doc_limits::min());
-    return doc_limits::invalid();
-  }
+                       doc_id_t next_id) {
+  doc_id_map.resize(reader.docs_count() + doc_limits::min(), doc_limits::eof());
   auto docs_itr = reader.docs_iterator();
   for (auto src_doc_id = docs_itr->Next(); !doc_limits::eof(src_doc_id);
        src_doc_id = docs_itr->Next(), ++next_id) {

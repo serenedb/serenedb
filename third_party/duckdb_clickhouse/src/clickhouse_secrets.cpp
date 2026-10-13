@@ -13,7 +13,8 @@ static const vector<string> connection_option_names = {
   "user",
   "password",
   "database",
-  "secure"
+  "secure",
+  "compression"
 };
 
 static const unordered_map<string, string> connection_option_aliases = {

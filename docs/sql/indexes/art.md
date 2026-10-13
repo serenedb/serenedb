@@ -25,7 +25,7 @@ ART indexes create a secondary copy of the data in a second location. Maintainin
 
 ### Constraint Checking in `UPDATE` Statements
 
-`UPDATE` statements on indexed columns and columns that cannot be updated in place are transformed into a `DELETE` of the original row followed by an `INSERT` of the updated row. This rewrite has performance implications, particularly for wide tables, as entire rows are rewritten instead of only the affected columns.
+`UPDATE` statements on indexed columns and columns that cannot be updated in place are transformed into a `DELETE` of the original row followed by an `INSERT` of the updated row. This rewrite has performance implications, particularly for wide tables, as entire rows are rewritten instead of only the affected columns. A row whose indexed values the `UPDATE` leaves as they are is updated in place instead, unless the statement sets only indexed columns, sets a column that cannot be updated in place, sets a floating-point, `INTERVAL` or `TIME WITH TIME ZONE` indexed column, or is subject to a `CHECK` constraint over both an indexed and another column it sets. The same applies to the `UPDATE` of `MERGE INTO`, `INSERT ... ON CONFLICT DO UPDATE` and `INSERT OR REPLACE`.
 
 Additionally, it causes the following constraint-checking limitation of `UPDATE` statements. The same limitation exists in other DBMSs, like PostgreSQL.
 

@@ -68,7 +68,7 @@ class DirectoryMock : public irs::Directory {
     return _impl.attributes();
   }
 
-  irs::IndexOutput::ptr create(std::string_view name) noexcept override {
+  irs::IndexOutput::ptr create(std::string_view name) override {
     return _impl.create(name);
   }
 
@@ -90,7 +90,7 @@ class DirectoryMock : public irs::Directory {
   }
 
   irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const noexcept override {
+                            irs::IOAdvice advice) const override {
     return _impl.open(name, advice);
   }
 
@@ -118,7 +118,7 @@ struct BlockingDirectory : DirectoryMock {
   explicit BlockingDirectory(irs::Directory& impl, const std::string& blocker)
     : tests::DirectoryMock(impl), blocker(blocker) {}
 
-  irs::IndexOutput::ptr create(std::string_view name) noexcept final {
+  irs::IndexOutput::ptr create(std::string_view name) final {
     auto stream = tests::DirectoryMock::create(name);
 
     if (name == blocker) {
@@ -158,7 +158,7 @@ struct CallbackDirectory : DirectoryMock {
   explicit CallbackDirectory(irs::Directory& impl, AfterCallback&& p)
     : tests::DirectoryMock(impl), after(p) {}
 
-  irs::IndexOutput::ptr create(std::string_view name) noexcept final {
+  irs::IndexOutput::ptr create(std::string_view name) final {
     auto stream = tests::DirectoryMock::create(name);
     after();
     return stream;

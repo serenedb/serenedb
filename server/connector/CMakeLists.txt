@@ -14,6 +14,7 @@ target_sources(
         geo_filter_builder.cpp
         search_filter_printer.cpp
         duckdb_client_state.cpp
+        duckdb_subscription.cpp
         scan/col_filter_verify.cpp
         scan/deferred_verify.cpp
         scan/scan_barrier.cpp
@@ -47,8 +48,6 @@ target_sources(
         duckdb_physical_search_update.cpp
         duckdb_pg_binary_copy.cpp
         duckdb_pg_text_copy.cpp
-        duckdb_tokenizer_function.cpp
-        duckdb_foreign_server_function.cpp
         duckdb_physical_create_index.cpp
         duckdb_index_utils.cpp
         duckdb_reindex_function.cpp

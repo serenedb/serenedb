@@ -1542,19 +1542,24 @@ TEST(pipeline_token_stream_test, front_failure_records_empty_run) {
   ASSERT_EQ("also", out.tokens[1].term);
 }
 
-TEST(pipeline_token_stream_test, collation_oversize_token_dropped) {
+TEST(pipeline_token_stream_test, collation_long_token_kept) {
   auto pipe = MakeChainPipe({&MakeCommaDelim, &MakeCollationEn});
   const std::string huge(50000, 'x');
-  const auto kept = tests::Analyze(*pipe, "aa,bb");
+  const auto alone = tests::Analyze(*MakeCollationEn(), huge);
+  const auto short_only = tests::Analyze(*pipe, "aa,bb");
   const auto mixed = tests::Analyze(*pipe, "aa," + huge + ",bb");
-  ASSERT_TRUE(kept.has_value());
+  ASSERT_TRUE(alone.has_value());
+  ASSERT_TRUE(short_only.has_value());
   ASSERT_TRUE(mixed.has_value());
-  ASSERT_EQ(2, kept->size());
-  ASSERT_EQ(kept->size(), mixed->size());
-  for (size_t i = 0; i < kept->size(); ++i) {
-    EXPECT_EQ((*kept)[i].term, (*mixed)[i].term) << "token " << i;
-    EXPECT_EQ((*kept)[i].pos, (*mixed)[i].pos) << "token " << i;
-  }
+  ASSERT_EQ(1, alone->size());
+  ASSERT_GT((*alone)[0].term.size(), 32768U);
+  ASSERT_EQ(2, short_only->size());
+  ASSERT_EQ(3, mixed->size());
+  EXPECT_EQ((*short_only)[0].term, (*mixed)[0].term);
+  EXPECT_EQ((*alone)[0].term, (*mixed)[1].term);
+  EXPECT_EQ((*short_only)[1].term, (*mixed)[2].term);
+  EXPECT_EQ((*mixed)[0].pos + 1, (*mixed)[1].pos);
+  EXPECT_EQ((*mixed)[1].pos + 1, (*mixed)[2].pos);
 }
 
 TEST(pipeline_token_stream_test, keyword_child_dropped_by_make) {

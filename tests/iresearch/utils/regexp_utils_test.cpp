@@ -1810,7 +1810,9 @@ TEST_F(RegexpUtilsTest, posix_ere_default_is_perl) {
 // an accept-all, which would turn a typo into a full-dictionary scan.
 
 TEST_F(RegexpUtilsTest, invalid_unclosed_paren) {
-  EXPECT_FALSE(FromPerl("(abc").ok());
+  const auto a = FromPerl("(abc");
+  EXPECT_FALSE(a.ok());
+  EXPECT_EQ("missing ): (abc", a.Error());
 }
 
 TEST_F(RegexpUtilsTest, invalid_unexpected_rparen) {
@@ -1876,6 +1878,7 @@ TEST_F(RegexpUtilsTest, max_mem_too_small_rejects_everything) {
   const irs::RegexpAcceptor a{ToBytesView("[abc]{5}"), irs::RegexpSyntax::Perl,
                               1};
   EXPECT_FALSE(a.ok());
+  EXPECT_EQ("regular expression is too complex", a.Error());
   EXPECT_FALSE(Accepts(a, "abcab"));
   EXPECT_FALSE(Accepts(a, ""));
 }
@@ -1929,6 +1932,7 @@ TEST_F(RegexpUtilsTest, max_mem_generous_budget_builds_normal_pattern) {
                               irs::RegexpSyntax::Perl,
                               irs::RegexpAcceptor::kDefaultMaxMem};
   ASSERT_TRUE(a.ok());
+  EXPECT_TRUE(a.Error().empty());
   EXPECT_TRUE(Accepts(a, "ace"));
   EXPECT_TRUE(Accepts(a, "bdf"));
   EXPECT_FALSE(Accepts(a, "acg"));

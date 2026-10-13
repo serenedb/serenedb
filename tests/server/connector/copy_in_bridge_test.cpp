@@ -49,6 +49,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include <yaclib/async/future.hpp>
@@ -116,6 +117,27 @@ yaclib::Future<> FeederCoro(CopyInBridge& bridge, yaclib::IExecutor& io,
   co_await yaclib::On(io);
   for (const auto& f : frames) {
     bridge.Publish(f.data(), f.size());
+    co_await bridge.Drained(io);
+    bridge.ResetDrained();
+  }
+  bridge.Finish();
+  co_return {};
+}
+
+yaclib::Future<> BatchedFeederCoro(CopyInBridge& bridge, yaclib::IExecutor& io,
+                                   const std::vector<std::string>& frames,
+                                   size_t batch_size) {
+  co_await yaclib::On(io);
+  std::vector<std::string_view> batch;
+  for (size_t i = 0; i < frames.size(); i += batch_size) {
+    batch.clear();
+    for (size_t j = i; j < std::min(frames.size(), i + batch_size); ++j) {
+      batch.emplace_back(frames[j]);
+      if (j % 3 == 1) {
+        batch.emplace_back();
+      }
+    }
+    bridge.Publish(batch);
     co_await bridge.Drained(io);
     bridge.ResetDrained();
   }
@@ -217,7 +239,7 @@ enum class Path {
 // FairThreadPool (the "io thread") and run the worker on a separate blocking
 // std::thread (the "duck worker"), then join both and assert exact, ordered,
 // clean-EOF delivery.
-void RunOne(Path path, size_t frame_count) {
+void RunOne(Path path, size_t frame_count, size_t batch_size = 0) {
   const Input in = MakeInput(frame_count);
   CopyInBridge bridge;
 
@@ -233,7 +255,9 @@ void RunOne(Path path, size_t frame_count) {
     }
   });
 
-  auto feeder = FeederCoro(bridge, io, in.frames);
+  auto feeder = batch_size == 0
+                  ? FeederCoro(bridge, io, in.frames)
+                  : BatchedFeederCoro(bridge, io, in.frames, batch_size);
   std::ignore = std::move(feeder).Get();  // join the feeder coroutine
   worker.join();
 
@@ -265,6 +289,18 @@ TEST(CopyInBridgeStress, WindowPathManyFramesRepeated) {
 // All-1-byte frames: the tightest possible race window (every frame drains
 // immediately, so the feeder is always one Publish ahead). This is the schedule
 // most likely to expose a live-`_len` gate.
+TEST(CopyInBridgeStress, ReadPathBatchedRepeated) {
+  for (int r = 0; r < kRepeats; ++r) {
+    RunOne(Path::Read, 2000, 1 + r % 17);
+  }
+}
+
+TEST(CopyInBridgeStress, WindowPathBatchedRepeated) {
+  for (int r = 0; r < kRepeats; ++r) {
+    RunOne(Path::Window, 2000, 1 + r % 17);
+  }
+}
+
 TEST(CopyInBridgeStress, SingleByteFramesReadPath) {
   for (int r = 0; r < kRepeats; ++r) {
     CopyInBridge bridge;
@@ -386,7 +422,7 @@ TEST(CopyInBridgeTeardown, FailMidStreamRethrows) {
     });
 
     // Feeder: publish ~half the frames, then Fail.
-    auto feeder = [&]() -> yaclib::Future<> {
+    const auto feeder = [&]() -> yaclib::Future<> {
       co_await yaclib::On(io);
       const size_t fail_at = in.frames.size() / 2;
       for (size_t i = 0; i < in.frames.size(); ++i) {
@@ -400,8 +436,8 @@ TEST(CopyInBridgeTeardown, FailMidStreamRethrows) {
         bridge.ResetDrained();
       }
       co_return {};
-    }();
-    std::ignore = std::move(feeder).Get();
+    };
+    std::ignore = feeder().Get();
     worker.join();
     io.Stop();
     io.Wait();
@@ -436,7 +472,7 @@ TEST(CopyInBridgeTeardown, AbortMidStreamStopsFeeder) {
 
     // Feeder mirrors RunCopyInFeeder's Aborted() guard: once aborted, stop
     // publishing (just drain frames without handing them out) and finish.
-    auto feeder = [&]() -> yaclib::Future<> {
+    const auto feeder = [&]() -> yaclib::Future<> {
       co_await yaclib::On(io);
       for (const auto& f : in.frames) {
         if (!bridge.Aborted()) {
@@ -446,8 +482,8 @@ TEST(CopyInBridgeTeardown, AbortMidStreamStopsFeeder) {
         }
       }
       co_return {};
-    }();
-    std::ignore = std::move(feeder).Get();
+    };
+    std::ignore = feeder().Get();
     worker.join();
     io.Stop();
     io.Wait();

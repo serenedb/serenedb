@@ -143,6 +143,7 @@ cleanup() {
 	# recovery-worker-* glob sweeps any datadir a worker didn't rm inline.
 	kill_recovery_orphans
 	rm -rf "${TMPDIR:-/tmp}"/recovery-worker-* 2>/dev/null || true
+	docker network rm "$SHARED_TEST_NETWORK" >/dev/null 2>&1 || true
 }
 
 kill_recovery_orphans
@@ -161,6 +162,8 @@ if [[ "$EXTERNAL_MODE" == "false" ]]; then
 		exit 1
 	fi
 
+	SHARED_TEST_NETWORK="$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 4)-serenedb-test-net-$$"
+	export SHARED_TEST_NETWORK
 	trap cleanup EXIT INT TERM
 fi
 

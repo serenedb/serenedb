@@ -20,6 +20,12 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
 #include "iresearch/formats/column/column_reader.hpp"
 
 namespace irs {
@@ -27,9 +33,16 @@ namespace irs {
 class ColBlockSink;
 class ColReader;
 
+inline constexpr size_t kMaxColumnDictionaries = 8;
+
 bool BlocksRelocatable(const ColumnReader& column);
 
+std::vector<std::string> ReadDictionaries(const ColReader& reader,
+                                          const ColumnReader& column);
+
 ColumnMeta CopyColumnBlocks(const ColReader& reader, const ColumnReader& column,
-                            bool validity, ColBlockSink& sink);
+                            bool validity,
+                            std::span<const uint16_t> dictionaries,
+                            ColBlockSink& sink);
 
 }  // namespace irs

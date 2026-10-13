@@ -136,7 +136,7 @@ ReencodeEstimate TrialReencode(
     static_cast<uint32_t>(group_rows), column_options.compression,
     /*hyperloglog=*/false, codec_params);
   if (dictionary) {
-    writer.ShareDictionary(std::move(dictionary));
+    writer.ShareDictionary(std::move(dictionary), 1);
   }
   auto state = column.InitScan(std::make_shared<ReadContext>(reader));
   ColumnReader::VectorScratch scratch{column.Type()};

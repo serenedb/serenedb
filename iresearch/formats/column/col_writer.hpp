@@ -27,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -76,9 +77,14 @@ class ColWriter final {
                                ColCodecParams codec_params);
 
   void CopyColumnPart(field_id id, uint32_t part, const ColReader& reader,
-                      const ColumnReader& column, bool validity);
+                      const ColumnReader& column, bool validity,
+                      std::span<const uint16_t> dictionaries);
 
-  void AddColumnDictionary(field_id id, std::string_view bytes);
+  uint16_t AddColumnDictionary(field_id id, std::string_view bytes);
+
+  bool AddCopiedDictionaries(field_id id,
+                             std::span<const std::string> dictionaries,
+                             std::vector<uint16_t>& indexes);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -117,7 +123,10 @@ class ColWriter final {
   struct ColumnParts {
     std::vector<ColumnPart> parts;
     std::vector<ColumnDictionaryMeta> dictionaries;
+    uint16_t own_dictionary = 0;
   };
+
+  uint16_t AppendDictionary(ColumnParts& parts, std::string_view bytes);
 
   ColumnPart& PartOf(field_id id, uint32_t part);
 

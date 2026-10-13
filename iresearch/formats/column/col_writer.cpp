@@ -202,29 +202,52 @@ ColWriter::ColumnPart& ColWriter::PartOf(field_id id, uint32_t part) {
 
 void ColWriter::CopyColumnPart(field_id id, uint32_t part,
                                const ColReader& reader,
-                               const ColumnReader& column, bool validity) {
+                               const ColumnReader& column, bool validity,
+                               std::span<const uint16_t> dictionaries) {
   ColBlockSink* sink = nullptr;
   {
     std::lock_guard lock{_mutex};
     EnsureOut();
     sink = _blocks.get();
   }
-  auto copy = CopyColumnBlocks(reader, column, validity, *sink);
+  auto copy = CopyColumnBlocks(reader, column, validity, dictionaries, *sink);
   std::lock_guard lock{_mutex};
   auto& slot = PartOf(id, part);
   SDB_ASSERT(!slot.writer);
   slot.copy = std::move(copy);
 }
 
-void ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
-  std::lock_guard lock{_mutex};
-  auto& dictionaries = _parts[id].dictionaries;
-  if (!dictionaries.empty()) {
-    return;
-  }
+uint16_t ColWriter::AppendDictionary(ColumnParts& parts,
+                                     std::string_view bytes) {
   EnsureOut();
-  dictionaries.push_back(
+  parts.dictionaries.push_back(
     {.file_offset = _blocks->Append(bytes), .byte_size = bytes.size()});
+  return static_cast<uint16_t>(parts.dictionaries.size());
+}
+
+uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
+  std::lock_guard lock{_mutex};
+  auto& parts = _parts[id];
+  if (parts.own_dictionary == 0) {
+    parts.own_dictionary = AppendDictionary(parts, bytes);
+  }
+  return parts.own_dictionary;
+}
+
+bool ColWriter::AddCopiedDictionaries(field_id id,
+                                      std::span<const std::string> dictionaries,
+                                      std::vector<uint16_t>& indexes) {
+  std::lock_guard lock{_mutex};
+  auto& parts = _parts[id];
+  const size_t reserved = parts.own_dictionary == 0 ? 1 : 0;
+  if (parts.dictionaries.size() + reserved + dictionaries.size() >
+      kMaxColumnDictionaries) {
+    return false;
+  }
+  for (const auto& bytes : dictionaries) {
+    indexes.push_back(AppendDictionary(parts, bytes));
+  }
+  return true;
 }
 
 ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {

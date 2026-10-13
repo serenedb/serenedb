@@ -207,6 +207,9 @@ class ColumnReader {
     return _hyperloglog.get();
   }
   bool HasDictionaries() const noexcept { return !_dictionary_metas.empty(); }
+  std::span<const ColumnDictionaryMeta> DictionaryMetas() const noexcept {
+    return _dictionary_metas;
+  }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
     return *_stats;

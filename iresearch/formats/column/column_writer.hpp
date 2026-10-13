@@ -100,7 +100,8 @@ class ColumnWriter final {
   bool TrainsDictionary() const noexcept;
   void SampleDictionary(std::span<const std::string_view> entries);
   void ShareDictionary(
-    std::shared_ptr<const codecs::TrainedDictionary> dictionary);
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary,
+    uint16_t index);
 
  private:
   friend class ColWriter;

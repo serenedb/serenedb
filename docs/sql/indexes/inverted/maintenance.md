@@ -129,11 +129,13 @@ A merge runs as separate pieces of work: the norms of each indexed field, one af
 
 On several threads, a merge also splits each large column into ranges of whole row groups that are written side by side, so one large column does not hold up the whole merge. A column counts as large when it holds more than half of an even share of the merge's column data, which is the data divided by the threads. Columns of nested types (lists, maps, structs, arrays and variants) and columns with `hyperloglog` are never split. A text column that trains a compression dictionary trains it once over the whole column before its ranges start, and every range uses that dictionary.
 
-A merge copies a column of an input block by block instead of re-encoding it, unless re-encoding would make it at least 10% smaller or the column's `compression` names a codec its blocks do not use. This is the estimate behind `verdict` in `sdb_segments`, and it is remembered while the segment stays open. Copying needs all of these:
+A merge copies a column of an input block by block instead of re-encoding it, unless re-encoding would make it at least 10% smaller or the column's `compression` names a codec its blocks do not use. The merge decides from a trial re-encoding of two row groups, as `verdict` in `sdb_segments` does. For a text column, the trial uses the dictionary the merge trains. Copying needs all of these:
 - the input has no deleted rows and at least eight row groups of rows (checking a smaller input costs about as much as re-encoding it);
 - the column is not a list, map, struct, array or variant, and has no `hyperloglog`;
 - if the column has `skip_validity`, the input stores no nulls for it;
-- its blocks need nothing else from the input's file: columns of segments whose text compression dictionary was trained by an earlier merge, and uncompressed text, are re-encoded.
+- the column is not stored as uncompressed text.
+
+A copied text column brings its compression dictionaries along. A merged column keeps at most eight dictionaries, and an input whose dictionaries would not fit is re-encoded instead.
 
 Every other input is re-encoded as before, so one merged column can mix copied and re-encoded rows. Copying costs little more than reading the blocks, so merges of segments that earlier merges already encoded well take a fraction of the time.
 

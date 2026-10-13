@@ -494,10 +494,9 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
       SDB_ASSERT(it != shared.dictionaries.end());
       dictionary = it->second;
     }
-    if (dictionary) {
-      output.AddColumnDictionary(column, dictionary->Bytes());
-    }
-    cw.ShareDictionary(std::move(dictionary));
+    const uint16_t index =
+      dictionary ? output.AddColumnDictionary(column, dictionary->Bytes()) : 0;
+    cw.ShareDictionary(std::move(dictionary), index);
   }
   if (!shared.VisitRows(
         column, begin, end, progress,
@@ -531,11 +530,14 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
       ? EstimateReencode(*source.col_reader, col, *shared.field_options,
                          std::move(dictionary))
       : *EstimateReencode(*source.col_reader, col, *shared.field_options);
-  if (ReencodePays(estimate)) {
+  std::vector<uint16_t> dictionaries;
+  if (ReencodePays(estimate) ||
+      !output.AddCopiedDictionaries(
+        column, ReadDictionaries(*source.col_reader, col), dictionaries)) {
     return MergeRange(column, part, begin, end, output, progress);
   }
   output.CopyColumnPart(column, part, *source.col_reader, col,
-                        !shared.Options(column).skip_validity);
+                        !shared.Options(column).skip_validity, dictionaries);
   return true;
 }
 

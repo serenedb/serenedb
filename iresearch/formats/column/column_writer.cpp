@@ -1722,10 +1722,10 @@ void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {
 }
 
 void ColumnWriter::ShareDictionary(
-  std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary, uint16_t index) {
   auto tuning = std::make_shared<codecs::StringTuning>();
   tuning->sampling_done = true;
-  tuning->dictionary_id = dictionary ? 1 : 0;
+  tuning->dictionary_id = index;
   tuning->dictionary = std::move(dictionary);
   _meta.write_string_tuning = std::move(tuning);
 }

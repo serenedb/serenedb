@@ -38,6 +38,24 @@
 namespace sdb::pg {
 namespace {
 
+constexpr SystemSqlColumn kSdbMetricsColumns[] = {
+  {"metric", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"value", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"description", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"relation_id", kOid, 0, false, false, 0, 0, SystemKey::None},
+};
+
+constexpr SystemSql kSdbMetricsSql{.oid = kSdbMetricsTable,
+                                   .schema = "pg_catalog",
+                                   .name = "sdb_metrics",
+                                   .row_type = 0,
+                                   .row_array_type = 0,
+                                   .relkind = 'r',
+                                   .replident = 'n',
+                                   .superuser_only = false,
+                                   .shared = false,
+                                   .columns = kSdbMetricsColumns};
+
 using search::StoreStats;
 
 struct IndexMetric {

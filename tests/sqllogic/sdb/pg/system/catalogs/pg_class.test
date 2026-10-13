@@ -857,3 +857,36 @@ plain	f
 
 statement ok
 DROP SCHEMA kunkka_cls_ns CASCADE;
+
+
+query
+SELECT relname, relreplident FROM pg_class
+WHERE oid IN ('pg_catalog.pg_class'::regclass, 'pg_catalog.pg_tables'::regclass, 'information_schema.sql_parts'::regclass)
+ORDER BY 1;
+----
+relname	relreplident
+pg_class	n
+pg_tables	n
+sql_parts	d
+
+
+query
+SELECT relname, relreplident FROM pg_class
+WHERE relname IN ('sdb_metrics', 'sdb_progress', 'sdb_settings')
+ORDER BY 1;
+----
+relname	relreplident
+sdb_metrics	n
+sdb_progress	n
+sdb_settings	n
+
+
+query
+SELECT relname, reloptions FROM pg_class
+WHERE relnamespace = 'pg_catalog'::regnamespace AND reloptions IS NOT NULL AND relkind = 'v'
+ORDER BY 1;
+----
+relname	reloptions
+pg_stats	{security_barrier=true}
+pg_stats_ext	{security_barrier=true}
+pg_stats_ext_exprs	{security_barrier=true}

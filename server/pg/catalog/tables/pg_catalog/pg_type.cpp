@@ -143,6 +143,10 @@ constexpr std::tuple kUserTypeColumns{
   Col<"typacl">(
     [](const auto& row) -> const auto& { return row.entry.permissions.acl; })};
 
+constexpr std::tuple kTypeTraits{
+  Col<"typisdefined">([](const auto&) { return true; }),
+  Col<"typdelim">([](const auto&) { return ','; })};
+
 class PgType final : public SystemTableScan<kPgTypeSql> {
  public:
   PgType(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
@@ -151,6 +155,8 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
       _session.emplace(MakeSession(&context));
     }
   }
+
+  static constexpr duckdb::idx_t kRows = 10000;
 
   static constexpr std::tuple kSources{
     ArraySource<BuiltinType>{&LoadBuiltinTypes, kBuiltinKeys, kBuiltinFacts},
@@ -166,6 +172,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     TypeColumns([](const auto& type) -> const BuiltinType& { return type; },
                 [](const auto& type) { return type.align; }),
     Col<"typispreferred">(&BuiltinType::preferred),
+    Col<"typisdefined">([](const auto&) { return true; }),
     Col<"typdelim">(&BuiltinType::delim), Col<"typelem">(&BuiltinType::elem),
     Col<"typarray">(&BuiltinType::array), Col<"typmodin">(&BuiltinType::modin),
     Col<"typmodout">(&BuiltinType::modout),
@@ -178,7 +185,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
       [](const auto& type) { return NonEmpty(type.default_text); }));
 
   static constexpr auto kEnumType = Shape<kSql, const UserType>(
-    kUserTypeColumns, Col<"typlen">([](const auto&) { return 4; }),
+    kUserTypeColumns, kTypeTraits, Col<"typlen">([](const auto&) { return 4; }),
     Col<"typbyval">([](const auto&) { return true; }),
     Col<"typtype">([](const auto&) { return 'e'; }),
     Col<"typcategory">([](const auto&) { return 'E'; }),
@@ -186,16 +193,19 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typoutput">([](const auto&) { return kEnumOut; }),
     Col<"typreceive">([](const auto&) { return kEnumRecv; }),
     Col<"typsend">([](const auto&) { return kEnumSend; }),
-    Col<"typalign">([](const auto&) { return 'i'; }));
+    Col<"typalign">([](const auto&) { return 'i'; }),
+    Col<"typstorage">([](const auto&) { return 'p'; }),
+    Col<"typtypmod">([](const auto&) { return -1; }));
 
   static constexpr auto kStructType = Shape<kSql, const UserType>(
-    kUserTypeColumns,
+    kUserTypeColumns, kTypeTraits,
     TypeColumns([](const auto&) -> const BuiltinType& { return kComposite; },
                 [](const auto&) { return kComposite.align; }),
-    Col<"typrelid">([](const auto& row) { return row.entry.oid; }));
+    Col<"typrelid">([](const auto& row) { return row.entry.oid; }),
+    Col<"typtypmod">([](const auto&) { return -1; }));
 
   static constexpr auto kDomainType = Shape<kSql, const UserType>(
-    kUserTypeColumns,
+    kUserTypeColumns, kTypeTraits,
     Col<"typlen">([](const auto& row) { return row.Base().len; }),
     Col<"typbyval">([](const auto& row) { return row.Base().byval; }),
     Col<"typtype">([](const auto&) { return kDomain.type; }),
@@ -233,7 +243,8 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     }),
     TypeColumns([](const auto&) -> const BuiltinType& { return kComposite; },
                 [](const auto&) { return kComposite.align; }),
-    Col<"typrelid">(&duckdb::CatalogEntry::oid));
+    kTypeTraits, Col<"typrelid">(&duckdb::CatalogEntry::oid),
+    Col<"typtypmod">([](const auto&) { return -1; }));
 
   static constexpr auto kArrayType = Shape<kSql, const ArrayType>(
     Col<"oid">([](const auto& row) { return TypeArrayOid(row.element); }),
@@ -243,6 +254,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
       [](const auto& row) { return row.owner.permissions.owner; }),
     TypeColumns([](const auto&) -> const BuiltinType& { return kArray; },
                 [](const auto& row) { return row.Align() == 'd' ? 'd' : 'i'; }),
+    kTypeTraits, Col<"typtypmod">([](const auto&) { return -1; }),
     Col<"typelem">(&ArrayType::element),
     Col<"typname">([](const auto& row) { return row.names.Of(row.owner); }));
 

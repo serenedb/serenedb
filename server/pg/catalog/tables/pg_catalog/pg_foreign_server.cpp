@@ -37,6 +37,8 @@ class PgForeignServer final : public SystemTableScan<kPgForeignServerSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr bool kSuperuserOnly = true;
+
   static constexpr std::tuple kSources{CatalogSetSource{
     SystemCatalog::Database, duckdb::CatalogType::FOREIGN_SERVER_ENTRY,
     kForeignServerIndexes}};

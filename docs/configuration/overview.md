@@ -245,8 +245,8 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `regex_match_operator_semantics` | Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` |  |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `UTF8` |
-| `server_version` | Shows the server version. | `VARCHAR` | `18.3` |
-| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `180003` |
+| `server_version` | Shows the server version. | `VARCHAR` | `18.6` |
+| `server_version_num` | Shows the server version as an integer. | `INTEGER` | `180006` |
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SETTING` |
 | `standard_conforming_strings` | Causes '...' strings to treat backslashes literally. | `BOOLEAN` | `on` |
 | `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `0` |
@@ -256,8 +256,8 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 `pg_settings` also lists a few more PostgreSQL settings, each with SereneDB's own value:
 
 - `max_connections` shows the server-wide limit set with `--max_connections` (`0` means no limit); a listener may override it with `?max_connections=`.
-- `max_identifier_length` (`63`), `max_index_keys` (`32`), `max_prepared_transactions` (`0`), `in_hot_standby`, `integer_datetimes` and `server_encoding` describe SereneDB and are read-only: `SET` fails with `cannot be changed`. pgjdbc reads `max_index_keys` to list the key columns of indexes and foreign keys.
-- `work_mem`, `maintenance_work_mem`, `lock_timeout`, `idle_in_transaction_session_timeout`, `transaction_timeout`, `synchronous_commit`, `check_function_bodies`, `row_security`, `xmloption`, `default_tablespace`, `default_table_access_method`, `transaction_deferrable`, `transaction_read_only`, `password_encryption` and `lc_messages`, `lc_monetary`, `lc_numeric`, `lc_time` exist so that what clients and `pg_dump` scripts set works. They have no effect: SereneDB never waits for a lock, `memory_limit` bounds memory, and there are no tablespaces or row security policies. `SET` checks numbers, units, booleans and enumerated values the way PostgreSQL does, and warns that the value is not enforced when it differs from the current one.
+- `max_identifier_length` (`63`), `max_index_keys` (`32`), `in_hot_standby`, `integer_datetimes` and `server_encoding` describe SereneDB and are read-only: `SET` fails with `cannot be changed`. pgjdbc reads `max_index_keys` to list the key columns of indexes and foreign keys.
+- `work_mem`, `maintenance_work_mem`, `lock_timeout`, `idle_in_transaction_session_timeout`, `transaction_timeout`, `synchronous_commit`, `check_function_bodies`, `row_security`, `xmloption`, `default_tablespace`, `default_table_access_method`, `transaction_deferrable`, `transaction_read_only` and `password_encryption` exist so that what clients and `pg_dump` scripts set works. They have no effect: SereneDB never waits for a lock, `memory_limit` bounds memory, and there are no tablespaces or row security policies. `SET` checks numbers, units, booleans and enumerated values the way PostgreSQL does, and warns that the value is not enforced when it differs from the current one.
 - `DateStyle` and `IntervalStyle` accept every PostgreSQL value and show it the way PostgreSQL does (`SET DateStyle = ISO` shows `ISO, MDY`), but dates are always shown in the ISO style and intervals in the `postgres` style, so other values warn that they are not enforced.
 
 `SHOW` prints a setting with a unit the way PostgreSQL does (`SHOW work_mem` is `4MB`), and `pg_settings` gives it in the setting's base unit (`4096` with unit `kB`). Other PostgreSQL settings, such as `shared_buffers` or `wal_level`, describe PostgreSQL's own machinery; SereneDB does not have them, and `SHOW` fails with `unrecognized configuration parameter`.

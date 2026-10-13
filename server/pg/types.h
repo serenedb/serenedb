@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types.hpp>
+#include <iresearch/utils/system_compiler.hpp>
 #include <span>
 
 #include "connector/pg_logical_types.h"
@@ -55,6 +56,54 @@ enum PgTypeOID : int32_t {
   kGeometry = kMinSystem + 106,
   kGeometryArray = kMinSystem + 107,
 };
+
+struct TypeStorage {
+  duckdb::PhysicalType physical;
+  bool zero;
+};
+
+constexpr TypeStorage StorageOf(int32_t type) {
+  using enum duckdb::PhysicalType;
+  switch (type) {
+    case kBool:
+      return {BOOL, true};
+    case kInt2:
+      return {INT16, true};
+    case kInt4:
+      return {INT32, true};
+    case kInt8:
+    case kOid:
+    case kRegproc:
+    case kXid:
+      return {INT64, true};
+    case kFloat4:
+      return {FLOAT, true};
+    case kFloat8:
+      return {DOUBLE, true};
+    case kText:
+    case kName:
+    case kChar:
+    case kBytea:
+    case kPgNodeTree:
+      return {VARCHAR, true};
+    case kCardinalNumber:
+      return {INT32, false};
+    case kTimestamptz:
+      return {INT64, false};
+    case kPgLsn:
+      return {UINT64, false};
+    case kAclitem:
+    case kAnyarray:
+    case kCharacterData:
+    case kSqlIdentifier:
+    case kYesOrNo:
+    case kPgNdistinct:
+    case kPgDependencies:
+    case kPgMcvList:
+      return {VARCHAR, false};
+  }
+  SDB_UNREACHABLE();
+}
 
 // A column's pg_type identity for RowDescription: the type OID, typlen (the
 // fixed byte width of a fixed-length type, or -1 for a varlena type), and

@@ -55,11 +55,11 @@ DateStyle	NULL	Client Connection Defaults / Locale and Formatting	Sets the displ
 default_transaction_isolation	NULL	Client Connection Defaults / Statement Behavior	Sets the transaction isolation level of each new transaction.	user	enum	NULL	NULL	{"repeatable read","read committed"}
 extra_float_digits	NULL	Client Connection Defaults / Locale and Formatting	Sets the number of digits displayed for floating-point values.	user	integer	-15	3	NULL
 IntervalStyle	NULL	Client Connection Defaults / Locale and Formatting	Sets the display format for interval values.	user	enum	NULL	NULL	{postgres,postgres_verbose,sql_standard,iso_8601}
-max_identifier_length	NULL	Preset Options	Shows the maximum identifier length.	internal	integer	63	63	NULL
-server_version_num	NULL	Preset Options	Shows the server version as an integer.	internal	integer	180003	180003	NULL
+max_identifier_length	NULL	Preset Options	Shows the maximum identifier length. SereneDB keeps longer identifiers in full.	internal	integer	63	63	NULL
+server_version_num	NULL	Preset Options	Shows the server version as an integer.	internal	integer	180006	180006	NULL
 standard_conforming_strings	NULL	Version and Platform Compatibility / Previous PostgreSQL Versions	Causes '...' strings to treat backslashes literally.	user	bool	NULL	NULL	NULL
-statement_timeout	ms	Client Connection Defaults / Statement Behavior	Sets the maximum allowed duration of any statement.	user	integer	0	2147483647	NULL
-work_mem	kB	Resource Usage / Memory	Sets the maximum memory to be used for query workspaces.	user	integer	64	2147483647	NULL
+statement_timeout	ms	Client Connection Defaults / Statement Behavior	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.	user	integer	0	2147483647	NULL
+work_mem	kB	Resource Usage / Memory	Sets the maximum memory to be used for query workspaces. Accepted for compatibility; memory_limit bounds the memory of every operation.	user	integer	64	2147483647	NULL
 
 
 query
@@ -78,7 +78,7 @@ DateStyle	ISO, MDY
 extra_float_digits	1
 IntervalStyle	postgres
 max_identifier_length	63
-server_version_num	180003
+server_version_num	180006
 standard_conforming_strings	on
 statement_timeout	0
 work_mem	4096
@@ -92,11 +92,7 @@ WHERE name IN ('lc_messages', 'lc_monetary', 'lc_numeric', 'lc_time',
 ORDER BY name;
 ----
 name	setting	boot_val	vartype
-lc_messages	C	C	string
-lc_monetary	C	C	string
-lc_numeric	C	C	string
-lc_time	C	C	string
-server_version	18.3	18.3	string
+server_version	18.6	18.6	string
 
 
 query
@@ -112,7 +108,7 @@ in_hot_standby	off
 integer_datetimes	on
 max_identifier_length	63
 server_encoding	UTF8
-server_version_num	180003
+server_version_num	180006
 
 
 query
@@ -265,7 +261,7 @@ FROM pg_settings
 WHERE name IN ('bytea_output', 'IntervalStyle', 'DateStyle', 'work_mem', 'lc_time');
 ----
 keyed
-5
+4
 
 
 query

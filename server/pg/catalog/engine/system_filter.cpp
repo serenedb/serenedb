@@ -462,13 +462,12 @@ void SystemScan::Compile(duckdb::column_t column,
   if (compiled.texts.Empty() && compiled.numbers.Empty()) {
     return;
   }
-  const auto& fallback = meta.default_value;
   const bool passes =
     !compiled.texts.Empty()
-      ? (fallback ? compiled.texts.Passes(*fallback)
-                  : compiled.texts.PassesNull())
-      : (fallback ? compiled.numbers.Passes(SystemNumber(*fallback))
-                  : compiled.numbers.PassesNull());
+      ? (meta.zero_default ? compiled.texts.Passes(std::string_view{})
+                           : compiled.texts.PassesNull())
+      : (meta.zero_default ? compiled.numbers.Passes(int64_t{0})
+                           : compiled.numbers.PassesNull());
   _filtered |= uint64_t{1} << column;
   if (!passes) {
     _rejecting |= uint64_t{1} << column;

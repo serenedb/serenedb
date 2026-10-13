@@ -181,7 +181,7 @@ SystemTableEntry::SystemTableEntry(duckdb::Catalog& catalog,
                                    const pg::SystemTable& table)
   : duckdb::TableCatalogEntry{catalog, schema, info}, _table{table} {
   internal = true;
-  permissions = pg::SystemPermissions(table.Sql().superuser_only);
+  permissions = pg::SystemPermissions(table.SuperuserOnly());
 }
 
 const duckdb::ColumnList& SystemTableEntry::GetColumns() const {

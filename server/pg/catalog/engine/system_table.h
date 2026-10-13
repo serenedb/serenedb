@@ -100,32 +100,32 @@ enum class SystemKey : uint8_t {
   Indexed,
 };
 
-constexpr int64_t SystemNumber(std::string_view text) {
-  if (text == "true") {
-    return 1;
-  }
-  if (text == "false") {
-    return 0;
-  }
-  const bool negative = text.starts_with('-');
-  int64_t value = 0;
-  for (const char digit : text.substr(negative ? 1 : 0)) {
-    if (digit < '0' || digit > '9') {
-      SDB_UNREACHABLE();
-    }
-    value = value * 10 + (digit - '0');
-  }
-  return negative ? -value : value;
-}
-
 struct SystemSqlColumn {
+  constexpr SystemSqlColumn(std::string_view name, int32_t type,
+                            int32_t element_type, bool composite, bool not_null,
+                            int32_t collation, int16_t ndims, SystemKey key)
+    : name{name},
+      type{type},
+      physical{element_type != 0 ? duckdb::PhysicalType::LIST
+                                 : StorageOf(type).physical},
+      element{composite           ? duckdb::PhysicalType::STRUCT
+              : element_type != 0 ? StorageOf(element_type).physical
+                                  : duckdb::PhysicalType::INVALID},
+      not_null{not_null},
+      zero_default{not_null && element_type == 0 && StorageOf(type).zero},
+      collation{collation},
+      ndims{ndims},
+      key{key} {}
+
   std::string_view name;
   int32_t type;
   duckdb::PhysicalType physical;
   duckdb::PhysicalType element;
   bool not_null;
+  bool zero_default;
+  int32_t collation;
+  int16_t ndims;
   SystemKey key;
-  std::optional<std::string_view> default_value;
 };
 
 enum class SystemLookup : uint8_t {
@@ -163,9 +163,9 @@ struct SystemSql {
   int32_t row_type;
   int32_t row_array_type;
   char relkind;
+  char replident;
   bool superuser_only;
   bool shared;
-  duckdb::idx_t rows;
   std::span<const SystemSqlColumn> columns;
 
   consteval uint32_t operator[](std::string_view column) const {
@@ -205,7 +205,7 @@ struct SystemShape {
   static consteval uint64_t Required() {
     uint64_t required = 0;
     for (uint32_t i = 0; i < Sql.columns.size(); ++i) {
-      if (Sql.columns[i].not_null && !Sql.columns[i].default_value) {
+      if (Sql.columns[i].not_null && !Sql.columns[i].zero_default) {
         required |= uint64_t{1} << i;
       }
     }
@@ -264,17 +264,27 @@ struct SystemTypeShape {
   uint64_t provided;
 };
 
+struct SystemColumnKey {
+  uint32_t column;
+  SystemKey key;
+};
+
 class SystemTable {
  public:
   SystemTable(const SystemSql& sql, SystemScanFunctions functions,
               std::span<const SystemFact> facts,
               std::optional<SystemVisibility> visibility,
-              std::span<const SystemTypeShape> type_shapes)
+              std::span<const SystemTypeShape> type_shapes,
+              std::span<const SystemColumnKey> column_keys, duckdb::idx_t rows,
+              bool superuser_only)
     : _sql{sql},
       _functions{functions},
       _facts{facts},
       _visibility{visibility},
-      _type_shapes{type_shapes} {}
+      _type_shapes{type_shapes},
+      _column_keys{column_keys},
+      _rows{rows},
+      _superuser_only{sql.superuser_only || superuser_only} {}
 
   SystemTable(const SystemTable&) = delete;
   SystemTable& operator=(const SystemTable&) = delete;
@@ -299,6 +309,14 @@ class SystemTable {
   std::span<const SystemTypeShape> TypeShapes() const noexcept {
     return _type_shapes;
   }
+  SystemKey KeyOf(uint32_t column) const {
+    const auto it = absl::c_find_if(
+      _column_keys,
+      [&](const SystemColumnKey& key) { return key.column == column; });
+    return it == _column_keys.end() ? _sql.columns[column].key : it->key;
+  }
+  duckdb::idx_t Rows() const noexcept { return _rows; }
+  bool SuperuserOnly() const noexcept { return _superuser_only; }
   bool DefaultsHold(uint64_t provided) const;
 
  private:
@@ -307,6 +325,9 @@ class SystemTable {
   std::span<const SystemFact> _facts;
   std::optional<SystemVisibility> _visibility;
   std::span<const SystemTypeShape> _type_shapes;
+  std::span<const SystemColumnKey> _column_keys;
+  duckdb::idx_t _rows;
+  bool _superuser_only;
   duckdb::ColumnList _columns;
 };
 
@@ -544,6 +565,13 @@ void SortedBy(const SystemRows<Row, Holder>& rows, const SystemFilter& filter,
 
 class SystemScan {
  public:
+  static constexpr std::span<const SystemFact> kFacts{};
+  static constexpr std::optional<SystemVisibility> kVisibility{};
+  static constexpr std::span<const SystemTypeShape> kTypeShapes{};
+  static constexpr std::span<const SystemColumnKey> kColumnKeys{};
+  static constexpr duckdb::idx_t kRows = 1000;
+  static constexpr bool kSuperuserOnly = false;
+
   SystemScan(duckdb::ClientContext& context,
              duckdb::TableFunctionInitInput& input);
   ~SystemScan();
@@ -741,7 +769,7 @@ class SystemScan {
     using T = SystemShapeOf<Shape>;
     constexpr auto kColumn = T::kColumns[I];
     constexpr auto& kMeta = T::kSql.columns[kColumn];
-    constexpr bool kNullDefault = !kMeta.default_value.has_value();
+    constexpr bool kNullDefault = !kMeta.zero_default;
     const auto put = [&](const auto& value) {
       static_assert(
         !std::is_same_v<std::remove_cvref_t<decltype(value)>, char> ||
@@ -944,14 +972,12 @@ class SystemScan {
     using enum duckdb::PhysicalType;
     constexpr auto& kMeta = Sql.columns[C];
     const auto& target = _vectors[_slots[C]];
-    if constexpr (!kMeta.default_value) {
+    if constexpr (!kMeta.zero_default) {
       target.validity->SetInvalid(_row);
     } else if constexpr (kMeta.physical == VARCHAR) {
-      Put<VARCHAR>(target, _row, SystemStableText{*kMeta.default_value});
+      Put<VARCHAR>(target, _row, SystemStableText{});
     } else {
-      static_assert(kMeta.physical != LIST, "a column default is a scalar");
-      constexpr auto kValue = SystemNumber(*kMeta.default_value);
-      Put<kMeta.physical>(target, _row, kValue);
+      Put<kMeta.physical>(target, _row, 0);
     }
   }
 
@@ -1016,9 +1042,6 @@ template<const SystemSql& Sql>
 class SystemTableScan : public SystemScan {
  public:
   static constexpr const SystemSql& kSql = Sql;
-  static constexpr std::span<const SystemFact> kFacts{};
-  static constexpr std::optional<SystemVisibility> kVisibility{};
-  static constexpr std::span<const SystemTypeShape> kTypeShapes{};
 
   using SystemScan::SystemScan;
 
@@ -1310,11 +1333,10 @@ void SystemScanRun(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
 
 template<typename T>
 SystemTable SystemTableOf() {
-  return SystemTable{T::kSql,
-                     {&SystemScanInit<T>, &SystemScanRun<T>},
-                     T::kFacts,
-                     T::kVisibility,
-                     T::kTypeShapes};
+  return SystemTable{T::kSql,        {&SystemScanInit<T>, &SystemScanRun<T>},
+                     T::kFacts,      T::kVisibility,
+                     T::kTypeShapes, T::kColumnKeys,
+                     T::kRows,       T::kSuperuserOnly};
 }
 
 }  // namespace sdb::pg

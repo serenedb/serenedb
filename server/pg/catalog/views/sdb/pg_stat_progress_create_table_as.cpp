@@ -18,11 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <string_view>
+#include "pg/catalog/views/system_views.h"
 
 namespace sdb::pg {
 
-std::string_view gPgStatProgressCreateTableAs = R"sql(SELECT
+SystemView gPgStatProgressCreateTableAs{
+  .schema = "pg_catalog",
+  .name = "pg_stat_progress_create_table_as",
+  .oid = kPgStatProgressCreateTableAsView,
+  .row_type = 0,
+  .row_array_type = 0,
+  .superuser_only = false,
+  .sql = R"sql(SELECT
     S.pid AS pid, S.datid AS datid, S.datname AS datname,
     S.relid AS relid,
     S.command AS command,
@@ -30,6 +37,6 @@ std::string_view gPgStatProgressCreateTableAs = R"sql(SELECT
     S.tuples_processed AS tuples_processed,
     S.bytes_processed AS bytes_processed,
     S.tuples_total AS tuples_total
-FROM sdb_progress S WHERE S.command = 'CREATE TABLE AS')sql";
+FROM sdb_progress S WHERE S.command = 'CREATE TABLE AS')sql"};
 
 }  // namespace sdb::pg

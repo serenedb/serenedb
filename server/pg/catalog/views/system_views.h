@@ -34,6 +34,7 @@ struct SystemView {
   int32_t row_type;
   int32_t row_array_type;
   bool superuser_only;
+  std::string_view options;
   std::string_view sql;
 };
 

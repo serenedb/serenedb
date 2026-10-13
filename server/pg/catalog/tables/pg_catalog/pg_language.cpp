@@ -41,6 +41,8 @@ class PgLanguage final : public SystemTableScan<kPgLanguageSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{
     ArraySource<Language>{&LoadStatic<kLanguages>, {}, {}}};
 

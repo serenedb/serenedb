@@ -221,9 +221,12 @@ relname
 t
 
 query
-SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[];
+SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[] ORDER BY relname;
 ----
 relname	reloptions
+pg_stats	{security_barrier=true}
+pg_stats_ext	{security_barrier=true}
+pg_stats_ext_exprs	{security_barrier=true}
 
 
 statement count 3

@@ -10,20 +10,21 @@ hand. Two inputs, both of the same PostgreSQL version:
             returns re-deparsed
 
   docker run -d --name pg18 -e POSTGRES_HOST_AUTH_METHOD=trust \\
-      -p 55433:5432 postgres:18.3
-  git clone --depth 1 -b REL_18_3 https://github.com/postgres/postgres pg-src
+      -p 55433:5432 postgres:18.6
+  git clone --depth 1 -b REL_18_6 https://github.com/postgres/postgres pg-src
   python3 scripts/generate_pg_catalog.py --pg 127.0.0.1:55433 --pg-src pg-src
 
-SereneDB's own choices live in scripts/pg_catalog/config.py (which views are
-native tables), in server/pg/types.cpp (which PostgreSQL types SereneDB
-supports) and in server/pg/catalog/views/<schema>/<view>.cpp (view bodies
-SereneDB writes). Those outputs are
-server/pg/catalog/generated/*.gen.inc.
+SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
+objects SereneDB names, which functions are stubs), in server/pg/types.cpp
+(which PostgreSQL types SereneDB supports), in
+server/pg/catalog/tables/<schema>/<table>.cpp (which views are tables) and in
+server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).
+Those outputs are server/pg/catalog/generated/*.gen.inc.
 
 Two outputs come from this repository alone and are written on every run,
 also without --pg: generated/registry.gen.inc, which registers each
 server/pg/catalog/tables/<folder>/<table>.cpp and
-server/pg/catalog/views/<schema>/<view>.cpp, and the sqllogic test that
+server/pg/catalog/views/<folder>/<view>.cpp, and the sqllogic test that
 checks the claims of docs/compatibility/system-table-compatibility.md.
 --check verifies they are current without writing anything.
 """

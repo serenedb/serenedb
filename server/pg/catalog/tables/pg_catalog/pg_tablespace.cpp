@@ -28,6 +28,8 @@ class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{
     ArraySource<SystemObject>{&LoadStatic<kSystemTablespaces>, {}, {}}};
 

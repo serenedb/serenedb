@@ -39,6 +39,9 @@ class PgAggregate final : public SystemTableScan<kPgAggregateSql> {
 
   static constexpr auto kAggregate = Shape<kSql, const BuiltinFunction>(
     Col<"aggfnoid">(&BuiltinFunction::oid),
+    Col<"aggkind">([](const auto&) { return 'n'; }),
+    Col<"aggfinalmodify">([](const auto&) { return 'r'; }),
+    Col<"aggmfinalmodify">([](const auto&) { return 'r'; }),
     Col<"aggtranstype">([](const auto&) { return kInternal; }));
 
   void Row(const BuiltinFunction& function) {

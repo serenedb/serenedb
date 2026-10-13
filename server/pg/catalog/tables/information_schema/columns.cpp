@@ -127,7 +127,11 @@ constexpr std::tuple kRelationColumns{
   Col<"column_name">(&InfoColumn::name),
   Col<"ordinal_position">(&InfoColumn::position),
   Col<"dtd_identifier">(
-    [](const auto& row) { return absl::StrCat(row.position); })};
+    [](const auto& row) { return absl::StrCat(row.position); }),
+  Col<"is_self_referencing">(
+    [](const auto&) { return std::string_view{"NO"}; }),
+  Col<"is_identity">([](const auto&) { return std::string_view{"NO"}; }),
+  Col<"identity_cycle">([](const auto&) { return std::string_view{"NO"}; })};
 
 constexpr std::tuple kTypeColumns{
   Col<"udt_catalog">(&InfoColumn::database),
@@ -223,6 +227,13 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10000;
+
+  static constexpr SystemColumnKey kColumnKeys[] = {
+    {kSql["table_schema"], SystemKey::Indexed},
+    {kSql["table_name"], SystemKey::Indexed},
+  };
+
   static constexpr std::tuple kSources{
     CatalogSource{kTableViewTypes, SystemSchemas::Visit, kIndexes}};
 
@@ -253,7 +264,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   static constexpr auto kViewColumn = Shape<kSql, const InfoColumn>(
     kRelationColumns, kTypeColumns,
     Col<"is_nullable">([](const auto&) { return std::string_view{"YES"}; }),
-    Col<"is_updatable">([](const auto&) { return std::string_view{"NO"}; }));
+    Col<"is_updatable">([](const auto&) { return std::string_view{"NO"}; }),
+    Col<"is_generated">([](const auto&) { return std::string_view{"NEVER"}; }));
 
   void Row(const duckdb::TableCatalogEntry& table) {
     const bool visible = Visible(table.permissions);

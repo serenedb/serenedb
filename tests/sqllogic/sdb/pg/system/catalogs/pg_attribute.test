@@ -472,3 +472,18 @@ t
 
 statement ok
 DROP TABLE sven_att_wide;
+
+
+query
+SELECT attrelid::regclass::text AS relation, attname, attcollation, attndims FROM pg_attribute
+WHERE (attrelid, attname) IN (('pg_catalog.pg_class'::regclass, 'relname'), ('pg_catalog.pg_class'::regclass, 'reloptions'),
+                              ('pg_catalog.pg_class'::regclass, 'relacl'), ('pg_catalog.pg_index'::regclass, 'indkey'),
+                              ('pg_catalog.pg_index'::regclass, 'indclass'))
+ORDER BY 1, 2;
+----
+relation	attname	attcollation	attndims
+pg_class	relacl	0	1
+pg_class	relname	950	0
+pg_class	reloptions	950	1
+pg_index	indclass	0	1
+pg_index	indkey	0	1

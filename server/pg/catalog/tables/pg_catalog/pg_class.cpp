@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_split.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
@@ -68,15 +69,14 @@ std::optional<std::vector<std::string>> Reloptions(
   return NonEmpty(std::move(result));
 }
 
-std::optional<std::vector<std::string>> Reloptions(
-  const duckdb::IndexCatalogEntry& index) {
+std::vector<std::string> Reloptions(const duckdb::IndexCatalogEntry& index) {
   std::vector<std::string> result;
   for (const auto name : catalog::kInvertedIndexSettings) {
     if (const auto it = index.options.find(name); it != index.options.end()) {
       result.emplace_back(absl::StrCat(name, "=", it->second.ToString()));
     }
   }
-  return NonEmpty(std::move(result));
+  return result;
 }
 
 uint64_t RelationRowType(const duckdb::CatalogEntry& relation) {
@@ -94,9 +94,18 @@ constexpr std::tuple kRelationBase{
   Col<"relnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
   Col<"relowner">(kOwner)};
 
+constexpr std::tuple kRelationState{
+  Col<"relpersistence">([](const auto&) { return 'p'; }),
+  Col<"relispopulated">([](const auto&) { return true; })};
+
+constexpr auto kRelationTraits = std::tuple_cat(
+  kRelationState,
+  std::tuple{Col<"relreplident">([](const auto&) { return 'n'; })});
+
 template<char Kind>
 constexpr auto kRelation = std::tuple_cat(
-  kRelationBase, std::tuple{Col<"relkind">([](const auto&) { return Kind; })});
+  kRelationBase, std::tuple{Col<"relkind">([](const auto&) { return Kind; })},
+  kRelationTraits);
 
 struct Ordinary {
   duckdb::TableCatalogEntry& table;
@@ -122,6 +131,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     }
   }
 
+  static constexpr duckdb::idx_t kRows = 10000;
+
   static constexpr std::tuple kSources{
     CatalogSource{kRelationTypes, SystemSchemas::Visit, kIndexes}};
 
@@ -129,9 +140,12 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
                                                 "pg_table_is_visible"};
 
   static constexpr auto kSystem = Shape<kSql, const catalog::SystemTableEntry>(
-    kRelationBase, Col<"relkind">([](const auto& entry) {
+    kRelationBase, kRelationState, Col<"relkind">([](const auto& entry) {
       return entry.Table().Sql().relkind;
     }),
+    Col<"relreplident">(
+      [](const auto& entry) { return entry.Table().Sql().replident; }),
+    Col<"reltuples">([](const auto&) { return -1.0F; }),
     Col<"relam">([](const auto& entry) {
       return entry.Table().Sql().relkind == 'v' ? duckdb::idx_t{0} : kPgAmHeap;
     }),
@@ -155,6 +169,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       [](const auto& row) { return row.table.ParentSchemaOid(); }),
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
+    Col<"relkind">([](const auto&) { return 'r'; }),
+    Col<"relpersistence">([](const auto&) { return 'p'; }),
+    Col<"relispopulated">([](const auto&) { return true; }),
     Col<"relam">(
       [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
     Col<"relnatts">([](const auto& row) {
@@ -196,6 +213,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     }));
 
   static constexpr auto kKeyIndex = Shape<kSql, const KeyIndex>(
+    kRelationTraits,
     Col<"oid">([](const auto& row) { return row.key.index_oid; }),
     Col<"relname">(
       [](const auto& row) -> const auto& { return row.key.constraint_name; }),
@@ -211,7 +229,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     }));
 
   static constexpr auto kIndex = Shape<kSql, const Index>(
-    Col<"oid">([](const auto& row) { return row.index.oid; }),
+    kRelationTraits, Col<"oid">([](const auto& row) { return row.index.oid; }),
     Col<"relname">(
       [](const auto& row) -> const auto& { return row.index.name; }),
     Col<"relnamespace">(
@@ -244,6 +262,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
 
   static constexpr auto kView = Shape<kSql, duckdb::ViewCatalogEntry>(
     kRelation<'v'>, Col<"relhasrules">([](const auto&) { return true; }),
+    Col<"reltuples">([](const auto&) { return -1.0F; }),
     Col<"reltype">(&RelationRowType),
     Col<"relnatts">([](auto& view, SystemScan& scan) {
       const auto columns = ViewColumns(scan.Context(), view);
@@ -252,6 +271,14 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relhasindex">([](auto& view, SystemScan& scan) {
       return !view.internal && scan.Indexed(view);
     }),
+    Col<"reloptions">(
+      [](const auto& view) -> std::optional<std::vector<std::string>> {
+        const auto* system = view.internal ? FindSystemView(view.oid) : nullptr;
+        if (!system || system->options.empty()) {
+          return std::nullopt;
+        }
+        return absl::StrSplit(system->options, ',');
+      }),
     Col<"relacl">(kAcl));
 
   static constexpr auto kSequence =
@@ -262,6 +289,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   static constexpr auto kComposite =
     Shape<kSql, const duckdb::TypeCatalogEntry>(
       kRelation<'c'>, Col<"reltype">(&duckdb::CatalogEntry::oid),
+      Col<"reltuples">([](const auto&) { return -1.0F; }),
       Col<"relnatts">([](const auto& type) {
         return duckdb::StructType::GetChildCount(type.user_type);
       }));

@@ -35,6 +35,8 @@ class PgNamespace final : public SystemTableScan<kPgNamespaceSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{
     CatalogSource{kSchemaTypes, SystemSchemas::Visit, kIndexes}};
 

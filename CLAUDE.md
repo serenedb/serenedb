@@ -64,7 +64,9 @@ per machine and invisible to the team. What every contributor needs goes into
 its topic page in `.claude/rules/` (a new topic gets a page with `paths:` for
 the files it covers, and a link from `CONTRIBUTING.md`); instructions only for
 Claude go into this file or a skill in `.claude/skills/`. Never copy a rule
-into a second place: point to it. Propose the change in the same PR.
+into a second place: point to it. Propose the change in the same PR; when the
+user rejects a rule, save that to memory and never propose that kind of rule
+again.
 
 ## Parallel work
 

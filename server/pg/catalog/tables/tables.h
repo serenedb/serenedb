@@ -22,7 +22,9 @@
 
 #include <optional>
 #include <ranges>
+#include <span>
 
+#include "catalog/entry/system_table.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/oids.h"
@@ -43,6 +45,26 @@ std::optional<T> NonEmpty(T value) {
 template<const auto& Rows>
 SystemRows<std::ranges::range_value_t<decltype(Rows)>> LoadStatic(SystemScan&) {
   return {Rows};
+}
+
+inline std::span<const SystemSqlColumn> SystemColumns(
+  const duckdb::TableCatalogEntry& table) {
+  const auto* system =
+    table.internal ? dynamic_cast<const catalog::SystemTableEntry*>(&table)
+                   : nullptr;
+  return system ? system->Table().Sql().columns
+                : std::span<const SystemSqlColumn>{};
+}
+
+inline ColumnType DescribeColumn(const duckdb::ColumnDefinition& column,
+                                 std::span<const SystemSqlColumn> system) {
+  auto described = DescribeColumnType(column.Type());
+  if (!system.empty()) {
+    const auto& sql = system[column.Logical().index];
+    described.collation = sql.collation;
+    described.ndims = sql.ndims;
+  }
+  return described;
 }
 
 inline constexpr auto kOwner = [](const auto& entry) {

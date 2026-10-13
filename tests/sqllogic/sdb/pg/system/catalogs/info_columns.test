@@ -438,3 +438,29 @@ SELECT count(*) AS n FROM information_schema.columns WHERE table_name LIKE 'invo
 ----
 n
 0
+
+
+query
+SELECT column_name, collation_catalog = current_database() AS in_database, collation_schema, collation_name
+FROM information_schema.columns
+WHERE table_schema = 'pg_catalog' AND table_name = 'pg_aggregate'
+  AND column_name IN ('agginitval', 'aggminitval')
+ORDER BY column_name;
+----
+column_name	in_database	collation_schema	collation_name
+agginitval	t	pg_catalog	C
+aggminitval	t	pg_catalog	C
+
+
+query
+SELECT count(*) AS differ
+FROM information_schema.columns c
+JOIN pg_namespace n ON n.nspname = c.table_schema
+JOIN pg_class r ON r.relnamespace = n.oid AND r.relname = c.table_name
+JOIN pg_attribute a ON a.attrelid = r.oid AND a.attname = c.column_name
+LEFT JOIN pg_collation co ON co.oid = a.attcollation AND co.collname <> 'default'
+WHERE c.table_schema IN ('pg_catalog', 'information_schema')
+  AND c.collation_name IS DISTINCT FROM co.collname;
+----
+differ
+0

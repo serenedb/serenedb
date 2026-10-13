@@ -64,6 +64,7 @@ struct InfoColumn {
   size_t position;
   const duckdb::LogicalType& type;
   const duckdb::ColumnDefinition* column;
+  std::span<const SystemSqlColumn> system;
   bool not_null;
   bool internal;
   mutable std::optional<ColumnTypeInfo> info;
@@ -72,7 +73,8 @@ struct InfoColumn {
     if (info) {
       return *info;
     }
-    const auto described = DescribeColumnType(type);
+    const auto described =
+      column ? DescribeColumn(*column, system) : DescribeColumnType(type);
     const auto* builtin =
       described.oid < kMaxSystem
         ? FindBuiltinType(static_cast<int32_t>(described.oid))
@@ -272,6 +274,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     const auto [schema, relation] = NameOf(Transaction(), table);
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
+    const auto system = SystemColumns(table);
     for (const auto& column :
          table.GetColumns().Logical() |
            std::views::filter([&](const duckdb::ColumnDefinition& column) {
@@ -289,6 +292,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .position = static_cast<size_t>(Attnum(column)),
          .type = column.Type(),
          .column = &column,
+         .system = system,
          .not_null = !not_null.empty() && not_null[column.Logical().index],
          .internal = table.internal,
          .info = {}});
@@ -315,6 +319,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .position = i + 1,
          .type = columns->types[i],
          .column = nullptr,
+         .system = {},
          .not_null = false,
          .internal = false,
          .info = {}});

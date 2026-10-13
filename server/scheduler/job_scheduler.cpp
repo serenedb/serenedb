@@ -279,8 +279,12 @@ void JobScheduler::Schedule(catalog::JobCatalogEntry& job) {
   if (status.suspended) {
     return;
   }
+  Arm(state, timer);
+}
+
+void JobScheduler::Arm(const std::shared_ptr<JobState>& state, uint64_t timer) {
   BackgroundScheduler::instance().RunAt(
-    status.next_run, [this, state, timer] { Run(state, timer); });
+    state->status.next_run, [this, state, timer] { Run(state, timer); });
 }
 
 void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
@@ -299,8 +303,7 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
       if (busy) {
         status.next_run = NextRun(status.schedule, state->definition.oid, now);
       }
-      BackgroundScheduler::instance().RunAt(
-        status.next_run, [this, state, timer] { Run(state, timer); });
+      Arm(state, timer);
       return;
     }
     ++status.running;
@@ -308,8 +311,7 @@ void JobScheduler::Run(std::shared_ptr<JobState> state, uint64_t timer) {
     job = state->definition;
     if (concurrent) {
       status.next_run = NextRun(status.schedule, job.oid, now);
-      BackgroundScheduler::instance().RunAt(
-        status.next_run, [this, state, timer] { Run(state, timer); });
+      Arm(state, timer);
     }
   }
   RunBody(state, std::move(job), nullptr, concurrent ? 0 : timer);
@@ -363,8 +365,7 @@ duckdb::ErrorData JobScheduler::RunBody(
     status.last_run = run;
     --status.running;
     if (timer != 0 && !state->dropped && state->timer == timer) {
-      BackgroundScheduler::instance().RunAt(
-        status.next_run, [this, state, timer] { Run(state, timer); });
+      Arm(state, timer);
     }
     _runs.Done();
   };

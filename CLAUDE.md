@@ -28,8 +28,8 @@ search open and recently closed issues and PRs
 `gh pr list --state all --search <words>`). The same problem already filed: add
 your findings to that issue instead of opening another. A PR already fixes it:
 link the PR instead of fixing it again (a stale one: ask whether to wait, build
-on it or fix it here). Only related: go ahead, mention the related issue in yours and
-leave a cross-reference on it.
+on it or fix it here). Only related: go ahead, mention the related issue in
+yours and leave a cross-reference on it.
 
 - Post, file or comment on GitHub only after the user agrees to the text.
 

@@ -1,0 +1,118 @@
+statement ok
+CREATE MACRO rot_vec(i) AS
+  list_transform(range(256), j -> (sin(i * 0.0113 * (j % 12 + 1) + j * 0.37) / (1 + j / 16))::FLOAT)::FLOAT[256];
+
+statement ok
+CREATE TABLE rot (id INTEGER PRIMARY KEY, grp INTEGER, emb FLOAT[256]);
+
+statement ok
+INSERT INTO rot SELECT i, i % 7, rot_vec(i) FROM range(3000) t(i);
+
+statement ok
+CREATE INDEX rot_l2 ON rot USING inverted(id, emb hnsw (metric = 'l2', quant = 'none')) INCLUDE (grp);
+
+statement ok
+CREATE TABLE rot_ip (id INTEGER PRIMARY KEY, grp INTEGER, emb FLOAT[256]);
+
+statement ok
+INSERT INTO rot_ip SELECT * FROM rot;
+
+statement ok
+CREATE INDEX rot_ip_idx ON rot_ip USING inverted(id, emb hnsw (metric = 'ip', quant = 'none')) INCLUDE (grp);
+
+statement ok
+CREATE TABLE rot_cos (id INTEGER PRIMARY KEY, grp INTEGER, emb FLOAT[256]);
+
+statement ok
+INSERT INTO rot_cos SELECT * FROM rot;
+
+statement ok
+CREATE INDEX rot_cos_idx ON rot_cos USING inverted(id, emb hnsw (metric = 'cosine', quant = 'none')) INCLUDE (grp);
+
+statement ok
+VACUUM (REFRESH_TABLE) rot;
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_ip;
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_cos;
+
+statement ok
+SET sdb_hnsw_ef_search = 4000;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_l2 ORDER BY emb <-> rot_vec(777.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot ORDER BY emb <-> rot_vec(777.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_ip_idx ORDER BY emb <#> rot_vec(1234.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot_ip ORDER BY emb <#> rot_vec(1234.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_cos_idx ORDER BY emb <=> rot_vec(42.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot_cos ORDER BY emb <=> rot_vec(42.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT id, round((emb <-> rot_vec(777))::DOUBLE, 4) AS d
+FROM rot_l2 ORDER BY emb <-> rot_vec(777) LIMIT 1;
+----
+id	d
+777	0
+
+statement ok
+SET sdb_hnsw_ef_search = 300;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_l2 ORDER BY emb <-> rot_vec(777.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot ORDER BY emb <-> rot_vec(777.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_ip_idx ORDER BY emb <#> rot_vec(1234.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot_ip ORDER BY emb <#> rot_vec(1234.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_cos_idx ORDER BY emb <=> rot_vec(42.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot_cos ORDER BY emb <=> rot_vec(42.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_l2 WHERE grp = 3 ORDER BY emb <-> rot_vec(500.5) LIMIT 15)
+  EXCEPT (SELECT id FROM rot WHERE grp = 3 ORDER BY emb <-> rot_vec(500.5) LIMIT 15)) t;
+----
+count
+0
+
+query
+SELECT (SELECT count(*) FROM rot_l2 WHERE emb <-> rot_vec(900.5) < 0.5)
+     = (SELECT count(*) FROM rot WHERE emb <-> rot_vec(900.5) < 0.5) AS same;
+----
+same
+t
+
+statement ok
+RESET sdb_hnsw_ef_search;

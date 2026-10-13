@@ -124,6 +124,13 @@ faiss::PCAMatrix TrainPcaRotation(const float* data, size_t n, uint32_t d) {
   return pca;
 }
 
+void RotateVector(const float* rotation, const float* in, float* out,
+                  uint32_t d) {
+  for (uint32_t i = 0; i < d; ++i) {
+    out[i] = duckdb::InnerProductOp::Operation(rotation + size_t{i} * d, in, d);
+  }
+}
+
 void NormalizeRows(float* data, size_t n, uint32_t d) {
   for (size_t i = 0; i < n; ++i) {
     float* row = data + i * d;

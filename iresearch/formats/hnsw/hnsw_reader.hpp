@@ -40,11 +40,14 @@ struct HnswHeader {
   uint32_t ef_construction = 0;
   uint32_t record_size = 0;
   uint64_t rows = 0;
+  bool rotated = false;
 };
 
 struct HnswData {
   HnswGraph graph;
   std::vector<float> vectors;
+  std::vector<float> rotation;
+  std::vector<float> norms;
   bstring codes;
   std::vector<float> centroid;
   std::shared_ptr<const QuantizerStats> stats;

@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -350,6 +351,95 @@ void HnswComputeDistances(const float* q, const float* base, uint32_t d,
 
 inline constexpr score_t kHnswNoThreshold =
   std::numeric_limits<score_t>::lowest();
+
+inline constexpr uint32_t kHnswPanoramaLevel = 64;
+inline constexpr uint32_t kHnswPanoramaMinDim = 4 * kHnswPanoramaLevel;
+inline constexpr float kHnswPanoramaSlack = 1e-4f;
+inline constexpr float kHnswPanoramaMargin = 1e-5f;
+
+inline uint32_t HnswPanoramaLevels(uint32_t d) noexcept {
+  return (d + kHnswPanoramaLevel - 1) / kHnswPanoramaLevel;
+}
+
+void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept;
+
+template<VectorMetric M>
+struct HnswPanoramaDist {
+  static constexpr auto kKernel = EffectiveQuantMetric(M);
+
+  const float* base;
+  uint32_t d;
+  const float* q;
+  const float* tails;
+  const float* norms;
+
+  const float* Row(uint32_t id) const noexcept {
+    return base + static_cast<size_t>(id) * d;
+  }
+
+  void Batch(std::span<const uint32_t> ids, score_t* out,
+             score_t threshold = kHnswNoThreshold) const noexcept {
+    if (threshold == kHnswNoThreshold) {
+      HnswComputeDistances<M>(q, base, d, ids, out);
+      return;
+    }
+    const score_t bar =
+      threshold - kHnswPanoramaMargin * (1.f + std::abs(threshold));
+    for (size_t i = 0; i < ids.size(); ++i) {
+      out[i] = Bounded(ids[i], bar);
+    }
+  }
+
+  score_t One(uint32_t id) const noexcept {
+    score_t s{};
+    Batch({&id, 1}, &s);
+    return s;
+  }
+
+  void Prefetch(uint32_t id) const noexcept {
+    __builtin_prefetch(Row(id), 0, 3);
+    __builtin_prefetch(norms + id, 0, 3);
+  }
+
+  score_t Bounded(uint32_t id, score_t bar) const noexcept {
+    const float* x = Row(id);
+    const float x_norm2 = norms[id];
+    const float slack = kHnswPanoramaSlack * x_norm2;
+    float acc = 0.f;
+    float head = 0.f;
+    for (uint32_t b = 0, level = 1; b < d; b += kHnswPanoramaLevel, ++level) {
+      const uint32_t w = std::min(kHnswPanoramaLevel, d - b);
+      if constexpr (kKernel == VectorMetric::L2Sqr) {
+        acc += faiss::fvec_L2sqr(q + b, x + b, w);
+      } else {
+        acc += faiss::fvec_inner_product(q + b, x + b, w);
+      }
+      if (b + w == d) {
+        break;
+      }
+      head += faiss::fvec_norm_L2sqr(x + b, w);
+      const float rest = x_norm2 - head;
+      const float qt = tails[level];
+      score_t bound;
+      if constexpr (kKernel == VectorMetric::L2Sqr) {
+        const float lo = std::sqrt(std::max(0.f, rest - slack));
+        const float hi = std::sqrt(std::max(0.f, rest + slack));
+        const float gap = qt < lo ? lo - qt : (qt > hi ? qt - hi : 0.f);
+        bound = -(acc + gap * gap);
+      } else {
+        bound = acc + qt * std::sqrt(std::max(0.f, rest + slack));
+      }
+      if (bound < bar) {
+        return kHnswNoThreshold;
+      }
+    }
+    if constexpr (kKernel == VectorMetric::L2Sqr) {
+      return -acc;
+    } else {
+      return acc;
+    }
+  }
+};
 
 inline uint32_t HnswLoadLink(const uint32_t& slot) noexcept {
   return std::atomic_ref<uint32_t>{const_cast<uint32_t&>(slot)}.load(

@@ -43,13 +43,6 @@ struct PanoramaStatsHeader {
   uint32_t d;
 };
 
-void RotateQuery(const byte_type* rotation, const float* q, float* out,
-                 uint32_t d) {
-  const auto* rows = reinterpret_cast<const float*>(rotation);
-  for (uint32_t i = 0; i < d; ++i) {
-    out[i] = duckdb::InnerProductOp::Operation(rows + size_t{i} * d, q, d);
-  }
-}
 constexpr uint32_t PanoramaLevels(uint32_t d) noexcept {
   return (d + kPanoramaLevelWidth - 1) / kPanoramaLevelWidth;
 }
@@ -221,7 +214,8 @@ class PanoramaQuantizerCodebook final : public QuantizerCodebook {
       return;
     }
     _query.resize(d);
-    RotateQuery(_stats->Rotation(), query.data(), _query.data(), d);
+    RotateVector(reinterpret_cast<const float*>(_stats->Rotation()),
+                 query.data(), _query.data(), d);
     _pano = MakePanorama(d, faiss::Panorama::kDefaultBatchSize);
     _cums.resize(_levels + 1);
     _pano->compute_query_cum_sums(_query.data(), _cums.data());

@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/random/distributions.h>
+
 #include <algorithm>
 #include <cmath>
 #include <duckdb.hpp>
@@ -30,6 +32,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <numeric>
 #include <random>
 #include <tuple>
 #include <vector>
@@ -611,6 +614,77 @@ std::vector<uint32_t> SelectReference(const SelectRefDist& dist,
 // Pinned because the two differ by a single cast and the search-side cost of
 // getting it wrong -- 2x the ef_search for the same recall -- shows up nowhere
 // near this code.
+template<irs::VectorMetric M>
+void CheckPanoramaDist(const std::vector<float>& base,
+                       const std::vector<float>& norms,
+                       const std::vector<float>& query, uint32_t d) {
+  const size_t rows = norms.size();
+  std::vector<float> tails(irs::HnswPanoramaLevels(d) + 1);
+  irs::HnswPanoramaTails(query.data(), d, tails.data());
+  const irs::HnswPanoramaDist<M> dist{.base = base.data(),
+                                      .d = d,
+                                      .q = query.data(),
+                                      .tails = tails.data(),
+                                      .norms = norms.data()};
+  std::vector<uint32_t> ids(rows);
+  std::iota(ids.begin(), ids.end(), 0U);
+  std::vector<irs::score_t> exact(rows);
+  irs::HnswComputeDistances<M>(query.data(), base.data(), d, ids, exact.data());
+  std::vector<irs::score_t> scored(rows);
+  dist.Batch(ids, scored.data());
+  for (size_t i = 0; i < rows; ++i) {
+    ASSERT_EQ(scored[i], exact[i]) << "d=" << d << " row " << i;
+  }
+  auto sorted = exact;
+  std::ranges::sort(sorted);
+  for (const double share : {0.1, 0.5, 0.9}) {
+    const auto threshold =
+      sorted[static_cast<size_t>(share * static_cast<double>(rows - 1))];
+    dist.Batch(ids, scored.data(), threshold);
+    size_t dropped = 0;
+    for (size_t i = 0; i < rows; ++i) {
+      if (scored[i] == irs::kHnswNoThreshold) {
+        ++dropped;
+        EXPECT_LE(exact[i], threshold)
+          << "d=" << d << " share " << share << " row " << i;
+      } else {
+        EXPECT_NEAR(scored[i], exact[i], 1e-4f * (1.f + std::abs(exact[i])))
+          << "d=" << d << " share " << share << " row " << i;
+      }
+    }
+    if (d > irs::kHnswPanoramaLevel && share > 0.5) {
+      EXPECT_GT(dropped, 0U) << "d=" << d << " share " << share;
+    }
+  }
+}
+
+TEST(HnswPanoramaDistTest, PrunesOnlyRowsThatCannotBeatTheThreshold) {
+  for (const uint32_t d : {64U, 96U, 130U}) {
+    constexpr size_t kRows = 400;
+    pcg32 rng{d};
+    const auto draw = [&](uint32_t j) {
+      return absl::Uniform<float>(rng, -1.f, 1.f) /
+             (1.f + static_cast<float>(j) / 8.f);
+    };
+    std::vector<float> base(kRows * d);
+    std::vector<float> norms(kRows);
+    for (size_t i = 0; i < kRows; ++i) {
+      for (uint32_t j = 0; j < d; ++j) {
+        base[i * d + j] = draw(j);
+      }
+      norms[i] = faiss::fvec_norm_L2sqr(base.data() + i * d, d);
+    }
+    for (size_t qi = 0; qi < 8; ++qi) {
+      std::vector<float> query(d);
+      for (uint32_t j = 0; j < d; ++j) {
+        query[j] = draw(j);
+      }
+      CheckPanoramaDist<irs::VectorMetric::L2Sqr>(base, norms, query, d);
+      CheckPanoramaDist<irs::VectorMetric::InnerProduct>(base, norms, query, d);
+    }
+  }
+}
+
 TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   for (const uint32_t m : {8U, 16U, 32U}) {
     constexpr size_t kDraws = 200000;

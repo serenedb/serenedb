@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
@@ -42,6 +43,7 @@
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -978,6 +980,50 @@ auto BuildDispatch(HnswGraphWriter& graph, const Factory& factory,
   co_return {};
 }
 
+inline constexpr size_t kPanoramaMinRows = 1024;
+inline constexpr size_t kPanoramaTrainRows = 4096;
+inline constexpr size_t kPanoramaApplyRows = 4096;
+
+bool RotateForPanorama(std::vector<float>& vectors,
+                       std::span<const uint8_t> valid, uint32_t d,
+                       std::vector<float>& rotation,
+                       std::vector<float>& norms) {
+  const size_t rows = valid.size();
+  const size_t floor = std::max(kPanoramaMinRows, size_t{8} * d);
+  const size_t want = std::max(kPanoramaTrainRows, size_t{8} * d);
+  const size_t live = static_cast<size_t>(absl::c_count(valid, uint8_t{1}));
+  if (live < floor) {
+    return false;
+  }
+  const size_t step = std::max<size_t>(1, live / want);
+  std::vector<float> sample;
+  sample.reserve(std::min(live, want) * d);
+  for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
+       ++row) {
+    if (valid[row] == 0) {
+      continue;
+    }
+    if (seen++ % step == 0) {
+      sample.insert(sample.end(), vectors.begin() + row * d,
+                    vectors.begin() + (row + 1) * d);
+    }
+  }
+  const auto pca = TrainPcaRotation(sample.data(), sample.size() / d, d);
+  rotation.assign(pca.A.begin(), pca.A.end());
+  std::vector<float> chunk(kPanoramaApplyRows * d);
+  for (size_t first = 0; first < rows; first += kPanoramaApplyRows) {
+    const size_t n = std::min(kPanoramaApplyRows, rows - first);
+    pca.apply_noalloc(static_cast<faiss::idx_t>(n), vectors.data() + first * d,
+                      chunk.data());
+    std::copy_n(chunk.data(), n * d, vectors.data() + first * d);
+  }
+  norms.resize(rows);
+  for (size_t row = 0; row < rows; ++row) {
+    norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
+  }
+  return true;
+}
+
 }  // namespace
 
 HnswWriter::HnswWriter(AnnInfo info) : _info{std::move(info)} {}
@@ -1100,6 +1146,12 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                                 n * _d * sizeof(float));
                   }
                 });
+    if (!_qw && _d >= kHnswPanoramaMinDim &&
+        PanoramaApplies(_info.metric, _d) &&
+        !RotateForPanorama(_vectors, valid, _d, _rotation, _norms)) {
+      _rotation.clear();
+      _norms.clear();
+    }
   }
 
   std::shared_ptr<const QuantizerStats> stats;
@@ -1175,6 +1227,7 @@ void HnswWriter::Flush() {
   out.WriteU32(_info.ef_construction);
   out.WriteU32(_record_size);
   out.WriteU64(_rows);
+  out.WriteByte(_rotation.empty() ? 0 : 1);
   _graph.Serialize(out);
   if (_qw) {
     _qw->Serialize(out);
@@ -1186,6 +1239,12 @@ void HnswWriter::Flush() {
   } else {
     out.WriteData(reinterpret_cast<const byte_type*>(_vectors.data()),
                   static_cast<size_t>(_rows) * _d * sizeof(float));
+    if (!_rotation.empty()) {
+      out.WriteData(reinterpret_cast<const byte_type*>(_rotation.data()),
+                    _rotation.size() * sizeof(float));
+      out.WriteData(reinterpret_cast<const byte_type*>(_norms.data()),
+                    _norms.size() * sizeof(float));
+    }
   }
 
   _idx->AddHnsw(
@@ -1194,6 +1253,10 @@ void HnswWriter::Flush() {
 
   _vectors.clear();
   _vectors.shrink_to_fit();
+  _rotation.clear();
+  _rotation.shrink_to_fit();
+  _norms.clear();
+  _norms.shrink_to_fit();
   _codes.clear();
   _codes.shrink_to_fit();
   _stats_blob.clear();

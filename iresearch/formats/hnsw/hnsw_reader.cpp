@@ -57,6 +57,7 @@ HnswHeader HnswIndex::ReadHeader(IndexInput& in) {
   h.ef_construction = static_cast<uint32_t>(in.ReadI32());
   h.record_size = static_cast<uint32_t>(in.ReadI32());
   h.rows = static_cast<uint64_t>(in.ReadI64());
+  h.rotated = in.ReadByte() != 0;
   return h;
 }
 
@@ -76,6 +77,14 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
       if (!data->vectors.empty()) {
         in->ReadData(reinterpret_cast<byte_type*>(data->vectors.data()),
                      data->vectors.size() * sizeof(float));
+      }
+      if (_header.rotated) {
+        data->rotation.resize(size_t{_header.d} * _header.d);
+        in->ReadData(reinterpret_cast<byte_type*>(data->rotation.data()),
+                     data->rotation.size() * sizeof(float));
+        data->norms.resize(static_cast<size_t>(_header.rows));
+        in->ReadData(reinterpret_cast<byte_type*>(data->norms.data()),
+                     data->norms.size() * sizeof(float));
       }
     } else {
       const auto stats_size = static_cast<size_t>(in->ReadI64());

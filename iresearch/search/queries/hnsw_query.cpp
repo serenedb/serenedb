@@ -27,6 +27,7 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -104,6 +105,22 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
   }
   ResolveEnum<VectorMetric>(
     EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
+      if constexpr (M == VectorMetric::L2Sqr ||
+                    M == VectorMetric::InnerProduct) {
+        if (!data.rotation.empty()) {
+          std::vector<float> rotated(d);
+          RotateVector(data.rotation.data(), query.data(), rotated.data(), d);
+          std::vector<float> tails(HnswPanoramaLevels(d) + 1);
+          HnswPanoramaTails(rotated.data(), d, tails.data());
+          HnswPanoramaDist<M> dist{.base = data.vectors.data(),
+                                   .d = d,
+                                   .q = rotated.data(),
+                                   .tails = tails.data(),
+                                   .norms = data.norms.data()};
+          fn(dist);
+          return;
+        }
+      }
       HnswQueryDist<M> dist{
         .base = data.vectors.data(), .d = d, .q = query.data()};
       fn(dist);

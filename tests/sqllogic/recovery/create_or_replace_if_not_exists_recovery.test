@@ -987,7 +987,6 @@ id	body	extra
 11	new eleven	110
 
 
-# Written after the last refresh: only the search WAL holds it at the crash.
 statement ok
 INSERT INTO coinr_st VALUES (12, 'new twelve', 120);
 

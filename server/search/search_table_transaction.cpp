@@ -133,13 +133,19 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
 
 SearchTableTransaction::~SearchTableTransaction() { ReleaseWriters(); }
 
-void SearchTableTransaction::RegisterWriter(
-  const std::shared_ptr<SearchTable>& shard,
-  const catalog::SearchTableEntry& table) {
+SearchShardWrites& SearchTableTransaction::EnsureShardWrites(
+  const std::shared_ptr<SearchTable>& shard) {
   auto& w = _writes[shard->GetTableId()];
   if (!w.shard) {
     w.shard = shard;
   }
+  return w;
+}
+
+void SearchTableTransaction::RegisterWriter(
+  const std::shared_ptr<SearchTable>& shard,
+  const catalog::SearchTableEntry& table) {
+  auto& w = EnsureShardWrites(shard);
   w.table = &table;
   if (w.writer_slot < 0) {
     const auto slot = shard->RegisterWriter();
@@ -162,11 +168,7 @@ void SearchTableTransaction::ReleaseWriters() noexcept {
 void SearchTableTransaction::AddParallelSearchTransaction(
   const std::shared_ptr<SearchTable>& shard,
   std::unique_ptr<irs::IndexWriter::Transaction> trx) {
-  auto& w = _writes[shard->GetTableId()];
-  if (!w.shard) {
-    w.shard = shard;
-  }
-  w.transactions.push_back(std::move(trx));
+  EnsureShardWrites(shard).transactions.push_back(std::move(trx));
 }
 
 void SearchTableTransaction::AddSegments(
@@ -215,10 +217,7 @@ void SearchTableTransaction::ReplayBuffer(SearchTable& shard,
 
 irs::IndexWriter::Transaction& SearchTableTransaction::EnsureBufferTransaction(
   const std::shared_ptr<SearchTable>& shard) {
-  auto& w = _writes[shard->GetTableId()];
-  if (!w.shard) {
-    w.shard = shard;
-  }
+  auto& w = EnsureShardWrites(shard);
   if (w.buffer_trx == nullptr) {
     // Exclusive: its segments are named in the record, so they must not also
     // carry another transaction's documents.
@@ -246,10 +245,7 @@ irs::IndexWriter::Transaction&
 SearchTableTransaction::EnsureSerialSearchTransaction(
   const std::shared_ptr<SearchTable>& shard,
   absl::AnyInvocable<irs::IndexWriter::Transaction()> make_trx) {
-  auto& w = _writes[shard->GetTableId()];
-  if (!w.shard) {
-    w.shard = shard;
-  }
+  auto& w = EnsureShardWrites(shard);
   if (w.transactions.empty()) {
     w.transactions.push_back(
       std::make_unique<irs::IndexWriter::Transaction>(make_trx()));
@@ -259,20 +255,14 @@ SearchTableTransaction::EnsureSerialSearchTransaction(
 
 void SearchTableTransaction::AddSearchDeletes(
   const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
-  auto& w = _writes[shard->GetTableId()];
-  if (!w.shard) {
-    w.shard = shard;
-  }
+  EnsureShardWrites(shard);
   _changes[shard->GetTableId()].AppendDeletes(rows);
 }
 
 void SearchTableTransaction::AddSearchTruncate(
   const std::shared_ptr<SearchTable>& shard,
   const duckdb::Identifier& table_name, bool clears_shard) {
-  auto& w = _writes[shard->GetTableId()];
-  if (!w.shard) {
-    w.shard = shard;
-  }
+  auto& w = EnsureShardWrites(shard);
   if (!w.truncate_claim) {
     if (!shard->ClaimTruncate()) {
       THROW_SQL_ERROR(

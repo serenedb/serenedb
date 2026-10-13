@@ -166,6 +166,8 @@ class SearchTableTransaction {
   }
 
  private:
+  SearchShardWrites& EnsureShardWrites(
+    const std::shared_ptr<SearchTable>& shard);
   void ReleaseWriters() noexcept;
 
   // Replays a buffer into `trx` in issue order, rows and removals interleaved

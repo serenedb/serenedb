@@ -309,6 +309,41 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
     });
 }
 
+void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
+                     duckdb::Vector& result) {
+  auto& context = state.GetContext();
+  auto& sequences = duckdb::SequenceSession::Get(context);
+  std::optional<std::pair<duckdb::idx_t, int64_t>> last;
+  {
+    std::lock_guard lock{sequences.lock};
+    if (sequences.last_used.IsValid()) {
+      const auto it = sequences.values.find(sequences.last_used.GetIndex());
+      if (it != sequences.values.end() && it->second.last) {
+        last.emplace(it->first, *it->second.last);
+      }
+    }
+  }
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry;
+  if (last) {
+    entry = EntryByOid(SessionOf(state), last->first);
+  }
+  if (!entry) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("lastval is not yet defined in this session"));
+  }
+  if (const auto* connection = connector::GetSereneDBContextPtr(context);
+      connection &&
+      !auth::ClosureFor(&context, connection->GetRoleId())
+         ->CanAny(duckdb::CatalogType::SEQUENCE_ENTRY, entry->permissions,
+                  duckdb::AclMode::Select | duckdb::AclMode::Usage)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                    ERR_MSG("permission denied for sequence ",
+                            entry->name.GetIdentifierName()));
+  }
+  result.Reference(duckdb::Value::BIGINT(last->second),
+                   duckdb::count_t(args.size()));
+}
+
 void ClockTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
   const duckdb::timestamp_tz_t now{duckdb::Timestamp::GetCurrentTimestamp()};
@@ -726,6 +761,8 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "pg_sequence_last_value", VOLATILE, InitSession,
     {duckdb::ScalarFunction{{regclass}, int8, PgSequenceLastValueFunction}});
+  RegisterScalar(loader, pg_catalog, "lastval", VOLATILE, InitSession,
+                 {duckdb::ScalarFunction{{}, int8, LastvalFunction}});
   RegisterScalar(
     loader, pg_catalog, "clock_timestamp", VOLATILE,
     {duckdb::ScalarFunction{

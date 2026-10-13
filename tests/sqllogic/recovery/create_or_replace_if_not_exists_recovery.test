@@ -374,7 +374,7 @@ connection w2
 statement error
 CREATE TABLE IF NOT EXISTS coinr_t_race (b TEXT);
 ----
-db error: ERROR: Catalog write-write conflict on create with "Schema\0public\0Table\0public\0coinr_t_race"
+db error: ERROR: Catalog write-write conflict on create with "coinr_t_race"
 
 
 connection w1

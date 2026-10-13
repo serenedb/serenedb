@@ -20,18 +20,27 @@
 
 #pragma once
 
-#include <duckdb/common/named_parameter_map.hpp>
+#include <string>
 #include <string_view>
 
-#include "pg/connection_context.h"
+#include "pg/options_parser.h"
+#include "pg/tsdictionary.h"
 
+namespace duckdb {
+
+class ClientContext;
+
+}  // namespace duckdb
 namespace sdb::pg {
 
-void CreateForeignServer(ConnectionContext& conn_ctx, std::string_view name,
-                         std::string_view fdw_name, bool if_not_exists,
-                         const duckdb::named_parameter_map_t& options);
+struct CompiledTSDictionary {
+  irs::analysis::TokenizerConfig config;
+  std::string definition;
+};
 
-void DropForeignServer(ConnectionContext& conn_ctx, std::string_view name,
-                       bool missing_ok, bool cascade);
+CompiledTSDictionary CompileTSDictionarySpec(duckdb::ClientContext& context,
+                                             std::string_view spec);
+
+std::string FormatTSDictionaryHelp();
 
 }  // namespace sdb::pg

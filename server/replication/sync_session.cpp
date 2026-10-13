@@ -236,7 +236,6 @@ bool SyncSession::SetupApplyConnection() {
     _target.database_oid, nullptr, 0, nullptr);
   this->_client_state = &connector::SereneDBClientState::Register(
     *this->_conn->context, this->_connection_ctx);
-  this->_conn->context->session_user.assign(user);
   connector::SetDefaultSearchPath(*this->_conn->context, _target.database_name);
   return true;
 }

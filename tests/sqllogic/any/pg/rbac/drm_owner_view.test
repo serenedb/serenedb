@@ -78,10 +78,18 @@ ALTER VIEW dov_mop_v1 OWNER TO dov_vedernikoff;
 
 # DROP ROLE is refused while vedernikoff owns the view (PG: 2BP01, DETAIL
 # "owner of view dov_mop_v1"). DETAIL wording differs across engines -> ignore.
+skipif serenedb
 statement error
 DROP ROLE dov_vedernikoff;
 ----
 db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dov_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dov_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # A *grantee* of the view (not its owner) is also pinned by the dependency:
@@ -90,10 +98,18 @@ statement ok
 GRANT SELECT ON dov_mop_v1 TO dov_kostya;
 
 
+skipif serenedb
 statement error
 DROP ROLE dov_kostya;
 ----
 db error: ERROR: role "dov_kostya" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dov_kostya;
+----
+db error: ERROR: Cannot drop entry "dov_kostya" because there are entries that depend on it.<slt:ignore>
 
 
 # Revoke the grant -> dependency gone -> kostya drops.
@@ -115,10 +131,18 @@ DROP ROLE dov_vedernikoff;
 
 
 # clickclack now owns the view -> its DROP ROLE is refused in turn.
+skipif serenedb
 statement error
 DROP ROLE dov_clickclack;
 ----
 db error: ERROR: role "dov_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dov_clickclack;
+----
+db error: ERROR: Cannot drop entry "dov_clickclack" because there are entries that depend on it.<slt:ignore>
 
 
 # DROP VIEW removes the dependency -> clickclack drops.
@@ -160,10 +184,18 @@ ALTER VIEW dov_mop_v2 OWNER TO dov_vedernikoff;
 
 
 # DROP ROLE refused -- vedernikoff owns both views (PG DETAIL lists both).
+skipif serenedb
 statement error
 DROP ROLE dov_vedernikoff;
 ----
 db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dov_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dov_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # DROP VIEW v1 RESTRICT is refused because v2 (a view) depends on it. This is an
@@ -181,17 +213,33 @@ ALTER VIEW dov_mop_v2 OWNER TO dov_clickclack;
 
 
 # clickclack owns the dependent view -> DROP ROLE refused.
+skipif serenedb
 statement error
 DROP ROLE dov_clickclack;
 ----
 db error: ERROR: role "dov_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
+onlyif serenedb
+statement error
+DROP ROLE dov_clickclack;
+----
+db error: ERROR: Cannot drop entry "dov_clickclack" because there are entries that depend on it.<slt:ignore>
+
+
 # vedernikoff still owns the base view -> DROP ROLE refused.
+skipif serenedb
 statement error
 DROP ROLE dov_vedernikoff;
 ----
 db error: ERROR: role "dov_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE dov_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "dov_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # DROP VIEW v1 CASCADE drops the dependent v2 too, clearing both ownerships.

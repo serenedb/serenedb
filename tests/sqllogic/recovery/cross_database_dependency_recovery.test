@@ -1,0 +1,225 @@
+control substitution on
+
+statement ok
+CREATE DATABASE xdr_db;
+
+
+statement ok
+CREATE TABLE xdr_db.public.t (a INTEGER);
+
+
+statement ok
+CREATE VIEW xdr_v AS SELECT a FROM xdr_db.public.t;
+
+
+statement ok
+CREATE TABLE xdr_local (a INTEGER);
+
+
+statement ok
+CREATE VIEW xdr_db.public.v_back AS SELECT a FROM ${__DATABASE__}.public.xdr_local;
+
+
+statement ok
+CREATE ROLE xdr_owner;
+
+
+statement ok
+CREATE TABLE xdr_db.public.xdr_owned (a INTEGER);
+
+
+statement ok
+ALTER TABLE xdr_db.public.xdr_owned OWNER TO xdr_owner;
+
+
+statement ok
+CREATE SEQUENCE xdr_db.public.xdr_seq;
+
+
+statement ok
+CREATE TABLE xdr_def (id BIGINT DEFAULT nextval('xdr_db.public.xdr_seq'));
+
+
+statement ok
+CREATE TYPE xdr_db.public.xdr_mood AS ENUM ('ok');
+
+
+statement ok
+CREATE TABLE xdr_typed (m xdr_db.public.xdr_mood);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname IN ('xdr_v', 'xdr_local');
+----
+count
+2
+
+
+connection after_crash
+statement error
+DROP TABLE xdr_db.public.t;
+----
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "xdr_v" depends on table "t".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_crash
+statement error
+DROP TABLE xdr_local;
+----
+db error: ERROR: Cannot drop entry "xdr_local" because there are entries that depend on it.
+view "v_back" depends on table "xdr_local".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_crash
+statement error
+DROP ROLE xdr_owner;
+----
+db error: ERROR: Cannot drop entry "xdr_owner" because there are entries that depend on it.
+table "xdr_owned" depends on role "xdr_owner".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_crash
+statement error
+DROP SEQUENCE xdr_db.public.xdr_seq;
+----
+db error: ERROR: Cannot drop entry "xdr_seq" because there are entries that depend on it.
+table "xdr_def" depends on sequence "xdr_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_crash
+statement error
+DROP TYPE xdr_db.public.xdr_mood;
+----
+db error: ERROR: Cannot drop entry "xdr_mood" because there are entries that depend on it.
+table "xdr_typed" depends on type "xdr_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_crash
+statement ok
+CREATE TABLE xdr_compact (a INTEGER);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_compaction
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) FROM pg_class WHERE relname IN ('xdr_v', 'xdr_local', 'xdr_compact');
+----
+count
+3
+
+
+connection after_compaction
+statement error
+DROP TABLE xdr_db.public.t;
+----
+db error: ERROR: Cannot drop entry "t" because there are entries that depend on it.
+view "xdr_v" depends on table "t".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_compaction
+statement error
+DROP TABLE xdr_local;
+----
+db error: ERROR: Cannot drop entry "xdr_local" because there are entries that depend on it.
+view "v_back" depends on table "xdr_local".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_compaction
+statement error
+DROP ROLE xdr_owner;
+----
+db error: ERROR: Cannot drop entry "xdr_owner" because there are entries that depend on it.
+table "xdr_owned" depends on role "xdr_owner".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_compaction
+statement error
+DROP SEQUENCE xdr_db.public.xdr_seq;
+----
+db error: ERROR: Cannot drop entry "xdr_seq" because there are entries that depend on it.
+table "xdr_def" depends on sequence "xdr_seq".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_compaction
+statement error
+DROP TYPE xdr_db.public.xdr_mood;
+----
+db error: ERROR: Cannot drop entry "xdr_mood" because there are entries that depend on it.
+table "xdr_typed" depends on type "xdr_mood".
+Use DROP...CASCADE to drop all dependents.
+
+
+connection after_compaction
+statement ok
+DROP TABLE xdr_def;
+
+
+connection after_compaction
+statement ok
+DROP TABLE xdr_typed;
+
+
+connection after_compaction
+statement ok
+DROP TABLE xdr_db.public.t CASCADE;
+
+
+connection after_compaction
+query
+SELECT count(*) FROM pg_class WHERE relname = 'xdr_v';
+----
+count
+0
+
+
+connection after_compaction
+statement ok
+DROP TABLE xdr_local CASCADE;
+
+
+connection after_compaction
+statement ok
+DROP TABLE xdr_db.public.xdr_owned;
+
+
+connection after_compaction
+statement ok
+DROP ROLE xdr_owner;
+
+
+connection after_compaction
+statement ok
+DROP DATABASE xdr_db;

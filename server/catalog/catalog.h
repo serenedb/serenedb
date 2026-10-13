@@ -42,6 +42,7 @@ class PhysicalOperator;
 class LogicalInsert;
 class LogicalCreateTable;
 class LogicalMergeInto;
+struct CreateJobInfo;
 struct DropInfo;
 
 }  // namespace duckdb
@@ -75,8 +76,6 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
     return _detached.load(std::memory_order_acquire);
   }
   duckdb::shared_ptr<duckdb::WriteAheadLog> CatalogLog() final;
-  void RequestCatalogLogSync(duckdb::shared_ptr<duckdb::WriteAheadLog> log,
-                             duckdb::idx_t offset) final;
   bool AppendLocalIndexes(
     duckdb::DuckTransaction& transaction, duckdb::TableIndexList& index_list,
     duckdb::RowGroupCollection& source,
@@ -118,9 +117,12 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   }
 
   duckdb::unique_ptr<duckdb::StandardEntry> MakeTokenizerEntry(
-    duckdb::DuckSchemaEntry& schema, duckdb::CreateTokenizerInfo& info) final {
-    return duckdb::make_uniq<TokenizerCatalogEntry>(*this, schema, info);
-  }
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateTokenizerInfo& info) final;
+
+  duckdb::unique_ptr<duckdb::StandardEntry> MakeJobEntry(
+    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
+    duckdb::CreateJobInfo& info) final;
 
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchemaById(
     duckdb::ClientContext& context, duckdb::idx_t id);
@@ -185,16 +187,12 @@ class SereneDBCatalog final : public duckdb::DuckCatalog {
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTokenizer(
-    duckdb::CatalogTransaction transaction, duckdb::DuckSchemaEntry& schema,
-    duckdb::CreateTokenizerInfo& info);
-
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateForeignServer(
     duckdb::CatalogTransaction transaction,
-    duckdb::CreateForeignServerInfo& info);
+    duckdb::CreateForeignServerInfo& info) final;
 
   void DropForeignServer(duckdb::CatalogTransaction transaction,
-                         duckdb::DropInfo& info);
+                         duckdb::DropInfo& info) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
     duckdb::CatalogTransaction transaction,

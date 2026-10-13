@@ -30,14 +30,12 @@
 
 #include "catalog/boot.h"
 #include "connector/duckdb_copy_filesystem.h"
-#include "connector/duckdb_foreign_server_function.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/duckdb_subscription.h"
-#include "connector/duckdb_tokenizer_function.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
@@ -46,6 +44,7 @@
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
 #include "connector/functions/inout.h"
+#include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
 #include "connector/functions/markdown_render.h"
 #include "connector/functions/math.h"
@@ -60,7 +59,6 @@
 #include "connector/scan/scan_function.h"
 #include "connector/system_table_scan.h"
 #include "docs/docs_functions.h"
-#include "pg/commands/rbac.h"
 #include "pg/pg_catalog/pg_replication_origin.h"
 #include "pg/pg_catalog/pg_statistic.h"
 #include "pg/system_catalog.h"
@@ -314,10 +312,6 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 }
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
-  connector::RegisterTokenizerPragma(db);
-
-  connector::RegisterForeignServerPragma(db);
-
   connector::RegisterPgMathFunctions(db);
 
   connector::RegisterSubscriptionPragma(db);
@@ -346,6 +340,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   docs::RegisterDocsFunctions(db);
 
+  connector::RegisterJobFunctions(db);
+
   connector::RegisterDuckDBAliases(db);
 
   connector::RegisterVacuumFunction(db);
@@ -364,8 +360,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterIResearchScanFunction(db);
 
   connector::RegisterSystemTableScanFunction(db);
-
-  pg::RegisterRbacFunctions(db);
 
   connector::RegisterAIFunctions(db);
 

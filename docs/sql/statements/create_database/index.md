@@ -47,13 +47,15 @@ A database created inside a transaction is visible to other sessions only once t
 
 ## Dropping a database
 
-`DROP DATABASE [IF EXISTS] name` removes a database together with its tables, indexes and files. As in PostgreSQL, it cannot run inside a transaction block and cannot be rolled back:
+`DROP DATABASE [IF EXISTS] name [CASCADE | RESTRICT]` removes a database together with its tables, indexes and files. With `IF EXISTS`, dropping a missing database is not an error. As in PostgreSQL, it cannot run inside a transaction block and cannot be rolled back:
 
 <SqlLogicTest id="sql/statements/create_database/index/example_005" />
 
 Only the owner of a database, or a member of the owning role, can drop it. A database that other sessions are connected to cannot be dropped: as in PostgreSQL, `DROP DATABASE` gives them five seconds to disconnect and fails if any is still connected then. Neither can the database the session itself is connected to or has switched to with `USE` be dropped:
 
 <SqlLogicTest id="sql/statements/create_database/index/example_006" />
+
+`DROP DATABASE` is rejected while objects of other databases depend on objects of this one, unless `CASCADE` is given, which drops those dependents too; see [Dependencies across Databases](../drop/index.md#dependencies-across-databases). A database created with `CREATE DATABASE` cannot be removed with `DETACH`.
 
 A transaction that wrote to a database dropped by another session fails at commit.
 

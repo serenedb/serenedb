@@ -160,7 +160,6 @@ InvertedIndexStorage::InvertedIndexStorage(
     _search{GetSearchEngine()} {
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
-  _tasks_settings.reindex_interval_msec = options.reindex_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   _tasks_settings.compaction_max_segments = options.compaction_max_segments;
   _tasks_settings.compaction_max_segments_bytes =
@@ -291,7 +290,6 @@ void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
   _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
   _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
-  _tasks_settings.reindex_interval_msec = options.reindex_interval_ms;
   _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
   _tasks_settings.compaction_max_segments = options.compaction_max_segments;
   _tasks_settings.compaction_max_segments_bytes =

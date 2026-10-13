@@ -48,7 +48,10 @@ class Creator {
  public:
   Creator(std::string_view database, duckdb::idx_t database_id,
           std::string_view schema = "public")
-    : _conn{connector::MakeSystemConnection(database, database_id).conn},
+    : _conn{connector::MakeSystemConnection(irs::StaticStrings::kDefaultUser,
+                                            pg::kRootUser, database,
+                                            database_id)
+              .conn},
       _schema{schema} {}
 
   // A search table cannot gain an index once it holds rows, so re-running the

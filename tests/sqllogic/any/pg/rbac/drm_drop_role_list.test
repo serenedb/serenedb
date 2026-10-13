@@ -1,0 +1,76 @@
+# DROP ROLE / DROP USER accepts a comma-separated list of roles, like
+# PostgreSQL. Single-connection, so byte-identical on PostgreSQL and serenedb.
+#
+# Lore: vedernikoff clears out a batch of transient interns at once.
+
+statement ok
+DROP ROLE IF EXISTS ddl_a, ddl_b, ddl_c, ddl_solo;
+
+
+# A comma list drops every named role.
+statement ok
+CREATE ROLE ddl_a;
+
+
+statement ok
+CREATE ROLE ddl_b;
+
+
+statement ok
+CREATE ROLE ddl_c;
+
+
+statement ok
+DROP ROLE ddl_a, ddl_b, ddl_c;
+
+
+query
+SELECT count(*) AS remaining FROM pg_roles WHERE rolname IN ('ddl_a', 'ddl_b', 'ddl_c');
+----
+remaining
+0
+
+
+# A single role still works (no regression).
+statement ok
+CREATE ROLE ddl_solo;
+
+
+statement ok
+DROP ROLE ddl_solo;
+
+
+# IF EXISTS applies to the whole list: a mix of present and absent is fine.
+statement ok
+CREATE ROLE ddl_a;
+
+
+statement ok
+DROP ROLE IF EXISTS ddl_a, ddl_absent;
+
+
+query
+SELECT count(*) AS remaining FROM pg_roles WHERE rolname = 'ddl_a';
+----
+remaining
+0
+
+
+# DROP USER takes a list too (same statement, USER spelling).
+statement ok
+CREATE ROLE ddl_u1;
+
+
+statement ok
+CREATE ROLE ddl_u2;
+
+
+statement ok
+DROP USER ddl_u1, ddl_u2;
+
+
+query
+SELECT count(*) AS remaining FROM pg_roles WHERE rolname IN ('ddl_u1', 'ddl_u2');
+----
+remaining
+0

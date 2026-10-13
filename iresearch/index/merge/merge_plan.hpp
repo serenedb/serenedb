@@ -47,6 +47,7 @@ struct SegmentMeta;
 enum class MergeUnitKind : uint8_t {
   Norms,
   Column,
+  ColumnTrain,
   ColumnsFooter,
   Ann,
   Postings,
@@ -57,6 +58,7 @@ struct MergeUnit {
   MergeUnitKind kind;
   field_id id = field_limits::invalid();
   uint64_t cost = 0;
+  uint32_t part = 0;
 };
 
 inline constexpr uint64_t kMergeDocsMax =
@@ -73,7 +75,7 @@ class MergePlan {
   MergePlan(const MergePlan&) = delete;
   MergePlan& operator=(const MergePlan&) = delete;
 
-  bool Prepare();
+  bool Prepare(size_t threads = 1);
 
   std::span<const MergeUnit> Units() const noexcept;
 
@@ -93,6 +95,7 @@ class MergePlan {
 class MergeExecutor {
  public:
   virtual bool Run(MergePlan& plan) = 0;
+  virtual size_t Threads() const noexcept { return 1; }
 
  protected:
   ~MergeExecutor() = default;

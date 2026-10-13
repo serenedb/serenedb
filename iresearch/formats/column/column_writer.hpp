@@ -27,6 +27,7 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -37,6 +38,11 @@
 #include "iresearch/types.hpp"
 
 namespace irs {
+namespace codecs {
+
+class TrainedDictionary;
+
+}  // namespace codecs
 
 class ColWriter;
 class ListIngest;
@@ -88,6 +94,8 @@ class ColumnWriter final {
 
   bool TrainsDictionary() const noexcept;
   void SampleDictionary(std::span<const std::string_view> entries);
+  void ShareDictionary(
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary);
 
  private:
   friend class ColWriter;

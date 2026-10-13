@@ -31,6 +31,7 @@ class ThreadedMergeExecutor final : public irs::MergeExecutor {
   explicit ThreadedMergeExecutor(size_t threads) noexcept : _threads{threads} {}
 
   bool Run(irs::MergePlan& plan) final;
+  size_t Threads() const noexcept final { return _threads; }
 
  private:
   size_t _threads;
@@ -42,6 +43,7 @@ class ShuffledMergeExecutor final : public irs::MergeExecutor {
     : _threads{threads}, _seed{seed} {}
 
   bool Run(irs::MergePlan& plan) final;
+  size_t Threads() const noexcept final { return _threads; }
 
  private:
   size_t _threads;

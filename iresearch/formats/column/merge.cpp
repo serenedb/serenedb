@@ -30,7 +30,9 @@
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
+#include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -91,7 +93,7 @@ constexpr size_t kSampleWindowVectors = 64;
 
 void SampleDictionary(std::span<const MergeSource> sources, field_id id,
                       std::span<const std::shared_ptr<ReadContext>> ctxs,
-                      ColumnWriter& cw) {
+                      absl::FunctionRef<void(std::string_view)> sink) {
   struct Range {
     size_t source;
     const ColumnReader* col;
@@ -155,9 +157,19 @@ void SampleDictionary(std::span<const MergeSource> sources, field_id id,
       }
       row += take;
     }
-    const std::string_view view{window};
-    cw.SampleDictionary({&view, 1});
+    sink(window);
   }
+}
+
+std::vector<std::shared_ptr<ReadContext>> OpenContexts(
+  std::span<const MergeSource> sources, field_id column) {
+  std::vector<std::shared_ptr<ReadContext>> ctxs(sources.size());
+  for (size_t si = 0; si < sources.size(); ++si) {
+    if (sources[si].col_reader && sources[si].col_reader->Column(column)) {
+      ctxs[si] = std::make_shared<ReadContext>(*sources[si].col_reader);
+    }
+  }
+  return ctxs;
 }
 
 }  // namespace
@@ -193,12 +205,158 @@ struct ColumnMerger::State {
     return kept.windows[w];
   }
 
+  const ColumnReader& First(field_id column) const {
+    const auto it = first_by_id.find(column);
+    SDB_ASSERT(it != first_by_id.end());
+    return *it->second;
+  }
+
+  ColumnOptions Options(field_id column) const {
+    return field_options ? field_options->GetColumnOptions(column)
+                         : ColumnOptions{};
+  }
+
+  ColCodecParams CodecParams(const ColumnOptions& opts) const {
+    return field_options ? field_options->CodecParams(opts) : ColCodecParams{};
+  }
+
+  ColumnWriter& OpenPart(field_id column, uint32_t part,
+                         ColWriter& output) const {
+    const auto opts = Options(column);
+    return output.OpenColumnPart(column, part, First(column).Type(),
+                                 opts.skip_validity, row_group_size,
+                                 opts.compression, CodecParams(opts));
+  }
+
+  template<typename Visit>
+  bool VisitRows(field_id column, uint64_t begin, uint64_t end,
+                 absl::FunctionRef<bool()> progress, Visit&& visit) {
+    ColumnReader::VectorScratch batch_scratch{First(column).Type()};
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    uint64_t source_end = 0;
+    for (size_t si = 0; si < sources.size() && source_end < end; ++si) {
+      const auto& s = sources[si];
+      const uint64_t source_begin = source_end;
+      source_end += s.alive_count;
+      const uint64_t lo = std::max(begin, source_begin);
+      const uint64_t hi = std::min(end, source_end);
+      const auto* col = s.col_reader ? s.col_reader->Column(column) : nullptr;
+      if (lo >= hi || !col) {
+        continue;
+      }
+      const uint64_t skip = lo - source_begin;
+      auto state = col->InitScan(std::make_shared<ReadContext>(*s.col_reader));
+      const uint64_t total = col->RowCount();
+      if (!HasRemovals(s.reader->Meta())) {
+        const uint64_t stop = std::min(skip + (hi - lo), total);
+        uint64_t pos = std::min(skip, stop);
+        col->Skip(state, pos);
+        while (pos < stop) {
+          if (!progress()) {
+            return false;
+          }
+          const auto take =
+            std::min<duckdb::idx_t>(stop - pos, STANDARD_VECTOR_SIZE);
+          auto& batch = batch_scratch.Reset();
+          col->Scan(state, batch, take);
+          if (!visit(source_begin + pos, batch, take)) {
+            return true;
+          }
+          pos += take;
+        }
+        continue;
+      }
+      uint64_t to_skip = skip;
+      uint64_t need = hi - lo;
+      uint64_t scanned = 0;
+      for (uint64_t pos = 0; pos < total && need != 0;
+           pos += STANDARD_VECTOR_SIZE) {
+        const auto take =
+          std::min<duckdb::idx_t>(total - pos, STANDARD_VECTOR_SIZE);
+        const auto& kept_idx = KeptFor(si, pos);
+        const auto kept_in_window = static_cast<uint64_t>(
+          std::ranges::lower_bound(kept_idx, static_cast<duckdb::sel_t>(take)) -
+          kept_idx.begin());
+        if (to_skip >= kept_in_window) {
+          to_skip -= kept_in_window;
+          continue;
+        }
+        if (!progress()) {
+          return false;
+        }
+        const auto last = std::min(kept_in_window, to_skip + need);
+        duckdb::idx_t kept = 0;
+        for (auto k = to_skip; k < last; ++k) {
+          sel.set_index(kept++, kept_idx[k]);
+        }
+        const uint64_t at = hi - need;
+        to_skip = 0;
+        need -= kept;
+        col->Skip(state, pos - scanned);
+        auto& batch = batch_scratch.Reset();
+        col->Scan(state, batch, take);
+        scanned = pos + take;
+        duckdb::Vector selected{batch, sel, kept};
+        if (!visit(at, selected, kept)) {
+          return true;
+        }
+      }
+    }
+    return true;
+  }
+
+  bool SampleRowGroups(field_id column, codecs::DictionarySampler& sampler,
+                       absl::FunctionRef<bool()> progress) {
+    uint64_t group = 0;
+    std::string entries;
+    absl::flat_hash_set<uint64_t> seen;
+    const auto flush = [&] {
+      const std::string_view view{entries};
+      sampler.Add({&view, 1});
+      entries.clear();
+      seen.clear();
+    };
+    if (!VisitRows(
+          column, 0, std::numeric_limits<uint64_t>::max(), progress,
+          [&](uint64_t at, const duckdb::Vector& values, duckdb::idx_t count) {
+            duckdb::UnifiedVectorFormat format;
+            values.ToUnifiedFormat(count, format);
+            const auto* data =
+              duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(format);
+            for (duckdb::idx_t i = 0; i < count; ++i) {
+              if ((at + i) / row_group_size != group) {
+                flush();
+                if (sampler.Ready()) {
+                  return false;
+                }
+                group = (at + i) / row_group_size;
+              }
+              const auto idx = format.sel->get_index(i);
+              if (format.validity.RowIsValid(idx) &&
+                  seen.insert(duckdb::Hash(data[idx])).second) {
+                entries.append(data[idx].GetData(), data[idx].GetSize());
+              }
+            }
+            return true;
+          })) {
+      return false;
+    }
+    if (!sampler.Ready()) {
+      flush();
+    }
+    return true;
+  }
+
   std::span<const MergeSource> sources;
   const IndexFieldOptions* field_options = nullptr;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::vector<field_id> ids;
   absl::flat_hash_map<field_id, const ColumnReader*> first_by_id;
   std::unique_ptr<KeptRows[]> kept_rows;
+  std::mutex dictionaries_mutex;
+  absl::flat_hash_map<field_id,
+                      std::shared_ptr<const codecs::TrainedDictionary>>
+    dictionaries;
 };
 
 ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
@@ -245,30 +403,91 @@ uint64_t ColumnMerger::StoredBytes(field_id column) const {
   return bytes;
 }
 
+uint32_t ColumnMerger::RowGroupSize() const noexcept {
+  return _state->row_group_size;
+}
+
+bool ColumnMerger::Splittable(field_id column) const {
+  const auto physical = _state->First(column).Type().InternalType();
+  if (physical == duckdb::PhysicalType::STRUCT ||
+      physical == duckdb::PhysicalType::LIST ||
+      physical == duckdb::PhysicalType::ARRAY) {
+    return false;
+  }
+  return !_state->Options(column).hyperloglog;
+}
+
+bool ColumnMerger::IsText(field_id column) const {
+  return _state->First(column).Type().InternalType() ==
+         duckdb::PhysicalType::VARCHAR;
+}
+
+bool ColumnMerger::Train(field_id column, ColWriter& output,
+                         absl::FunctionRef<bool()> progress) {
+  auto& shared = *_state;
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+  if (shared.OpenPart(column, 0, output).TrainsDictionary()) {
+    const auto ctxs = OpenContexts(shared.sources, column);
+    codecs::DictionarySampler sampler;
+    SampleDictionary(
+      shared.sources, column, ctxs,
+      [&](std::string_view window) { sampler.Add({&window, 1}); });
+    if (!sampler.Ready() &&
+        !shared.SampleRowGroups(column, sampler, progress)) {
+      return false;
+    }
+    if (!progress()) {
+      return false;
+    }
+    if (auto bytes = sampler.Ready() ? sampler.Train() : std::nullopt) {
+      output.AddColumnDictionary(column, *bytes);
+      dictionary =
+        std::make_shared<const codecs::TrainedDictionary>(std::move(*bytes));
+    }
+  }
+  std::lock_guard lock{shared.dictionaries_mutex};
+  shared.dictionaries.emplace(column, std::move(dictionary));
+  return true;
+}
+
+bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
+                              uint64_t end, ColWriter& output,
+                              absl::FunctionRef<bool()> progress) {
+  SDB_ASSERT(begin < end);
+  auto& shared = *_state;
+  auto& cw = shared.OpenPart(column, part, output);
+  if (cw.TrainsDictionary()) {
+    std::lock_guard lock{shared.dictionaries_mutex};
+    const auto it = shared.dictionaries.find(column);
+    SDB_ASSERT(it != shared.dictionaries.end());
+    cw.ShareDictionary(it->second);
+  }
+  if (!shared.VisitRows(
+        column, begin, end, progress,
+        [&](uint64_t at, const duckdb::Vector& values, duckdb::idx_t count) {
+          cw.Append(at - begin, values, count);
+          return true;
+        })) {
+    return false;
+  }
+  cw.PadNullsTo(end - begin);
+  cw.Finish();
+  return true;
+}
+
 bool ColumnMerger::Merge(field_id column, ColWriter& output,
                          absl::FunctionRef<bool()> progress) {
   auto& shared = *_state;
-  const auto first = shared.first_by_id.find(column);
-  SDB_ASSERT(first != shared.first_by_id.end());
-  const auto* first_col = first->second;
+  const auto* first_col = &shared.First(column);
   const auto sources = shared.sources;
-  const auto* field_options = shared.field_options;
   HyperLogLogMerger hyperloglog;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-  const auto opts =
-    field_options ? field_options->GetColumnOptions(column) : ColumnOptions{};
-  const auto codec_params =
-    field_options ? field_options->CodecParams(opts) : ColCodecParams{};
-  std::vector<std::shared_ptr<ReadContext>> ctxs(sources.size());
-  for (size_t si = 0; si < sources.size(); ++si) {
-    if (sources[si].col_reader && sources[si].col_reader->Column(column)) {
-      ctxs[si] = std::make_shared<ReadContext>(*sources[si].col_reader);
-    }
-  }
+  const auto opts = shared.Options(column);
+  const auto ctxs = OpenContexts(sources, column);
 
   auto& cw = output.OpenColumn(column, first_col->Type(), opts.skip_validity,
                                shared.row_group_size, opts.compression, false,
-                               codec_params);
+                               shared.CodecParams(opts));
   if (opts.ann_info) {
     output.AttachAnn(column, *opts.ann_info).SetMergeSources(sources);
   }
@@ -278,7 +497,9 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
   }
 
   if (cw.TrainsDictionary()) {
-    SampleDictionary(sources, column, ctxs, cw);
+    SampleDictionary(sources, column, ctxs, [&](std::string_view window) {
+      cw.SampleDictionary({&window, 1});
+    });
   }
 
   ColumnReader::VectorScratch batch_scratch{first_col->Type()};

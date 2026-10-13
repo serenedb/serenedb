@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/column/codecs/trained_dictionary.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/merge.hpp"
@@ -114,13 +115,81 @@ struct MergePlan::State {
     return true;
   }
 
-  bool MergeColumn(field_id column) {
+  bool MergeColumn(const MergeUnit& unit) {
     MergeStepClock clock{profile};
-    if (!columns->Merge(column, *col_writer, progress)) {
+    const auto split = splits.find(unit.id);
+    if (split == splits.end()
+          ? !columns->Merge(unit.id, *col_writer, progress)
+          : !columns->MergeRange(unit.id, unit.part, split->second[unit.part],
+                                 split->second[unit.part + 1], *col_writer,
+                                 progress)) {
       return false;
     }
     clock.Lap(MergeStep::Columns);
     return true;
+  }
+
+  bool TrainColumn(field_id column) {
+    MergeStepClock clock{profile};
+    if (!columns->Train(column, *col_writer, progress)) {
+      return false;
+    }
+    clock.Lap(MergeStep::Columns);
+    return true;
+  }
+
+  size_t AddUnit(MergeUnit unit, std::vector<size_t> unit_deps) {
+    units.push_back(unit);
+    deps.push_back(std::move(unit_deps));
+    return units.size() - 1;
+  }
+
+  uint64_t AddColumns(size_t threads) {
+    std::vector<size_t> after_norms;
+    if (!units.empty()) {
+      after_norms.push_back(units.size() - 1);
+    }
+    std::vector<uint64_t> bytes;
+    uint64_t total = 0;
+    for (const auto id : columns->Columns()) {
+      total += bytes.emplace_back(columns->StoredBytes(id));
+    }
+    const uint64_t rows = segment.docs_count;
+    const uint64_t row_group_size = columns->RowGroupSize();
+    const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
+    const uint64_t target = threads > 1 ? total / (2 * threads) : 0;
+    for (size_t i = 0; const auto id : columns->Columns()) {
+      const auto cost = bytes[i++];
+      const uint64_t parts =
+        target != 0 && cost > target && columns->Splittable(id)
+          ? std::min((cost + target - 1) / target, row_groups)
+          : 1;
+      if (parts < 2) {
+        AddUnit({.kind = MergeUnitKind::Column, .id = id, .cost = cost},
+                after_norms);
+        continue;
+      }
+      auto part_deps = after_norms;
+      if (columns->IsText(id)) {
+        part_deps = {AddUnit({.kind = MergeUnitKind::ColumnTrain,
+                              .id = id,
+                              .cost = codecs::kTrainSampleBytes},
+                             after_norms)};
+      }
+      auto& bounds = splits[id];
+      for (uint64_t part = 0; part <= parts; ++part) {
+        bounds.push_back(
+          std::min(rows, part * row_groups / parts * row_group_size));
+      }
+      for (uint32_t part = 0; part != parts; ++part) {
+        AddUnit({.kind = MergeUnitKind::Column,
+                 .id = id,
+                 .cost = cost / parts,
+                 .part = part},
+                part_deps);
+      }
+    }
+    return total;
   }
 
   bool WriteColumnsFooter() {
@@ -212,6 +281,7 @@ struct MergePlan::State {
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   std::unique_ptr<ColumnMerger> columns;
+  absl::flat_hash_map<field_id, std::vector<uint64_t>> splits;
   MergedNormIdMap merged_norm_ids;
   std::vector<MergeUnit> units;
   std::vector<std::vector<size_t>> deps;
@@ -234,7 +304,7 @@ MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
 
 MergePlan::~MergePlan() = default;
 
-bool MergePlan::Prepare() {
+bool MergePlan::Prepare(size_t threads) {
   auto& s = *_state;
   MergeStepClock clock{s.profile};
   uint64_t live_docs = 0;
@@ -308,25 +378,17 @@ bool MergePlan::Prepare() {
                id);
     s.merged_norm_ids.emplace(id, out);
     s.norms->AddField(out, id, stats.sum, stats.non_zero);
-    s.units.push_back(
-      {.kind = MergeUnitKind::Norms, .id = id, .cost = s.segment.docs_count});
-  }
-  uint64_t column_bytes = 0;
-  for (const auto id : s.columns->Columns()) {
-    const auto bytes = s.columns->StoredBytes(id);
-    column_bytes += bytes;
-    s.units.push_back({.kind = MergeUnitKind::Column, .id = id, .cost = bytes});
-  }
-  const auto footer = s.units.size();
-  s.units.push_back({.kind = MergeUnitKind::ColumnsFooter});
-  s.deps.resize(s.units.size());
-  const auto norm_units = s.merged_norm_ids.size();
-  for (size_t unit = 0; unit != footer; ++unit) {
-    if (unit != 0 && unit < norm_units) {
-      s.deps[unit].push_back(unit - 1);
-    } else if (unit >= norm_units && norm_units != 0) {
-      s.deps[unit].push_back(norm_units - 1);
+    std::vector<size_t> after;
+    if (!s.units.empty()) {
+      after.push_back(s.units.size() - 1);
     }
+    s.AddUnit(
+      {.kind = MergeUnitKind::Norms, .id = id, .cost = s.segment.docs_count},
+      std::move(after));
+  }
+  const auto column_bytes = s.AddColumns(threads);
+  const auto footer = s.AddUnit({.kind = MergeUnitKind::ColumnsFooter}, {});
+  for (size_t unit = 0; unit != footer; ++unit) {
     s.deps[footer].push_back(unit);
   }
   std::vector<size_t> ivf_units;
@@ -393,7 +455,9 @@ bool MergePlan::RunUnit(size_t unit) {
     case MergeUnitKind::Norms:
       return s.MergeNorms(id);
     case MergeUnitKind::Column:
-      return s.MergeColumn(id);
+      return s.MergeColumn(s.units[unit]);
+    case MergeUnitKind::ColumnTrain:
+      return s.TrainColumn(id);
     case MergeUnitKind::ColumnsFooter:
       return s.WriteColumnsFooter();
     case MergeUnitKind::Ann:

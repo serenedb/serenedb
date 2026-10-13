@@ -24,6 +24,7 @@
 
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -68,6 +69,14 @@ class ColWriter final {
                            bool hyperloglog = false,
                            ColCodecParams codec_params = {});
 
+  ColumnWriter& OpenColumnPart(field_id id, uint32_t part,
+                               duckdb::LogicalType type, bool skip_validity,
+                               uint32_t row_group_size,
+                               duckdb::CompressionType compression,
+                               ColCodecParams codec_params);
+
+  void AddColumnDictionary(field_id id, std::string_view bytes);
+
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
   void SetIdxWriter(IdxWriter& idx) noexcept;
@@ -97,6 +106,13 @@ class ColWriter final {
     std::unique_ptr<AnnWriter> writer;
   };
 
+  struct ColumnParts {
+    std::vector<std::unique_ptr<ColumnWriter>> writers;
+    std::vector<ColumnDictionaryMeta> dictionaries;
+  };
+
+  static ColumnMeta AssembleParts(field_id id, ColumnParts& parts);
+
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
   bool Empty() const noexcept;
@@ -118,6 +134,7 @@ class ColWriter final {
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
+  std::map<field_id, ColumnParts> _parts;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;

@@ -80,6 +80,8 @@ class SegmentRewriteExecutor final : public irs::MergeExecutor {
   explicit SegmentRewriteExecutor(SegmentRewriteSourceState& state) noexcept
     : _state{state} {}
 
+  size_t Threads() const noexcept final { return _state.threads; }
+
   bool Run(irs::MergePlan& plan) final {
     const auto run = std::make_shared<search::MergeUnitRun>(plan);
     {

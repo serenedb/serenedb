@@ -40,6 +40,7 @@ class PoolMergeExecutor final : public irs::MergeExecutor {
     : _pool{pool}, _helpers{helpers}, _acquire{acquire}, _release{release} {}
 
   bool Run(irs::MergePlan& plan) final;
+  size_t Threads() const noexcept final { return _helpers + 1; }
 
  private:
   yaclib::IExecutor& _pool;

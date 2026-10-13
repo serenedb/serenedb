@@ -26,6 +26,7 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_features.hpp>
+#include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <random>
 #include <span>
@@ -86,5 +87,36 @@ SegmentShape RandomShape(Generator& gen);
 irs::ColumnOptions SketchedColumns(irs::field_id id);
 
 std::vector<const irs::SubReader*> Segments(const irs::DirectoryReader& reader);
+
+class WithoutColumnStore final : public irs::SubReader {
+ public:
+  explicit WithoutColumnStore(const irs::SubReader& segment) noexcept
+    : _segment{segment} {}
+
+  uint64_t CountMappedMemory() const final { return 0; }
+
+  const irs::SegmentInfo& Meta() const final { return _segment.Meta(); }
+
+  const irs::DocumentMask* docs_mask() const final {
+    return _segment.docs_mask();
+  }
+
+  irs::lead::Node::ptr docs_iterator() const final {
+    return _segment.docs_iterator();
+  }
+
+  std::span<const irs::field_id> field_ids() const final {
+    return _segment.field_ids();
+  }
+
+  const irs::TermReader* field(irs::field_id id) const final {
+    return _segment.field(id);
+  }
+
+  irs::NormReader::ptr norms(irs::field_id) const final { return {}; }
+
+ private:
+  const irs::SubReader& _segment;
+};
 
 }  // namespace tests::merge

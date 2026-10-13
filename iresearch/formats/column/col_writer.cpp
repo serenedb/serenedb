@@ -22,10 +22,12 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cstring>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/main/database.hpp>
+#include <iterator>
 #include <utility>
 
 #include "iresearch/error/error.hpp"
@@ -104,7 +106,7 @@ void ColWriter::EnsureOut() {
 }
 
 bool ColWriter::Empty() const noexcept {
-  return _columns.empty() && _ann_writers.empty();
+  return _columns.empty() && _parts.empty();
 }
 
 void ColWriter::SetFieldOptions(
@@ -121,6 +123,7 @@ ColumnWriter& ColWriter::OpenColumnInternal(
   ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
   std::lock_guard lock{_mutex};
+  SDB_ASSERT(!_parts.contains(id));
   if (auto it = _by_id.find(id); it != _by_id.end()) {
     auto& existing = *it->second;
     SDB_ASSERT(
@@ -167,6 +170,53 @@ ColumnWriter& ColWriter::OpenColumn(field_id id, duckdb::LogicalType type,
                                     ColCodecParams codec_params) {
   return OpenColumnInternal(id, std::move(type), skip_validity, row_group_size,
                             compression, hyperloglog, codec_params);
+}
+
+ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
+                                        duckdb::LogicalType type,
+                                        bool skip_validity,
+                                        uint32_t row_group_size,
+                                        duckdb::CompressionType compression,
+                                        ColCodecParams codec_params) {
+  SDB_ASSERT(row_group_size != 0);
+  std::lock_guard lock{_mutex};
+  SDB_ASSERT(!_by_id.contains(id));
+  auto& writers = _parts[id].writers;
+  if (writers.size() <= part) {
+    writers.resize(part + 1);
+  }
+  auto& writer = writers[part];
+  if (!writer) {
+    EnsureOut();
+    writer = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
+                                            skip_validity, row_group_size,
+                                            compression, false, codec_params);
+  }
+  return *writer;
+}
+
+void ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
+  std::lock_guard lock{_mutex};
+  EnsureOut();
+  _parts[id].dictionaries.push_back(
+    {.file_offset = _blocks->Append(bytes), .byte_size = bytes.size()});
+}
+
+ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
+  ColumnMeta meta;
+  meta.id = id;
+  meta.dictionaries = std::move(parts.dictionaries);
+  for (auto& writer : parts.writers) {
+    SDB_ASSERT(writer, "ColWriter::Commit: column ", id, " misses a part");
+    writer->Finish();
+    auto& part = writer->_meta;
+    SDB_ASSERT(part.children.empty() && part.variant_rgs.empty() &&
+               part.dictionaries.empty() && !part.hyperloglog);
+    meta.type = part.type;
+    std::ranges::move(part.data, std::back_inserter(meta.data));
+    std::ranges::move(part.validity, std::back_inserter(meta.validity));
+  }
+  return meta;
 }
 
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
@@ -301,13 +351,21 @@ bool ColWriter::Commit(uint64_t target_row,
     }
     cw->Finish();
   }
+  std::vector<ColumnMeta> assembled;
+  assembled.reserve(_parts.size());
+  for (auto& [id, parts] : _parts) {
+    assembled.emplace_back(AssembleParts(id, parts));
+  }
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
-    if (!_columns.empty()) {
+    const auto columns = _columns.size() + assembled.size();
+    if (columns != 0) {
       footer.WriteList(
-        kColFieldColumns, "columns", _columns.size(),
+        kColFieldColumns, "columns", columns,
         [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
           list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeColumnMeta(obj, _columns[i]->Meta());
+            SerializeColumnMeta(obj, i < _columns.size()
+                                       ? _columns[i]->Meta()
+                                       : assembled[i - _columns.size()]);
           });
         });
     }

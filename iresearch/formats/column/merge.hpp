@@ -57,8 +57,20 @@ class ColumnMerger {
 
   uint64_t StoredBytes(field_id column) const;
 
+  uint32_t RowGroupSize() const noexcept;
+
+  bool Splittable(field_id column) const;
+
+  bool IsText(field_id column) const;
+
   bool Merge(field_id column, ColWriter& output,
              absl::FunctionRef<bool()> progress);
+
+  bool Train(field_id column, ColWriter& output,
+             absl::FunctionRef<bool()> progress);
+
+  bool MergeRange(field_id column, uint32_t part, uint64_t begin, uint64_t end,
+                  ColWriter& output, absl::FunctionRef<bool()> progress);
 
  private:
   struct State;

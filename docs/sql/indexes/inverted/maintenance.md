@@ -127,6 +127,8 @@ Each result row describes one merge:
 
 A merge runs as separate pieces of work: the norms of each indexed field, one after another, then every column and the postings of all indexed fields side by side, then the column file's footer, the vector indexes one at a time, and finally the index files. `CALL sdb_compact` and `VACUUM (COMPACT_*)` run these pieces on as many threads as the session may use (the `threads` setting), so a merge of a wide table finishes sooner on more threads. With several threads the step times of a merge add up to more than its `total_ms`.
 
+On several threads, a merge also splits each large column into ranges of whole row groups that are written side by side, so one large column does not hold up the whole merge. A column counts as large when it holds more than half of an even share of the merge's column data, which is the data divided by the threads. Columns of nested types (lists, maps, structs, arrays and variants) and columns with `hyperloglog` are never split. A text column that trains a compression dictionary trains it once over the whole column before its ranges start, and every range uses that dictionary.
+
 Background compaction runs on the server's background threads (`--background_threads`, see [Command Line Interface](../../../configuration/cli.mdx)) and never on the threads that run queries. Merges may use all of these threads but one, the *merge threads*:
 
 - **One queue.** The background merges of all search tables and indexes wait in one queue. The merges that rewrite the fewest bytes for each segment they remove start first, and a merge gains priority the longer it waits.

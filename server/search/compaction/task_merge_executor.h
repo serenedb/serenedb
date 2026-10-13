@@ -36,6 +36,7 @@ class TaskMergeExecutor final : public irs::MergeExecutor {
     : _scheduler{scheduler}, _threads{threads} {}
 
   bool Run(irs::MergePlan& plan) final;
+  size_t Threads() const noexcept final { return _threads; }
 
  private:
   duckdb::TaskScheduler& _scheduler;

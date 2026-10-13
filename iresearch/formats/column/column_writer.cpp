@@ -1713,4 +1713,13 @@ void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {
   _meta.write_string_tuning->sampler.Add(entries);
 }
 
+void ColumnWriter::ShareDictionary(
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
+  auto tuning = std::make_shared<codecs::StringTuning>();
+  tuning->sampling_done = true;
+  tuning->dictionary_id = dictionary ? 1 : 0;
+  tuning->dictionary = std::move(dictionary);
+  _meta.write_string_tuning = std::move(tuning);
+}
+
 }  // namespace irs

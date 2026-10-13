@@ -289,37 +289,6 @@ TEST_F(MergeCharacterizationTest, FullyDeletedInputYieldsNoSegment) {
   EXPECT_TRUE(merged.meta.files.empty());
 }
 
-class WithoutColumnStore final : public irs::SubReader {
- public:
-  explicit WithoutColumnStore(const irs::SubReader& segment) noexcept
-    : _segment{segment} {}
-
-  uint64_t CountMappedMemory() const final { return 0; }
-
-  const irs::SegmentInfo& Meta() const final { return _segment.Meta(); }
-
-  const irs::DocumentMask* docs_mask() const final {
-    return _segment.docs_mask();
-  }
-
-  irs::lead::Node::ptr docs_iterator() const final {
-    return _segment.docs_iterator();
-  }
-
-  std::span<const irs::field_id> field_ids() const final {
-    return _segment.field_ids();
-  }
-
-  const irs::TermReader* field(irs::field_id id) const final {
-    return _segment.field(id);
-  }
-
-  irs::NormReader::ptr norms(irs::field_id) const final { return {}; }
-
- private:
-  const irs::SubReader& _segment;
-};
-
 irs::IndexWriter::ptr MakeWriter(irs::Directory& dir,
                                  irs::ColumnOptionsProvider columns) {
   auto options = irs::tests::DefaultWriterOptions();

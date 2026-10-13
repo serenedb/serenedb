@@ -78,7 +78,15 @@ enum class VectorQuantization : uint8_t {
   // both uniform; ours was per-dimension only.
   USQ8,
   USQ4,
+  BQ,
+  OSQ,
+  FP16,
+  BF16,
 };
+
+inline constexpr bool IsHalfFloat(VectorQuantization q) noexcept {
+  return q == VectorQuantization::FP16 || q == VectorQuantization::BF16;
+}
 
 /// True for the scalar quantizers whose range is shared by every dimension.
 inline constexpr bool IsUniformScalar(VectorQuantization q) noexcept {
@@ -102,8 +110,36 @@ inline constexpr bool TQBitsValid(uint32_t bits) noexcept {
   return bits >= kTQMinBits && bits <= kTQMaxBits;
 }
 
-inline constexpr bool TQFullBits(uint32_t bits) noexcept {
-  return bits == 3 || bits == 5;
+inline constexpr bool TQFullBits(uint32_t bits) noexcept { return bits == 5; }
+
+inline constexpr bool TQHalfBitValid(uint32_t bits) noexcept {
+  return bits == 1;
+}
+
+inline constexpr uint32_t kBQDefaultBits = 1;
+inline constexpr uint32_t kBQDefaultQueryBits = 1;
+
+inline constexpr bool BQBitsValid(uint32_t bits, bool half_bit) noexcept {
+  return half_bit ? bits == 1 : bits == 1 || bits == 2;
+}
+
+inline constexpr bool BQQueryBitsValid(uint32_t bits) noexcept {
+  return bits == 1 || bits == 4 || bits == 8;
+}
+
+inline constexpr uint32_t kOSQDefaultBits = 1;
+
+inline constexpr bool OSQBitsValid(uint32_t bits) noexcept {
+  return bits == 1 || bits == 2 || bits == 4 || bits == 7 || bits == 8;
+}
+
+inline constexpr uint32_t OSQDefaultQueryBits(uint32_t bits) noexcept {
+  return bits <= 4 ? 4 : bits;
+}
+
+inline constexpr bool OSQQueryBitsValid(uint32_t bits,
+                                        uint32_t query_bits) noexcept {
+  return bits <= 4 ? query_bits == 4 || query_bits == 8 : query_bits == bits;
 }
 
 inline constexpr VectorMetric EffectiveQuantMetric(
@@ -147,6 +183,8 @@ struct AnnInfo {
     VectorQuantization kind = VectorQuantization::None;
     uint32_t pq_m = 0;
     uint32_t nb_bits = 0;
+    bool half_bit = false;
+    uint32_t query_bits = 0;
 
     friend bool operator==(const Quantizer&, const Quantizer&) = default;
   };

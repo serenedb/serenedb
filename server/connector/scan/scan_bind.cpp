@@ -200,6 +200,8 @@ duckdb::unique_ptr<ScanBindData> MakeViewScanBindData(
 double AutoOversample(const VectorScorerOptions& vs) noexcept {
   switch (vs.quant) {
     case irs::VectorQuantization::None:
+    case irs::VectorQuantization::FP16:
+    case irs::VectorQuantization::BF16:
       return 0.0;
     case irs::VectorQuantization::SQ8:
     case irs::VectorQuantization::USQ8:
@@ -208,6 +210,8 @@ double AutoOversample(const VectorScorerOptions& vs) noexcept {
     case irs::VectorQuantization::PQ:
     case irs::VectorQuantization::RaBitQ:
     case irs::VectorQuantization::TQ:
+    case irs::VectorQuantization::BQ:
+    case irs::VectorQuantization::OSQ:
       return 1.0;
   }
   return 0.0;

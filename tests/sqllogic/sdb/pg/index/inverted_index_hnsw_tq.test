@@ -4,9 +4,7 @@ control substitution on
 # HNSW with TurboQuant codes (quant = 'tq').
 #
 # TurboQuant encodes the residual against a single global centroid -- the
-# dataset mean -- because HNSW has no clusters, and its codes are stored
-# row-major so the reader packs them into 32-lane fast-scan blocks per visited
-# node.
+# dataset mean -- because HNSW has no clusters.
 #
 # The fixture is one-hot: point i lives on axis i % 8 with magnitude
 # 10 * (1 + i / 8), so neighbours are separated by a whole axis or a whole
@@ -63,8 +61,6 @@ SELECT count(*) FROM hnsw_tq_idx;
 count
 64
 
-
-# An even nb_bits has no QJL refinement stage; it is given explicitly.
 
 statement ok
 CREATE TABLE hnsw_tq4 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
@@ -145,6 +141,86 @@ count
 63
 
 
+statement ok
+CREATE TABLE hnsw_tq15 (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_tq15_idx ON hnsw_tq15
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 1.5));
+
+statement ok
+INSERT INTO hnsw_tq15 SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_tq15;
+
+statement ok
+SET sdb_ann_oversample = 32
+
+query
+SELECT pk FROM hnsw_tq15_idx
+  ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+43
+35
+51
+
+query
+SELECT pk FROM hnsw_tq15_idx
+  ORDER BY emb <-> [80, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+56
+48
+40
+
+statement ok
+SET sdb_ann_oversample = 4
+
+statement ok
+CREATE TABLE hnsw_tq15_ip (pk INTEGER PRIMARY KEY, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX hnsw_tq15_ip_idx ON hnsw_tq15_ip
+  USING inverted(pk, emb hnsw (metric = 'ip', quant = 'tq', nb_bits = 1.5));
+
+statement ok
+INSERT INTO hnsw_tq15_ip SELECT i,
+  list_transform(range(8),
+                 x -> CASE WHEN x = i % 8 THEN (10.0 * (1 + i / 8))::FLOAT
+                           ELSE 0.0::FLOAT END)::FLOAT[8]
+  FROM range(64) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_tq15_ip;
+
+statement ok
+SET sdb_ann_oversample = 32
+
+query
+SELECT pk FROM hnsw_tq15_ip_idx
+  ORDER BY emb <#> [0, 0, 1, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+pk
+58
+50
+42
+
+statement ok
+SET sdb_ann_oversample = 4
+
+statement ok
+DROP TABLE hnsw_tq15;
+
+statement ok
+DROP TABLE hnsw_tq15_ip;
+
+
 # Negative cases: bit rates, and nb_bits on a quantizer that has none.
 
 statement error
@@ -155,10 +231,38 @@ db error: ERROR: Column 'emb': hnsw option 'nb_bits' (6) must be between 1 and 5
 
 
 statement error
+CREATE INDEX bad_half ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 2.5));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (2.5) is not a bit rate quant 'tq' has; the only fractional one is 1.5
+
+
+statement error
+CREATE INDEX bad_quarter ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 1.25));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' must be a whole or half number of bits, got 1.25
+
+
+statement error
+CREATE INDEX bad_rabitq_half ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'rabitq', nb_bits = 1.5));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' (1.5) must be between 1 and 9 for quant 'rabitq'
+
+
+statement error
+CREATE INDEX bad_zero ON hnsw_tq
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'tq', nb_bits = 0));
+----
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' must be positive, got 0
+
+
+statement error
 CREATE INDEX bad_c ON hnsw_tq
   USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq8', nb_bits = 2));
 ----
-db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'rabitq' or 'tq'
+db error: ERROR: Column 'emb': hnsw option 'nb_bits' is only valid with quant 'rabitq', 'tq', 'bq' or 'osq'
 
 
 statement error

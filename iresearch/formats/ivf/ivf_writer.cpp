@@ -381,7 +381,8 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const auto d = static_cast<uint32_t>(col.ArraySize());
   auto qw = MakeQuantizerWriter(
     _info.quant.kind, d, EffectiveQuantMetric(_info.metric), _info.quant.pq_m,
-    kDefaultClusterIters, _info.quant.nb_bits);
+    kDefaultClusterIters, _info.quant.nb_bits, /*row_major=*/false,
+    _info.quant.half_bit, _info.quant.query_bits);
 
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get());

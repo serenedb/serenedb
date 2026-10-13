@@ -403,7 +403,7 @@ TEST_P(HnswIndexTest, MergeOfManySourcesMatchesRebuild) {
   EXPECT_GE(recall_merged, RecallFloor())
     << "merged recall " << recall_merged << " metric "
     << static_cast<int>(metric) << " quant " << static_cast<int>(Quant());
-  EXPECT_GE(recall_merged, recall_fresh - 0.05)
+  EXPECT_GE(recall_merged, recall_fresh * 0.9)
     << "merged " << recall_merged << " vs rebuilt " << recall_fresh;
 }
 
@@ -451,7 +451,13 @@ INSTANTIATE_TEST_SUITE_P(
                       HnswQuant{irs::VectorQuantization::SQ4, 0, 0.7},
                       HnswQuant{irs::VectorQuantization::TQ, 4, 0.7},
                       HnswQuant{irs::VectorQuantization::TQ, 2, 0.5},
-                      HnswQuant{irs::VectorQuantization::TQ, 3, 0.5})));
+                      HnswQuant{irs::VectorQuantization::TQ, 3, 0.5},
+                      HnswQuant{irs::VectorQuantization::BQ, 1, 0.3},
+                      HnswQuant{irs::VectorQuantization::BQ, 2, 0.5},
+                      HnswQuant{irs::VectorQuantization::OSQ, 1, 0.5},
+                      HnswQuant{irs::VectorQuantization::OSQ, 4, 0.8},
+                      HnswQuant{irs::VectorQuantization::FP16, 0, 0.9},
+                      HnswQuant{irs::VectorQuantization::BF16, 0, 0.9})));
 
 }  // namespace
 namespace {

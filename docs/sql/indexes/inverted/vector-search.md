@@ -24,10 +24,11 @@ For `ivf`, the `metric` is required. Everything else is optional: the index is s
 | `metric` | Distance metric: `l2` (Euclidean), `cosine`, `ip` (inner product) or `l1` (Manhattan) |
 | `nlist` | Number of coarse clusters. Higher values narrow each cluster (faster, more precise probes) at the cost of build time. Mutually exclusive with `nlist_factor` |
 | `nlist_factor` | Sizes `nlist` relative to the row count as `round(nlist_factor * sqrt(rows))`. Default `2.0`. Mutually exclusive with `nlist` |
-| `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `pq`, `rabitq`, `tq` or `none` (the default for `l1`) — see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
+| `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq`, `osq` or `none` (the default for `l1`) — see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
 | `pq_m` | Number of subquantizers for `quant = 'pq'`. Must evenly divide the vector dimension `N`. Defaults to a value close to a 2-dimensional subvector |
 | `rabitq_bits` | Extra magnitude bits per dimension for `quant = 'rabitq'`, `1` to `9`. Default `1` (sign-only). Also spelled `nb_bits` |
-| `nb_bits` | Bits per dimension for `quant = 'tq'`, `1` to `5`. Default `3` |
+| `nb_bits` | Bits per dimension for `quant = 'tq'`: a whole number from `1` to `5`, or `1.5`. Default `3`. For `quant = 'bq'`: `1`, `1.5` or `2`, default `1`. For `quant = 'osq'`: `1`, `2`, `4`, `7` or `8`, default `1` |
+| `query_bits` | How the query is encoded. For `quant = 'bq'`: `1` compares it bit for bit with the stored codes, `4` and `8` keep it as 4- or 8-bit integers for a finer estimate; default `1`. For `quant = 'osq'`: `4` (the default) or `8` when `nb_bits` is at most `4`, otherwise the same as `nb_bits` |
 | `compression` | Whether the stored vectors are compressed. Default `true`; `false` stores them uncompressed, which searches faster and takes more disk |
 
 There are two ways to query a vector index: **k-nearest-neighbor** search (the closest `k` vectors) and **range** search (every vector within a distance threshold).
@@ -86,19 +87,22 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 | `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |
-| `pq` | Product quantization — the vector is split into `pq_m` subvectors, each quantized against its own small codebook | Highest compression; recall is sensitive to `pq_m` (must divide `N`). `ivf` only |
+| `fp16` / `bf16` | Every component stored as a 16-bit float: IEEE half precision, or bfloat16 (the float exponent with a shorter mantissa) | Half the size of `none` with scores nearly as exact, so they are not re-scored by default; `bf16` keeps the full float range, `fp16` keeps more precision |
+| `pq` | Product quantization — the vector is split into `pq_m` subvectors, each quantized against its own codebook: 16 centroids (4 bits) per subvector under `ivf`, 256 centroids (one byte) under `hnsw` | Highest compression; recall is sensitive to `pq_m` (must divide `N`) |
 | `rabitq` | RaBitQ binary quantization, 1 bit per dimension plus `rabitq_bits` − 1 extra magnitude bits | Very compact; `rabitq_bits` (1 to 9) trades size for recall. Needs `l2` or `ip` |
-| `tq` | Low-bit quantization with `nb_bits` (1 to 5, default 3) bits per dimension | Size and recall grow with `nb_bits` |
+| `tq` | Low-bit quantization with `nb_bits` (1 to 5 or 1.5, default 3) bits per dimension | Size and recall grow with `nb_bits` |
+| `bq` | Binary quantization: 1 bit per dimension, set above a cut point fitted to that dimension's values; with `nb_bits = 2`, a second bit splits each dimension into a low, middle and high range; `1.5` shares the second bit between two neighbouring dimensions | Smallest and cheapest to compare. With `query_bits = 1` a nearest-neighbor score is a bit count, so rely on [oversampling](#oversampling); `4` or `8` estimate the real distance, as a range query always does |
+| `osq` | `nb_bits` (1, 2, 4, 7 or 8, default 1) bits per dimension relative to the centroid, on a quantization interval fitted to each vector, with a few correction terms stored beside the codes; the query is quantized to `query_bits` | Scores estimate the real distance; per-vector intervals pay off most at 1 to 4 bits. Each vector carries 16 extra bytes |
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
-Quantization also speeds up the scan itself, not just the index size: quantized codes are stored inline in each cluster's postings, laid out contiguously per cluster, so a probe reads them sequentially instead of chasing full vectors elsewhere; and comparing quantized codes (a table lookup for `pq`, a popcount for `rabitq`, integer arithmetic for `sq8`/`sq4`) is cheaper than a full-precision `FLOAT[N]` distance. So `quant` is a query-latency optimization as much as a storage one — the smaller, posting-aware layout is what lets `nprobe` scan more clusters for the same latency budget.
+Quantization also speeds up the scan itself, not just the index size: quantized codes are stored inline in each cluster's postings, laid out contiguously per cluster, so a probe reads them sequentially instead of chasing full vectors elsewhere; and comparing quantized codes (a table lookup for `pq`, a popcount for `rabitq` and `bq`, integer arithmetic for `sq8`/`sq4` and `osq`) is cheaper than a full-precision `FLOAT[N]` distance. So `quant` is a query-latency optimization as much as a storage one — the smaller, posting-aware layout is what lets `nprobe` scan more clusters for the same latency budget.
 
 ### Oversampling {#oversampling}
 
 A quantized score is an *estimate*, and two segments' estimates are not comparable — each segment trains its own quantizer. [`sdb_ann_oversample`](./maintenance.md#session-settings) says how much of that to undo: the search runs on the codes, `ceil(sdb_ann_oversample * k)` of each segment's candidates are read back at full precision and re-ordered, and only then are segments compared against each other.
 
-- `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact.
+- `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact. `fp16` and `bf16` are the exception and answer from their codes, which are close to exact already.
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
 - A value above `1` widens the pool. For HNSW the beam is widened with it, since a beam of a hundred cannot hand four hundred candidates to the rescorer.
 
@@ -113,8 +117,10 @@ A quantized score is an *estimate*, and two segments' estimates are not comparab
 | `metric` | Distance metric: `l2`, `cosine`, `ip` or `l1`. Required |
 | `m` | Neighbours kept per node per layer, `2m` on the bottom layer, at least `2`. Default `32`. Higher = better recall and a larger index |
 | `ef_construction` | Beam width while building. Default `200`, must be `>= m`. Higher = a better graph and a slower build; it does not affect query time |
-| `quant` | `none`, `sq8` (the default), `sq4`, `usq8`, `usq4`, `rabitq` or `tq` — see [Quantization](#quantization). `pq` is IVF-only, and `metric = 'l1'` accepts `none` only |
-| `nb_bits` | Bits per dimension for `quant = 'tq'`, `1` to `5`, default `3`; extra magnitude bits for `quant = 'rabitq'`, `1` to `9`, default `1` |
+| `quant` | `none`, `sq8` (the default), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq` or `osq` — see [Quantization](#quantization). `metric = 'l1'` accepts `none` only |
+| `pq_m` | Number of subquantizers for `quant = 'pq'`, each coded in one byte. Must evenly divide the vector dimension `N`. Defaults to a value close to a 4-dimensional subvector, 2 bits per dimension |
+| `nb_bits` | Bits per dimension for `quant = 'tq'`, `1` to `5` or `1.5`, default `3`; for `quant = 'bq'`, `1`, `1.5` or `2`, default `1`; for `quant = 'osq'`, `1`, `2`, `4`, `7` or `8`, default `1`; extra magnitude bits for `quant = 'rabitq'`, `1` to `9`, default `1` |
+| `query_bits` | Query encoding for `quant = 'bq'` and `quant = 'osq'` — see the `ivf` table above |
 | `compression` | Whether the stored vectors are compressed. Default `true` |
 
 A graph walk reads a great many candidate vectors, so the smaller code pays for itself, and [oversampling](#oversampling) restores the recall it costs.

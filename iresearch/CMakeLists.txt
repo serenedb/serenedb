@@ -78,6 +78,13 @@ set(IResearch_core_sources
     ./formats/ivf/ivf_writer.cpp
     ./formats/ivf/ivf_reader.cpp
     ./formats/ivf/quantizer.cpp
+    ./formats/ivf/quantizers/bq.cpp
+    ./formats/ivf/quantizers/osq.cpp
+    ./formats/ivf/quantizers/panorama.cpp
+    ./formats/ivf/quantizers/pq.cpp
+    ./formats/ivf/quantizers/rabitq.cpp
+    ./formats/ivf/quantizers/scalar.cpp
+    ./formats/ivf/quantizers/tq.cpp
     ./index/directory_reader.cpp
     ./index/document_mask.cpp
     ./index/directory_reader_impl.cpp

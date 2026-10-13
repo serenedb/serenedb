@@ -1,0 +1,891 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include <absl/random/distributions.h>
+#include <faiss/impl/ProductQuantizer.h>
+
+#include <core_functions/array_kernels.hpp>
+#include <limits>
+#include <pcg_random.hpp>
+
+#include "iresearch/formats/ivf/quantizers/common.hpp"
+#include "iresearch/utils/empty.hpp"
+
+namespace irs::quantizers {
+namespace {
+
+constexpr uint32_t kPqNbits = 4;
+constexpr uint32_t kPq8Nbits = 8;
+constexpr size_t kPq8Ksub = size_t{1} << kPq8Nbits;
+constexpr size_t kPq8TrainRows = 32768;
+
+constexpr size_t kPqTrainResiduals = kFastScanKsub * 256;
+
+struct PqStatsHeader {
+  uint32_t m;
+  uint32_t ksub;
+};
+
+template<VectorMetric M>
+class ProductQuantizerWriter final : public QuantizerWriter {
+ public:
+  ProductQuantizerWriter(uint32_t d, uint32_t m, uint32_t niter)
+    : _d{d}, _pq{d, m == 0 ? 1 : m, kPqNbits} {
+    static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
+    if (niter != 0) {
+      _pq.cp.niter = static_cast<int>(niter);
+    }
+    _packed.resize(kFastScanBbs * FastScanNsq(_pq.M) / 2);
+    _res_tile.resize(kFastScanBbs * size_t{_d});
+    _codes_tile.resize(kFastScanBbs * _pq.code_size);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _dec.resize(_d);
+    }
+  }
+
+  size_t TrainSamples(size_t rows) const noexcept final {
+    return std::min<size_t>(rows, kPqTrainResiduals);
+  }
+
+  void Train(const float* vecs, size_t n) final {
+    if (n == 0) {
+      return;
+    }
+    const size_t ksub = _pq.ksub;
+    if (n >= ksub) {
+      _pq.train(n, vecs);
+    } else {
+      std::vector<float> padded(ksub * _d);
+      for (size_t i = 0; i < ksub; ++i) {
+        std::memcpy(padded.data() + i * _d, vecs + (i % n) * _d,
+                    _d * sizeof(float));
+      }
+      _pq.train(ksub, padded.data());
+    }
+    _trained = true;
+  }
+
+  void SetClusterCentroid(const float* centroid) final {
+    CodePending();
+    _centroid.assign(centroid, centroid + _d);
+  }
+
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = kFastScanBbs,
+            .record_size = static_cast<uint32_t>(
+              FastScanNsq(_pq.M) / 2 +
+              (M == VectorMetric::L2Sqr ? sizeof(float) : 0))};
+  }
+
+  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+    SDB_ASSERT(_trained);
+    SDB_ASSERT(_centroid.size() == _d);
+    for (size_t i = 0; i < n; ++i) {
+      const float* vec = vecs + i * _d;
+      float* res = _res_tile.data() + _lane * size_t{_d};
+      for (uint32_t j = 0; j < _d; ++j) {
+        res[j] = vec[j] - _centroid[j];
+      }
+      if (++_lane == kFastScanBbs) {
+        WriteGroup(out, kFastScanBbs);
+      }
+    }
+  }
+
+  void Finish(IndexOutput& out) final {
+    if (_lane != 0) {
+      WriteGroup(out, _lane);
+    }
+  }
+
+  uint32_t PendingLanes() const noexcept final {
+    return static_cast<uint32_t>(_lane);
+  }
+
+  void Serialize(DataOutput& out) const final {
+    if (!_trained) {
+      out.WriteU64(0);
+      return;
+    }
+    const auto cents = FloatSpan(_pq.centroids);
+    out.WriteU64(sizeof(PqStatsHeader) + cents.size());
+    WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
+                                static_cast<uint32_t>(_pq.ksub)});
+    out.WriteData(cents.data(), cents.size());
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::PQ;
+  }
+
+ private:
+  void CodePending() {
+    if (_lane == _coded) {
+      return;
+    }
+    const size_t count = _lane - _coded;
+    uint8_t* codes = _codes_tile.data() + _coded * _pq.code_size;
+    _pq.compute_codes(_res_tile.data() + _coded * size_t{_d}, codes, count);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      for (size_t i = 0; i < count; ++i) {
+        _pq.decode(codes + i * _pq.code_size, _dec.data());
+        for (uint32_t j = 0; j < _d; ++j) {
+          _dec[j] += _centroid[j];
+        }
+        _norms[_coded + i] = duckdb::NormSquaredOp::Operation(_dec.data(), _d);
+      }
+    }
+    _coded = _lane;
+  }
+
+  void WriteGroup(IndexOutput& out, size_t count) {
+    CodePending();
+    faiss::pq4_pack_codes(_codes_tile.data(), count, _pq.M, kFastScanBbs,
+                          kFastScanBbs, FastScanNsq(_pq.M), _packed.data(),
+                          _pq.code_size);
+    out.WriteData(_packed.data(), _packed.size());
+    if constexpr (M == VectorMetric::L2Sqr) {
+      std::fill_n(_norms.data() + count, kFastScanBbs - count, 0.f);
+      out.WriteData(reinterpret_cast<const byte_type*>(_norms.data()),
+                    kFastScanBbs * sizeof(float));
+    }
+    _lane = 0;
+    _coded = 0;
+  }
+
+  uint32_t _d;
+  faiss::ProductQuantizer _pq;
+  bool _trained = false;
+  size_t _lane = 0;
+  size_t _coded = 0;
+  std::vector<float> _centroid;
+  std::vector<float> _res_tile;
+  std::vector<uint8_t> _codes_tile;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::array<float, kFastScanBbs>> _norms;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr,
+                                    std::vector<float>> _dec;
+  std::vector<uint8_t> _packed;
+};
+
+template<VectorMetric M>
+class ProductQuantizerStats final : public QuantizerStats {
+ public:
+  ProductQuantizerStats(uint32_t d, std::span<const byte_type> stats) {
+    static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
+    const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
+    SDB_ASSERT(hdr.m != 0);
+    SDB_ASSERT(d % hdr.m == 0);
+    SDB_ASSERT(hdr.ksub != 0);
+    _pq.d = d;
+    _pq.M = hdr.m;
+    _pq.nbits = kPqNbits;
+    _pq.set_derived_values();
+    const size_t want = _pq.centroids.size() * sizeof(float);
+    SDB_ASSERT(hdr.ksub == static_cast<uint32_t>(_pq.ksub));
+    SDB_ASSERT(stats.size() >= sizeof(PqStatsHeader) + want);
+    std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
+                want);
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::PQ;
+  }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
+
+  const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
+
+ private:
+  faiss::ProductQuantizer _pq;
+};
+
+template<VectorMetric M>
+class ProductQuantizerCodebook final : public QuantizerCodebook {
+ public:
+  ProductQuantizerCodebook(
+    std::shared_ptr<const ProductQuantizerStats<M>> stats,
+    std::span<const float> query)
+    : _stats{std::move(stats)}, _query(query.begin(), query.end()) {
+    // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
+    // query-only and precomputed once per query here.
+    const faiss::ProductQuantizer& pq = _stats->Pq();
+    const size_t ksub = pq.ksub;
+    std::vector<float> ip_table(static_cast<size_t>(pq.M) * ksub);
+    pq.compute_inner_prod_table(_query.data(), ip_table.data());
+    _lut.Build(ip_table.data(), pq.M, ksub);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      _query_norm2 =
+        duckdb::NormSquaredOp::Operation(_query.data(), _query.size());
+    }
+  }
+
+  std::unique_ptr<QuantizerReader> MakeReader() const final;
+
+  const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
+  std::span<const float> Query() const noexcept { return _query; }
+  const FastScanLut& Lut() const noexcept { return _lut; }
+  float QueryNorm() const noexcept
+    requires(M == VectorMetric::L2Sqr)
+  {
+    return _query_norm2;
+  }
+
+ private:
+  std::shared_ptr<const ProductQuantizerStats<M>> _stats;
+  std::vector<float> _query;
+  FastScanLut _lut;
+  [[no_unique_address]] utils::Need<M == VectorMetric::L2Sqr, float>
+    _query_norm2;
+};
+
+template<VectorMetric M>
+class ProductQuantizerReader final : public QuantizerReader {
+ public:
+  explicit ProductQuantizerReader(
+    std::shared_ptr<const ProductQuantizerCodebook<M>> cb)
+    : _cb{std::move(cb)},
+      _nsq{FastScanNsq(_cb->Pq().M)},
+      _code_bytes{kFastScanBbs * _nsq / 2},
+      _group_bytes{_code_bytes + (M == VectorMetric::L2Sqr
+                                    ? kFastScanBbs * sizeof(float)
+                                    : 0)} {}
+
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = kFastScanBbs,
+            .record_size = static_cast<uint32_t>(_group_bytes / kFastScanBbs)};
+  }
+
+  void StartCluster(const float* centroid) final {
+    SDB_ASSERT(centroid != nullptr);
+    const std::span<const float> query = _cb->Query();
+    // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
+    // query-only and precomputed once per query in the codebook.
+    _qc = ComputeDistance<VectorMetric::InnerProduct>(
+      query.data(), centroid, static_cast<uint16_t>(query.size()));
+  }
+
+  void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
+                    score_t* out) final {
+    SDB_ASSERT(block.size() % _group_bytes == 0);
+    const FastScanLut& lut = _cb->Lut();
+    for (size_t off = 0; off < block.size();
+         off += _group_bytes, out += kFastScanBbs) {
+      const byte_type* codes = block.data() + off;
+      faiss::accumulate_to_mem(1, kFastScanBbs, static_cast<int>(_nsq), codes,
+                               lut.Packed(), _accu.data());
+      if constexpr (M == VectorMetric::L2Sqr) {
+        const float* norms =
+          reinterpret_cast<const float*>(codes + _code_bytes);
+        const float q2 = _cb->QueryNorm();
+        for (size_t i = 0; i < kFastScanBbs; ++i) {
+          const float ip = lut.Decode(_accu[i]);
+          out[i] = -(q2 - 2.f * _qc - 2.f * ip + norms[i]);
+        }
+      } else {
+        for (size_t i = 0; i < kFastScanBbs; ++i) {
+          out[i] = lut.Decode(_accu[i]) + _qc;
+        }
+      }
+    }
+  }
+
+ private:
+  std::shared_ptr<const ProductQuantizerCodebook<M>> _cb;
+  size_t _nsq;
+  size_t _code_bytes;
+  size_t _group_bytes;
+  std::array<uint16_t, kFastScanBbs> _accu;
+  float _qc = 0.f;
+};
+
+template<VectorMetric M>
+std::unique_ptr<QuantizerReader> ProductQuantizerCodebook<M>::MakeReader()
+  const {
+  return MakeReaderT<ProductQuantizerCodebook<M>, ProductQuantizerReader<M>>(
+    this);
+}
+
+template<VectorMetric M>
+std::shared_ptr<const QuantizerCodebook> ProductQuantizerStats<M>::MakeCodebook(
+  std::span<const float> query) const {
+  return MakeCodebookT<ProductQuantizerStats<M>, ProductQuantizerCodebook<M>>(
+    this, query);
+}
+
+uint32_t NearestCentroid(const float* __restrict x, uint32_t dsub,
+                         const float* __restrict cent_t,
+                         const float* __restrict cnorm,
+                         float* __restrict dist) {
+  float x2 = 0.f;
+  for (uint32_t j = 0; j < dsub; ++j) {
+    x2 += x[j] * x[j];
+  }
+  for (size_t c = 0; c < kPq8Ksub; ++c) {
+    dist[c] = cnorm[c] + x2;
+  }
+  for (uint32_t j = 0; j < dsub; ++j) {
+    const float xj = -2.f * x[j];
+    const float* __restrict cj = cent_t + j * kPq8Ksub;
+    for (size_t c = 0; c < kPq8Ksub; ++c) {
+      dist[c] += xj * cj[c];
+    }
+  }
+  int32_t best = std::numeric_limits<int32_t>::max();
+  for (size_t c = 0; c < kPq8Ksub; ++c) {
+    best = std::min(best, std::bit_cast<int32_t>(dist[c]));
+  }
+  constexpr auto kNone = static_cast<uint32_t>(kPq8Ksub);
+  uint32_t arg = kNone;
+  for (uint32_t c = 0; c < kNone; ++c) {
+    arg = std::min(arg, std::bit_cast<int32_t>(dist[c]) == best ? c : kNone);
+  }
+  return arg;
+}
+
+void TrainSubspace(const float* x, size_t n, uint32_t dsub, uint32_t k,
+                   uint32_t niter, uint64_t seed, float* cent) {
+  SDB_ASSERT(n >= k);
+  SDB_ASSERT(k % 8 == 0);
+  std::vector<uint32_t> order(n);
+  std::iota(order.begin(), order.end(), 0U);
+  pcg32 rng{seed};
+  for (uint32_t c = 0; c < k; ++c) {
+    std::swap(order[c], order[absl::Uniform<size_t>(rng, c, n)]);
+    std::copy_n(x + size_t{order[c]} * dsub, dsub, cent + size_t{c} * dsub);
+  }
+  SDB_ASSERT(k == kPq8Ksub);
+  std::vector<float> cent_t(size_t{k} * dsub);
+  std::vector<float> cnorm(k);
+  std::vector<float> dist(k);
+  std::vector<uint32_t> assign(n, k);
+  std::vector<double> sum(size_t{k} * dsub);
+  std::vector<size_t> count(k);
+  for (uint32_t it = 0; it < niter; ++it) {
+    for (uint32_t c = 0; c < k; ++c) {
+      float s = 0.f;
+      for (uint32_t j = 0; j < dsub; ++j) {
+        const float v = cent[size_t{c} * dsub + j];
+        cent_t[size_t{j} * k + c] = v;
+        s += v * v;
+      }
+      cnorm[c] = s;
+    }
+    size_t moved = 0;
+    for (size_t i = 0; i < n; ++i) {
+      const uint32_t c = NearestCentroid(x + i * dsub, dsub, cent_t.data(),
+                                         cnorm.data(), dist.data());
+      moved += c != assign[i] ? 1 : 0;
+      assign[i] = c;
+    }
+    if (moved * 1000 < n) {
+      break;
+    }
+    std::fill(sum.begin(), sum.end(), 0.0);
+    std::fill(count.begin(), count.end(), size_t{0});
+    for (size_t i = 0; i < n; ++i) {
+      const uint32_t c = assign[i];
+      ++count[c];
+      for (uint32_t j = 0; j < dsub; ++j) {
+        sum[size_t{c} * dsub + j] += x[i * dsub + j];
+      }
+    }
+    for (uint32_t c = 0; c < k; ++c) {
+      if (count[c] == 0) {
+        continue;
+      }
+      const double inv = 1.0 / static_cast<double>(count[c]);
+      for (uint32_t j = 0; j < dsub; ++j) {
+        cent[size_t{c} * dsub + j] =
+          static_cast<float>(sum[size_t{c} * dsub + j] * inv);
+      }
+    }
+    constexpr float kSplit = 1.f / 1024.f;
+    for (uint32_t c = 0; c < k; ++c) {
+      if (count[c] != 0) {
+        continue;
+      }
+      const auto big = static_cast<uint32_t>(
+        std::max_element(count.begin(), count.end()) - count.begin());
+      for (uint32_t j = 0; j < dsub; ++j) {
+        const float v = cent[size_t{big} * dsub + j];
+        const float sign = j % 2 == 0 ? 1.f : -1.f;
+        cent[size_t{c} * dsub + j] = v * (1.f + sign * kSplit);
+        cent[size_t{big} * dsub + j] = v * (1.f - sign * kSplit);
+      }
+      count[c] = count[big] / 2;
+      count[big] -= count[c];
+    }
+  }
+}
+
+template<VectorMetric M>
+class ProductQuantizer8Writer final : public QuantizerWriter {
+ public:
+  ProductQuantizer8Writer(uint32_t d, uint32_t m, uint32_t niter)
+    : _d{d}, _pq{d, m == 0 ? 1 : m, kPq8Nbits} {
+    static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
+    if (niter != 0) {
+      _pq.cp.niter = static_cast<int>(niter);
+    }
+  }
+
+  size_t TrainSamples(size_t rows) const noexcept final {
+    return std::min<size_t>(rows, kPq8TrainRows);
+  }
+
+  void Train(const float* vecs, size_t n) final {
+    TrainParallel(vecs, n,
+                  [](size_t tasks, absl::FunctionRef<void(size_t)> task) {
+                    for (size_t t = 0; t < tasks; ++t) {
+                      task(t);
+                    }
+                  });
+  }
+
+  void TrainParallel(const float* vecs, size_t n, TrainFanout fanout) final {
+    if (n == 0) {
+      return;
+    }
+    const size_t ksub = _pq.ksub;
+    std::vector<float> padded;
+    if (n < ksub) {
+      padded.resize(ksub * _d);
+      for (size_t i = 0; i < ksub; ++i) {
+        std::memcpy(padded.data() + i * _d, vecs + (i % n) * _d,
+                    _d * sizeof(float));
+      }
+      vecs = padded.data();
+      n = ksub;
+    }
+    const size_t dsub = _pq.dsub;
+    fanout(_pq.M, [&](size_t m) {
+      std::vector<float> sub(n * dsub);
+      for (size_t i = 0; i < n; ++i) {
+        std::copy_n(vecs + i * _d + m * dsub, dsub, sub.data() + i * dsub);
+      }
+      TrainSubspace(sub.data(), n, static_cast<uint32_t>(dsub),
+                    static_cast<uint32_t>(ksub),
+                    static_cast<uint32_t>(_pq.cp.niter), kIvfRotationSeed + m,
+                    _pq.centroids.data() + m * ksub * dsub);
+    });
+    PrepareEncode();
+    _trained = true;
+  }
+
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = 1,
+            .record_size = static_cast<uint32_t>(_pq.code_size)};
+  }
+
+  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+    SDB_ASSERT(_trained);
+    _codes.resize(n * _pq.code_size);
+    EncodeRows(vecs, n, _codes.data());
+    out.WriteData(_codes.data(), _codes.size());
+  }
+
+  bool EncodeInto(byte_type* dst, const float* vecs, size_t n) final {
+    SDB_ASSERT(_trained);
+    EncodeRows(vecs, n, reinterpret_cast<uint8_t*>(dst));
+    return true;
+  }
+
+  std::unique_ptr<QuantizerWriter> CloneForEncode() const final {
+    auto out = std::make_unique<ProductQuantizer8Writer>(_d, 0, 0);
+    out->_pq = _pq;
+    out->_cent_t = _cent_t;
+    out->_cnorm = _cnorm;
+    out->_trained = _trained;
+    return out;
+  }
+
+  void Finish(IndexOutput& /*out*/) final {}
+
+  void Serialize(DataOutput& out) const final {
+    if (!_trained) {
+      out.WriteU64(0);
+      return;
+    }
+    const auto cents = FloatSpan(_pq.centroids);
+    out.WriteU64(sizeof(PqStatsHeader) + cents.size());
+    WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
+                                static_cast<uint32_t>(_pq.ksub)});
+    out.WriteData(cents.data(), cents.size());
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::PQ;
+  }
+
+ private:
+  void PrepareEncode() {
+    const size_t dsub = _pq.dsub;
+    _cent_t.resize(_pq.M * kPq8Ksub * dsub);
+    _cnorm.resize(_pq.M * kPq8Ksub);
+    for (size_t m = 0; m < _pq.M; ++m) {
+      const float* cent = _pq.centroids.data() + m * kPq8Ksub * dsub;
+      float* cent_t = _cent_t.data() + m * kPq8Ksub * dsub;
+      for (size_t c = 0; c < kPq8Ksub; ++c) {
+        float s = 0.f;
+        for (size_t j = 0; j < dsub; ++j) {
+          const float v = cent[c * dsub + j];
+          cent_t[j * kPq8Ksub + c] = v;
+          s += v * v;
+        }
+        _cnorm[m * kPq8Ksub + c] = s;
+      }
+    }
+  }
+
+  void EncodeRows(const float* vecs, size_t n, uint8_t* codes) {
+    const size_t dsub = _pq.dsub;
+    _dist.resize(kPq8Ksub);
+    for (size_t i = 0; i < n; ++i) {
+      const float* x = vecs + i * _d;
+      uint8_t* code = codes + i * _pq.M;
+      for (size_t m = 0; m < _pq.M; ++m) {
+        code[m] = static_cast<uint8_t>(
+          NearestCentroid(x + m * dsub, static_cast<uint32_t>(dsub),
+                          _cent_t.data() + m * kPq8Ksub * dsub,
+                          _cnorm.data() + m * kPq8Ksub, _dist.data()));
+      }
+    }
+  }
+
+  uint32_t _d;
+  faiss::ProductQuantizer _pq;
+  bool _trained = false;
+  std::vector<float> _cent_t;
+  std::vector<float> _cnorm;
+  std::vector<float> _dist;
+  std::vector<uint8_t> _codes;
+};
+
+template<VectorMetric M>
+class ProductQuantizer8Stats final : public QuantizerStats {
+ public:
+  ProductQuantizer8Stats(uint32_t d, std::span<const byte_type> stats) {
+    static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
+    const PqStatsHeader hdr = ReadPodHeader<PqStatsHeader>(stats);
+    SDB_ASSERT(hdr.m != 0);
+    SDB_ASSERT(d % hdr.m == 0);
+    _pq.d = d;
+    _pq.M = hdr.m;
+    _pq.nbits = kPq8Nbits;
+    _pq.set_derived_values();
+    const size_t want = _pq.centroids.size() * sizeof(float);
+    SDB_ASSERT(hdr.ksub == static_cast<uint32_t>(_pq.ksub));
+    SDB_ASSERT(stats.size() >= sizeof(PqStatsHeader) + want);
+    std::memcpy(_pq.centroids.data(), stats.data() + sizeof(PqStatsHeader),
+                want);
+    _norms.resize(_pq.M * _pq.ksub);
+    for (size_t i = 0; i < _norms.size(); ++i) {
+      _norms[i] = duckdb::NormSquaredOp::Operation(
+        _pq.centroids.data() + i * _pq.dsub, _pq.dsub);
+    }
+    _cent_t.resize(_pq.M * _pq.dsub * kPq8Ksub);
+    for (size_t m = 0; m < _pq.M; ++m) {
+      const float* cent = _pq.centroids.data() + m * kPq8Ksub * _pq.dsub;
+      float* cent_t = _cent_t.data() + m * _pq.dsub * kPq8Ksub;
+      for (size_t c = 0; c < kPq8Ksub; ++c) {
+        for (size_t j = 0; j < _pq.dsub; ++j) {
+          cent_t[j * kPq8Ksub + c] = cent[c * _pq.dsub + j];
+        }
+      }
+    }
+  }
+
+  VectorQuantization Kind() const noexcept final {
+    return VectorQuantization::PQ;
+  }
+
+  std::shared_ptr<const QuantizerCodebook> MakeCodebook(
+    std::span<const float> query) const final;
+
+  const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
+  const float* CentroidNorms() const noexcept { return _norms.data(); }
+  const float* TransposedCentroids() const noexcept { return _cent_t.data(); }
+
+ private:
+  faiss::ProductQuantizer _pq;
+  std::vector<float> _norms;
+  std::vector<float> _cent_t;
+};
+
+template<VectorMetric M>
+class ProductQuantizer8Codebook final : public QuantizerCodebook {
+ public:
+  ProductQuantizer8Codebook(
+    std::shared_ptr<const ProductQuantizer8Stats<M>> stats,
+    std::span<const float> query)
+    : _stats{std::move(stats)} {
+    Rekey(query);
+  }
+
+  void Rekey(std::span<const float> query) {
+    const faiss::ProductQuantizer& pq = _stats->Pq();
+    const size_t dsub = pq.dsub;
+    _lut.resize(pq.M * kPq8Ksub);
+    const float* cent_t = _stats->TransposedCentroids();
+    const float* norms = _stats->CentroidNorms();
+    for (size_t m = 0; m < pq.M; ++m) {
+      const float* q = query.data() + m * dsub;
+      const float* __restrict ct = cent_t + m * dsub * kPq8Ksub;
+      float* __restrict out = _lut.data() + m * kPq8Ksub;
+      if constexpr (M == VectorMetric::L2Sqr) {
+        float q2 = 0.f;
+        for (size_t j = 0; j < dsub; ++j) {
+          q2 += q[j] * q[j];
+        }
+        const float* __restrict cn = norms + m * kPq8Ksub;
+        for (size_t c = 0; c < kPq8Ksub; ++c) {
+          out[c] = cn[c] + q2;
+        }
+        for (size_t j = 0; j < dsub; ++j) {
+          const float w = -2.f * q[j];
+          for (size_t c = 0; c < kPq8Ksub; ++c) {
+            out[c] += w * ct[j * kPq8Ksub + c];
+          }
+        }
+      } else {
+        std::fill_n(out, kPq8Ksub, 0.f);
+        for (size_t j = 0; j < dsub; ++j) {
+          const float w = q[j];
+          for (size_t c = 0; c < kPq8Ksub; ++c) {
+            out[c] += w * ct[j * kPq8Ksub + c];
+          }
+        }
+      }
+    }
+  }
+
+  std::unique_ptr<QuantizerReader> MakeReader() const final;
+
+  const std::shared_ptr<const ProductQuantizer8Stats<M>>& StatsPtr()
+    const noexcept {
+    return _stats;
+  }
+  const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
+  const float* Lut() const noexcept { return _lut.data(); }
+
+ private:
+  std::shared_ptr<const ProductQuantizer8Stats<M>> _stats;
+  std::vector<float> _lut;
+};
+
+template<VectorMetric M>
+class ProductQuantizer8Reader final : public QuantizerReader {
+ public:
+  explicit ProductQuantizer8Reader(
+    std::shared_ptr<const ProductQuantizer8Codebook<M>> cb)
+    : _cb{std::move(cb)},
+      _cur{_cb.get()},
+      _m{_cb->Pq().M},
+      _dsub{_cb->Pq().dsub} {}
+
+  PayloadBlockSetting BlockSetting() const noexcept final {
+    return {.group_size = 1, .record_size = static_cast<uint32_t>(_m)};
+  }
+
+  void StartCluster(const float* /*centroid*/) final {}
+
+  void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
+                    score_t* out) final {
+    SDB_ASSERT(block.size() % _m == 0);
+    const size_t rows = block.size() / _m;
+    const auto* codes = reinterpret_cast<const uint8_t*>(block.data());
+    for (size_t i = 0; i < rows; ++i) {
+      out[i] = Score(codes + i * _m);
+    }
+  }
+
+  void ComputeGathered(const byte_type* base, uint32_t record_size,
+                       std::span<const uint32_t> ids, score_t /*threshold*/,
+                       score_t* out) final {
+    ScoreGatheredRows(base, record_size, ids, out, [this](const byte_type* r) {
+      return Score(reinterpret_cast<const uint8_t*>(r));
+    });
+  }
+
+  bool Decode(const byte_type* code, float* out) const final {
+    _cb->Pq().decode(reinterpret_cast<const uint8_t*>(code), out);
+    return true;
+  }
+
+  bool SetQuery(std::span<const float> query) final {
+    if (!_own) {
+      _own =
+        std::make_unique<ProductQuantizer8Codebook<M>>(_cb->StatsPtr(), query);
+      _cur = _own.get();
+    } else {
+      _own->Rekey(query);
+    }
+    return true;
+  }
+
+  bool SupportsPairScores() const noexcept final { return true; }
+
+  bool PreparePairTerms(const byte_type* base, uint32_t record_size,
+                        uint64_t rows, std::vector<float>& terms) final {
+    const float* norms = _cb->StatsPtr()->CentroidNorms();
+    terms.assign(rows, 0.f);
+    for (uint64_t row = 0; row < rows; ++row) {
+      const auto* code =
+        reinterpret_cast<const uint8_t*>(base + row * size_t{record_size});
+      float s = 0.f;
+      for (size_t j = 0; j < _m; ++j) {
+        s += norms[j * kPq8Ksub + code[j]];
+      }
+      terms[row] = s;
+    }
+    return true;
+  }
+
+  void ScorePairBatch(const byte_type* base, uint32_t record_size,
+                      std::span<const float> terms, uint32_t from,
+                      std::span<const uint32_t> ids, score_t* out) final {
+    switch (_dsub) {
+      case 1:
+        ScorePairs<1>(base, record_size, terms, from, ids, out);
+        return;
+      case 2:
+        ScorePairs<2>(base, record_size, terms, from, ids, out);
+        return;
+      case 4:
+        ScorePairs<4>(base, record_size, terms, from, ids, out);
+        return;
+      case 8:
+        ScorePairs<8>(base, record_size, terms, from, ids, out);
+        return;
+      case 16:
+        ScorePairs<16>(base, record_size, terms, from, ids, out);
+        return;
+      default:
+        ScorePairs<0>(base, record_size, terms, from, ids, out);
+        return;
+    }
+  }
+
+ private:
+  template<size_t Dsub>
+  void ScorePairs(const byte_type* base, uint32_t record_size,
+                  std::span<const float> terms, uint32_t from,
+                  std::span<const uint32_t> ids, score_t* out) {
+    const auto& pq = _cb->Pq();
+    const size_t dsub = Dsub == 0 ? _dsub : Dsub;
+    _pair_a.resize(pq.d);
+    pq.decode(
+      reinterpret_cast<const uint8_t*>(base + size_t{from} * record_size),
+      _pair_a.data());
+    const float* cents = pq.centroids.data();
+    const float* xa = _pair_a.data();
+    for (size_t i = 0; i < ids.size(); ++i) {
+      const auto* b = reinterpret_cast<const uint8_t*>(
+        base + static_cast<size_t>(ids[i]) * record_size);
+      float acc[4] = {};
+      for (size_t j = 0; j < _m; ++j) {
+        const float* cb = cents + (j * kPq8Ksub + b[j]) * dsub;
+        const float* aj = xa + j * dsub;
+        float s = 0.f;
+        for (size_t k = 0; k < dsub; ++k) {
+          s += aj[k] * cb[k];
+        }
+        acc[j & 3] += s;
+      }
+      const float dot = (acc[0] + acc[1]) + (acc[2] + acc[3]);
+      if constexpr (M == VectorMetric::L2Sqr) {
+        out[i] = -(terms[from] + terms[ids[i]] - 2.f * dot);
+      } else {
+        out[i] = dot;
+      }
+    }
+  }
+
+  float Score(const uint8_t* code) const noexcept {
+    const float* lut = _cur->Lut();
+    float a0 = 0.f;
+    float a1 = 0.f;
+    float a2 = 0.f;
+    float a3 = 0.f;
+    size_t j = 0;
+    for (; j + 4 <= _m; j += 4, lut += 4 * kPq8Ksub) {
+      a0 += lut[code[j]];
+      a1 += lut[kPq8Ksub + code[j + 1]];
+      a2 += lut[2 * kPq8Ksub + code[j + 2]];
+      a3 += lut[3 * kPq8Ksub + code[j + 3]];
+    }
+    for (; j < _m; ++j, lut += kPq8Ksub) {
+      a0 += lut[code[j]];
+    }
+    const float s = (a0 + a1) + (a2 + a3);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      return -s;
+    } else {
+      return s;
+    }
+  }
+
+  std::shared_ptr<const ProductQuantizer8Codebook<M>> _cb;
+  const ProductQuantizer8Codebook<M>* _cur;
+  std::unique_ptr<ProductQuantizer8Codebook<M>> _own;
+  size_t _m;
+  size_t _dsub;
+  std::vector<float> _pair_a;
+};
+
+template<VectorMetric M>
+std::unique_ptr<QuantizerReader> ProductQuantizer8Codebook<M>::MakeReader()
+  const {
+  return MakeReaderT<ProductQuantizer8Codebook<M>, ProductQuantizer8Reader<M>>(
+    this);
+}
+
+template<VectorMetric M>
+std::shared_ptr<const QuantizerCodebook>
+ProductQuantizer8Stats<M>::MakeCodebook(std::span<const float> query) const {
+  return MakeCodebookT<ProductQuantizer8Stats<M>, ProductQuantizer8Codebook<M>>(
+    this, query);
+}
+
+}  // namespace
+
+std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
+                                              uint32_t pq_m, uint32_t pq_niter,
+                                              bool row_major) {
+  if (row_major) {
+    return MakeWriterWithMetric<ProductQuantizer8Writer>(metric, d, pq_m,
+                                                         pq_niter);
+  }
+  return MakeWriterWithMetric<ProductQuantizerWriter>(metric, d, pq_m,
+                                                      pq_niter);
+}
+
+std::shared_ptr<const QuantizerStats> MakePqStats(
+  VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
+  bool row_major) {
+  if (row_major) {
+    return MakeStatsWithMetric<ProductQuantizer8Stats>(metric, d, stats);
+  }
+  return MakeStatsWithMetric<ProductQuantizerStats>(metric, d, stats);
+}
+
+}  // namespace irs::quantizers

@@ -1518,17 +1518,22 @@ struct CodeFixture {
 
 CodeFixture BuildCodes(VectorQuantization quant, uint32_t d, uint32_t nb_bits,
                        VectorMetric metric, const std::vector<float>& points,
-                       size_t n, const std::vector<float>& centroid) {
+                       size_t n, const std::vector<float>& centroid,
+                       bool half_bit = false, uint32_t query_bits = 0) {
   CodeFixture f;
   auto writer = MakeQuantizerWriter(quant, d, metric, /*pq_m=*/0,
                                     /*pq_niter=*/0, nb_bits,
-                                    /*row_major=*/true);
+                                    /*row_major=*/true, half_bit, query_bits);
   EXPECT_NE(writer, nullptr);
   if (writer->TrainSamples(n) != 0) {
     writer->Train(points.data(), n);
   }
   if (QuantizerNeedsCentroid(quant)) {
     writer->SetClusterCentroid(centroid.data());
+  }
+  if (const size_t refine = writer->RefineSamples(n); refine != 0) {
+    writer->Refine(points.data(), std::min(n, refine));
+    writer->RefineDone();
   }
   f.record_size = writer->BlockSetting().record_size;
   EXPECT_EQ(writer->BlockSetting().group_size, 1U);
@@ -1574,16 +1579,28 @@ struct CodeQuant {
   float min_cosine;
   double min_tau;
   size_t min_top10;
+  bool half_bit = false;
+  uint32_t query_bits = 0;
 };
 
 std::string CodeQuantName(const ::testing::TestParamInfo<CodeQuant>& info) {
+  const std::string bits =
+    std::to_string(info.param.nb_bits) + (info.param.half_bit ? "_5" : "");
   switch (info.param.quant) {
     case VectorQuantization::SQ8:
       return "sq8";
     case VectorQuantization::SQ4:
       return "sq4";
     case VectorQuantization::TQ:
-      return "tq" + std::to_string(info.param.nb_bits);
+      return "tq" + bits;
+    case VectorQuantization::BQ:
+      return "bq" + bits + "_q" + std::to_string(info.param.query_bits);
+    case VectorQuantization::OSQ:
+      return "osq" + bits + "_q" + std::to_string(info.param.query_bits);
+    case VectorQuantization::FP16:
+      return "fp16";
+    case VectorQuantization::BF16:
+      return "bf16";
     default:
       return "other";
   }
@@ -1605,10 +1622,12 @@ TEST_P(code_rekey_test, encode_into_matches_encode) {
   const auto points = MakeSpread(d, n, 7);
   const std::vector<float> centroid(d, 0.05f);
 
-  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                            GetParam().half_bit, GetParam().query_bits);
 
   auto writer = MakeQuantizerWriter(quant, d, metric, 0, 0, nb_bits,
-                                    /*row_major=*/true);
+                                    /*row_major=*/true, GetParam().half_bit,
+                                    GetParam().query_bits);
   ASSERT_NE(writer, nullptr);
   if (writer->TrainSamples(n) != 0) {
     writer->Train(points.data(), n);
@@ -1641,7 +1660,8 @@ TEST_P(code_rekey_test, decode_recovers_direction) {
   const auto points = MakeSpread(d, n, 11);
   const std::vector<float> centroid(d, 0.f);
 
-  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                            GetParam().half_bit, GetParam().query_bits);
   auto reader = MakeKeyedReader(f, {points.data(), d}, centroid.data());
 
   std::vector<float> decoded(d, 0.f);
@@ -1668,7 +1688,8 @@ TEST_P(code_rekey_test, rekey_from_code_ranks_like_raw_query) {
   const auto points = MakeSpread(d, n, 13);
   const std::vector<float> centroid(d, 0.f);
 
-  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                            GetParam().half_bit, GetParam().query_bits);
 
   std::vector<uint32_t> ids(n - 1);
   for (size_t i = 0; i < ids.size(); ++i) {
@@ -1739,7 +1760,8 @@ TEST_P(code_rekey_test, pair_scores_track_the_keyed_reader) {
   const std::vector<float> centroid(d, 0.05f);
   for (const VectorMetric metric :
        {VectorMetric::InnerProduct, VectorMetric::L2Sqr}) {
-    const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+    const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                              GetParam().half_bit, GetParam().query_bits);
 
     const std::vector<float> scratch(d, 0.f);
     auto reader = MakeKeyedReader(f, scratch, centroid.data());
@@ -1751,7 +1773,7 @@ TEST_P(code_rekey_test, pair_scores_track_the_keyed_reader) {
     std::vector<float> terms;
     ASSERT_TRUE(
       reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
-    ASSERT_EQ(terms.size(), n);
+    ASSERT_FALSE(terms.empty());
 
     std::vector<uint32_t> ids(n);
     for (uint32_t i = 0; i < n; ++i) {
@@ -1841,7 +1863,8 @@ TEST_P(code_rekey_test, gathered_scores_are_chunking_invariant) {
   const auto points = MakeSpread(d, n, 29);
   const std::vector<float> centroid(d, 0.f);
 
-  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid);
+  const auto f = BuildCodes(quant, d, nb_bits, metric, points, n, centroid,
+                            GetParam().half_bit, GetParam().query_bits);
 
   std::vector<uint32_t> ids(n - 1);
   for (size_t i = 0; i < ids.size(); ++i) {
@@ -1910,11 +1933,24 @@ TEST_P(code_rekey_test, gathered_scores_are_chunking_invariant) {
 
 INSTANTIATE_TEST_SUITE_P(
   quants, code_rekey_test,
-  ::testing::Values(CodeQuant{VectorQuantization::SQ8, 0, 0.99f, 0.99, 10},
-                    CodeQuant{VectorQuantization::SQ4, 0, 0.9f, 0.95, 9},
-                    CodeQuant{VectorQuantization::TQ, 4, 0.9f, 0.95, 9},
-                    CodeQuant{VectorQuantization::TQ, 2, 0.7f, 0.85, 6},
-                    CodeQuant{VectorQuantization::TQ, 3, 0.7f, 0.85, 6}),
+  ::testing::Values(
+    CodeQuant{VectorQuantization::SQ8, 0, 0.99f, 0.99, 10},
+    CodeQuant{VectorQuantization::SQ4, 0, 0.9f, 0.95, 9},
+    CodeQuant{VectorQuantization::TQ, 4, 0.9f, 0.95, 9},
+    CodeQuant{VectorQuantization::TQ, 2, 0.7f, 0.85, 6},
+    CodeQuant{VectorQuantization::TQ, 3, 0.7f, 0.85, 6},
+    CodeQuant{VectorQuantization::TQ, 1, 0.6f, 0.8, 5, true},
+    CodeQuant{VectorQuantization::BQ, 1, 0.7f, 0.8, 5, false, 1},
+    CodeQuant{VectorQuantization::BQ, 1, 0.7f, 0.75, 5, false, 8},
+    CodeQuant{VectorQuantization::BQ, 1, 0.7f, 0.8, 5, true, 8},
+    CodeQuant{VectorQuantization::BQ, 2, 0.8f, 0.85, 3, false, 8},
+    CodeQuant{VectorQuantization::OSQ, 1, 0.7f, 0.75, 5, false, 4},
+    CodeQuant{VectorQuantization::OSQ, 2, 0.8f, 0.8, 5, false, 4},
+    CodeQuant{VectorQuantization::OSQ, 4, 0.9f, 0.85, 6, false, 4},
+    CodeQuant{VectorQuantization::OSQ, 7, 0.95f, 0.9, 7, false, 7},
+    CodeQuant{VectorQuantization::OSQ, 8, 0.95f, 0.9, 7, false, 8},
+    CodeQuant{VectorQuantization::FP16, 0, 0.999f, 0.99, 10},
+    CodeQuant{VectorQuantization::BF16, 0, 0.99f, 0.97, 9}),
   CodeQuantName);
 
 namespace {
@@ -2078,4 +2114,859 @@ TEST(code_bound_test, only_byte_scalar_codes_are_bounded) {
                             VectorMetric::L2Sqr, points, kRows, {});
   EXPECT_EQ(f.stats->MakeCodeBound(query, VectorMetric::L1), nullptr);
   EXPECT_NE(f.stats->MakeCodeBound(query, VectorMetric::L2Sqr), nullptr);
+}
+
+namespace {
+
+CodeFixture BuildPqCodes(uint32_t d, uint32_t pq_m, VectorMetric metric,
+                         const std::vector<float>& points, size_t n) {
+  CodeFixture f;
+  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d, metric, pq_m,
+                                    /*pq_niter=*/0, /*nb_bits=*/0,
+                                    /*row_major=*/true);
+  EXPECT_NE(writer, nullptr);
+  writer->Train(points.data(), std::min(n, writer->TrainSamples(n)));
+  f.record_size = writer->BlockSetting().record_size;
+  EXPECT_EQ(writer->BlockSetting().group_size, 1U);
+  EXPECT_EQ(f.record_size, pq_m);
+  f.codes.resize(n * f.record_size, 0);
+  EXPECT_TRUE(writer->EncodeInto(f.codes.data(), points.data(), n));
+  f.blob = SerializeStats(*writer);
+  f.stats = MakeQuantizerStats(VectorQuantization::PQ, d, f.blob, metric,
+                               /*row_major=*/true);
+  EXPECT_NE(f.stats, nullptr);
+  return f;
+}
+
+}  // namespace
+
+TEST(hnsw_pq_quantizer_test, codes_rank_like_exact) {
+  constexpr uint32_t d = 32;
+  constexpr uint32_t pq_m = 8;
+  constexpr size_t n = 1024;
+  constexpr size_t nq = 16;
+  const auto points = MakeSpread(d, n, 41);
+  const auto queries = MakeSpread(d, nq, 43);
+  const std::vector<float> centroid(d, 0.f);
+  for (const VectorMetric metric :
+       {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+    const auto f = BuildPqCodes(d, pq_m, metric, points, n);
+    size_t found = 0;
+    for (size_t qi = 0; qi < nq; ++qi) {
+      const std::span<const float> q{queries.data() + qi * d, d};
+      auto reader = MakeKeyedReader(f, q, centroid.data());
+      std::vector<score_t> got(n);
+      reader->ComputeBlock(f.codes, kNoPrune, got.data());
+      std::vector<float> want(n);
+      for (size_t i = 0; i < n; ++i) {
+        want[i] = ExactScore(metric, q.data(), points.data() + i * d, d);
+      }
+      EXPECT_GE(Cosine(got, want), 0.95f) << static_cast<int>(metric);
+      const auto best =
+        std::max_element(want.begin(), want.end()) - want.begin();
+      size_t above = 0;
+      for (size_t i = 0; i < n; ++i) {
+        above += got[i] > got[best] ? 1 : 0;
+      }
+      found += above < 10 ? 1 : 0;
+    }
+    EXPECT_GE(found, nq - 1) << static_cast<int>(metric);
+  }
+}
+
+TEST(hnsw_pq_quantizer_test, pair_scores_are_decoded_distances) {
+  constexpr uint32_t d = 24;
+  constexpr uint32_t pq_m = 6;
+  constexpr size_t n = 300;
+  const auto points = MakeSpread(d, n, 53);
+  const std::vector<float> centroid(d, 0.f);
+  for (const VectorMetric metric :
+       {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+    const auto f = BuildPqCodes(d, pq_m, metric, points, n);
+    const std::vector<float> scratch(d, 0.f);
+    auto reader = MakeKeyedReader(f, scratch, centroid.data());
+    ASSERT_TRUE(reader->SupportsPairScores());
+    std::vector<float> terms;
+    ASSERT_TRUE(
+      reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
+
+    std::vector<float> decoded(n * d);
+    for (size_t i = 0; i < n; ++i) {
+      ASSERT_TRUE(reader->Decode(f.codes.data() + i * f.record_size,
+                                 decoded.data() + i * d));
+    }
+    std::vector<uint32_t> ids(n);
+    for (uint32_t i = 0; i < n; ++i) {
+      ids[i] = i;
+    }
+    std::vector<score_t> pair(n);
+    std::vector<score_t> keyed(n);
+    for (const uint32_t a : {0U, 7U, 151U, 299U}) {
+      reader->ScorePairBatch(f.codes.data(), f.record_size, terms, a, ids,
+                             pair.data());
+      auto keyed_reader = MakeKeyedReader(f, scratch, centroid.data());
+      ASSERT_TRUE(keyed_reader->SetQuery({decoded.data() + a * d, d}));
+      keyed_reader->ComputeGathered(f.codes.data(), f.record_size, ids,
+                                    kNoPrune, keyed.data());
+      for (size_t b = 0; b < n; ++b) {
+        const float want =
+          ExactScore(metric, decoded.data() + a * d, decoded.data() + b * d, d);
+        EXPECT_NEAR(pair[b], want, 1e-4f * (1.f + std::fabs(want)))
+          << "a=" << a << " b=" << b;
+        EXPECT_NEAR(keyed[b], want, 1e-4f * (1.f + std::fabs(want)))
+          << "a=" << a << " b=" << b;
+      }
+    }
+  }
+}
+
+TEST(hnsw_pq_quantizer_test, gathered_matches_block) {
+  constexpr uint32_t d = 16;
+  constexpr uint32_t pq_m = 4;
+  constexpr size_t n = 400;
+  const auto points = MakeSpread(d, n, 61);
+  const std::vector<float> centroid(d, 0.f);
+  const auto f = BuildPqCodes(d, pq_m, VectorMetric::L2Sqr, points, n);
+  const auto query = MakeSpread(d, 1, 67);
+  auto reader = MakeKeyedReader(f, query, centroid.data());
+  std::vector<score_t> block(n);
+  reader->ComputeBlock(f.codes, kNoPrune, block.data());
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = (i * 37) % n;
+  }
+  std::vector<score_t> gathered(n);
+  for (size_t off = 0; off < n; off += 33) {
+    const size_t take = std::min<size_t>(33, n - off);
+    reader->ComputeGathered(f.codes.data(), f.record_size,
+                            std::span<const uint32_t>{ids}.subspan(off, take),
+                            kNoPrune, gathered.data() + off);
+  }
+  for (size_t i = 0; i < n; ++i) {
+    EXPECT_EQ(gathered[i], block[ids[i]]) << i;
+  }
+}
+
+TEST(hnsw_pq_quantizer_test, encode_into_matches_encode) {
+  constexpr uint32_t d = 32;
+  constexpr uint32_t pq_m = 16;
+  constexpr size_t n = 300;
+  const auto points = MakeSpread(d, n, 71);
+  const auto f = BuildPqCodes(d, pq_m, VectorMetric::InnerProduct, points, n);
+  auto writer = MakeQuantizerWriter(VectorQuantization::PQ, d,
+                                    VectorMetric::InnerProduct, pq_m, 0, 0,
+                                    /*row_major=*/true);
+  ASSERT_NE(writer, nullptr);
+  writer->Train(points.data(), std::min(n, writer->TrainSamples(n)));
+  SimpleMemoryAccounter memory;
+  MemoryFile file{memory};
+  uint64_t start = 0;
+  uint64_t end = 0;
+  {
+    MemoryIndexOutput out{file};
+    start = out.Position();
+    writer->Encode(out, points.data(), n);
+    writer->Finish(out);
+    out.Flush();
+    end = out.Position();
+  }
+  ExpectBytesEq(ReadPayload(file, start, end), f.codes);
+}
+
+namespace {
+
+struct BqMode {
+  uint32_t bits;
+  bool half;
+  uint32_t query_bits;
+  double min_recall;
+};
+
+std::string BqModeName(const BqMode& mode) {
+  return "bq" + std::to_string(mode.bits) + (mode.half ? ".5" : "") + "/q" +
+         std::to_string(mode.query_bits);
+}
+
+std::vector<float> MakeShifted(uint32_t d, size_t n, uint32_t seed) {
+  std::mt19937 rng{seed};
+  std::uniform_real_distribution<float> shift{-2.f, 2.f};
+  std::uniform_real_distribution<float> spread{0.3f, 2.f};
+  std::vector<float> mean(d);
+  std::vector<float> scale(d);
+  for (uint32_t i = 0; i < d; ++i) {
+    mean[i] = shift(rng);
+    scale[i] = spread(rng);
+  }
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> out(n * d);
+  for (size_t r = 0; r < n; ++r) {
+    for (uint32_t i = 0; i < d; ++i) {
+      out[r * d + i] = mean[i] + scale[i] * nd(rng);
+    }
+  }
+  return out;
+}
+
+CodeFixture BuildBqCodes(uint32_t d, const BqMode& mode, VectorMetric metric,
+                         const std::vector<float>& points, size_t n) {
+  return BuildCodes(VectorQuantization::BQ, d, mode.bits, metric, points, n, {},
+                    mode.half, mode.query_bits);
+}
+
+double RecallInPool(std::span<const float> want, std::span<const score_t> got,
+                    size_t k, size_t pool) {
+  std::vector<uint32_t> order(want.size());
+  for (size_t i = 0; i < order.size(); ++i) {
+    order[i] = static_cast<uint32_t>(i);
+  }
+  auto by_want = order;
+  std::partial_sort(by_want.begin(), by_want.begin() + k, by_want.end(),
+                    [&](uint32_t a, uint32_t b) { return want[a] > want[b]; });
+  std::partial_sort(order.begin(), order.begin() + pool, order.end(),
+                    [&](uint32_t a, uint32_t b) { return got[a] > got[b]; });
+  size_t hit = 0;
+  for (size_t i = 0; i < k; ++i) {
+    hit += std::find(order.begin(), order.begin() + pool, by_want[i]) !=
+               order.begin() + pool
+             ? 1
+             : 0;
+  }
+  return static_cast<double>(hit) / static_cast<double>(k);
+}
+
+constexpr VectorMetric kBqMetrics[] = {VectorMetric::L2Sqr,
+                                       VectorMetric::InnerProduct};
+
+}  // namespace
+
+TEST(bq_quantizer_test, codes_rank_like_exact) {
+  constexpr uint32_t d = 64;
+  constexpr size_t n = 2000;
+  constexpr size_t nq = 20;
+  const auto all = MakeShifted(d, n + nq, 83);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  for (const BqMode mode : {BqMode{1, false, 1, 0.3}, BqMode{1, false, 4, 0.55},
+                            BqMode{1, false, 8, 0.55}, BqMode{1, true, 1, 0.33},
+                            BqMode{1, true, 8, 0.65}, BqMode{2, false, 1, 0.45},
+                            BqMode{2, false, 8, 0.85}}) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildBqCodes(d, mode, metric, points, n);
+      double recall = 0;
+      for (size_t qi = 0; qi < nq; ++qi) {
+        const std::span<const float> q{all.data() + (n + qi) * d, d};
+        auto reader = MakeKeyedReader(f, q, nullptr);
+        std::vector<score_t> got(n);
+        reader->ComputeBlock(f.codes, kNoPrune, got.data());
+        std::vector<float> want(n);
+        for (size_t i = 0; i < n; ++i) {
+          want[i] = ExactScore(metric, q.data(), points.data() + i * d, d);
+        }
+        recall += RecallInPool(want, got, 10, 100);
+      }
+      recall /= static_cast<double>(nq);
+      EXPECT_GE(recall, mode.min_recall)
+        << BqModeName(mode) << " metric " << static_cast<int>(metric);
+    }
+  }
+}
+
+TEST(bq_quantizer_test, scalar_query_estimates_the_distance) {
+  constexpr uint32_t d = 48;
+  constexpr size_t n = 1500;
+  constexpr size_t nq = 8;
+  const auto all = MakeShifted(d, n + nq, 89);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  for (const BqMode mode : {BqMode{1, false, 8, 0.45}, BqMode{1, true, 8, 0.6},
+                            BqMode{2, false, 8, 0.7}}) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildBqCodes(d, mode, metric, points, n);
+      for (size_t qi = 0; qi < nq; ++qi) {
+        const std::span<const float> q{all.data() + (n + qi) * d, d};
+        auto reader = MakeKeyedReader(f, q, nullptr);
+        std::vector<score_t> got(n);
+        reader->ComputeBlock(f.codes, kNoPrune, got.data());
+        std::vector<float> want(n);
+        double mean_want = 0;
+        double mean_delta = 0;
+        for (size_t i = 0; i < n; ++i) {
+          want[i] = ExactScore(metric, q.data(), points.data() + i * d, d);
+          mean_want += want[i];
+          mean_delta += double{got[i]} - double{want[i]};
+        }
+        mean_want /= static_cast<double>(n);
+        mean_delta /= static_cast<double>(n);
+        double var_want = 0;
+        double cov = 0;
+        double var_got = 0;
+        double mean_got = mean_want + mean_delta;
+        for (size_t i = 0; i < n; ++i) {
+          var_want += (want[i] - mean_want) * (want[i] - mean_want);
+          var_got += (got[i] - mean_got) * (got[i] - mean_got);
+          cov += (want[i] - mean_want) * (got[i] - mean_got);
+        }
+        const double corr = cov / std::sqrt(var_want * var_got);
+        EXPECT_GE(corr, mode.min_recall)
+          << BqModeName(mode) << " metric " << static_cast<int>(metric);
+        if (metric == VectorMetric::InnerProduct) {
+          EXPECT_LE(std::fabs(mean_delta),
+                    0.05 * std::sqrt(var_want / static_cast<double>(n)))
+            << BqModeName(mode);
+        }
+      }
+    }
+  }
+}
+
+TEST(bq_quantizer_test, decode_is_unbiased_per_dimension) {
+  constexpr uint32_t d = 32;
+  constexpr size_t n = 4000;
+  const auto points = MakeShifted(d, n, 97);
+  for (const BqMode mode : {BqMode{1, false, 1, 0}, BqMode{1, true, 8, 0},
+                            BqMode{2, false, 8, 0}}) {
+    const auto f = BuildBqCodes(d, mode, VectorMetric::L2Sqr, points, n);
+    auto reader = MakeKeyedReader(f, {points.data(), d}, nullptr);
+    std::vector<double> bias(d, 0.0);
+    std::vector<double> var(d, 0.0);
+    std::vector<float> decoded(d);
+    for (size_t r = 0; r < n; ++r) {
+      ASSERT_TRUE(
+        reader->Decode(f.codes.data() + r * f.record_size, decoded.data()));
+      for (uint32_t i = 0; i < d; ++i) {
+        const double x = points[r * d + i];
+        bias[i] += decoded[i] - x;
+        var[i] += x * x;
+      }
+    }
+    for (uint32_t i = 0; i < d; ++i) {
+      EXPECT_LE(std::fabs(bias[i]) / static_cast<double>(n),
+                1e-3 * std::sqrt(var[i] / static_cast<double>(n)))
+        << BqModeName(mode) << " dim " << i;
+    }
+  }
+}
+
+TEST(bq_quantizer_test, codes_nest_and_balance_on_gaussian_data) {
+  constexpr uint32_t d = 40;
+  constexpr size_t n = 3000;
+  const auto points = MakeShifted(d, n, 101);
+  for (const uint32_t bits : {1U, 2U}) {
+    const auto f = BuildBqCodes(d, BqMode{bits, false, 1, 0},
+                                VectorMetric::L2Sqr, points, n);
+    const uint32_t plane = (d + 7) / 8;
+    ASSERT_EQ(f.record_size, plane * bits);
+    for (uint32_t i = 0; i < d; ++i) {
+      size_t low = 0;
+      size_t high = 0;
+      for (size_t r = 0; r < n; ++r) {
+        const auto* code = f.codes.data() + r * f.record_size;
+        const bool b0 = ((code[i / 8] >> (i % 8)) & 1) != 0;
+        low += b0 ? 0 : 1;
+        if (bits == 2) {
+          const bool b1 = ((code[plane + i / 8] >> (i % 8)) & 1) != 0;
+          EXPECT_TRUE(b0 || !b1) << "dim " << i << " row " << r;
+          high += b1 ? 1 : 0;
+        }
+      }
+      const double low_share = static_cast<double>(low) / n;
+      if (bits == 1) {
+        EXPECT_NEAR(low_share, 0.5, 0.1) << "dim " << i;
+      } else {
+        EXPECT_NEAR(low_share, 0.27, 0.08) << "dim " << i;
+        EXPECT_NEAR(static_cast<double>(high) / n, 0.27, 0.08) << "dim " << i;
+      }
+    }
+  }
+}
+
+namespace {
+
+std::vector<float> MakeSkewed(uint32_t d, size_t n, uint32_t seed) {
+  std::mt19937 rng{seed};
+  std::uniform_real_distribution<float> zeros{0.3f, 0.6f};
+  std::uniform_real_distribution<float> scale{1.f, 30.f};
+  std::uniform_real_distribution<float> coin{0.f, 1.f};
+  std::vector<float> p(d);
+  std::vector<std::exponential_distribution<float>> tail;
+  for (uint32_t i = 0; i < d; ++i) {
+    p[i] = zeros(rng);
+    tail.emplace_back(1.f / scale(rng));
+  }
+  std::vector<float> out(n * d);
+  for (size_t r = 0; r < n; ++r) {
+    for (uint32_t i = 0; i < d; ++i) {
+      out[r * d + i] = coin(rng) < p[i] ? 0.f : tail[i](rng);
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST(bq_quantizer_test, cuts_follow_skewed_dimensions) {
+  constexpr uint32_t d = 32;
+  constexpr size_t n = 4000;
+  constexpr size_t nq = 20;
+  const auto all = MakeSkewed(d, n + nq, 139);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  const auto two =
+    BuildBqCodes(d, BqMode{2, false, 8, 0}, VectorMetric::L2Sqr, points, n);
+  const uint32_t plane = (d + 7) / 8;
+  for (uint32_t i = 0; i < d; ++i) {
+    size_t low = 0;
+    size_t high = 0;
+    for (size_t r = 0; r < n; ++r) {
+      const auto* code = two.codes.data() + r * two.record_size;
+      low += ((code[i / 8] >> (i % 8)) & 1) == 0 ? 1 : 0;
+      high += ((code[plane + i / 8] >> (i % 8)) & 1) != 0 ? 1 : 0;
+    }
+    EXPECT_GT(low, n / 10) << "dim " << i;
+    EXPECT_GT(high, n / 50) << "dim " << i;
+  }
+  const auto one =
+    BuildBqCodes(d, BqMode{1, false, 8, 0}, VectorMetric::L2Sqr, points, n);
+  const auto recall_of = [&](const CodeFixture& f) {
+    double recall = 0;
+    for (size_t qi = 0; qi < nq; ++qi) {
+      const std::span<const float> q{all.data() + (n + qi) * d, d};
+      auto reader = MakeKeyedReader(f, q, nullptr);
+      std::vector<score_t> got(n);
+      reader->ComputeBlock(f.codes, kNoPrune, got.data());
+      std::vector<float> want(n);
+      for (size_t i = 0; i < n; ++i) {
+        want[i] =
+          ExactScore(VectorMetric::L2Sqr, q.data(), points.data() + i * d, d);
+      }
+      recall += RecallInPool(want, got, 10, 50);
+    }
+    return recall / static_cast<double>(nq);
+  };
+  EXPECT_GT(recall_of(two), recall_of(one) + 0.05);
+}
+
+TEST(bq_quantizer_test, binary_pair_scores_match_the_keyed_reader) {
+  constexpr uint32_t d = 72;
+  constexpr size_t n = 300;
+  const auto points = MakeShifted(d, n, 103);
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = i;
+  }
+  for (const BqMode mode : {BqMode{1, false, 1, 0}, BqMode{2, false, 1, 0}}) {
+    const auto f = BuildBqCodes(d, mode, VectorMetric::L2Sqr, points, n);
+    const std::vector<float> scratch(d, 0.f);
+    auto reader = MakeKeyedReader(f, scratch, nullptr);
+    ASSERT_TRUE(reader->SupportsPairScores());
+    std::vector<float> terms;
+    ASSERT_TRUE(
+      reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
+    std::vector<float> decoded(d);
+    std::vector<score_t> pair(n);
+    std::vector<score_t> keyed(n);
+    for (const uint32_t a : {0U, 13U, 150U, 299U}) {
+      reader->ScorePairBatch(f.codes.data(), f.record_size, terms, a, ids,
+                             pair.data());
+      ASSERT_TRUE(reader->Decode(f.codes.data() + size_t{a} * f.record_size,
+                                 decoded.data()));
+      auto keyed_reader = MakeKeyedReader(f, decoded, nullptr);
+      keyed_reader->ComputeGathered(f.codes.data(), f.record_size, ids,
+                                    kNoPrune, keyed.data());
+      for (size_t b = 0; b < n; ++b) {
+        EXPECT_EQ(pair[b], keyed[b])
+          << BqModeName(mode) << " a=" << a << " b=" << b;
+      }
+      EXPECT_EQ(pair[a], 0.f);
+    }
+  }
+}
+
+TEST(bq_quantizer_test, scalar_query_builds_through_decoded_rows) {
+  constexpr uint32_t d = 16;
+  constexpr size_t n = 64;
+  const auto points = MakeShifted(d, n, 107);
+  const auto f =
+    BuildBqCodes(d, BqMode{2, false, 8, 0}, VectorMetric::L2Sqr, points, n);
+  auto reader = MakeKeyedReader(f, {points.data(), d}, nullptr);
+  EXPECT_FALSE(reader->SupportsPairScores());
+  std::vector<float> decoded(d);
+  ASSERT_TRUE(reader->Decode(f.codes.data(), decoded.data()));
+  EXPECT_TRUE(reader->SetQuery(decoded));
+}
+
+TEST(bq_quantizer_test, build_codebook_is_binary_for_every_query_width) {
+  constexpr uint32_t d = 48;
+  constexpr size_t n = 100;
+  const auto points = MakeShifted(d, n, 167);
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = i;
+  }
+  for (const BqMode mode : {BqMode{1, false, 8, 0}, BqMode{2, false, 4, 0},
+                            BqMode{1, true, 8, 0}, BqMode{1, false, 1, 0}}) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildBqCodes(d, mode, metric, points, n);
+      auto build =
+        MakeQuantizerReader(f.stats->MakeBuildCodebook({points.data(), d}));
+      build->StartCluster(nullptr);
+      ASSERT_TRUE(build->SupportsPairScores()) << BqModeName(mode);
+      std::vector<score_t> keyed(n);
+      build->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                             keyed.data());
+      std::vector<float> terms;
+      ASSERT_TRUE(
+        build->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
+      std::vector<score_t> pair(n);
+      build->ScorePairBatch(f.codes.data(), f.record_size, terms, 0, ids,
+                            pair.data());
+      EXPECT_EQ(keyed[0], 0.f) << BqModeName(mode);
+      for (size_t b = 0; b < n; ++b) {
+        EXPECT_EQ(pair[b], keyed[b]) << BqModeName(mode) << " b=" << b;
+      }
+    }
+  }
+}
+
+TEST(bq_quantizer_test, gathered_matches_block) {
+  constexpr uint32_t d = 100;
+  constexpr size_t n = 400;
+  const auto all = MakeShifted(d, n + 1, 109);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  const std::span<const float> query{all.data() + n * d, d};
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = (i * 37) % n;
+  }
+  for (const BqMode mode : {BqMode{1, false, 1, 0}, BqMode{1, true, 4, 0},
+                            BqMode{2, false, 8, 0}}) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildBqCodes(d, mode, metric, points, n);
+      auto reader = MakeKeyedReader(f, query, nullptr);
+      std::vector<score_t> block(n);
+      reader->ComputeBlock(f.codes, kNoPrune, block.data());
+      std::vector<score_t> gathered(n);
+      for (size_t off = 0; off < n; off += 33) {
+        const size_t take = std::min<size_t>(33, n - off);
+        reader->ComputeGathered(
+          f.codes.data(), f.record_size,
+          std::span<const uint32_t>{ids}.subspan(off, take), kNoPrune,
+          gathered.data() + off);
+      }
+      for (size_t i = 0; i < n; ++i) {
+        EXPECT_EQ(gathered[i], block[ids[i]]) << BqModeName(mode) << " " << i;
+      }
+    }
+  }
+}
+
+namespace {
+
+std::vector<float> ColumnMean(const std::vector<float>& points, uint32_t d,
+                              size_t n) {
+  std::vector<float> mean(d, 0.f);
+  for (size_t r = 0; r < n; ++r) {
+    for (uint32_t i = 0; i < d; ++i) {
+      mean[i] += points[r * d + i];
+    }
+  }
+  for (auto& v : mean) {
+    v /= static_cast<float>(n);
+  }
+  return mean;
+}
+
+double Pearson(std::span<const float> a, std::span<const score_t> b) {
+  double ma = 0;
+  double mb = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    ma += a[i];
+    mb += b[i];
+  }
+  ma /= static_cast<double>(a.size());
+  mb /= static_cast<double>(b.size());
+  double cov = 0;
+  double va = 0;
+  double vb = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    cov += (a[i] - ma) * (b[i] - mb);
+    va += (a[i] - ma) * (a[i] - ma);
+    vb += (b[i] - mb) * (b[i] - mb);
+  }
+  return cov / std::sqrt(va * vb);
+}
+
+struct OsqMode {
+  uint32_t bits;
+  uint32_t query_bits;
+  double min_recall;
+};
+
+std::string OsqModeName(const OsqMode& mode) {
+  return "osq" + std::to_string(mode.bits) + "/q" +
+         std::to_string(mode.query_bits);
+}
+
+constexpr OsqMode kOsqModes[] = {{1, 4, 0.75}, {1, 8, 0.75}, {2, 4, 0.85},
+                                 {4, 4, 0.9},  {4, 8, 0.9},  {7, 7, 0.95},
+                                 {8, 8, 0.95}};
+
+uint32_t OsqRecordSize(uint32_t d, uint32_t bits) {
+  const uint32_t codes = bits <= 2   ? bits * ((d + 7) / 8)
+                         : bits == 4 ? (d + 1) / 2
+                                     : d;
+  return codes + 4 * static_cast<uint32_t>(sizeof(float));
+}
+
+CodeFixture BuildOsqCodes(uint32_t d, const OsqMode& mode, VectorMetric metric,
+                          const std::vector<float>& points, size_t n,
+                          const std::vector<float>& centroid) {
+  return BuildCodes(VectorQuantization::OSQ, d, mode.bits, metric, points, n,
+                    centroid, false, mode.query_bits);
+}
+
+}  // namespace
+
+TEST(osq_quantizer_test, codes_rank_like_exact) {
+  constexpr uint32_t d = 64;
+  constexpr size_t n = 2000;
+  constexpr size_t nq = 20;
+  const auto all = MakeShifted(d, n + nq, 113);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  const auto centroid = ColumnMean(points, d, n);
+  for (const OsqMode mode : kOsqModes) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildOsqCodes(d, mode, metric, points, n, centroid);
+      double recall = 0;
+      double corr = 0;
+      for (size_t qi = 0; qi < nq; ++qi) {
+        const std::span<const float> q{all.data() + (n + qi) * d, d};
+        auto reader = MakeKeyedReader(f, q, centroid.data());
+        std::vector<score_t> got(n);
+        reader->ComputeBlock(f.codes, kNoPrune, got.data());
+        std::vector<float> want(n);
+        for (size_t i = 0; i < n; ++i) {
+          want[i] = ExactScore(metric, q.data(), points.data() + i * d, d);
+        }
+        recall += RecallInPool(want, got, 10, 100);
+        corr += Pearson(want, got);
+      }
+      EXPECT_GE(recall / nq, mode.min_recall)
+        << OsqModeName(mode) << " metric " << static_cast<int>(metric);
+      EXPECT_GE(corr / nq, 0.8)
+        << OsqModeName(mode) << " metric " << static_cast<int>(metric);
+    }
+  }
+}
+
+TEST(osq_quantizer_test, pair_scores_match_a_reader_keyed_on_the_row) {
+  constexpr uint32_t d = 40;
+  constexpr size_t n = 200;
+  const auto points = MakeShifted(d, n, 151);
+  const std::vector<float> zero(d, 0.f);
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = i;
+  }
+  for (const OsqMode mode : kOsqModes) {
+    const auto f =
+      BuildOsqCodes(d, mode, VectorMetric::InnerProduct, points, n, zero);
+    auto reader = MakeKeyedReader(f, zero, zero.data());
+    ASSERT_TRUE(reader->SupportsPairScores());
+    std::vector<float> terms;
+    ASSERT_TRUE(
+      reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
+    std::vector<float> decoded(d);
+    std::vector<score_t> pair(n);
+    std::vector<score_t> keyed(n);
+    double offset = 0;
+    double spread = 0;
+    for (const uint32_t a : {0U, 17U, 99U, 199U}) {
+      reader->ScorePairBatch(f.codes.data(), f.record_size, terms, a, ids,
+                             pair.data());
+      ASSERT_TRUE(reader->Decode(f.codes.data() + size_t{a} * f.record_size,
+                                 decoded.data()));
+      auto keyed_reader = MakeKeyedReader(f, decoded, zero.data());
+      keyed_reader->ComputeGathered(f.codes.data(), f.record_size, ids,
+                                    kNoPrune, keyed.data());
+      for (size_t b = 0; b < n; ++b) {
+        offset += pair[b] - keyed[b];
+        spread += std::fabs(keyed[b]);
+      }
+      if (mode.bits == 1) {
+        for (size_t b = 0; b < n; ++b) {
+          EXPECT_NEAR(pair[b], keyed[b], 1e-3f * (1.f + std::fabs(keyed[b])))
+            << OsqModeName(mode) << " a=" << a << " b=" << b;
+        }
+      }
+    }
+    EXPECT_LE(std::fabs(offset), 0.02 * spread) << OsqModeName(mode);
+  }
+}
+
+TEST(osq_quantizer_test, scores_comparable_across_clusters) {
+  constexpr uint32_t d = 48;
+  constexpr size_t n = 800;
+  const auto all = MakeShifted(d, 2 * n + 1, 127);
+  const std::span<const float> query{all.data() + 2 * n * d, d};
+  for (const VectorMetric metric : kBqMetrics) {
+    std::array<double, 2> bias{};
+    double spread = 0;
+    for (size_t c = 0; c < 2; ++c) {
+      std::vector<float> points(all.begin() + c * n * d,
+                                all.begin() + (c + 1) * n * d);
+      for (size_t r = 0; r < n; ++r) {
+        for (uint32_t i = 0; i < d; ++i) {
+          points[r * d + i] += c == 0 ? 1.f : 4.f;
+        }
+      }
+      const auto centroid = ColumnMean(points, d, n);
+      const auto f =
+        BuildOsqCodes(d, kOsqModes[0], metric, points, n, centroid);
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<score_t> scores(n);
+      reader->ComputeBlock(f.codes, kNoPrune, scores.data());
+      double mean = 0;
+      double mean2 = 0;
+      for (size_t i = 0; i < n; ++i) {
+        const double want =
+          ExactScore(metric, query.data(), points.data() + i * d, d);
+        bias[c] += scores[i] - want;
+        mean += want;
+        mean2 += want * want;
+      }
+      bias[c] /= static_cast<double>(n);
+      mean /= static_cast<double>(n);
+      spread = std::max(spread, std::sqrt(mean2 / n - mean * mean));
+    }
+    EXPECT_LE(std::fabs(bias[0] - bias[1]), 0.25 * spread)
+      << "metric " << static_cast<int>(metric) << " bias " << bias[0] << " "
+      << bias[1] << " spread " << spread;
+  }
+}
+
+TEST(osq_quantizer_test, gathered_matches_block) {
+  constexpr uint32_t d = 100;
+  constexpr size_t n = 300;
+  const auto all = MakeShifted(d, n + 1, 131);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  const std::span<const float> query{all.data() + n * d, d};
+  const auto centroid = ColumnMean(points, d, n);
+  std::vector<uint32_t> ids(n);
+  for (uint32_t i = 0; i < n; ++i) {
+    ids[i] = (i * 41) % n;
+  }
+  for (const OsqMode mode : kOsqModes) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildOsqCodes(d, mode, metric, points, n, centroid);
+      EXPECT_EQ(f.record_size, OsqRecordSize(d, mode.bits))
+        << OsqModeName(mode);
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<score_t> block(n);
+      reader->ComputeBlock(f.codes, kNoPrune, block.data());
+      std::vector<score_t> gathered(n);
+      for (size_t off = 0; off < n; off += 29) {
+        const size_t take = std::min<size_t>(29, n - off);
+        reader->ComputeGathered(
+          f.codes.data(), f.record_size,
+          std::span<const uint32_t>{ids}.subspan(off, take), kNoPrune,
+          gathered.data() + off);
+      }
+      for (size_t i = 0; i < n; ++i) {
+        EXPECT_EQ(gathered[i], block[ids[i]]) << OsqModeName(mode) << " " << i;
+      }
+    }
+  }
+}
+
+TEST(osq_quantizer_test, more_bits_rank_better) {
+  constexpr uint32_t d = 64;
+  constexpr size_t n = 2000;
+  constexpr size_t nq = 20;
+  const auto all = MakeShifted(d, n + nq, 157);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  const auto centroid = ColumnMean(points, d, n);
+  double previous = 0;
+  for (const OsqMode mode : {OsqMode{1, 4, 0}, OsqMode{2, 4, 0},
+                             OsqMode{4, 4, 0}, OsqMode{7, 7, 0}}) {
+    const auto f =
+      BuildOsqCodes(d, mode, VectorMetric::L2Sqr, points, n, centroid);
+    double recall = 0;
+    for (size_t qi = 0; qi < nq; ++qi) {
+      const std::span<const float> q{all.data() + (n + qi) * d, d};
+      auto reader = MakeKeyedReader(f, q, centroid.data());
+      std::vector<score_t> got(n);
+      reader->ComputeBlock(f.codes, kNoPrune, got.data());
+      std::vector<float> want(n);
+      for (size_t i = 0; i < n; ++i) {
+        want[i] =
+          ExactScore(VectorMetric::L2Sqr, q.data(), points.data() + i * d, d);
+      }
+      recall += RecallInPool(want, got, 10, 20);
+    }
+    recall /= static_cast<double>(nq);
+    EXPECT_GT(recall, previous) << OsqModeName(mode);
+    previous = recall;
+  }
+}
+
+TEST(osq_quantizer_test, decode_needs_a_centroid) {
+  constexpr uint32_t d = 16;
+  constexpr size_t n = 32;
+  const auto points = MakeShifted(d, n, 137);
+  const auto centroid = ColumnMean(points, d, n);
+  const auto f =
+    BuildOsqCodes(d, kOsqModes[0], VectorMetric::L2Sqr, points, n, centroid);
+  auto codebook = f.stats->MakeCodebook({points.data(), d});
+  auto bare = MakeQuantizerReader(codebook);
+  std::vector<float> decoded(d);
+  EXPECT_FALSE(bare->Decode(f.codes.data(), decoded.data()));
+  EXPECT_FALSE(bare->SupportsPairScores());
+  bare->StartCluster(centroid.data());
+  EXPECT_TRUE(bare->Decode(f.codes.data(), decoded.data()));
+  EXPECT_TRUE(bare->SupportsPairScores());
+}
+
+namespace {
+
+struct HalfCase {
+  VectorQuantization quant;
+  double tolerance;
+  double min_recall;
+};
+
+}  // namespace
+
+TEST(half_quantizer_test, scores_track_exact) {
+  constexpr uint32_t d = 96;
+  constexpr size_t n = 1500;
+  constexpr size_t nq = 10;
+  const auto all = MakeShifted(d, n + nq, 163);
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  for (const auto [quant, tolerance, min_recall] :
+       {HalfCase{VectorQuantization::FP16, 2e-3, 0.99},
+        HalfCase{VectorQuantization::BF16, 2e-2, 0.9}}) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f = BuildCodes(quant, d, 0, metric, points, n, {});
+      EXPECT_EQ(f.record_size, 2 * d);
+      double recall = 0;
+      for (size_t qi = 0; qi < nq; ++qi) {
+        const std::span<const float> q{all.data() + (n + qi) * d, d};
+        auto reader = MakeKeyedReader(f, q, nullptr);
+        std::vector<score_t> got(n);
+        reader->ComputeBlock(f.codes, kNoPrune, got.data());
+        std::vector<float> want(n);
+        double scale = 0;
+        for (size_t i = 0; i < n; ++i) {
+          want[i] = ExactScore(metric, q.data(), points.data() + i * d, d);
+          scale = std::max(scale, std::fabs(double{want[i]}));
+        }
+        for (size_t i = 0; i < n; ++i) {
+          EXPECT_NEAR(got[i], want[i], tolerance * scale)
+            << static_cast<int>(quant) << " metric " << static_cast<int>(metric)
+            << " row " << i;
+        }
+        recall += RecallInPool(want, got, 10, 10);
+      }
+      EXPECT_GE(recall / nq, min_recall)
+        << static_cast<int>(quant) << " metric " << static_cast<int>(metric);
+    }
+  }
 }

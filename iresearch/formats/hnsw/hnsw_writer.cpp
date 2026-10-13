@@ -463,12 +463,12 @@ struct HnswCodeDistFactory {
     dist.pair_terms = pair_terms;
     dist.symmetric = !pair_terms.empty();
     dist.decoded_query.assign(d, 0.f);
-    dist.query_book = stats->MakeCodebook(dist.decoded_query);
+    dist.query_book = stats->MakeBuildCodebook(dist.decoded_query);
     dist.query_reader = MakeQuantizerReader(dist.query_book);
     dist.query_reader->StartCluster(centroid);
     if (!dist.symmetric) {
       dist.decoded_pair.assign(d, 0.f);
-      dist.pair_book = stats->MakeCodebook(dist.decoded_pair);
+      dist.pair_book = stats->MakeBuildCodebook(dist.decoded_pair);
       dist.pair_reader = MakeQuantizerReader(dist.pair_book);
       dist.pair_reader->StartCluster(centroid);
     }
@@ -478,7 +478,7 @@ struct HnswCodeDistFactory {
  private:
   std::unique_ptr<QuantizerReader> MakeReader() const {
     std::vector<float> scratch(d, 0.f);
-    auto book = stats->MakeCodebook(scratch);
+    auto book = stats->MakeBuildCodebook(scratch);
     auto reader = MakeQuantizerReader(book);
     reader->StartCluster(centroid);
     return reader;
@@ -922,20 +922,22 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const bool normalize = _info.metric == VectorMetric::Cosine;
 
   if (_info.quant.kind != VectorQuantization::None) {
-    _qw = MakeQuantizerWriter(_info.quant.kind, _d,
-                              EffectiveQuantMetric(_info.metric),
-                              _info.quant.pq_m, 0, _info.quant.nb_bits,
-                              /*row_major=*/true);
+    _qw = MakeQuantizerWriter(
+      _info.quant.kind, _d, EffectiveQuantMetric(_info.metric),
+      _info.quant.pq_m, 0, _info.quant.nb_bits,
+      /*row_major=*/true, _info.quant.half_bit, _info.quant.query_bits);
   }
   const bool train =
     _qw && _qw->TrainSamples(_rows) == QuantizerWriter::kTrainStreaming;
+  const size_t train_rows = _qw && !train ? _qw->TrainSamples(_rows) : 0;
+  std::vector<float> train_buf;
   const bool needs_centroid = _qw && QuantizerNeedsCentroid(_info.quant.kind);
   if (needs_centroid) {
     _centroid.assign(_d, 0.f);
   }
 
   uint64_t trained_rows = 0;
-  if (_qw) {
+  if (_qw && (train || train_rows != 0 || needs_centroid)) {
     // A streaming trainer asked for every row and has to get every row. For
     // scalar quantization what it trains is a per-dimension min/max, and
     // faiss silently clamps a component outside that range -- so a row the

@@ -11,7 +11,7 @@ The test tree is split by what runs the test and what it covers:
 - `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both. `any/pg` runs through the symlinks `sdb/pg/any` and `pg/any`, never directly. Validate new SQL behaviour on real PostgreSQL before pinning it (`PG_CHANGED_TESTS=any/pg/<file>.test ./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>` for one file, the whole `pg/**` suite without the variable; CI's `validate pg` runs PostgreSQL 18 with PostGIS from the fixture image `tests/sqllogic/fixtures/postgres`): outcomes must match, error text may differ.
 - `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
 - `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
-- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir. `SET sdb_faults` is allowed only here (pre-commit `check-fault-points`).
+- `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir. Fault points are armed only here (see "Fault points" in [sqllogic.md](sqllogic.md)).
 - `tests/server/<area>/...`, `tests/iresearch/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions / hard-to-reproduce bugs).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
 - `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's (see "Running DuckDB's own test suites" below).

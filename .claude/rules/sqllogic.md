@@ -38,3 +38,12 @@ Races are testable in sqllogic, so a concurrency bug still gets a test:
 - `control max-async-connections N` caps parallel background records (default 10); `control always-async on` makes every record async.
 - There are no loops: widen a race window by repeating records.
 - `tests/sqllogic/pg/simple/async.test` is a minimal example.
+
+## Fault points
+
+Fault points force what a plain test can't reach: a rare interleaving, an error or a crash at an exact spot, a corner case. Use them for such tests, and add one to the code where none sits at the spot you need.
+
+- In C++ (`iresearch/utils/debugging.hpp`): `SDB_IF_FAILURE("<name>") { ... }` runs its block when the point is armed, usually `THROW_SQL_ERROR(ERR_MSG("intentional debug error"))` or `SDB_IMMEDIATE_ABORT()`; `SDB_WAIT_ON_FAILURE("<name>")` holds every thread that reaches it until the point is disarmed; `SDB_PARK_ONCE_ON_FAILURE("<name>")` parks the first thread that reaches it until the test releases it.
+- A test arms a point with `SET sdb_faults = '<name>'` and disarms it with `SET sdb_faults = '-<name>'`; `RESET sdb_faults` clears all. Arming an armed point or disarming an unarmed one is an error. Only a superuser can set them, and an armed point fires in every session.
+- Only under `recovery/`, where each file gets its own serened, and only in builds with fault injection (the `lldb`, `clangd` and sanitizer presets, not `bench` or `perf`). Pre-commit `check-fault-points` also requires every point a test arms to exist in the code, and every point in the code to be used by some test.
+- A race, step by step: arm a park point; start the statement on its own connection with `statement async ok`; wait until it is parked with `statement ok retry 40 backoff 250ms` on `SET sdb_faults = '-<name>:parked'`, which fails until the thread parks; run the competing statements on other connections; release the parked thread with `SET sdb_faults = '<name>:release'` (a wait point: disarm it) and `wait`. Release it from another connection than the parked one, or the runner deadlocks. `tests/sqllogic/recovery/inverted_index_checkpoint_during_refresh.test` does exactly this.

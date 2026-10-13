@@ -685,3 +685,177 @@ TEST(HnswSelectNeighborsTest, TransposedMatchesReference) {
     }
   }
 }
+
+namespace {
+
+struct WalkDist {
+  const std::vector<float>* pts;
+  uint32_t d;
+  const float* q = nullptr;
+
+  const float* Row(uint32_t id) const noexcept {
+    return pts->data() + static_cast<size_t>(id) * d;
+  }
+
+  static irs::score_t Score(const float* x, const float* y,
+                            uint32_t d) noexcept {
+    float s = 0.f;
+    for (uint32_t i = 0; i < d; ++i) {
+      const float t = x[i] - y[i];
+      s += t * t;
+    }
+    return -s;
+  }
+
+  void SetQuery(uint32_t id) noexcept { q = Row(id); }
+
+  irs::score_t One(uint32_t id) const noexcept { return Score(q, Row(id), d); }
+
+  void Batch(std::span<const uint32_t> ids, irs::score_t* out,
+             irs::score_t = 0.f) const noexcept {
+    for (size_t i = 0; i < ids.size(); ++i) {
+      out[i] = One(ids[i]);
+    }
+  }
+
+  void Prefetch(uint32_t) const noexcept {}
+
+  bool CheapPair() const noexcept { return true; }
+
+  irs::score_t Pair(uint32_t a, uint32_t b) const noexcept {
+    return Score(Row(a), Row(b), d);
+  }
+
+  void PairBatch(uint32_t from, std::span<const uint32_t> to,
+                 irs::score_t* out) const noexcept {
+    for (size_t i = 0; i < to.size(); ++i) {
+      out[i] = Pair(from, to[i]);
+    }
+  }
+};
+
+struct HopAccept {
+  const std::vector<uint8_t>* admitted;
+  std::vector<uint8_t>* handed;
+  size_t* unhanded;
+
+  void Prepare(std::span<const uint32_t> hop) const {
+    for (const auto node : hop) {
+      (*handed)[node] = 1;
+    }
+  }
+
+  bool operator()(uint32_t node) const {
+    if ((*handed)[node] == 0) {
+      (*handed)[node] = 1;
+      ++*unhanded;
+    }
+    return (*admitted)[node] != 0;
+  }
+};
+
+template<irs::HnswWalk Walk>
+void CheckWalkAsksPerHop() {
+  constexpr uint32_t kD = 8;
+  constexpr uint32_t kNodes = 3000;
+  constexpr uint32_t kM = 8;
+  constexpr uint32_t kEf = 64;
+  constexpr size_t kK = 10;
+  constexpr size_t kQueries = 50;
+  pcg32 rng{20261013};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  std::vector<float> pts(size_t{kNodes} * kD);
+  for (float& v : pts) {
+    v = nd(rng);
+  }
+  std::vector<uint8_t> admitted(kNodes);
+  for (auto& a : admitted) {
+    a = rng() % 4 == 0 ? 1 : 0;
+  }
+
+  irs::HnswGraphWriter writer;
+  writer.Reset(kNodes, kM);
+  pcg32 levels{irs::kHnswBuildSeed};
+  uint32_t entry = 0;
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    writer.SetLevel(i, irs::HnswRandomLevel(levels, kM));
+    if (writer.LevelOf(i) > writer.LevelOf(entry)) {
+      entry = i;
+    }
+  }
+  writer.AllocateLinks();
+  writer.SetEntryPoint(entry);
+  WalkDist build{.pts = &pts, .d = kD};
+  irs::HnswBuildScratch scratch;
+  scratch.search.visited.Reset(kNodes);
+  for (uint32_t i = 0; i < kNodes; ++i) {
+    if (i != entry) {
+      build.SetQuery(i);
+      irs::HnswInsert(writer, i, build, kEf, scratch);
+    }
+  }
+  const auto& graph = writer.Graph();
+
+  std::vector<float> query(kD);
+  WalkDist dist{.pts = &pts, .d = kD, .q = query.data()};
+  irs::HnswSearchScratch s;
+  size_t found_plain = 0;
+  size_t found_hops = 0;
+  for (size_t qi = 0; qi < kQueries; ++qi) {
+    for (float& v : query) {
+      v = nd(rng);
+    }
+    std::vector<std::pair<irs::score_t, uint32_t>> truth;
+    for (uint32_t n = 0; n < kNodes; ++n) {
+      if (admitted[n] != 0) {
+        truth.emplace_back(dist.One(n), n);
+      }
+    }
+    std::partial_sort(truth.begin(), truth.begin() + kK, truth.end(),
+                      std::greater<>{});
+    truth.resize(kK);
+    const auto hits = [&](std::vector<irs::HnswCandidate> nearest) {
+      std::ranges::sort(nearest, [](const auto& l, const auto& r) {
+        return l.score > r.score;
+      });
+      nearest.resize(std::min(nearest.size(), kK));
+      size_t hit = 0;
+      for (const auto& c : nearest) {
+        EXPECT_NE(admitted[c.node], 0) << "node " << c.node;
+        hit += std::ranges::any_of(
+                 truth, [&](const auto& t) { return t.second == c.node; })
+                 ? 1
+                 : 0;
+      }
+      return hit;
+    };
+    irs::HnswSearchTopK<Walk>(graph, dist, kEf, s,
+                              [&](uint32_t n) { return admitted[n] != 0; });
+    found_plain += hits(s.nearest);
+    std::vector<uint8_t> handed(kNodes, 0);
+    size_t unhanded = 0;
+    irs::HnswSearchTopK<Walk>(graph, dist, kEf, s,
+                              HopAccept{&admitted, &handed, &unhanded});
+    EXPECT_LE(unhanded, 1U) << "query " << qi;
+    found_hops += hits(s.nearest);
+  }
+  const double plain =
+    static_cast<double>(found_plain) / static_cast<double>(kQueries * kK);
+  const double hops =
+    static_cast<double>(found_hops) / static_cast<double>(kQueries * kK);
+  EXPECT_GE(hops, plain - 0.02) << "plain " << plain << " hops " << hops;
+}
+
+}  // namespace
+
+TEST(HnswWalkTest, TwoHopAsksTheAcceptorPerHop) {
+  CheckWalkAsksPerHop<irs::HnswWalk::TwoHop>();
+}
+
+TEST(HnswWalkTest, PruneAsksTheAcceptorPerHop) {
+  CheckWalkAsksPerHop<irs::HnswWalk::Prune>();
+}
+
+TEST(HnswWalkTest, BridgeAsksTheAcceptorPerHop) {
+  CheckWalkAsksPerHop<irs::HnswWalk::Bridge>();
+}

@@ -162,6 +162,9 @@ struct HnswSearchScratch {
   std::vector<HnswCandidate> nearest;
   std::vector<HnswCandidate> frontier;
   std::vector<uint32_t> batch;
+  std::vector<uint32_t> hop;
+  std::vector<uint32_t> bridges;
+  std::vector<uint32_t> hop2;
   std::vector<score_t> scores;
   // Distances computed by the level walk of the current search.
   uint64_t scored = 0;
@@ -357,6 +360,57 @@ inline void HnswStoreLink(uint32_t& slot, uint32_t id) noexcept {
   std::atomic_ref<uint32_t>{slot}.store(id, std::memory_order_release);
 }
 
+template<HnswWalk Walk, typename Dist, typename Accept>
+void HnswCollectAsked(const HnswGraph& graph, Dist& dist, uint32_t level,
+                      std::span<const uint32_t> neighbors, HnswSearchScratch& s,
+                      const Accept& accept) {
+  auto& hop = s.hop;
+  hop.clear();
+  for (const auto& link : neighbors) {
+    const auto id = HnswLoadLink(link);
+    if (id == kHnswInvalidNode) {
+      break;
+    }
+    if (!s.visited.TestAndSet(id)) {
+      hop.push_back(id);
+    }
+  }
+  accept.Prepare(std::span<const uint32_t>{hop});
+  auto& bridges = s.bridges;
+  bridges.clear();
+  for (const auto id : hop) {
+    if (accept(id)) {
+      s.batch.push_back(id);
+      dist.Prefetch(id);
+    } else if constexpr (Walk == HnswWalk::TwoHop) {
+      bridges.push_back(id);
+    }
+  }
+  if constexpr (Walk == HnswWalk::TwoHop) {
+    auto& hop2 = s.hop2;
+    hop2.clear();
+    for (const auto id : bridges) {
+      for (const auto& link : graph.Neighbors(id, level)) {
+        const auto w = HnswLoadLink(link);
+        if (w == kHnswInvalidNode) {
+          break;
+        }
+        if (!s.visited.Test(w) && !s.visited_hop2.TestAndSet(w)) {
+          hop2.push_back(w);
+        }
+      }
+    }
+    accept.Prepare(std::span<const uint32_t>{hop2});
+    for (const auto w : hop2) {
+      if (accept(w)) {
+        s.visited.Set(w);
+        s.batch.push_back(w);
+        dist.Prefetch(w);
+      }
+    }
+  }
+}
+
 // Best-first expansion of `level` from the seeded heaps: `s.frontier` holds
 // the nodes still to expand and `s.nearest` the admitted results, both already
 // heaps. The walk passes through every reachable node so a predicate never
@@ -392,7 +446,15 @@ bool HnswExpandLevel(const HnswGraph& graph, Dist& dist, uint32_t level,
     // neighbours; an admitted node offers them all, as Through does.
     const bool through = Walk == HnswWalk::Through ||
                          (Walk == HnswWalk::Bridge && accept(cur.node));
-    for (size_t i = 0; i < width; ++i) {
+    bool asked = false;
+    if constexpr (Walk != HnswWalk::Through &&
+                  requires { accept.Prepare(std::span<const uint32_t>{}); }) {
+      if (!through) {
+        HnswCollectAsked<Walk>(graph, dist, level, neighbors, s, accept);
+        asked = true;
+      }
+    }
+    for (size_t i = 0; !asked && i < width; ++i) {
       const auto id = HnswLoadLink(neighbors[i]);
       if (id == kHnswInvalidNode) {
         break;

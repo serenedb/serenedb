@@ -586,10 +586,6 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     }
     return false;
   };
-  // Only the Through walk is asked at hop granularity. The others consult the
-  // acceptor while they are still collecting a hop, before the hop exists, so
-  // they would take one positioned read per node: worse than the fold this is
-  // replacing. They keep the set.
   if (ask_per_hop) {
     const WalkFilter walk_filter{*table, docs_count, scratch.walk_filter};
     const bool done =

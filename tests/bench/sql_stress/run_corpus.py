@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-DIALECTS = ("duckdb", "postgres", "cedardb", "sqlite", "mysql", "serenedb")
+DIALECTS = ("duckdb", "postgres", "cedardb", "sqlite", "mysql", "clickhouse", "datafusion", "serenedb")
 
 
 def find_queries(corpus, dialects, only):
@@ -30,7 +30,11 @@ def common_prefix(a, b):
     return count
 
 
-def setup_files(project, name):
+def setup_files(project, name, ports=None):
+    if ports is not None:
+        ported = ports / project.name / f"{name}.setup.sql"
+        if ported.exists():
+            return [ported]
     own = project / f"{name}.setup.sql"
     if own.exists():
         return [own]
@@ -51,16 +55,21 @@ def setup_files(project, name):
 LITERAL = re.compile(r"'([^'\n]{1,200})'")
 
 
-def absolutize(text, project):
+def absolutize(text, project, ports=None):
+    bases = [project / "data", project]
+    if ports is not None:
+        bases.append(ports / project.name / "data")
+
     def replace(match):
         literal = match.group(1)
         relative = literal[2:] if literal.startswith("./") else literal
         if relative.startswith("/") or not relative:
             return match.group(0)
-        for base in (project / "data", project):
+        for base in bases:
             candidate = base / relative
             try:
-                if candidate.exists() or (any(c in relative for c in "*?[") and any(base.glob(relative))):
+                if candidate.is_file() or (any(c in relative for c in "*?[") and any(c in relative for c in "/.")
+                                           and any(base.glob(relative))):
                     return f"'{candidate}'"
             except (OSError, ValueError, IndexError):
                 pass
@@ -79,16 +88,26 @@ def resolve_query(args, project, query):
     return port if port.exists() else query
 
 
-def run_one(args, project, query, name):
+FLOAT_DIVISION_DIALECTS = ("duckdb", "mysql", "clickhouse")
+
+
+def prelude(dialect, timeout):
     script = [
         "DROP SCHEMA IF EXISTS sql_stress CASCADE;",
         "CREATE SCHEMA sql_stress;",
         "SET search_path TO sql_stress, public;",
-        f"SET statement_timeout = '{args.timeout}s';",
+        f"SET statement_timeout = '{timeout}s';",
     ]
-    for setup in setup_files(project, name):
-        script.append(absolutize(setup.read_text(errors="replace"), project))
-    script.append(absolutize(resolve_query(args, project, query).read_text(errors="replace"), project))
+    if dialect in FLOAT_DIVISION_DIALECTS:
+        script.append("SET integer_division = false;")
+    return script
+
+
+def run_one(args, project, query, name):
+    script = prelude(query.name.rsplit(".", 2)[1], args.timeout)
+    for setup in setup_files(project, name, args.ports):
+        script.append(absolutize(setup.read_text(errors="replace"), project, args.ports))
+    script.append(absolutize(resolve_query(args, project, query).read_text(errors="replace"), project, args.ports))
     combined = args.work / f"{project.name}__{name}.run.sql"
     combined.write_text("\n".join(script))
     command = ["psql", "-h", "127.0.0.1", "-p", str(args.port), "-U", "postgres", "-d", "postgres", "-X", "-q", "-A",

@@ -1,0 +1,1 @@
+CREATE TABLE "table" AS SELECT CAST(range AS UBIGINT) AS number FROM range(44100);

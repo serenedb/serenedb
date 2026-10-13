@@ -1,0 +1,473 @@
+-- DuckDB-compatible renderer. Changes from the Postgres version:
+--   1. generate_series(...) AS alias → AS alias(alias) for explicit column naming
+--      (DuckDB keeps the column named "generate_series"; Postgres uses the alias)
+--   2. DISTINCT ON (...) → ROW_NUMBER() OVER (PARTITION BY ...) workaround
+--      (DISTINCT ON is a Postgres extension not supported by DuckDB)
+--   3. LATERAL generate_series(...) AS px → AS px(px) for same column-naming reason
+
+CREATE OR REPLACE VIEW rays AS
+WITH cols AS (
+    SELECT pc.col FROM settings s, generate_series(0, s.view_w) as pc(col)
+  )
+SELECT p.id as player_id,
+  m.x AS player_x,
+  m.y AS player_y,
+  c.col,
+  (m.dir - s.fov/2.0 + s.fov * (c.col*1.0 / (s.view_w - 1))) AS angle
+FROM cols c
+CROSS JOIN settings s
+CROSS JOIN players p
+JOIN mobs m ON p.id = m.id;
+
+CREATE OR REPLACE VIEW visible_tiles AS
+WITH RECURSIVE raytrace AS (
+    SELECT
+      r.player_id,
+      r.col,
+      1 as step_count,
+      r.player_x + COS(r.angle)*s.step as fx,
+      r.player_y + SIN(r.angle)*s.step as fy,
+      r.angle,
+      0::double precision as dist
+    FROM rays r
+    CROSS JOIN settings s
+
+    UNION ALL
+
+    SELECT
+      rt.player_id as player_id,
+      rt.col as col,
+      rt.step_count + 1 as step_count,
+      rt.fx + COS(rt.angle)*s.step as fx,
+      rt.fy + SIN(rt.angle)*s.step as fy,
+      rt.angle,
+      step_count * s.step * COS(rt.angle - m.dir) as dist
+    FROM settings s
+    CROSS JOIN raytrace rt
+    JOIN players p ON p.id = rt.player_id
+    JOIN mobs m ON m.id = p.id
+    WHERE rt.step_count < s.max_steps
+      AND NOT EXISTS (
+        SELECT 1
+        FROM map m
+        WHERE m.x = CAST(rt.fx AS INT)
+          AND m.y = CAST(rt.fy AS INT)
+          AND m.tile = '#')
+    )
+  SELECT DISTINCT
+    rt.player_id,
+    m.tile,
+    CAST(rt.fx AS INT) AS tile_x,
+    CAST(rt.fy AS INT) AS tile_y,
+    col,
+    min(dist) as dist
+  FROM raytrace rt
+  JOIN map m ON m.x = CAST(rt.fx AS INT) AND m.y = CAST(rt.fy AS INT)
+  GROUP BY tile_x, tile_y, m.tile, col, player_id;
+
+CREATE OR REPLACE VIEW render_3d_frame AS
+WITH
+  cols AS (
+    SELECT pc.col
+    FROM settings s
+    CROSS JOIN generate_series(0, s.view_w) as pc(col)
+  ),
+  rows_gen AS (
+    SELECT pr.row FROM settings s
+    CROSS JOIN generate_series(0, s.view_h) as pr(row)
+  ),
+  visible_walls AS (
+    SELECT
+      player_id,
+      vt.col,
+      min(dist) as dist
+    FROM map m
+    JOIN visible_tiles vt ON vt.tile_x = m.x AND vt.tile_y = m.y
+    WHERE m.tile = '#'
+    GROUP BY player_id, vt.col
+  ),
+  distances AS (
+    select r.player_id,
+      r.col,
+      r.angle,
+      coalesce(v.dist, s.max_steps * s.step) as dist
+    FROM settings s
+    CROSS JOIN rays r
+    LEFT JOIN visible_walls v ON r.col = v.col AND r.player_id = v.player_id
+  ),
+  heights AS (
+    SELECT
+      p.id as player_id,
+      d.col,
+      CASE WHEN d.dist <= 0
+        THEN s.view_h
+        ELSE GREATEST(0, LEAST(s.view_h, CAST(s.view_h / (d.dist * COS(d.angle - m.dir)) AS INT)))
+      END AS height
+    FROM settings s
+    CROSS JOIN distances d
+    JOIN players p ON p.id = d.player_id
+    JOIN mobs m ON m.id = p.id
+  ),
+  pixels AS (
+    SELECT
+      h.player_id,
+      c.col AS x,
+      rg.row AS y,
+      CASE WHEN rg.row < (s.view_h - h.height) / 2 THEN ' '
+        WHEN rg.row >= (s.view_h + h.height) / 2 THEN '.'
+        WHEN d.dist < s.max_steps * s.step / 4 THEN '█'
+        WHEN d.dist < s.max_steps * s.step * 2 / 4 THEN '▓'
+        WHEN d.dist < s.max_steps * s.step * 3 / 4 THEN '▒'
+        ELSE '░' END AS ch
+      FROM cols c
+      JOIN heights h ON c.col = h.col
+      JOIN distances d ON h.player_id = d.player_id AND h.col = d.col
+      CROSS JOIN rows_gen rg
+      CROSS JOIN settings s)
+SELECT player_id, x, y, ch FROM pixels ORDER BY y, x;
+
+CREATE OR REPLACE VIEW game_view as
+WITH
+config as (
+  SELECT
+    p.id as player_id,
+    m.x as player_x,
+    m.y as player_y,
+    m.dir as player_dir,
+    s.view_w / (2 * tan(s.fov / 2)) as projection_factor
+  FROM settings s
+  CROSS JOIN players p
+  JOIN mobs m ON p.id = m.id
+),
+projected_mobs as (
+  SELECT
+    c.player_id,
+    m.*,
+    (m.x - c.player_x) * cos(-c.player_dir) - (m.y - c.player_y) * sin(-c.player_dir) as depth,
+    (m.x - c.player_x) * sin(-c.player_dir) + (m.y - c.player_y) * cos(-c.player_dir) as horiz
+  FROM mobs m
+  CROSS JOIN config c
+),
+screen_mobs as (
+  SELECT
+    pm.*,
+    ROUND(s.view_w / 2 + (pm.horiz / pm.depth) * c.projection_factor) AS screen_x_center,
+    ROUND(s.view_h / 2) AS screen_y_center
+  FROM projected_mobs pm
+  CROSS JOIN settings s
+  CROSS JOIN config c
+  WHERE pm.depth > 0.1
+),
+
+column_distances AS (
+  SELECT player_id, col, MAX(dist) AS dist
+  FROM visible_tiles
+  GROUP BY player_id, col
+),
+
+bullet_lods AS (
+  SELECT
+    (SELECT id FROM sprites WHERE name = 'shot_slug_away_12x12') AS near_id,
+    (SELECT id FROM sprites WHERE name = 'shot_slug_away_6x6')  AS far_id
+),
+marine_lods AS (
+  SELECT
+    (SELECT id FROM sprites WHERE name = 'marine_outline_16x20') AS near_id,
+    (SELECT id FROM sprites WHERE name = 'marine_outline_12x15') AS mid_id,
+    (SELECT id FROM sprites WHERE name = 'marine_outline_8x10')  AS far_id
+),
+screen_mobs_lod AS (
+  SELECT
+    sm.*,
+    CASE
+      WHEN sm.kind = 'bullet' AND sm.depth > 4 THEN blod.far_id
+      WHEN sm.kind = 'player' AND sm.depth > 6 THEN ml.far_id
+      WHEN sm.kind = 'player' AND sm.depth > 3 THEN ml.mid_id
+      ELSE sm.sprite_id
+    END AS effective_sprite_id
+  FROM screen_mobs sm
+  CROSS JOIN bullet_lods blod
+  CROSS JOIN marine_lods ml
+),
+
+expanded_sprite_pixels AS (
+  SELECT
+    sm.player_id,
+    sm.id AS mob_id,
+    sm.depth,
+    sp.sx, sp.sy, sp.ch,
+    spr.w, spr.h,
+    sm.screen_x_center,
+    sm.screen_y_center,
+    (c.projection_factor * sm.world_w / sm.depth) / spr.w AS scale_x,
+    (c.projection_factor * sm.world_h / sm.depth) / spr.h AS scale_y
+  FROM config c, screen_mobs_lod sm
+  JOIN sprites spr ON spr.id = sm.effective_sprite_id
+  JOIN sprite_pixels sp ON sp.sprite_id = spr.id
+  WHERE sp.ch IS NOT NULL AND sp.ch <> ' '
+),
+sprite_screen_pixels AS (
+  WITH base AS (
+    SELECT
+      esp.player_id,
+      esp.mob_id,
+      esp.depth,
+      esp.ch,
+      esp.sx, esp.sy,
+      esp.scale_x,
+      esp.scale_y,
+      esp.w, esp.h,
+      (esp.screen_x_center - ROUND((esp.w/2.0) * esp.scale_x))::int AS ax,
+      (esp.screen_y_center - ROUND((esp.h/2.0) * esp.scale_y))::int AS ay
+    FROM expanded_sprite_pixels esp
+  ),
+  spans AS (
+    SELECT
+      b.*,
+      (b.ax + FLOOR(b.sx * b.scale_x))::int AS x0_raw,
+      (b.ax + FLOOR((b.sx + 1) * b.scale_x) - 1)::int AS x1_raw,
+      (b.ay + FLOOR(b.sy * b.scale_y))::int AS y0_raw,
+      (b.ay + FLOOR((b.sy + 1) * b.scale_y) - 1)::int AS y1_raw
+    FROM base b
+    WHERE b.ch IS NOT NULL
+  ),
+  clamped AS (
+    SELECT
+      s.player_id, s.mob_id, s.depth, s.ch, se.view_w, se.view_h,
+      GREATEST(s.x0_raw, 0)                          AS x0,
+      LEAST(GREATEST(s.x1_raw, s.x0_raw), se.view_w-1) AS x1,
+      GREATEST(s.y0_raw, 0)                          AS y0,
+      LEAST(GREATEST(s.y1_raw, s.y0_raw), se.view_h-1) AS y1
+    FROM spans s, settings se
+  )
+  SELECT
+    c.player_id, c.mob_id, c.depth, c.ch,
+    px.px AS px, py.py AS py
+  FROM clamped c
+  JOIN LATERAL generate_series(c.x0, c.x1) AS px(px) ON TRUE
+  JOIN LATERAL generate_series(c.y0, c.y1) AS py(py) ON TRUE
+),
+
+visible_sprite_pixels AS (
+  SELECT
+    ssp.*,
+    cd.dist AS wall_depth
+  FROM sprite_screen_pixels ssp
+  LEFT JOIN column_distances cd
+    ON cd.player_id = ssp.player_id
+   AND cd.col = ssp.px
+   WHERE depth < COALESCE(cd.dist, 1e9)
+),
+
+-- DISTINCT ON is a Postgres extension; DuckDB uses ROW_NUMBER() instead
+closest_sprite_pixel AS (
+  SELECT player_id, px, py, ch, depth
+  FROM (
+    SELECT player_id, px, py, ch, depth,
+           ROW_NUMBER() OVER (PARTITION BY player_id, px, py ORDER BY depth ASC) AS _rn
+    FROM visible_sprite_pixels
+  ) _ranked
+  WHERE _rn = 1
+),
+patched_framebuffer AS (
+  SELECT
+    bf.player_id,
+    bf.y,
+    bf.x,
+    COALESCE(csp.ch, bf.ch) AS ch
+  FROM render_3d_frame bf
+  LEFT JOIN closest_sprite_pixel csp
+    ON csp.player_id = bf.player_id AND csp.px = bf.x AND csp.py = bf.y
+),
+final_frame AS (
+  SELECT
+    player_id,
+    y,
+    string_agg(ch, '' ORDER BY x) as row
+  FROM patched_framebuffer
+  GROUP BY player_id, y
+)
+select * from final_frame ORDER BY y;
+
+
+CREATE OR REPLACE VIEW minimap AS
+with dimensions AS (
+  SELECT max(x) as max_x, max(y) as max_y FROM map
+),
+-- generate_series(...) as x gives column named "generate_series" in DuckDB;
+-- use explicit column alias _gx(x) / _gy(y) to get columns named x / y
+grid AS (
+  SELECT _gx.x, _gy.y
+  FROM dimensions d
+  CROSS JOIN generate_series(0, d.max_x) as _gx(x)
+  CROSS JOIN generate_series(0, d.max_y) as _gy(y)
+),
+tiles_to_display AS (
+  SELECT player_id, tile_x, tile_y, min(tile) as tile
+  FROM visible_tiles
+  GROUP BY player_id, tile_x, tile_y
+),
+mobs_overlay AS (
+  SELECT
+    t.player_id,
+    FLOOR(m.x)::int AS x,
+    FLOOR(m.y)::int AS y,
+    COALESCE(m.minimap_icon, '?') AS ch
+  FROM mobs m
+  JOIN tiles_to_display t
+    ON FLOOR(m.x)::int = t.tile_x AND FLOOR(m.y)::int = t.tile_y
+),
+combined AS (
+  SELECT pl.id AS player_id, g.x, g.y,
+    CASE
+      WHEN mo.ch IS NOT NULL     THEN mo.ch
+      WHEN t.tile IS NOT NULL    THEN CASE WHEN t.tile = 'R' THEN '.' ELSE t.tile::text END
+      WHEN base.tile::text = '#' THEN '#'
+      ELSE ' '
+    END AS ch
+  FROM players pl
+  CROSS JOIN grid g
+  LEFT JOIN map base ON g.x = base.x AND g.y = base.y
+  LEFT JOIN tiles_to_display t ON g.x = t.tile_x AND g.y = t.tile_y AND pl.id = t.player_id
+  LEFT JOIN mobs_overlay mo ON g.x = mo.x AND g.y = mo.y AND pl.id = mo.player_id
+),
+lines AS (
+  SELECT
+    player_id,
+    y,
+    string_agg(ch, '' ORDER BY x) as row
+  FROM combined
+  GROUP BY player_id, y
+)
+SELECT *
+FROM lines;
+
+CREATE OR REPLACE VIEW screen AS
+WITH
+mm AS (
+  SELECT player_id, y, row
+  FROM minimap
+),
+mm_dims AS (
+  SELECT
+         MAX(LENGTH(row))::int AS mm_w,
+         MAX(y)::int           AS y_max
+  FROM mm
+),
+gameview_lines AS (
+  SELECT g.player_id,
+         g.y,
+         '║' || rpad(g.row, view_w, ' ') || '║' AS view_col
+  FROM game_view g
+  CROSS JOIN settings s
+),
+gameview_frame AS (
+  SELECT p.id as player_id, -1 AS y, '╔' || repeat('═', view_w) || '╗' AS view_col
+  FROM players p
+  CROSS JOIN settings s
+
+  UNION ALL
+
+  SELECT *
+  FROM gameview_lines
+
+  UNION ALL
+
+  SELECT p.id as player_id, s.view_w + 1 AS y, '╚' || repeat('═', view_w) || '╝' AS view_col
+  FROM players p
+  CROSS JOIN settings s
+),
+minimap_lines AS (
+  SELECT m.player_id,
+         m.y,
+         '║' || rpad(m.row, md.mm_w, ' ') || '║' AS mm_col
+  FROM mm m
+  CROSS JOIN mm_dims md
+),
+minimap_frame AS (
+  SELECT p.id as player_id, -1 AS y, '╔' || repeat('═', md.mm_w) || '╗' AS mm_col
+  FROM mm_dims md
+  CROSS JOIN players p
+
+  UNION ALL
+
+  SELECT *
+  FROM minimap_lines
+
+  UNION ALL
+
+  SELECT p.id as player_id, md.y_max + 1 AS y, '╚' || repeat('═', md.mm_w) || '╝' AS mm_col
+  FROM mm_dims md
+  CROSS JOIN players p
+),
+player_lines AS (
+  SELECT
+    row_number() OVER (ORDER BY p.id) - 1 AS y,
+    (
+      p.id || ': ' || rpad(m.name, 10, ' ') || ' (' || m.minimap_icon || ') '
+      || 'score: ' || p.score || '   '
+      || 'HP: [' ||
+         repeat('█', GREATEST(0, LEAST(20, ROUND(20 * GREATEST(0, LEAST(p.hp,100))::numeric / 100)::int))) ||
+         repeat(' ', GREATEST(0, 20 - ROUND(20 * GREATEST(0, LEAST(p.hp,100))::numeric / 100)::int)) ||
+         '] ' || GREATEST(0, p.hp) || '   '
+      || 'AMMO: ' ||
+        repeat('•', COALESCE(p.ammo,0))
+    ) AS player_row
+  FROM players p
+  JOIN mobs m ON p.id = m.id
+),
+
+player_lines_shifted AS (
+  SELECT pl.player_row,
+         pl.y + md.y_max + 2 AS y
+  FROM player_lines pl
+  CROSS JOIN mm_dims md
+),
+
+hud_dims AS (
+  SELECT MAX(y)::int AS hud_max_y
+  FROM player_lines_shifted
+),
+
+bounds AS (
+  SELECT
+    p.id as player_id,
+    GREATEST(
+      s.view_h + 1,
+      md.y_max + 1,
+      hd.hud_max_y
+    ) AS y_top
+  FROM players p
+  CROSS JOIN settings s
+  CROSS JOIN mm_dims md
+  CROSS JOIN hud_dims hd
+),
+row_index AS (
+  SELECT b.player_id, gs.y
+  FROM bounds b
+  JOIN LATERAL generate_series(-1, b.y_top) AS gs(y) ON TRUE
+),
+
+frames_by_row AS (
+  SELECT
+    ri.player_id,
+    ri.y,
+    gv.view_col,
+    mf.mm_col
+  FROM row_index ri
+  LEFT JOIN gameview_frame gv
+    ON gv.player_id = ri.player_id AND gv.y = ri.y
+  LEFT JOIN minimap_frame mf
+    ON mf.player_id = ri.player_id AND mf.y = ri.y
+)
+
+SELECT
+  f.player_id,
+  f.y,
+  COALESCE(f.view_col, repeat(' ', s.view_w + 2)) || '   ' ||
+  COALESCE(f.mm_col, COALESCE(pls.player_row, '')) AS full_row
+FROM frames_by_row f
+LEFT JOIN player_lines_shifted pls ON pls.y = f.y, mm_dims md, settings s
+ORDER BY f.player_id, f.y;
+
+SELECT full_row FROM screen WHERE player_id = 1 ORDER BY y;

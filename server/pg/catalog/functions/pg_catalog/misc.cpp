@@ -476,6 +476,26 @@ void NumBackendsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
+template<int64_t DatabaseStats::* kCounter>
+void DatabaseCounterFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                             duckdb::Vector& result) {
+  const auto& registry = ProgressRegistry::Instance();
+  duckdb::UnaryExecutor::Execute<int64_t, int64_t>(
+    args.data[0], result, args.size(),
+    [&](int64_t oid) { return registry.GetDatabaseStats(oid).*kCounter; });
+}
+
+template<int64_t DatabaseStats::* kMicros>
+void DatabaseMillisFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
+                            duckdb::Vector& result) {
+  const auto& registry = ProgressRegistry::Instance();
+  duckdb::UnaryExecutor::Execute<int64_t, double>(
+    args.data[0], result, args.size(), [&](int64_t oid) {
+      return static_cast<double>(registry.GetDatabaseStats(oid).*kMicros) /
+             1000.0;
+    });
+}
+
 // current_setting(name, missing_ok) -> text
 void CurrentSetting2Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
@@ -723,6 +743,33 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "pg_stat_get_db_numbackends",
                  CONSISTENT_WITHIN_QUERY,
                  {duckdb::ScalarFunction{{oid}, int4, NumBackendsFunction}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_stat_get_db_xact_commit", CONSISTENT_WITHIN_QUERY,
+    {duckdb::ScalarFunction{
+      {oid}, int8, DatabaseCounterFunction<&DatabaseStats::xact_commit>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_stat_get_db_xact_rollback", CONSISTENT_WITHIN_QUERY,
+    {duckdb::ScalarFunction{
+      {oid}, int8, DatabaseCounterFunction<&DatabaseStats::xact_rollback>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_stat_get_db_sessions", CONSISTENT_WITHIN_QUERY,
+    {duckdb::ScalarFunction{
+      {oid}, int8, DatabaseCounterFunction<&DatabaseStats::sessions>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_stat_get_db_session_time", CONSISTENT_WITHIN_QUERY,
+    {duckdb::ScalarFunction{
+      {oid}, float8, DatabaseMillisFunction<&DatabaseStats::session_time_us>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_stat_get_db_active_time", CONSISTENT_WITHIN_QUERY,
+    {duckdb::ScalarFunction{
+      {oid}, float8, DatabaseMillisFunction<&DatabaseStats::active_time_us>}});
+  RegisterScalar(
+    loader, pg_catalog, "pg_stat_get_db_idle_in_transaction_time",
+    CONSISTENT_WITHIN_QUERY,
+    {duckdb::ScalarFunction{
+      {oid},
+      float8,
+      DatabaseMillisFunction<&DatabaseStats::idle_in_transaction_time_us>}});
 
   {
     duckdb::ScalarFunction function{{any}, pg::REGTYPE(), nullptr};

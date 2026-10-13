@@ -250,7 +250,7 @@ class Loader {
         *_conn->context, irs::StaticStrings::kDefaultUser, pg::kRootUser,
         database, database_id, nullptr, 0, nullptr)},
       _docs{docs} {
-    connector::SereneDBClientState::Register(*_conn->context, _ctx);
+    connector::SereneDBClientState::Register(*_conn->context, _ctx, false);
     connector::SetDefaultSearchPath(*_conn->context, database);
   }
 

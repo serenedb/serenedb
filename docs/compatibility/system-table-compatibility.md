@@ -120,6 +120,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the [PostgreSQL settings SereneDB accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
+| pg_stat_database | 🟢 | Shows one row per database, plus a row with `datid` `0` for shared objects. `numbackends`, `xact_commit`, `xact_rollback`, `sessions`, `session_time`, `active_time` and `idle_in_transaction_time` count from the moment the server started; a restart sets them back to `0`. The other counters are always `0` and `stats_reset` is `NULL`. |
 | pg_stats | 🟡 | Provides planner statistics. |
 | pg_stats_ext | 🟡 | Displays extended planner statistics. |
 | pg_stats_ext_exprs | 🟡 | Shows extended planner statistics for expressions. |

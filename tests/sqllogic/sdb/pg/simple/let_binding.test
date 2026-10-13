@@ -1,0 +1,55 @@
+statement ok
+CREATE TABLE lb_t AS SELECT range::INT AS x, (range * 10)::INT AS y FROM range(3)
+
+query
+SELECT list_transform([199], lambda v199: list_transform([198], lambda v198: list_transform([197], lambda v197: list_transform([196], lambda v196: list_transform([195], lambda v195: list_transform([194], lambda v194: list_transform([193], lambda v193: list_transform([192], lambda v192: list_transform([191], lambda v191: list_transform([190], lambda v190: list_transform([189], lambda v189: list_transform([188], lambda v188: list_transform([187], lambda v187: list_transform([186], lambda v186: list_transform([185], lambda v185: list_transform([184], lambda v184: list_transform([183], lambda v183: list_transform([182], lambda v182: list_transform([181], lambda v181: list_transform([180], lambda v180: list_transform([179], lambda v179: list_transform([178], lambda v178: list_transform([177], lambda v177: list_transform([176], lambda v176: list_transform([175], lambda v175: list_transform([174], lambda v174: list_transform([173], lambda v173: list_transform([172], lambda v172: list_transform([171], lambda v171: list_transform([170], lambda v170: list_transform([169], lambda v169: list_transform([168], lambda v168: list_transform([167], lambda v167: list_transform([166], lambda v166: list_transform([165], lambda v165: list_transform([164], lambda v164: list_transform([163], lambda v163: list_transform([162], lambda v162: list_transform([161], lambda v161: list_transform([160], lambda v160: list_transform([159], lambda v159: list_transform([158], lambda v158: list_transform([157], lambda v157: list_transform([156], lambda v156: list_transform([155], lambda v155: list_transform([154], lambda v154: list_transform([153], lambda v153: list_transform([152], lambda v152: list_transform([151], lambda v151: list_transform([150], lambda v150: list_transform([149], lambda v149: list_transform([148], lambda v148: list_transform([147], lambda v147: list_transform([146], lambda v146: list_transform([145], lambda v145: list_transform([144], lambda v144: list_transform([143], lambda v143: list_transform([142], lambda v142: list_transform([141], lambda v141: list_transform([140], lambda v140: list_transform([139], lambda v139: list_transform([138], lambda v138: list_transform([137], lambda v137: list_transform([136], lambda v136: list_transform([135], lambda v135: list_transform([134], lambda v134: list_transform([133], lambda v133: list_transform([132], lambda v132: list_transform([131], lambda v131: list_transform([130], lambda v130: list_transform([129], lambda v129: list_transform([128], lambda v128: list_transform([127], lambda v127: list_transform([126], lambda v126: list_transform([125], lambda v125: list_transform([124], lambda v124: list_transform([123], lambda v123: list_transform([122], lambda v122: list_transform([121], lambda v121: list_transform([120], lambda v120: list_transform([119], lambda v119: list_transform([118], lambda v118: list_transform([117], lambda v117: list_transform([116], lambda v116: list_transform([115], lambda v115: list_transform([114], lambda v114: list_transform([113], lambda v113: list_transform([112], lambda v112: list_transform([111], lambda v111: list_transform([110], lambda v110: list_transform([109], lambda v109: list_transform([108], lambda v108: list_transform([107], lambda v107: list_transform([106], lambda v106: list_transform([105], lambda v105: list_transform([104], lambda v104: list_transform([103], lambda v103: list_transform([102], lambda v102: list_transform([101], lambda v101: list_transform([100], lambda v100: list_transform([99], lambda v99: list_transform([98], lambda v98: list_transform([97], lambda v97: list_transform([96], lambda v96: list_transform([95], lambda v95: list_transform([94], lambda v94: list_transform([93], lambda v93: list_transform([92], lambda v92: list_transform([91], lambda v91: list_transform([90], lambda v90: list_transform([89], lambda v89: list_transform([88], lambda v88: list_transform([87], lambda v87: list_transform([86], lambda v86: list_transform([85], lambda v85: list_transform([84], lambda v84: list_transform([83], lambda v83: list_transform([82], lambda v82: list_transform([81], lambda v81: list_transform([80], lambda v80: list_transform([79], lambda v79: list_transform([78], lambda v78: list_transform([77], lambda v77: list_transform([76], lambda v76: list_transform([75], lambda v75: list_transform([74], lambda v74: list_transform([73], lambda v73: list_transform([72], lambda v72: list_transform([71], lambda v71: list_transform([70], lambda v70: list_transform([69], lambda v69: list_transform([68], lambda v68: list_transform([67], lambda v67: list_transform([66], lambda v66: list_transform([65], lambda v65: list_transform([64], lambda v64: list_transform([63], lambda v63: list_transform([62], lambda v62: list_transform([61], lambda v61: list_transform([60], lambda v60: list_transform([59], lambda v59: list_transform([58], lambda v58: list_transform([57], lambda v57: list_transform([56], lambda v56: list_transform([55], lambda v55: list_transform([54], lambda v54: list_transform([53], lambda v53: list_transform([52], lambda v52: list_transform([51], lambda v51: list_transform([50], lambda v50: list_transform([49], lambda v49: list_transform([48], lambda v48: list_transform([47], lambda v47: list_transform([46], lambda v46: list_transform([45], lambda v45: list_transform([44], lambda v44: list_transform([43], lambda v43: list_transform([42], lambda v42: list_transform([41], lambda v41: list_transform([40], lambda v40: list_transform([39], lambda v39: list_transform([38], lambda v38: list_transform([37], lambda v37: list_transform([36], lambda v36: list_transform([35], lambda v35: list_transform([34], lambda v34: list_transform([33], lambda v33: list_transform([32], lambda v32: list_transform([31], lambda v31: list_transform([30], lambda v30: list_transform([29], lambda v29: list_transform([28], lambda v28: list_transform([27], lambda v27: list_transform([26], lambda v26: list_transform([25], lambda v25: list_transform([24], lambda v24: list_transform([23], lambda v23: list_transform([22], lambda v22: list_transform([21], lambda v21: list_transform([20], lambda v20: list_transform([19], lambda v19: list_transform([18], lambda v18: list_transform([17], lambda v17: list_transform([16], lambda v16: list_transform([15], lambda v15: list_transform([14], lambda v14: list_transform([13], lambda v13: list_transform([12], lambda v12: list_transform([11], lambda v11: list_transform([10], lambda v10: list_transform([9], lambda v9: list_transform([8], lambda v8: list_transform([7], lambda v7: list_transform([6], lambda v6: list_transform([5], lambda v5: list_transform([4], lambda v4: list_transform([3], lambda v3: list_transform([2], lambda v2: list_transform([1], lambda v1: list_transform([0], lambda v0: x + v0)[1] + v1)[1] + v2)[1] + v3)[1] + v4)[1] + v5)[1] + v6)[1] + v7)[1] + v8)[1] + v9)[1] + v10)[1] + v11)[1] + v12)[1] + v13)[1] + v14)[1] + v15)[1] + v16)[1] + v17)[1] + v18)[1] + v19)[1] + v20)[1] + v21)[1] + v22)[1] + v23)[1] + v24)[1] + v25)[1] + v26)[1] + v27)[1] + v28)[1] + v29)[1] + v30)[1] + v31)[1] + v32)[1] + v33)[1] + v34)[1] + v35)[1] + v36)[1] + v37)[1] + v38)[1] + v39)[1] + v40)[1] + v41)[1] + v42)[1] + v43)[1] + v44)[1] + v45)[1] + v46)[1] + v47)[1] + v48)[1] + v49)[1] + v50)[1] + v51)[1] + v52)[1] + v53)[1] + v54)[1] + v55)[1] + v56)[1] + v57)[1] + v58)[1] + v59)[1] + v60)[1] + v61)[1] + v62)[1] + v63)[1] + v64)[1] + v65)[1] + v66)[1] + v67)[1] + v68)[1] + v69)[1] + v70)[1] + v71)[1] + v72)[1] + v73)[1] + v74)[1] + v75)[1] + v76)[1] + v77)[1] + v78)[1] + v79)[1] + v80)[1] + v81)[1] + v82)[1] + v83)[1] + v84)[1] + v85)[1] + v86)[1] + v87)[1] + v88)[1] + v89)[1] + v90)[1] + v91)[1] + v92)[1] + v93)[1] + v94)[1] + v95)[1] + v96)[1] + v97)[1] + v98)[1] + v99)[1] + v100)[1] + v101)[1] + v102)[1] + v103)[1] + v104)[1] + v105)[1] + v106)[1] + v107)[1] + v108)[1] + v109)[1] + v110)[1] + v111)[1] + v112)[1] + v113)[1] + v114)[1] + v115)[1] + v116)[1] + v117)[1] + v118)[1] + v119)[1] + v120)[1] + v121)[1] + v122)[1] + v123)[1] + v124)[1] + v125)[1] + v126)[1] + v127)[1] + v128)[1] + v129)[1] + v130)[1] + v131)[1] + v132)[1] + v133)[1] + v134)[1] + v135)[1] + v136)[1] + v137)[1] + v138)[1] + v139)[1] + v140)[1] + v141)[1] + v142)[1] + v143)[1] + v144)[1] + v145)[1] + v146)[1] + v147)[1] + v148)[1] + v149)[1] + v150)[1] + v151)[1] + v152)[1] + v153)[1] + v154)[1] + v155)[1] + v156)[1] + v157)[1] + v158)[1] + v159)[1] + v160)[1] + v161)[1] + v162)[1] + v163)[1] + v164)[1] + v165)[1] + v166)[1] + v167)[1] + v168)[1] + v169)[1] + v170)[1] + v171)[1] + v172)[1] + v173)[1] + v174)[1] + v175)[1] + v176)[1] + v177)[1] + v178)[1] + v179)[1] + v180)[1] + v181)[1] + v182)[1] + v183)[1] + v184)[1] + v185)[1] + v186)[1] + v187)[1] + v188)[1] + v189)[1] + v190)[1] + v191)[1] + v192)[1] + v193)[1] + v194)[1] + v195)[1] + v196)[1] + v197)[1] + v198)[1] + v199)[1] AS r FROM lb_t ORDER BY 1
+----
+r
+19900
+19901
+19902
+
+query
+SELECT list_transform([x], lambda v: v + y)[1] AS r FROM lb_t ORDER BY 1
+----
+r
+0
+11
+22
+
+query
+SELECT list_transform([x], lambda a: list_transform([a + 1], lambda b: a * b + y)[1])[1] AS r FROM lb_t ORDER BY 1
+----
+r
+0
+12
+26
+
+query
+SELECT list_transform([NULL::INT], lambda v: coalesce(v, -1))[1] AS r
+----
+r
+-1
+
+query
+SELECT list_transform([x], lambda v, i: v + i)[1] AS r FROM lb_t ORDER BY 1
+----
+r
+1
+2
+3
+
+query
+SELECT list_transform([x], lambda v: v * 2)[2] IS NULL AS r FROM lb_t ORDER BY 1 LIMIT 1
+----
+r
+t
+
+query
+SELECT sum(list_transform([x], lambda v: v * x)[1]) AS s FROM range(100000) t(x)
+----
+s
+333328333350000
+
+statement ok
+DROP TABLE lb_t

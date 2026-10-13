@@ -1,0 +1,244 @@
+statement ok
+DROP SCHEMA IF EXISTS ident_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS ident_reader;
+
+
+statement ok
+CREATE ROLE ident_reader;
+
+
+statement ok
+CREATE SCHEMA ident_s;
+
+
+statement ok
+CREATE TABLE ident_s.t (id int PRIMARY KEY, v text DEFAULT 'x', CONSTRAINT v_check CHECK (v <> ''));
+
+
+statement ok
+CREATE INDEX t_v_idx ON ident_s.t (v);
+
+
+statement ok
+CREATE VIEW ident_s.w AS SELECT id FROM ident_s.t;
+
+
+statement ok
+CREATE SEQUENCE ident_s.seq;
+
+
+statement ok
+CREATE FUNCTION ident_s.f(a int) RETURNS int LANGUAGE sql AS 'SELECT a';
+
+
+statement ok
+CREATE TYPE ident_s.mood AS ENUM ('ok');
+
+
+statement ok
+CREATE TABLE ident_s."Mixed" ("Col" int);
+
+
+statement ok
+CREATE TYPE ident_s.pair AS (a int, b text);
+
+
+statement ok
+GRANT SELECT ON ident_s.t TO ident_reader;
+
+
+statement ok
+GRANT UPDATE (v) ON ident_s.t TO ident_reader;
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 'pg_class'::regclass, 0) AS a, pg_describe_object('pg_class'::regclass, 'pg_class'::regclass, 2) AS b, pg_describe_object('pg_namespace'::regclass, 'pg_catalog'::regnamespace, 0) AS c, pg_describe_object('pg_type'::regclass, 'int4'::regtype, 0) AS d, pg_describe_object('pg_proc'::regclass, 'now'::regproc, 0) AS e;
+----
+a	b	c	d	e
+table pg_class	column relname of table pg_class	schema pg_catalog	type integer	function now()
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 'ident_s.t'::regclass, 0) AS t, pg_describe_object('pg_class'::regclass, 'ident_s.t_v_idx'::regclass, 0) AS idx, pg_describe_object('pg_class'::regclass, 'ident_s.w'::regclass, 0) AS w, pg_describe_object('pg_class'::regclass, 'ident_s.seq'::regclass, 0) AS seq, pg_describe_object('pg_class'::regclass, 'ident_s.t'::regclass, 2) AS col;
+----
+t	idx	w	seq	col
+table ident_s.t	index ident_s.t_v_idx	view ident_s.w	sequence ident_s.seq	column v of table ident_s.t
+
+
+query
+SELECT pg_describe_object('pg_proc'::regclass, 'ident_s.f(int)'::regprocedure, 0) AS f, pg_describe_object('pg_type'::regclass, 'ident_s.mood'::regtype, 0) AS mood, pg_describe_object('pg_namespace'::regclass, 'ident_s'::regnamespace, 0) AS s, pg_describe_object('pg_constraint'::regclass, (SELECT oid FROM pg_constraint WHERE conname = 'v_check'), 0) AS chk, pg_describe_object('pg_attrdef'::regclass, (SELECT oid FROM pg_attrdef WHERE adrelid = 'ident_s.t'::regclass), 0) AS def, pg_describe_object('pg_authid'::regclass, 'ident_reader'::regrole, 0) AS role;
+----
+f	mood	s	chk	def	role
+function ident_s.f(integer)	type ident_s.mood	schema ident_s	constraint v_check on table ident_s.t	default value for column v of table ident_s.t	role ident_reader
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 0, 0) IS NULL AS zero, pg_describe_object('pg_class'::regclass, 999999999, 0) IS NULL AS missing;
+----
+zero	missing
+t	t
+
+
+query
+SELECT (pg_identify_object('pg_class'::regclass, 'ident_s.t'::regclass, 0)).*;
+----
+type	schema	name	identity
+table	ident_s	t	ident_s.t
+
+
+query
+SELECT (pg_identify_object('pg_class'::regclass, 'ident_s.t'::regclass, 2)).*;
+----
+type	schema	name	identity
+table column	ident_s	t	ident_s.t.v
+
+
+query
+SELECT (pg_identify_object('pg_proc'::regclass, 'ident_s.f(int)'::regprocedure, 0)).*;
+----
+type	schema	name	identity
+function	ident_s	NULL	ident_s.f(integer)
+
+
+query
+SELECT (pg_identify_object('pg_type'::regclass, 'ident_s.mood'::regtype, 0)).*;
+----
+type	schema	name	identity
+type	ident_s	mood	ident_s.mood
+
+
+query
+SELECT (pg_identify_object('pg_class'::regclass, 'pg_class'::regclass, 0)).*;
+----
+type	schema	name	identity
+table	pg_catalog	pg_class	pg_catalog.pg_class
+
+
+query
+SELECT (pg_identify_object('pg_namespace'::regclass, 'ident_s'::regnamespace, 0)).*;
+----
+type	schema	name	identity
+schema	NULL	ident_s	ident_s
+
+
+query
+SELECT pg_get_acl('pg_class'::regclass, 'ident_s.t'::regclass, 0) AS t, pg_get_acl('pg_class'::regclass, 'ident_s.t'::regclass, 2) AS col, pg_get_acl('pg_class'::regclass, 'ident_s.seq'::regclass, 0) IS NULL AS seq_default, pg_get_acl('pg_class'::regclass, 999999999, 0) IS NULL AS missing;
+----
+t	col	seq_default	missing
+{postgres=arwdDxtm/postgres,ident_reader=r/postgres}	{ident_reader=w/postgres}	t	t
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 'ident_s."Mixed"'::regclass, 1) AS d, (pg_identify_object('pg_class'::regclass, 'ident_s."Mixed"'::regclass, 1)).*;
+----
+d	type	schema	name	identity
+column Col of table ident_s."Mixed"	table column	ident_s	"Mixed"	ident_s."Mixed"."Col"
+
+
+query
+SELECT (pg_identify_object('pg_class'::regclass, 999999999, 0)).*;
+----
+type	schema	name	identity
+relation	NULL	NULL	NULL
+
+
+query
+SELECT (pg_identify_object('pg_proc'::regclass, 999999999, 0)).*;
+----
+type	schema	name	identity
+routine	NULL	NULL	NULL
+
+
+query
+SELECT (pg_identify_object('pg_class'::regclass, 'ident_s.t'::regclass, 99)).*;
+----
+type	schema	name	identity
+table column	NULL	NULL	NULL
+
+
+query
+SELECT pg_describe_object('pg_proc'::regclass, 'now'::regproc, 1) AS f;
+----
+f
+function now()
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 'ident_s.t_v_idx'::regclass, 1) AS idx, pg_describe_object('pg_class'::regclass, 'ident_s.t_pkey'::regclass, 0) AS pkey, pg_describe_object('pg_class'::regclass, 'ident_s.t_pkey'::regclass, 1) AS pkey_col, pg_describe_object('pg_class'::regclass, 'ident_s.seq'::regclass, 1) AS seq_col, pg_describe_object('pg_class'::regclass, 'ident_s.w'::regclass, 1) AS view_col;
+----
+idx	pkey	pkey_col	seq_col	view_col
+column v of index ident_s.t_v_idx	index ident_s.t_pkey	column id of index ident_s.t_pkey	column last_value of sequence ident_s.seq	column id of view ident_s.w
+
+
+query
+SELECT pg_describe_object('pg_class'::regclass, 'pg_tables'::regclass, 1) AS sys_view_col, pg_describe_object('pg_class'::regclass, (SELECT typrelid FROM pg_type WHERE typname = 'pair'), 2) AS composite_col;
+----
+sys_view_col	composite_col
+column schemaname of view pg_tables	column b of composite type ident_s.pair
+
+
+query
+SELECT (pg_identify_object('pg_proc'::regclass, 'sum(int4)'::regprocedure, 0)).*;
+----
+type	schema	name	identity
+aggregate	pg_catalog	NULL	pg_catalog.sum(integer)
+
+
+query
+SELECT count(*) FROM pg_class WHERE pg_describe_object('pg_class'::regclass, oid, 0) IS NULL;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_attribute WHERE attnum > 0 AND pg_describe_object('pg_class'::regclass, attrelid, attnum) IS NULL;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_class WHERE pg_get_acl('pg_class'::regclass, oid, 0) IS DISTINCT FROM relacl;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_attribute WHERE attnum > 0 AND pg_get_acl('pg_class'::regclass, attrelid, attnum) IS DISTINCT FROM attacl;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_namespace WHERE pg_get_acl('pg_namespace'::regclass, oid, 0) IS DISTINCT FROM nspacl;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_proc WHERE pg_get_acl('pg_proc'::regclass, oid, 0) IS DISTINCT FROM proacl;
+----
+count
+0
+
+
+query
+SELECT count(*) FROM pg_type WHERE pg_get_acl('pg_type'::regclass, oid, 0) IS DISTINCT FROM typacl;
+----
+count
+0
+
+
+statement ok
+DROP SCHEMA ident_s CASCADE;
+
+
+statement ok
+DROP ROLE ident_reader;

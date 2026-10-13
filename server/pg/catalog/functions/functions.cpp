@@ -55,6 +55,7 @@ void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
 void RegisterFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader{db, "serenedb"};
   RegisterMiscFunctions(loader);
+  RegisterObjectAddressFunctions(loader);
   RegisterAclFunctions(loader);
   RegisterDbsizeFunctions(loader);
   RegisterFormatTypeFunctions(loader);

@@ -252,6 +252,9 @@ SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
 
 bool NumbersRows(const duckdb::CatalogEntry& sequence);
 
+inline constexpr std::array<std::string_view, 3> kSequenceColumns{
+  "last_value", "log_cnt", "is_called"};
+
 void VisitDefaultAcls(
   duckdb::ClientContext& context, const duckdb::CatalogEntry& database,
   absl::FunctionRef<void(duckdb::idx_t oid, const duckdb::DefaultAcl& row)>
@@ -370,6 +373,13 @@ struct Relation {
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid);
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
                   const Relation& relation);
+
+struct RelationAccess : Relation {
+  const duckdb::Permissions* permissions;
+};
+
+std::optional<RelationAccess> RelationByOid(const Session& session,
+                                            uint64_t oid);
 
 std::optional<std::string_view> NextvalArgument(
   const duckdb::ParsedExpression& expression);

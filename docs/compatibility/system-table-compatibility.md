@@ -51,7 +51,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_foreign_table            | 🟡            | Stores information about foreign tables. |
 | pg_index                    | 🟢            | Contains information about indexes. |
 | pg_inherits                 | 🟡            | Tracks table inheritance hierarchies. |
-| pg_init_privs               | 🟡            | Stores initial privileges of database objects. |
+| pg_init_privs               | 🟢            | Stores initial privileges of database objects: the built-in relations of `pg_catalog` and the `pg_catalog` and `public` schemas, with the privileges they start with. |
 | pg_language                 | 🟢            | Contains information about procedural languages. |
 | pg_largeobject              | 🟡            | Stores large object data. |
 | pg_largeobject_metadata     | 🟡            | Contains metadata for large objects. |

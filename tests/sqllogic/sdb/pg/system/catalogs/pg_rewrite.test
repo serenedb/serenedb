@@ -36,6 +36,22 @@ ev_qual	pg_node_tree	t
 ev_action	pg_node_tree	t
 
 
+query
+SELECT count(*) AS views_without_rule FROM pg_class c
+WHERE c.relkind = 'v' AND c.relhasrules
+  AND NOT EXISTS (SELECT 1 FROM pg_rewrite r WHERE r.ev_class = c.oid AND r.rulename = '_RETURN');
+----
+views_without_rule
+0
+
+
+query
+SELECT count(*) AS null_actions FROM pg_rewrite WHERE ev_action IS NULL;
+----
+null_actions
+0
+
+
 statement ok
 CREATE TABLE rubick_rw_spell (id INT, name TEXT);
 

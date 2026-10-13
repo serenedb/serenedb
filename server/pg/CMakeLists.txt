@@ -42,8 +42,8 @@ target_sources(
         catalog/tables/pg_catalog/pg_enum.cpp
         catalog/tables/pg_catalog/pg_foreign_data_wrapper.cpp
         catalog/tables/pg_catalog/pg_foreign_server.cpp
-        catalog/tables/pg_catalog/pg_hba_file_rules.cpp
         catalog/tables/pg_catalog/pg_index.cpp
+        catalog/tables/pg_catalog/pg_init_privs.cpp
         catalog/tables/pg_catalog/pg_language.cpp
         catalog/tables/pg_catalog/pg_namespace.cpp
         catalog/tables/pg_catalog/pg_opclass.cpp

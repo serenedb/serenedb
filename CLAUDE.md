@@ -2,10 +2,9 @@
 
 ## Rules
 
-- Don't write comments unless explicitly asked to; for you this overrides
-"Comments" in `.claude/rules/cpp.md`. The license block and `# DOCS_TEST:`
-markers are required, not comments in this sense. When a comment is outdated, or
-your change makes it outdated, remove it unless asked to keep it.
+- Don't write comments unless explicitly asked to; the license block and
+`# DOCS_TEST:` markers are required, not comments in this sense. When a comment
+is outdated, or your change makes it outdated, remove it unless asked to keep it.
 
 - Don't use python/sed for normal code editing or reading, only for real
 scripting changes.

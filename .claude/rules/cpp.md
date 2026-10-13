@@ -18,9 +18,9 @@ Based on common sense, Google C++ style guide, and Abseil best practices. These 
 
 Formatting and naming nits shouldn't block PRs -- what the tools don't catch can be fixed later; the "never" and "forbidden" rules do block. This is a living document.
 
-## Tools
+## Standard
 
-Single supported toolchain: the versions in `CONTRIBUTING.md` "Build prerequisites". We use the latest C++ standard.
+C++26.
 
 ## Naming
 
@@ -39,7 +39,6 @@ Handled by [`.clang-format`](../../.clang-format).
 Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Header_Files) with differences:
 
 - `#pragma once` instead of include guards
-- Forward declarations in the directory's `fwd.h` where one exists
 - `.h` for headers in `server/` and `tests/server/`, `.hpp` in `iresearch/` and `tests/iresearch/`, either in `server/connector/` (pre-commit `check-cpp-extensions`); `.tpp` for template implementations, `.cpp` for sources
 - Avoid pimpl (exception: abstracting over multiple library backends)
 - Avoid duplicating directory name in filename
@@ -83,6 +82,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Clas
 - Avoid friends
 - Avoid public init functions -- do work in constructors
 - Prefer explicit constructors
+- Overriding methods are `final`, not `override`
 
 ## Functions
 
@@ -92,26 +92,17 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Lambda without args: `[] {}`
 - Overloads are fine, but avoid ambiguous ones like `const T&` vs `std::shared_ptr<const T>&`
 - Default args banned for virtual functions -- use overloads
+- A one-line method goes in the header, not in the `.cpp`
 
 ## Comments
 
-- Every file starts with the license block; copy it from a sibling. Pre-commit `check-disclaimer` rejects a file without it and, in a header, wants a blank line and `#pragma once` right after it. (The license block is the *only* place the banner style is allowed.)
-- Elsewhere, plain `//` comments only. No doxygen, no decorative separators of any flavour -- `// ---`, `/*** ... ***/`, `////////`, `//===`, etc. They're noise in normal code and especially bad as section dividers.
-- Comment only what the code can't say itself: a hidden constraint, an
-  invariant, a workaround for a specific bug, or the *why* behind a
-  non-obvious shape. A function or struct can earn a one-line intro
-  stating its role. Don't describe *what* the body does -- the body
-  already does.
-- Don't justify changes in the source. "We used to do X, we now do Y
-  because..." belongs in the PR description / commit message. The source
-  is read by someone who has never seen the prior version, so describe
-  the current contract positively, not relative to what it replaced.
+- Every file starts with the license block; copy it from a sibling. Pre-commit `check-disclaimer` rejects a file without it and, in a header, wants a blank line and `#pragma once` right after it.
+- No other comments: names, types and asserts carry the meaning.
 
 ## Error Handling
 
-- PostgreSQL/frontend code: use `THROW_SQL_ERROR`, so the real SQLSTATE goes on the wire. In `server/`, pre-commit `check-no-raw-throw` rejects any other `throw` except a rethrow (`throw;`), `irs::SqlException` and `duckdb::NotImplementedException`
-- Common/backend code outside `server/`: both `absl::Status` and `throw` are acceptable
-- Consider performance: an `absl::Status` holding only a code doesn't allocate
+- Always `THROW_SQL_ERROR`, so the real SQLSTATE goes on the wire. In `server/`, pre-commit `check-no-raw-throw` rejects any other `throw` except a rethrow (`throw;`), `irs::SqlException` and `duckdb::NotImplementedException`
+- Cleanup that must run on every way out is an `absl::Cleanup` declared before the call (`absl::Cleanup cleanup = [&] { Clean(); };`), never `try { Func(); } catch (...) { Clean(); throw; }`
 - `SDB_ASSERT` and `SDB_ENSURE` are debug checks of invariants: they fire in dev builds (`SDB_DEV`: the `lldb`, `clangd` and sanitizer presets). `SDB_ENSURE` also throws an internal error in other builds, but nothing relies on that: a condition that can really fail gets real handling.
 - `SDB_VERIFY` crashes in every build.
 - Prefer an `SDB_ASSERT` to a comment about an invariant; reach for `SDB_ENSURE` or `SDB_VERIFY` only when the guarantee is genuinely hard to follow locally.
@@ -202,6 +193,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
   - `if (opt)`, not `if (opt.has_value())`.
   - `*p` / `*opt`, not `opt.value()` (`.value()` adds a redundant throw
     once you've verified the optional is engaged).
+- `std::optional` only where no value of the type can mean "none": an empty vector or string, a null pointer or a sentinel id usually can, so `std::optional<std::vector<T>>` is almost always a plain `std::vector<T>`.
 - Don't add includes speculatively -- only when clangd or the compiler
   asks for them.
 - Prefer `emplace`-like functions; `emplace_back` takes aggregate members positionally.

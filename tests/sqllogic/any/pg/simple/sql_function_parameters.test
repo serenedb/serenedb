@@ -1,0 +1,68 @@
+statement ok
+DROP SCHEMA IF EXISTS fnp CASCADE;
+
+
+statement ok
+CREATE SCHEMA fnp;
+
+
+statement ok
+CREATE FUNCTION fnp.add_one(integer) RETURNS integer LANGUAGE sql RETURN $1 + 1;
+
+
+statement ok
+CREATE FUNCTION fnp.add_mixed(a integer, b integer) RETURNS integer LANGUAGE sql RETURN $1 + b;
+
+
+statement ok
+CREATE FUNCTION fnp.add_atomic(integer, integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT $1 + $2; END;
+
+
+statement ok
+CREATE FUNCTION fnp.add_one_subquery(a integer) RETURNS integer LANGUAGE sql RETURN (SELECT $1 + 1);
+
+
+statement ok
+CREATE FUNCTION fnp.count_below(integer) RETURNS bigint LANGUAGE sql RETURN (SELECT count(*) FROM generate_series(0, 9) t(i) WHERE i < $1);
+
+
+statement ok
+CREATE FUNCTION fnp.in_range(integer) RETURNS boolean LANGUAGE sql BEGIN ATOMIC SELECT EXISTS (SELECT 1 FROM generate_series(0, 9) t(i) WHERE i = $1); END;
+
+
+statement ok
+CREATE FUNCTION fnp.add_one_nested(integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT (SELECT (SELECT $1) + 1); END;
+
+
+statement ok
+CREATE FUNCTION fnp.next_day(d date) RETURNS date LANGUAGE sql RETURN d + 1;
+
+
+statement ok
+CREATE FUNCTION fnp.rel_name(r regclass) RETURNS text LANGUAGE sql RETURN r::text;
+
+
+query
+SELECT fnp.add_one(41) AS a, fnp.add_mixed(40, 2) AS b, fnp.add_atomic(40, 2) AS c, fnp.add_one_subquery(41) AS d, fnp.count_below(4) AS e, fnp.in_range(4) AS f, fnp.in_range(40) AS g, fnp.add_one_nested(41) AS h;
+----
+a	b	c	d	e	f	g	h
+42	42	42	42	4	t	f	42
+
+
+query
+SELECT fnp.next_day('2024-01-31') AS a, fnp.next_day(d => '2024-02-28') AS b, fnp.rel_name('pg_class') AS c, fnp.rel_name(1259) AS d;
+----
+a	b	c	d
+2024-02-01	2024-02-29	pg_class	pg_class
+
+
+statement error Parameter expressions within macro's are not supported
+CREATE FUNCTION fnp.add_missing(integer) RETURNS integer LANGUAGE sql RETURN $2;
+
+
+statement error does not support the supplied arguments
+SELECT fnp.next_day('2024-01-31'::varchar);
+
+
+statement ok
+DROP SCHEMA fnp CASCADE;

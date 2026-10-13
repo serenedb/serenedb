@@ -118,7 +118,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.
@@ -459,7 +459,7 @@ error_on_division_by_zero	on	Throw an error instead of returning NULL when divid
 errors_as_json	off	Output error messages as structured JSON instead of as a raw string.
 experimental_metadata_reuse	on	EXPERIMENTAL: Re-use row group and table metadata when checkpointing.
 explain_output	PHYSICAL_ONLY	Configure the output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY).
-explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line)
+explain_output_format	PG	Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats)
 extension_directories	[]	Set the directories to store extensions in.
 extension_repository_directory	(empty)	Set the directory in which trusted extension repositories are stored. This is the trust anchor for user-provided repositories, so while signature checking is enabled (allow_unsigned_extensions=false) it can only be set at startup, not while the database is running.
 external_file_cache_local_max_block_size	16384	Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel.

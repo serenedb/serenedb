@@ -1,0 +1,58 @@
+query
+EXPLAIN (FORMAT json) SELECT 1
+----
+QUERY PLAN
+[\n    {\n        "name": "PROJECTION",\n        "children": [\n            {\n                "name": "DUMMY_SCAN",\n                "children": [],\n                "extra_info": {}\n            }\n        ],\n        "extra_info": {\n            "Projections": "1",\n            "Estimated Cardinality": "1"\n        }\n    }\n]
+
+query
+EXPLAIN (FORMAT compact) SELECT 1
+----
+QUERY PLAN
+PROJECTION (est=1) Projections: 1
+  DUMMY_SCAN
+
+query
+EXPLAIN (FORMAT yaml) SELECT 1
+----
+QUERY PLAN
+- name: "PROJECTION"\n  "Projections": "1"\n  "Estimated Cardinality": "1"\n  children: \n    - name: "DUMMY_SCAN"
+
+statement ok
+SET explain_output = 'all'
+
+query
+EXPLAIN SELECT 1
+----
+QUERY PLAN
+logical_plan
+╭─ PROJECTION ───╮
+│ Expressions: 1 │
+╰────────┬───────╯
+╭─ DUMMY_SCAN ───╮
+╰────────────────╯
+logical_opt
+╭─ PROJECTION ───╮
+│ Expressions: 1 │
+│ ~1 row         │
+╰────────┬───────╯
+╭─ DUMMY_SCAN ───╮
+│ ~1 row         │
+╰────────────────╯
+physical_plan
+╭─ PROJECTION ───╮
+│ Projections: 1 │
+│ ~1 row         │
+╰────────┬───────╯
+╭─ DUMMY_SCAN ───╮
+╰────────────────╯
+
+query
+EXPLAIN (FORMAT json) SELECT 1
+----
+QUERY PLAN
+[\n    {\n        "name": "PROJECTION",\n        "children": [\n            {\n                "name": "DUMMY_SCAN",\n                "children": [],\n                "extra_info": {\n                    "Expressions": ""\n                }\n            }\n        ],\n        "extra_info": {\n            "Expressions": "1"\n        }\n    }\n]
+[\n    {\n        "name": "PROJECTION",\n        "children": [\n            {\n                "name": "DUMMY_SCAN",\n                "children": [],\n                "extra_info": {\n                    "Expressions": "",\n                    "Estimated Cardinality": "1"\n                }\n            }\n        ],\n        "extra_info": {\n            "Expressions": "1",\n            "Estimated Cardinality": "1"\n        }\n    }\n]
+[\n    {\n        "name": "PROJECTION",\n        "children": [\n            {\n                "name": "DUMMY_SCAN",\n                "children": [],\n                "extra_info": {}\n            }\n        ],\n        "extra_info": {\n            "Projections": "1",\n            "Estimated Cardinality": "1"\n        }\n    }\n]
+
+statement ok
+RESET explain_output

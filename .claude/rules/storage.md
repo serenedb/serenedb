@@ -7,7 +7,6 @@ paths:
   - "iresearch/utils/serializer.hpp"
   - "server/catalog/boot.*"
   - "server/catalog/cluster.*"
-  - "server/catalog/database_directory.*"
   - "server/catalog/persistence/**"
   - "server/connector/duckdb_storage_extension.*"
   - "server/connector/file_manifest.*"
@@ -70,16 +69,6 @@ A database file with a DuckDB storage version (a plain `ATTACH`, `serened shell`
 
 `tests/duckdb/run.sh --suite interop` checks both directions against the official `duckdb/duckdb` image. A change to what a DuckDB file holds also follows "Changing the DuckDB on-disk format" in [tests/duckdb/README.md](../../tests/duckdb/README.md).
 
-## Data directory
-
-- Every directory has one owner, and only the owner creates or removes it.
-- Create a directory, and fsync its parent, before the statement that creates its object commits.
-- Leave crash leftovers to boot.
-
 ## Serialized structs
 
 `irs::utils::WriteTuple` and `ReadTuple` store catalog-entry blobs (tokenizer configs, the inverted index payload), the view-backed index manifest and the search-table WAL's segment references. They number fields by member position, so the struct rules above apply member by member, and a member left at its value-initialized value isn't written. A struct boost::pfr can't reflect (one holding a `std::vector<std::unique_ptr<T>>`) declares `SerdeFields(value)` returning `std::tie` of its members, in declaration order.
-
-## Search-table WAL
-
-The frame header never changes, and the record follows the rules above. A record change that needs a new version bumps the database's.

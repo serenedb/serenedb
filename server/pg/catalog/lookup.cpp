@@ -524,6 +524,48 @@ ObjectName NameOf(duckdb::CatalogTransaction transaction,
   return {.schema = relation.view->schema, .name = relation.view->name};
 }
 
+namespace {
+
+const duckdb::Permissions& SystemTablePermissions(const SystemTable& table) {
+  static const auto kPublic = SystemPermissions(false);
+  static const auto kSuperuser = SystemPermissions(true);
+  return table.SuperuserOnly() ? kSuperuser : kPublic;
+}
+
+}  // namespace
+
+std::optional<RelationAccess> RelationByOid(const Session& session,
+                                            uint64_t oid) {
+  auto relation = FindRelation(session, oid);
+  if (!relation) {
+    return std::nullopt;
+  }
+  if (relation->system) {
+    return RelationAccess{{*relation},
+                          &SystemTablePermissions(*relation->system)};
+  }
+  if (relation->view) {
+    const auto entry = session.retriever->GetEntry(
+      duckdb::EntryLookupInfo{
+        duckdb::CatalogType::VIEW_ENTRY,
+        duckdb::QualifiedName{{duckdb::Identifier{relation->view->schema}},
+                              duckdb::Identifier{relation->view->name}}},
+      duckdb::OnEntryNotFound::RETURN_NULL);
+    if (!entry) {
+      return std::nullopt;
+    }
+    relation->entry = entry;
+    return RelationAccess{{*relation}, &entry->permissions};
+  }
+  if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
+    const auto owner = EntryByOid(
+      session, relation->entry->Cast<duckdb::IndexCatalogEntry>().table_oid);
+    return RelationAccess{{*relation},
+                          &(owner ? owner : relation->entry)->permissions};
+  }
+  return RelationAccess{{*relation}, &relation->entry->permissions};
+}
+
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,
                           const duckdb::CatalogEntry& element) {
   using enum duckdb::CatalogType;

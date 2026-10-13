@@ -17,6 +17,7 @@ target_sources(
         catalog/functions/pg_catalog/format_type.cpp
         catalog/functions/pg_catalog/macros.cpp
         catalog/functions/pg_catalog/misc.cpp
+        catalog/functions/pg_catalog/objectaddress.cpp
         catalog/functions/pg_catalog/regproc.cpp
         catalog/functions/pg_catalog/ruleutils.cpp
         catalog/functions/pg_catalog/subscription.cpp

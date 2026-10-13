@@ -192,12 +192,12 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     if (!Allows<"attrelid">(sequence.oid) || NumbersRows(sequence)) {
       return;
     }
-    int16_t attnum = 0;
-    for (const auto& [name, type] :
-         {std::pair{"last_value", duckdb::LogicalType::BIGINT},
-          std::pair{"log_cnt", duckdb::LogicalType::BIGINT},
-          std::pair{"is_called", duckdb::LogicalType::BOOLEAN}}) {
-      Emit<kSequenceColumn>({sequence.oid, name, ++attnum, type});
+    const std::array types{duckdb::LogicalType::BIGINT,
+                           duckdb::LogicalType::BIGINT,
+                           duckdb::LogicalType::BOOLEAN};
+    for (size_t i = 0; i < kSequenceColumns.size(); ++i) {
+      Emit<kSequenceColumn>({sequence.oid, kSequenceColumns[i],
+                             static_cast<int16_t>(i + 1), types[i]});
     }
   }
 

@@ -423,6 +423,14 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_encoding_max_length", "(encoding int4) AS 4"},
   // No temp schemas supported yet.
   {"pg_catalog", "pg_my_temp_schema", "() AS 0::oid"},
+  {"pg_catalog", "make_interval",
+   R"((years INTEGER := 0, months INTEGER := 0, weeks INTEGER := 0,
+       days INTEGER := 0, hours INTEGER := 0, mins INTEGER := 0,
+       secs DOUBLE := 0.0) AS
+      to_months(years::BIGINT * 12 + months) +
+      to_days(weeks::BIGINT * 7 + days) +
+      to_microseconds(hours::BIGINT * 3600000000 + mins::BIGINT * 60000000 +
+                      round(secs * 1000000)::BIGINT))"},
   // pg_backend_pid() is a C++ scalar (PgBackendPidFunction) -- it reads the
   // per-connection backend PID from the ConnectionContext.
   // clang-format on

@@ -90,6 +90,61 @@ date_bin
 2001-02-16 20:00:00
 
 
+statement error
+SELECT date_bin(interval '1 hour', timestamp '2020-02-11', timestamp 'infinity');
+----
+db error: ERROR: origin out of range
+
+
+# make_interval
+
+query
+SELECT make_interval(days => 10, hours => 3) AS a, make_interval(1, 2, 3, 4, 5, 6, 7.5) AS b, make_interval() AS c;
+----
+a	b	c
+10 days 03:00:00	1 year 2 mons 25 days 05:06:07.5	00:00:00
+
+
+# justify_days, justify_hours, justify_interval
+
+query
+SELECT justify_days(interval '35 days') AS a, justify_days(interval '-35 days') AS b,
+       justify_days(interval '1 mon -40 days') AS c, justify_days(interval '-1 mon 40 days') AS d;
+----
+a	b	c	d
+1 mon 5 days	-1 mons -5 days	-10 days	10 days
+
+
+query
+SELECT justify_hours(interval '27 hours') AS a, justify_hours(interval '-27 hours') AS b,
+       justify_hours(interval '1 day -1 hour') AS c, justify_hours(interval '-1 day 1 hour') AS d;
+----
+a	b	c	d
+1 day 03:00:00	-1 days -03:00:00	23:00:00	-23:00:00
+
+
+query
+SELECT justify_interval(interval '1 mon -1 hour') AS a, justify_interval(interval '-1 day 23 hours') AS b,
+       justify_interval(interval '50 days 30 hours') AS c, justify_interval(interval '-1 mon 31 days -25 hours') AS d;
+----
+a	b	c	d
+29 days 23:00:00	-01:00:00	1 mon 21 days 06:00:00	-01:00:00
+
+
+query
+SELECT justify_days(NULL::interval) IS NULL AS a, justify_hours(NULL::interval) IS NULL AS b,
+       justify_interval(NULL::interval) IS NULL AS c;
+----
+a	b	c
+t	t	t
+
+
+statement error
+SELECT justify_days(interval '2147483647 mons 30 days');
+----
+db error: ERROR: interval out of range
+
+
 # clock_timestamp returns non-null
 
 query

@@ -453,6 +453,22 @@ SELECT tan(pi() / 4) AS tan;
 tan
 0.9999999999999999
 
+# DOCS_TEST: to_char
+# DOCS_TEST_BODY
+query
+SELECT to_char(1234567.891, 'FM9,999,999.00') AS result;
+----
+result
+1,234,567.89
+
+# DOCS_TEST: to_char_patterns
+# DOCS_TEST_BODY
+query
+SELECT to_char(-12.5, 'FM999.9PR') AS brackets, to_char(485, 'FMRN') AS roman, to_char(21, 'FM99th') AS ordinal, to_char(1234.5, 'FM9G999D99') AS grouped;
+----
+brackets	roman	ordinal	grouped
+<12.5>	CDLXXXV	21st	1,234.5
+
 # DOCS_TEST: to_hex
 # DOCS_TEST_BODY
 query
@@ -460,6 +476,14 @@ SELECT to_hex(-1) AS to_hex;
 ----
 to_hex
 ffffffff
+
+# DOCS_TEST: to_number
+# DOCS_TEST_BODY
+query
+SELECT to_number('12,454.8-', '99G999D9S') AS result;
+----
+result
+-12454.8
 
 # DOCS_TEST: trunc
 # DOCS_TEST_BODY

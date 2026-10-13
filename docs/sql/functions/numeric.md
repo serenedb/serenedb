@@ -107,7 +107,9 @@ The table below shows the available mathematical functions.
 | [`sqrt(x)`](#sqrtx)                                                    | Returns the square root of the number.                                                                                                                                                         |
 | [`subtract(x, y)`](#subtractx-y)                                       | Alias for `x - y`.                                                                                                                                                                             |
 | [`tan(x)`](#tanx)                                                      | Computes the tangent of `x`.                                                                                                                                                                   |
+| [`to_char(x, format)`](#to_charx-format)                               | Formats the number `x` as text according to the [numeric template](#numeric-template-patterns) `format`, as PostgreSQL does.                                                                  |
 | [`to_hex(x)`](#to_hexx)                                                | Converts the integer `x` to lowercase hexadecimal, as PostgreSQL does.                                                                                                                         |
+| [`to_number(text, format)`](#to_numbertext-format)                     | Reads a number from `text` according to the [numeric template](#numeric-template-patterns) `format`, as PostgreSQL does.                                                                      |
 | [`trunc(x)`](#truncx)                                                  | Truncates the number.                                                                                                                                                                          |
 | [`xor(x, y)`](#xorx-y)                                                 | Bitwise XOR.                                                                                                                                                                                   |
 
@@ -462,11 +464,23 @@ Computes the tangent of `x`.
 
 <SqlLogicTest id="sql/functions/numeric/tan" />
 
+#### `to_char(x, format)`
+
+Formats the `integer`, `bigint`, `real`, `double precision` or `numeric` value `x` as text according to the [numeric template](#numeric-template-patterns) `format`. A value that does not fit the digits of the template prints as `#` characters. An empty template returns an empty string. To format dates and times, see [`to_char(timestamp, format)`](../../sql/functions/dateformat.md#to_chartimestamp-format).
+
+<SqlLogicTest id="sql/functions/numeric/to_char" />
+
 #### `to_hex(x)`
 
 Converts the `integer` or `bigint` `x` to lowercase hexadecimal, as PostgreSQL does. A negative value is shown in the two's complement of its own width: `to_hex(-1)` is `ffffffff`, `to_hex(-1::BIGINT)` is `ffffffffffffffff`. For a string or blob, `to_hex` is an alias of [`hex`](../../sql/functions/text.md#hexstring).
 
 <SqlLogicTest id="sql/functions/numeric/to_hex" />
+
+#### `to_number(text, format)`
+
+Reads a `numeric` value from `text` according to the [numeric template](#numeric-template-patterns) `format`. Characters of the template that are not patterns skip one character of the input. The result keeps the fractional digits that were read when both arguments are constants or query parameters, and as many fractional digits as the template allows otherwise; a template that is not a constant gives 3 fractional digits. `EEEE` is not supported for input.
+
+<SqlLogicTest id="sql/functions/numeric/to_number" />
 
 #### `trunc(x)`
 
@@ -479,3 +493,29 @@ Truncates the number.
 Bitwise XOR.
 
 <SqlLogicTest id="sql/functions/numeric/xor" />
+
+## Numeric Template Patterns
+
+[`to_char(x, format)`](#to_charx-format) and [`to_number(text, format)`](#to_numbertext-format) read their template as PostgreSQL does. Patterns are recognized in upper and lower case, and the other characters of the template are copied to the output. The locale-dependent patterns follow the C locale: `D` is a period, `G` a comma, and `L` prints a space.
+
+| Pattern      | Description                                                                          |
+| :----------- | :----------------------------------------------------------------------------------- |
+| `9`          | Digit position, dropped if insignificant.                                            |
+| `0`          | Digit position, kept even if insignificant.                                          |
+| `.`          | Decimal point.                                                                       |
+| `,`          | Group (thousands) separator.                                                         |
+| `D`          | Decimal point of the locale.                                                         |
+| `G`          | Group separator of the locale.                                                       |
+| `L`          | Currency symbol of the locale.                                                       |
+| `S`          | Sign anchored to the number.                                                         |
+| `MI`         | Minus sign in the given position, if the number is negative.                         |
+| `PL`         | Plus sign in the given position, if the number is positive.                          |
+| `SG`         | Plus or minus sign in the given position.                                            |
+| `PR`         | Negative value in angle brackets.                                                    |
+| `RN`, `rn`   | Roman numeral in upper or lower case, for values from 1 to 3999.                     |
+| `TH`, `th`   | Ordinal number suffix in upper or lower case.                                        |
+| `V`          | Multiplies by 10 for each digit that follows, `to_char(12, 'FM99V9')` is `120`.      |
+| `EEEE`       | Exponent for scientific notation, such as `4.86e-04`; only digits and a decimal point may come before it. |
+| `FM`         | Fill mode: no padding blanks and no trailing zeros.                                  |
+
+<SqlLogicTest id="sql/functions/numeric/to_char_patterns" />

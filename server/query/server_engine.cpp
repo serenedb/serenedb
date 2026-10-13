@@ -43,6 +43,7 @@
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
+#include "connector/functions/formatting.h"
 #include "connector/functions/inout.h"
 #include "connector/functions/jobs.h"
 #include "connector/functions/json.h"
@@ -161,6 +162,8 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
+
+  connector::RegisterPgFormattingFunctions(db);
 
   connector::RegisterSubscriptionPragma(db);
 

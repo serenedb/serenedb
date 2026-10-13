@@ -403,10 +403,10 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 #### Data Type Formatting
 | Feature       | Support State | Details                |
 |---------------|---------------|------------------------|
-| to_char       | No            |                        |
-| to_date       | No            |                        |
-| to_number     | No            |                        |
-| to_timestamp  | Partial       | Epoch (numeric) form only; text+format parsing unsupported |
+| to_char       | Yes           | `TZ` prints the UTC offset for zones other than UTC and GMT |
+| to_date       | Yes           |                        |
+| to_number     | Yes           | The scale of the result is fixed per query |
+| to_timestamp  | Yes           | `TZ` input recognizes UTC, GMT and numeric offsets |
 
 #### Date/Time
 | Feature                | Support State | Details                  |
@@ -441,7 +441,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | statement_timestamp    | No            |                          |
 | timeofday              | Yes           |                          |
 | transaction_timestamp  | Yes           |                          |
-| to_timestamp           | Partial           | Epoch (numeric) form only; text+format parsing unsupported |
+| to_timestamp           | Yes               |                          |
 | OVERLAPS               | No            |                          |
 | EXTRACT                | Yes           |                          |
 
@@ -959,13 +959,6 @@ PostgreSQL's array-to-text conversion leaves the quote unescaped instead:
 Unlike PostgreSQL's `regexp_substr` function, SereneDB's `regexp_extract` returns empty strings instead of `NULL`s when there is no match:
 
 <SqlLogicTest id="sql/dialect/postgresql_compatibility/example_014" />
-
-#### `to_date` Function
-
-SereneDB does not support the [`to_date` PostgreSQL date formatting function](https://www.postgresql.org/docs/17/functions-formatting.html).
-Instead, please use the [`strptime` function](../sql/functions/dateformat.md#strptime-examples):
-
-<SqlLogicTest id="sql/dialect/postgresql_compatibility/example_015" />
 
 #### `date_part` Function
 

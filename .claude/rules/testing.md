@@ -18,7 +18,7 @@ The test tree is split by what runs the test and what it covers:
 
 When a change needs a test:
 
-- Bug fix: always, unless you can argue the bug is uncoverable. The test fails before the fix, for the reason the fix claims. Crash / recovery bugs go under `tests/sqllogic/recovery/`.
+- Bug fix: always. The test fails before the fix, for the reason the fix claims. A bug a plain test can't reach (a race, an error or a crash at one spot) gets its test through a fault point (see "Fault points" in [sqllogic.md](sqllogic.md)). Crash / recovery bugs go under `tests/sqllogic/recovery/`.
 - Never edit a test or an expectation just to make a failure go away.
 - Anything checked by hand (a crash/restart loop, a driver check) ends up as a committed recovery or driver test.
 - After an upstream update, a changed error text is fine (update the test); ok -> error is a regression to fix; error -> ok needs understanding before the expectation changes.

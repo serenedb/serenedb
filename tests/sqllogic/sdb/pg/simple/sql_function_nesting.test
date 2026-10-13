@@ -1,0 +1,57 @@
+hash-threshold 100
+
+statement ok
+CREATE FUNCTION sfn_dbl(x double precision) RETURNS double precision LANGUAGE sql AS 'SELECT x + x'
+
+query
+SELECT sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(i::double precision)))))))))))))))))))))))) AS r FROM range(2) t(i) ORDER BY 1
+----
+r
+0
+16777216
+
+statement ok
+CREATE FUNCTION sfn_vec(v double precision[]) RETURNS double precision[] LANGUAGE sql AS 'SELECT ARRAY[v[1] + v[2], v[2] + v[3], v[3] + v[1]]'
+
+query
+SELECT sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(sfn_vec(ARRAY[i::double precision, 1.0, 2.0])))))))))))))))) AS r FROM range(1) t(i)
+----
+r
+{65537,65535,65536}
+
+statement ok
+CREATE FUNCTION sfn_rand() RETURNS double precision LANGUAGE sql AS 'SELECT random()'
+
+query
+SELECT count(DISTINCT sfn_rand()) > 1 AS r FROM range(100)
+----
+r
+t
+
+statement ok
+CREATE FUNCTION sfn_window(x int) RETURNS bigint LANGUAGE sql AS 'SELECT row_number() OVER ()'
+
+query
+SELECT sfn_window(7) AS r
+----
+r
+1
+
+query
+SELECT proname, prosrc FROM pg_proc WHERE proname IN ('sfn_dbl', 'sfn_window') ORDER BY 1
+----
+proname	prosrc
+sfn_dbl	(x + x)
+sfn_window	(SELECT row_number() OVER () LIMIT 1)
+
+statement ok
+DROP FUNCTION sfn_dbl
+
+statement ok
+DROP FUNCTION sfn_vec
+
+statement ok
+DROP FUNCTION sfn_rand
+
+statement ok
+DROP FUNCTION sfn_window

@@ -1778,7 +1778,7 @@ SELECT function_name, macro_definition FROM duckdb_functions()
 WHERE database_name = current_database() AND function_name LIKE 'cmr\_%' ORDER BY 1
 ----
 function_name	macro_definition
-cmr_f	(SELECT (x + 1) LIMIT 1)
+cmr_f	(x + 1)
 cmr_m	(x + 1)
 
 
@@ -1856,7 +1856,7 @@ query
 SELECT proname, prosrc FROM pg_proc WHERE proname LIKE 'cmr\_%' ORDER BY 1
 ----
 proname	prosrc
-cmr_f	(SELECT (x + 100) LIMIT 1)
+cmr_f	(x + 100)
 cmr_m	(x + 100)
 
 

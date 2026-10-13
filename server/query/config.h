@@ -75,6 +75,16 @@ class SettingRef {
   mutable std::atomic<Slot> _slot;
 };
 
+struct PgSetting {
+  std::string_view vartype;
+  std::string_view category;
+  std::string_view context = "user";
+  std::string_view unit;
+  std::string_view min_val;
+  std::string_view max_val;
+  std::span<const std::string_view> enumvals;
+};
+
 struct VariableDescription {
   duckdb::LogicalTypeId type;
   std::string_view description;
@@ -82,9 +92,14 @@ struct VariableDescription {
   duckdb::set_option_callback_t set_callback = nullptr;
   duckdb::reset_option_callback_t reset_callback = nullptr;
   duckdb::SetScope scope = duckdb::SetScope::AUTOMATIC;
+  PgSetting pg = {};
 };
 
 std::string_view GetOriginalName(std::string_view name);
+
+const VariableDescription* FindVariable(std::string_view name);
+
+std::optional<double> PgBaseValue(std::string_view unit, std::string_view text);
 
 int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             double unitless_ms);

@@ -60,7 +60,6 @@
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/oids.h"
-#include "pg/catalog/tables/settings.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 #include "pg/types.h"
@@ -609,8 +608,8 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 // PG-style version string. Overrides DuckDB's built-in version()
 void VersionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                      duckdb::Vector& result) {
-  auto value = duckdb::Value(absl::StrCat(
-    "PostgreSQL ", kServerVersion, " (SereneDB ", SERENEDB_VERSION, ")"));
+  auto value = duckdb::Value(
+    absl::StrCat("PostgreSQL 18.6 (SereneDB ", SERENEDB_VERSION, ")"));
   result.Reference(value, duckdb::count_t(args.size()));
 }
 

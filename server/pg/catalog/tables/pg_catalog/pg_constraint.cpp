@@ -70,17 +70,27 @@ constexpr std::tuple kConstraint{
   Col<"connamespace">(
     [](const auto& row) { return row.table.ParentSchemaOid(); }),
   Col<"conname">(
-    [](const auto& row) { return ConstraintName(row.table, row.constraint); })};
+    [](const auto& row) { return ConstraintName(row.table, row.constraint); }),
+  Col<"conenforced">([](const auto&) { return true; }),
+  Col<"convalidated">([](const auto&) { return true; }),
+  Col<"conislocal">([](const auto&) { return true; })};
+
+constexpr std::tuple kNoForeignKey{
+  Col<"confupdtype">([](const auto&) { return ' '; }),
+  Col<"confdeltype">([](const auto&) { return ' '; }),
+  Col<"confmatchtype">([](const auto&) { return ' '; })};
 
 class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10000;
+
   static constexpr std::tuple kSources{
     CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes}};
 
   static constexpr auto kCheck = Shape<kSql, const ConstraintRow>(
-    kConstraint, Col<"contype">([](const auto&) { return 'c'; }),
+    kConstraint, kNoForeignKey, Col<"contype">([](const auto&) { return 'c'; }),
     Col<"conkey">([](const ConstraintRow& row) {
       return NonEmpty(ExpressionAttnums(
         row.table, *row.As<duckdb::CheckConstraint>().expression));
@@ -90,14 +100,14 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
     }));
 
   static constexpr auto kNotNull = Shape<kSql, const ConstraintRow>(
-    kConstraint, Col<"contype">([](const auto&) { return 'n'; }),
+    kConstraint, kNoForeignKey, Col<"contype">([](const auto&) { return 'n'; }),
     Col<"conkey">([](const ConstraintRow& row) {
       return std::array{
         Attnum(row.table.GetColumn(row.As<duckdb::NotNullConstraint>().index))};
     }));
 
   static constexpr auto kUnique = Shape<kSql, const ConstraintRow>(
-    kConstraint, Col<"contype">([](const ConstraintRow& row) {
+    kConstraint, kNoForeignKey, Col<"contype">([](const ConstraintRow& row) {
       return row.As<duckdb::UniqueConstraint>().IsPrimaryKey() ? 'p' : 'u';
     }),
     Col<"condeferrable">([](const ConstraintRow& row) {

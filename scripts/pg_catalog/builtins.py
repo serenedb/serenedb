@@ -45,11 +45,20 @@ TYPE_MAPPINGS = os.path.join(REPO_ROOT, 'server', 'pg', 'types.cpp')
 MAPPINGS_TABLE = re.compile(r'kMappings\[\] = \{\n(.*?)\n\};', re.S)
 MAPPED_TYPE = re.compile(r'^\s*\{k(\w+),', re.M)
 
+SDB_TYPES = os.path.join(REPO_ROOT, 'server', 'pg', 'catalog', 'builtin',
+                         'builtin.cpp')
+SDB_TYPE = re.compile(r'Sdb(?:Type|Array)\(\s*k\w+,\s*"(\w+)"')
+
 
 def mapped_types():
     with open(TYPE_MAPPINGS) as source:
         table = MAPPINGS_TABLE.search(source.read()).group(1)
     return set(MAPPED_TYPE.findall(table))
+
+
+def sdb_types():
+    with open(SDB_TYPES) as source:
+        return SDB_TYPE.findall(source.read())
 
 
 def array_element(row, by_oid):
@@ -67,7 +76,7 @@ def procedures(gen, types):
 
 
 def supported_types(gen):
-    types = gen.query(TYPES_SQL, (list(config.SDB_OWNED_TYPES),))
+    types = gen.query(TYPES_SQL, (sdb_types(),))
     by_oid = {row[0]: row for row in types}
     mapped = mapped_types()
     keep = {row[0] for row in types

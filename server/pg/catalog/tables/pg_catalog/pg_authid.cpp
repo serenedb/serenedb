@@ -39,6 +39,8 @@ class PgAuthid final : public SystemTableScan<kPgAuthidSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{CatalogSetSource{
     SystemCatalog::Cluster, duckdb::CatalogType::ROLE_ENTRY, kAuthidIndexes}};
 

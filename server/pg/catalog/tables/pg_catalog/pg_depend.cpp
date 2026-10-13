@@ -119,6 +119,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 100000;
+
   static constexpr std::tuple kSources{
     CatalogSource{kSchemaObjectTypes, SystemSchemas::Skip, kIndexes}};
 

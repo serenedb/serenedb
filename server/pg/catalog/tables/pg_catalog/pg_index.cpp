@@ -107,11 +107,16 @@ constexpr std::tuple kIndexColumns{
   Col<"indoption">([](const auto& row) {
     return std::views::repeat(int16_t{0},
                               static_cast<std::ptrdiff_t>(row.Keys()));
-  })};
+  }),
+  Col<"indisvalid">([](const auto&) { return true; }),
+  Col<"indisready">([](const auto&) { return true; }),
+  Col<"indislive">([](const auto&) { return true; })};
 
 class PgIndex final : public SystemTableScan<kPgIndexSql> {
  public:
   using SystemTableScan::SystemTableScan;
+
+  static constexpr duckdb::idx_t kRows = 10000;
 
   static constexpr std::tuple kSources{
     CatalogSource{kIndexTypes, SystemSchemas::Skip, kIndexes}};
@@ -129,7 +134,7 @@ class PgIndex final : public SystemTableScan<kPgIndexSql> {
     Col<"indrelid">([](const auto& row) { return row.relation.oid; }),
     Col<"indisunique">([](const auto& row) { return row.index.IsUnique(); }),
     Col<"indisprimary">([](const auto& row) { return row.index.IsPrimary(); }),
-    kIndexColumns,
+    Col<"indimmediate">([](const auto&) { return true; }), kIndexColumns,
     Col<"indexprs">([](const auto& row) -> std::optional<std::string> {
       const auto attnums = row.Attnums();
       if (absl::c_none_of(attnums,

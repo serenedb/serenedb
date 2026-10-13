@@ -39,6 +39,8 @@ class PgCollation final : public SystemTableScan<kPgCollationSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{
     ArraySource<BuiltinCollation>{&LoadCollations, {}, {}}};
 
@@ -49,6 +51,7 @@ class PgCollation final : public SystemTableScan<kPgCollationSql> {
     Col<"collowner">([](const auto&) { return kRootUser; }),
     Col<"collprovider">(&BuiltinCollation::provider),
     Col<"collisdeterministic">(&BuiltinCollation::deterministic),
+    Col<"collencoding">([](const auto&) { return -1; }),
     Col<"collcollate">(kLocale<'c'>), Col<"collctype">(kLocale<'c'>),
     Col<"colllocale">(kLocale<'i'>));
 

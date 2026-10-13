@@ -1,25 +1,23 @@
 import os
-import re
 
 from . import config
 from .common import (CATALOG_DIR, GENERATED_DIR, SUPERUSER_ONLY_SQL, camel,
                      cpp_bool, cpp_char, cpp_str, generated)
 
-TABLE_FOLDERS = {
-    'pg_catalog': 'pg_catalog',
-    'sdb': 'pg_catalog',
-    'information_schema': 'information_schema',
-}
+PG_FOLDERS = ('pg_catalog', 'information_schema')
 
-VIEW_FOLDERS = ('pg_catalog', 'information_schema')
+SDB_FOLDER = 'sdb'
 
 RELATIONS_SQL = f"""
 SELECT c.oid::int8, n.nspname, c.relname, c.relkind, c.relisshared,
-       {SUPERUSER_ONLY_SQL}, c.reltype::int4, coalesce(t.typarray, 0)::int4
+       {SUPERUSER_ONLY_SQL}, c.reltype::int4, coalesce(t.typarray, 0)::int4,
+       c.relreplident
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 LEFT JOIN pg_type t ON t.oid = c.reltype
-WHERE (n.nspname IN ('pg_catalog', 'information_schema') AND c.relkind = 'r')
-   OR (n.nspname, c.relname) IN (SELECT * FROM unnest(%s::text[], %s::text[]))
+WHERE n.nspname IN ('pg_catalog', 'information_schema')
+  AND (c.relkind = 'r'
+       OR (c.relkind = 'v' AND (n.nspname, c.relname) IN
+           (SELECT * FROM unnest(%s::text[], %s::text[]))))
 ORDER BY n.nspname, c.relname
 """
 
@@ -29,21 +27,13 @@ LEFT JOIN pg_type e ON e.oid = t.typelem
 """
 
 COLUMNS_SQL = f"""
-SELECT a.attname, a.atttypid::int8, t.typname, e.typname, e.typrelid <> 0,
-       a.attnotnull
+SELECT a.attname, a.atttypid::int8, coalesce(e.oid, 0)::int8, e.typrelid <> 0,
+       a.attnotnull, a.attcollation::int8, a.attndims
 FROM pg_attribute a
 JOIN pg_type t ON t.oid = a.atttypid
 {ELEMENT_JOIN}
 WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped
 ORDER BY a.attnum
-"""
-
-SDB_COLUMNS_SQL = f"""
-SELECT c.name, t.oid::int8, t.typname, e.typname, e.typrelid <> 0, false
-FROM unnest(%s::text[], %s::text[]::regtype[]) WITH ORDINALITY c(name, type, i)
-JOIN pg_type t ON t.oid = c.type
-{ELEMENT_JOIN}
-ORDER BY c.i
 """
 
 KEYS_SQL = """
@@ -54,156 +44,127 @@ WHERE i.indrelid = %s
 GROUP BY a.attname
 """
 
+FUNCTIONS_SQL = """
+SELECT p.oid::int8, n.nspname, p.proname,
+       NOT EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,
+                                                   acldefault('f', p.proowner)))
+                   WHERE grantee = 0 AND privilege_type = 'EXECUTE')
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE p.proretset
+  AND (n.nspname, p.proname) IN (SELECT * FROM unnest(%s::text[], %s::text[]))
+ORDER BY n.nspname, p.proname
+"""
+
+FUNCTION_COLUMNS_SQL = f"""
+SELECT a.name, a.type::int8, coalesce(e.oid, 0)::int8, e.typrelid <> 0,
+       t.typcollation::int8
+FROM pg_proc p
+CROSS JOIN LATERAL unnest(p.proargnames, p.proallargtypes, p.proargmodes)
+  WITH ORDINALITY AS a(name, type, mode, ordinal)
+JOIN pg_type t ON t.oid = a.type
+{ELEMENT_JOIN}
+WHERE p.oid = %s AND a.mode IN ('o', 't')
+ORDER BY a.ordinal
+"""
+
 MAX_COLUMNS = 64
-CATALOG_STRUCT = re.compile(r'^CATALOG\((\w+),.*?\n\{(.*?)\n\}', re.M | re.S)
-CATALOG_COLUMN = re.compile(r'^\s*\w+\s+(\w+)(?:\[\d*\])?\s*(.*);', re.M)
-BKI_DEFAULT = re.compile(r'BKI_DEFAULT\(((?:[^()]|\([^)]*\))*)\)')
-NUMBER = re.compile(r'-?\d+(\.\d+)?')
-ZERO = {'bool': 'false', 'char': '', 'name': '', 'text': '', 'bytea': '',
-        'pg_node_tree': '', 'int2': '0', 'int4': '0', 'int8': '0',
-        'float4': '0', 'float8': '0', 'oid': '0', 'xid': '0', 'regproc': '0'}
-
-
-def bki_defaults(gen, name):
-    path = gen.source(f'src/include/catalog/{name}.h')
-    if not os.path.exists(path):
-        return {}
-    with open(path) as header:
-        match = CATALOG_STRUCT.search(header.read())
-    defaults = {}
-    for column, annotations in CATALOG_COLUMN.findall(match.group(2)):
-        if found := BKI_DEFAULT.search(annotations):
-            defaults[column] = found.group(1)
-    return defaults
-
-
-def bki_literal(raw, typname):
-    if typname == 'bool':
-        return {'t': 'true', 'f': 'false'}.get(raw)
-    if typname == 'char':
-        value = raw.strip("'")
-        return '' if value == '\\0' else value
-    if raw == '-':
-        return '0'
-    return raw if NUMBER.fullmatch(raw) else None
-
-
-def column_default(column, typname, element, notnull, bki, overrides):
-    if column in overrides:
-        return overrides[column]
-    if element or typname not in ZERO:
-        return None
-    if column in bki:
-        if (literal := bki_literal(bki[column], typname)) is not None:
-            return literal
-    return ZERO[typname] if notnull else None
 
 
 def relation_constant(schema, name):
     return ('kInfo' if schema == 'information_schema' else 'k') + camel(name)
 
 
-def physical(typname, composite):
-    if composite:
-        return 'STRUCT'
-    if typname not in config.PHYSICAL_TYPES:
-        raise SystemExit(f'no physical type for {typname}')
-    return config.PHYSICAL_TYPES[typname]
-
-
-def relations(gen):
-    native = list(config.NATIVE_VIEWS)
-    rels = gen.query(RELATIONS_SQL, ([s for s, _ in native],
-                                     [n for _, n in native]))
-    return rels + [(None, 'pg_catalog', name, 'r', False, False, 0, 0)
-                   for name in config.SDB_TABLES]
-
-
-def relation_columns(gen, oid, name):
-    if oid is None:
-        columns = config.SDB_TABLES[name][1]
-        return gen.query(SDB_COLUMNS_SQL, ([c for c, _ in columns],
-                                           [t for _, t in columns]))
-    return gen.query(COLUMNS_SQL, (oid,))
-
-
-def relation_keys(gen, oid, schema, name):
-    keys = config.NATIVE_VIEWS.get((schema, name))
-    if keys is None:
-        keys = gen.query(KEYS_SQL, (oid,)) if oid is not None else []
-    return {column: 'Unique' if unique else 'Indexed'
-            for column, unique in keys}
-
-
-def column_line(column, type_oid, typname, element, composite, notnull,
-                default, key, types):
-    if element:
-        kind, child = 'LIST', physical(element, composite)
-    else:
-        kind, child = physical(typname, False), 'INVALID'
-    value = 'std::nullopt' if default is None else cpp_str(default)
+def column_line(column, type_oid, element, composite, notnull, collation,
+                ndims, key, types):
     return (f'  {{{cpp_str(column)}, {types.get(type_oid, type_oid)}, '
-            f'duckdb::PhysicalType::{kind}, duckdb::PhysicalType::{child}, '
-            f'{cpp_bool(notnull)}, SystemKey::{key}, {value}}},')
+            f'{types.get(element, element)}, {cpp_bool(bool(composite))}, '
+            f'{cpp_bool(notnull)}, {collation}, {ndims}, SystemKey::{key}}},')
 
 
 def table_lines(gen, oid, schema, name, relkind, shared, superuser, row_type,
-                row_array_type, types):
-    columns = relation_columns(gen, oid, name)
+                row_array_type, replident, types):
+    columns = gen.query(COLUMNS_SQL, (oid,))
     if len(columns) > MAX_COLUMNS:
         raise SystemExit(f'{schema}.{name} has more than {MAX_COLUMNS} columns')
-    keys = relation_keys(gen, oid, schema, name)
-    bki = bki_defaults(gen, name) if oid and schema == 'pg_catalog' else {}
-    overrides = config.COLUMN_DEFAULTS.get((schema, name), {})
+    keys = {column: 'Unique' if unique else 'Indexed'
+            for column, unique in gen.query(KEYS_SQL, (oid,))}
     const = relation_constant(schema, name)
-    rows = config.ESTIMATED_ROWS.get((schema, name),
-                                     config.DEFAULT_ESTIMATED_ROWS)
     return ([f'inline constexpr SystemSqlColumn {const}Columns[] = {{'] +
-            [column_line(column, type_oid, typname, element, composite,
-                         notnull,
-                         column_default(column, typname, element, notnull,
-                                        bki, overrides),
-                         keys.get(column, 'None'), types)
-             for column, type_oid, typname, element, composite, notnull
-             in columns] +
+            [column_line(column, type_oid, element, composite, notnull,
+                         collation, ndims, keys.get(column, 'None'), types)
+             for column, type_oid, element, composite, notnull, collation,
+             ndims in columns] +
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Table, '
              f'{cpp_str(schema)}, {cpp_str(name)}, {row_type}, '
              f'{row_array_type}, {cpp_char(relkind)}, '
-             f'{cpp_bool(superuser)}, {cpp_bool(shared)}, {rows}, '
-             f'{const}Columns}};'])
+             f'{cpp_char(replident)}, {cpp_bool(superuser)}, '
+             f'{cpp_bool(shared)}, {const}Columns}};'])
+
+
+def function_lines(gen, oid, schema, name, superuser, types):
+    const = relation_constant(schema, name)
+    return ([f'inline constexpr SystemSqlColumn {const}Columns[] = {{'] +
+            [column_line(column, type_oid, element, composite, False,
+                         collation, 0, 'None', types)
+             for column, type_oid, element, composite, collation
+             in gen.query(FUNCTION_COLUMNS_SQL, (oid,))] +
+            ['};',
+             f'inline constexpr SystemSql {const}Sql{{{const}Function, '
+             f"{cpp_str(schema)}, {cpp_str(name)}, 0, 0, '\\0', '\\0', "
+             f'{cpp_bool(superuser)}, false, {const}Columns}};'])
 
 
 REGISTRY = os.path.join(GENERATED_DIR, 'registry.gen.inc')
 
 
+def files(kind, folder):
+    path = os.path.join(CATALOG_DIR, kind, folder)
+    if not os.path.isdir(path):
+        return []
+    return [file.removesuffix('.cpp') for file in sorted(os.listdir(path))]
+
+
 def table_files():
-    for folder, schema in TABLE_FOLDERS.items():
-        for file in sorted(os.listdir(os.path.join(CATALOG_DIR, 'tables',
-                                                   folder))):
-            yield f'tables/{folder}/{file}', schema, file.removesuffix('.cpp')
+    return [(schema, name) for schema in PG_FOLDERS
+            for name in files('tables', schema)]
+
+
+def function_files():
+    return [(schema, name) for schema in PG_FOLDERS
+            for name in files('table_functions', schema)]
 
 
 def view_files():
-    for schema in VIEW_FOLDERS:
-        for file in sorted(os.listdir(os.path.join(CATALOG_DIR, 'views',
-                                                   schema))):
-            yield schema, file.removesuffix('.cpp')
+    return [(schema, name) for schema in PG_FOLDERS
+            for name in files('views', schema)]
 
 
 def registry():
-    coded = sorted(relation_constant(schema, name)[1:]
-                   for _, schema, name in table_files())
+    coded = sorted([relation_constant(schema, name)[1:]
+                    for schema, name in table_files()] +
+                   [relation_constant('pg_catalog', name)[1:]
+                    for name in files('tables', SDB_FOLDER)])
     views = sorted((relation_constant(schema, name)[1:], schema, name)
                    for schema, name in view_files())
-    return generated('the files in server/pg/catalog/tables and views', [
-        f'extern SystemTable g{name};' for name in coded] +
+    sdb_views = sorted(relation_constant('pg_catalog', name)[1:]
+                       for name in files('views', SDB_FOLDER))
+    functions = sorted(relation_constant(schema, name)[1:]
+                       for schema, name in function_files())
+    return generated(
+      'the files in server/pg/catalog/tables, table_functions and views', [
+        f'extern SystemTable g{name};' for name in coded + functions] +
         ['SystemTable* const kSystemTables[] = {'] +
         [f'  &g{name},' for name in coded] + ['};'] +
+        ['SystemTable* const kSystemTableFunctions[] = {'] +
+        [f'  &g{name},' for name in functions] + ['};'] +
         [f'extern std::string_view g{const};' for const, _, _ in views] +
         ['const SystemViewSql kSystemViewSql[] = {'] +
         [f'  {{{cpp_str(schema)}, {cpp_str(name)}, g{const}}},'
-         for const, schema, name in views] + ['};'])
+         for const, schema, name in views] + ['};'] +
+        [f'extern SystemView g{const};' for const in sdb_views] +
+        ['SystemView* const kSdbViews[] = {'] +
+        [f'  &g{const},' for const in sdb_views] + ['};'])
 
 
 def named_oids(gen, sql, names):
@@ -239,26 +200,39 @@ def generate(gen, types):
                             "collname = %s AND collnamespace = "
                             "'pg_catalog'::regnamespace",
                        config.COLLATIONS))
+    coded = table_files()
     tables, all_tables, known = [], [], set()
     for (oid, schema, name, relkind, shared, superuser, row_type,
-         row_array_type) in relations(gen):
+         row_array_type, replident) in gen.query(RELATIONS_SQL,
+                                                 ([s for s, _ in coded],
+                                                  [n for _, n in coded])):
         known.add((schema, name))
         const = relation_constant(schema, name)
-        table_oid = (oid if oid is not None
-                     else f'kMinSystem + {config.SDB_TABLES[name][0]}')
-        oids.append(f'inline constexpr duckdb::idx_t {const}Table = '
-                    f'{table_oid};')
-        superuser = superuser or (schema, name) in config.SUPERUSER_ONLY
+        oids.append(f'inline constexpr duckdb::idx_t {const}Table = {oid};')
         tables += table_lines(gen, oid, schema, name, relkind, shared,
-                              superuser, row_type, row_array_type, types)
+                              superuser, row_type, row_array_type, replident,
+                              types)
         all_tables.append(f'&{const}Sql,')
+    functions = function_files()
+    found = []
+    for oid, schema, name, superuser in gen.query(
+            FUNCTIONS_SQL, ([s for s, _ in functions], [n for _, n in functions])):
+        found.append((schema, name))
+        const = relation_constant(schema, name)
+        oids.append(f'inline constexpr duckdb::idx_t {const}Function = {oid};')
+        tables += function_lines(gen, oid, schema, name, superuser, types)
+    for schema, name in functions:
+        if found.count((schema, name)) != 1:
+            raise SystemExit(f'table_functions/{schema}/{name}.cpp names no '
+                             f'single set-returning function')
     tables.append('inline constexpr const SystemSql* kGeneratedTables[] = {')
     tables += ['  ' + line for line in all_tables]
     tables.append('};')
     gen.write('catalog_oids.gen.inc', oids)
     gen.write('tables.gen.inc', tables)
-    for path, schema, name in table_files():
+    for schema, name in coded:
         if (schema, name) not in known:
-            raise SystemExit(f'{path} names no catalog table')
+            raise SystemExit(f'tables/{schema}/{name}.cpp names no catalog '
+                             f'table')
     gen.write('keywords.gen.inc',
               [cpp_str(word) + ',' for word in sorted(reserved)])

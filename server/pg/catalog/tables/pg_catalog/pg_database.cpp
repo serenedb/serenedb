@@ -34,6 +34,8 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{
     CatalogSetSource{SystemCatalog::Cluster,
                      duckdb::CatalogType::DATABASE_ENTRY, kDatabaseIndexes}};
@@ -42,6 +44,14 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
     Shape<kSql, const catalog::DatabaseCatalogEntry>(
       Col<"oid">(&duckdb::CatalogEntry::oid),
       Col<"datname">(&duckdb::CatalogEntry::name), Col<"datdba">(kOwner),
+      Col<"encoding">([](const auto&) { return 6; }),
+      Col<"datlocprovider">([](const auto&) { return 'c'; }),
+      Col<"datallowconn">([](const auto&) { return true; }),
+      Col<"datconnlimit">([](const auto&) { return -1; }),
+      Col<"dattablespace">([](const auto&) { return kPgDefaultTablespace; }),
+      Col<"datcollate">(
+        [](const auto&) { return std::string_view{"C.UTF-8"}; }),
+      Col<"datctype">([](const auto&) { return std::string_view{"C.UTF-8"}; }),
       Col<"datacl">(kAcl));
 
   void Row(const catalog::DatabaseCatalogEntry& database) {

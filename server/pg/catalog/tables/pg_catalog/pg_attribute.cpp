@@ -28,6 +28,7 @@
 #include <limits>
 #include <optional>
 
+#include "catalog/entry/system_table.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/types.h"
@@ -61,6 +62,7 @@ struct TableAttribute {
   duckdb::idx_t relid;
   const duckdb::ColumnDefinition& column;
   const std::vector<bool>& not_null;
+  const SystemSqlColumn* system;
   mutable std::optional<ColumnType> described = std::nullopt;
 
   duckdb::idx_t Relid() const noexcept { return relid; }
@@ -72,6 +74,10 @@ struct TableAttribute {
   const ColumnType& Described() const {
     if (!described) {
       described = DescribeColumnType(column.Type());
+      if (system) {
+        described->collation = system->collation;
+        described->ndims = system->ndims;
+      }
     }
     return *described;
   }
@@ -99,12 +105,15 @@ constexpr std::tuple kAttribute{
   Col<"attbyval">([](const auto& row) { return row.Described().byval; }),
   Col<"attalign">([](const auto& row) { return row.Described().align; }),
   Col<"attstorage">([](const auto& row) { return row.Described().storage; }),
+  Col<"attislocal">([](const auto&) { return true; }),
   Col<"attcollation">(
     [](const auto& row) { return row.Described().collation; })};
 
 class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
  public:
   using SystemTableScan::SystemTableScan;
+
+  static constexpr duckdb::idx_t kRows = 100000;
 
   static constexpr std::tuple kSources{
     CatalogSource{kRelationTypes, SystemSchemas::Visit, kIndexes}};
@@ -142,8 +151,14 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     if (Allows<"attrelid">(table.oid)) {
       const auto not_null =
         Reads<"attnotnull">() ? NotNullColumns(table) : std::vector<bool>{};
+      const auto* system =
+        table.internal ? dynamic_cast<const catalog::SystemTableEntry*>(&table)
+                       : nullptr;
       for (const auto& column : table.GetColumns().Logical()) {
-        Emit<kTableColumn>({table.oid, column, not_null});
+        Emit<kTableColumn>(
+          {table.oid, column, not_null,
+           system ? &system->Table().Sql().columns[column.Logical().index]
+                  : nullptr});
       }
     }
     for (const auto& key : KeyIndexes(table)) {

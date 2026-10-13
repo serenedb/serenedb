@@ -63,7 +63,7 @@ ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
-check_function_bodies	on	Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE.
+check_function_bodies	on	Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE. SereneDB always checks them; turning this off has no effect.
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables cleanup. Default: 1.
@@ -84,8 +84,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
-default_table_access_method	heap	Sets the default table access method for new tables.
-default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in.
+default_table_access_method	heap	Sets the default table access method for new tables. Accepted for compatibility; it has no effect in SereneDB.
+default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in. Accepted for compatibility; SereneDB has no tablespaces.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	repeatable read	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -164,7 +164,7 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification for deletion-vector files. This unsafe compatibility option permits reading invalid bare-blob files written by DuckDB Iceberg 1.5.3.
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
-idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction.
+idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction. Accepted for compatibility; SereneDB does not end idle transactions.
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -177,26 +177,21 @@ integer_division	on	Whether or not the / operator defaults to integer division, 
 IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
-lc_messages	C	Sets the language in which messages are displayed.
-lc_monetary	C	Sets the locale for formatting monetary amounts.
-lc_numeric	C	Sets the locale for formatting numbers.
-lc_time	C	Sets the locale for formatting date and time values.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
-lock_timeout	0	Sets the maximum allowed duration of any wait for a lock.
+lock_timeout	0	Sets the maximum allowed duration of any wait for a lock. Accepted for compatibility; SereneDB never waits for a lock, a conflicting write fails at once.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
 logging_level	<slt:ignore>	Determines which 'severity' of log messages will be logged.
 logging_mode	<slt:ignore>	Determines which types of log messages are logged.
 logging_storage	<slt:ignore>	Set the logging storage, options are 'memory', 'stdout', 'file', '<custom>'.
-maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations.
+maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations. Accepted for compatibility; memory_limit bounds the memory of every operation.
 match_recognize_max_states	1000000	The maximum number of pattern states MATCH_RECOGNIZE explores for a single match, before it refuses the pattern (0 = no limit). A match is never refused below what matching the pattern without backtracking would take.
-max_connections	0	Sets the maximum number of concurrent client connections.
+max_connections	0	Sets the maximum number of concurrent client connections. Set with --max_connections; 0 means no limit. A listener may override it with ?max_connections=.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
-max_identifier_length	63	Shows the maximum identifier length.
-max_index_keys	32	Shows the maximum number of index keys.
+max_identifier_length	63	Shows the maximum identifier length. SereneDB keeps longer identifiers in full.
+max_index_keys	32	Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as pg_index.indkey and pg_constraint.conkey.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
-max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
@@ -213,7 +208,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
-password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords. SereneDB stores a password given in plain text as SCRAM-SHA-256; clients read this setting to choose how they encrypt one themselves.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
@@ -258,7 +253,7 @@ refresh_interval	1000	Background refresh interval (ms) for newly created inverte
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
-row_security	on	Enables row security.
+row_security	on	Enables row security. Accepted for compatibility; SereneDB has no row security policies.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -315,27 +310,27 @@ secret_directory	<slt:ignore>	Set the directory in which persistent secrets are 
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
 segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.3	Shows the server version.
-server_version_num	180003	Shows the server version as an integer.
+server_version	18.6	Shows the server version.
+server_version_num	180006	Shows the server version as an integer.
 session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Sets the maximum allowed duration of any statement.
+statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
-synchronous_commit	on	Sets the current transaction's synchronization level.
+synchronous_commit	on	Sets the current transaction's synchronization level. Accepted for compatibility; it has no effect in SereneDB.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
 threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
-transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.
+transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures. Accepted for compatibility; it has no effect in SereneDB.
 transaction_isolation	repeatable read	Sets the current transaction's isolation level.
-transaction_read_only	off	Sets the current transaction's read-only status.
-transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).
+transaction_read_only	off	Sets the current transaction's read-only status. Accepted for compatibility; it has no effect in SereneDB.
+transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction). Accepted for compatibility; SereneDB does not time transactions out.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
@@ -346,11 +341,11 @@ wal_receiver_status_interval	10s	How often a logical replication worker reports 
 wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
 wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
-work_mem	4096	Sets the maximum memory to be used for query workspaces.
+work_mem	4096	Sets the maximum memory to be used for query workspaces. Accepted for compatibility; memory_limit bounds the memory of every operation.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
-xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments. Accepted for compatibility; SereneDB has no xml type.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.
 
 
@@ -423,7 +418,7 @@ ch_pool_max_connections	<slt:ignore>	Maximum number of connections that are allo
 ch_pool_max_lifetime_millis	0	Maximum number of milliseconds a connection can be kept open; checked on lease/return and, with the reaper thread enabled, in the background
 ch_pool_wait_timeout_millis	30000	Maximum number of milliseconds to wait when acquiring a connection from a pool where all available connections are already taken
 ch_statement_timeout_millis	NULL	Maximum milliseconds a ClickHouse scan/execute query may run (0 = unlimited)
-check_function_bodies	on	Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE.
+check_function_bodies	on	Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE. SereneDB always checks them; turning this off has no effect.
 checkpoint_on_detach	DEFAULT	Override checkpoint behavior when detaching a database. ENABLED requests a checkpoint, but the checkpoint does not occur if another connection still references the database. DISABLED never checkpoints, DEFAULT defers to the global checkpoint_on_shutdown setting.
 checkpoint_threshold	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 cleanup_interval_step	1	Number of commit ticks between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables cleanup. Default: 1.
@@ -444,8 +439,8 @@ default_collation	(empty)	The collation setting used when none is specified.
 default_null_order	NULLS_LAST	The NULL ordering used when none is specified (NULLS_FIRST or NULLS_LAST).
 default_order	ASCENDING	The order type used when none is specified (ASC or DESC).
 default_secret_storage	local_file	Allows switching the default storage for secrets.
-default_table_access_method	heap	Sets the default table access method for new tables.
-default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in.
+default_table_access_method	heap	Sets the default table access method for new tables. Accepted for compatibility; it has no effect in SereneDB.
+default_tablespace	(empty)	Sets the default tablespace to create tables and indexes in. Accepted for compatibility; SereneDB has no tablespaces.
 default_transaction_invalidation_policy	ALL_ERRORS_INVALIDATE_TRANSACTION	When to invalidate transactions when errors occur. SYNTACTIC_ERRORS_DO_NOT_INVALIDATE means that parser and binder exceptions do not invalidate. ALL_ERRORS_INVALIDATE_TRANSACTION means all errors invalidate a transaction.
 default_transaction_isolation	read committed	Sets the transaction isolation level of each new transaction.
 default_transaction_read_only	off	Sets the default read-only status of new transactions.
@@ -524,7 +519,7 @@ iceberg_test_force_token_expiry	off	DEBUG SETTING: force OAuth2 token expiry for
 iceberg_unsafe_skip_puffin_verification	off	Skip structural Puffin verification for deletion-vector files. This unsafe compatibility option permits reading invalid bare-blob files written by DuckDB Iceberg 1.5.3.
 iceberg_use_metadata_log	off	Use metadata-log to select table metadata as of the transaction start for snapshot isolation. Disable to accept the latest table metadata resolved by the transaction instead
 iceberg_use_server_side_scan_planning	off	Whether or not to use server-side scanning planning (if available)
-idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction.
+idle_in_transaction_session_timeout	0	Sets the maximum allowed idle time between queries, when in a transaction. Accepted for compatibility; SereneDB does not end idle transactions.
 ieee_floating_point_ops	on	Use IEEE 754 behavior for supported floating point operations, returning NAN/INF instead of errors/NULL.
 ignore_unknown_crs	off	Ignore unknown Coordinate Reference Systems (CRS) when creating geometry types or importing geospatial data.
 immediate_transaction_mode	off	Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called.
@@ -537,26 +532,21 @@ integer_division	on	Whether or not the / operator defaults to integer division, 
 IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
-lc_messages	C	Sets the language in which messages are displayed.
-lc_monetary	C	Sets the locale for formatting monetary amounts.
-lc_numeric	C	Sets the locale for formatting numbers.
-lc_time	C	Sets the locale for formatting date and time values.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder. This was the default behavior prior to DuckDB v2.0.
 lock_configuration	off	Whether configurations can be altered.
-lock_timeout	0	Sets the maximum allowed duration of any wait for a lock.
+lock_timeout	0	Sets the maximum allowed duration of any wait for a lock. Accepted for compatibility; SereneDB never waits for a lock, a conflicting write fails at once.
 log_query_path	(empty)	Specifies the path to which queries should be logged. The default is NULL, meaning queries are not logged.
 logging_level	<slt:ignore>	Determines which 'severity' of log messages will be logged.
 logging_mode	<slt:ignore>	Determines which types of log messages are logged.
 logging_storage	<slt:ignore>	Set the logging storage, options are 'memory', 'stdout', 'file', '<custom>'.
-maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations.
+maintenance_work_mem	65536	Sets the maximum memory to be used for maintenance operations. Accepted for compatibility; memory_limit bounds the memory of every operation.
 match_recognize_max_states	1000000	The maximum number of pattern states MATCH_RECOGNIZE explores for a single match, before it refuses the pattern (0 = no limit). A match is never refused below what matching the pattern without backtracking would take.
-max_connections	0	Sets the maximum number of concurrent client connections.
+max_connections	0	Sets the maximum number of concurrent client connections. Set with --max_connections; 0 means no limit. A listener may override it with ?max_connections=.
 max_execution_time	0	The maximum execution time per query in milliseconds (0 = no limit).
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
-max_identifier_length	63	Shows the maximum identifier length.
-max_index_keys	32	Shows the maximum number of index keys.
+max_identifier_length	63	Shows the maximum identifier length. SereneDB keeps longer identifiers in full.
+max_index_keys	32	Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as pg_index.indkey and pg_constraint.conkey.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
-max_prepared_transactions	0	Shows the maximum number of simultaneously prepared transactions.
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
 max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
@@ -573,7 +563,7 @@ parquet_metadata_cache	off	Cache Parquet metadata - useful when reading the same
 parquet_prefetch_column_gap	NULL	Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it)
 partitioned_write_flush_threshold	524288	The number of rows threshold after which a thread state is flushed when writing using PARTITION_BY.
 partitioned_write_max_open_files	100	The maximum amount of files the system can keep open before flushing to disk when writing using PARTITION_BY.
-password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords.
+password_encryption	scram-sha-256	Chooses the algorithm for encrypting passwords. SereneDB stores a password given in plain text as SCRAM-SHA-256; clients read this setting to choose how they encrypt one themselves.
 perfect_ht_threshold	12	Threshold in bytes for when to use a perfect hash table.
 pg_array_as_varchar	off	Read Postgres arrays as varchar - enables reading mixed dimensional arrays
 pg_connection_cache	on	Whether or not to use the connection pooling. This option is deprecated, instead to disable the connection pooling use "SET pg_pool_max_connections=0" for newly attached Postgres databases and "FROM postgres_configure_pool(catalog_name='my_attached_postgres_db', max_connections=0)" for already attached Postgres databases.
@@ -618,7 +608,7 @@ refresh_interval	1000	Background refresh interval (ms) for newly created inverte
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
 reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
-row_security	on	Enables row security.
+row_security	on	Enables row security. Accepted for compatibility; SereneDB has no row security policies.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
 rtree_index_scan_ratio	0.075	the maximum estimated fraction of a table's rows that a bounding-box filter may match for an R-tree index scan to be used instead of a full table scan
 s3_access_key_id	NULL	S3 Access Key ID
@@ -675,27 +665,27 @@ secret_directory	<slt:ignore>	Set the directory in which persistent secrets are 
 segment_docs_max	0	Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs).
 segment_memory_max	268435456	In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence, and half of it is the write buffer a serial search-table statement fills before it starts feeding the index as it goes). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB).
 server_encoding	UTF8	Shows the server (database) character set encoding.
-server_version	18.3	Shows the server version.
-server_version_num	180003	Shows the server version as an integer.
+server_version	18.6	Shows the server version.
+server_version_num	180006	Shows the server version as an integer.
 session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
-statement_timeout	0	Sets the maximum allowed duration of any statement.
+statement_timeout	0	Aborts any statement that takes more than the specified amount of time (milliseconds without a unit). 0 disables the timeout.
 storage_block_prefetch	REMOTE_ONLY	Configures the scenario in which to use storage block prefetching.
 storage_compatibility_version	latest	Sets the DuckDB version for which data is serialized to the DuckDB file during checkpointing. Can differ from the version of the DuckDB instance.
 streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
-synchronous_commit	on	Sets the current transaction's synchronization level.
+synchronous_commit	on	Sets the current transaction's synchronization level. Accepted for compatibility; it has no effect in SereneDB.
 table_function_identifier_conversion	DISABLE_IMPLICIT_STRING	Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments.
 temp_directory	<slt:ignore>	Set the directory to which temporary files are written.
 temp_file_encryption	off	Encrypt all temporary files, if the database is encrypted.
 threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 TimeZone	Etc/UTC	Sets the time zone for displaying and interpreting time stamps.
 tracked_metrics	[*]	A list of metric glob patterns to enable for collection, e.g. ['query.*', 'optimizer.*'].
-transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures.
+transaction_deferrable	off	Whether to defer a read-only serializable transaction until it can be executed with no possible serialization failures. Accepted for compatibility; it has no effect in SereneDB.
 transaction_isolation	read committed	Sets the current transaction's isolation level.
-transaction_read_only	off	Sets the current transaction's read-only status.
-transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction).
+transaction_read_only	off	Sets the current transaction's read-only status. Accepted for compatibility; it has no effect in SereneDB.
+transaction_timeout	0	Sets the maximum allowed duration of any transaction within a session (not a prepared transaction). Accepted for compatibility; SereneDB does not time transactions out.
 unsafe_disable_etag_checks	off	Disable checks on ETag consistency
 unsafe_enable_version_guessing	off	Enable globbing the filesystem (if possible) to find the latest version metadata. This could result in reading an uncommitted version.
 validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_ALL is the default, it validates all cache entries., VALIDATE_REMOTE only validates remote cache entries. NO_VALIDATION disables cache validation.
@@ -706,9 +696,9 @@ wal_receiver_status_interval	10s	How often a logical replication worker reports 
 wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
 wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
-work_mem	4096	Sets the maximum memory to be used for query workspaces.
+work_mem	4096	Sets the maximum memory to be used for query workspaces. Accepted for compatibility; memory_limit bounds the memory of every operation.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
 write_buffer_row_group_memory_limit	<slt:ignore>	The maximum data to buffer in row groups (in bytes) to buffer prior to flushing them together. When either this limit is reached, or write_buffer_row_group_count is reached, we flush the data to disk. Defaults to 20% of the memory limit divided by the thread count.
-xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments.
+xmloption	content	Sets whether XML data in implicit parsing and serialization operations is to be considered as documents or content fragments. Accepted for compatibility; SereneDB has no xml type.
 zstd_min_string_length	4096	The (average) minimum length at which to enable ZSTD compression, defaults to 4096.

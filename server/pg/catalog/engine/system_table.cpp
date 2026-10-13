@@ -69,9 +69,9 @@ void SystemTable::Init() {
 
 bool SystemTable::DefaultsHold(uint64_t provided) const {
   return absl::c_all_of(_facts, [&](const SystemFact& fact) {
-    const auto& fallback = _sql.columns[fact.column].default_value;
-    return ((provided >> fact.column) & 1) != 0 || !fallback ||
-           Holds(fact.column, SystemNumber(*fallback));
+    return ((provided >> fact.column) & 1) != 0 ||
+           !_sql.columns[fact.column].zero_default ||
+           Holds(fact.column, int64_t{0});
   });
 }
 

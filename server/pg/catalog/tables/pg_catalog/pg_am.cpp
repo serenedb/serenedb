@@ -42,6 +42,8 @@ class PgAm final : public SystemTableScan<kPgAmSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10;
+
   static constexpr std::tuple kSources{
     ArraySource<Am>{&LoadStatic<kAms>, {}, {}}};
 

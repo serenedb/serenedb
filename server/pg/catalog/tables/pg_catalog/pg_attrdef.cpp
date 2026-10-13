@@ -41,6 +41,8 @@ class PgAttrdef final : public SystemTableScan<kPgAttrdefSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
+  static constexpr duckdb::idx_t kRows = 10000;
+
   static constexpr std::tuple kSources{
     CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes}};
 

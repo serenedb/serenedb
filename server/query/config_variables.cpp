@@ -18,8 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/flags/declare.h>
+#include <absl/flags/flag.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_join.h>
@@ -28,7 +32,6 @@
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -57,19 +60,48 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/catalog/tables/settings.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "scheduler/job_scheduler.h"
 
+ABSL_DECLARE_FLAG(uint64_t, max_connections);
+
 namespace sdb {
 namespace {
 
-constexpr std::pair<std::string_view, double> kTimeUnits[] = {
-  {"us", 0.001},  {"ms", 1},      {"s", 1000},
-  {"min", 60000}, {"h", 3600000}, {"d", 86400000},
+struct PgUnit {
+  std::string_view name;
+  double factor;
+  bool memory;
 };
+
+constexpr PgUnit kPgUnits[] = {
+  {"B", 1, true},
+  {"kB", 1024, true},
+  {"MB", 1024.0 * 1024, true},
+  {"GB", 1024.0 * 1024 * 1024, true},
+  {"TB", 1024.0 * 1024 * 1024 * 1024, true},
+  {"us", 0.001, false},
+  {"ms", 1, false},
+  {"s", 1000, false},
+  {"min", 60000, false},
+  {"h", 3600000, false},
+  {"d", 86400000, false},
+};
+
+constexpr std::string_view kMemoryUnitsHint =
+  "Valid units for this parameter are \"B\", \"kB\", \"MB\", \"GB\", and "
+  "\"TB\".";
+constexpr std::string_view kTimeUnitsHint =
+  "Valid units for this parameter are \"us\", \"ms\", \"s\", \"min\", \"h\", "
+  "and \"d\".";
+
+const PgUnit* FindPgUnit(std::string_view name) {
+  const auto* it = absl::c_find_if(
+    kPgUnits, [&](const PgUnit& unit) { return unit.name == name; });
+  return it == std::end(kPgUnits) ? nullptr : it;
+}
 
 }  // namespace
 
@@ -79,8 +111,7 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
-      ERR_HINT("Valid units for this parameter are \"us\", "
-               "\"ms\", \"s\", \"min\", \"h\", and \"d\"."));
+      ERR_HINT(kTimeUnitsHint));
   };
   const auto trimmed = absl::StripAsciiWhitespace(text);
   double number = 0;
@@ -93,12 +124,11 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
     trimmed.substr(static_cast<size_t>(ptr - trimmed.data())));
   double scale = unitless_ms;
   if (!unit.empty()) {
-    const auto it = std::ranges::find(
-      kTimeUnits, unit, &std::pair<std::string_view, double>::first);
-    if (it == std::end(kTimeUnits)) {
+    const auto* found = FindPgUnit(unit);
+    if (!found || found->memory) {
       invalid();
     }
-    scale = it->second;
+    scale = found->factor;
   }
   const auto ms = std::round(number * scale);
   if (ms < 0 || ms > std::numeric_limits<int32_t>::max()) {
@@ -108,6 +138,28 @@ int64_t ParseDurationMillis(std::string_view name, std::string_view text,
                             name, "\" (0 ms .. 2147483647 ms)"));
   }
   return static_cast<int64_t>(ms);
+}
+
+std::optional<double> PgBaseValue(std::string_view unit,
+                                  std::string_view text) {
+  const auto value = absl::StripAsciiWhitespace(text);
+  double number = 0;
+  const auto [end, error] =
+    fast_float::from_chars(value.data(), value.data() + value.size(), number);
+  if (error != std::errc{}) {
+    return std::nullopt;
+  }
+  const auto suffix = absl::StripLeadingAsciiWhitespace(
+    value.substr(static_cast<size_t>(end - value.data())));
+  if (suffix.empty()) {
+    return number;
+  }
+  const auto* base = FindPgUnit(unit);
+  const auto* given = FindPgUnit(suffix);
+  if (!base || !given || given->memory != base->memory) {
+    return std::nullopt;
+  }
+  return number * given->factor / base->factor;
 }
 
 duckdb::Value SettingRef::Global(const duckdb::DBConfig& config) const {
@@ -220,31 +272,86 @@ void NoticeIfChanged(duckdb::ClientContext& ctx, std::string_view name,
       "\" is accepted for compatibility but is not enforced by serened")));
 }
 
-std::string FormatDuration(int64_t ms) {
-  if (ms == 0) {
-    return "0";
+std::string PgIntegerText(std::string_view unit, int64_t value) {
+  const auto* base = FindPgUnit(unit);
+  if (!base || value == 0) {
+    return absl::StrCat(value);
   }
-  for (const auto& [unit, scale] : std::views::reverse(kTimeUnits)) {
-    const auto factor = static_cast<int64_t>(scale);
-    if (factor != 0 && ms % factor == 0) {
-      return absl::StrCat(ms / factor, unit);
+  for (const auto& larger : std::views::reverse(kPgUnits)) {
+    const auto ratio = static_cast<int64_t>(larger.factor / base->factor);
+    if (larger.memory == base->memory && ratio > 1 && value % ratio == 0) {
+      return absl::StrCat(value / ratio, larger.name);
     }
   }
-  return absl::StrCat(ms, "ms");
+  return absl::StrCat(value, base->name);
+}
+
+int64_t CheckPgInteger(std::string_view name, const PgSetting& pg,
+                       std::string_view text) {
+  const auto value = PgBaseValue(pg.unit, text);
+  if (!value) {
+    const auto* base = FindPgUnit(pg.unit);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
+      ERR_HINT(!base          ? std::string_view{}
+               : base->memory ? kMemoryUnitsHint
+                              : kTimeUnitsHint));
+  }
+  const auto rounded = std::round(*value);
+  double min = 0;
+  double max = 0;
+  if (!absl::SimpleAtod(pg.min_val, &min) ||
+      !absl::SimpleAtod(pg.max_val, &max) || rounded < min || rounded > max) {
+    const auto unit =
+      pg.unit.empty() ? std::string{} : absl::StrCat(" ", pg.unit);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(absl::StrFormat("%.0f", rounded), unit,
+              " is outside the valid range for parameter \"", name, "\" (",
+              pg.min_val, unit, " .. ", pg.max_val, unit, ")"));
+  }
+  return static_cast<int64_t>(rounded);
+}
+
+std::string NormalizePgValue(std::string_view name, const PgSetting& pg,
+                             std::string_view text) {
+  if (pg.vartype == "integer") {
+    return PgIntegerText(pg.unit, CheckPgInteger(name, pg, text));
+  }
+  const auto value = absl::StripAsciiWhitespace(text);
+  if (pg.vartype == "enum") {
+    const auto it = absl::c_find_if(pg.enumvals, [&](std::string_view option) {
+      return absl::EqualsIgnoreCase(option, value);
+    });
+    if (it != pg.enumvals.end()) {
+      return std::string{*it};
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"", name, "\": \"", text, "\""),
+      ERR_HINT("Available values: ", absl::StrJoin(pg.enumvals, ", "), "."));
+  }
+  return std::string{text};
 }
 
 template<irs::utils::detail::FixedString Name>
 void NoOverwrite(duckdb::ClientContext& ctx, duckdb::SetScope,
                  duckdb::Value& value) {
-  NoticeIfChanged(ctx, std::string_view{Name}, value);
+  constexpr std::string_view kName{Name};
+  if (!value.IsNull() && value.type().id() == duckdb::LogicalTypeId::VARCHAR) {
+    value = duckdb::Value{
+      NormalizePgValue(kName, FindVariable(kName)->pg, value.ToString())};
+  }
+  NoticeIfChanged(ctx, kName, value);
 }
 
 void SetStatementTimeout(duckdb::ClientContext& ctx, duckdb::SetScope scope,
                          duckdb::Value& value) {
-  const auto& guc = *pg::FindGuc("statement_timeout");
-  const auto ms =
-    value.IsNull() ? 0 : pg::CheckGucInteger(guc, value.ToString());
-  value = duckdb::Value{pg::GucIntegerText(guc, ms)};
+  const auto ms = value.IsNull() ? 0
+                                 : ParseDurationMillis("statement_timeout",
+                                                       value.ToString(), 1);
+  value = duckdb::Value{PgIntegerText("ms", ms)};
   duckdb::Settings::Set<duckdb::MaxExecutionTimeSetting>(
     ctx,
     scope == duckdb::SetScope::AUTOMATIC ? duckdb::SetScope::SESSION : scope,
@@ -283,8 +390,9 @@ void SetServerDuration(duckdb::ClientContext& ctx, duckdb::SetScope,
   RequireSuperuser(ctx, kName,
                    "Only roles with the SUPERUSER attribute may change "
                    "server-wide replication settings.");
-  value = duckdb::Value{FormatDuration(ParseDurationMillis(
-    kName, value.ToString(), static_cast<double>(UnitlessMs)))};
+  value = duckdb::Value{
+    PgIntegerText("ms", ParseDurationMillis(kName, value.ToString(),
+                                            static_cast<double>(UnitlessMs)))};
 }
 
 template<irs::utils::detail::FixedString Name>
@@ -492,16 +600,6 @@ void CheckDateStyle(duckdb::ClientContext& ctx, duckdb::SetScope,
   NoticeIfChanged(ctx, "DateStyle", value);
 }
 
-void CheckIntervalStyle(duckdb::ClientContext& ctx, duckdb::SetScope,
-                        duckdb::Value& value) {
-  if (value.IsNull()) {
-    return;
-  }
-  value = duckdb::Value{
-    pg::NormalizeGucValue(*pg::FindGuc("IntervalStyle"), value.ToString())};
-  NoticeIfChanged(ctx, "IntervalStyle", value);
-}
-
 void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
                           duckdb::Value& value) {
   if (value.IsNull()) {
@@ -523,6 +621,28 @@ void CheckApplicationName(duckdb::ClientContext&, duckdb::SetScope,
     value = duckdb::Value{clean};
   }
 }
+
+constexpr std::string_view kStatementBehavior =
+  "Client Connection Defaults / Statement Behavior";
+constexpr std::string_view kLocaleAndFormatting =
+  "Client Connection Defaults / Locale and Formatting";
+constexpr std::string_view kAuthentication =
+  "Connections and Authentication / Authentication";
+constexpr std::string_view kPresetOptions = "Preset Options";
+constexpr std::string_view kMemory = "Resource Usage / Memory";
+
+constexpr std::string_view kByteaOutputs[] = {"escape", "hex"};
+constexpr std::string_view kIsolationLevels[] = {"repeatable read",
+                                                 "read committed"};
+constexpr std::string_view kIntervalStyles[] = {"postgres", "postgres_verbose",
+                                                "sql_standard", "iso_8601"};
+constexpr std::string_view kMessageLevels[] = {"debug5", "debug4",  "debug3",
+                                               "debug2", "debug1",  "log",
+                                               "notice", "warning", "error"};
+constexpr std::string_view kPasswordEncryptions[] = {"md5", "scram-sha-256"};
+constexpr std::string_view kSynchronousCommits[] = {
+  "local", "remote_write", "remote_apply", "on", "off"};
+constexpr std::string_view kXmlOptions[] = {"content", "document"};
 
 constexpr std::pair<std::string_view, VariableDescription>
   kVariableDescription[] = {
@@ -1228,140 +1348,180 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "extra_float_digits",
       {
-        LogicalTypeId::INTEGER,
-        "Sets the number of digits displayed for floating-point values.",
-        [] { return duckdb::Value{"1"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          auto n = value.GetValue<int32_t>();
-          if (!(-15 <= n && n <= 3)) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"extra_float_digits\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        .type = LogicalTypeId::INTEGER,
+        .description =
+          "Sets the number of digits displayed for floating-point values.",
+        .default_value = [] { return duckdb::Value{"1"}; },
+        .set_callback =
+          [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+            auto n = value.GetValue<int32_t>();
+            if (!(-15 <= n && n <= 3)) {
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                              ERR_MSG("invalid value for parameter "
+                                      "\"extra_float_digits\": \"",
+                                      value.ToString(), "\""));
+            }
+          },
+        .pg = {.vartype = "integer",
+               .category = kLocaleAndFormatting,
+               .min_val = "-15",
+               .max_val = "3"},
       },
     },
     {
       "bytea_output",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the output format for bytea.",
-        [] { return duckdb::Value{"hex"}; },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (!magic_enum::enum_cast<ByteaOutput>(value.ToString(),
-                                                  magic_enum::case_insensitive)
-                 .has_value()) {
-            THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                            ERR_MSG("invalid value for parameter "
-                                    "\"bytea_output\": \"",
-                                    value.ToString(), "\""));
-          }
-        },
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the output format for bytea.",
+        .default_value = [] { return duckdb::Value{"hex"}; },
+        .set_callback =
+          [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
+            if (!magic_enum::enum_cast<ByteaOutput>(
+                   value.ToString(), magic_enum::case_insensitive)
+                   .has_value()) {
+              THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                              ERR_MSG("invalid value for parameter "
+                                      "\"bytea_output\": \"",
+                                      value.ToString(), "\""));
+            }
+          },
+        .pg = {.vartype = "enum",
+               .category = kStatementBehavior,
+               .enumvals = kByteaOutputs},
       },
     },
     {
       "client_encoding",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the client's character set encoding.",
-        [] { return duckdb::Value{"UTF8"}; },
-        NoOverwriteClientEncoding,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the client's character set encoding.",
+        .default_value = [] { return duckdb::Value{"UTF8"}; },
+        .set_callback = NoOverwriteClientEncoding,
+        .pg = {.vartype = "string", .category = kLocaleAndFormatting},
       },
     },
     {
       "application_name",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the application name to be reported in statistics and logs.",
-        [] { return duckdb::Value{""}; },
-        CheckApplicationName,
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the application name to be reported in statistics and logs.",
+        .default_value = [] { return duckdb::Value{""}; },
+        .set_callback = CheckApplicationName,
+        .pg = {.vartype = "string",
+               .category = "Reporting and Logging / What to Log"},
       },
     },
     {
       "in_hot_standby",
       {
-        LogicalTypeId::BOOLEAN,
-        "Shows whether hot standby is currently active.",
-        [] { return duckdb::Value{false}; },
-        nullptr,  // refused via kUnchangeableSettings
+        .type = LogicalTypeId::BOOLEAN,
+        .description = "Shows whether hot standby is currently active.",
+        .default_value = [] { return duckdb::Value{false}; },
+        .pg = {.vartype = "bool",
+               .category = kPresetOptions,
+               .context = "internal"},
       },
     },
     {
       "integer_datetimes",
       {
-        LogicalTypeId::BOOLEAN,
-        "Shows whether datetimes are integer based.",
-        [] { return duckdb::Value{true}; },
-        NoOverwrite<"integer_datetimes">,
+        .type = LogicalTypeId::BOOLEAN,
+        .description = "Shows whether datetimes are integer based.",
+        .default_value = [] { return duckdb::Value{true}; },
+        .set_callback = NoOverwrite<"integer_datetimes">,
+        .pg = {.vartype = "bool",
+               .category = kPresetOptions,
+               .context = "internal"},
       },
     },
     {
       "scram_iterations",
       {
-        LogicalTypeId::INTEGER,
-        "Sets the iteration count for SCRAM secret generation.",
-        [] { return duckdb::Value{"4096"}; },
-        NoOverwrite<"scram_iterations">,
+        .type = LogicalTypeId::INTEGER,
+        .description = "Sets the iteration count for SCRAM secret generation.",
+        .default_value = [] { return duckdb::Value{"4096"}; },
+        .set_callback = NoOverwrite<"scram_iterations">,
+        .pg = {.vartype = "integer",
+               .category = kAuthentication,
+               .min_val = "1",
+               .max_val = "2147483647"},
       },
     },
     {
       "server_encoding",
       {
-        LogicalTypeId::VARCHAR,
-        "Shows the server (database) character set encoding.",
-        [] { return duckdb::Value{"UTF8"}; },
-        nullptr,  // refused via kUnchangeableSettings
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Shows the server (database) character set encoding.",
+        .default_value = [] { return duckdb::Value{"UTF8"}; },
+        .pg = {.vartype = "string",
+               .category = kPresetOptions,
+               .context = "internal"},
       },
     },
     {
       "server_version",
       {
-        LogicalTypeId::VARCHAR,
-        "Shows the server version.",
-        [] { return duckdb::Value{std::string{pg::kServerVersion}}; },
-        nullptr,  // refused via kUnchangeableSettings
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Shows the server version.",
+        .default_value = [] { return duckdb::Value{"18.6"}; },
+        .pg = {.vartype = "string",
+               .category = kPresetOptions,
+               .context = "internal"},
       },
     },
     {
       "server_version_num",
       {
-        LogicalTypeId::INTEGER,
-        "Shows the server version as an integer.",
-        [] {
-          return duckdb::Value{std::string{pg::kServerVersionNum}}
-            .DefaultCastAs(duckdb::LogicalType::INTEGER);
-        },
-        nullptr,  // refused via kUnchangeableSettings
+        .type = LogicalTypeId::INTEGER,
+        .description = "Shows the server version as an integer.",
+        .default_value = [] { return duckdb::Value::INTEGER(180006); },
+        .pg = {.vartype = "integer",
+               .category = kPresetOptions,
+               .context = "internal",
+               .min_val = "180006",
+               .max_val = "180006"},
       },
     },
     {
       "standard_conforming_strings",
       {
-        LogicalTypeId::BOOLEAN,
-        "Causes '...' strings to treat backslashes literally.",
-        [] { return duckdb::Value{true}; },
-        NoOverwrite<"standard_conforming_strings">,
+        .type = LogicalTypeId::BOOLEAN,
+        .description = "Causes '...' strings to treat backslashes literally.",
+        .default_value = [] { return duckdb::Value{true}; },
+        .set_callback = NoOverwrite<"standard_conforming_strings">,
+        .pg = {.vartype = "bool",
+               .category = "Version and Platform Compatibility / Previous "
+                           "PostgreSQL Versions"},
       },
     },
     {
       "client_min_messages",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the message levels that are sent to the client.",
-        [] { return duckdb::Value{"notice"}; },
-        NoOverwrite<"client_min_messages">,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the message levels that are sent to the client.",
+        .default_value = [] { return duckdb::Value{"notice"}; },
+        .set_callback = NoOverwrite<"client_min_messages">,
+        .pg = {.vartype = "enum",
+               .category = kStatementBehavior,
+               .enumvals = kMessageLevels},
       },
     },
     {
       "statement_timeout",
       {
-        LogicalTypeId::VARCHAR,
-        "Aborts any statement that takes more than the specified amount of "
-        "time (milliseconds without a unit). 0 disables the timeout.",
-        [] { return duckdb::Value{"0"}; },
-        SetStatementTimeout,
-        ResetStatementTimeout,
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Aborts any statement that takes more than the specified amount of "
+          "time (milliseconds without a unit). 0 disables the timeout.",
+        .default_value = [] { return duckdb::Value{"0"}; },
+        .set_callback = SetStatementTimeout,
+        .reset_callback = ResetStatementTimeout,
+        .pg = {.vartype = "integer",
+               .category = kStatementBehavior,
+               .unit = "ms",
+               .min_val = "0",
+               .max_val = "2147483647"},
       },
     },
     {
@@ -1456,39 +1616,339 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "DateStyle",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the display format for date and time values.",
-        [] { return duckdb::Value{"ISO, MDY"}; },
-        CheckDateStyle,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the display format for date and time values.",
+        .default_value = [] { return duckdb::Value{"ISO, MDY"}; },
+        .set_callback = CheckDateStyle,
+        .pg = {.vartype = "string", .category = kLocaleAndFormatting},
       },
     },
     {
       "IntervalStyle",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the display format for interval values.",
-        [] { return duckdb::Value{"postgres"}; },
-        CheckIntervalStyle,
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the display format for interval values.",
+        .default_value = [] { return duckdb::Value{"postgres"}; },
+        .set_callback = NoOverwrite<"IntervalStyle">,
+        .pg = {.vartype = "enum",
+               .category = kLocaleAndFormatting,
+               .enumvals = kIntervalStyles},
       },
     },
     {
       "TimeZone",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the time zone for displaying and interpreting time stamps.",
-        [] { return duckdb::Value{"Etc/UTC"}; },
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the time zone for displaying and interpreting time stamps.",
+        .default_value = [] { return duckdb::Value{"Etc/UTC"}; },
+        .pg = {.vartype = "string", .category = kLocaleAndFormatting},
+      },
+    },
+    {
+      "search_path",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the schema search order for names that are not "
+                       "schema-qualified.",
+        .default_value = [] { return duckdb::Value{"\"$user\", public"}; },
+        .pg = {.vartype = "string", .category = kStatementBehavior},
+      },
+    },
+    {
+      "transaction_isolation",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description = "Sets the current transaction's isolation level.",
+        .default_value = [] { return duckdb::Value{"repeatable read"}; },
+        .pg = {.vartype = "enum",
+               .category = kStatementBehavior,
+               .enumvals = kIsolationLevels},
+      },
+    },
+    {
+      "default_transaction_isolation",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the transaction isolation level of each new transaction.",
+        .default_value = [] { return duckdb::Value{"repeatable read"}; },
+        .pg = {.vartype = "enum",
+               .category = kStatementBehavior,
+               .enumvals = kIsolationLevels},
+      },
+    },
+    {
+      "default_transaction_read_only",
+      {
+        .type = LogicalTypeId::BOOLEAN,
+        .description = "Sets the default read-only status of new transactions.",
+        .default_value = [] { return duckdb::Value{false}; },
+        .pg = {.vartype = "bool", .category = kStatementBehavior},
+      },
+    },
+    {
+      "check_function_bodies",
+      {
+        .type = LogicalTypeId::BOOLEAN,
+        .description =
+          "Check routine bodies during CREATE FUNCTION and CREATE PROCEDURE. "
+          "SereneDB always checks them; turning this off has no effect.",
+        .default_value = [] { return duckdb::Value{true}; },
+        .set_callback = NoOverwrite<"check_function_bodies">,
+        .pg = {.vartype = "bool", .category = kStatementBehavior},
+      },
+    },
+    {
+      "default_table_access_method",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the default table access method for new tables. Accepted for "
+          "compatibility; it has no effect in SereneDB.",
+        .default_value = [] { return duckdb::Value{"heap"}; },
+        .set_callback = NoOverwrite<"default_table_access_method">,
+        .pg = {.vartype = "string", .category = kStatementBehavior},
+      },
+    },
+    {
+      "default_tablespace",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the default tablespace to create tables and indexes in. "
+          "Accepted for compatibility; SereneDB has no tablespaces.",
+        .default_value = [] { return duckdb::Value{""}; },
+        .set_callback = NoOverwrite<"default_tablespace">,
+        .pg = {.vartype = "string", .category = kStatementBehavior},
+      },
+    },
+    {
+      "idle_in_transaction_session_timeout",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the maximum allowed idle time between queries, when in a "
+          "transaction. Accepted for compatibility; SereneDB does not end idle "
+          "transactions.",
+        .default_value = [] { return duckdb::Value{"0"}; },
+        .set_callback = NoOverwrite<"idle_in_transaction_session_timeout">,
+        .pg = {.vartype = "integer",
+               .category = kStatementBehavior,
+               .unit = "ms",
+               .min_val = "0",
+               .max_val = "2147483647"},
+      },
+    },
+    {
+      "lock_timeout",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the maximum allowed duration of any wait for a lock. Accepted "
+          "for compatibility; SereneDB never waits for a lock, a conflicting "
+          "write fails at once.",
+        .default_value = [] { return duckdb::Value{"0"}; },
+        .set_callback = NoOverwrite<"lock_timeout">,
+        .pg = {.vartype = "integer",
+               .category = kStatementBehavior,
+               .unit = "ms",
+               .min_val = "0",
+               .max_val = "2147483647"},
+      },
+    },
+    {
+      "maintenance_work_mem",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the maximum memory to be used for maintenance operations. "
+          "Accepted for compatibility; memory_limit bounds the memory of every "
+          "operation.",
+        .default_value = [] { return duckdb::Value{"64MB"}; },
+        .set_callback = NoOverwrite<"maintenance_work_mem">,
+        .pg = {.vartype = "integer",
+               .category = kMemory,
+               .unit = "kB",
+               .min_val = "1024",
+               .max_val = "2147483647"},
+      },
+    },
+    {
+      "max_connections",
+      {
+        .type = LogicalTypeId::UBIGINT,
+        .description =
+          "Sets the maximum number of concurrent client connections. Set with "
+          "--max_connections; 0 means no limit. A listener may override it "
+          "with ?max_connections=.",
+        .default_value =
+          [] {
+            return duckdb::Value::UBIGINT(absl::GetFlag(FLAGS_max_connections));
+          },
+        .pg = {.vartype = "integer",
+               .category =
+                 "Connections and Authentication / Connection Settings",
+               .context = "postmaster",
+               .min_val = "0",
+               .max_val = "4294967295"},
+      },
+    },
+    {
+      "max_identifier_length",
+      {
+        .type = LogicalTypeId::INTEGER,
+        .description = "Shows the maximum identifier length. SereneDB keeps "
+                       "longer identifiers in full.",
+        .default_value = [] { return duckdb::Value::INTEGER(63); },
+        .pg = {.vartype = "integer",
+               .category = kPresetOptions,
+               .context = "internal",
+               .min_val = "63",
+               .max_val = "63"},
+      },
+    },
+    {
+      "max_index_keys",
+      {
+        .type = LogicalTypeId::INTEGER,
+        .description =
+          "Shows the maximum number of index keys. Clients read it as the "
+          "bound of index and constraint key arrays, such as pg_index.indkey "
+          "and pg_constraint.conkey.",
+        .default_value = [] { return duckdb::Value::INTEGER(32); },
+        .pg = {.vartype = "integer",
+               .category = kPresetOptions,
+               .context = "internal",
+               .min_val = "32",
+               .max_val = "32"},
+      },
+    },
+    {
+      "password_encryption",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Chooses the algorithm for encrypting passwords. SereneDB stores a "
+          "password given in plain text as SCRAM-SHA-256; clients read this "
+          "setting to choose how they encrypt one themselves.",
+        .default_value = [] { return duckdb::Value{"scram-sha-256"}; },
+        .set_callback = NoOverwrite<"password_encryption">,
+        .pg = {.vartype = "enum",
+               .category = kAuthentication,
+               .enumvals = kPasswordEncryptions},
+      },
+    },
+    {
+      "row_security",
+      {
+        .type = LogicalTypeId::BOOLEAN,
+        .description = "Enables row security. Accepted for compatibility; "
+                       "SereneDB has no row security policies.",
+        .default_value = [] { return duckdb::Value{true}; },
+        .set_callback = NoOverwrite<"row_security">,
+        .pg = {.vartype = "bool", .category = kStatementBehavior},
+      },
+    },
+    {
+      "synchronous_commit",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the current transaction's synchronization level. Accepted for "
+          "compatibility; it has no effect in SereneDB.",
+        .default_value = [] { return duckdb::Value{"on"}; },
+        .set_callback = NoOverwrite<"synchronous_commit">,
+        .pg = {.vartype = "enum",
+               .category = "Write-Ahead Log / Settings",
+               .enumvals = kSynchronousCommits},
+      },
+    },
+    {
+      "transaction_deferrable",
+      {
+        .type = LogicalTypeId::BOOLEAN,
+        .description =
+          "Whether to defer a read-only serializable transaction until it can "
+          "be executed with no possible serialization failures. Accepted for "
+          "compatibility; it has no effect in SereneDB.",
+        .default_value = [] { return duckdb::Value{false}; },
+        .set_callback = NoOverwrite<"transaction_deferrable">,
+        .pg = {.vartype = "bool", .category = kStatementBehavior},
+      },
+    },
+    {
+      "transaction_read_only",
+      {
+        .type = LogicalTypeId::BOOLEAN,
+        .description = "Sets the current transaction's read-only status. "
+                       "Accepted for compatibility; it has no effect in "
+                       "SereneDB.",
+        .default_value = [] { return duckdb::Value{false}; },
+        .set_callback = NoOverwrite<"transaction_read_only">,
+        .pg = {.vartype = "bool", .category = kStatementBehavior},
+      },
+    },
+    {
+      "transaction_timeout",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the maximum allowed duration of any transaction within a "
+          "session (not a prepared transaction). Accepted for compatibility; "
+          "SereneDB does not time transactions out.",
+        .default_value = [] { return duckdb::Value{"0"}; },
+        .set_callback = NoOverwrite<"transaction_timeout">,
+        .pg = {.vartype = "integer",
+               .category = kStatementBehavior,
+               .unit = "ms",
+               .min_val = "0",
+               .max_val = "2147483647"},
+      },
+    },
+    {
+      "work_mem",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the maximum memory to be used for query workspaces. Accepted "
+          "for compatibility; memory_limit bounds the memory of every "
+          "operation.",
+        .default_value = [] { return duckdb::Value{"4MB"}; },
+        .set_callback = NoOverwrite<"work_mem">,
+        .pg = {.vartype = "integer",
+               .category = kMemory,
+               .unit = "kB",
+               .min_val = "64",
+               .max_val = "2147483647"},
+      },
+    },
+    {
+      "xmloption",
+      {
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets whether XML data in implicit parsing and serialization "
+          "operations is to be considered as documents or content fragments. "
+          "Accepted for compatibility; SereneDB has no xml type.",
+        .default_value = [] { return duckdb::Value{"content"}; },
+        .set_callback = NoOverwrite<"xmloption">,
+        .pg = {.vartype = "enum",
+               .category = kStatementBehavior,
+               .enumvals = kXmlOptions},
       },
     },
 };
 
-const duckdb::case_insensitive_set_view_t kVariableIndex = [] {
-  duckdb::case_insensitive_set_view_t m;
-  m.reserve(std::size(kVariableDescription));
-  for (const auto& entry : kVariableDescription) {
-    m.emplace(entry.first);
-  }
-  return m;
-}();
+const duckdb::case_insensitive_map_view_t<const VariableDescription*>
+  kVariableIndex = [] {
+    duckdb::case_insensitive_map_view_t<const VariableDescription*> m;
+    m.reserve(std::size(kVariableDescription));
+    for (const auto& [name, desc] : kVariableDescription) {
+      m.emplace(name, &desc);
+    }
+    return m;
+  }();
 
 }  // namespace
 
@@ -1497,7 +1957,12 @@ std::string_view GetOriginalName(std::string_view name) {
   if (it == kVariableIndex.end()) {
     return {};
   }
-  return *it;
+  return it->first;
+}
+
+const VariableDescription* FindVariable(std::string_view name) {
+  const auto it = kVariableIndex.find(name);
+  return it == kVariableIndex.end() ? nullptr : it->second;
 }
 
 // Settings a client may never change, refused for the lifetime of the process
@@ -1511,54 +1976,26 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   // the GUC.
   "in_hot_standby",
   "is_superuser",
+  "max_connections",
+  "max_identifier_length",
+  "max_index_keys",
   "server_encoding",
   "server_version",
   "server_version_num",
 };
 
-namespace {
-
-const pg::Guc* CompatGuc(std::string_view name) {
-  if (kVariableIndex.contains(name) ||
-      duckdb::DBConfig::GetOptionByName(duckdb::Identifier{name})) {
-    return nullptr;
-  }
-  return pg::FindGuc(name);
-}
-
-}  // namespace
-
 bool IsUnchangeableSetting(std::string_view name) {
-  if (kUnchangeableSettings.contains(name)) {
-    return true;
-  }
-  const auto* guc = CompatGuc(name);
-  return guc && guc->context != "user" && guc->context != "superuser";
+  return kUnchangeableSettings.contains(name);
 }
 
 namespace {
-
-template<size_t I>
-void SetCompatGuc(duckdb::ClientContext& ctx, duckdb::SetScope,
-                  duckdb::Value& value) {
-  if (value.IsNull()) {
-    return;
-  }
-  const auto& guc = pg::kGucs[I];
-  value = duckdb::Value{pg::NormalizeGucValue(guc, value.ToString())};
-  NoticeIfChanged(ctx, guc.name, value);
-}
-
-constexpr auto kSetCompatGuc = []<size_t... I>(std::index_sequence<I...>) {
-  return std::array<duckdb::set_option_callback_t, sizeof...(I)>{
-    &SetCompatGuc<I>...};
-}(std::make_index_sequence<std::size(pg::kGucs)>{});
 
 void TryRegister(duckdb::DBConfig& config, std::string_view name,
                  const VariableDescription& desc) {
   duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
   const duckdb::Identifier setting{name};
-  if (config.TryGetSettingIndex(setting, option).IsValid()) {
+  if (duckdb::DBConfig::GetOptionByName(setting) ||
+      config.TryGetSettingIndex(setting, option).IsValid()) {
     return;  // already registered or built-in
   }
   config.AddExtensionOption(
@@ -1574,21 +2011,6 @@ namespace connector {
 void RegisterConfigVariables(duckdb::DBConfig& config) {
   for (const auto& [name, desc] : kVariableDescription) {
     TryRegister(config, name, desc);
-  }
-  for (size_t i = 0; i < std::size(pg::kGucs); ++i) {
-    const auto& guc = pg::kGucs[i];
-    const duckdb::Identifier setting{guc.name};
-    duckdb::optional_ptr<const duckdb::ConfigurationOption> option;
-    if (!CompatGuc(guc.name) ||
-        config.TryGetSettingIndex(setting, option).IsValid()) {
-      continue;
-    }
-    config.AddExtensionOption(
-      setting, std::string{guc.short_desc}, duckdb::LogicalType::VARCHAR,
-      duckdb::Value{guc.configured ? guc.configured()
-                                   : std::string{guc.setting}},
-      kSetCompatGuc[i], nullptr, duckdb::SetScope::AUTOMATIC,
-      IsUnchangeableSetting(guc.name));
   }
 }
 

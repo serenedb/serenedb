@@ -32,6 +32,33 @@
 namespace sdb::pg {
 namespace {
 
+constexpr SystemSqlColumn kSdbSettingsColumns[] = {
+  {"name", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"setting", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"unit", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"category", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"short_desc", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"context", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"vartype", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"source", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"min_val", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"max_val", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"boot_val", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"reset_val", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"pending_restart", kBool, 0, false, false, 0, 0, SystemKey::None},
+};
+
+constexpr SystemSql kSdbSettingsSql{.oid = kSdbSettingsTable,
+                                    .schema = "pg_catalog",
+                                    .name = "sdb_settings",
+                                    .row_type = 0,
+                                    .row_array_type = 0,
+                                    .relkind = 'r',
+                                    .replident = 'n',
+                                    .superuser_only = false,
+                                    .shared = false,
+                                    .columns = kSdbSettingsColumns};
+
 std::string_view VarType(const absl::CommandLineFlag& flag) {
   if (flag.IsOfType<bool>()) {
     return "bool";

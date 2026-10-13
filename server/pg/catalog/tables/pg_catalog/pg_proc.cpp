@@ -116,6 +116,8 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     }
   }
 
+  static constexpr duckdb::idx_t kRows = 10000;
+
   static constexpr std::tuple kSources{
     ArraySource<BuiltinFunction, BuiltinFunctions>{&LoadBuiltins, kBuiltinKeys,
                                                    kBuiltinFacts},
@@ -129,12 +131,14 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     Col<"pronamespace">(&BuiltinFunction::nsp),
     Col<"proowner">([](const auto&) { return kRootUser; }),
     Col<"prolang">(&BuiltinFunction::lang),
+    Col<"procost">([](const auto&) { return 1.0F; }),
     Col<"prorows">(
       [](const auto& function) { return function.retset ? 1000.0F : 0.0F; }),
     Col<"prokind">(&BuiltinFunction::kind),
     Col<"proisstrict">(&BuiltinFunction::strict),
     Col<"proretset">(&BuiltinFunction::retset),
     Col<"provolatile">(&BuiltinFunction::volatility),
+    Col<"proparallel">([](const auto&) { return 's'; }),
     Col<"pronargs">(
       [](const auto& function) { return function.argtypes.size(); }),
     Col<"prorettype">(&BuiltinFunction::rettype),

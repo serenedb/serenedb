@@ -29,6 +29,46 @@
 namespace sdb::pg {
 namespace {
 
+constexpr SystemSqlColumn kSdbProgressColumns[] = {
+  {"pid", kInt4, 0, false, false, 0, 0, SystemKey::None},
+  {"datid", kOid, 0, false, false, 0, 0, SystemKey::None},
+  {"usename", kName, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"datname", kName, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"state", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"query", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"backend_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"query_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"percent", kFloat8, 0, false, false, 0, 0, SystemKey::None},
+  {"rows_processed", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"rows_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"command", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"io_type", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"relid", kOid, 0, false, false, 0, 0, SystemKey::None},
+  {"current_relid", kOid, 0, false, false, 0, 0, SystemKey::None},
+  {"phase", kText, 0, false, false, kCCollation, 0, SystemKey::None},
+  {"bytes_processed", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"bytes_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"tuples_processed", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"tuples_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"stage", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"stages_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"step", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"steps_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"items_processed", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"items_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
+};
+
+constexpr SystemSql kSdbProgressSql{.oid = kSdbProgressTable,
+                                    .schema = "pg_catalog",
+                                    .name = "sdb_progress",
+                                    .row_type = 0,
+                                    .row_array_type = 0,
+                                    .relkind = 'r',
+                                    .replident = 'n',
+                                    .superuser_only = false,
+                                    .shared = false,
+                                    .columns = kSdbProgressColumns};
+
 SystemRows<ProgressSnapshot> LoadSnapshots(SystemScan&) {
   return ProgressRegistry::Instance().GetSnapshots();
 }

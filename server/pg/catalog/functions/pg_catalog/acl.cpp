@@ -427,7 +427,7 @@ const duckdb::Permissions kForeignDataWrapperPermissions{
 const duckdb::Permissions& SystemTablePermissions(const SystemTable& table) {
   static const auto kPublic = SystemPermissions(false);
   static const auto kSuperuser = SystemPermissions(true);
-  return table.Sql().superuser_only ? kSuperuser : kPublic;
+  return table.SuperuserOnly() ? kSuperuser : kPublic;
 }
 
 struct RelationAccess : Relation {

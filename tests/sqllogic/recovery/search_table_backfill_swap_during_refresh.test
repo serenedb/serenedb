@@ -1,0 +1,99 @@
+control substitution on
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE bsr (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO bsr VALUES (1, 'old'), (2, 'old');
+
+
+statement ok
+VACUUM (REFRESH_TABLE) bsr;
+
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+
+connection builder
+statement async ok
+CREATE INDEX bsr_idx ON bsr USING inverted (tag);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'bsr'::regclass;
+----
+tuples_done
+2
+
+
+connection default
+statement ok
+INSERT INTO bsr VALUES (3, 'new');
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh_begun';
+
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) bsr;
+
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_index_refresh_begun:parked';
+
+
+connection default
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+
+sleep 1s
+
+
+connection default
+statement ok
+SET sdb_faults = 'pause_index_refresh_begun:release';
+
+
+wait
+
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) bsr;
+
+
+connection default
+query
+SELECT id FROM bsr_idx WHERE tag @@ 'old' ORDER BY id;
+----
+id
+1
+2
+
+
+connection default
+query
+SELECT id FROM bsr_idx WHERE tag @@ 'new';
+----
+id
+3
+
+
+connection default
+statement ok
+DROP TABLE bsr;

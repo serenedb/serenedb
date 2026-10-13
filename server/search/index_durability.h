@@ -34,7 +34,9 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "connector/file_manifest.h"
@@ -75,6 +77,11 @@ class IndexDurability {
                        const irs::ProgressReportCallback& progress,
                        RefreshResult& code, absl::FunctionRef<void()> unchanged,
                        absl::FunctionRef<void()> published);
+  void ReplaceSegments(
+    irs::IndexWriter& writer, std::span<const std::string_view> replaced,
+    std::span<const std::string_view> adopted_metas,
+    absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
+      removal_provider);
   void Clear(irs::IndexWriter& writer, const irs::SourcePosition& position);
   void PrepareCheckpoint(irs::IndexWriter& writer, uint64_t iteration);
   bool FinishCheckpoint(irs::IndexWriter& writer);

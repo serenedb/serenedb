@@ -194,6 +194,7 @@ absl::Status IndexDurability::Refresh(
         return absl::OkStatus();
       }
       if (were_changes && _pending_checkpoint == 0) {
+        SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh_begun");
         writer.RefreshFinish();
         _published = _position;
         _directory_dirty.store(true, std::memory_order_relaxed);
@@ -230,6 +231,20 @@ absl::Status IndexDurability::Refresh(
       absl::StrCat("caught exception while refreshing ", _name));
   }
   return absl::OkStatus();
+}
+
+void IndexDurability::ReplaceSegments(
+  irs::IndexWriter& writer, std::span<const std::string_view> replaced,
+  std::span<const std::string_view> adopted_metas,
+  absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
+    removal_provider) {
+  std::unique_lock lock{_refresh_mutex};
+  while (_pending_checkpoint != 0 && CanPersist()) {
+    lock.unlock();
+    WaitForCheckpoint();
+    lock.lock();
+  }
+  writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
 }
 
 void IndexDurability::Clear(irs::IndexWriter& writer,

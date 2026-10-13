@@ -32,6 +32,40 @@
 #include "ts_common.hpp"
 
 namespace sdb::connector {
+namespace {
+
+// Copy the term before the next bound reuses the tokenizer's buffers.
+// No tokens means no match, which is distinct from an unbounded NULL.
+bool AnalyzeRangeBound(irs::analysis::Tokenizer& analyzer,
+                       const duckdb::Value& value, std::string_view label,
+                       irs::bstring& out) {
+  const auto& text = duckdb::StringValue::Get(value);
+  irs::ValueAnalyzer value_analyzer;
+  irs::ValueTokens tokens;
+  if (!value_analyzer.Analyze(analyzer, text, tokens)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label, " failed to analyse '", text, "'"),
+      ERR_HINT("The column's analyzer rejected the bound value."));
+  }
+  const auto terms = tokens.terms();
+  if (terms.empty()) {
+    return false;
+  }
+  if (terms.size() > 1) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(label,
+              " produced multiple tokens; range comparison "
+              "requires a single token"),
+      ERR_HINT("Use a bound that produces a single token with the column's "
+               "analyzer."));
+  }
+  out.assign(irs::AsBytesView(terms[0]));
+  return true;
+}
+
+}  // namespace
 
 RangeArgs ParseRangeArgs(const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
@@ -140,28 +174,10 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
 
   if (col_type == duckdb::LogicalTypeId::VARCHAR ||
       col_type == duckdb::LogicalTypeId::BLOB) {
-    auto text = duckdb::StringValue::Get(*bound_val);
-    auto& analyzer = ctx.tokenizer;
-    irs::ValueAnalyzer value_analyzer;
-    irs::ValueTokens tokens;
-    if (!value_analyzer.Analyze(analyzer, text, tokens)) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(label, " failed to analyse '", text, "'"),
-        ERR_HINT("The column's analyzer rejected the bound value."));
-    }
-    const auto toks = tokens.terms();
-    if (toks.empty()) {
+    irs::bstring term;
+    if (!AnalyzeRangeBound(ctx.tokenizer, *bound_val, label, term)) {
       AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
       return;
-    }
-    if (toks.size() > 1) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG(label,
-                " produced multiple tokens; range comparison "
-                "requires a single token"),
-        ERR_HINT("Use ts_between(min, max, ...) for multi-component bounds."));
     }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
@@ -170,10 +186,10 @@ void FromHalfRange(BoolTarget parent, const FilterContext& ctx,
     auto* options = range.mutable_options();
     auto& rng = options->range;
     if (is_lower) {
-      rng.min.assign(irs::AsBytesView(toks[0]));
+      rng.min = std::move(term);
       rng.min_type = bound_type;
     } else {
-      rng.max.assign(irs::AsBytesView(toks[0]));
+      rng.max = std::move(term);
       rng.max_type = bound_type;
     }
     return;
@@ -250,15 +266,6 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
         val_type != duckdb::LogicalTypeId::BLOB) {
       type_mismatch();
     }
-    if (column_info.tokenizer.analyzer->type() !=
-        irs::Type<irs::KeywordTokenizer>::id()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("ts_between on VARCHAR field requires keyword-analyzed column"),
-        ERR_HINT("Recreate the inverted index with the keyword tokenizer "
-                 "for this column, or use ts_lt/ts_le/ts_gt/ts_ge for "
-                 "analyzed-text bounds."));
-    }
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     if (val_type != duckdb::LogicalTypeId::BOOLEAN) {
       type_mismatch();
@@ -271,20 +278,38 @@ void FromBetween(BoolTarget parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_between: unsupported column type ",
                             column_info.logical_type.ToString()),
-                    ERR_HINT("ts_between is supported on VARCHAR (identity "
-                             "analyzer), BOOLEAN and numeric columns."));
+                    ERR_HINT("ts_between is supported on VARCHAR, BLOB, "
+                             "BOOLEAN and numeric columns."));
   }
 
   ValidateFilterType(col_type);
 
   if (col_type == duckdb::LogicalTypeId::VARCHAR ||
       col_type == duckdb::LogicalTypeId::BLOB) {
+    irs::ByRangeOptions options;
+    bool has_min = true;
+    bool has_max = true;
+    if (args.min) {
+      has_min = AnalyzeRangeBound(ctx.tokenizer, *args.min, "ts_between",
+                                  options.range.min);
+      options.range.min_type =
+        args.min_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+    }
+    if (args.max) {
+      has_max = AnalyzeRangeBound(ctx.tokenizer, *args.max, "ts_between",
+                                  options.range.max);
+      options.range.max_type =
+        args.max_incl ? irs::BoundType::Inclusive : irs::BoundType::Exclusive;
+    }
+    if (!has_min || !has_max) {
+      AddMaybeNegated<irs::Empty>(parent, ctx, column_info);
+      return;
+    }
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);
     range.SetBoost(ctx.boost);
     SetLeafScorer(range, column_info);
-    auto* options = range.mutable_options();
-    FillByRangeOptionsVarchar(args, *options);
+    *range.mutable_options() = std::move(options);
   } else if (col_type == duckdb::LogicalTypeId::BOOLEAN) {
     auto& range = AddMaybeNegated<irs::ByRange>(parent, ctx, column_info);
     *range.mutable_field_id() = PickPerKindFieldId(column_info, col_type);

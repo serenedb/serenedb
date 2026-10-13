@@ -1,0 +1,89 @@
+control substitution on
+
+statement ok
+CREATE TABLE trrec_t (id INTEGER);
+
+statement ok
+CREATE TABLE trrec_log (name TEXT);
+
+statement ok
+CREATE TRIGGER trrec_replica AFTER INSERT ON trrec_t INSERT INTO trrec_log VALUES ('replica');
+
+statement ok
+CREATE TRIGGER trrec_disabled AFTER INSERT ON trrec_t INSERT INTO trrec_log VALUES ('disabled');
+
+statement ok
+CREATE TRIGGER trrec_kept AFTER INSERT ON trrec_t INSERT INTO trrec_log VALUES ('kept');
+
+statement ok
+ALTER TABLE trrec_t ENABLE REPLICA TRIGGER trrec_replica;
+
+statement ok
+ALTER TABLE trrec_t DISABLE TRIGGER trrec_disabled;
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE trrec_t ENABLE ALWAYS TRIGGER trrec_kept;
+
+statement ok
+ROLLBACK;
+
+statement ok
+CREATE TABLE trrec_c (id INTEGER);
+
+statement ok
+CREATE TRIGGER trrec_checkpointed AFTER INSERT ON trrec_c INSERT INTO trrec_log VALUES ('checkpointed');
+
+statement ok
+ALTER TABLE trrec_c ENABLE ALWAYS TRIGGER trrec_checkpointed;
+
+statement ok
+CHECKPOINT;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'trrec_t'::regclass ORDER BY tgname;
+----
+tgname	tgenabled
+trrec_disabled	D
+trrec_kept	O
+trrec_replica	R
+
+connection after_crash
+query
+SELECT tgname, tgenabled FROM pg_trigger WHERE tgrelid = 'trrec_c'::regclass;
+----
+tgname	tgenabled
+trrec_checkpointed	A
+
+connection after_crash
+statement ok
+INSERT INTO trrec_t VALUES (1);
+
+connection after_crash
+query
+SELECT name FROM trrec_log ORDER BY name;
+----
+name
+kept
+
+connection after_crash
+statement ok
+DROP TABLE trrec_c;
+
+connection after_crash
+statement ok
+DROP TABLE trrec_t;
+
+connection after_crash
+statement ok
+DROP TABLE trrec_log;

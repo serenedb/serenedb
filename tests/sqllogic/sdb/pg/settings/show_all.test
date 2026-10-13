@@ -185,6 +185,7 @@ max_execution_time	0	The maximum execution time per query in milliseconds (0 = n
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
@@ -241,7 +242,7 @@ read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = a
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
-reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
+reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
@@ -286,6 +287,8 @@ sdb_ivf_max_search_fanout	16	Maximum number of IVF centroid-tree children expand
 sdb_ivf_posting_size	1024	Target IVF posting-list size (leaf cap t), captured into the index config at CREATE INDEX. Smaller values force deeper multi-level centroid trees (useful for testing). Default 1024.
 sdb_ivf_sample_factor	0.2	Fraction of rows used to train the IVF centroid tree (sample_size = sample_factor * N), captured into the index config at CREATE INDEX. Any value in (0, 1]. Default 0.2.
 sdb_ivf_search_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
+sdb_job_history_size	1024	Number of recent job runs, across all jobs, that sdb_job_runs() returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global.
+sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global.
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
 sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = ceil(sdb_rerank_factor * k)). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Fractional values are allowed, but a nonzero factor below 1 is rejected because the pool must cover k. Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
@@ -301,6 +304,7 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -321,6 +325,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.
@@ -519,6 +526,7 @@ max_execution_time	0	The maximum execution time per query in milliseconds (0 = n
 max_expression_depth	1000	The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep expressions might lead to stack overflow errors.
 max_memory	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
 max_streaming_buffer_size	10.0 MiB	The maximum number of bytes a streaming query result buffers (e.g. 1GB). Queued output stays under this cap, and each engine thread may hold, beyond the queue, the units it is still building or handing over from its current chunk.
+max_sync_workers_per_subscription	2	How many tables one subscription copies at the same time during its initial synchronization. Server-wide, superuser only.
 max_temp_directory_size	90% of available disk space	The maximum amount of data stored inside the 'temp_directory' (when set) (e.g. 1GB).
 max_vacuum_tasks	100	The maximum number of vacuum tasks to schedule during a checkpoint.
 memory_limit	<slt:ignore>	The maximum memory of the system (e.g. 1GB).
@@ -575,7 +583,7 @@ read_ahead_depth	-1	The number of scan jobs prefetched ahead of decoding. -1 = a
 recovery_replay_depth	0	Maximum WAL chunks in flight per inverted index during recovery replay (the prefetch window; bounds replay memory). 0 = auto (4 x cpu threads).
 refresh_interval	1000	Background refresh interval (ms) for newly created inverted indexes and search tables. WITH (refresh_interval = ...) overrides it per index or table, ALTER INDEX / ALTER TABLE ... SET changes it later. 0 disables the refresh task. Default: 1000.
 regex_match_operator_semantics	partial	Configures whether regex match operators use partial or full string matching.
-reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: every tick runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes a live loop. 0 disables the task. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
+reindex_interval	0	Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a job named after the index that runs the ordinary REINDEX road (up_to_date / delta / rebuild) as the index owner, AFTER the interval. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job. 0 disables it. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0.
 role	none	Sets the current role.
 row_group_size	122880	Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880.
 rtree_index_scan_min_rows	8192	always allow an R-tree index scan when the estimated number of matching rows is at or below this count, regardless of rtree_index_scan_ratio
@@ -620,6 +628,8 @@ sdb_ivf_max_search_fanout	16	Maximum number of IVF centroid-tree children expand
 sdb_ivf_posting_size	1024	Target IVF posting-list size (leaf cap t), captured into the index config at CREATE INDEX. Smaller values force deeper multi-level centroid trees (useful for testing). Default 1024.
 sdb_ivf_sample_factor	0.2	Fraction of rows used to train the IVF centroid tree (sample_size = sample_factor * N), captured into the index config at CREATE INDEX. Any value in (0, 1]. Default 0.2.
 sdb_ivf_search_nprobe	8	Number of IVF cluster lists scanned per vector-similarity query. Higher values improve recall at the cost of latency. Default 8.
+sdb_job_history_size	1024	Number of recent job runs, across all jobs, that sdb_job_runs() returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global.
+sdb_job_max_depth	16	Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global.
 sdb_levenshtein_max_terms	50	The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50.
 sdb_pattern_cache_size	0	Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global.
 sdb_rerank_factor	4	Multiplier applied to LIMIT k to size the candidate pool re-scored with exact distances for a quantized IVF vector-similarity query (pool = ceil(sdb_rerank_factor * k)). Higher values improve recall at the cost of latency; 0 disables reranking (top-k picked by the approximate quantized distance). Fractional values are allowed, but a nonzero factor below 1 is rejected because the pool must cover k. Default 4. Unquantized (quant = 'none') indexes never rerank, regardless of this setting.
@@ -635,6 +645,7 @@ server_encoding	UTF8	Shows the server (database) character set encoding.
 server_version	18.3	Shows the server version.
 server_version_num	180003	Shows the server version as an integer.
 session_authorization	postgres	Sets the current session's user name.
+session_replication_role	origin	Sets the session's behavior for triggers and rewrite rules.
 show_behavior	SETTING	Configures how SHOW resolves a bare identifier. 'auto' describes a table if one exists, else it describes a setting (deprecated). 'table' always describes a table, and 'setting' always describes a setting.
 standard_conforming_strings	on	Causes '...' strings to treat backslashes literally.
 standard_vector_size	2048	The compiled-in STANDARD_VECTOR_SIZE (read-only).
@@ -655,6 +666,9 @@ validate_external_file_cache	VALIDATE_ALL	The cache validation mode. VALIDATE_AL
 variant_minimum_shredding_size	30000	Minimum size of a row group to have VARIANT shredding enabled. Set to -1 to disable shredding entirely. Defaults to 1/4th of the row group size.
 wal_autocheckpoint	16.0 MiB	The WAL size threshold at which to automatically trigger a checkpoint, e.g. 1GB.
 wal_autocheckpoint_entries	0	Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled).
+wal_receiver_status_interval	10s	How often a logical replication worker reports its position to the publisher (seconds without a unit); 0 disables the periodic reports. Server-wide, superuser only.
+wal_receiver_timeout	1min	Terminates a logical replication worker whose publisher sent nothing for this long (milliseconds without a unit); 0 disables the timeout. Server-wide, superuser only.
+wal_retrieve_retry_interval	5s	How long a failed logical replication worker waits before it reconnects (milliseconds without a unit). Server-wide, superuser only.
 warnings_as_errors	off	Escalate all warnings to errors.
 worker_threads	<slt:ignore>	The number of total background threads used by the system; a session or transaction value caps the threads its queries use.
 write_buffer_row_group_count	5	The amount of row groups to buffer in bulk ingestion prior to flushing them together. Reducing this setting can reduce memory consumption.

@@ -191,11 +191,6 @@ def test_psql_round_trip() -> None:
 
 
 def test_psql_create_drop_database() -> None:
-    # CREATE DATABASE / DROP DATABASE are rewritten by the parser to
-    # ATTACH (TYPE serenedb) / DETACH -- local catalog ops the client shell
-    # cannot run (it has no serenedb storage extension). serened psql must
-    # forward them to the attached server instead of failing locally with
-    # `Extension "serenedb.duckdb_extension" not found`.
     k = _kw()
     db = f"psql_cdb_{uuid.uuid4().hex[:10]}"
 

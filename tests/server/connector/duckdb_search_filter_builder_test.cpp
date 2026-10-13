@@ -4413,15 +4413,14 @@ TEST_F(SearchFilterBuilderTest,
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangeNonIdentityVarchar) {
-  // VARCHAR column with a non-keyword analyzer rejects standalone
-  // RANGE (the indexed tokens are transformed; raw bounds wouldn't
-  // line up with them).
   std::vector<ColumnSpec> columns{
     {.id = 1, .type = duckdb::LogicalType::VARCHAR, .name = "b"}};
-  AssertFilter({},
-               "SELECT * FROM foo WHERE b @@ ts_between('a', 'm', true, true)",
-               columns, false, SegmentationAnalyzerProvider,
-               "requires keyword-analyzed column");
+  irs::BooleanFilter expected;
+  AddRangeFilter<std::string_view>(expected, 1, std::string_view{"a"}, true,
+                                   std::string_view{"m"}, true);
+  AssertFilter(expected,
+               "SELECT * FROM foo WHERE b @@ ts_between('A', 'M', true, true)",
+               columns, true, SegmentationAnalyzerProvider);
 }
 
 TEST_F(SearchFilterBuilderTest, test_TSQueryMatch_RangePhraseNumericRejected) {

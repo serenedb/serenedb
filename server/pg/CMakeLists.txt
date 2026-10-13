@@ -33,6 +33,11 @@ target_sources(
         pg_catalog/pg_trigger.cpp
         pg_catalog/pg_ts_dict.cpp
         pg_catalog/sdb_progress.cpp
+        pg_catalog/pg_replication_origin.cpp
+        pg_catalog/pg_subscription.cpp
+        pg_catalog/pg_subscription_rel.cpp
+        pg_catalog/pg_stat_subscription.cpp
+        pg_catalog/pg_stat_subscription_stats.cpp
         pg_catalog/pg_type.cpp
         information_schema/sql_implementation_info.cpp
         information_schema/sql_parts.cpp
@@ -44,9 +49,10 @@ target_sources(
         deserialize.cpp
         system_catalog.cpp
         progress_registry.cpp
-        role_dependencies.cpp
         sql_utils.cpp
         option_help.cpp
         tokenizer_options.cpp
         geo_tokenizer_options.cpp
+        tsdictionary.cpp
+        tsdictionary_spec.cpp
 )

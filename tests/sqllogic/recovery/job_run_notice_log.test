@@ -1,0 +1,26 @@
+statement ok
+SET enable_logging = true;
+
+
+statement ok
+SET logging_storage = 'memory';
+
+
+statement ok
+CREATE JOB jrn_notice AFTER 1 HOUR SUSPENDED AS SELECT pg_cancel_backend(424242);
+
+
+statement ok
+EXECUTE JOB jrn_notice;
+
+
+query
+SELECT count(*) > 0 AS logged FROM duckdb_logs()
+WHERE message LIKE '%job "jrn_notice": PID 424242 is not a PostgreSQL backend process%';
+----
+logged
+t
+
+
+statement ok
+DROP JOB jrn_notice;

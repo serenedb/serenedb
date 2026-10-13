@@ -367,6 +367,10 @@ cleanup_postgres() {
 		echo "Stopping postgres container..."
 		docker rm -fv "$name" >/dev/null 2>&1 || true
 	fi
+	if [[ -n "${PGSOCKETDIR:-}" ]]; then
+		rm -rf "$PGSOCKETDIR"
+		PGSOCKETDIR=""
+	fi
 }
 
 cleanup_clickhouse() {
@@ -794,6 +798,10 @@ launch_postgres() {
 		network_args=(--network "$TEST_NETWORK" -p 5432)
 		export PGHOST="localhost"
 		export PGPORT
+		PGSOCKETDIR=$(mktemp -d "${TMPDIR:-/tmp}/sdb-pgsocket-XXXXXX")
+		chmod 777 "$PGSOCKETDIR"
+		network_args+=(-v "$PGSOCKETDIR:/var/run/postgresql")
+		export PGSOCKETDIR
 	fi
 	export PGUSER=postgres
 	export PGDATABASE=postgres
@@ -804,7 +812,7 @@ launch_postgres() {
 		"${network_args[@]}" \
 		-e POSTGRES_HOST_AUTH_METHOD=trust \
 		-e POSTGRES_DB=postgres \
-		postgres:18.6
+		postgres:18.6 -c wal_level=logical -c max_replication_slots=64 -c max_wal_senders=64
 	if [[ -z "${COMPOSE_NETWORK:-}" ]]; then
 		PGPORT=$(docker port "$POSTGRES_CONTAINER_NAME" 5432/tcp | head -1 | sed 's/.*://')
 	fi
@@ -1003,7 +1011,7 @@ launch_external() {
 			# package RTA, which has no docker -- exclude it. An external-service
 			# suffix on a plain .test is a mistake; fail loudly instead of
 			# letting the service launch blow up later.
-			*_s3.test | *_iceberg.test | *_ollama.test | *_kev.test | *_pgscan.test | *_chscan.test | *_azure.test)
+			*_s3.test | *_iceberg.test | *_ollama.test | *_kev.test | *_pgscan.test | *_pgscan_tls.test | *_chscan.test | *_azure.test)
 				misnamed+=("$f")
 				;;
 			*_s3.test_slow) needs_s3=true ;;
@@ -1011,7 +1019,7 @@ launch_external() {
 			*_iceberg.test_slow) needs_iceberg=true ;;
 			*_ollama.test_slow) needs_ollama=true ;;
 			*_kev.test_slow) needs_kev=true ;;
-			*_pgscan.test_slow) needs_postgres=true ;;
+			*_pgscan.test_slow | *_pgscan_tls.test_slow) needs_postgres=true ;;
 			*_chscan.test_slow) needs_clickhouse=true ;;
 			esac
 		done <<<"$test_files"
@@ -1298,6 +1306,7 @@ run_tests() {
 		--host "$host" --port "$port" --engine "$engine" \
 		--jobs "$jobs" \
 		--label "$database" \
+		${PGSOCKETDIR:+--label pgsocket} \
 		--junit "$junit-$engine" \
 		$options \
 		$skip_failed_opt ${skip_failed:+"$skip_failed"} \
@@ -1309,6 +1318,7 @@ run_tests() {
 			--host "$host" --port "$port" --engine "$engine" \
 			--jobs 1 \
 			--label "$database" \
+			${PGSOCKETDIR:+--label pgsocket} \
 			--junit "$junit-$engine-exclusive" \
 			$options \
 			$skip_failed_opt ${skip_failed:+"$skip_failed"} \

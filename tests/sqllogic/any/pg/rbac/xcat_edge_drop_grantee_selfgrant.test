@@ -1,10 +1,8 @@
 # Cross-catalog EDGE CASES around grant dependencies:
 #   1. A grantee that holds a table privilege is referenced from pg_class.relacl;
 #      DROP ROLE is refused while that reference exists ("cannot be dropped
-#      because some objects depend on it"). The ERROR line is identical on both
-#      engines; the DETAIL differs (PG names the table; serenedb reports a
-#      count) -> trailing <slt:ignore>. After REVOKE the relacl element is gone
-#      and the drop succeeds.
+#      because some objects depend on it"). After REVOKE the relacl element is
+#      gone and the drop succeeds.
 #   2. Self-membership is rejected ("role X is a member of role X"), error text
 #      byte-identical on both engines (no DETAIL).
 #
@@ -54,13 +52,19 @@ e
 xcat_dg_vedernikoff=r/postgres
 
 
-# DROP ROLE is refused while the relacl element exists. ERROR line matches on
-# both engines; DETAIL diverges (PG: "privileges for table ..."; serenedb:
-# "N object(s) ...") -> <slt:ignore>.
+# DROP ROLE is refused while the relacl element exists.
+skipif serenedb
 statement error
 DROP ROLE xcat_dg_vedernikoff;
 ----
 db error: ERROR: role "xcat_dg_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+
+
+onlyif serenedb
+statement error
+DROP ROLE xcat_dg_vedernikoff;
+----
+db error: ERROR: Cannot drop entry "xcat_dg_vedernikoff" because there are entries that depend on it.<slt:ignore>
 
 
 # The relacl element is still present after the failed drop (the role survives).

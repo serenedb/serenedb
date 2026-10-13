@@ -23,6 +23,7 @@
 #include <absl/flags/flag.h>
 
 #include <algorithm>
+#include <duckdb/common/types/timestamp.hpp>
 #include <memory>
 #include <yaclib/async/contract.hpp>
 
@@ -111,6 +112,17 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     });
   _delays.insert(std::move(timer));
   return std::move(f);
+}
+
+void BackgroundScheduler::RunAt(duckdb::timestamp_t at,
+                                std::function<void()> task) {
+  const std::chrono::microseconds delay{
+    at.value - duckdb::Timestamp::GetCurrentTimestamp().value};
+  Delay(delay).Detach(*_pool, [this, task = std::move(task)] {
+    if (!IsStopping()) {
+      task();
+    }
+  });
 }
 
 void BackgroundScheduler::OpenDelays() {

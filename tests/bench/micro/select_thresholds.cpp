@@ -21,7 +21,7 @@
 // Measures duckdb compression methods DIRECTLY on a single ColumnSegment of
 // the desired size -- no reader abstractions in the timed path. Per
 // (codec/logical type, block size W, hits k) the arms are:
-//   fetch      -- per-hit ColumnSegment::FetchRow (when the codec has one)
+//   fetch      -- per-hit ColumnSegment::FetchRow
 //   select     -- one native codec select over the block window; skipped
 //                 where the codec's select can't take a block-sized window
 //   entire     -- decode the whole block + dictionary Slice of the hits;
@@ -153,7 +153,7 @@ std::unique_ptr<Blk> BuildBlk(const Shape& shape, uint64_t w) {
                blk->type.ToString().c_str(), col->DataBlocks().size(),
                static_cast<unsigned long long>(blk->rows),
                duckdb::EnumUtil::ToChars<duckdb::CompressionType>(fn.type),
-               fn.select != nullptr, fn.fetch_row != nullptr);
+               fn.select != nullptr, fn.fetch_rows != nullptr);
   return blk;
 }
 
@@ -208,10 +208,6 @@ void BenchArm(benchmark::State& state, size_t shape_idx, Arm arm) {
   const auto& fn = segment.GetCompressionFunction();
   if (arm == Arm::Select && fn.select == nullptr) {
     state.SkipWithError("no select");
-    return;
-  }
-  if (arm == Arm::Fetch && fn.fetch_row == nullptr) {
-    state.SkipWithError("no fetch_row");
     return;
   }
 

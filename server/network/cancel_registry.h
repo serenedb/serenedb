@@ -39,8 +39,7 @@ class TransportBase {
  public:
   virtual void Stop() = 0;
 
- protected:
-  ~TransportBase() = default;
+  virtual ~TransportBase() = default;
 };
 
 // Cross-thread cancellation handle for one connection (pg and http alike). A

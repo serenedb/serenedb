@@ -1,0 +1,94 @@
+control substitution on
+
+onlyif serenedb
+statement ok
+DROP ROLE IF EXISTS sub_rec_owner;
+
+onlyif serenedb
+statement ok
+CREATE ROLE sub_rec_owner;
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION sub_rec_kept CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub_a, pub_b WITH (connect = false, slot_name = NONE, binary = true, origin = none);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION sub_rec_altered CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub_a WITH (connect = false, slot_name = NONE);
+
+onlyif serenedb
+statement ok
+CREATE SUBSCRIPTION sub_rec_dropped CONNECTION 'host=localhost dbname=mydb' PUBLICATION pub_a WITH (connect = false, slot_name = NONE);
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION sub_rec_altered SET (disable_on_error = true, synchronous_commit = 'local');
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION sub_rec_altered ADD PUBLICATION pub_c WITH (refresh = false);
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION sub_rec_altered SKIP (lsn = '1/2');
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION sub_rec_altered RENAME TO sub_rec_renamed;
+
+onlyif serenedb
+statement ok
+ALTER SUBSCRIPTION sub_rec_renamed OWNER TO sub_rec_owner;
+
+onlyif serenedb
+statement ok
+DROP SUBSCRIPTION sub_rec_dropped;
+
+onlyif serenedb
+query
+SELECT subname FROM pg_subscription ORDER BY subname;
+----
+subname
+sub_rec_kept
+sub_rec_renamed
+
+onlyif serenedb
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+onlyif serenedb
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname, subenabled, subbinary, suborigin, subpublications FROM pg_subscription ORDER BY subname;
+----
+subname	subenabled	subbinary	suborigin	subpublications
+sub_rec_kept	f	t	none	{pub_a,pub_b}
+sub_rec_renamed	f	f	any	{pub_a,pub_c}
+
+onlyif serenedb
+connection after_crash
+query
+SELECT s.subdisableonerr, s.subsynccommit, s.subskiplsn, r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'sub_rec_renamed';
+----
+subdisableonerr	subsynccommit	subskiplsn	rolname
+t	local	1/2	sub_rec_owner
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP SUBSCRIPTION sub_rec_kept;
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP SUBSCRIPTION sub_rec_renamed;
+
+onlyif serenedb
+connection after_crash
+statement ok
+DROP ROLE sub_rec_owner;

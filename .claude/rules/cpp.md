@@ -179,7 +179,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Never build a `std::string` just to pass a view on or look it up: `options[name]`, `options.find(name)`, never `options[std::string{name}]` or `options.find(std::string{name})`.
 - Hash containers and hashing are absl's: never `std::unordered_*` (pre-commit `check-banned-calls` rejects it in `server/` and `iresearch/`) or `std::hash`:
   - in our code, `irs::containers::FlatHashMap` and `FlatHashSet` (`absl::flat_hash_map` and `flat_hash_set`), and `NodeHashMap` when references to elements must survive inserts;
-  - in the DuckDB family, `unordered_map` and `unordered_set`: upstream makes them `std::unordered_map` and `std::unordered_set`, our fork overrides them as `absl::node_hash_map` and `absl::node_hash_set`, and its `case_insensitive_map_t` and `case_insensitive_set_t` are those with transparent case-insensitive hashing and equality.
+  - in the DuckDB family, `unordered_map` and `unordered_set`, which in our fork are `absl::node_hash_map` and `absl::node_hash_set`, and the `case_insensitive_map_t` and `case_insensitive_set_t` built on them.
 - All of them take the `std::string_view` or `const char*` key you have wherever a key goes: `find`, `contains`, `count`, `operator[]`, `at`, `try_emplace`, `insert_or_assign`, `erase`. `std::map` and `std::set` take it in the lookups (`find`, `contains`, `count`, `lower_bound`, `equal_range`), because our patched libc++ makes `std::less<>` their default comparator, but not in `operator[]`, `at`, `try_emplace` or `erase`.
 - Never `find` followed by an insert of the same key: `try_emplace` or `operator[]` looks the key up once.
 - Key a map by `std::string_view` when the strings outlive it.

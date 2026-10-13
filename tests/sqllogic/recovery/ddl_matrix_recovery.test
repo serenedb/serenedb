@@ -359,7 +359,7 @@ dm.parent	parent_pkey	p
 dm.pk	pk_id_not_null	n
 dm.pk	pk_pkey	p
 dm.pk	pk_v_short	c
-dm.plain2	plain2_a_not_null	n
+dm.plain2	plain_a_not_null	n
 dm.ser	ser_id_not_null	n
 dm.ser	ser_pkey	p
 dm.st	st_id_not_null	n
@@ -479,7 +479,7 @@ dm.parent	parent_pkey	p
 dm.pk	pk_id_not_null	n
 dm.pk	pk_pkey	p
 dm.pk	pk_v_short	c
-dm.plain2	plain2_a_not_null	n
+dm.plain2	plain_a_not_null	n
 dm.ser	ser_id_not_null	n
 dm.ser	ser_pkey	p
 dm.st	st_id_not_null	n
@@ -678,7 +678,7 @@ dm.parent	parent_pkey	p
 dm.pk	pk_id_not_null	n
 dm.pk	pk_pkey	p
 dm.pk	pk_v_short	c
-dm.plain2	plain2_a_not_null	n
+dm.plain2	plain_a_not_null	n
 dm.ser	ser_id_not_null	n
 dm.ser	ser_pkey	p
 dm.st	st_id_not_null	n

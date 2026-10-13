@@ -184,7 +184,6 @@ WHERE a.rolname IN ('cxd_owner', 'cxd_reader') AND s.classid = 'pg_class'::regcl
 ORDER BY 1, 2
 ----
 rolname	deptype	in_cxd_db
-cxd_owner	a	t
 cxd_owner	o	t
 cxd_reader	a	t
 

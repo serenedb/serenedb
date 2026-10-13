@@ -271,9 +271,12 @@ t
 statement ok
 SELECT * FROM pg_catalog."pg_inherits" LIMIT 0;
 
-# sys_tables: pg_init_privs (🟡)
-statement ok
-SELECT * FROM pg_catalog."pg_init_privs" LIMIT 0;
+# sys_tables: pg_init_privs (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_init_privs";
+----
+populated
+t
 
 # sys_tables: pg_language (🟢)
 query
@@ -588,6 +591,13 @@ t
 # sys_views: pg_shmem_allocations (🟡)
 statement ok
 SELECT * FROM pg_catalog."pg_shmem_allocations" LIMIT 0;
+
+# sys_views: pg_stat_database (🟢)
+query
+SELECT count(*) > 0 AS populated FROM pg_catalog."pg_stat_database";
+----
+populated
+t
 
 # sys_views: pg_stats (🟡)
 statement ok

@@ -168,3 +168,39 @@ FROM sdb_merge_simulate(
 ----
 merges	write_amplification	most_segments
 57	5.62	28
+
+# DOCS_TEST: example_009
+
+statement ok
+CREATE TABLE my_journal (id INTEGER PRIMARY KEY, msg VARCHAR USING COMPRESSION uncompressed)
+WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+INSERT INTO my_journal SELECT i, 'event ' || (i % 10) FROM generate_series(1, 1000) s(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) my_journal;
+
+statement ok
+ALTER TABLE my_journal ALTER COLUMN msg SET COMPRESSION DEFAULT;
+
+# DOCS_TEST_BODY
+
+query
+SELECT "column", codecs, verdict
+FROM sdb_segments('my_journal', columns := true)
+WHERE "column" = 'msg';
+----
+column	codecs	verdict
+msg	Uncompressed	re-encode
+
+statement ok
+VACUUM (OPTIMIZE_TABLE) my_journal;
+
+query
+SELECT "column", verdict
+FROM sdb_segments('my_journal', columns := true)
+WHERE "column" = 'msg';
+----
+column	verdict
+msg	copy

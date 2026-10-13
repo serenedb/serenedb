@@ -59,6 +59,11 @@
 #include "search/writer_generations.h"
 #include "storage_engine/search_engine.h"
 
+namespace duckdb {
+
+class TaskScheduler;
+
+}  // namespace duckdb
 namespace sdb::search {
 
 enum class MergeMode : uint8_t;
@@ -200,10 +205,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                                bool& empty_compaction,
                                const irs::IndexFieldOptions* field_options,
                                MergeOrigin origin,
-                               irs::MergeExecutor* executor = nullptr) {
+                               irs::MergeExecutor* executor = nullptr,
+                               irs::LoneSegment lone = irs::LoneSegment::Skip) {
     return irs::GetReady(CompactUnsafeAsync(policy, progress, empty_compaction,
                                             field_options, &AnnBuildEnv(),
-                                            origin, nullptr, executor));
+                                            origin, nullptr, executor, lone));
   }
   auto CompactUnsafeAsync(const irs::CompactionPolicy& policy,
                           const irs::MergeWriter::FlushProgress& progress,
@@ -211,7 +217,8 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
                           irs::CompactionResult* outcome = nullptr,
-                          irs::MergeExecutor* executor = nullptr)
+                          irs::MergeExecutor* executor = nullptr,
+                          irs::LoneSegment lone = irs::LoneSegment::Skip)
     -> yaclib::Future<ResultWithTime>;
   irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {
     return _writer->ReserveMerges(planner);
@@ -234,6 +241,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   void VacuumRefresh();
   void VacuumCompact(MergeMode mode, uint32_t target_segments,
+                     duckdb::TaskScheduler& scheduler,
                      const irs::MergeWriter::FlushProgress& progress,
                      irs::MergeExecutor* executor = nullptr);
 

@@ -51,6 +51,7 @@
 #include "pg/connection_context.h"
 #include "pg/pg_types.h"
 #include "query/config.h"
+#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/task_merge_executor.h"
 #include "search/inverted_index_storage.h"
@@ -257,29 +258,44 @@ uint32_t QueryThreads(duckdb::ClientContext& context) {
     duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads());
 }
 
-std::vector<irs::CompactionPolicy> IndexMergePolicies(
-  Action action, search::InvertedIndexStorage& inverted,
-  const irs::IndexFieldOptions& field_options, duckdb::ClientContext& context) {
+struct IndexMerge {
+  irs::CompactionPolicy policy;
+  irs::LoneSegment lone = irs::LoneSegment::Skip;
+};
+
+std::vector<IndexMerge> IndexMerges(Action action,
+                                    search::InvertedIndexStorage& inverted,
+                                    const irs::IndexFieldOptions& field_options,
+                                    duckdb::ClientContext& context) {
+  std::vector<IndexMerge> merges;
   if (action == Action::Compact) {
-    return {irs::index_utils::MakePolicy(
-      irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()})};
+    merges.emplace_back(IndexMerge{
+      .policy = irs::index_utils::MakePolicy(
+        irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()}),
+    });
+    return merges;
   }
+  const search::CopyChecker checker{
+    field_options, duckdb::TaskScheduler::GetScheduler(context)};
   const auto plan = search::PlanMergeRound(
     inverted.GetInvertedIndexSnapshot()->reader,
     search::MergeRoundRequest{.mode = search::MergeMode::Optimize,
                               .target_segments = QueryThreads(context),
-                              .row_group_size = field_options.row_group_size});
-  std::vector<irs::CompactionPolicy> policies;
-  policies.reserve(plan.merges.size());
+                              .row_group_size = field_options.row_group_size,
+                              .copy_check = &checker});
+  merges.reserve(plan.merges.size());
   for (const auto& planned : plan.merges) {
     std::vector<std::string> names;
     names.reserve(planned.inputs.size());
     for (const auto& segment : planned.inputs) {
       names.emplace_back(segment.name);
     }
-    policies.emplace_back(search::ExplicitPolicy(names));
+    merges.emplace_back(IndexMerge{
+      .policy = search::ExplicitPolicy(names),
+      .lone = planned.lone,
+    });
   }
-  return policies;
+  return merges;
 }
 
 void CompactInvertedStorage(Action action,
@@ -301,14 +317,14 @@ void CompactInvertedStorage(Action action,
   const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
 
   inverted.Refresh();
-  for (const auto& policy :
-       IndexMergePolicies(action, inverted, field_options, context)) {
+  for (const auto& merge :
+       IndexMerges(action, inverted, field_options, context)) {
     bool empty_compaction = false;
     // The merge encodes against the index definition the step captured,
     // which the step holds for the whole call.
     const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-      policy, tick, empty_compaction, &field_options, env_ptr,
-      search::MergeOrigin::Vacuum, nullptr, &executor));
+      merge.policy, tick, empty_compaction, &field_options, env_ptr,
+      search::MergeOrigin::Vacuum, nullptr, &executor, merge.lone));
     context.InterruptCheck();
     context.DeadlineCheck();
     if (!res.ok()) {
@@ -547,6 +563,7 @@ void DispatchInverted(duckdb::ClientContext& context,
         search->VacuumCompact(
           optimize ? search::MergeMode::Optimize : search::MergeMode::Compact,
           optimize ? QueryThreads(context) : gTargetSegments.Int(context),
+          duckdb::TaskScheduler::GetScheduler(context),
           [&context] { return StatementRunning(context); }, &executor);
         context.InterruptCheck();
         context.DeadlineCheck();

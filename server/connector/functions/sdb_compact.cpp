@@ -39,6 +39,7 @@
 #include "connector/segment_rewrite/logical_segment_rewrite.h"
 #include "connector/segment_rewrite/merge_target.h"
 #include "query/config.h"
+#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "storage_engine/search_engine.h"
 
@@ -143,6 +144,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
       ? static_cast<uint32_t>(
           duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads())
       : gTargetSegments.Int(context);
+  const search::CopyChecker checker{
+    target.FieldOptions(), duckdb::TaskScheduler::GetScheduler(context)};
   search::MergeRoundRequest request{
     .mode = mode,
     .settings = &settings,
@@ -151,6 +154,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     .row_group_size = target.RowGroupSize(),
     .single_output = target.IsIndex(),
     .segments = segments,
+    .copy_check = &checker,
   };
   auto plan = search::PlanMergeRound(snapshot, request);
   auto job = std::make_shared<SegmentRewriteJob>(

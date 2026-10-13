@@ -48,6 +48,7 @@
 #include <yaclib/coro/future.hpp>
 
 #include "connector/column_id.h"
+#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
@@ -400,12 +401,13 @@ auto SearchTable::CompactUnsafeAsync(
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
   MergeOrigin origin, irs::CompactionResult* outcome,
-  irs::MergeExecutor* executor) -> yaclib::Future<ResultWithTime> {
+  irs::MergeExecutor* executor, irs::LoneSegment lone)
+  -> yaclib::Future<ResultWithTime> {
   MergeRecorder recorder{GetTableId(), origin};
   const auto recorded = recorder.Wrap(policy);
   co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
     return _writer->CompactAsync(recorded, field_options, progress, env,
-                                 executor);
+                                 executor, lone);
   });
 }
 
@@ -488,17 +490,20 @@ void SearchTable::VacuumRefresh() {
 }
 
 void SearchTable::VacuumCompact(MergeMode mode, uint32_t target_segments,
+                                duckdb::TaskScheduler& scheduler,
                                 const irs::MergeWriter::FlushProgress& progress,
                                 irs::MergeExecutor* executor) {
   const auto lease = GetSearchEngine().Merges().TakeOver(MergeRelation());
   const auto field_options = Config();
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
+  const CopyChecker checker{*field_options, scheduler};
   const auto plan =
     PlanMergeRound(_writer->GetSnapshot(),
                    MergeRoundRequest{.mode = mode,
                                      .target_segments = target_segments,
-                                     .row_group_size = _row_group_size});
+                                     .row_group_size = _row_group_size,
+                                     .copy_check = &checker});
   for (const auto& planned : plan.merges) {
     if (!progress()) {
       break;
@@ -510,7 +515,7 @@ void SearchTable::VacuumCompact(MergeMode mode, uint32_t target_segments,
     }
     bool empty = false;
     CompactUnsafe(ExplicitPolicy(names), progress, empty, field_options.get(),
-                  MergeOrigin::Vacuum, executor);
+                  MergeOrigin::Vacuum, executor, planned.lone);
     SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
     RefreshUnsafe(/*wait=*/true, nullptr, code);
   }

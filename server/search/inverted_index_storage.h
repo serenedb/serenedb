@@ -179,7 +179,8 @@ class InvertedIndexStorage final
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env, MergeOrigin origin,
                           irs::CompactionResult* outcome = nullptr,
-                          irs::MergeExecutor* executor = nullptr)
+                          irs::MergeExecutor* executor = nullptr,
+                          irs::LoneSegment lone = irs::LoneSegment::Skip)
     -> yaclib::Future<ResultWithTime>;
 
   irs::MergeReservation ReserveMerges(irs::MergePlanner planner) {

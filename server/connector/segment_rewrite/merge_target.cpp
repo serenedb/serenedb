@@ -86,7 +86,7 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
     target._table = search->Storage();
     target._relation_id = search->oid;
     target._name = QualifiedDisplayName(*search);
-    target._row_group_size = target._table->Config()->row_group_size;
+    target._options = target._table->Config();
     table = search;
   } else if (auto index_entry = duckdb::Catalog::GetEntry(
                context,
@@ -111,12 +111,12 @@ MergeTarget MergeTarget::Resolve(duckdb::ClientContext& context,
       target._index = inverted->Storage();
       target._relation_id = inverted->oid;
       target._name = QualifiedDisplayName(*inverted);
-      target._row_group_size = inverted->Config()->row_group_size;
+      target._options = inverted->Config();
     } else if (inverted->SearchStore() && owner) {
       target._table = inverted->SearchStore();
       target._relation_id = owner->oid;
       target._name = QualifiedDisplayName(*owner);
-      target._row_group_size = target._table->Config()->row_group_size;
+      target._options = target._table->Config();
     }
   }
 
@@ -166,16 +166,18 @@ MergeRun MergeTarget::Compact(const irs::CompactionPolicy& policy,
                               const irs::MergeWriter::FlushProgress& progress,
                               const irs::IndexFieldOptions* field_options,
                               search::MergeOrigin origin,
-                              irs::MergeExecutor* executor) const {
+                              irs::MergeExecutor* executor,
+                              irs::LoneSegment lone) const {
   MergeRun run;
   bool empty = false;
   const auto* env = &search::AnnBuildEnv();
-  auto [status, time_ms] = _table ? irs::GetBlocking(_table->CompactUnsafeAsync(
-                                      policy, progress, empty, field_options,
-                                      env, origin, &run.result, executor))
-                                  : irs::GetBlocking(_index->CompactUnsafeAsync(
-                                      policy, progress, empty, field_options,
-                                      env, origin, &run.result, executor));
+  auto [status, time_ms] = _table
+                             ? irs::GetBlocking(_table->CompactUnsafeAsync(
+                                 policy, progress, empty, field_options, env,
+                                 origin, &run.result, executor, lone))
+                             : irs::GetBlocking(_index->CompactUnsafeAsync(
+                                 policy, progress, empty, field_options, env,
+                                 origin, &run.result, executor, lone));
   if (!status.ok()) {
     run.error = std::string{status.message()};
   }

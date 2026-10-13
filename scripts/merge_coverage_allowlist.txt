@@ -15,16 +15,15 @@ iresearch/formats/hnsw/hnsw_writer.cpp:776-778 a donor is picked only with live 
 iresearch/formats/hnsw/hnsw_writer.cpp:935 BuildGraphFromMerge fails only on the impossible donor states above (706-715, 776-778)
 iresearch/formats/hnsw/hnsw_writer.cpp:959-961 a vector column exists only with rows
 iresearch/formats/hnsw/hnsw_writer.cpp:1014-1019 TurboQuant error correction is compiled off (kTurboQuantErrorCorrection), so RefineSamples is 0 for every quantizer
-server/search/compaction/merge_planner.cpp:105-106 the merge policies offer a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
-server/search/compaction/merge_planner.cpp:224 the implicit default of an exhaustive switch over MergeMode
-server/search/compaction/merge_planner.cpp:234 the return after an exhaustive switch over MergeMode
-server/search/compaction/merge_planner.cpp:254-258 every search-table and index segment carries the generated row key with its range
-server/search/compaction/merge_planner.cpp:265-267 every planned merge has documents
-server/search/compaction/merge_planner.cpp:276 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:106-107 the merge policies offer a single segment only when it has deletes; the check mirrors CompactAsync so EXPLAIN matches the merge
+server/search/compaction/merge_planner.cpp:263 the implicit default of an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:273 the return after an exhaustive switch over MergeMode
+server/search/compaction/merge_planner.cpp:304-306 every planned merge has documents
+server/search/compaction/merge_planner.cpp:315 the implicit default of an exhaustive switch over MergeMode
 server/search/compaction/merge_policies.cpp:76 the index's database was detached after the merge checked that its storage is not retired and before it pinned the options; DROP DATABASE retires the storage first, so a parked merge stops at that check
 server/search/compaction/merge_policies.cpp:84-86 the index was dropped while its compaction options were being pinned
 server/search/compaction/merge_policies.cpp:92 the database-detached race of line 76
-server/connector/functions/sdb_segments.cpp:77-78 every search-table and index segment carries the generated row key with its range
+server/connector/functions/sdb_segments.cpp:113-114 every search-table and index segment carries the generated row key with its range
 server/connector/segment_rewrite/segment_rewrite_job.cpp:65-75 every search-table and index segment carries the generated row key with its range
 server/connector/segment_rewrite/segment_rewrite_job.cpp:97-101 every segment has the generated row key column, so a merge has columns
 server/connector/segment_rewrite/segment_rewrite_job.cpp:126 the return after an exhaustive switch over irs::MergeStep

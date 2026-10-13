@@ -96,6 +96,11 @@ struct MergeReservation {
   bool busy = false;
 };
 
+enum class LoneSegment : uint8_t {
+  Skip,
+  Rewrite,
+};
+
 enum class CompactionError : uint32_t {
   Fail = 0,
 
@@ -448,10 +453,12 @@ class IndexWriter : private util::Noncopyable {
   auto CompactAsync(const CompactionPolicy& policy,
                     const IndexFieldOptions* field_options,
                     const MergeWriter::FlushProgress& progress,
-                    const AnnBuildEnv* env, MergeExecutor* executor = nullptr)
+                    const AnnBuildEnv* env, MergeExecutor* executor = nullptr,
+                    LoneSegment lone = LoneSegment::Skip)
     -> yaclib::Future<CompactionResult>;
 
-  MergeReservation ReserveMerges(MergePlanner planner);
+  MergeReservation ReserveMerges(MergePlanner planner,
+                                 LoneSegment lone = LoneSegment::Skip);
 
   auto RunMerge(MergeTicket ticket, const IndexFieldOptions* field_options,
                 const MergeWriter::FlushProgress& progress,

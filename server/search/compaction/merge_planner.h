@@ -33,6 +33,8 @@
 
 namespace sdb::search {
 
+class CopyChecker;
+
 enum class MergeMode : uint8_t {
   Background = 0,
   Compact,
@@ -66,6 +68,7 @@ struct PlannedMerge {
   uint64_t largest_column_bytes = 0;
   uint64_t fields = 0;
   uint64_t ann_columns = 0;
+  irs::LoneSegment lone = irs::LoneSegment::Skip;
 
   uint64_t EstimatedOutputBytes() const noexcept;
 };
@@ -91,6 +94,7 @@ struct MergeRoundRequest {
   uint32_t row_group_size = 0;
   bool single_output = false;
   std::span<const std::string> segments{};
+  const CopyChecker* copy_check = nullptr;
 };
 
 PlannedSegment DescribeSegment(const irs::SubReader& segment);

@@ -59,6 +59,7 @@ set(iresearch-tests_sources
     ./analysis/wildcard_tokenizer_tests.cpp
     ./formats/column/col_block_sink_test.cpp
     ./formats/column/col_codecs_test.cpp
+    ./formats/column/col_copy_check_test.cpp
     ./formats/column/col_numeric_codec_test.cpp
     ./formats/column/column_reader_test.cpp
     ./formats/column/test_cs_helpers.cpp

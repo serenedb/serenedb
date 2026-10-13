@@ -1,0 +1,201 @@
+statement ok
+SET profiling_renderer_settings = {'deterministic': true}
+
+
+statement ok
+CREATE TABLE reenc (id INT PRIMARY KEY, body TEXT USING COMPRESSION uncompressed, tags INT[], meta STRUCT(k INT), pair INT[2])
+WITH (storage = 'search', compaction_interval = 0, row_group_size = 2048)
+
+
+statement ok
+INSERT INTO reenc
+SELECT i, 'request ' || (i % 50) || ' handled by checkout in ' || (i % 7) || ' ms', [i, i + 1], {'k': i % 3}, [i % 5, i % 7]::INT[2]
+FROM generate_series(1, 8192) s(i)
+
+
+statement ok
+VACUUM (REFRESH_TABLE) reenc
+
+
+query
+SELECT "column", type, rows, codecs, verdict
+FROM sdb_segments('reenc', columns := true)
+WHERE "column" IN ('body', 'meta', 'pair', 'tags')
+ORDER BY "column"
+----
+column	type	rows	codecs	verdict
+body	VARCHAR	8192	Uncompressed	copy
+meta	STRUCT(k INTEGER)	8192	NULL	NULL
+pair	INTEGER[2]	8192	NULL	NULL
+tags	INTEGER[]	8192	Sequence	NULL
+
+
+query
+SELECT count(*) AS columns,
+       count(*) FILTER (WHERE bytes > 0) AS sized,
+       count(*) FILTER (WHERE reencoded_bytes IS NULL) AS unchecked
+FROM sdb_segments('reenc', columns := true)
+----
+columns	sized	unchecked
+6	6	3
+
+
+query
+SELECT count(*) AS segments FROM sdb_segments('reenc', columns := NULL)
+----
+segments
+1
+
+
+statement ok
+ALTER TABLE reenc ALTER COLUMN body SET COMPRESSION DEFAULT
+
+
+query
+SELECT codecs, verdict, reencoded_bytes * 2 < bytes AS halved
+FROM sdb_segments('reenc', columns := true)
+WHERE "column" = 'body'
+----
+codecs	verdict	halved
+Uncompressed	re-encode	t
+
+
+query
+EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ─────────────────────╮
+│ Table: public.reenc                   │
+│ Mode: optimize                        │
+│ Segments: 1                           │
+│ Merges: 1                             │
+│ Merge 1:                              │
+│ 1 segment -> 1, re-encoding saves 95% │
+│ Merge 1 Inputs: _1                    │
+│ Merge 1 Docs:                         │
+│ 8192 (8192 live), rowid 1..8192       │
+│ Merge 1 Bytes:                        │
+│ <slt:ignore> -> est <slt:ignore>│
+│ Merge 1 Columns:                      │
+│ 6, <slt:ignore>, largest body <slt:ignore>│
+│ Merge 1 Postings: 1 field             │
+╰───────────────────────────────────────╯
+
+
+query
+SELECT merge, outcome, input_docs, output_docs
+FROM sdb_compact('reenc', mode := 'optimize')
+----
+merge	outcome	input_docs	output_docs
+1	merged	8192	8192
+
+
+query
+SELECT verdict, codecs <> 'Uncompressed' AS reencoded
+FROM sdb_segments('reenc', columns := true)
+WHERE "column" = 'body'
+----
+verdict	reencoded
+copy	t
+
+
+query
+SELECT merge, outcome FROM sdb_compact('reenc', mode := 'optimize')
+----
+merge	outcome
+
+
+query
+EXPLAIN CALL sdb_compact('reenc', mode := 'optimize')
+----
+QUERY PLAN
+╭─ SEGMENT_REWRITE ──────────────────────────────────────────────────╮
+│ Table: public.reenc                                                │
+│ Mode: optimize                                                     │
+│ Segments: 1                                                        │
+│ Merges: 0                                                          │
+│ Not Merged:                                                        │
+│ _2 (alone in its group without deletes, re-encoding would save 0%) │
+╰────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) AS n, count(DISTINCT body) AS bodies, sum(tags[2] - tags[1]) AS gaps FROM reenc
+----
+n	bodies	gaps
+8192	350	8192
+
+
+statement ok
+ALTER TABLE reenc ALTER COLUMN body SET COMPRESSION uncompressed
+
+
+query
+SELECT verdict FROM sdb_segments('reenc', columns := true) WHERE "column" = 'body'
+----
+verdict
+re-encode
+
+
+statement ok
+VACUUM (OPTIMIZE_TABLE) reenc
+
+
+query
+SELECT codecs, verdict FROM sdb_segments('reenc', columns := true) WHERE "column" = 'body'
+----
+codecs	verdict
+Uncompressed	copy
+
+
+query
+SELECT origin, count(*) AS merges FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'reenc') AND type = 'merge'
+GROUP BY origin ORDER BY origin
+----
+origin	merges
+sql	1
+vacuum	1
+
+
+statement ok
+DROP TABLE reenc
+
+
+statement ok
+CREATE TABLE reenc_idx_t (id INT, body TEXT)
+
+
+statement ok
+CREATE INDEX reenc_idx ON reenc_idx_t USING inverted (body) WITH (row_group_size = 2048, compaction_interval = 0)
+
+
+statement ok
+INSERT INTO reenc_idx_t SELECT i, 'fox ' || (i % 10) FROM generate_series(1, 4096) s(i)
+
+
+statement ok
+VACUUM (REFRESH_INDEX) reenc_idx
+
+
+statement ok
+VACUUM (OPTIMIZE_INDEX) reenc_idx
+
+
+query
+SELECT count(*) AS segments, sum(docs) AS docs FROM sdb_segments('reenc_idx')
+----
+segments	docs
+1	4096
+
+
+query
+SELECT count(*) AS merges FROM sdb_compact_history
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'reenc_idx') AND type = 'merge'
+----
+merges
+0
+
+
+statement ok
+DROP TABLE reenc_idx_t

@@ -38,6 +38,7 @@
 
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/formats/column/col_copy_check.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -82,23 +83,6 @@ class HyperLogLogMerger {
   duckdb::shared_ptr<duckdb::HyperLogLog> _hyperloglog;
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
-
-uint64_t StoredBytes(const ColumnReader& col) {
-  uint64_t bytes = 0;
-  for (const auto& block : col.DataBlocks()) {
-    bytes += block.byte_size;
-  }
-  if (const auto* validity = col.Validity()) {
-    bytes += StoredBytes(*validity);
-  }
-  if (const auto* child = col.Child()) {
-    bytes += StoredBytes(*child);
-  }
-  for (size_t i = 0; i != col.StructFieldCount(); ++i) {
-    bytes += StoredBytes(col.StructField(i));
-  }
-  return bytes;
-}
 
 constexpr size_t kSampleWindows = 32;
 constexpr size_t kSampleWindowBytes =

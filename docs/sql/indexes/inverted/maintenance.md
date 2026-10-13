@@ -95,7 +95,7 @@ Recompute statistics after large changes in data distribution so that [relevance
 | `background` (default) | What one round of background compaction would merge, following the table's `compaction_*` options, even when background compaction is disabled |
 | `compact` | What `VACUUM (COMPACT_TABLE)` or `VACUUM (COMPACT_INDEX)` would merge: `target_segments` groups for a search table (default: the `sdb_compact_target_segments` setting), one segment for an index |
 | `segments` | Exactly the segments named in `segments := ['...', ...]`, as `sdb_segments` lists them |
-| `optimize` | The shape that serves queries best: about as many segments as the server has query threads, each a contiguous range of rows, balanced by live documents and without deleted documents. A small relation gets fewer, so that every segment holds at least four row groups (`row_group_size`) of rows; `target_segments` sets the count instead. A segment with deletes is rewritten even when the relation already has no more segments than the target, and a second run finds nothing to do. Merges only combine segments, so a segment already larger than its share stays as it is |
+| `optimize` | The shape that serves queries best: about as many segments as the server has query threads, each a contiguous range of rows, balanced by live documents and without deleted documents. A small relation gets fewer, so that every segment holds at least four row groups (`row_group_size`) of rows; `target_segments` sets the count instead. A segment with deletes is rewritten even when the relation already has no more segments than the target, and so is a segment whose columns are not encoded the way the current codec settings would encode them (see `verdict` in `sdb_segments` below); a second run finds nothing to do. Merges only combine segments, so a segment already larger than its share stays as it is |
 
 Each result row describes one merge:
 
@@ -114,14 +114,14 @@ Each result row describes one merge:
 | Line | Meaning |
 |---|---|
 | `Segments`, `Merges` | Segments of the relation and merges planned |
-| `Merge N` | How many segments the merge combines into one, and why: `tier policy` or `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments` |
+| `Merge N` | How many segments the merge combines into one, and why: `tier policy` or `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
 | `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |
 | `Merge N Columns` | Columns stored in the inputs, internal ones included: how many, their size and the largest one |
 | `Merge N Postings` | Indexed fields whose postings the merge combines |
 | `Merge N ANN` | Vector columns whose ANN index the merge builds |
-| `Not Merged` | Segments left out, with the reason: `not selected by the tier policy` (or `adjacent policy`), `at or above the merge size cap` or `alone in its group without deletes` |
+| `Not Merged` | Segments left out, with the reason: `not selected by the tier policy` (or `adjacent policy`), `at or above the merge size cap` or `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) |
 | `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, or the only listed segment has no deletes |
 
 `EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
@@ -143,6 +143,19 @@ Background compaction runs on the server's background threads (`--background_thr
 `sdb_compact` needs the same privilege as `VACUUM` on the table (`MAINTAIN`). Its merges take effect at once: they are not part of the surrounding transaction, and `ROLLBACK` does not undo them. Cancelling the call or reaching `statement_timeout` stops it: the merge in progress is abandoned and its segments stay as they were, while merges that finished before remain. Like `VACUUM (COMPACT_*)`, a call that merges anything pauses the relation's background merges until it ends: those in progress stop and show as `cancelled`. `EXPLAIN` runs nothing and pauses nothing.
 
 `sdb_segments(relation)` lists the segments of a search table or an inverted index: `segment`, `docs`, `live_docs`, `deleted_docs`, `bytes`, and `rowid_min` / `rowid_max`, the range of row ids a segment holds.
+
+`sdb_segments(relation, columns := true)` lists the stored columns of every segment instead, internal ones included (`rowid` is the row id), one row each:
+
+| Column | Meaning |
+|---|---|
+| `segment`, `column`, `type`, `rows`, `bytes` | The segment, the column, its type, its rows and the bytes its data takes |
+| `codecs` | The codecs of the column's own blocks, in the order they first appear. For a list these hold where each list ends, for a struct there are none (`NULL`): the values live in the nested parts, which are not listed |
+| `reencoded_bytes` | The estimated size of the column if it were encoded again with the current codec settings, as a merge would. A few row groups spread over the column are encoded on the side and compared with the bytes they take now; the estimate is kept as long as the segment is in use. `NULL` for nested columns, which are not checked |
+| `verdict` | `re-encode` when re-encoding would save more than 10% of the column's bytes, or when the codec declared with `ALTER COLUMN ... SET COMPRESSION` is one the column's blocks do not use; `copy` otherwise; `NULL` when not checked |
+
+The estimates cost a little encoding work the first time a segment is looked at. `sdb_compact(mode := 'optimize')` and `VACUUM (OPTIMIZE_*)` use the same verdicts to decide whether a segment that would otherwise stay as it is gets rewritten:
+
+<SqlLogicTest id="sql/indexes/inverted/maintenance/example_009" />
 
 Two system tables show the compaction of the current database's search tables and indexes, whichever task ran a merge (`origin`: `background`, `vacuum` or `sql`):
 

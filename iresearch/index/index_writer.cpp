@@ -1356,7 +1356,8 @@ uint64_t IndexWriter::CurrentSegmentId() const noexcept {
   return _seg_counter.load(std::memory_order_relaxed);
 }
 
-MergeReservation IndexWriter::ReserveMerges(MergePlanner planner) {
+MergeReservation IndexWriter::ReserveMerges(MergePlanner planner,
+                                            LoneSegment lone) {
   MergeReservation reservation;
   std::lock_guard lock{_compacting.lock};
   if (_compacting.floor_requests != 0) {
@@ -1392,8 +1393,8 @@ MergeReservation IndexWriter::ReserveMerges(MergePlanner planner) {
 
   reservation.tickets.reserve(groups.size());
   for (auto& group : groups) {
-    if (group.empty() ||
-        (group.size() == 1 && !HasRemovals(group.front()->Meta()))) {
+    if (group.empty() || (group.size() == 1 && lone == LoneSegment::Skip &&
+                          !HasRemovals(group.front()->Meta()))) {
       continue;
     }
     if (absl::c_any_of(group, [this](const SubReader* candidate) {
@@ -1459,13 +1460,15 @@ void IndexWriter::RevokeTicketsLocked(bool clear) noexcept {
 auto IndexWriter::CompactAsync(const CompactionPolicy& policy,
                                const IndexFieldOptions* field_options,
                                const MergeWriter::FlushProgress& progress,
-                               const AnnBuildEnv* env, MergeExecutor* executor)
+                               const AnnBuildEnv* env, MergeExecutor* executor,
+                               LoneSegment lone)
   -> yaclib::Future<CompactionResult> {
-  auto reservation = ReserveMerges([&policy](const IndexReader& index,
-                                             const CompactingSegments& reserved,
-                                             MergeGroups& groups) {
-    policy(groups.emplace_back(), index, reserved);
-  });
+  auto reservation = ReserveMerges(
+    [&policy](const IndexReader& index, const CompactingSegments& reserved,
+              MergeGroups& groups) {
+      policy(groups.emplace_back(), index, reserved);
+    },
+    lone);
   if (reservation.tickets.empty()) {
     co_return CompactionResult{
       0, reservation.busy ? CompactionError::Busy : CompactionError::Ok};

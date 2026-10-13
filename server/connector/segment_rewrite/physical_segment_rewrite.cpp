@@ -246,9 +246,9 @@ duckdb::SourceResultType PhysicalSegmentRewrite::GetDataInternal(
         return StatementRunning(client);
       };
       SegmentRewriteExecutor executor{state};
-      auto run = _job->target.Compact(search::ExplicitPolicy(names), progress,
-                                      state.options.field_options,
-                                      search::MergeOrigin::Sql, &executor);
+      auto run = _job->target.Compact(
+        search::ExplicitPolicy(names), progress, state.options.field_options,
+        search::MergeOrigin::Sql, &executor, planned.lone);
       context.client.InterruptCheck();
       context.client.DeadlineCheck();
       ExecutedMerge executed{

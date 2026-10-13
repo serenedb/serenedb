@@ -404,12 +404,13 @@ auto InvertedIndexStorage::CompactUnsafeAsync(
   const irs::MergeWriter::FlushProgress& progress, bool& empty_compaction,
   const irs::IndexFieldOptions* field_options, const irs::AnnBuildEnv* env,
   MergeOrigin origin, irs::CompactionResult* outcome,
-  irs::MergeExecutor* executor) -> yaclib::Future<ResultWithTime> {
+  irs::MergeExecutor* executor, irs::LoneSegment lone)
+  -> yaclib::Future<ResultWithTime> {
   MergeRecorder recorder{GetId(), origin};
   const auto recorded = recorder.Wrap(policy);
   co_return co_await AwaitMerge(recorder, empty_compaction, outcome, [&] {
     return _writer->CompactAsync(recorded, field_options, progress, env,
-                                 executor);
+                                 executor, lone);
   });
 }
 

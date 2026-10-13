@@ -53,6 +53,7 @@ set(IResearch_core_sources
     ./analysis/filter_tokens_tokenizer.cpp
     ./error/error.cpp
     ./formats/column/col_block_sink.cpp
+    ./formats/column/col_copy_check.cpp
     ./formats/column/col_reader.cpp
     ./formats/column/col_writer.cpp
     ./formats/column/column_writer.cpp

@@ -33,6 +33,7 @@
 #include <utility>
 
 #include "connector/column_id.h"
+#include "search/compaction/copy_check.h"
 #include "search/compaction/merge_policies.h"
 
 namespace sdb::search {
@@ -125,8 +126,37 @@ void PlanBackground(const irs::IndexReader& reader,
   }
 }
 
+void PlaceAlone(const irs::SubReader& segment, const CopyChecker* checker,
+                MergeRoundPlan& plan) {
+  if (!checker) {
+    plan.skipped.emplace_back(SkippedSegment{
+      .name = segment.Meta().name,
+      .reason = "alone in its group without deletes",
+    });
+    return;
+  }
+  const auto check = checker->Check(segment);
+  if (!check.Rewrite()) {
+    plan.skipped.emplace_back(SkippedSegment{
+      .name = segment.Meta().name,
+      .reason = absl::StrCat(
+        "alone in its group without deletes, re-encoding would save ",
+        check.SavedPercent(), "%"),
+    });
+    return;
+  }
+  const irs::SubReader* inputs[] = {&segment};
+  auto& merge = plan.merges.emplace_back(DescribeMerge(
+    check.codec_changed
+      ? std::string{"a declared column codec changed"}
+      : absl::StrCat("re-encoding saves ", check.SavedPercent(), "%"),
+    inputs));
+  merge.lone = irs::LoneSegment::Rewrite;
+}
+
 void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
-                   std::string_view reason, MergeRoundPlan& plan) {
+                   std::string_view reason, const CopyChecker* checker,
+                   MergeRoundPlan& plan) {
   struct Placed {
     const irs::SubReader* segment;
     int64_t first_row;
@@ -163,15 +193,24 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
     buckets[group].emplace_back(placed.segment);
     taken += placed.live_docs;
   }
+  const auto alone = [](const irs::Compaction& bucket) {
+    return bucket.size() == 1 && !HasDeletes(*bucket.front());
+  };
+  if (checker) {
+    std::vector<const irs::SubReader*> lone;
+    for (const auto& bucket : buckets) {
+      if (alone(bucket)) {
+        lone.emplace_back(bucket.front());
+      }
+    }
+    checker->Warm(lone);
+  }
   for (const auto& bucket : buckets) {
     if (bucket.empty()) {
       continue;
     }
-    if (bucket.size() == 1 && !HasDeletes(*bucket.front())) {
-      plan.skipped.emplace_back(SkippedSegment{
-        .name = bucket.front()->Meta().name,
-        .reason = "alone in its group without deletes",
-      });
+    if (alone(bucket)) {
+      PlaceAlone(*bucket.front(), checker, plan);
       continue;
     }
     plan.merges.emplace_back(DescribeMerge(std::string{reason}, bucket));
@@ -187,7 +226,7 @@ void PlanCompact(const irs::IndexReader& reader,
     return;
   }
   PlaceInGroups(reader, target, absl::StrCat("compact to ", Segments(target)),
-                plan);
+                nullptr, plan);
 }
 
 void PlanOptimize(const irs::IndexReader& reader,
@@ -198,7 +237,7 @@ void PlanOptimize(const irs::IndexReader& reader,
   const auto target = static_cast<uint32_t>(std::clamp<uint64_t>(
     by_size, 1, std::max<uint32_t>(1, request.target_segments)));
   PlaceInGroups(reader, target, absl::StrCat("optimize to ", Segments(target)),
-                plan);
+                request.copy_check, plan);
 }
 
 void PlanSegments(const irs::IndexReader& reader,

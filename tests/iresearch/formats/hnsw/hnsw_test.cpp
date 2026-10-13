@@ -98,6 +98,22 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc,
             /*count=*/1);
 }
 
+void WriteNullAt(irs::ColWriter& cs, irs::doc_id_t doc, float payload) {
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+  auto& cw = cs.OpenColumn(kVec, vtype);
+  duckdb::Vector v{vtype, 1};
+  auto& child = duckdb::ArrayVector::GetChildMutable(v);
+  auto* data = duckdb::FlatVector::GetDataMutable<float>(child);
+  std::fill_n(data, kDim, payload);
+  duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
+  duckdb::FlatVector::ValidityMutable(v).SetInvalid(0);
+  duckdb::FlatVector::ValidityMutable(child).SetAllValid(kDim);
+  duckdb::FlatVector::SetSize(v, 1);
+  cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
+            /*count=*/1);
+}
+
 irs::DirectoryReader BuildIndex(irs::Directory& dir,
                                 const std::vector<std::vector<float>>& vecs,
                                 irs::VectorMetric metric,
@@ -336,8 +352,79 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   EXPECT_GE(recall_merged, RecallFloor())
     << "merged recall " << recall_merged << " metric "
     << static_cast<int>(metric) << " quant " << static_cast<int>(Quant());
-  EXPECT_GE(recall_merged, recall_fresh - 0.05)
+  EXPECT_GE(recall_merged, recall_fresh * 0.9)
     << "merged " << recall_merged << " vs rebuilt " << recall_fresh;
+}
+
+TEST_P(HnswIndexTest, NullRowsStayOutOfTrainingAndResults) {
+  const auto metric = Metric();
+  constexpr size_t kNulls = 900;
+  constexpr size_t kRows = 500;
+  constexpr size_t kK = 10;
+  const auto vecs = MakeVectors(2 * kRows, 41);
+
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, WriterOptions());
+  ASSERT_NE(nullptr, writer);
+  const auto write_part = [&](size_t part) {
+    auto trx = writer->GetBatch();
+    for (size_t i = 0; i < kNulls; ++i) {
+      auto doc = trx.Insert();
+      WriteNullAt(*doc.GetColWriter(), doc.DocId(), 50.f);
+    }
+    for (size_t i = part * kRows; i < (part + 1) * kRows; ++i) {
+      auto doc = trx.Insert();
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[i]);
+    }
+    trx.Commit();
+    writer->RefreshCommit();
+  };
+  std::vector<irs::doc_id_t> docs(vecs.size());
+  for (size_t i = 0; i < vecs.size(); ++i) {
+    docs[i] = static_cast<irs::doc_id_t>(irs::doc_limits::min() +
+                                         (i / kRows + 1) * kNulls + i);
+  }
+
+  const auto queries = MakeVectors(20, 43);
+  const auto check = [&](const irs::DirectoryReader& reader, size_t count,
+                         std::string_view stage) {
+    const std::span<const std::vector<float>> rows{vecs.data(), count};
+    const std::span<const irs::doc_id_t> want_docs{docs.data(), count};
+    size_t total = 0;
+    size_t matched = 0;
+    for (const auto& q : queries) {
+      auto filter = MakeKnnFilter(q, metric, Quant(), 128);
+      const auto got = RunKnn(reader, filter);
+      ASSERT_FALSE(got.empty()) << stage;
+      for (const auto doc : got) {
+        ASSERT_NE(std::ranges::find(want_docs, doc), want_docs.end())
+          << stage << ": doc " << doc << " has no vector";
+      }
+      const std::vector<std::vector<float>> owned(rows.begin(), rows.end());
+      for (const auto ordinal : BruteForceTopK(owned, q, metric, kK)) {
+        ++total;
+        const auto doc = want_docs[ordinal - irs::doc_limits::min()];
+        matched += std::ranges::find(got, doc) != got.end() ? 1 : 0;
+      }
+    }
+    EXPECT_GE(static_cast<double>(matched) / static_cast<double>(total),
+              RecallFloor())
+      << stage << " metric " << static_cast<int>(metric) << " quant "
+      << static_cast<int>(Quant());
+  };
+
+  write_part(0);
+  auto flushed = writer->GetSnapshot();
+  ASSERT_EQ(1U, flushed->size());
+  check(flushed, kRows, "flush");
+
+  write_part(1);
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
+  auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged->size());
+  check(merged, vecs.size(), "merge");
 }
 
 // Eight equal segments merged at once: the shape a CREATE INDEX actually

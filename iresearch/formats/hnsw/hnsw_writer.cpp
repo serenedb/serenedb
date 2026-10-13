@@ -253,7 +253,76 @@ uint64_t ScanVectors(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
   return rows;
 }
 
+template<typename Fn>
+uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
+                          uint64_t rows, uint64_t limit, uint32_t d,
+                          bool normalize, std::vector<float>& buf, Fn&& fn) {
+  ColumnReader::VectorScratch scratch{col.Type()};
+  auto scan = col.InitScan(ctx);
+  uint64_t delivered = 0;
+  for (uint64_t done = 0; done < rows && delivered < limit;) {
+    const auto take = static_cast<duckdb::idx_t>(
+      std::min<uint64_t>(STANDARD_VECTOR_SIZE, rows - done));
+    auto& batch = scratch.Reset();
+    col.Scan(scan, batch, take);
+    const auto& mask = duckdb::FlatVector::Validity(batch);
+    const auto* src =
+      duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
+    buf.clear();
+    size_t n = 0;
+    for (duckdb::idx_t i = 0; i < take && delivered + n < limit; ++i) {
+      if (mask.RowIsValid(i)) {
+        buf.insert(buf.end(), src + static_cast<size_t>(i) * d,
+                   src + static_cast<size_t>(i + 1) * d);
+        ++n;
+      }
+    }
+    if (normalize) {
+      for (size_t i = 0; i < n; ++i) {
+        float* v = buf.data() + i * d;
+        duckdb::L2NormalizeOp::Operation(v, v, d);
+      }
+    }
+    if (n != 0) {
+      fn(buf.data(), n);
+    }
+    delivered += n;
+    done += take;
+  }
+  return delivered;
+}
+
 inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
+
+void FanOut(const AnnBuildEnv* env, size_t tasks,
+            absl::FunctionRef<void(size_t)> task) {
+  const bool can_fan_out = env != nullptr && env->executor != nullptr;
+  const auto want =
+    can_fan_out
+      ? static_cast<uint32_t>(std::clamp<size_t>(tasks, 1, kHnswMaxWorkers))
+      : 1U;
+  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
+  absl::Cleanup release_workers = [&] {
+    if (want > 1) {
+      env->release(workers);
+    }
+  };
+  std::atomic<size_t> next{0};
+  const auto work = [&] {
+    for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
+      task(t);
+    }
+  };
+  std::vector<yaclib::FutureOn<>> runs;
+  runs.reserve(workers - 1);
+  for (uint32_t i = 1; i < workers; ++i) {
+    runs.push_back(yaclib::Run(*env->executor, [&work] { work(); }));
+  }
+  work();
+  if (!runs.empty()) {
+    yaclib::Wait(runs.begin(), runs.end());
+  }
+}
 
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
@@ -297,14 +366,17 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
     auto* src =
       duckdb::FlatVector::GetData<float>(duckdb::ArrayVector::GetChild(batch));
     const float* vecs = src;
-    if (normalize) {
-      owned.assign(src, src + static_cast<size_t>(take) * d);
-      vecs = owned.data();
-    }
+    bool nulls = false;
     for (duckdb::idx_t i = 0; i < take; ++i) {
       if (!mask.RowIsValid(i)) {
         valid[done + i] = 0;
+        nulls = true;
       }
+    }
+    const bool rewrite = normalize || nulls;
+    if (rewrite) {
+      owned.assign(src, src + static_cast<size_t>(take) * d);
+      vecs = owned.data();
     }
 
     const size_t n = take;
@@ -314,10 +386,14 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
       if (lo >= hi) {
         return;
       }
-      if (normalize) {
+      if (rewrite) {
         for (size_t i = lo; i < hi; ++i) {
           float* v = owned.data() + i * size_t{d};
-          duckdb::L2NormalizeOp::Operation(v, v, d);
+          if (valid[done + i] == 0) {
+            std::fill_n(v, d, 0.f);
+          } else if (normalize) {
+            duckdb::L2NormalizeOp::Operation(v, v, d);
+          }
         }
       }
       auto& writer = w == 0 ? qw : *spare[w - 1];
@@ -948,11 +1024,15 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     // that want a bounded sample (k-means and friends) still get one.
     const uint64_t sample =
       train ? _rows : std::min<uint64_t>(_rows, kHnswTrainSample);
-    trained_rows = ScanVectors(
-      col, ctx, sample, _d, normalize, batch_buf,
-      [&](const float* rows, size_t n, uint64_t, const duckdb::ValidityMask&) {
+    trained_rows = ScanValidVectors(
+      col, ctx, _rows, sample, _d, normalize, batch_buf,
+      [&](const float* rows, size_t n) {
         if (train) {
           _qw->Train(rows, n);
+        }
+        if (const size_t have = train_buf.size() / _d; have < train_rows) {
+          const size_t take = std::min(n, train_rows - have);
+          train_buf.insert(train_buf.end(), rows, rows + take * _d);
         }
         if (needs_centroid) {
           for (size_t i = 0; i < n; ++i) {
@@ -963,6 +1043,17 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
           }
         }
       });
+    if (trained_rows == 0) {
+      co_return {};
+    }
+    if (train_rows != 0) {
+      _qw->TrainParallel(
+        train_buf.data(), train_buf.size() / _d,
+        [env](size_t tasks, absl::FunctionRef<void(size_t)> task) {
+          FanOut(env, tasks, task);
+        });
+      train_buf = {};
+    }
   }
 
   if (needs_centroid) {
@@ -977,10 +1068,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   if (_qw) {
     const uint64_t refine = _qw->RefineSamples(_rows);
     if (refine != 0) {
-      ScanVectors(col, ctx, std::min<uint64_t>(_rows, refine), _d, normalize,
-                  batch_buf,
-                  [&](const float* rows, size_t n, uint64_t,
-                      const duckdb::ValidityMask&) { _qw->Refine(rows, n); });
+      ScanValidVectors(
+        col, ctx, _rows, std::min<uint64_t>(_rows, refine), _d, normalize,
+        batch_buf, [&](const float* rows, size_t n) { _qw->Refine(rows, n); });
       _qw->RefineDone();
     }
   }

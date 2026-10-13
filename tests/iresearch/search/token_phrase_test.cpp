@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cstring>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -903,7 +904,7 @@ class DeadRange final : public irs::detail::TableFilter {
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final {
     const uint64_t live = Narrow(base, mask, nullptr, words);
-    std::fill_n(mask, words, uint64_t{0});
+    std::memset(mask, 0, words * sizeof(uint64_t));
     return live;
   }
 

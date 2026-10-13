@@ -51,9 +51,9 @@ namespace {
 // scheduler worker between executor slices). A failed call has already been
 // written out as an ES error envelope when this resolves null.
 yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
-  RequestContext& ctx, std::string sql, http::HttpResponseWriter& writer,
+  RequestContext& ctx, std::string_view sql, http::HttpResponseWriter& writer,
   std::string_view index = {}, bool writes = false) {
-  auto result = co_await ctx.RunQuery(std::move(sql), writes);
+  auto result = co_await ctx.RunQuery(sql, writes);
   if (result->HasError()) {
     WriteSqlError(writer, result->GetErrorObject(), index);
     co_return nullptr;
@@ -93,13 +93,13 @@ int64_t TookMs(std::chrono::steady_clock::time_point start) {
 // The official clients post to bare /_bulk and route via per-line _index;
 // peek the FIRST action line for it (es_bulk enforces that every line names
 // the same index -- multi-index bulks are not supported).
-std::string FirstActionIndex(std::string_view body) {
+std::string FirstActionIndex(std::string_view body, size_t capacity) {
   const auto line = body.substr(0, body.find('\n'));
   try {
-    simdjson::padded_string padded{line};
     simdjson::ondemand::parser parser;
     simdjson::ondemand::document doc;
-    if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+    if (parser.iterate(line.data(), line.size(), capacity).get(doc) !=
+        simdjson::SUCCESS) {
       return {};
     }
     for (auto action : doc.get_object()) {
@@ -127,10 +127,12 @@ class BulkHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext& ctx, const HttpRequest& request,
                         http::HttpResponseWriter& writer) override {
-    auto body = FlattenBody(request.body);
+    const auto padded = FlattenBody(request.body, simdjson::SIMDJSON_PADDING);
+    const std::string_view body{padded.data(),
+                                padded.size() - simdjson::SIMDJSON_PADDING};
     std::string index{request.Param("index")};
     if (index.empty()) {
-      index = FirstActionIndex(body);
+      index = FirstActionIndex(body, padded.size());
     }
     if (index.empty()) {
       WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
@@ -140,23 +142,23 @@ class BulkHandler final : public HttpHandler {
     }
     const auto start = std::chrono::steady_clock::now();
 
-    auto& entry = ctx.PreparedSlot(PreparedSlotId::EsBulk);
-    if (auto error = EnsurePrepared(
-          ctx, entry,
-          absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
-                       " SELECT * FROM es_bulk_source(", SqlLiteral(index),
-                       ")"))) {
-      WriteSqlError(writer, *error, index);
+    const auto sql =
+      absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
+                   " SELECT * FROM es_bulk_source(", SqlLiteral(index), ")");
+    auto prepared = PrepareCached(ctx, PreparedSlotId::EsBulk, sql);
+    if (prepared.error) {
+      WriteSqlError(writer, *prepared.error, index);
       co_return {};
     }
-    std::string items;
-    const connector::EsBulkInput input{.body = body, .items = &items};
+    std::vector<std::string> items;
+    const connector::EsBulkInput input{
+      .body = body, .capacity = padded.size(), .items = &items};
     auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
     connection.SetSideChannel(&input);
     const absl::Cleanup clear = [&] {
       connection.SetSideChannel<const connector::EsBulkInput>(nullptr);
     };
-    auto result = co_await ctx.RunPrepared(*entry.statement);
+    auto result = co_await ctx.RunPrepared(*prepared.statement);
     if (result->HasError()) {
       WriteSqlError(writer, result->GetErrorObject(), index);
       co_return {};
@@ -164,9 +166,34 @@ class BulkHandler final : public HttpHandler {
     if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
-    WriteJson(writer, HttpStatus::Ok,
-              absl::StrCat("{\"took\":", TookMs(start),
-                           ",\"errors\":false,\"items\":[", items, "]}"));
+    const std::string head = absl::StrCat("{\"took\":", TookMs(start),
+                                          ",\"errors\":false,\"items\":[");
+    static constexpr std::string_view kTail = "]}";
+    size_t length = head.size() + kTail.size();
+    size_t parts = 0;
+    for (const auto& part : items) {
+      if (!part.empty()) {
+        length += part.size();
+        ++parts;
+      }
+    }
+    const size_t commas = parts == 0 ? 0 : parts - 1;
+    length += commas;
+    writer.WriteHead(HttpStatus::Ok, kJsonContentType, length, kProductHeader);
+    writer.Write(head);
+    bool first = true;
+    for (const auto& part : items) {
+      if (part.empty()) {
+        continue;
+      }
+      if (!first) {
+        writer.Write(",");
+      }
+      writer.Write(part);
+      first = false;
+    }
+    writer.Write(kTail);
+    writer.Finish();
     co_return {};
   }
 };

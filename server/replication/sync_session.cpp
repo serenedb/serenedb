@@ -46,7 +46,7 @@
 #include "network/pg/wire_frames.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
+#include "pg/copy_in_batches.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
@@ -194,18 +194,18 @@ yaclib::Task<bool> SyncSession::CopyTable(const SyncTable& table, bool binary) {
       break;
     }
   }
-  sdb::pg::CopyInBridge bridge;
-  this->_connection_ctx->SetSideChannel(&bridge);
+  sdb::pg::CopyInBatches batches;
+  this->_connection_ctx->SetSideChannel(&batches);
   _copy_stmt =
     BuildCopyFromStdin(table.schema, table.table, table.columns, binary);
   _job_done.Reset();
   _job.store(Job::Copy, std::memory_order_release);
   this->_task->RequestRun();
-  co_await this->RunCopyInFeeder(bridge, binary
-                                           ? network::pg::CopyFormat::Binary
-                                           : network::pg::CopyFormat::Text);
+  co_await this->RunCopyInFeeder(batches, binary
+                                            ? network::pg::CopyFormat::Binary
+                                            : network::pg::CopyFormat::Text);
   co_await _job_done.AwaitOn(*this->_ioexec);
-  this->_connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
+  this->_connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
   const bool copied = _job_ok;
   co_return co_await ReadUntilReady(nullptr) && copied;
 }
@@ -307,7 +307,8 @@ bool SyncSession::BeginSync() {
 yaclib::Task<bool> SyncSession::RunLocalCopy() {
   this->_client_state->copy_stdin_open_count = 0;
   this->_client_state->copy_stdin_done = false;
-  auto* bridge = this->_connection_ctx->GetSideChannel<sdb::pg::CopyInBridge>();
+  auto* batches =
+    this->_connection_ctx->GetSideChannel<sdb::pg::CopyInBatches>();
   bool ok = false;
   try {
     UseRole(_sync_table->owner);
@@ -319,8 +320,8 @@ yaclib::Task<bool> SyncSession::RunLocalCopy() {
   } catch (const std::exception& ex) {
     ApplyFailed(network::pg::ToSqlError(ex));
   }
-  if (!ok && bridge != nullptr) {
-    bridge->Abort();
+  if (!ok && batches != nullptr) {
+    batches->Abort();
   }
   co_return ok;
 }

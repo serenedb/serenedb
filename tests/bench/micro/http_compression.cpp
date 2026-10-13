@@ -33,11 +33,13 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "benchmark/benchmark.h"
 #include "network/http/compression.h"
 #include "network/http/mcp/tools.h"
+#include "server/utils/message_buffer.h"
 #include "server/utils/simdjson_sink.h"
 
 // What the HTTP layer would send for MCP responses under each content-coding:
@@ -48,6 +50,8 @@
 namespace {
 
 using sdb::network::http::ContentCoding;
+using sdb::network::http::ContentCodingToken;
+using sdb::network::http::ContentEncoder;
 using sdb::network::http::FindContentCoding;
 
 constexpr std::string_view kCodings[] = {"gzip", "zstd", "lz4", "zxc"};
@@ -124,10 +128,18 @@ const std::vector<Payload>& Payloads() {
   return payloads;
 }
 
-std::string Compress(const ContentCoding& coding, std::string_view body) {
+inline constexpr size_t kChunk = 64 << 10;
+
+std::string Compress(ContentCoding coding, std::string_view body) {
+  sdb::message::Buffer buffer{kChunk, kChunk};
+  sdb::message::Writer writer{buffer};
+  ContentEncoder{coding, sdb::network::http::kNoLevel}.Encode(body, true,
+                                                              writer);
+  writer.Commit(false);
   std::string out;
-  coding.make()->Encode(body, true,
-                        [&](std::string_view piece) { out.append(piece); });
+  for (const auto chunk : buffer.Written()) {
+    out.append(static_cast<const char*>(chunk.data()), chunk.size());
+  }
   return out;
 }
 
@@ -164,12 +176,16 @@ std::string Decompress(std::string_view token, std::string_view in,
 }
 
 void BM_Compress(benchmark::State& state, const Payload& payload,
-                 const ContentCoding& coding) {
+                 ContentCoding coding) {
+  sdb::message::Buffer buffer{kChunk, kChunk};
   size_t compressed_size = 0;
   for (auto _ : state) {
-    const auto out = Compress(coding, payload.body);
-    compressed_size = out.size();
-    benchmark::DoNotOptimize(out.data());
+    sdb::message::Writer writer{buffer};
+    ContentEncoder{coding, sdb::network::http::kNoLevel}.Encode(payload.body,
+                                                                true, writer);
+    compressed_size = writer.Commit(false);
+    benchmark::DoNotOptimize(compressed_size);
+    buffer.Clear();
   }
   state.SetBytesProcessed(
     static_cast<int64_t>(state.iterations() * payload.body.size()));
@@ -179,10 +195,11 @@ void BM_Compress(benchmark::State& state, const Payload& payload,
 }
 
 void BM_Decompress(benchmark::State& state, const Payload& payload,
-                   const ContentCoding& coding) {
+                   ContentCoding coding) {
   const auto compressed = Compress(coding, payload.body);
   for (auto _ : state) {
-    const auto out = Decompress(coding.token, compressed, payload.body.size());
+    const auto out =
+      Decompress(ContentCodingToken(coding), compressed, payload.body.size());
     benchmark::DoNotOptimize(out.data());
   }
   state.SetBytesProcessed(
@@ -284,13 +301,13 @@ class RankingReporter final : public benchmark::ConsoleReporter {
 static int Main(int argc, char** argv) {
   for (const auto& payload : Payloads()) {
     for (const auto token : kCodings) {
-      const auto* coding = FindContentCoding(token);
+      const auto coding = FindContentCoding(token);
       benchmark::RegisterBenchmark(
         std::string{"compress/"} + payload.name + "/" + std::string{token},
-        BM_Compress, payload, *coding);
+        BM_Compress, payload, coding);
       benchmark::RegisterBenchmark(
         std::string{"decompress/"} + payload.name + "/" + std::string{token},
-        BM_Decompress, payload, *coding);
+        BM_Decompress, payload, coding);
     }
   }
   benchmark::Initialize(&argc, argv);

@@ -52,7 +52,7 @@ struct ReplBatch;
 }  // namespace sdb::replication
 namespace sdb::pg {
 
-class CopyInBridge;
+class CopyInBatches;
 
 // Outcome of the connect-time login gate. On success `role` is the id of the
 // resolved login role and `error` is default (errcode 0); on failure `role` is
@@ -80,7 +80,7 @@ class CancelRegistry;
 namespace sdb {
 
 using SideChannel =
-  PointerUnion<pg::CopyInBridge, otel::ExportRequest<otel::LogRecord>,
+  PointerUnion<pg::CopyInBatches, otel::ExportRequest<otel::LogRecord>,
                otel::ExportRequest<otel::Span>,
                otel::ExportRequest<otel::Metric>, connector::EsBulkInput,
                replication::ReplBatch>;

@@ -22,6 +22,9 @@
 
 #include <ada.h>
 
+#include <array>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -40,27 +43,30 @@ class HttpRouter {
 
   // Parses the query string into request.query, matches method + path,
   // fills request.params from the pattern's named groups. nullptr = no
-  // route. Routes are tried in insertion order, first match wins.
+  // route.
   HttpHandler* Match(HttpRequest& request);
 
  private:
-  using Pattern = ada::url_pattern<AdaRe2Provider>;
+  using PathPattern = ada::url_pattern_component<AdaRe2Provider>;
+
+  static constexpr size_t kMethods = magic_enum::enum_count<HttpMethod>();
+
+  using Handlers = std::array<HttpHandler*, kMethods>;
 
   // Fully literal routes are matched first, so one api's `/:index` cannot
   // swallow another's reserved `/_mcp` whichever order the apis were
-  // registered in; within each of the two classes, insertion order still
-  // decides.
+  // registered in.
   struct Entry {
-    HttpMethod method;
-    Pattern pattern;
-    std::unique_ptr<HttpHandler> handler;
+    PathPattern path;
+    size_t handlers;
   };
 
-  static HttpHandler* MatchIn(std::vector<Entry>& routes,
-                              const ada::url_pattern_init& path,
-                              HttpRequest& request);
+  size_t HandlersOf(std::string_view pattern);
 
-  std::vector<Entry> _literal;
+  std::vector<std::unique_ptr<HttpHandler>> _handlers;
+  std::vector<Handlers> _methods;
+  irs::containers::FlatHashMap<std::string, size_t> _patterns;
+  irs::containers::FlatHashMap<std::string, size_t> _literal;
   std::vector<Entry> _parameterized;
 };
 

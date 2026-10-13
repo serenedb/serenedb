@@ -22,45 +22,61 @@
 
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
+#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_split.h>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
-#include <vector>
+#include <variant>
 
 #include "network/http/codecs/codec.h"
 
 namespace sdb::network::http {
 namespace {
 
-// Declaration order IS the server's preference order, used whenever the
-// client accepts more than one of these equally.
-constexpr std::array kContentCodings = {
-  ContentCoding{
-    .token = "zstd", .make = MakeZstdEncoder, .make_decoder = MakeZstdDecoder},
-  ContentCoding{.token = "br",
-                .make = MakeBrotliEncoder,
-                .make_decoder = MakeBrotliDecoder},
-  ContentCoding{
-    .token = "gzip", .make = MakeGzipEncoder, .make_decoder = MakeGzipDecoder},
-  ContentCoding{
-    .token = "zxc", .make = MakeZxcEncoder, .make_decoder = MakeZxcDecoder},
-  ContentCoding{
-    .token = "lz4", .make = MakeLz4Encoder, .make_decoder = MakeLz4Decoder},
-  ContentCoding{.token = "snappy",
-                .make = MakeSnappyEncoder,
-                .make_decoder = MakeSnappyDecoder},
+struct CodingInfo {
+  ContentCoding coding;
+  std::string_view token;
+  LevelRange levels;
 };
+
+constexpr std::array kContentCodings = {
+  CodingInfo{ContentCoding::Identity, "identity", {}},
+  CodingInfo{ContentCoding::Zstd, "zstd", kZstdLevels},
+  CodingInfo{ContentCoding::Brotli, "br", kBrotliLevels},
+  CodingInfo{ContentCoding::Gzip, "gzip", kDeflateLevels},
+  CodingInfo{ContentCoding::Deflate, "deflate", kDeflateLevels},
+  CodingInfo{ContentCoding::Zxc, "zxc", kZxcLevels},
+  CodingInfo{ContentCoding::Lz4, "lz4", kLz4Levels},
+  CodingInfo{ContentCoding::Snappy, "snappy", {}},
+  CodingInfo{ContentCoding::Unknown, {}, {}},
+};
+
+static_assert(std::ranges::all_of(
+  std::views::iota(size_t{0}, kContentCodings.size()), [](size_t i) {
+    return static_cast<size_t>(kContentCodings[i].coding) == i;
+  }));
+
+constexpr size_t kFirstCompressing = static_cast<size_t>(ContentCoding::Zstd);
+constexpr size_t kEndCompressing = static_cast<size_t>(ContentCoding::Unknown);
+
+const CodingInfo& Info(ContentCoding coding) noexcept {
+  return kContentCodings[static_cast<size_t>(coding)];
+}
 
 struct AcceptedCoding {
   std::string_view token;
+  int level = kNoLevel;
   double quality = 1.0;
 };
 
@@ -92,6 +108,28 @@ std::optional<double> ParseQValue(std::string_view text) {
   return one ? 1.0 : fraction;
 }
 
+std::string_view CanonicalToken(std::string_view token) {
+  return absl::EqualsIgnoreCase(token, "x-gzip") ? "gzip" : token;
+}
+
+bool SplitLevel(std::string_view& token, int& level) {
+  const auto open = token.find('(');
+  if (open == std::string_view::npos) {
+    return true;
+  }
+  if (token.back() != ')') {
+    return false;
+  }
+  int value = 0;
+  if (!absl::SimpleAtoi(token.substr(open + 1, token.size() - open - 2),
+                        &value)) {
+    return false;
+  }
+  token = absl::StripTrailingAsciiWhitespace(token.substr(0, open));
+  level = value;
+  return true;
+}
+
 std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
   element = absl::StripAsciiWhitespace(element);
   if (element.empty()) {
@@ -102,7 +140,10 @@ std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
   for (std::string_view part : absl::StrSplit(element, ';')) {
     part = absl::StripAsciiWhitespace(part);
     if (std::exchange(first, false)) {
-      accepted.token = part;
+      if (!SplitLevel(part, accepted.level)) {
+        return std::nullopt;
+      }
+      accepted.token = CanonicalToken(part);
       continue;
     }
     if (absl::StartsWithIgnoreCase(part, "q=")) {
@@ -119,13 +160,135 @@ std::optional<AcceptedCoding> ParseAccepted(std::string_view element) {
 
 }  // namespace
 
-const ContentCoding* FindContentCoding(std::string_view token) {
-  for (const auto& coding : kContentCodings) {
-    if (absl::EqualsIgnoreCase(coding.token, token)) {
-      return &coding;
+std::string_view ContentCodingToken(ContentCoding coding) noexcept {
+  return Info(coding).token;
+}
+
+LevelRange ContentCodingLevels(ContentCoding coding) noexcept {
+  return Info(coding).levels;
+}
+
+ContentCoding FindContentCoding(std::string_view token) {
+  token = CanonicalToken(token);
+  for (const auto& info : kContentCodings) {
+    if (absl::EqualsIgnoreCase(info.token, token)) {
+      return info.coding;
     }
   }
-  return nullptr;
+  return ContentCoding::Unknown;
+}
+
+struct ContentEncoder::Codec {
+  template<typename Encoder>
+  Codec(std::in_place_type_t<Encoder> type, int level) : impl{type, level} {}
+
+  std::variant<ZstdEncoder, BrotliEncoder, GzipEncoder, DeflateEncoder,
+               ZxcEncoder, Lz4Encoder, SnappyEncoder>
+    impl;
+};
+
+ContentEncoder::ContentEncoder(ContentCoding coding, int level) {
+  switch (coding) {
+    case ContentCoding::Zstd:
+      _codec = std::make_unique<Codec>(std::in_place_type<ZstdEncoder>, level);
+      return;
+    case ContentCoding::Brotli:
+      _codec =
+        std::make_unique<Codec>(std::in_place_type<BrotliEncoder>, level);
+      return;
+    case ContentCoding::Gzip:
+      _codec = std::make_unique<Codec>(std::in_place_type<GzipEncoder>, level);
+      return;
+    case ContentCoding::Deflate:
+      _codec =
+        std::make_unique<Codec>(std::in_place_type<DeflateEncoder>, level);
+      return;
+    case ContentCoding::Zxc:
+      _codec = std::make_unique<Codec>(std::in_place_type<ZxcEncoder>, level);
+      return;
+    case ContentCoding::Lz4:
+      _codec = std::make_unique<Codec>(std::in_place_type<Lz4Encoder>, level);
+      return;
+    case ContentCoding::Snappy:
+      _codec =
+        std::make_unique<Codec>(std::in_place_type<SnappyEncoder>, level);
+      return;
+    case ContentCoding::Identity:
+    case ContentCoding::Unknown:
+      break;
+  }
+  SDB_ASSERT(false);
+}
+
+ContentEncoder::ContentEncoder(ContentEncoder&&) noexcept = default;
+ContentEncoder& ContentEncoder::operator=(ContentEncoder&&) noexcept = default;
+ContentEncoder::~ContentEncoder() = default;
+
+void ContentEncoder::Encode(std::string_view in, bool finish,
+                            message::Writer& out) {
+  std::visit([&](auto& encoder) { encoder.Encode(in, finish, out); },
+             _codec->impl);
+}
+
+void ContentEncoder::EncodeAll(std::string_view in, message::Writer& out) {
+  std::visit(
+    [&](auto& encoder) {
+      if constexpr (requires { encoder.EncodeAll(in, out); }) {
+        encoder.EncodeAll(in, out);
+      } else {
+        encoder.Encode(in, true, out);
+      }
+    },
+    _codec->impl);
+}
+
+struct ContentDecoder::Codec {
+  template<typename Decoder>
+  explicit Codec(std::in_place_type_t<Decoder> type) : impl{type} {}
+
+  std::variant<ZstdDecoder, BrotliDecoder, GzipDecoder, DeflateDecoder,
+               ZxcDecoder, Lz4Decoder, SnappyDecoder>
+    impl;
+};
+
+ContentDecoder::ContentDecoder(ContentCoding coding) {
+  switch (coding) {
+    case ContentCoding::Zstd:
+      _codec = std::make_unique<Codec>(std::in_place_type<ZstdDecoder>);
+      return;
+    case ContentCoding::Brotli:
+      _codec = std::make_unique<Codec>(std::in_place_type<BrotliDecoder>);
+      return;
+    case ContentCoding::Gzip:
+      _codec = std::make_unique<Codec>(std::in_place_type<GzipDecoder>);
+      return;
+    case ContentCoding::Deflate:
+      _codec = std::make_unique<Codec>(std::in_place_type<DeflateDecoder>);
+      return;
+    case ContentCoding::Zxc:
+      _codec = std::make_unique<Codec>(std::in_place_type<ZxcDecoder>);
+      return;
+    case ContentCoding::Lz4:
+      _codec = std::make_unique<Codec>(std::in_place_type<Lz4Decoder>);
+      return;
+    case ContentCoding::Snappy:
+      _codec = std::make_unique<Codec>(std::in_place_type<SnappyDecoder>);
+      return;
+    case ContentCoding::Identity:
+    case ContentCoding::Unknown:
+      break;
+  }
+  SDB_ASSERT(false);
+}
+
+ContentDecoder::ContentDecoder(ContentDecoder&&) noexcept = default;
+ContentDecoder& ContentDecoder::operator=(ContentDecoder&&) noexcept = default;
+ContentDecoder::~ContentDecoder() = default;
+
+void ContentDecoder::Decode(std::string_view in, bool finish,
+                            absl::FunctionRef<void(std::string_view)> sink) {
+  std::visit([&](auto& decoder) { decoder.Decode(in, finish, sink); },
+             _codec->impl);
 }
 
 Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
@@ -136,7 +299,9 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
     return {};
   }
 
-  std::vector<AcceptedCoding> accepted;
+  std::array<std::optional<double>, kContentCodings.size()> weights;
+  std::array<int, kContentCodings.size()> levels{};
+  std::optional<double> identity;
   std::optional<double> wildcard;
   for (const auto element : absl::StrSplit(accept_encoding, ',')) {
     if (absl::StripAsciiWhitespace(element).empty()) {
@@ -148,68 +313,87 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding) {
     }
     if (parsed->token == "*") {
       wildcard = parsed->quality;
-    } else {
-      accepted.push_back(*parsed);
+      continue;
+    }
+    if (absl::EqualsIgnoreCase(parsed->token, "identity")) {
+      if (!identity) {
+        identity = parsed->quality;
+      }
+      continue;
+    }
+    for (size_t i = kFirstCompressing; i < kEndCompressing; ++i) {
+      if (!absl::EqualsIgnoreCase(kContentCodings[i].token, parsed->token)) {
+        continue;
+      }
+      if (!kContentCodings[i].levels.Contains(parsed->level)) {
+        return {.acceptance = Acceptance::UnsupportedLevel};
+      }
+      if (!weights[i]) {
+        weights[i] = parsed->quality;
+        levels[i] = parsed->level;
+      }
     }
   }
 
   // An explicit weight wins over the wildcard, whatever their order.
-  const auto quality_of = [&](std::string_view token) -> std::optional<double> {
-    for (const auto& candidate : accepted) {
-      if (absl::EqualsIgnoreCase(candidate.token, token)) {
-        return candidate.quality;
-      }
-    }
-    return wildcard;
+  const auto quality_of = [&](const std::optional<double>& weight) {
+    return weight ? weight : wildcard;
   };
 
   // "the acceptable content coding with the highest non-zero qvalue is
   // preferred"; server order breaks ties, which is the usual case since most
   // clients send no weights at all.
-  const ContentCoding* best = nullptr;
+  size_t best = kEndCompressing;
   double best_quality = 0.0;
-  for (const auto& coding : kContentCodings) {
-    const double quality = quality_of(coding.token).value_or(0.0);
+  for (size_t i = kFirstCompressing; i < kEndCompressing; ++i) {
+    const double quality = quality_of(weights[i]).value_or(0.0);
     if (quality > best_quality) {
-      best = &coding;
+      best = i;
       best_quality = quality;
     }
   }
-  if (best != nullptr) {
-    return {.coding = best};
+  if (best != kEndCompressing) {
+    return {.coding = kContentCodings[best].coding, .level = levels[best]};
   }
 
   // Nothing we encode is acceptable. The uncompressed form still is, unless
   // the client ruled it out too -- then there is no representation to send.
   // https://www.rfc-editor.org/rfc/rfc9110#name-accept-encoding
-  if (quality_of("identity").value_or(1.0) > 0.0) {
+  if (quality_of(identity).value_or(1.0) > 0.0) {
     return {};
   }
   return {.acceptance = Acceptance::NotAcceptable};
 }
 
-std::optional<std::vector<const ContentCoding*>> ParseContentEncoding(
+std::optional<ContentCodings> ParseContentEncoding(
   std::string_view content_encoding) {
-  std::vector<const ContentCoding*> codings;
+  ContentCodings codings;
   for (const auto element : absl::StrSplit(content_encoding, ',')) {
-    const auto token = absl::StripAsciiWhitespace(element);
-    if (token.empty() || absl::EqualsIgnoreCase(token, "identity")) {
+    auto token = absl::StripAsciiWhitespace(element);
+    int level = kNoLevel;
+    if (!SplitLevel(token, level)) {
+      return std::nullopt;
+    }
+    if (token.empty()) {
       continue;
     }
-    const auto* coding = FindContentCoding(token);
-    if (coding == nullptr) {
+    const auto coding = FindContentCoding(token);
+    if (coding == ContentCoding::Unknown) {
       return std::nullopt;
+    }
+    if (coding == ContentCoding::Identity) {
+      continue;
     }
     if (codings.size() == kMaxContentCodings) {
       return std::nullopt;
     }
-    codings.push_back(coding);
+    codings.emplace_back(coding);
   }
   return codings;
 }
 
 void DecodeContent(const message::SequenceView& body,
-                   std::span<const ContentCoding* const> codings,
+                   std::span<const ContentCoding> codings,
                    absl::FunctionRef<void(std::string_view)> sink,
                    size_t max_bytes) {
   if (codings.empty()) {
@@ -235,15 +419,15 @@ void DecodeContent(const message::SequenceView& body,
         next.append(part);
       }
     };
-    auto decoder = codings[stage]->make_decoder();
+    ContentDecoder decoder{codings[stage]};
     if (stage + 1 == codings.size()) {
       for (const auto chunk : body) {
-        decoder->Decode({static_cast<const char*>(chunk.data()), chunk.size()},
-                        false, emit);
+        decoder.Decode({static_cast<const char*>(chunk.data()), chunk.size()},
+                       false, emit);
       }
-      decoder->Decode({}, true, emit);
+      decoder.Decode({}, true, emit);
     } else {
-      decoder->Decode(staged, true, emit);
+      decoder.Decode(staged, true, emit);
     }
     staged = std::move(next);
   }

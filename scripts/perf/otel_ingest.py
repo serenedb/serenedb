@@ -419,6 +419,8 @@ def single(args, paths, signals):
                 try:
                     batch = Batch(server, signal, payload)
                     path = PATHS[name](server, server.datadir, batch, 0)
+                    sent = (batch.copy_bytes() if name == "psql" else
+                            os.path.getsize(path.file))
                     wall, cpu = [], []
                     for i in range(args.warmup + runs):
                         server.truncate(batch.tables())
@@ -430,8 +432,6 @@ def single(args, paths, signals):
                 finally:
                     server.stop()
                 p50 = statistics.median(wall)
-                sent = (batch.copy_bytes() if name == "psql" else
-                        os.path.getsize(path.file))
                 rows.append((human(len(payload)), signal, name, sent,
                              sum(batch.rows().values()), p50,
                              percentile(wall, 0.99),

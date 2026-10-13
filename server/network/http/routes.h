@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -40,5 +41,7 @@ struct Route {
 std::span<const Route> Routes();
 
 void AddRoutes(HttpRouter& router, std::span<const HttpApi> apis);
+
+uint64_t MaxBodyBytes(std::span<const HttpApi> apis) noexcept;
 
 }  // namespace sdb::network::http

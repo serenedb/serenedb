@@ -28,7 +28,6 @@
 #include <string_view>
 #include <vector>
 
-#include "pg/copy_in_bridge.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
@@ -75,53 +74,11 @@ struct ByteSource {
     }
     return done;
   }
-  // Block until EOF, releasing remaining bytes. Used after the last row to keep
-  // the pg-stdin bridge in lock-step with the feeder until CopyDone.
+  // Block until EOF, releasing remaining bytes.
   virtual void DrainToEof() = 0;
 };
 
-// pg-stdin source: borrows the recv-buffer view the CopyInBridge holds. The
-// common case reads straight out of the live bridge window (zero-copy) and
-// Next drives the bridge in lock-step -- one want-more per drained CopyData
-// frame. A value/row that straddles a frame boundary is pulled across it (the
-// Fill loop or the decoder's accumulator), so want-more still fires once per
-// frame. There is NO field-level scratch in the source.
-class BridgeByteSource final : public ByteSource {
- public:
-  explicit BridgeByteSource(sdb::pg::CopyInBridge& bridge) : _bridge{bridge} {}
-
-  std::string_view View() final {
-    if (_view.empty()) {
-      const auto next = _bridge.Window();
-      _view = {next.data(), next.size()};
-    }
-    return _view;
-  }
-
-  void Next(size_t n) final {
-    if (n == 0) {
-      return;  // never Consume(0): it could fire a spurious want-more
-    }
-    _view.remove_prefix(n);
-    _bridge.Consume(n);
-  }
-
-  void DrainToEof() final {
-    for (;;) {
-      auto v = View();
-      if (v.empty()) {
-        return;  // feeder reached CopyDone
-      }
-      Next(v.size());
-    }
-  }
-
- private:
-  sdb::pg::CopyInBridge& _bridge;
-  std::string_view _view;
-};
-
-// file / real-stdin source: one block-buffered read per `kBlock`, hands views
+// file source: one block-buffered read per `kBlock`, hands views
 // straight into the block (zero-copy) and refills when exhausted. A value/row
 // that straddles two blocks is pulled across them via Fill / the decoder's
 // accumulator (no field-level scratch).

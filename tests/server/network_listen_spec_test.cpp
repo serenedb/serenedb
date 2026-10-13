@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 #include <string>
 #include <vector>
@@ -152,16 +153,80 @@ TEST(ListenSpec, UnixPgPortMakesPgsqlPath) {
   EXPECT_EQ(*specs[0].unix_port, 5499);
 }
 
-TEST(ListenSpec, HttpUnixSpecialScheme) {
-  // http is a WHATWG "special" scheme; the empty-authority unix form must still
-  // parse to a unix listener (textual detection, not ada).
-  const auto specs = Parse({"http:///tmp/sdbhttp.sock?api=es"});
+TEST(ListenSpec, HttpKeepsItsDefaultPort) {
+  const auto specs = Parse({"http://127.0.0.1:80?api=es"});
   ASSERT_EQ(specs.size(), 1u);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Http);
-  EXPECT_EQ(specs[0].transport, ListenTransport::Unix);
-  EXPECT_EQ(specs[0].unix_path, "/tmp/sdbhttp.sock");
-  ASSERT_EQ(specs[0].apis.size(), 1u);
-  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Es);
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 80);
+}
+
+TEST(ListenSpec, HttpsKeepsItsDefaultPort) {
+  const auto specs = Parse({"https://[::1]:443?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].endpoint.port(), 443);
+}
+
+TEST(ListenSpec, HttpWithoutPortUsesTheDefault) {
+  const auto http = Parse({"http://0.0.0.0?api=es"});
+  ASSERT_EQ(http.size(), 1u);
+  EXPECT_EQ(http[0].endpoint.port(), 80);
+  const auto https = Parse({"https://0.0.0.0?api=es"});
+  ASSERT_EQ(https.size(), 1u);
+  EXPECT_EQ(https[0].endpoint.port(), 443);
+}
+
+TEST(ListenSpec, HttpWithEmptyPortUsesTheDefault) {
+  const auto specs = Parse({"http://0.0.0.0:?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].endpoint.port(), 80);
+}
+
+TEST(ListenSpec, PgWithoutPortIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"postgres://127.0.0.1"});
+    },
+    "missing or invalid port");
+}
+
+TEST(ListenSpec, MissingSlashesAreRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"postgres:5432"});
+    },
+    "expected scheme://");
+}
+
+TEST(ListenSpec, TcpPathIsIgnored) {
+  const auto specs = Parse({"postgres://127.0.0.1:7890/postgres"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 7890);
+}
+
+TEST(ListenSpec, HttpPathIsIgnored) {
+  const auto specs = Parse({"http://127.0.0.1:9200/x?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 9200);
+}
+
+TEST(ListenSpec, HttpBackslashIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://0.0.0.0\\:8080?api=es"});
+    },
+    "is not allowed");
+}
+
+TEST(ListenSpec, HttpIPv6Brackets) {
+  const auto specs = Parse({"http://[::1]:9200?api=es"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_TRUE(specs[0].endpoint.address().is_v6());
+  EXPECT_EQ(specs[0].endpoint.port(), 9200);
 }
 
 TEST(ListenSpec, UnixModeAndGroup) {

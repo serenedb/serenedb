@@ -79,6 +79,11 @@ value the column cannot hold) answers `400`, which clients do not retry, and
 a transient server condition (a transaction conflict, out of memory, shutdown)
 answers `503`, which they do.
 
+Each export is written in one transaction, so a failed export stores nothing:
+a metrics export whose points span several `otel_metrics_*` tables is written
+to all of them or to none, and a client retry cannot duplicate the tables
+that succeeded the first time.
+
 ### Encodings
 
 Both OTLP encodings are accepted, and the response always uses the request's:
@@ -106,6 +111,11 @@ Request bodies may be compressed with any coding the HTTP listener supports —
 [HTTP Compression](../configuration/http_compression.md). An unsupported
 `Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
 before the payload is decoded.
+
+A request body is at most 20 MiB, the OpenTelemetry Collector's default
+`max_request_body_size`, and a larger one answers `413`. The limit applies to
+the body after decompression too. A listener that also serves other APIs
+(`?api=otel&api=es`) applies the largest of their limits to every request.
 
 Errors of the export itself use `google.rpc.Status`, encoded the same way as
 the request: `400` for an undecodable payload.

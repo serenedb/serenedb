@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
 #include <absl/functional/function_ref.h>
 
 #include <cstddef>
@@ -28,57 +29,95 @@
 #include <optional>
 #include <span>
 #include <string_view>
-#include <vector>
 
+#include "server/utils/message_buffer.h"
 #include "server/utils/message_sequence_view.h"
 
 namespace sdb::network::http {
 
-// One response's compression stream: Encode appends compressed bytes to sink,
-// finish=true closes the stream.
+inline constexpr int kNoLevel = 0;
+
+struct LevelRange {
+  int min = kNoLevel;
+  int max = kNoLevel;
+
+  constexpr bool Contains(int level) const noexcept {
+    return level == kNoLevel || (min <= level && level <= max);
+  }
+};
+
+// https://www.rfc-editor.org/rfc/rfc9110#name-content-codings
+// Between Identity and Unknown, declaration order IS the server's preference
+// order, used whenever the client accepts more than one of these equally.
+enum class ContentCoding : uint8_t {
+  Identity,
+  Zstd,
+  Brotli,
+  Gzip,
+  Deflate,
+  Zxc,
+  Lz4,
+  Snappy,
+  Unknown,
+};
+
+std::string_view ContentCodingToken(ContentCoding coding) noexcept;
+LevelRange ContentCodingLevels(ContentCoding coding) noexcept;
+
+// Every coding the server implements, and identity; `x-gzip` names gzip.
+// Unknown for a token none of them answers to.
+ContentCoding FindContentCoding(std::string_view token);
+
 class ContentEncoder {
  public:
-  virtual ~ContentEncoder() = default;
+  ContentEncoder(ContentCoding coding, int level);
+  ContentEncoder(ContentEncoder&&) noexcept;
+  ContentEncoder& operator=(ContentEncoder&&) noexcept;
+  ~ContentEncoder();
 
-  virtual void Encode(std::string_view in, bool finish,
-                      absl::FunctionRef<void(std::string_view)> sink) = 0;
+  void Encode(std::string_view in, bool finish, message::Writer& out);
+  void EncodeAll(std::string_view in, message::Writer& out);
+
+ private:
+  struct Codec;
+
+  std::unique_ptr<Codec> _codec;
 };
 
 class ContentDecoder {
  public:
-  virtual ~ContentDecoder() = default;
+  explicit ContentDecoder(ContentCoding coding);
+  ContentDecoder(ContentDecoder&&) noexcept;
+  ContentDecoder& operator=(ContentDecoder&&) noexcept;
+  ~ContentDecoder();
 
-  virtual void Decode(std::string_view in, bool finish,
-                      absl::FunctionRef<void(std::string_view)> sink) = 0;
+  void Decode(std::string_view in, bool finish,
+              absl::FunctionRef<void(std::string_view)> sink);
+
+ private:
+  struct Codec;
+
+  std::unique_ptr<Codec> _codec;
 };
-
-// https://www.rfc-editor.org/rfc/rfc9110#name-content-codings
-struct ContentCoding {
-  std::string_view token;
-  std::unique_ptr<ContentEncoder> (*make)();
-  std::unique_ptr<ContentDecoder> (*make_decoder)();
-};
-
-// Every coding the server implements (gzip, zstd, lz4, zxc); nullptr for a
-// token none of them answers to.
-const ContentCoding* FindContentCoding(std::string_view token);
 
 // A fixed body smaller than this is sent as-is: the codec framing would eat
 // most of the saving, and the round trip is not worth the CPU.
 inline constexpr size_t kMinCompressBytes = 1024;
 
 enum class Acceptance : uint8_t {
-  // Use `coding`, or send the body uncompressed when it is null.
+  // Use `coding`; Identity sends the body uncompressed.
   Ok,
   // The client ruled out every coding the server has AND the uncompressed
   // form: 406. https://www.rfc-editor.org/rfc/rfc9110#status.406
   NotAcceptable,
   // The field value does not parse (a weight that is not a qvalue): 400.
   Malformed,
+  UnsupportedLevel,
 };
 
 struct Negotiation {
-  const ContentCoding* coding = nullptr;
+  ContentCoding coding = ContentCoding::Identity;
+  int level = kNoLevel;
   Acceptance acceptance = Acceptance::Ok;
 };
 
@@ -90,11 +129,13 @@ Negotiation NegotiateContentCoding(std::string_view accept_encoding);
 
 inline constexpr size_t kMaxContentCodings = 2;
 
-std::optional<std::vector<const ContentCoding*>> ParseContentEncoding(
+using ContentCodings = absl::InlinedVector<ContentCoding, kMaxContentCodings>;
+
+std::optional<ContentCodings> ParseContentEncoding(
   std::string_view content_encoding);
 
 void DecodeContent(const message::SequenceView& body,
-                   std::span<const ContentCoding* const> codings,
+                   std::span<const ContentCoding> codings,
                    absl::FunctionRef<void(std::string_view)> sink,
                    size_t max_bytes);
 

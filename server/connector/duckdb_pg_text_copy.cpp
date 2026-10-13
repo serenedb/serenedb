@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/catalog/catalog.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -34,6 +36,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -43,10 +46,12 @@
 #include <string_view>
 #include <vector>
 
+#include "connector/copy_batch_parse.h"
 #include "connector/copy_byte_source.h"
+#include "connector/copy_from_batches.h"
+#include "connector/copy_from_blocks.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
 #include "pg/deserialize.h"
 #include "pg/serialize.h"
 #include "server/utils/message_buffer.h"
@@ -249,237 +254,139 @@ duckdb::CopyFunctionExecutionMode ExecutionMode(bool, bool) {
 struct PgTextCopyFromBindData final : public duckdb::TableFunctionData {
   PgTextCopyFromBindData(duckdb::vector<duckdb::LogicalType> types,
                          std::string path, char delim, std::string null_str,
-                         bool header)
+                         bool header, bool parallel)
     : sql_types{std::move(types)},
       file_path{std::move(path)},
       delim{delim},
       null_str{std::move(null_str)},
-      header{header} {}
+      header{header},
+      parallel{parallel} {}
   duckdb::vector<duckdb::LogicalType> sql_types;
   std::string file_path;
   char delim;
   std::string null_str;
   bool header;
+  bool parallel;
+  bool from_stdin = false;
+  bool ordered = false;
 };
 
-struct PgTextCopyFromGlobalState final
-  : public duckdb::GlobalTableFunctionState {
-  std::unique_ptr<ByteSource> source;
-  std::vector<sdb::pg::DeserializationFunction<sdb::pg::VectorSink>>
-    deserializers;
-  std::string partial;  // bytes pulled but not yet ending in a full row
-  bool finished = false;
+struct PgTextCopyFromGlobalState final : public CopyFromGlobalState {
+  std::string carry;
+  std::string partial;          // bytes pulled but not yet ending in a full row
   bool header_pending = false;  // drop the first line (COPY ... HEADER)
+
+ protected:
+  std::string CutBlock() final {
+    std::string data = std::exchange(carry, {});
+    if (header_pending) {
+      DropHeader(data);
+    }
+    bool has_row_end = data.find(kRowSep) != std::string::npos;
+    while (!finished && (!has_row_end || data.size() < kCopyBlockBytes)) {
+      has_row_end |= Pull(data).find(kRowSep) != std::string_view::npos;
+    }
+    if (!finished) {
+      const size_t rows_end = data.rfind(kRowSep) + 1;
+      carry.assign(data, rows_end);
+      data.resize(rows_end);
+    }
+    return data;
+  }
+
+ private:
+  void DropHeader(std::string& data) {
+    header_pending = false;
+    size_t header_end = data.find(kRowSep);
+    while (header_end == std::string::npos) {
+      if (finished) {
+        data.clear();
+        return;
+      }
+      Pull(data);
+      header_end = data.find(kRowSep);
+    }
+    data.erase(0, header_end + 1);
+  }
+};
+
+struct PgTextCopyFromLocalState final : public CopyFromLocalState {
+  bool dctx_ready = false;
+  std::string field_buf;
 };
 
 duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
-  duckdb::ClientContext&, duckdb::CopyFromFunctionBindInput& input,
+  duckdb::ClientContext& context, duckdb::CopyFromFunctionBindInput& input,
   duckdb::vector<duckdb::Identifier>&,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
   // HEADER lands in parsed_options (still populated here -- the binder folds it
   // into options only after this bind); delimiter/null arrive via options.
   auto opts = ResolveTextCopyOptions(input.info.parsed_options);
   ResolveTextCopyOptions(input.info.options, opts);
-  return duckdb::make_uniq<PgTextCopyFromBindData>(
+  const bool from_stdin = input.info.file_path == kCopyStdinPath;
+  auto result = duckdb::make_uniq<PgTextCopyFromBindData>(
     expected_types, input.info.file_path, opts.delim, std::move(opts.null_str),
-    opts.header);
+    opts.header, !from_stdin && ParallelCopyFrom(context, input));
+  if (from_stdin) {
+    result->from_stdin = true;
+    BindCopyFromBatches(context, input, "text", result->ordered);
+  }
+  return result;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
+  if (bind.from_stdin) {
+    return duckdb::make_uniq<CopyFromBatchesGlobalState>(
+      context, RequireCopyInBatches(context, "text"),
+      pg::CopyInTarget{
+        .binary = false,
+        .delim = bind.delim,
+        .null_str = bind.null_str,
+        .header = bind.header,
+        .types = {bind.sql_types.begin(), bind.sql_types.end()},
+      },
+      bind.ordered);
+  }
   auto result = duckdb::make_uniq<PgTextCopyFromGlobalState>();
   result->header_pending = bind.header;
-
-  // pg-wire STDIN routes through the CopyInBridge, which needs the server-side
-  // wire connection. A real file falls through to the OS filesystem and works
-  // without any connection.
-  auto* state =
-    context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
-      .get();
-  if (bind.file_path == "/dev/stdin") {
-    if (!state) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG("COPY ... FROM STDIN (FORMAT text) is only valid "
-                              "on a server-side PostgreSQL wire connection"));
-    }
-    auto& conn = state->GetConnectionContext();
-    // pg-stdin: borrow the recv-buffer view the bridge already holds; skip the
-    // FileHandle entirely. Text COPY opens stdin once (single-pass), so nothing
-    // else reads the handle, and the session has already sent CopyInResponse.
-    auto* bridge = conn.GetSideChannel<pg::CopyInBridge>();
-    if (!bridge) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("COPY ... FROM STDIN (FORMAT text) requires a PG wire "
-                "connection (transport not attached)"));
-    }
-    result->source = std::make_unique<BridgeByteSource>(*bridge);
-    return result;
-  }
-  // file / real-stdin: block-buffered reader over the OS FileHandle.
   result->source = std::make_unique<HandleByteSource>(
     duckdb::FileSystem::GetFileSystem(context).OpenFile(
       bind.file_path, duckdb::FileFlags::FILE_FLAGS_READ));
+  result->deserializers.reserve(bind.sql_types.size());
+  for (const auto& type : bind.sql_types) {
+    result->deserializers.emplace_back(
+      sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
+        type, sdb::pg::VarFormat::Text));
+  }
+  if (bind.parallel) {
+    result->StartParallel(context);
+  }
   return result;
 }
 
-// Decode one PG TEXT field body that contains a backslash escape, unescaping
-// into `out` and returning a view over it. The no-escape common case never
-// calls this: ProcessRow hands the raw view straight to the decoder
-// (zero-copy). The exact two-byte `\N` SQL NULL sentinel is checked by the
-// caller before this runs.
-std::string_view DecodeFieldView(std::string_view field, std::string& out) {
-  out.clear();
-  out.reserve(field.size());
-  for (size_t i = 0; i < field.size();) {
-    const char c = field[i++];
-    if (c != '\\') {
-      out.push_back(c);
-      continue;
-    }
-    if (i == field.size()) {
-      out.push_back('\\');  // trailing backslash is literal
-      break;
-    }
-    const char e = field[i++];
-    switch (e) {
-      case 'b':
-        out.push_back('\b');
-        break;
-      case 'f':
-        out.push_back('\f');
-        break;
-      case 'n':
-        out.push_back('\n');
-        break;
-      case 'r':
-        out.push_back('\r');
-        break;
-      case 't':
-        out.push_back('\t');
-        break;
-      case 'v':
-        out.push_back('\v');
-        break;
-      case '\\':
-        out.push_back('\\');
-        break;
-      case 'x': {
-        const char* begin = field.data() + i;
-        const char* end = field.data() + std::min(i + 2, field.size());
-        unsigned value = 0;
-        const auto res = fast_float::from_chars(begin, end, value, 16);
-        if (res.ptr == begin) {
-          out.push_back('x');  // `\x` with no hex digit -> literal x
-        } else {
-          out.push_back(static_cast<char>(value));
-          i += static_cast<size_t>(res.ptr - begin);
-        }
-        break;
-      }
-      case '0':
-      case '1':
-      case '2':
-      case '3':
-      case '4':
-      case '5':
-      case '6':
-      case '7': {
-        // The switch already consumed the first octal digit, so parse the run
-        // of up to three starting one byte back. A byte value wraps (& 0xFF).
-        const char* begin = field.data() + (i - 1);
-        const char* end = field.data() + std::min(i + 2, field.size());
-        unsigned value = 0;
-        const auto res = fast_float::from_chars(begin, end, value, 8);
-        i = static_cast<size_t>(res.ptr - field.data());
-        out.push_back(static_cast<char>(value & 0xFF));
-        break;
-      }
-      default:
-        out.push_back(e);  // `\<anyotherchar>` -> drop the backslash
-        break;
-    }
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitLocalFrom(
+  duckdb::ExecutionContext&, duckdb::TableFunctionInitInput& input,
+  duckdb::GlobalTableFunctionState*) {
+  if (input.bind_data->Cast<PgTextCopyFromBindData>().from_stdin) {
+    return duckdb::make_uniq<CopyFromBatchesLocalState>();
   }
-  return out;
+  return duckdb::make_uniq<PgTextCopyFromLocalState>();
 }
 
-// Scan from `pos` to the field's end -- the next unescaped delimiter, or the
-// row end if none. A backslash escapes the following byte, so an escaped
-// delimiter
-// (\<delim>, the form EmitEscaped produces) stays in the body. Sets
-// `had_escape` when any backslash is seen, so a field with none skips
-// DecodeFieldView and reaches the decoder as a zero-copy view straight into
-// `line`.
-size_t ScanField(std::string_view line, char delim, size_t pos,
-                 bool& had_escape) {
-  had_escape = false;
-  while (pos < line.size()) {
-    const char c = line[pos];
-    if (c == '\\') {
-      had_escape = true;
-      pos += 2;
-      continue;
-    }
-    if (c == delim) {
-      return pos;
-    }
-    ++pos;
-  }
-  return line.size();
-}
-
-// Process one complete row (the bytes between row separators, delimiters still
-// raw) into `output` at `row`. One pass per field finds the unescaped delimiter
-// and notes whether the field needs unescaping: a field with no backslash
-// reaches the decoder as a zero-copy view straight into `line`; only an escaped
-// field is materialized through `field_buf`. The field count is validated
-// against the column count.
 void ProcessRow(
   std::string_view line, const PgTextCopyFromBindData& bind,
   const std::vector<sdb::pg::DeserializationFunction<sdb::pg::VectorSink>>&
     deserializers,
   sdb::pg::DeserializeContext& dctx, duckdb::DataChunk& output,
   duckdb::idx_t row, std::string& field_buf) {
-  const auto columns = bind.sql_types.size();
-  duckdb::idx_t column = 0;
-  size_t pos = 0;
-  for (;;) {
-    bool had_escape = false;
-    const auto end = ScanField(line, bind.delim, pos, had_escape);
-    if (column >= columns) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-        ERR_MSG("COPY FROM: row has more than ", columns, " fields"));
-    }
-    const auto raw = line.substr(pos, end - pos);
-    auto& vec = output.data[column];
-    if (raw == bind.null_str) {
-      duckdb::FlatVector::SetNull(vec, row, true);
-    } else {
-      const auto field = had_escape ? DecodeFieldView(raw, field_buf) : raw;
-      sdb::pg::VectorSink sink{vec, row};
-      if (!deserializers[column](dctx, field, sink)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-          ERR_MSG("COPY FROM: invalid input for column ", column + 1));
-      }
-    }
-    ++column;
-    if (end == line.size()) {
-      break;
-    }
-    pos = end + 1;
-  }
-  if (column != columns) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
-      ERR_MSG("COPY FROM: row has ", column, " fields, expected ", columns));
-  }
+  ProcessTextRow(line, bind.delim, bind.null_str, deserializers, dctx, output,
+                 row, field_buf);
 }
 
-void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
-              duckdb::DataChunk& output) {
+void ScanSerial(duckdb::ClientContext& context,
+                duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<PgTextCopyFromGlobalState>();
   const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
   auto& source = *g.source;
@@ -488,14 +395,6 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     return;
   }
 
-  if (g.deserializers.size() != bind.sql_types.size()) {
-    g.deserializers.reserve(bind.sql_types.size());
-    for (const auto& type : bind.sql_types) {
-      g.deserializers.push_back(
-        sdb::pg::GetDeserialization<sdb::pg::VectorSink>(
-          type, sdb::pg::VarFormat::Text));
-    }
-  }
   sdb::pg::DeserializeContext dctx;
   sdb::pg::FillDeserializeContext(context, dctx);
   std::string field_buf;  // reused per field across this chunk
@@ -539,8 +438,7 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
 
   if (eof) {
     // PG accepts a missing trailing newline: a non-empty leftover partial is
-    // the final row. Then keep the bridge in lock-step until the feeder's
-    // CopyDone.
+    // the final row.
     if (!g.partial.empty()) {
       if (g.header_pending) {
         g.header_pending = false;  // header-only input with no trailing newline
@@ -553,6 +451,47 @@ void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
     }
     source.DrainToEof();
     g.finished = true;
+  }
+
+  // SetChildCardinality (not SetCardinality): fork vectors carry their own
+  // v_size, and a downstream size-deriving op reads it; SetCardinality leaves
+  // the column vectors at v_size 0 -> "Mismatch in input vector sizes".
+  output.SetChildCardinality(row);
+}
+
+void ScanFrom(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
+              duckdb::DataChunk& output) {
+  if (input.bind_data->Cast<PgTextCopyFromBindData>().from_stdin) {
+    ScanCopyFromBatches(context, input, output);
+    return;
+  }
+  if (!input.bind_data->Cast<PgTextCopyFromBindData>().parallel) {
+    ScanSerial(context, input, output);
+    return;
+  }
+  auto& g = input.global_state->Cast<PgTextCopyFromGlobalState>();
+  auto& local = input.local_state->Cast<PgTextCopyFromLocalState>();
+  const auto& bind = input.bind_data->Cast<PgTextCopyFromBindData>();
+  if (!local.dctx_ready) {
+    sdb::pg::FillDeserializeContext(context, local.dctx);
+    local.dctx_ready = true;
+  }
+  duckdb::idx_t row = 0;
+  while (row < STANDARD_VECTOR_SIZE) {
+    if (local.Exhausted()) {
+      if (row != 0 || local.Claim(g, input) != TakeResult::Item) {
+        break;
+      }
+      continue;
+    }
+    const auto rest = std::string_view{local.block.data}.substr(local.pos);
+    const auto nl = rest.find(kRowSep);
+    // PG accepts a missing trailing newline: the last block may end mid-row.
+    const auto line = nl == std::string_view::npos ? rest : rest.substr(0, nl);
+    ProcessRow(line, bind, g.deserializers, local.dctx, output, row,
+               local.field_buf);
+    ++row;
+    local.pos += nl == std::string_view::npos ? rest.size() : nl + 1;
   }
 
   // SetChildCardinality (not SetCardinality): fork vectors carry their own
@@ -619,7 +558,8 @@ void RegisterPgTextCopyFunction(duckdb::DatabaseInstance& db) {
   func.copy_from_bind = BindFrom;
   func.copy_from_function =
     duckdb::TableFunction("pg_text_copy_from", {}, ScanFrom,
-                          /*bind=*/nullptr, InitGlobalFrom);
+                          /*bind=*/nullptr, InitGlobalFrom, InitLocalFrom);
+  func.copy_from_function.get_partition_data = CopyFromPartitionData;
   loader.RegisterFunction(std::move(func));
 }
 

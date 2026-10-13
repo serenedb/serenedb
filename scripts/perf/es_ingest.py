@@ -15,7 +15,8 @@ The documents are web-access-log shaped (timestamp, client ip, request line,
 status, size), like rally's http_logs track. The gzip client sends the same
 NDJSON gzip-compressed (compressed before timing).
 
-Each tool reports its own time: curl's `%{time_total}` and psql's `\timing`.
+Every request is timed by wall clock around its client process, curl or psql
+alike, so the latency columns compare the same thing.
 The harness starts its own serened on free ports with a fresh datadir per
 path, and also records the server CPU time.
 
@@ -226,6 +227,12 @@ class PsqlCopyPath:
         return float(times[0])
 
 
+def wall_ms(sender):
+    start = time.perf_counter()
+    sender.send()
+    return (time.perf_counter() - start) * 1000
+
+
 def unescape_copy(field):
     if field == "\\N":
         return None
@@ -333,7 +340,7 @@ def main():
                            for i, (payload, _) in enumerate(chunks)]
                 cpu_before, start = cpu_ms(server.proc.pid), time.perf_counter()
                 with ThreadPoolExecutor(concurrency) as pool:
-                    times = list(pool.map(lambda s: s.send(), senders))
+                    times = list(pool.map(wall_ms, senders))
                 wall = time.perf_counter() - start
                 cpu = cpu_ms(server.proc.pid) - cpu_before
                 rss = peak_rss_mb(server.proc.pid)

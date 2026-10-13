@@ -103,6 +103,10 @@ Read the contents of a file provided as parameter of a prepared statement into t
 
 <SqlLogicTest id="sql/statements/copy/index/example_022" />
 
+### `COPY ... FROM STDIN`
+
+Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` in the `text` and `binary` formats parses rows on several threads, up to the `threads` setting, while the client is still sending them. Rows keep their input order when [`preserve_insertion_order`](../../../configuration/overview.md) is `true`, the default; when it is `false`, and for search tables, rows may be stored in any order. A client that sends slowly does not keep threads busy: they run other queries until more data arrives. The initial table copy of a [subscription](../create_subscription/index.md) loads rows the same way.
+
 ### Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />

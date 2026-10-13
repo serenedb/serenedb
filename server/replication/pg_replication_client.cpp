@@ -73,7 +73,6 @@
 #include "network/server.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
-#include "pg/copy_in_bridge.h"
 #include "pg/pg_types.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
@@ -1069,9 +1068,8 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
               add_unique(names);
             });
   });
-  absl::erase_if(_stmts, [&](const auto& entry) {
-    return entry.first.relid == message.relation_id;
-  });
+  _stmts.EraseIf(
+    [&](const StmtKey& key) { return key.relid == message.relation_id; });
   _relations[message.relation_id] = std::move(info);
 }
 
@@ -1481,8 +1479,8 @@ void PgReplicationClient::LimitKeyFilter(const RelInfo& relation,
 yaclib::Task<bool> PgReplicationClient::RunBatch() {
   const auto& relation = *_batch.rel;
   const auto& shape = _batch.shape;
-  auto it = _stmts.find(StmtKeyView{_batch.relid, shape});
-  if (it == _stmts.end()) {
+  auto* statement = _stmts.Find(StmtKeyView{_batch.relid, shape});
+  if (statement == nullptr) {
     const auto names = [&](const std::vector<size_t>& indexes) {
       std::vector<std::string> result;
       result.reserve(indexes.size());
@@ -1497,14 +1495,9 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
     if (prepared->HasError()) {
       prepared->GetErrorObject().Throw();
     }
-    if (_stmts.size() >= kMaxStatements) {
-      _stmts.clear();
-    }
-    it = _stmts
-           .emplace(StmtKey{shape.op, _batch.relid, shape.keys, shape.cols,
-                            shape.full},
-                    std::move(prepared))
-           .first;
+    statement = &_stmts.Insert(
+      StmtKey{shape.op, _batch.relid, shape.keys, shape.cols, shape.full},
+      std::move(prepared), kMaxStatements);
   }
   _batch.rows = 0;
   _batch.ResetTouched();
@@ -1532,7 +1525,7 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   std::optional<int64_t> affected;
   irs::pg::SqlErrorData error;
   try {
-    affected = co_await RunPrepared(*it->second);
+    affected = co_await RunPrepared(*statement);
   } catch (const std::exception& ex) {
     error = network::pg::ToSqlError(ex);
   }

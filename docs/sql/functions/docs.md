@@ -259,7 +259,9 @@ wraps for itself.
 An HTTP listener with `?api=mcp` serves this documentation to AI agents over the
 [Model Context Protocol](https://modelcontextprotocol.io). The endpoint is `POST /_mcp`.
 It speaks JSON-RPC 2.0 and accepts protocol versions `2025-06-18`, `2025-03-26` and
-`2024-11-05`.
+`2024-11-05`. A request body is at most 4 MiB, the limit of the MCP TypeScript SDK's
+HTTP transport, and a larger one answers `413`. A listener that also serves other
+APIs (`?api=mcp&api=es`) applies the largest of their limits to every request.
 
 ```bash
 serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:8080?api=mcp'

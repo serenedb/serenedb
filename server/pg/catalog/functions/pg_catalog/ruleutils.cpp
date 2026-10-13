@@ -60,6 +60,7 @@
 #include "connector/common.h"
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/engine/builtin_functions.h"
+#include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/lookup.h"
@@ -78,13 +79,18 @@ const T* EntryByOid(const pg::Session& session, duckdb::CatalogType type,
   return entry && entry->type == type ? &entry->Cast<T>() : nullptr;
 }
 
-std::string RelationName(const pg::Session& session,
-                         const duckdb::CatalogEntry& relation, bool qualified) {
-  const auto [schema, name] = pg::NameOf(*session.transaction, relation);
+std::string RelationName(const pg::Session& session, std::string_view schema,
+                         std::string_view name, bool qualified) {
   if (qualified) {
     return pg::QualifiedOutName(schema, name);
   }
   return std::string{pg::AsView(pg::RelationName(session, schema, name))};
+}
+
+std::string RelationName(const pg::Session& session,
+                         const duckdb::CatalogEntry& relation, bool qualified) {
+  const auto [schema, name] = pg::NameOf(*session.transaction, relation);
+  return RelationName(session, schema, name, qualified);
 }
 
 constexpr auto kQuotedName = [](std::string* out,
@@ -160,6 +166,9 @@ const duckdb::ViewCatalogEntry* UserView(const pg::Session& session,
 }
 
 Definition ViewDefinition(const pg::Session& session, int64_t oid) {
+  if (const auto* system = pg::FindSystemView(oid)) {
+    return absl::StrCat(system->info->query->ToString(), ";");
+  }
   const auto* view = UserView(session, oid);
   if (!view) {
     return std::nullopt;
@@ -169,13 +178,19 @@ Definition ViewDefinition(const pg::Session& session, int64_t oid) {
 
 Definition RuleDefinition(const pg::Session& session, int64_t oid,
                           bool pretty) {
-  const auto* view = UserView(session, oid);
-  if (!view) {
+  std::string relation;
+  const duckdb::SelectStatement* query;
+  if (const auto* system = pg::FindSystemView(oid)) {
+    relation = RelationName(session, system->schema, system->name, !pretty);
+    query = system->info->query.get();
+  } else if (const auto* view = UserView(session, oid)) {
+    relation = RelationName(session, *view, !pretty);
+    query = view->query.get();
+  } else {
     return std::nullopt;
   }
-  return absl::StrCat("CREATE RULE \"_RETURN\" AS\n    ON SELECT TO ",
-                      RelationName(session, *view, !pretty), " DO INSTEAD  ",
-                      view->query->ToString(), ";");
+  return absl::StrCat("CREATE RULE \"_RETURN\" AS\n    ON SELECT TO ", relation,
+                      " DO INSTEAD  ", query->ToString(), ";");
 }
 
 std::string ForeignKeyDefinition(const pg::Session& session,

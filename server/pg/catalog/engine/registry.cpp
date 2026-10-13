@@ -130,9 +130,11 @@ duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   info->temporary = true;
   info->internal = true;
   for (auto& m : info->macros) {
-    for (auto& type : m->types) {
-      if (type.IsUnbound()) {
-        type = duckdb::UnboundType::TryDefaultBind(type);
+    for (auto* types : {&m->types, &m->return_types}) {
+      for (auto& type : *types) {
+        if (type.IsUnbound()) {
+          type = duckdb::UnboundType::TryDefaultBind(type);
+        }
       }
     }
   }

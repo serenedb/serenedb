@@ -53,3 +53,9 @@ SELECT count(*) AS c, sum(generate_series) AS s FROM generate_series(1, 30000000
 ----
 c	s
 30000000	450000015000000
+
+query
+WITH d AS MATERIALIZED (SELECT i FROM range(1000000) r(i)) SELECT (SELECT sum(i) FROM d) AS s, (SELECT i FROM d LIMIT 1) AS f
+----
+s	f
+499999500000	0

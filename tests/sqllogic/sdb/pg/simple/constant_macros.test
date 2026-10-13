@@ -1,0 +1,269 @@
+statement ok
+CREATE MACRO cm_0() AS 1::BIGINT
+
+statement ok
+CREATE MACRO cm_1() AS cm_0() + cm_0()
+
+statement ok
+CREATE MACRO cm_2() AS cm_1() + cm_1()
+
+statement ok
+CREATE MACRO cm_3() AS cm_2() + cm_2()
+
+statement ok
+CREATE MACRO cm_4() AS cm_3() + cm_3()
+
+statement ok
+CREATE MACRO cm_5() AS cm_4() + cm_4()
+
+statement ok
+CREATE MACRO cm_6() AS cm_5() + cm_5()
+
+statement ok
+CREATE MACRO cm_7() AS cm_6() + cm_6()
+
+statement ok
+CREATE MACRO cm_8() AS cm_7() + cm_7()
+
+statement ok
+CREATE MACRO cm_9() AS cm_8() + cm_8()
+
+statement ok
+CREATE MACRO cm_10() AS cm_9() + cm_9()
+
+statement ok
+CREATE MACRO cm_11() AS cm_10() + cm_10()
+
+statement ok
+CREATE MACRO cm_12() AS cm_11() + cm_11()
+
+statement ok
+CREATE MACRO cm_13() AS cm_12() + cm_12()
+
+statement ok
+CREATE MACRO cm_14() AS cm_13() + cm_13()
+
+statement ok
+CREATE MACRO cm_15() AS cm_14() + cm_14()
+
+statement ok
+CREATE MACRO cm_16() AS cm_15() + cm_15()
+
+statement ok
+CREATE MACRO cm_17() AS cm_16() + cm_16()
+
+statement ok
+CREATE MACRO cm_18() AS cm_17() + cm_17()
+
+statement ok
+CREATE MACRO cm_19() AS cm_18() + cm_18()
+
+statement ok
+CREATE MACRO cm_20() AS cm_19() + cm_19()
+
+statement ok
+CREATE MACRO cm_21() AS cm_20() + cm_20()
+
+statement ok
+CREATE MACRO cm_22() AS cm_21() + cm_21()
+
+statement ok
+CREATE MACRO cm_23() AS cm_22() + cm_22()
+
+statement ok
+CREATE MACRO cm_24() AS cm_23() + cm_23()
+
+statement ok
+CREATE MACRO cm_25() AS cm_24() + cm_24()
+
+statement ok
+CREATE MACRO cm_26() AS cm_25() + cm_25()
+
+statement ok
+CREATE MACRO cm_27() AS cm_26() + cm_26()
+
+statement ok
+CREATE MACRO cm_28() AS cm_27() + cm_27()
+
+statement ok
+CREATE MACRO cm_29() AS cm_28() + cm_28()
+
+statement ok
+CREATE MACRO cm_30() AS cm_29() + cm_29()
+
+statement ok
+CREATE MACRO cm_31() AS cm_30() + cm_30()
+
+statement ok
+CREATE MACRO cm_32() AS cm_31() + cm_31()
+
+statement ok
+CREATE MACRO cm_33() AS cm_32() + cm_32()
+
+statement ok
+CREATE MACRO cm_34() AS cm_33() + cm_33()
+
+statement ok
+CREATE MACRO cm_35() AS cm_34() + cm_34()
+
+statement ok
+CREATE MACRO cm_36() AS cm_35() + cm_35()
+
+statement ok
+CREATE MACRO cm_37() AS cm_36() + cm_36()
+
+statement ok
+CREATE MACRO cm_38() AS cm_37() + cm_37()
+
+statement ok
+CREATE MACRO cm_39() AS cm_38() + cm_38()
+
+statement ok
+CREATE MACRO cm_40() AS cm_39() + cm_39()
+
+query
+SELECT cm_40() AS r
+----
+r
+1099511627776
+
+query
+SELECT list_transform([1, 2, 3], lambda v: v + cm_10()) AS r
+----
+r
+{1025,1026,1027}
+
+statement ok
+CREATE MACRO cm_rand() AS random()
+
+query
+SELECT count(DISTINCT cm_rand()) > 1 AS r FROM range(100)
+----
+r
+t
+
+statement ok
+DROP MACRO cm_rand
+
+statement ok
+DROP MACRO cm_40
+
+statement ok
+DROP MACRO cm_39
+
+statement ok
+DROP MACRO cm_38
+
+statement ok
+DROP MACRO cm_37
+
+statement ok
+DROP MACRO cm_36
+
+statement ok
+DROP MACRO cm_35
+
+statement ok
+DROP MACRO cm_34
+
+statement ok
+DROP MACRO cm_33
+
+statement ok
+DROP MACRO cm_32
+
+statement ok
+DROP MACRO cm_31
+
+statement ok
+DROP MACRO cm_30
+
+statement ok
+DROP MACRO cm_29
+
+statement ok
+DROP MACRO cm_28
+
+statement ok
+DROP MACRO cm_27
+
+statement ok
+DROP MACRO cm_26
+
+statement ok
+DROP MACRO cm_25
+
+statement ok
+DROP MACRO cm_24
+
+statement ok
+DROP MACRO cm_23
+
+statement ok
+DROP MACRO cm_22
+
+statement ok
+DROP MACRO cm_21
+
+statement ok
+DROP MACRO cm_20
+
+statement ok
+DROP MACRO cm_19
+
+statement ok
+DROP MACRO cm_18
+
+statement ok
+DROP MACRO cm_17
+
+statement ok
+DROP MACRO cm_16
+
+statement ok
+DROP MACRO cm_15
+
+statement ok
+DROP MACRO cm_14
+
+statement ok
+DROP MACRO cm_13
+
+statement ok
+DROP MACRO cm_12
+
+statement ok
+DROP MACRO cm_11
+
+statement ok
+DROP MACRO cm_10
+
+statement ok
+DROP MACRO cm_9
+
+statement ok
+DROP MACRO cm_8
+
+statement ok
+DROP MACRO cm_7
+
+statement ok
+DROP MACRO cm_6
+
+statement ok
+DROP MACRO cm_5
+
+statement ok
+DROP MACRO cm_4
+
+statement ok
+DROP MACRO cm_3
+
+statement ok
+DROP MACRO cm_2
+
+statement ok
+DROP MACRO cm_1
+
+statement ok
+DROP MACRO cm_0

@@ -11,6 +11,31 @@ r
 16777216
 
 statement ok
+PREPARE sfn_nested AS SELECT sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(sfn_dbl(i::double precision)))))))))))))))))))))))) AS r FROM range(2) t(i) ORDER BY 1
+
+query
+EXECUTE sfn_nested
+----
+r
+0
+16777216
+
+statement ok
+DEALLOCATE sfn_nested
+
+statement ok
+PREPARE sfn_param AS SELECT sfn_dbl(sfn_dbl($1::double precision)) AS r
+
+query
+EXECUTE sfn_param(2)
+----
+r
+8
+
+statement ok
+DEALLOCATE sfn_param
+
+statement ok
 CREATE FUNCTION sfn_vec(v double precision[]) RETURNS double precision[] LANGUAGE sql AS 'SELECT ARRAY[v[1] + v[2], v[2] + v[3], v[3] + v[1]]'
 
 query

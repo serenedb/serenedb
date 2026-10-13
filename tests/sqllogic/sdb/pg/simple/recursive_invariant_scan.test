@@ -1,0 +1,18 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE ris_points AS SELECT (range % 1000)::DOUBLE AS x, (range // 1000)::DOUBLE AS y FROM range(2000000)
+
+query
+WITH RECURSIVE r(i, best) AS (
+  SELECT 0, 0.0::DOUBLE
+  UNION ALL
+  SELECT r.i + 1, (SELECT max(p.x * r.i - p.y) FROM ris_points p WHERE p.x >= r.best / 1000)
+  FROM r WHERE r.i < 20)
+SELECT count(*) AS c, sum(best) AS s FROM r
+----
+c	s
+21	189810
+
+statement ok
+DROP TABLE ris_points

@@ -150,7 +150,7 @@ CREATE SUBSCRIPTION cs_defaults CONNECTION 'host=localhost dbname=mydb' PUBLICAT
 
 
 query
-SELECT subbinary, suborigin, subdisableonerr, subsynccommit, subrunasowner, subfailover, subpasswordrequired, subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
+SELECT subbinary, suborigin, subdisableonerr, subsynccommit, subrunasowner, subfailover, subpasswordrequired, subskiplsn::text AS subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
 ----
 subbinary	suborigin	subdisableonerr	subsynccommit	subrunasowner	subfailover	subpasswordrequired	subskiplsn
 f	any	f	off	f	f	t	0/0
@@ -333,10 +333,23 @@ ALTER SUBSCRIPTION cs_defaults SKIP (lsn = '0/1A2B3C');
 
 
 query
-SELECT subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
+SELECT subskiplsn::text AS subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
 ----
 subskiplsn
 0/1A2B3C
+
+
+query
+SELECT subskiplsn = '0/1A2B3C' AS same, subskiplsn > '0/1A2B3B' AS later FROM pg_subscription WHERE subname = 'cs_defaults';
+----
+same	later
+t	t
+
+
+statement error
+SELECT subskiplsn = 'not-an-lsn' FROM pg_subscription;
+----
+db error: ERROR: invalid input syntax for type pg_lsn: "not-an-lsn"
 
 
 statement ok
@@ -344,7 +357,7 @@ ALTER SUBSCRIPTION cs_defaults SKIP (lsn = NONE);
 
 
 query
-SELECT subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
+SELECT subskiplsn::text AS subskiplsn FROM pg_subscription WHERE subname = 'cs_defaults';
 ----
 subskiplsn
 0/0

@@ -29,8 +29,6 @@ link the PR instead of fixing it again (a stale one: ask whether to wait, build
 on it or fix it here). Only related: go ahead, mention the related issue in
 yours and leave a cross-reference on it.
 
-- Post, file or comment on GitHub only after the user agrees to the text.
-
 - When you find a bug, look for the same mistake elsewhere -- the other callers,
 the sibling functions and types, the same pattern in other files -- and fix the
 whole family in one change, with a test for each, or file the ones that don't
@@ -44,21 +42,6 @@ cover the change. Full sqllogic/recovery suites, the DuckDB suites, stress,
 benchmarks and sanitizer builds only when the user asks. CI only once the
 change passes locally, and only when the user asks (`.claude/rules/ci.md`).
 
-- C++ symbols are looked up with the LSP tool (`clangd-lsp` plugin), not grep:
-`goToDefinition`, `findReferences`, `incomingCalls`, `goToImplementation` for
-the overrides of a virtual, `hover` for types. grep stays the tool for strings,
-SQL, tests, error messages and non-C++ files, and grep too before renaming or
-removing a symbol: clangd sees one build configuration, not the `#if` branches
-for other platforms. clangd starts at the first LSP
-call of a session and loads its index for about 5 seconds (minutes in a fresh
-checkout): repeat an empty or short first answer before trusting it. The LSP
-tool is deferred: load it with ToolSearch (`select:LSP`). If ToolSearch finds
-none, the plugin is missing
-(`claude plugin install clangd-lsp@claude-plugins-official`); an LSP error that
-the server can't start means `clangd` itself is missing. Ask the user to
-install what is missing. clangd reads `build/compile_commands.json`; without
-one there, use grep.
-
 - Repo-wide knowledge goes into the repo, not into personal memory. What every
 contributor needs goes into its topic page in `.claude/rules/` (a new topic gets
 a page with `paths:` for the files it covers, and a link from
@@ -66,26 +49,6 @@ a page with `paths:` for the files it covers, and a link from
 `.claude/skills/`. Never copy a rule into a second place: point to it. Propose
 the change in the same PR; when the user rejects a rule, save that to memory and
 never propose that kind of rule again.
-
-## Parallel work
-
-Other work runs next to yours: the user's other Claude sessions, builds, tests
-and servers, in this checkout or another one, and other developers on the
-shared dev machines. Nothing is yours except the processes and files you
-created.
-
-- Uncommitted changes in the tree may belong to another session: never discard
-  them wholesale (`git checkout .`, `git reset --hard`, `git stash`,
-  `git clean`). Undo your own edits one by one, stage your own files by path
-  (never `git add -A` or `commit -a`), and switch branches only in a checkout
-  no other session works in.
-- Temporary files, data dirs and ports get names nobody else picks: `mktemp -d`
-  or the session's scratchpad, a free port, a data dir named after the task;
-  never a fixed `/tmp/<name>`.
-- Kill only pids you started, never by name or pattern: `pkill serened` also
-  stops the servers of the user's other sessions.
-- Before timing anything, follow "Performance" in `.claude/rules/cpp.md`
-  (quiet machine, discard overlapped numbers).
 
 ## Formatting
 

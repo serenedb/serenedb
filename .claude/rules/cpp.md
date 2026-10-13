@@ -218,7 +218,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Large buffers should be heap-allocated separately, not inlined as arrays/members in objects
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
-- Measure on a quiet machine: check `uptime` and `ps -eo user,pcpu,comm --sort=-pcpu | head` first, never time while a build or test runs on the box, and discard numbers that overlapped one
+- The dev VMs are shared: the CI runner (`ghrunner`) and other developers can take the CPU at any time. Before every timed run, look at `top -b -n 2 -d 1 -o %CPU` (the second frame; `ps` shows a lifetime average). When another account's processes take CPU, tell the user which account and command, and wait until they finish. Never time while your own build or test runs, and discard any number that overlapped other load.
 - Binary size matters: excessive inlining/templates hurt icache and build times
 - Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `<build dir>/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`.
 - Measure and profile with the `perf` preset. `bench` omits frame pointers, so `perf record -g` call graphs break there.

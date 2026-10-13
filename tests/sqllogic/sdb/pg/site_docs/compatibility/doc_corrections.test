@@ -49,12 +49,10 @@ SELECT json_extract_path('{"a":{"b":1}}'::json, 'a', 'b');
 statement error
 SELECT NULL::jsonb;
 
-# --- to_timestamp: epoch (numeric) form works, text+format does not ---
-
 statement ok
 SELECT to_timestamp(1577836800);
 
-statement error
+statement ok
 SELECT to_timestamp('2020-01-01', 'YYYY-MM-DD');
 
 # --- Formerly crash-flagged in docs, now confirmed working (no crash) ---

@@ -1291,19 +1291,19 @@ statement ok
 SELECT regexp_substr('abcabc','b');
 
 # op_pattern: to_char
-statement error
+statement ok
 SELECT to_char(now(),'YYYY');
 
 # op_pattern: to_date
-statement error
+statement ok
 SELECT to_date('2020-01-01','YYYY-MM-DD');
 
 # op_pattern: to_number
-statement error
+statement ok
 SELECT to_number('123','999');
 
 # op_pattern: to_timestamp
-statement error
+statement ok
 SELECT to_timestamp('2020-01-01','YYYY-MM-DD');
 
 # op_datetime: +

@@ -26,6 +26,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <new>
 
@@ -131,7 +133,9 @@ class PooledBytes {
   explicit PooledBytes(size_t size)
     : _data{static_cast<uint8_t*>(Pool::Allocate(size))}, _size{size} {
     if (_data == nullptr) {
-      throw std::bad_alloc{};
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+        ERR_MSG("out of memory: cannot allocate ", size, " bytes"));
     }
   }
 

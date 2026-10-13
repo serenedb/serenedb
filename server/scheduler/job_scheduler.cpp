@@ -193,9 +193,11 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
   context = connection.conn->context;
   context->registered_state->Insert(kJobRunKey,
                                     duckdb::make_shared_ptr<JobRun>(depth));
-  context->client_data->catalog_search_path->Set(
-    {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
-    duckdb::CatalogSetPathType::SET_DIRECTLY);
+  if (!job.schema->parent) {
+    context->client_data->catalog_search_path->Set(
+      {duckdb::CatalogSearchEntry{job.catalog, job.schema->Name()}},
+      duckdb::CatalogSetPathType::SET_DIRECTLY);
+  }
   duckdb::QueryParameters parameters;
   parameters.caller_drives = true;
   auto pending = context->Submit(job.body->Copy(), parameters);

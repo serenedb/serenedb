@@ -836,6 +836,43 @@ DROP TABLE jd_nested_runs;
 
 
 statement ok
+CREATE SCHEMA jd_inner;
+
+
+statement ok
+CREATE TABLE jd_inner.jd_shadow (n int);
+
+
+statement ok
+CREATE TABLE jd_outer.jd_inner.jd_shadow (n int);
+
+
+statement ok
+CREATE JOB jd_outer.jd_inner.jd_unqualified AFTER 1 HOUR SUSPENDED AS INSERT INTO jd_shadow VALUES (1);
+
+
+statement error
+EXECUTE JOB jd_outer.jd_inner.jd_unqualified;
+----
+db error: ERROR: Table with name jd_shadow does not exist!<slt:ignore>
+
+
+query
+SELECT (SELECT count(*) FROM jd_inner.jd_shadow) AS top_level, (SELECT count(*) FROM jd_outer.jd_inner.jd_shadow) AS nested;
+----
+top_level	nested
+0	0
+
+
+statement ok
+DROP JOB jd_outer.jd_inner.jd_unqualified;
+
+
+statement ok
+DROP SCHEMA jd_inner CASCADE;
+
+
+statement ok
 DROP JOB jd_outer.jd_inner.jd_nested;
 
 

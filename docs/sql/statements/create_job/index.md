@@ -98,7 +98,7 @@ A job runs **as its owner**, the role that created it, in a session of its own: 
 
 The job session starts with the job's schema first on the search path and reads **global** settings; session settings of the role that created the job do not apply.
 
-A search path holds only top-level schemas, so a job in a nested schema (`CREATE JOB outer.inner.job ...`) cannot have its own schema on it: an unqualified name in its body is looked up in a top-level schema named like the job's schema (`inner`), not in `outer.inner`. Qualify the names in the body of such a job (`INSERT INTO outer.inner.events ...`).
+A search path holds only top-level schemas, so a job in a nested schema (`CREATE JOB outer.inner.job ...`) runs with the database's default search path (`"$user", public`), as a new session in that database would, instead of its own schema. Qualify the names in the body of such a job (`INSERT INTO outer.inner.events ...`).
 
 ## Jobs in other databases
 

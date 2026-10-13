@@ -1,0 +1,46 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE ivc (id BIGINT PRIMARY KEY, tag TEXT)
+  WITH (storage = 'search', segment_memory_max = 2, compaction_interval = 0);
+
+statement ok
+SET sdb_faults = 'pause_search_insert_after_table_lock';
+
+connection writer
+statement async ok
+INSERT INTO ivc VALUES (1, 'a');
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_insert_after_table_lock:parked';
+
+connection indexer
+statement async ok
+CREATE INDEX ivc_tag ON ivc USING inverted (tag);
+
+sleep 1s
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_insert_after_table_lock:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) ivc;
+
+connection default
+query
+SELECT id FROM ivc_tag WHERE tag @@ 'a';
+----
+id
+1
+
+connection default
+statement ok
+DROP TABLE ivc;

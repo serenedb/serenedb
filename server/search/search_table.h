@@ -83,8 +83,12 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   static catalog::CompressionByColumn DeclaredCompression(
     const duckdb::ColumnList& columns);
 
-  std::shared_ptr<const catalog::InvertedIndexConfig> Config() const;
-  std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const;
+  std::shared_ptr<const catalog::InvertedIndexConfig> Config() const {
+    return std::atomic_load(&_config);
+  }
+  std::shared_ptr<const catalog::InvertedIndexConfig> ScanConfig() const {
+    return std::atomic_load(&_scan_config);
+  }
   void MergeIndexConfig(
     duckdb::idx_t index_oid,
     std::shared_ptr<const catalog::InvertedIndexConfig> config);

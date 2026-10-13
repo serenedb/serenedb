@@ -299,18 +299,6 @@ void SearchTable::CloseDeleteLog() {
   _delete_log.clear();
 }
 
-std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::Config()
-  const {
-  std::shared_lock lock(_table_lock);
-  return _config;
-}
-
-std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::ScanConfig()
-  const {
-  std::shared_lock lock(_table_lock);
-  return _scan_config;
-}
-
 std::shared_ptr<const catalog::InvertedIndexConfig> SearchTable::MergeConfigs(
   std::span<const IndexConfig> configs,
   std::optional<duckdb::idx_t> skip) const {
@@ -343,8 +331,8 @@ void SearchTable::RebuildConfig(Configs&& configs,
   }
   _configs = std::forward<Configs>(configs);
   _building_index = building_index;
-  _config = std::move(config);
-  _scan_config = std::move(scan_config);
+  std::atomic_store(&_config, std::move(config));
+  std::atomic_store(&_scan_config, std::move(scan_config));
 }
 
 void SearchTable::MergeIndexConfig(
@@ -377,7 +365,7 @@ void SearchTable::FinishIndexBuild(duckdb::idx_t index_oid) noexcept {
     return;
   }
   _building_index.reset();
-  _scan_config = _config;
+  std::atomic_store(&_scan_config, _config);
 }
 
 void SearchTable::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
@@ -388,7 +376,7 @@ void SearchTable::AbortIndexBuild(duckdb::idx_t index_oid) noexcept {
   _building_index.reset();
   std::erase_if(
     _configs, [&](const IndexConfig& index) { return index.oid == index_oid; });
-  _config = _scan_config;
+  std::atomic_store(&_config, _scan_config);
 }
 
 void SearchTable::BuildClaim::Finish() noexcept { Release(/*finished=*/true); }

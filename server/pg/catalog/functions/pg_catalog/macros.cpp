@@ -109,6 +109,137 @@ constexpr SystemMacro kMacros[] = {
            LEFT JOIN pg_catalog.pg_authid AS U ON (S.usename = U.rolname)
       WHERE target_pid IS NULL OR S.pid = target_pid)"},
 
+  {"pg_catalog", "pg_stat_get_progress_info",
+   R"((cmdtype) AS TABLE
+      SELECT S.pid AS pid,
+             S.datid AS datid,
+             S.relid AS relid,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'VACUUM' THEN CASE S.phase
+                                         WHEN 'initializing' THEN 0
+                                         WHEN 'scanning heap' THEN 1
+                                         WHEN 'vacuuming indexes' THEN 2
+                                         WHEN 'vacuuming heap' THEN 3
+                                         WHEN 'cleaning up indexes' THEN 4
+                                         WHEN 'truncating heap' THEN 5
+                                         WHEN 'performing final cleanup' THEN 6
+                                       END
+                    WHEN 'ANALYZE' THEN CASE S.phase
+                                          WHEN 'initializing' THEN 0
+                                          WHEN 'acquiring sample rows' THEN 1
+                                          WHEN 'acquiring inherited sample rows' THEN 2
+                                          WHEN 'computing statistics' THEN 3
+                                          WHEN 'computing extended statistics' THEN 4
+                                          WHEN 'finalizing analyze' THEN 5
+                                        END
+                    WHEN 'CLUSTER' THEN 1
+                    WHEN 'CREATE INDEX' THEN CASE S.command
+                                               WHEN 'CREATE INDEX' THEN 1
+                                               WHEN 'REINDEX' THEN 3
+                                             END
+                    WHEN 'BASEBACKUP' THEN CASE S.phase
+                                             WHEN 'initializing' THEN 0
+                                             WHEN 'waiting for checkpoint to finish' THEN 1
+                                             WHEN 'estimating backup size' THEN 2
+                                             WHEN 'streaming database files' THEN 3
+                                             WHEN 'waiting for wal archiving to finish' THEN 4
+                                             WHEN 'transferring wal files' THEN 5
+                                           END
+                    WHEN 'COPY' THEN S.bytes_processed
+                    ELSE 0
+                  END AS BIGINT) AS param1,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'VACUUM' THEN S.steps_total
+                    WHEN 'CLUSTER' THEN CASE S.phase
+                                          WHEN 'initializing' THEN 0
+                                          WHEN 'seq scanning heap' THEN 1
+                                          WHEN 'index scanning heap' THEN 2
+                                          WHEN 'sorting tuples' THEN 3
+                                          WHEN 'writing new heap' THEN 4
+                                          WHEN 'swapping relation files' THEN 5
+                                          WHEN 'rebuilding index' THEN 6
+                                          WHEN 'performing final cleanup' THEN 7
+                                        END
+                    WHEN 'BASEBACKUP' THEN S.bytes_total
+                    WHEN 'COPY' THEN S.bytes_total
+                    ELSE 0
+                  END AS BIGINT) AS param2,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'VACUUM' THEN S.step
+                    WHEN 'CLUSTER' THEN S.current_relid
+                    WHEN 'BASEBACKUP' THEN S.bytes_processed
+                    WHEN 'COPY' THEN S.tuples_processed
+                    ELSE 0
+                  END AS BIGINT) AS param3,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'CLUSTER' THEN S.tuples_processed
+                    WHEN 'BASEBACKUP' THEN S.items_total
+                    ELSE 0
+                  END AS BIGINT) AS param4,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'BASEBACKUP' THEN S.items_processed
+                    WHEN 'COPY' THEN CASE S.command
+                                       WHEN 'COPY FROM' THEN 1
+                                       WHEN 'COPY TO' THEN 2
+                                     END
+                    ELSE 0
+                  END AS BIGINT) AS param5,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'ANALYZE' THEN S.items_total
+                    WHEN 'CLUSTER' THEN S.steps_total
+                    WHEN 'COPY' THEN CASE S.io_type
+                                       WHEN 'FILE' THEN 1
+                                       WHEN 'PROGRAM' THEN 2
+                                       WHEN 'PIPE' THEN 3
+                                       WHEN 'CALLBACK' THEN 4
+                                     END
+                    ELSE 0
+                  END AS BIGINT) AS param6,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'ANALYZE' THEN S.items_processed
+                    WHEN 'CLUSTER' THEN S.step
+                    WHEN 'CREATE INDEX' THEN S.current_relid
+                    ELSE 0
+                  END AS BIGINT) AS param7,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'ANALYZE' THEN S.current_relid
+                    ELSE 0
+                  END AS BIGINT) AS param8,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'VACUUM' THEN S.items_total
+                    ELSE 0
+                  END AS BIGINT) AS param9,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'VACUUM' THEN S.items_processed
+                    WHEN 'CREATE INDEX' THEN CASE S.phase
+                                               WHEN 'initializing' THEN 0
+                                               WHEN 'building index' THEN 2
+                                             END
+                    ELSE 0
+                  END AS BIGINT) AS param10,
+             0::BIGINT AS param11,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'CREATE INDEX' THEN S.tuples_total
+                    ELSE 0
+                  END AS BIGINT) AS param12,
+             CAST(CASE upper(cmdtype)
+                    WHEN 'CREATE INDEX' THEN S.tuples_processed
+                    ELSE 0
+                  END AS BIGINT) AS param13,
+             0::BIGINT AS param14,
+             0::BIGINT AS param15,
+             0::BIGINT AS param16,
+             0::BIGINT AS param17,
+             0::BIGINT AS param18,
+             0::BIGINT AS param19,
+             0::BIGINT AS param20
+      FROM pg_catalog.sdb_progress AS S
+      WHERE CASE upper(cmdtype)
+              WHEN 'COPY' THEN S.command IN ('COPY FROM', 'COPY TO')
+              WHEN 'CREATE INDEX' THEN S.command IN ('CREATE INDEX', 'REINDEX')
+              ELSE S.command = upper(cmdtype)
+            END)"},
+
   {"pg_catalog", "pg_stat_get_recovery_prefetch",
    R"(() AS TABLE
       SELECT NULL::TIMESTAMPTZ AS stats_reset,

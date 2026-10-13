@@ -27,3 +27,20 @@ DROP INDEX index_vedernikoff;
 
 statement ok
 DROP TABLE vedernikoff;
+
+query
+SELECT * FROM pg_stat_get_progress_info('copy');
+----
+pid	datid	relid	param1	param2	param3	param4	param5	param6	param7	param8	param9	param10	param11	param12	param13	param14	param15	param16	param17	param18	param19	param20
+
+query
+SELECT viewname FROM pg_views
+WHERE viewname LIKE 'pg\_stat\_progress\_%' AND definition LIKE '%pg_stat_get_progress_info%'
+ORDER BY 1;
+----
+viewname
+pg_stat_progress_analyze
+pg_stat_progress_basebackup
+pg_stat_progress_cluster
+pg_stat_progress_copy
+pg_stat_progress_vacuum

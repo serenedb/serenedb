@@ -361,17 +361,183 @@ uint32_t NearestCentroid(const float* __restrict x, uint32_t dsub,
   return arg;
 }
 
+void InitLine(std::span<const float> sorted, uint32_t k, float* cent) {
+  const size_t n = sorted.size();
+  const double lo = sorted.front();
+  const double hi = sorted.back();
+  if (!(hi > lo)) {
+    std::fill_n(cent, k, sorted.front());
+    return;
+  }
+  const size_t bins = size_t{4} * k;
+  const double width = (hi - lo) / static_cast<double>(bins);
+  std::vector<double> mass(bins + 1, 0.0);
+  size_t i = 0;
+  for (size_t b = 0; b < bins; ++b) {
+    const double edge = lo + width * static_cast<double>(b + 1);
+    size_t j = i;
+    while (j < n && (b + 1 == bins || sorted[j] < edge)) {
+      ++j;
+    }
+    mass[b + 1] = mass[b] + std::cbrt(static_cast<double>(j - i));
+    i = j;
+  }
+  size_t b = 0;
+  for (uint32_t c = 0; c < k; ++c) {
+    const double t = (c + 0.5) / k * mass[bins];
+    while (b + 1 < bins && mass[b + 1] < t) {
+      ++b;
+    }
+    const double span = mass[b + 1] - mass[b];
+    const double f = span > 0.0 ? (t - mass[b]) / span : 0.5;
+    cent[c] = static_cast<float>(lo + width * (static_cast<double>(b) + f));
+  }
+}
+
+void TrainLine(const float* x, size_t n, uint32_t k, uint32_t niter,
+               float* cent) {
+  std::vector<float> sorted(x, x + n);
+  std::ranges::sort(sorted);
+  InitLine(sorted, k, cent);
+  std::vector<double> prefix(n + 1);
+  for (size_t i = 0; i < n; ++i) {
+    prefix[i + 1] = prefix[i] + sorted[i];
+  }
+  std::vector<uint32_t> by_value(k);
+  std::vector<size_t> lo(k, 0);
+  std::vector<size_t> hi(k, 0);
+  std::vector<size_t> count(k);
+  for (uint32_t it = 0; it < niter; ++it) {
+    std::iota(by_value.begin(), by_value.end(), 0U);
+    std::ranges::stable_sort(
+      by_value, [&](uint32_t l, uint32_t r) { return cent[l] < cent[r]; });
+    size_t moved = n;
+    size_t begin = 0;
+    for (uint32_t p = 0; p < k; ++p) {
+      const uint32_t c = by_value[p];
+      size_t end = n;
+      if (p + 1 < k) {
+        const float mid = 0.5f * (cent[c] + cent[by_value[p + 1]]);
+        end = static_cast<size_t>(
+          std::lower_bound(sorted.begin() + begin, sorted.end(), mid) -
+          sorted.begin());
+      }
+      const size_t kept_lo = std::max(begin, lo[c]);
+      const size_t kept_hi = std::min(end, hi[c]);
+      moved -= kept_hi > kept_lo ? kept_hi - kept_lo : 0;
+      lo[c] = begin;
+      hi[c] = end;
+      count[c] = end - begin;
+      begin = end;
+    }
+    if (moved * 1000 < n) {
+      break;
+    }
+    for (uint32_t c = 0; c < k; ++c) {
+      if (count[c] != 0) {
+        cent[c] = static_cast<float>((prefix[hi[c]] - prefix[lo[c]]) /
+                                     static_cast<double>(count[c]));
+      }
+    }
+    constexpr float kSplit = 1.f / 1024.f;
+    for (uint32_t c = 0; c < k; ++c) {
+      if (count[c] != 0) {
+        continue;
+      }
+      const auto big = static_cast<uint32_t>(
+        std::max_element(count.begin(), count.end()) - count.begin());
+      const float v = cent[big];
+      cent[c] = v * (1.f + kSplit);
+      cent[big] = v * (1.f - kSplit);
+      count[c] = count[big] / 2;
+      count[big] -= count[c];
+    }
+  }
+}
+
+float LaneSum(const float* v, size_t n) noexcept {
+  float a[8] = {};
+  size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    for (size_t g = 0; g < 8; ++g) {
+      a[g] += v[i + g];
+    }
+  }
+  for (; i < n; ++i) {
+    a[0] += v[i];
+  }
+  return ((a[0] + a[1]) + (a[2] + a[3])) + ((a[4] + a[5]) + (a[6] + a[7]));
+}
+
+void InitSpread(const float* x, size_t n, uint32_t dsub, uint32_t k, pcg32& rng,
+                float* cent) {
+  constexpr size_t kBlock = 256;
+  const size_t blocks = (n + kBlock - 1) / kBlock;
+  std::vector<float> xt(n * dsub);
+  for (size_t r = 0; r < n; ++r) {
+    for (uint32_t j = 0; j < dsub; ++j) {
+      xt[j * n + r] = x[r * dsub + j];
+    }
+  }
+  std::vector<float> near(n, std::numeric_limits<float>::max());
+  std::vector<float> dist(n);
+  std::vector<double> mass(blocks);
+  const auto pick = [&](uint32_t c, size_t i) {
+    const float* p = x + i * dsub;
+    std::copy_n(p, dsub, cent + size_t{c} * dsub);
+    std::fill(dist.begin(), dist.end(), 0.f);
+    for (uint32_t j = 0; j < dsub; ++j) {
+      const float pj = p[j];
+      const float* __restrict col = xt.data() + j * n;
+      float* __restrict d = dist.data();
+      for (size_t r = 0; r < n; ++r) {
+        const float t = col[r] - pj;
+        d[r] += t * t;
+      }
+    }
+    for (size_t r = 0; r < n; ++r) {
+      near[r] = std::min(near[r], dist[r]);
+    }
+    for (size_t b = 0; b < blocks; ++b) {
+      const size_t from = b * kBlock;
+      mass[b] = LaneSum(near.data() + from, std::min(kBlock, n - from));
+    }
+  };
+  pick(0, absl::Uniform<size_t>(rng, 0, n));
+  for (uint32_t c = 1; c < k; ++c) {
+    const double total = std::accumulate(mass.begin(), mass.end(), 0.0);
+    size_t i = 0;
+    if (total > 0.0) {
+      double r = absl::Uniform<double>(rng, 0.0, total);
+      size_t b = 0;
+      for (; b + 1 < blocks && r >= mass[b]; ++b) {
+        r -= mass[b];
+      }
+      i = b * kBlock;
+      const size_t end = std::min(n, i + kBlock);
+      for (; i + 1 < end; ++i) {
+        r -= near[i];
+        if (r < 0.0) {
+          break;
+        }
+      }
+    } else {
+      i = absl::Uniform<size_t>(rng, 0, n);
+    }
+    pick(c, i);
+  }
+}
+
 void TrainSubspace(const float* x, size_t n, uint32_t dsub, uint32_t k,
                    uint32_t niter, uint64_t seed, float* cent) {
   SDB_ASSERT(n >= k);
   SDB_ASSERT(k % 8 == 0);
-  std::vector<uint32_t> order(n);
-  std::iota(order.begin(), order.end(), 0U);
-  pcg32 rng{seed};
-  for (uint32_t c = 0; c < k; ++c) {
-    std::swap(order[c], order[absl::Uniform<size_t>(rng, c, n)]);
-    std::copy_n(x + size_t{order[c]} * dsub, dsub, cent + size_t{c} * dsub);
+  if (dsub == 1) {
+    TrainLine(x, n, k, niter, cent);
+    return;
   }
+  pcg32 rng{seed};
+  InitSpread(x, n, dsub, k, rng, cent);
   SDB_ASSERT(k == kPq8Ksub);
   std::vector<float> cent_t(size_t{k} * dsub);
   std::vector<float> cnorm(k);
@@ -514,6 +680,8 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     out->_pq = _pq;
     out->_cent_t = _cent_t;
     out->_cnorm = _cnorm;
+    out->_mid = _mid;
+    out->_order = _order;
     out->_trained = _trained;
     return out;
   }
@@ -554,10 +722,50 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
         _cnorm[m * kPq8Ksub + c] = s;
       }
     }
+    if (dsub != 1) {
+      return;
+    }
+    _mid.resize(_pq.M * kPq8Ksub);
+    _order.resize(_pq.M * kPq8Ksub);
+    std::array<uint32_t, kPq8Ksub> by_value;
+    for (size_t m = 0; m < _pq.M; ++m) {
+      const float* cent = _pq.centroids.data() + m * kPq8Ksub;
+      std::iota(by_value.begin(), by_value.end(), 0U);
+      std::ranges::stable_sort(
+        by_value, [&](uint32_t l, uint32_t r) { return cent[l] < cent[r]; });
+      float* mid = _mid.data() + m * kPq8Ksub;
+      uint8_t* order = _order.data() + m * kPq8Ksub;
+      for (size_t p = 0; p < kPq8Ksub; ++p) {
+        order[p] = static_cast<uint8_t>(by_value[p]);
+        mid[p] = p + 1 < kPq8Ksub
+                   ? 0.5f * (cent[by_value[p]] + cent[by_value[p + 1]])
+                   : std::numeric_limits<float>::infinity();
+      }
+    }
+  }
+
+  void EncodeLines(const float* vecs, size_t n, uint8_t* codes) const {
+    for (size_t i = 0; i < n; ++i) {
+      const float* x = vecs + i * _d;
+      uint8_t* code = codes + i * _pq.M;
+      for (size_t m = 0; m < _pq.M; ++m) {
+        const float* mid = _mid.data() + m * kPq8Ksub;
+        const float v = x[m];
+        uint32_t pos = 0;
+        for (uint32_t step = kPq8Ksub / 2; step != 0; step >>= 1) {
+          pos += mid[pos + step - 1] < v ? step : 0;
+        }
+        code[m] = _order[m * kPq8Ksub + pos];
+      }
+    }
   }
 
   void EncodeRows(const float* vecs, size_t n, uint8_t* codes) {
     const size_t dsub = _pq.dsub;
+    if (dsub == 1) {
+      EncodeLines(vecs, n, codes);
+      return;
+    }
     _dist.resize(kPq8Ksub);
     for (size_t i = 0; i < n; ++i) {
       const float* x = vecs + i * _d;
@@ -576,6 +784,8 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
   bool _trained = false;
   std::vector<float> _cent_t;
   std::vector<float> _cnorm;
+  std::vector<float> _mid;
+  std::vector<uint8_t> _order;
   std::vector<float> _dist;
   std::vector<uint8_t> _codes;
 };

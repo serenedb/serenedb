@@ -2221,6 +2221,28 @@ TEST(hnsw_pq_quantizer_test, pair_scores_are_decoded_distances) {
   }
 }
 
+TEST(hnsw_pq_quantizer_test, line_codebook_is_tight) {
+  constexpr uint32_t d = 8;
+  constexpr size_t n = 4096;
+  const auto points = MakeSpread(d, n, 83);
+  const std::vector<float> centroid(d, 0.f);
+  const auto f = BuildPqCodes(d, d, VectorMetric::L2Sqr, points, n);
+  auto reader = MakeKeyedReader(f, centroid, centroid.data());
+  std::vector<float> row(d);
+  double sum = 0.0;
+  float worst = 0.f;
+  for (size_t i = 0; i < n; ++i) {
+    ASSERT_TRUE(reader->Decode(f.codes.data() + i * f.record_size, row.data()));
+    for (uint32_t j = 0; j < d; ++j) {
+      const float e = row[j] - points[i * d + j];
+      sum += double{e} * e;
+      worst = std::max(worst, std::fabs(e));
+    }
+  }
+  EXPECT_LT(sum / static_cast<double>(n * d), 1.2e-4);
+  EXPECT_LT(worst, 0.5f);
+}
+
 TEST(hnsw_pq_quantizer_test, gathered_matches_block) {
   constexpr uint32_t d = 16;
   constexpr uint32_t pq_m = 4;

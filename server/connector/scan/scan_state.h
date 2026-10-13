@@ -294,7 +294,8 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
       uint32_t count;
     };
     std::vector<irs::ScoreDoc> answer;
-    std::vector<uint32_t> answer_rank;
+    std::span<const irs::ScoreDoc> ranked;
+    uint32_t verify_first = std::numeric_limits<uint32_t>::max();
     std::vector<FetchUnit> fetch_units;
     std::atomic_uint32_t next_fetch_unit{0};
     std::atomic_uint32_t fetch_done{0};

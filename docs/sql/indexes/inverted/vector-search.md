@@ -166,7 +166,7 @@ ORDER BY emb <-> $query_vector
 LIMIT 10;
 ```
 
-Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields — a comparison, a range, a full-text `@@` match — is answered from the index once per segment, and the rest is read from the columnstore for each row the walk reaches. `EXPLAIN` shows such a predicate as the scan's `Row Filter`. A predicate on a column that is neither indexed nor `INCLUDE`d needs the base table, which the walk cannot read, and is refused; add the column to `INCLUDE` to filter on it.
+Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields — a comparison, a range, a full-text `@@` match — is answered from the index once per segment, and the rest is read from the columnstore for each row the walk reaches. `EXPLAIN` shows such a predicate as the scan's `Row Filter`. A predicate on a column that is neither indexed nor `INCLUDE`d needs the base table, which the walk cannot read. Its rows are checked after the search, nearest first. If fewer than `k` pass, every row is ranked by its exact distance and checked in that order until `k` pass or none are left: the answer is complete, but it can cost a scan of the whole index. When such a predicate is `OR`ed with the others, the distance is computed exactly for every row instead. Add the column to `INCLUDE` to filter inside the walk.
 
 ## Column types
 

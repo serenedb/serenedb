@@ -1694,16 +1694,24 @@ void ColumnWriter::SetHyperLogLog(duckdb::shared_ptr<duckdb::HyperLogLog> hll) {
   _hll_auto = false;
 }
 
-bool ColumnWriter::TrainsDictionary() const noexcept {
-  if (_is_nested || _type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
+                            const duckdb::LogicalType& type,
+                            duckdb::CompressionType forced,
+                            const ColCodecParams& params) {
+  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
     return false;
   }
-  const auto forced_method = ForcedMethod(WriteCtx().Database(), _forced);
+  const auto forced_method = ForcedMethod(db, forced);
   const auto named = codecs::ChoiceOf(forced_method);
   if (!named && forced_method != duckdb::CompressionType::COMPRESSION_AUTO) {
     return false;
   }
-  return codecs::TrainsDictionary(named, _codec_params);
+  return codecs::TrainsDictionary(named, params);
+}
+
+bool ColumnWriter::TrainsDictionary() const noexcept {
+  return TrainsColumnDictionary(WriteCtx().Database(), _type, _forced,
+                                _codec_params);
 }
 
 void ColumnWriter::SampleDictionary(std::span<const std::string_view> entries) {

@@ -69,12 +69,13 @@ class EstimateTask final : public duckdb::BaseExecutorTask {
 bool ColumnCopyCheck::Saves() const noexcept {
   return reencoded_bytes &&
          absl::uint128{*reencoded_bytes} * 100 <
-           absl::uint128{bytes} * (100 - kReencodeMinSavingsPercent);
+           absl::uint128{bytes} * (100 - irs::kReencodeMinSavingsPercent);
 }
 
 bool SegmentCopyCheck::Rewrite() const noexcept {
-  return codec_changed || absl::uint128{saved_bytes} * 100 >
-                            absl::uint128{bytes} * kReencodeMinSavingsPercent;
+  return codec_changed ||
+         absl::uint128{saved_bytes} * 100 >
+           absl::uint128{bytes} * irs::kReencodeMinSavingsPercent;
 }
 
 uint64_t SegmentCopyCheck::SavedPercent() const noexcept {

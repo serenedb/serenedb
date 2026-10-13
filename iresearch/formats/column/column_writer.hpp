@@ -52,6 +52,11 @@ struct WriteChunk {
   duckdb::idx_t count;
 };
 
+bool TrainsColumnDictionary(duckdb::DatabaseInstance& db,
+                            const duckdb::LogicalType& type,
+                            duckdb::CompressionType forced,
+                            const ColCodecParams& params);
+
 class ColumnWriter final {
  public:
   ColumnWriter(WriteContext& ctx, field_id id, duckdb::LogicalType type,

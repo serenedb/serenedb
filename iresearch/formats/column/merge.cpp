@@ -40,6 +40,7 @@
 
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/codecs/trained_dictionary.hpp"
+#include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/column/col_copy_check.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
@@ -349,6 +350,7 @@ struct ColumnMerger::State {
 
   std::span<const MergeSource> sources;
   const IndexFieldOptions* field_options = nullptr;
+  duckdb::DatabaseInstance* db = nullptr;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::vector<field_id> ids;
   absl::flat_hash_map<field_id, const ColumnReader*> first_by_id;
@@ -372,6 +374,7 @@ ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
     if (!s.col_reader) {
       continue;
     }
+    state.db = &s.col_reader->Database();
     for (const auto& col : s.col_reader->Columns()) {
       if (state.first_by_id.emplace(col->Id(), col.get()).second) {
         state.ids.emplace_back(col->Id());
@@ -403,6 +406,12 @@ uint64_t ColumnMerger::StoredBytes(field_id column) const {
   return bytes;
 }
 
+uint64_t ColumnMerger::StoredBytes(field_id column, size_t input) const {
+  const auto* reader = _state->sources[input].col_reader;
+  const auto* col = reader ? reader->Column(column) : nullptr;
+  return col ? irs::StoredBytes(*col) : 0;
+}
+
 uint32_t ColumnMerger::RowGroupSize() const noexcept {
   return _state->row_group_size;
 }
@@ -422,11 +431,33 @@ bool ColumnMerger::IsText(field_id column) const {
          duckdb::PhysicalType::VARCHAR;
 }
 
-bool ColumnMerger::Train(field_id column, ColWriter& output,
-                         absl::FunctionRef<bool()> progress) {
+bool ColumnMerger::Copyable(field_id column, size_t input) const {
+  const auto& shared = *_state;
+  const auto& source = shared.sources[input];
+  if (!shared.field_options || !source.col_reader ||
+      HasRemovals(source.reader->Meta())) {
+    return false;
+  }
+  const auto* col = source.col_reader->Column(column);
+  if (!col || !Splittable(column)) {
+    return false;
+  }
+  if (col->RowCount() != source.alive_count ||
+      col->RowCount() < uint64_t{shared.row_group_size} * kCopyMinRowGroups) {
+    return false;
+  }
+  if (shared.Options(column).skip_validity && col->HasValidity()) {
+    return false;
+  }
+  return BlocksRelocatable(*col);
+}
+
+bool ColumnMerger::Train(field_id column, absl::FunctionRef<bool()> progress) {
   auto& shared = *_state;
   std::shared_ptr<const codecs::TrainedDictionary> dictionary;
-  if (shared.OpenPart(column, 0, output).TrainsDictionary()) {
+  const auto opts = shared.Options(column);
+  if (TrainsColumnDictionary(*shared.db, shared.First(column).Type(),
+                             opts.compression, shared.CodecParams(opts))) {
     const auto ctxs = OpenContexts(shared.sources, column);
     codecs::DictionarySampler sampler;
     SampleDictionary(
@@ -440,7 +471,6 @@ bool ColumnMerger::Train(field_id column, ColWriter& output,
       return false;
     }
     if (auto bytes = sampler.Ready() ? sampler.Train() : std::nullopt) {
-      output.AddColumnDictionary(column, *bytes);
       dictionary =
         std::make_shared<const codecs::TrainedDictionary>(std::move(*bytes));
     }
@@ -457,10 +487,17 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
   auto& shared = *_state;
   auto& cw = shared.OpenPart(column, part, output);
   if (cw.TrainsDictionary()) {
-    std::lock_guard lock{shared.dictionaries_mutex};
-    const auto it = shared.dictionaries.find(column);
-    SDB_ASSERT(it != shared.dictionaries.end());
-    cw.ShareDictionary(it->second);
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+    {
+      std::lock_guard lock{shared.dictionaries_mutex};
+      const auto it = shared.dictionaries.find(column);
+      SDB_ASSERT(it != shared.dictionaries.end());
+      dictionary = it->second;
+    }
+    if (dictionary) {
+      output.AddColumnDictionary(column, dictionary->Bytes());
+    }
+    cw.ShareDictionary(std::move(dictionary));
   }
   if (!shared.VisitRows(
         column, begin, end, progress,
@@ -472,6 +509,33 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
   }
   cw.PadNullsTo(end - begin);
   cw.Finish();
+  return true;
+}
+
+bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
+                             uint64_t begin, uint64_t end, ColWriter& output,
+                             absl::FunctionRef<bool()> progress) {
+  auto& shared = *_state;
+  const auto& source = shared.sources[input];
+  const auto& col = *source.col_reader->Column(column);
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary;
+  {
+    std::lock_guard lock{shared.dictionaries_mutex};
+    if (const auto it = shared.dictionaries.find(column);
+        it != shared.dictionaries.end()) {
+      dictionary = it->second;
+    }
+  }
+  const auto estimate =
+    dictionary
+      ? EstimateReencode(*source.col_reader, col, *shared.field_options,
+                         std::move(dictionary))
+      : *EstimateReencode(*source.col_reader, col, *shared.field_options);
+  if (ReencodePays(estimate)) {
+    return MergeRange(column, part, begin, end, output, progress);
+  }
+  output.CopyColumnPart(column, part, *source.col_reader, col,
+                        !shared.Options(column).skip_validity);
   return true;
 }
 

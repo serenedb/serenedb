@@ -78,6 +78,13 @@ uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept {
 
 }  // namespace
 
+bool ReencodePays(const ReencodeEstimate& estimate) noexcept {
+  return estimate.codec_changed ||
+         absl::uint128{estimate.reencoded_bytes} * 100 <
+           absl::uint128{estimate.stored_bytes} *
+             (100 - kReencodeMinSavingsPercent);
+}
+
 uint64_t StoredBytes(const ColumnReader& column) {
   uint64_t bytes = BlockBytes(column.DataBlocks());
   if (const auto* validity = column.Validity()) {
@@ -108,27 +115,15 @@ void ReencodeCache::Store(field_id column, const ReencodeKey& key,
   _entries.insert_or_assign(column, std::pair{key, estimate});
 }
 
-std::optional<ReencodeEstimate> EstimateReencode(
+namespace {
+
+ReencodeEstimate TrialReencode(
   const ColReader& reader, const ColumnReader& column,
-  const IndexFieldOptions& options, size_t samples) {
-  if (samples == 0 || IsNested(column.Type())) {
-    return std::nullopt;
-  }
-  SDB_ASSERT(column.RowCount() != 0);
+  const IndexFieldOptions& options, size_t samples,
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
   const auto column_options = options.GetColumnOptions(column.Id());
   auto codec_params = options.CodecParams(column_options);
   codec_params.tier = WriteTier::Merge;
-  const ReencodeKey key{
-    .skip_validity = column_options.skip_validity,
-    .compression = column_options.compression,
-    .codec_params = codec_params,
-    .row_group_size = options.row_group_size,
-    .samples = samples,
-  };
-  auto& cache = reader.Reencodes();
-  if (auto cached = cache.Find(column.Id(), key)) {
-    return cached;
-  }
   const uint64_t rows = column.RowCount();
   const uint64_t group_rows = std::max<uint32_t>(1, options.row_group_size);
   const uint64_t groups = (rows + group_rows - 1) / group_rows;
@@ -140,6 +135,9 @@ std::optional<ReencodeEstimate> EstimateReencode(
     column.Id(), column.Type(), column_options.skip_validity,
     static_cast<uint32_t>(group_rows), column_options.compression,
     /*hyperloglog=*/false, codec_params);
+  if (dictionary) {
+    writer.ShareDictionary(std::move(dictionary));
+  }
   auto state = column.InitScan(std::make_shared<ReadContext>(reader));
   ColumnReader::VectorScratch scratch{column.Type()};
   ReencodeEstimate estimate;
@@ -169,8 +167,44 @@ std::optional<ReencodeEstimate> EstimateReencode(
         return trial.codec->type == stored.codec->type;
       });
     });
+  return estimate;
+}
+
+}  // namespace
+
+std::optional<ReencodeEstimate> EstimateReencode(
+  const ColReader& reader, const ColumnReader& column,
+  const IndexFieldOptions& options, size_t samples) {
+  if (samples == 0 || IsNested(column.Type())) {
+    return std::nullopt;
+  }
+  SDB_ASSERT(column.RowCount() != 0);
+  const auto column_options = options.GetColumnOptions(column.Id());
+  auto codec_params = options.CodecParams(column_options);
+  codec_params.tier = WriteTier::Merge;
+  const ReencodeKey key{
+    .skip_validity = column_options.skip_validity,
+    .compression = column_options.compression,
+    .codec_params = codec_params,
+    .row_group_size = options.row_group_size,
+    .samples = samples,
+  };
+  auto& cache = reader.Reencodes();
+  if (auto cached = cache.Find(column.Id(), key)) {
+    return cached;
+  }
+  const auto estimate = TrialReencode(reader, column, options, samples, {});
   cache.Store(column.Id(), key, estimate);
   return estimate;
+}
+
+ReencodeEstimate EstimateReencode(
+  const ColReader& reader, const ColumnReader& column,
+  const IndexFieldOptions& options,
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary) {
+  SDB_ASSERT(!IsNested(column.Type()) && column.RowCount() != 0);
+  return TrialReencode(reader, column, options, kReencodeSampleRowGroups,
+                       std::move(dictionary));
 }
 
 }  // namespace irs

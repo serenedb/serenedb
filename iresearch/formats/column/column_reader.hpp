@@ -206,6 +206,7 @@ class ColumnReader {
   const duckdb::HyperLogLog* HyperLogLog() const noexcept {
     return _hyperloglog.get();
   }
+  bool HasDictionaries() const noexcept { return !_dictionary_metas.empty(); }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
     return *_stats;

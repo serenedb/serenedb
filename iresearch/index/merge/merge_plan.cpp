@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -51,6 +52,14 @@ namespace {
 using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
 
 constexpr uint64_t kAnnCostPerByte = 32;
+constexpr size_t kEncode = std::numeric_limits<size_t>::max();
+
+struct ColumnRange {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  size_t input = kEncode;
+  uint64_t cost = 0;
+};
 
 void ComputeFieldMeta(FieldMetaMapT& field_meta_map,
                       IndexFeatures& index_features, const SubReader& reader) {
@@ -117,12 +126,20 @@ struct MergePlan::State {
 
   bool MergeColumn(const MergeUnit& unit) {
     MergeStepClock clock{profile};
-    const auto split = splits.find(unit.id);
-    if (split == splits.end()
-          ? !columns->Merge(unit.id, *col_writer, progress)
-          : !columns->MergeRange(unit.id, unit.part, split->second[unit.part],
-                                 split->second[unit.part + 1], *col_writer,
-                                 progress)) {
+    const auto it = ranges.find(unit.id);
+    bool merged = false;
+    if (it == ranges.end()) {
+      merged = columns->Merge(unit.id, *col_writer, progress);
+    } else {
+      const auto& range = it->second[unit.part];
+      merged =
+        range.input == kEncode
+          ? columns->MergeRange(unit.id, unit.part, range.begin, range.end,
+                                *col_writer, progress)
+          : columns->CopyRange(unit.id, unit.part, range.input, range.begin,
+                               range.end, *col_writer, progress);
+    }
+    if (!merged) {
       return false;
     }
     clock.Lap(MergeStep::Columns);
@@ -131,7 +148,7 @@ struct MergePlan::State {
 
   bool TrainColumn(field_id column) {
     MergeStepClock clock{profile};
-    if (!columns->Train(column, *col_writer, progress)) {
+    if (!columns->Train(column, progress)) {
       return false;
     }
     clock.Lap(MergeStep::Columns);
@@ -144,6 +161,58 @@ struct MergePlan::State {
     return units.size() - 1;
   }
 
+  void AddEncodeRanges(field_id id, uint64_t begin, uint64_t end,
+                       uint64_t bytes, uint64_t target,
+                       std::vector<ColumnRange>& out) const {
+    if (begin == end) {
+      return;
+    }
+    const uint64_t rows = end - begin;
+    const uint64_t row_group_size = columns->RowGroupSize();
+    const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
+    const uint64_t parts =
+      target != 0 && bytes > target && columns->Splittable(id)
+        ? std::min((bytes + target - 1) / target, row_groups)
+        : 1;
+    for (uint64_t part = 0; part != parts; ++part) {
+      out.push_back({
+        .begin =
+          begin + std::min(rows, part * row_groups / parts * row_group_size),
+        .end = begin +
+               std::min(rows, (part + 1) * row_groups / parts * row_group_size),
+        .input = kEncode,
+        .cost = bytes / parts,
+      });
+    }
+  }
+
+  std::vector<ColumnRange> RangesOf(field_id id, uint64_t target) const {
+    std::vector<ColumnRange> out;
+    uint64_t row = 0;
+    uint64_t stretch = 0;
+    uint64_t stretch_bytes = 0;
+    for (size_t input = 0; input != sources.size(); ++input) {
+      const uint64_t rows = sources[input].alive_count;
+      if (!columns->Copyable(id, input)) {
+        stretch_bytes += columns->StoredBytes(id, input);
+        row += rows;
+        continue;
+      }
+      AddEncodeRanges(id, stretch, row, stretch_bytes, target, out);
+      out.push_back({
+        .begin = row,
+        .end = row + rows,
+        .input = input,
+        .cost = columns->StoredBytes(id, input),
+      });
+      row += rows;
+      stretch = row;
+      stretch_bytes = 0;
+    }
+    AddEncodeRanges(id, stretch, row, stretch_bytes, target, out);
+    return out;
+  }
+
   uint64_t AddColumns(size_t threads) {
     std::vector<size_t> after_norms;
     if (!units.empty()) {
@@ -154,17 +223,12 @@ struct MergePlan::State {
     for (const auto id : columns->Columns()) {
       total += bytes.emplace_back(columns->StoredBytes(id));
     }
-    const uint64_t rows = segment.docs_count;
-    const uint64_t row_group_size = columns->RowGroupSize();
-    const uint64_t row_groups = (rows + row_group_size - 1) / row_group_size;
     const uint64_t target = threads > 1 ? total / (2 * threads) : 0;
     for (size_t i = 0; const auto id : columns->Columns()) {
       const auto cost = bytes[i++];
-      const uint64_t parts =
-        target != 0 && cost > target && columns->Splittable(id)
-          ? std::min((cost + target - 1) / target, row_groups)
-          : 1;
-      if (parts < 2) {
+      auto column_ranges = RangesOf(id, target);
+      if (column_ranges.size() < 2 &&
+          (column_ranges.empty() || column_ranges[0].input == kEncode)) {
         AddUnit({.kind = MergeUnitKind::Column, .id = id, .cost = cost},
                 after_norms);
         continue;
@@ -176,18 +240,16 @@ struct MergePlan::State {
                               .cost = codecs::kTrainSampleBytes},
                              after_norms)};
       }
-      auto& bounds = splits[id];
-      for (uint64_t part = 0; part <= parts; ++part) {
-        bounds.push_back(
-          std::min(rows, part * row_groups / parts * row_group_size));
-      }
-      for (uint32_t part = 0; part != parts; ++part) {
-        AddUnit({.kind = MergeUnitKind::Column,
+      for (uint32_t part = 0; part != column_ranges.size(); ++part) {
+        const auto& range = column_ranges[part];
+        AddUnit({.kind = range.input == kEncode ? MergeUnitKind::Column
+                                                : MergeUnitKind::ColumnCopy,
                  .id = id,
-                 .cost = cost / parts,
+                 .cost = range.cost,
                  .part = part},
                 part_deps);
       }
+      ranges.emplace(id, std::move(column_ranges));
     }
     return total;
   }
@@ -281,7 +343,7 @@ struct MergePlan::State {
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   std::unique_ptr<ColumnMerger> columns;
-  absl::flat_hash_map<field_id, std::vector<uint64_t>> splits;
+  absl::flat_hash_map<field_id, std::vector<ColumnRange>> ranges;
   MergedNormIdMap merged_norm_ids;
   std::vector<MergeUnit> units;
   std::vector<std::vector<size_t>> deps;
@@ -455,6 +517,7 @@ bool MergePlan::RunUnit(size_t unit) {
     case MergeUnitKind::Norms:
       return s.MergeNorms(id);
     case MergeUnitKind::Column:
+    case MergeUnitKind::ColumnCopy:
       return s.MergeColumn(s.units[unit]);
     case MergeUnitKind::ColumnTrain:
       return s.TrainColumn(id);

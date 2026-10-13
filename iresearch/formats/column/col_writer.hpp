@@ -75,6 +75,9 @@ class ColWriter final {
                                duckdb::CompressionType compression,
                                ColCodecParams codec_params);
 
+  void CopyColumnPart(field_id id, uint32_t part, const ColReader& reader,
+                      const ColumnReader& column, bool validity);
+
   void AddColumnDictionary(field_id id, std::string_view bytes);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
@@ -106,10 +109,17 @@ class ColWriter final {
     std::unique_ptr<AnnWriter> writer;
   };
 
+  struct ColumnPart {
+    std::unique_ptr<ColumnWriter> writer;
+    ColumnMeta copy;
+  };
+
   struct ColumnParts {
-    std::vector<std::unique_ptr<ColumnWriter>> writers;
+    std::vector<ColumnPart> parts;
     std::vector<ColumnDictionaryMeta> dictionaries;
   };
+
+  ColumnPart& PartOf(field_id id, uint32_t part);
 
   static ColumnMeta AssembleParts(field_id id, ColumnParts& parts);
 

@@ -34,8 +34,6 @@ class TaskScheduler;
 }  // namespace duckdb
 namespace sdb::search {
 
-inline constexpr uint64_t kReencodeMinSavingsPercent = 10;
-
 struct ColumnCopyCheck {
   irs::field_id column = irs::field_limits::invalid();
   uint64_t rows = 0;

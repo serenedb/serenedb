@@ -1,9 +1,9 @@
 # Lines the merge coverage gate accepts as uncovered: path:line or path:first-last, then the reason.
 iresearch/index/merge/postings_unit.cpp:203-206 CompoundTermIterator::GetMutable exists for the Attribute interface; merges read attributes only through get()
 iresearch/index/merge/postings_unit.cpp:300 only zero-doc terms give the shared empty postings, and only IVF cluster fields have them, which a merge rebuilds or drops before their terms are read
-iresearch/index/merge/merge_plan.cpp:376 the refusal of an invalid norm column id is covered by MergeCharacterizationTest.InvalidNormColumnIdIsRefused, a death test whose child process dies before it writes its profile
-iresearch/index/merge/merge_plan.cpp:454 the implicit default of an exhaustive switch over MergeUnitKind
-iresearch/index/merge/merge_plan.cpp:470-471 the return after an exhaustive switch over MergeUnitKind
+iresearch/index/merge/merge_plan.cpp:438 the refusal of an invalid norm column id is covered by MergeCharacterizationTest.InvalidNormColumnIdIsRefused, a death test whose child process dies before it writes its profile
+iresearch/index/merge/merge_plan.cpp:516 the implicit default of an exhaustive switch over MergeUnitKind
+iresearch/index/merge/merge_plan.cpp:533-534 the return after an exhaustive switch over MergeUnitKind
 server/search/compaction/task_merge_executor.cpp:69-73 DuckDB's task queue throws only when it cannot allocate the queued task
 iresearch/formats/column/col_block_sink.cpp:63-64 a string over 4 GiB cannot be built in a test; the check guards the 32-bit length prefix of an overflow string
 iresearch/formats/hnsw/hnsw_writer.cpp:126 every input's graph indexes the same column, whose fixed array size is the merged dimension; only a changed metric can differ

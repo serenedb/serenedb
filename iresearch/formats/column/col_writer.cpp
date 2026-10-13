@@ -31,6 +31,7 @@
 #include <utility>
 
 #include "iresearch/error/error.hpp"
+#include "iresearch/formats/column/col_block_copy.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -180,12 +181,7 @@ ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
                                         ColCodecParams codec_params) {
   SDB_ASSERT(row_group_size != 0);
   std::lock_guard lock{_mutex};
-  SDB_ASSERT(!_by_id.contains(id));
-  auto& writers = _parts[id].writers;
-  if (writers.size() <= part) {
-    writers.resize(part + 1);
-  }
-  auto& writer = writers[part];
+  auto& writer = PartOf(id, part).writer;
   if (!writer) {
     EnsureOut();
     writer = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
@@ -195,10 +191,39 @@ ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
   return *writer;
 }
 
+ColWriter::ColumnPart& ColWriter::PartOf(field_id id, uint32_t part) {
+  SDB_ASSERT(!_by_id.contains(id));
+  auto& parts = _parts[id].parts;
+  if (parts.size() <= part) {
+    parts.resize(part + 1);
+  }
+  return parts[part];
+}
+
+void ColWriter::CopyColumnPart(field_id id, uint32_t part,
+                               const ColReader& reader,
+                               const ColumnReader& column, bool validity) {
+  ColBlockSink* sink = nullptr;
+  {
+    std::lock_guard lock{_mutex};
+    EnsureOut();
+    sink = _blocks.get();
+  }
+  auto copy = CopyColumnBlocks(reader, column, validity, *sink);
+  std::lock_guard lock{_mutex};
+  auto& slot = PartOf(id, part);
+  SDB_ASSERT(!slot.writer);
+  slot.copy = std::move(copy);
+}
+
 void ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
   std::lock_guard lock{_mutex};
+  auto& dictionaries = _parts[id].dictionaries;
+  if (!dictionaries.empty()) {
+    return;
+  }
   EnsureOut();
-  _parts[id].dictionaries.push_back(
+  dictionaries.push_back(
     {.file_offset = _blocks->Append(bytes), .byte_size = bytes.size()});
 }
 
@@ -206,10 +231,14 @@ ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
   ColumnMeta meta;
   meta.id = id;
   meta.dictionaries = std::move(parts.dictionaries);
-  for (auto& writer : parts.writers) {
-    SDB_ASSERT(writer, "ColWriter::Commit: column ", id, " misses a part");
-    writer->Finish();
-    auto& part = writer->_meta;
+  for (auto& slot : parts.parts) {
+    if (slot.writer) {
+      slot.writer->Finish();
+      slot.copy = std::move(slot.writer->_meta);
+    }
+    auto& part = slot.copy;
+    SDB_ASSERT(part.type.id() != duckdb::LogicalTypeId::INVALID,
+               "ColWriter::Commit: column ", id, " misses a part");
     SDB_ASSERT(part.children.empty() && part.variant_rgs.empty() &&
                part.dictionaries.empty() && !part.hyperloglog);
     meta.type = part.type;

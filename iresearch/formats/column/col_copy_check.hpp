@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -33,11 +34,18 @@
 #include "iresearch/types.hpp"
 
 namespace irs {
+namespace codecs {
+
+class TrainedDictionary;
+
+}  // namespace codecs
 
 class ColReader;
 class ColumnReader;
 
 inline constexpr size_t kReencodeSampleRowGroups = 2;
+inline constexpr size_t kCopyMinRowGroups = 4 * kReencodeSampleRowGroups;
+inline constexpr uint64_t kReencodeMinSavingsPercent = 10;
 
 struct ReencodeEstimate {
   uint64_t stored_bytes = 0;
@@ -47,6 +55,8 @@ struct ReencodeEstimate {
   friend bool operator==(const ReencodeEstimate&,
                          const ReencodeEstimate&) = default;
 };
+
+bool ReencodePays(const ReencodeEstimate& estimate) noexcept;
 
 struct ReencodeKey {
   bool skip_validity = false;
@@ -77,5 +87,10 @@ uint64_t StoredBytes(const ColumnReader& column);
 std::optional<ReencodeEstimate> EstimateReencode(
   const ColReader& reader, const ColumnReader& column,
   const IndexFieldOptions& options, size_t samples = kReencodeSampleRowGroups);
+
+ReencodeEstimate EstimateReencode(
+  const ColReader& reader, const ColumnReader& column,
+  const IndexFieldOptions& options,
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary);
 
 }  // namespace irs

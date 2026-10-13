@@ -422,14 +422,15 @@ TEST(MergeColumnsTest, EachColumnEndsBeforeTheNextOneStarts) {
   Generator gen{79};
   size_t next_id = 0;
   SegmentShape shape;
-  shape.docs = 150;
+  shape.docs = 100;
   shape.null_ratio = 0.1;
   shape.columns = {0, 1, 2, 3, 4};
   WriteSegment(*writer, gen, shape, next_id);
   WriteSegment(*writer, gen, shape, next_id);
+  WriteSegment(*writer, gen, shape, next_id);
   const auto reader = writer->GetSnapshot();
   const auto inputs = Segments(reader);
-  ASSERT_EQ(2, inputs.size());
+  ASSERT_EQ(3, inputs.size());
 
   irs::FunctionFieldOptions field_options{
     PlainColumns, irs::tests::MakeNormColumnIdProvider(), kRowGroup};

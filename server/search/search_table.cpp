@@ -27,7 +27,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <deque>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -133,6 +132,7 @@ void SearchTable::OpenWriter(bool in_memory) {
            : irs::OpenMode::kOmCreate;
 
   irs::IndexWriterOptions writer_options;
+  writer_options.ann_env = &AnnBuildEnv();
   writer_options.segment_memory_max = _segment_memory_max;
   // A shard loaded from disk may hold flushed-but-unpublished segments the WAL
   // references, so Make() must not unlink them; FinishRecovery cleans up once
@@ -502,26 +502,31 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
       engine.ReleaseCompaction();
     }
   };
-  const irs::AnnBuildEnv* env = slot ? &AnnBuildEnv() : nullptr;
+  const auto acquire = [&engine](uint32_t want) {
+    return engine.AcquireAnnWorkers(want, SearchEngine::MaxAnnBuildWorkers());
+  };
+  const irs::AnnBuildEnv round_env{.executor = AnnBuildEnv().executor,
+                                   .acquire = acquire,
+                                   .release = AnnReleaseWorkers};
+  const irs::AnnBuildEnv* env = slot ? &round_env : nullptr;
   for (size_t pass = 0; pass < 8; ++pass) {
-    std::vector<std::vector<std::string>> buckets(target);
+    std::vector<std::vector<std::string>> buckets;
     {
       const auto snapshot = _writer->GetSnapshot();
       if (snapshot.size() <= target) {
         break;
       }
+      buckets.resize(target);
       for (size_t i = 0; i < snapshot.size(); ++i) {
         buckets[i % target].emplace_back(snapshot[i].Meta().name);
       }
     }
-    std::vector<yaclib::Future<ResultWithTime>> rounds;
-    std::deque<bool> empties(target, false);
-    rounds.reserve(target);
-    for (uint32_t b = 0; b < target; ++b) {
+    absl::Status status;
+    bool merged = false;
+    for (const auto& names : buckets) {
       const irs::CompactionPolicy bucket =
-        [names = std::move(buckets[b])](irs::Compaction& candidates,
-                                        const irs::IndexReader& reader,
-                                        const irs::CompactingSegments& busy) {
+        [&names](irs::Compaction& candidates, const irs::IndexReader& reader,
+                 const irs::CompactingSegments& busy) {
           for (size_t i = 0; i < reader.size(); ++i) {
             const auto& segment = reader[i];
             const auto& name = segment.Meta().name;
@@ -530,12 +535,12 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
             }
           }
         };
-      rounds.push_back(CompactUnsafeAsync(bucket, kProgress, empties[b],
-                                          field_options.get(), env));
-    }
-    absl::Status status;
-    for (auto& round : rounds) {
-      status.Update(irs::GetBlocking(std::move(round)).res);
+      bool empty = false;
+      status.Update(
+        irs::GetBlocking(CompactUnsafeAsync(bucket, kProgress, empty,
+                                            field_options.get(), env))
+          .res);
+      merged = merged || !empty;
     }
     if (!status.ok()) {
       return status;
@@ -543,7 +548,7 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
     if (auto res = RefreshUnsafe(/*wait=*/true, nullptr, code).res; !res.ok()) {
       return res;
     }
-    if (absl::c_all_of(empties, [](bool empty) { return empty; })) {
+    if (!merged) {
       break;
     }
   }

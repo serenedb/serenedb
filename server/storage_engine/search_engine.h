@@ -94,9 +94,10 @@ class SearchEngine final {
     _running_compactions.fetch_sub(1, std::memory_order_release);
   }
 
-  uint32_t AcquireAnnWorkers(uint32_t want) noexcept {
+  uint32_t AcquireAnnWorkers(uint32_t want,
+                             uint32_t most = MaxAnnWorkersPerBuild()) noexcept {
     const uint32_t cap = MaxAnnBuildWorkers();
-    const uint32_t ceiling = std::clamp(want, 1U, MaxAnnWorkersPerBuild());
+    const uint32_t ceiling = std::clamp(want, 1U, std::max(most, 1U));
     auto cur = _running_ann_workers.load(std::memory_order_relaxed);
     for (;;) {
       const uint32_t grant =

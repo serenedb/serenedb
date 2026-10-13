@@ -427,13 +427,13 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | date_trunc             | Yes           | Without timezone         |
 | extract                | Yes           |                          |
 | isfinite               | Yes           |                          |
-| justify_days           | No            |                          |
-| justify_hours          | No            |                          |
-| justify_interval       | No            |                          |
+| justify_days           | Yes           |                          |
+| justify_hours          | Yes           |                          |
+| justify_interval       | Yes           |                          |
 | localtime              | Yes           |                          |
 | localtimestamp         | Yes           |                          |
 | make_date              | Yes           |                          |
-| make_interval          | No            |                          |
+| make_interval          | Yes           |                          |
 | make_time              | Yes           |                          |
 | make_timestamp         | Yes           |                          |
 | make_timestamptz       | Yes           | With time zone name      |
@@ -857,7 +857,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | acldefault                         | Yes           | Also `aclexplode` |
 | has_table_privilege                | Yes           | Also `has_column_privilege`, `has_any_column_privilege`, `has_sequence_privilege`, `has_schema_privilege`, `has_database_privilege`, `has_function_privilege`, `has_type_privilege` and `pg_has_role`, with the role and the object given by name or by oid |
 | has_server_privilege               | Yes           | Also `has_foreign_data_wrapper_privilege` (`clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`) and `has_tablespace_privilege` (`pg_default` and `pg_global`) |
-| pg_stat_get_*                      | Partial       | Counters are `0` and times `NULL`. `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions; function statistics are `NULL` |
+| pg_stat_get_*                      | Partial       | `pg_stat_get_live_tuples` returns the table's row count and `pg_stat_get_db_numbackends` the database's sessions. `pg_stat_get_db_xact_commit`, `pg_stat_get_db_xact_rollback`, `pg_stat_get_db_sessions`, `pg_stat_get_db_session_time`, `pg_stat_get_db_active_time` and `pg_stat_get_db_idle_in_transaction_time` count from server start. Other counters are `0` and other times `NULL`; function statistics are `NULL` |
 
 ## Behavioral Differences from PostgreSQL
 

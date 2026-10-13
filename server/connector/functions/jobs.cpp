@@ -41,6 +41,7 @@
 #include <utility>
 #include <vector>
 
+#include "catalog/catalog.h"
 #include "catalog/entry/job.h"
 #include "scheduler/job_scheduler.h"
 
@@ -108,7 +109,12 @@ duckdb::unique_ptr<duckdb::FunctionData> JobsBind(
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto result = duckdb::make_uniq<JobsState>();
-  for (auto& schema : duckdb::Catalog::GetAllSchemas(context)) {
+  const auto holds_jobs = [](duckdb::AttachedDatabase& database) {
+    return database.GetCatalog().GetCatalogType() ==
+           catalog::SereneDBCatalog::kStorageType;
+  };
+  for (auto& schema :
+       duckdb::Catalog::GetAllSchemas(context, false, holds_jobs)) {
     schema.get().Scan(
       context, duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {

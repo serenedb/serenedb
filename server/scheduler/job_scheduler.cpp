@@ -36,6 +36,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/client_data.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/connection.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <functional>
@@ -138,6 +139,14 @@ JobDefinition DefinitionOf(catalog::JobCatalogEntry& job) {
     .oid = job.oid,
     .owner = job.permissions.owner,
     .body = std::shared_ptr<duckdb::SQLStatement>{job.Body().Copy().release()}};
+}
+
+size_t HistorySize() {
+  static constinit SettingRef gHistorySize{"sdb_job_history_size"};
+  return gHistorySize
+    .Global(
+      duckdb::DBConfig::GetConfig(irs::DuckDBEngine::Instance().instance()))
+    .GetValue<uint64_t>();
 }
 
 void ForAllJobs(
@@ -365,23 +374,22 @@ duckdb::ErrorData JobScheduler::RunBody(
   if (!run.success) {
     run.error = error.RawMessage();
   }
+  const auto size = HistorySize();
   absl::MutexLock lock{&_mutex};
   _history.emplace_back(run);
-  if (_history.size() > _history_size) {
-    _history.pop_front();
-  }
+  TrimHistory(size);
   return error;
 }
 
 std::vector<JobRunRecord> JobScheduler::GetHistory() {
+  const auto size = HistorySize();
   absl::MutexLock lock{&_mutex};
+  TrimHistory(size);
   return {_history.begin(), _history.end()};
 }
 
-void JobScheduler::SetHistorySize(size_t size) {
-  absl::MutexLock lock{&_mutex};
-  _history_size = size;
-  while (_history.size() > _history_size) {
+void JobScheduler::TrimHistory(size_t size) {
+  while (_history.size() > size) {
     _history.pop_front();
   }
 }

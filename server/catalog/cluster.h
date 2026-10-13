@@ -34,6 +34,7 @@
 #include <string>
 #include <string_view>
 
+#include "auth/role_closure.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 
@@ -91,6 +92,8 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   void DropDatabase(duckdb::CatalogTransaction transaction,
                     duckdb::DropInfo& info) final;
 
+  auth::RoleCache& Roles() noexcept { return _roles; }
+
  private:
   void CompactCatalogLog();
   bool HoldsPreparedBatch(duckdb::idx_t oid, duckdb::idx_t generation);
@@ -99,6 +102,7 @@ class ClusterCatalog final : public duckdb::DuckCatalog {
   duckdb::shared_ptr<duckdb::WriteAheadLog> _catalog_log;
   bool _compactable = false;
   std::atomic<duckdb::idx_t> _live_bytes{0};
+  auth::RoleCache _roles;
 };
 
 ClusterCatalog& ClusterOf(duckdb::ClientContext& context);

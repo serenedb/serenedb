@@ -1223,13 +1223,11 @@ void ReindexByIdPragma(duckdb::ClientContext& context,
   if (!index || index->index_type != "inverted") {
     return;
   }
-  const duckdb::Identifier schema_ident = index->GetSchemaName();
-  const auto relation =
-    catalog.GetSchema(trx, schema_ident)
-      .GetEntry(trx, duckdb::CatalogType::TABLE_ENTRY, index->GetTableName());
-  if (relation->type != duckdb::CatalogType::VIEW_ENTRY) {
+  const auto relation = index->GetRelation(trx);
+  if (!relation || relation->type != duckdb::CatalogType::VIEW_ENTRY) {
     return;
   }
+  const duckdb::Identifier schema_ident = index->GetSchemaName();
   const auto storage = index->Cast<catalog::InvertedIndexEntry>().Storage();
   if (!storage) {
     return;

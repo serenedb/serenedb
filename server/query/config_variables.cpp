@@ -899,16 +899,8 @@ constexpr std::pair<std::string_view, VariableDescription>
         [] {
           return duckdb::Value::UBIGINT(JobScheduler::kDefaultHistorySize);
         },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          if (auto* jobs = JobScheduler::Instance()) {
-            jobs->SetHistorySize(value.GetValue<uint64_t>());
-          }
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          if (auto* jobs = JobScheduler::Instance()) {
-            jobs->SetHistorySize(JobScheduler::kDefaultHistorySize);
-          }
-        },
+        nullptr,
+        nullptr,
         duckdb::SetScope::GLOBAL,
       },
     },

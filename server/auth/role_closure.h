@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <algorithm>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
@@ -113,6 +115,15 @@ struct RoleClosure {
 
   duckdb::AclMode HeldModes(std::span<const duckdb::AclItem> acl) const;
   duckdb::AclMode GrantableModes(std::span<const duckdb::AclItem> acl) const;
+};
+
+struct RoleCache {
+  absl::Mutex mutex;
+  duckdb::idx_t version ABSL_GUARDED_BY(mutex) = 0;
+  std::shared_ptr<const RoleGraph> roles ABSL_GUARDED_BY(mutex);
+  irs::containers::FlatHashMap<duckdb::idx_t,
+                               std::shared_ptr<const RoleClosure>>
+    closures ABSL_GUARDED_BY(mutex);
 };
 
 std::shared_ptr<const RoleGraph> RolesOf(duckdb::ClientContext* context);

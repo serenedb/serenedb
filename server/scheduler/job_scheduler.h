@@ -105,7 +105,6 @@ class JobScheduler final {
   void Schedule(catalog::JobCatalogEntry& job);
   void Execute(duckdb::ClientContext& caller, catalog::JobCatalogEntry& job);
   std::vector<JobRunRecord> GetHistory();
-  void SetHistorySize(size_t size);
   void Stop();
 
  private:
@@ -113,13 +112,13 @@ class JobScheduler final {
   duckdb::ErrorData RunBody(std::shared_ptr<JobState> state, JobDefinition job,
                             duckdb::optional_ptr<duckdb::ClientContext> caller,
                             uint64_t timer);
+  void TrimHistory(size_t size) ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
   inline static JobScheduler* gInstance = nullptr;
 
   yaclib::WaitGroup<> _runs{1};
   absl::Mutex _mutex;
-  std::deque<JobRunRecord> _history;
-  size_t _history_size = kDefaultHistorySize;
+  std::deque<JobRunRecord> _history ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace sdb

@@ -7,12 +7,6 @@ CREATE OR REPLACE MACRO L2Normalize(a) AS list_transform([a], ch_lx -> list_tran
 CREATE OR REPLACE MACRO clamp(x, lo, hi) AS greatest(lo, least(hi, x));
 CREATE OR REPLACE MACRO ch_numbers_n(n) AS TABLE SELECT range AS number FROM range(CAST(n AS BIGINT));
 CREATE OR REPLACE MACRO toInt64(x) AS CAST(trunc(x) AS BIGINT);
-CREATE OR REPLACE MACRO ch_u64(x) AS list_transform([CAST(x AS HUGEINT)], ch_lv -> CAST(CASE WHEN ch_lv < 0 THEN ch_lv + CAST('18446744073709551616' AS HUGEINT) ELSE ch_lv END AS UBIGINT))[1];
-CREATE OR REPLACE MACRO ch_mul64(a, c) AS CAST((CAST(a AS UHUGEINT) * CAST(c AS UHUGEINT)) % CAST('18446744073709551616' AS UHUGEINT) AS UBIGINT);
-CREATE OR REPLACE MACRO ch_shr_xor(x, s) AS list_transform([x], ch_lv -> xor(ch_lv, ch_lv >> s))[1];
-CREATE OR REPLACE MACRO ch_intHash64(x) AS ch_shr_xor(ch_mul64(ch_shr_xor(ch_mul64(ch_shr_xor(xor(ch_u64(x), CAST(5544725790478674055 AS UBIGINT)), 33), 18397679294719823053), 33), 14181476777654086739), 33);
-CREATE OR REPLACE MACRO ch_hash128to64(lo, hi) AS list_transform([hi], ch_lh -> list_transform([ch_shr_xor(ch_mul64(xor(lo, ch_lh), 11376068507788127593), 47)], ch_la -> ch_mul64(ch_shr_xor(ch_mul64(xor(ch_lh, ch_la), 11376068507788127593), 47), 11376068507788127593))[1])[1];
-CREATE OR REPLACE MACRO cityHash64(a, b) AS ch_hash128to64(ch_intHash64(a), ch_intHash64(b)), (a, b, c) AS ch_hash128to64(ch_hash128to64(ch_intHash64(a), ch_intHash64(b)), ch_intHash64(c));
 CREATE OR REPLACE MACRO ch_intDiv(a, b) AS a // b;
 CREATE OR REPLACE MACRO W() AS 112::UBIGINT;
 CREATE OR REPLACE MACRO H() AS 63::UBIGINT;
@@ -43,7 +37,7 @@ CREATE OR REPLACE MACRO camRight() AS L2Normalize(vc(L2Normalize(tupleMinus(targ
 CREATE OR REPLACE MACRO camUp() AS vc(camRight(), camFwd());
 CREATE OR REPLACE MACRO tanHalf() AS tan(fovDeg()*0.5::DOUBLE*pi()/180.0::DOUBLE);
 CREATE OR REPLACE MACRO aspect() AS imgW()/imgH();
-CREATE OR REPLACE MACRO vnoise(x, y) AS list_transform([floor(x)], ix__vnoise -> list_transform([floor(y)], iy__vnoise -> list_transform([x - ix__vnoise], fx__vnoise -> list_transform([y - iy__vnoise], fy__vnoise -> list_transform([fx__vnoise*fx__vnoise*fx__vnoise*(fx__vnoise*(fx__vnoise*6.0::DOUBLE-15.0::DOUBLE)+10.0::DOUBLE)], u__vnoise -> list_transform([fy__vnoise*fy__vnoise*fy__vnoise*(fy__vnoise*(fy__vnoise*6.0::DOUBLE-15.0::DOUBLE)+10.0::DOUBLE)], v__vnoise -> list_transform([(cityHash64(toInt64(ix__vnoise),   toInt64(iy__vnoise))   % 4194304) / 4194304.0::DOUBLE], a__vnoise -> list_transform([(cityHash64(toInt64(ix__vnoise)+1, toInt64(iy__vnoise))   % 4194304) / 4194304.0::DOUBLE], b__vnoise -> list_transform([(cityHash64(toInt64(ix__vnoise),   toInt64(iy__vnoise)+1) % 4194304) / 4194304.0::DOUBLE], c__vnoise -> list_transform([(cityHash64(toInt64(ix__vnoise)+1, toInt64(iy__vnoise)+1) % 4194304) / 4194304.0::DOUBLE], d__vnoise -> (a__vnoise + (b__vnoise-a__vnoise)*u__vnoise) + ((c__vnoise + (d__vnoise-c__vnoise)*u__vnoise) - (a__vnoise + (b__vnoise-a__vnoise)*u__vnoise)) * v__vnoise)[1])[1])[1])[1])[1])[1])[1])[1])[1])[1];
+CREATE OR REPLACE MACRO vnoise(x, y) AS list_transform([floor(x)], ix__vnoise -> list_transform([floor(y)], iy__vnoise -> list_transform([x - ix__vnoise], fx__vnoise -> list_transform([y - iy__vnoise], fy__vnoise -> list_transform([fx__vnoise*fx__vnoise*fx__vnoise*(fx__vnoise*(fx__vnoise*6.0::DOUBLE-15.0::DOUBLE)+10.0::DOUBLE)], u__vnoise -> list_transform([fy__vnoise*fy__vnoise*fy__vnoise*(fy__vnoise*(fy__vnoise*6.0::DOUBLE-15.0::DOUBLE)+10.0::DOUBLE)], v__vnoise -> list_transform([(hash_city64(toInt64(ix__vnoise),   toInt64(iy__vnoise))   % 4194304) / 4194304.0::DOUBLE], a__vnoise -> list_transform([(hash_city64(toInt64(ix__vnoise)+1, toInt64(iy__vnoise))   % 4194304) / 4194304.0::DOUBLE], b__vnoise -> list_transform([(hash_city64(toInt64(ix__vnoise),   toInt64(iy__vnoise)+1) % 4194304) / 4194304.0::DOUBLE], c__vnoise -> list_transform([(hash_city64(toInt64(ix__vnoise)+1, toInt64(iy__vnoise)+1) % 4194304) / 4194304.0::DOUBLE], d__vnoise -> (a__vnoise + (b__vnoise-a__vnoise)*u__vnoise) + ((c__vnoise + (d__vnoise-c__vnoise)*u__vnoise) - (a__vnoise + (b__vnoise-a__vnoise)*u__vnoise)) * v__vnoise)[1])[1])[1])[1])[1])[1])[1])[1])[1])[1];
 CREATE OR REPLACE MACRO fbm(x, y) AS (vnoise(x, y)*0.5::DOUBLE + vnoise(x*2.0::DOUBLE, y*2.0::DOUBLE)*0.25::DOUBLE  + vnoise(x*4.0::DOUBLE, y*4.0::DOUBLE)*0.125::DOUBLE + vnoise(x*8.0::DOUBLE, y*8.0::DOUBLE)*0.0625::DOUBLE) / 0.9375::DOUBLE;
 CREATE OR REPLACE MACRO height(x, y) AS amp() * fbm(x*nscale(), y*nscale());
 CREATE OR REPLACE MACRO terrainN(x, y) AS vn(((height(x-0.15::DOUBLE, y) - height(x+0.15::DOUBLE, y)) / 0.3::DOUBLE,
@@ -94,8 +88,8 @@ FROM (
       ch_intDiv(number, CAST(2 AS UINTEGER)) AS pixel,
       number % CAST(2 AS UINTEGER) AS sample,
       eye() AS O,
-      vn(va(camFwd(), va(vm(camRight(), (((pixel % W()) + (cityHash64(pixel,sample,1)%1024)/1024.0::DOUBLE) / imgW() * 2.0::DOUBLE - 1.0::DOUBLE) * aspect() * tanHalf()),
-                       vm(camUp(),    (1.0::DOUBLE - (ch_intDiv(pixel, W()) + (cityHash64(pixel,sample,2)%1024)/1024.0::DOUBLE) / imgH() * 2.0::DOUBLE) * tanHalf())))) AS D
+      vn(va(camFwd(), va(vm(camRight(), (((pixel % W()) + (hash_city64(pixel,sample,1)%1024)/1024.0::DOUBLE) / imgW() * 2.0::DOUBLE - 1.0::DOUBLE) * aspect() * tanHalf()),
+                       vm(camUp(),    (1.0::DOUBLE - (ch_intDiv(pixel, W()) + (hash_city64(pixel,sample,2)%1024)/1024.0::DOUBLE) / imgH() * 2.0::DOUBLE) * tanHalf())))) AS D
     FROM ch_numbers_n(W() * H() * CAST(2 AS UINTEGER))
   )
 )

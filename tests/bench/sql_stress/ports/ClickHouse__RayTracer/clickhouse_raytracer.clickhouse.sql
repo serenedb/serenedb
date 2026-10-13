@@ -10,12 +10,6 @@ CREATE OR REPLACE MACRO ch_numbers_n(n) AS TABLE SELECT range AS number FROM ran
 CREATE OR REPLACE MACRO toInt64(x) AS CAST(trunc(x) AS BIGINT);
 CREATE OR REPLACE MACRO toInt32(x) AS CAST(trunc(x) AS INTEGER);
 CREATE OR REPLACE MACRO toUInt8(x) AS CAST(trunc(x) AS UTINYINT);
-CREATE OR REPLACE MACRO ch_u64(x) AS list_transform([CAST(x AS HUGEINT)], ch_lv -> CAST(CASE WHEN ch_lv < 0 THEN ch_lv + CAST('18446744073709551616' AS HUGEINT) ELSE ch_lv END AS UBIGINT))[1];
-CREATE OR REPLACE MACRO ch_mul64(a, c) AS CAST((CAST(a AS UHUGEINT) * CAST(c AS UHUGEINT)) % CAST('18446744073709551616' AS UHUGEINT) AS UBIGINT);
-CREATE OR REPLACE MACRO ch_shr_xor(x, s) AS list_transform([x], ch_lv -> xor(ch_lv, ch_lv >> s))[1];
-CREATE OR REPLACE MACRO ch_intHash64(x) AS ch_shr_xor(ch_mul64(ch_shr_xor(ch_mul64(ch_shr_xor(xor(ch_u64(x), CAST(5544725790478674055 AS UBIGINT)), 33), 18397679294719823053), 33), 14181476777654086739), 33);
-CREATE OR REPLACE MACRO ch_hash128to64(lo, hi) AS list_transform([hi], ch_lh -> list_transform([ch_shr_xor(ch_mul64(xor(lo, ch_lh), 11376068507788127593), 47)], ch_la -> ch_mul64(ch_shr_xor(ch_mul64(xor(ch_lh, ch_la), 11376068507788127593), 47), 11376068507788127593))[1])[1];
-CREATE OR REPLACE MACRO cityHash64(a, b) AS ch_hash128to64(ch_intHash64(a), ch_intHash64(b)), (a, b, c) AS ch_hash128to64(ch_hash128to64(ch_intHash64(a), ch_intHash64(b)), ch_intHash64(c));
 CREATE OR REPLACE MACRO ch_intDiv(a, b) AS a // b;
 CREATE OR REPLACE MACRO ch_toFloat64(x) AS CAST(x AS DOUBLE);
 CREATE OR REPLACE MACRO banner() AS ['.###..##...#.......#....#...#....................', '#...#..#...........#....#...#....................', '#......#...#...###.#.##.#...#..##..#..#..###..##.', '#......#...#..#....#.#..#####.#..#.#..#.#....#..#', '#......#...#..#....##...#...#.#..#.#..#..##..####', '#...#..#...#..#....#.#..#...#.#..#.#..#....#.#...', '.###...##..#...###.#..#.#...#..##...###.###...###'];
@@ -82,7 +76,7 @@ CREATE OR REPLACE MACRO planeT(o, d) AS if(d[3] < -eps() AND o[3] > 0.0::DOUBLE,
 CREATE OR REPLACE MACRO occluded(o, d, maxd) AS list_bool_or(list_transform(spheres(), c__occluded -> sphereT(vs(o, c__occluded), d) < maxd));
 CREATE OR REPLACE MACRO sky(d) AS tupleMultiplyByNumber(skyColor(), 0.35::DOUBLE + 0.65::DOUBLE * pow(greatest(1.0::DOUBLE - d[3], 0.0::DOUBLE), 3.0::DOUBLE));
 CREATE OR REPLACE MACRO checker(p) AS (toInt64(floor(p[1] / tile())) + toInt64(floor(p[2] / tile()))) % 2;
-CREATE OR REPLACE MACRO rnd(a, b, c) AS (cityHash64(a, b, c) % 1048576) / 1048576.0::DOUBLE;
+CREATE OR REPLACE MACRO rnd(a, b, c) AS (hash_city64(a, b, c) % 1048576) / 1048576.0::DOUBLE;
 -- ============================================================================
 --  A path tracer in one ClickHouse SQL query.
 --

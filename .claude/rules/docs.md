@@ -12,7 +12,7 @@ A user-visible change lands with its documentation in the same PR. New SQL synta
 - **`docs/` is the source of truth**, and two consumers read it: the website, which renders it as its Docusaurus tree, and the server itself, which embeds it as the `sdb_docs` schema when built with `SDB_EMBEDDED_DOCS`.
 - **Frontmatter:** every page needs `title` and `split`, where `split` is `page` (index the whole page as one unit) or `headings` (index each heading separately -- use it for long reference pages). `scripts/generate_docs.py` rejects anything else, which fails the build.
 - **New folder:** add a `_category_.json` beside the pages with `label` and `position`, or the sidebar falls back to the folder name.
-- **Content:** only what a user can act on -- what works, what an option does, requirements, errors, trade-offs. No engine internals, project history or comparisons with earlier behaviour.
+- **Content:** a page is user documentation, not a design note: only what a user can act on -- what works, what an option does, requirements, errors, trade-offs. No implementation details (source files, classes and functions, internal data structures and algorithms), project history or comparisons with earlier behaviour.
 - **SereneDB on its own terms:** don't cite other databases as design references or as the origin of a dataset. Other systems as data sources (connectors, ATTACH) are product features and belong in the docs.
 - **Style:** SQL keywords in UPPER CASE, multi-line formatted `SELECT`s rather than one-liners, one line per paragraph or list item (no hard wraps).
 

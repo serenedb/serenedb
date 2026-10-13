@@ -86,3 +86,34 @@ SELECT id, name FROM networks_idx WHERE net >>= '10.1.2.3' ORDER BY id;
 id	name
 1	corporate
 2	office
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_BODY
+
+query
+SELECT '{"ip_type": 1, "address": 167772161, "mask": 8}'::JSON::INET AS valid, '{"ip_type": 1, "address": null, "mask": 8}'::JSON::INET AS null_field, TRY_CAST('{"ip_type": 7, "address": 1, "mask": 8}'::JSON AS INET) AS try_invalid;
+----
+valid	null_field	try_invalid
+10.0.0.1/8	NULL	NULL
+
+statement error
+SELECT '{"ip_type": 7, "address": 1, "mask": 8}'::JSON::INET;
+----
+db error: ERROR: Invalid INET value: ip_type must be 1 (IPv4) or 2 (IPv6)
+
+
+# DOCS_TEST: example_008
+
+# DOCS_TEST_BODY
+
+query
+SELECT '10.1.2.3'::CIDR AS host, '10.0.0.0/8'::CIDR AS net, '192.168.1.5/24'::INET::CIDR AS from_inet, network('10.1.2.3/16'::INET) AS network;
+----
+host	net	from_inet	network
+10.1.2.3/32	10.0.0.0/8	192.168.1.0/24	10.1.0.0/16
+
+statement error
+SELECT '192.168.1.5/24'::CIDR;
+----
+db error: ERROR: invalid cidr value: "192.168.1.5/24"

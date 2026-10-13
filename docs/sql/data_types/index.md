@@ -20,6 +20,7 @@ the next value of that sequence.
 | `BIT`                      | `BITSTRING`                        | String of 1s and 0s                                                                                        |
 | `BLOB`                     | `BYTEA`, `BINARY`, `VARBINARY`     | Variable-length binary data                                                                                |
 | `BOOLEAN`                  | `BOOL`, `LOGICAL`                  | Logical Boolean (`true` / `false`)                                                                         |
+| `CIDR`                     |                                    | IPv4 or IPv6 network address, see [Inet](./inet.md#cidr)                                                   |
 | `DATE`                     |                                    | Calendar date (year, month, day)                                                                           |
 | `DECIMAL(prec, scale)`     | `NUMERIC(prec, scale)`, `DEC(prec, scale)` | Fixed-precision number with the given width (precision) and scale, defaults to `prec = 18` and `scale = 3` |
 | `DOUBLE`                   | `FLOAT8`                           | Double precision floating-point number (8 bytes)                                                           |

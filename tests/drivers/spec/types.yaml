@@ -229,13 +229,10 @@
 - oid: 650
   name: cidr
   pg_typname: cidr
-  # TODO: SereneDB - cidr type lives in the DuckDB inet extension; not
-  # registered in the default catalog. Re-enable once the extension is
-  # auto-loaded or the type promoted to core.
-  text: false
-  binary: false
-  array: false
-  samples: ["192.168.0.0/16", "::1/128", null]
+  text: true
+  binary: true
+  array: true
+  samples: ["192.168.0.0/16", "::1/128", "10.1.2.3/32", "0.0.0.0/0", null]
 
 - oid: 829
   name: macaddr

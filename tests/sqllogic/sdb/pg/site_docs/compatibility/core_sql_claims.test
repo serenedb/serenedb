@@ -373,7 +373,7 @@ statement ok
 DROP TABLE types_cv2;
 
 # types: cidr
-statement error
+statement ok
 SELECT NULL::cidr;
 
 # types: circle

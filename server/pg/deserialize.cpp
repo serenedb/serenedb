@@ -1686,6 +1686,7 @@ void StoreInet(duckdb::Vector& vec, duckdb::idx_t row, INET_IPAddressType type,
   Out<uint16_t>(entries[2])[row] = mask;
 }
 
+template<bool Cidr>
 bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
                            duckdb::Vector& vec, duckdb::idx_t row) {
   if (data.size() < 4) {
@@ -1700,17 +1701,26 @@ bool DeserializeBinaryInet(DeserializeContext&, std::string_view data,
     return false;
   }
   const char* addr = data.data() + 4;
+  INET_IPAddress inet;
+  inet.mask = bits;
   if (is_v6) {
-    StoreInet(vec, row, INET_IP_ADDRESS_V6,
-              absl::big_endian::Load<uint64_t>(addr),
-              absl::big_endian::Load<uint64_t>(addr + 8), bits);
+    inet.type = INET_IP_ADDRESS_V6;
+    inet.address.upper = absl::big_endian::Load<uint64_t>(addr);
+    inet.address.lower = absl::big_endian::Load<uint64_t>(addr + 8);
   } else {
-    StoreInet(vec, row, INET_IP_ADDRESS_V4, 0,
-              absl::big_endian::Load<uint32_t>(addr), bits);
+    inet.type = INET_IP_ADDRESS_V4;
+    inet.address.upper = 0;
+    inet.address.lower = absl::big_endian::Load<uint32_t>(addr);
   }
+  if (Cidr && ipaddress_has_host_bits(&inet)) {
+    return false;
+  }
+  StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
+            inet.mask);
   return true;
 }
 
+template<bool Cidr>
 bool DeserializeTextInet(DeserializeContext&, std::string_view data,
                          duckdb::Vector& vec, duckdb::idx_t row) {
   INET_IPAddress inet;
@@ -1722,6 +1732,9 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
   if (inet.type == INET_IP_ADDRESS_INVALID) {
     return false;
   }
+  if (Cidr && ipaddress_has_host_bits(&inet)) {
+    return false;
+  }
   StoreInet(vec, row, inet.type, inet.address.upper, inet.address.lower,
             inet.mask);
   return true;
@@ -1730,21 +1743,23 @@ bool DeserializeTextInet(DeserializeContext&, std::string_view data,
 // Thin nested cores: present the LIST/STRUCT/MAP rebuilders with the same
 // Decode interface as the scalar cores, so the GetDeserialization switch
 // dispatches them through SelectDecoder uniformly.
+template<bool Cidr>
 struct InetBin {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet>(ctx, data,
-                                                                    sink);
+    return NestedAdapter<Sink>::template Run<DeserializeBinaryInet<Cidr>>(
+      ctx, data, sink);
   }
 };
 
+template<bool Cidr>
 struct InetText {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    return NestedAdapter<Sink>::template Run<DeserializeTextInet>(ctx, data,
-                                                                  sink);
+    return NestedAdapter<Sink>::template Run<DeserializeTextInet<Cidr>>(
+      ctx, data, sink);
   }
 };
 
@@ -1926,7 +1941,10 @@ DeserializationFunction<Sink> GetDeserialization(
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectDecoder<InetBin, InetText, Sink>(binary);
+        return SelectDecoder<InetBin<false>, InetText<false>, Sink>(binary);
+      }
+      if (IsCidr(type)) {
+        return SelectDecoder<InetBin<true>, InetText<true>, Sink>(binary);
       }
       if (connector::IsTSQueryStructType(type)) {
         return &TsqueryCore::template Decode<Sink>;

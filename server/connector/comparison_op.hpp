@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <iresearch/utils/system_compiler.hpp>
+
 namespace sdb::connector {
 
 enum class ComparisonOp {
@@ -29,5 +31,37 @@ enum class ComparisonOp {
   Gt,
   Ge,
 };
+
+constexpr ComparisonOp InvertComparisonOp(ComparisonOp op) noexcept {
+  switch (op) {
+    case ComparisonOp::Le:
+      return ComparisonOp::Gt;
+    case ComparisonOp::Ge:
+      return ComparisonOp::Lt;
+    case ComparisonOp::Gt:
+      return ComparisonOp::Le;
+    case ComparisonOp::Lt:
+      return ComparisonOp::Ge;
+    case ComparisonOp::None:
+      return ComparisonOp::None;
+  }
+  SDB_UNREACHABLE();
+}
+
+constexpr ComparisonOp SwapComparisonOp(ComparisonOp op) noexcept {
+  switch (op) {
+    case ComparisonOp::Lt:
+      return ComparisonOp::Gt;
+    case ComparisonOp::Le:
+      return ComparisonOp::Ge;
+    case ComparisonOp::Gt:
+      return ComparisonOp::Lt;
+    case ComparisonOp::Ge:
+      return ComparisonOp::Le;
+    case ComparisonOp::None:
+      return ComparisonOp::None;
+  }
+  SDB_UNREACHABLE();
+}
 
 }  // namespace sdb::connector

@@ -43,6 +43,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/duckdb_sink_writer_base.h"
 #include "connector/index_expression.hpp"
+#include "connector/inet_terms.h"
 #include "connector/inverted_store_index.h"
 #include "connector/primary_key.h"
 #include "search/inverted_index_storage.h"
@@ -288,7 +289,20 @@ class SearchSinkInsertBaseImpl {
     irs::ColumnWriter* _writer = nullptr;
   };
 
+  struct InetBatch {
+    std::array<duckdb::UnifiedVectorFormat, 3> fields;
+    irs::TokenBatch tokens;
+    std::array<irs::DocRun,
+               irs::TokenBatch::kCapacity / inet_terms::kMinTermsPerValue>
+      runs;
+    std::array<uint8_t, irs::TokenBatch::kCapacity /
+                          inet_terms::kMinV6TermsPerValue *
+                          inet_terms::kV6LongTermBytes>
+      bytes;
+  };
+
   duckdb::RecursiveUnifiedVectorFormat _vec_fmt;
+  std::unique_ptr<InetBatch> _inet_batch;
   StoreAppender _store_appender;
   std::vector<duckdb::string_t> _key_terms;
   std::vector<IndexedExpression> _indexed_expressions;

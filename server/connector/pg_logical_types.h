@@ -130,13 +130,29 @@ inline duckdb::LogicalType CTID() {
 
 inline constexpr std::string_view kInetAlias = duckdb::INET_TYPE_NAME;
 
+inline constexpr std::string_view kCidrAlias = duckdb::CIDR_TYPE_NAME;
+
 inline bool IsInet(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::STRUCT &&
          type.GetAlias() == kInetAlias;
 }
 
+inline bool IsCidr(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kCidrAlias;
+}
+
+inline bool IsInetOrCidr(const duckdb::LogicalType& type) {
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  const auto alias = type.GetAlias();
+  return alias == kInetAlias || alias == kCidrAlias;
+}
+
 #ifndef SDB_PG_LOGICAL_TYPES_NO_FACTORY
 inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
+inline duckdb::LogicalType CIDR() { return duckdb::make_cidr_type(); }
 #endif
 
 }  // namespace sdb::pg

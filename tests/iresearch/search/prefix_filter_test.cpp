@@ -21,8 +21,10 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/search/detail/term_predicate.hpp>
 #include <iresearch/search/filters/filter_visitor.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
@@ -67,8 +69,40 @@ irs::ByPrefix MakeFilter(irs::field_id field, const std::string_view term,
   return q;
 }
 
+irs::ByPrefixes MakePrefixesFilter(
+  irs::field_id field, const std::vector<std::string_view>& prefixes) {
+  irs::ByPrefixes q;
+  *q.mutable_field_id() = field;
+  for (const auto prefix : prefixes) {
+    q.mutable_options()->prefixes.emplace_back(
+      irs::ViewCast<irs::byte_type>(prefix));
+  }
+  return q;
+}
+
 class PrefixFilterTestCase : public tests::FilterTestCaseBase {
  protected:
+  void ByPrefixesSequential() {
+    {
+      tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                  &tests::GenericJsonFieldFactory);
+      add_segment(gen);
+    }
+    auto rdr = open_reader();
+
+    CheckQuery(irs::ByPrefixes(), Docs{}, rdr);
+    CheckQuery(MakePrefixesFilter(kDuplicatedId, {}), Docs{}, rdr);
+    CheckQuery(MakePrefixesFilter(kInvalidId, {"a"}), Docs{}, rdr);
+    CheckQuery(MakePrefixesFilter(kSameId, {"xyz_invalid"}), Docs{}, rdr);
+    CheckQuery(MakePrefixesFilter(kDuplicatedId, {"a", "vcz"}),
+               Docs{1, 2, 3, 5, 8, 11, 14, 17, 19, 21, 24, 27, 31}, rdr);
+    CheckQuery(MakePrefixesFilter(kPrefixId, {"a", "abc"}),
+               Docs{1, 4, 16, 21, 26, 29, 31, 32}, rdr);
+    CheckQuery(MakePrefixesFilter(kPrefixId, {"0", "abc", "abz", "b", "zzz"}),
+               Docs{1, 4, 9, 21, 24, 26, 31, 32}, rdr);
+    CheckQuery(MakePrefixesFilter(kNameId, {"!"}), Docs{28}, rdr);
+  }
+
   void ByPrefixOrder() {
     // add segment
     {
@@ -324,6 +358,74 @@ TEST_P(PrefixFilterTestCase, by_prefix) {
   ByPrefixSequential(false);
   ByPrefixSequential(true);
   ByPrefixSchemas();
+}
+
+TEST_P(PrefixFilterTestCase, by_prefixes) { ByPrefixesSequential(); }
+
+TEST_P(PrefixFilterTestCase, by_prefixes_terms) {
+  for (const auto mode : {irs::kOmCreate, irs::kOmAppend}) {
+    tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                                &tests::GenericJsonFieldFactory);
+    add_segment(gen, mode);
+  }
+  auto rdr = open_reader();
+  ASSERT_EQ(2, rdr.size());
+
+  const std::vector<std::vector<std::string_view>> cases{
+    {},
+    {""},
+    {"a"},
+    {"a", "abc"},
+    {"abc", "a"},
+    {"b", "a", "b"},
+    {"0", "abc", "abz", "b", "zzz"},
+    {"vcz", "a", "x"},
+    {"a", "ab", "abc", "abcd", "abcde"}};
+  for (const auto& segment : rdr) {
+    for (const auto field : {kPrefixId, kDuplicatedId}) {
+      const auto* reader = segment.field(field);
+      ASSERT_NE(nullptr, reader);
+      for (const auto& prefixes : cases) {
+        std::vector<irs::bstring> expected;
+        for (auto it = reader->iterator(); it->next();) {
+          const irs::bytes_view term = it->value();
+          if (std::ranges::any_of(prefixes, [&](std::string_view prefix) {
+                return term.starts_with(irs::ViewCast<irs::byte_type>(prefix));
+              })) {
+            expected.emplace_back(term);
+          }
+        }
+        const auto filter = MakePrefixesFilter(field, prefixes);
+        std::vector<irs::bstring> iterated;
+        for (auto cursor = filter.CompileTermIterator(*reader);
+             cursor->next();) {
+          iterated.emplace_back(cursor->value());
+        }
+        EXPECT_EQ(expected, iterated);
+        const auto pred = filter.CompileTermPredicate();
+        ASSERT_NE(nullptr, pred);
+        std::vector<irs::bstring> accepted;
+        for (auto it = reader->iterator(); it->next();) {
+          if (pred->Accepts(it->value())) {
+            accepted.emplace_back(it->value());
+          }
+        }
+        EXPECT_EQ(expected, accepted);
+      }
+    }
+  }
+}
+
+TEST_P(PrefixFilterTestCase, by_prefixes_scored) {
+  tests::JsonDocGenerator gen(resource("simple_sequential.json"),
+                              &tests::GenericJsonFieldFactory);
+  add_segment(gen);
+  auto rdr = open_reader();
+  std::array<irs::Scorer::ptr, 1> order{
+    std::make_unique<tests::sort::FrequencySort>()};
+  auto filter = MakePrefixesFilter(kPrefixId, {"a"});
+  filter.SetScorer(order.front().get());
+  CheckQuery(filter, order, Docs{31, 32, 1, 4, 16, 21, 26, 29}, rdr);
 }
 
 TEST_P(PrefixFilterTestCase, visit) {

@@ -361,6 +361,12 @@ SELECT greatest('abc', 'bcd', 'cde', 'EFG') AS result;
 result
 cde
 
+query
+SELECT greatest('abc', 'bcd', 'cde', 'EFG' COLLATE NOCASE) AS result;
+----
+result
+EFG
+
 # DOCS_TEST: hash
 # DOCS_TEST_BODY
 query
@@ -406,6 +412,12 @@ SELECT least('abc', 'bcd', 'cde', 'EFG') AS result;
 ----
 result
 EFG
+
+query
+SELECT least('abc', 'bcd', 'cde', 'EFG' COLLATE NOCASE) AS result;
+----
+result
+abc
 
 # DOCS_TEST: left
 # DOCS_TEST_BODY

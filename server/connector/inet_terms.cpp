@@ -30,12 +30,6 @@
 namespace sdb::connector::inet_terms {
 namespace {
 
-constexpr uint8_t kV4Exact = 0x40;
-constexpr uint8_t kV6Exact = 0x60;
-constexpr uint8_t kMaskOffset = 8;
-constexpr uint8_t kV4Type = 1;
-constexpr uint8_t kV6Type = 2;
-
 uint8_t ExactTag(bool v6) noexcept { return v6 ? kV6Exact : kV4Exact; }
 uint8_t MaskTag(bool v6) noexcept { return ExactTag(v6) + kMaskOffset; }
 uint32_t Width(bool v6) noexcept { return v6 ? 16 : 4; }
@@ -162,12 +156,16 @@ uint32_t LevelBits(bool v6, uint32_t level) {
   return Width(v6) * 8 - level * LevelStep(v6);
 }
 
-size_t ExactTerm(const Inet& value, uint8_t* out) {
+namespace {
+
+size_t ExactTerm(const Inet& value, const Bytes& network, uint8_t* out) {
   const auto width = value.Width();
-  const auto network = Network(value, value.NetworkBits());
   out[0] = ExactTag(value.v6);
   std::memcpy(out + 1, network.data(), width);
   absl::big_endian::Store16(out + 1 + width, value.mask);
+  if (network == value.address) {
+    return 3 + width;
+  }
   std::memcpy(out + 3 + width, value.address.data(), width);
   return 3 + 2 * width;
 }
@@ -185,9 +183,12 @@ size_t MaskTerm(bool v6, uint8_t mask, uint8_t* out) {
   return 2;
 }
 
+}  // namespace
+
 irs::bstring ExactTermOf(const Inet& value) {
   uint8_t buf[kMaxTermSize];
-  return ToBString(buf, ExactTerm(value, buf));
+  return ToBString(buf,
+                   ExactTerm(value, Network(value, value.NetworkBits()), buf));
 }
 
 std::vector<irs::bstring> GranularTermsOf(const Inet& value) {
@@ -268,8 +269,10 @@ std::string Describe(irs::bytes_view term) {
     return Format(v6, term.data() + 3 + width, mask);
   }
   if (term.size() == 3 + width) {
-    return Format(v6, term.data() + 1,
-                  absl::big_endian::Load16(term.data() + 1 + width));
+    return Format(
+      v6, term.data() + 1,
+      std::min<uint32_t>(absl::big_endian::Load16(term.data() + 1 + width),
+                         width * 8));
   }
   if (term.size() == 1 + width) {
     return Format(v6, term.data() + 1, width * 8);

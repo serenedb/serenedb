@@ -26,6 +26,7 @@
 
 #include "connector/column_id.h"
 #include "connector/functions/vector.h"
+#include "connector/pg_logical_types.h"
 #include "connector/scan/scan_bind.h"
 #include "connector/scan/scan_function.h"
 #include "connector/search_filter_printer.hpp"
@@ -54,7 +55,7 @@ void AppendKindSuffix(std::string& name, const duckdb::LogicalType& type) {
       name += "(numeric)";
       break;
     case Kind::Inet:
-      name += "(inet)";
+      name += pg::IsCidr(type) ? "(cidr)" : "(inet)";
       break;
     case Kind::Unsupported:
       break;

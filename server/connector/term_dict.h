@@ -88,7 +88,7 @@ constexpr Kind Classify(duckdb::LogicalTypeId id) noexcept {
 }
 
 inline Kind Classify(const duckdb::LogicalType& type) {
-  return pg::IsInet(type) ? Kind::Inet : Classify(type.id());
+  return pg::IsInetOrCidr(type) ? Kind::Inet : Classify(type.id());
 }
 
 constexpr bool IsNumeric(Kind kind) noexcept {

@@ -73,6 +73,7 @@
 
 #include "comparison_op.hpp"
 #include "connector/common.h"
+#include "connector/pg_logical_types.h"
 #include "connector/term_dict.h"
 #include "functions/search.h"
 #include "functions/string.h"
@@ -218,22 +219,6 @@ absl::Status SetupTermClause(irs::TermClause& clause,
 }
 
 namespace {
-
-ComparisonOp InvertComparisonOp(ComparisonOp op) {
-  switch (op) {
-    case ComparisonOp::Le:
-      return ComparisonOp::Gt;
-    case ComparisonOp::Ge:
-      return ComparisonOp::Lt;
-    case ComparisonOp::Gt:
-      return ComparisonOp::Le;
-    case ComparisonOp::Lt:
-      return ComparisonOp::Ge;
-    case ComparisonOp::None:
-      return ComparisonOp::None;
-  }
-  SDB_UNREACHABLE();
-}
 
 ComparisonOp GetComparisonOp(duckdb::ExpressionType type) {
   switch (type) {
@@ -2175,6 +2160,13 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
   }
 
   if (matched_unwrapped && unwrapped.override_type &&
+      (pg::IsInetOrCidr(*unwrapped.override_type) ||
+       pg::IsInetOrCidr(info->logical_type)) &&
+      *unwrapped.override_type != info->logical_type) {
+    return nullptr;
+  }
+
+  if (matched_unwrapped && unwrapped.override_type &&
       unwrapped.override_type->id() != info->logical_type.id()) {
     if (IsNumericTypeId(unwrapped.override_type->id())) {
       if (!irs::field_limits::valid(info->numeric_field_id)) {
@@ -2187,7 +2179,7 @@ const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
     }
   }
 
-  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type.id()))) {
+  if (!term_dict::IsSupported(term_dict::Classify(info->logical_type))) {
     return nullptr;
   }
   info->field_id = PickPerKindFieldId(*info, info->logical_type.id());

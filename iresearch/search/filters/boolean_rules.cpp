@@ -502,8 +502,9 @@ field_id AnyFieldOf(const Filter& node) {
 }
 
 field_id RequiringLeafFieldOf(const Filter& node) {
-  return AnyFieldOf<ByTerm, ByPrefix, ByRange, ByGranularRange, ByPhrase,
-                    AutomatonFilter, LevenshteinAutomatonFilter>(node);
+  return AnyFieldOf<ByTerm, ByPrefix, ByPrefixes, ByRange, ByGranularRange,
+                    ByPhrase, AutomatonFilter, LevenshteinAutomatonFilter>(
+    node);
 }
 
 void CollectAnchors(const Filter& node,
@@ -755,7 +756,8 @@ size_t DriverRank(const Filter& filter) noexcept {
       irs::utils::downCast<AutomatonFilter>(filter).options().source;
     return source && source->Automaton() ? kPatternRank : kLiteralsRank;
   }
-  if (type == Type<ByPrefix>::id() || type == Type<ByRange>::id()) {
+  if (type == Type<ByPrefix>::id() || type == Type<ByPrefixes>::id() ||
+      type == Type<ByRange>::id()) {
     return kRangeRank;
   }
   return kRangeRank + 1;

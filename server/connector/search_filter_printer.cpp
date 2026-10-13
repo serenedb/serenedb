@@ -476,6 +476,22 @@ struct FilterPrinter {
                                     : TermToString(f.options().term);
       return node;
     }
+    if (type == Type<ByPrefixes>::id()) {
+      const auto& f = downCast<const ByPrefixes>(filter);
+      ExplainNode node{"Starts With Any"};
+      node.attributes["Field"] = FieldName(f.field_id());
+      const auto kind = FieldKind(f.field_id());
+      const auto& prefixes = f.options().prefixes;
+      const auto render = [&](const bstring& term) {
+        return kind == Kind::Inet ? TermValue(term, kind) : TermToString(term);
+      };
+      node.attributes["Prefixes"] =
+        prefixes.empty()
+          ? std::string{"0"}
+          : absl::StrCat(prefixes.size(), ", ", render(prefixes.front()),
+                         " .. ", render(prefixes.back()));
+      return node;
+    }
     if (type == Type<ByNestedFilter>::id()) {
       const auto& f = downCast<const ByNestedFilter>(filter);
       auto& [parent, child, match, _] = f.options();

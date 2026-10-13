@@ -691,3 +691,101 @@ DROP SEQUENCE seq_cache;
 
 statement ok
 DROP SEQUENCE seq_nocache;
+
+
+connection lv_conn
+statement error
+SELECT lastval();
+----
+db error: ERROR: lastval is not yet defined in this session
+
+
+connection lv_conn
+statement ok
+CREATE SEQUENCE lv_a;
+
+
+connection lv_conn
+statement ok
+CREATE SEQUENCE lv_b START 100;
+
+
+connection lv_conn
+query
+SELECT nextval('lv_a') AS a1, nextval('lv_a') AS a2;
+----
+a1	a2
+1	2
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+2
+
+
+connection lv_conn
+query
+SELECT nextval('lv_b');
+----
+nextval
+100
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+100
+
+
+connection lv_conn
+query
+SELECT setval('lv_b', 500);
+----
+setval
+500
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+500
+
+
+connection lv_conn
+query
+SELECT setval('lv_a', 7);
+----
+setval
+7
+
+
+connection lv_conn
+query
+SELECT lastval();
+----
+lastval
+500
+
+
+connection lv_conn
+statement ok
+DROP SEQUENCE lv_b;
+
+
+connection lv_conn
+statement error
+SELECT lastval();
+----
+db error: ERROR: lastval is not yet defined in this session
+
+
+connection lv_conn
+statement ok
+DROP SEQUENCE lv_a;

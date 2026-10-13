@@ -2586,10 +2586,6 @@ SELECT COALESCE(NULL, 1, 2);
 statement ok
 SELECT NULL::timestamp with time zone;
 
-# op_seq_cond: lastval (function absent)
-statement error
-SELECT lastval();
-
 # op_datetime: make_timestamptz (function absent)
 statement ok
 SELECT make_timestamptz(2020, 1, 1, 0, 0, 0);

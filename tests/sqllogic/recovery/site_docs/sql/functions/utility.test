@@ -120,6 +120,21 @@ SELECT is_histogram_other_bin('') AS is_histogram_other_bin;
 is_histogram_other_bin
 t
 
+# DOCS_TEST: lastval
+
+statement ok
+CREATE SEQUENCE seq_lastval START 42;
+
+statement ok
+SELECT nextval('seq_lastval');
+
+# DOCS_TEST_BODY
+query
+SELECT lastval() AS lastval;
+----
+lastval
+42
+
 # DOCS_TEST: md5
 # DOCS_TEST_BODY
 query

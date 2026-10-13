@@ -667,7 +667,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | nextval  | Yes          |  |
 | setval   | Yes          |  |
 | currval  | Yes          |  |
-| lastval  | No            |         |
+| lastval  | Yes           |         |
 
 #### Conditional
 | Feature   | Support State | Details |

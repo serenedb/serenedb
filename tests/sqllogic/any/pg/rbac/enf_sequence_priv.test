@@ -104,6 +104,26 @@ sv
 10
 
 
+connection c_sq_ok user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
+query
+SELECT lastval() AS last;
+----
+last
+10
+
+
+connection default
+statement ok
+REVOKE USAGE, SELECT, UPDATE ON SEQUENCE enf_sq_mop_counter FROM enf_sq_vedernikoff;
+
+
+connection c_sq_ok user=enf_sq_vedernikoff password=enf_sq_vedernikoff_pw
+statement error
+SELECT lastval();
+----
+db error: ERROR: permission denied for sequence enf_sq_mop_counter
+
+
 # ---- cleanup ----
 
 statement ok

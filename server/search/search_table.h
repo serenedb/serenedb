@@ -126,8 +126,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // Re-attach a segment this shard already flushed + fsynced, named by its meta
   // file. `tick` must be in the adopting transaction's space -- it orders the
   // segment against that transaction's removals.
-  void AdoptSegment(std::string_view meta_file, uint64_t tick) {
-    _writer->AdoptSegment(meta_file, tick);
+  void AdoptSegment(std::string_view meta_file, uint64_t tick,
+                    const irs::SourcePosition& position) {
+    _writer->AdoptSegment(meta_file, tick, position);
   }
 
   // Called once this shard's WAL has been replayed, to reclaim what the replay

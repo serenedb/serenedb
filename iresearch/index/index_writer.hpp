@@ -418,7 +418,8 @@ class IndexWriter : private util::Noncopyable {
                     const MergeWriter::FlushProgress& progress,
                     const AnnBuildEnv* env) -> yaclib::Future<CompactionResult>;
 
-  void AdoptSegment(std::string_view meta_file, uint64_t tick);
+  void AdoptSegment(std::string_view meta_file, uint64_t tick,
+                    const SourcePosition& position = {});
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
    public:

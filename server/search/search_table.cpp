@@ -608,7 +608,7 @@ void SearchTable::FinishReplay() {
     for (const auto& pending : session.adopts) {
       const uint64_t tick = first_tick + pending.queries_before;
       try {
-        AdoptSegment(pending.meta_file, tick);
+        AdoptSegment(pending.meta_file, tick, {.offset = session.max_tick});
       } catch (const std::exception& e) {
         SDB_FATAL(SEARCH,
                   "search-table WAL recovery: failed to adopt segment '",

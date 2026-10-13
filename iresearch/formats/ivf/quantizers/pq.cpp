@@ -735,7 +735,27 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   }
 
   bool Decode(const byte_type* code, float* out) const final {
-    _cb->Pq().decode(reinterpret_cast<const uint8_t*>(code), out);
+    const auto* c = reinterpret_cast<const uint8_t*>(code);
+    switch (_dsub) {
+      case 1:
+        DecodeRow<1>(c, out);
+        break;
+      case 2:
+        DecodeRow<2>(c, out);
+        break;
+      case 4:
+        DecodeRow<4>(c, out);
+        break;
+      case 8:
+        DecodeRow<8>(c, out);
+        break;
+      case 16:
+        DecodeRow<16>(c, out);
+        break;
+      default:
+        DecodeRow<0>(c, out);
+        break;
+    }
     return true;
   }
 
@@ -795,15 +815,28 @@ class ProductQuantizer8Reader final : public QuantizerReader {
 
  private:
   template<size_t Dsub>
+  void DecodeRow(const uint8_t* code, float* out) const noexcept {
+    const size_t dsub = Dsub == 0 ? _dsub : Dsub;
+    const float* cents = _cb->Pq().centroids.data();
+    for (size_t j = 0; j < _m; ++j) {
+      std::copy_n(cents + (j * kPq8Ksub + code[j]) * dsub, dsub,
+                  out + j * dsub);
+    }
+  }
+
+  template<size_t Dsub>
   void ScorePairs(const byte_type* base, uint32_t record_size,
                   std::span<const float> terms, uint32_t from,
                   std::span<const uint32_t> ids, score_t* out) {
     const auto& pq = _cb->Pq();
     const size_t dsub = Dsub == 0 ? _dsub : Dsub;
-    _pair_a.resize(pq.d);
-    pq.decode(
-      reinterpret_cast<const uint8_t*>(base + size_t{from} * record_size),
-      _pair_a.data());
+    const auto* code =
+      reinterpret_cast<const uint8_t*>(base + size_t{from} * record_size);
+    if (code != _pair_code) {
+      _pair_a.resize(pq.d);
+      DecodeRow<Dsub>(code, _pair_a.data());
+      _pair_code = code;
+    }
     const float* cents = pq.centroids.data();
     const float* xa = _pair_a.data();
     for (size_t i = 0; i < ids.size(); ++i) {
@@ -924,6 +957,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   size_t _m;
   size_t _dsub;
   std::vector<float> _pair_a;
+  const uint8_t* _pair_code = nullptr;
 };
 
 template<VectorMetric M>

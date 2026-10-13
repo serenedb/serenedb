@@ -2176,45 +2176,46 @@ TEST(hnsw_pq_quantizer_test, codes_rank_like_exact) {
 
 TEST(hnsw_pq_quantizer_test, pair_scores_are_decoded_distances) {
   constexpr uint32_t d = 24;
-  constexpr uint32_t pq_m = 6;
   constexpr size_t n = 300;
   const auto points = MakeSpread(d, n, 53);
   const std::vector<float> centroid(d, 0.f);
-  for (const VectorMetric metric :
-       {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
-    const auto f = BuildPqCodes(d, pq_m, metric, points, n);
-    const std::vector<float> scratch(d, 0.f);
-    auto reader = MakeKeyedReader(f, scratch, centroid.data());
-    ASSERT_TRUE(reader->SupportsPairScores());
-    std::vector<float> terms;
-    ASSERT_TRUE(
-      reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
+  for (const uint32_t pq_m : {6U, 24U}) {
+    for (const VectorMetric metric :
+         {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+      const auto f = BuildPqCodes(d, pq_m, metric, points, n);
+      const std::vector<float> scratch(d, 0.f);
+      auto reader = MakeKeyedReader(f, scratch, centroid.data());
+      ASSERT_TRUE(reader->SupportsPairScores());
+      std::vector<float> terms;
+      ASSERT_TRUE(
+        reader->PreparePairTerms(f.codes.data(), f.record_size, n, terms));
 
-    std::vector<float> decoded(n * d);
-    for (size_t i = 0; i < n; ++i) {
-      ASSERT_TRUE(reader->Decode(f.codes.data() + i * f.record_size,
-                                 decoded.data() + i * d));
-    }
-    std::vector<uint32_t> ids(n);
-    for (uint32_t i = 0; i < n; ++i) {
-      ids[i] = i;
-    }
-    std::vector<score_t> pair(n);
-    std::vector<score_t> keyed(n);
-    for (const uint32_t a : {0U, 7U, 151U, 299U}) {
-      reader->ScorePairBatch(f.codes.data(), f.record_size, terms, a, ids,
-                             pair.data());
-      auto keyed_reader = MakeKeyedReader(f, scratch, centroid.data());
-      ASSERT_TRUE(keyed_reader->SetQuery({decoded.data() + a * d, d}));
-      keyed_reader->ComputeGathered(f.codes.data(), f.record_size, ids,
-                                    kNoPrune, keyed.data());
-      for (size_t b = 0; b < n; ++b) {
-        const float want =
-          ExactScore(metric, decoded.data() + a * d, decoded.data() + b * d, d);
-        EXPECT_NEAR(pair[b], want, 1e-4f * (1.f + std::fabs(want)))
-          << "a=" << a << " b=" << b;
-        EXPECT_NEAR(keyed[b], want, 1e-4f * (1.f + std::fabs(want)))
-          << "a=" << a << " b=" << b;
+      std::vector<float> decoded(n * d);
+      for (size_t i = 0; i < n; ++i) {
+        ASSERT_TRUE(reader->Decode(f.codes.data() + i * f.record_size,
+                                   decoded.data() + i * d));
+      }
+      std::vector<uint32_t> ids(n);
+      for (uint32_t i = 0; i < n; ++i) {
+        ids[i] = i;
+      }
+      std::vector<score_t> pair(n);
+      std::vector<score_t> keyed(n);
+      for (const uint32_t a : {0U, 7U, 0U, 151U, 7U, 299U}) {
+        reader->ScorePairBatch(f.codes.data(), f.record_size, terms, a, ids,
+                               pair.data());
+        auto keyed_reader = MakeKeyedReader(f, scratch, centroid.data());
+        ASSERT_TRUE(keyed_reader->SetQuery({decoded.data() + a * d, d}));
+        keyed_reader->ComputeGathered(f.codes.data(), f.record_size, ids,
+                                      kNoPrune, keyed.data());
+        for (size_t b = 0; b < n; ++b) {
+          const float want = ExactScore(metric, decoded.data() + a * d,
+                                        decoded.data() + b * d, d);
+          EXPECT_NEAR(pair[b], want, 1e-4f * (1.f + std::fabs(want)))
+            << "a=" << a << " b=" << b;
+          EXPECT_NEAR(keyed[b], want, 1e-4f * (1.f + std::fabs(want)))
+            << "a=" << a << " b=" << b;
+        }
       }
     }
   }

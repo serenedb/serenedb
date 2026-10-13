@@ -1,0 +1,51 @@
+hash-threshold 100
+
+statement ok
+CREATE TABLE cc_t AS SELECT range::INT AS a, CASE WHEN range % 10 = 0 THEN NULL ELSE 'x' END AS c FROM range(100000)
+
+query
+SELECT count(*) AS rows, count(r) AS non_null, sum(length(r)) AS total FROM (SELECT c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c || c AS r FROM cc_t)
+----
+rows	non_null	total
+100000	90000	54000000
+
+query
+SELECT x || 'b' || x || 'c' AS r FROM (VALUES (1, 'a'), (2, NULL)) t(k, x) ORDER BY k
+----
+r
+abac
+NULL
+
+query
+SELECT 1 || 'a' || 2.5 AS r
+----
+r
+1a2.5
+
+query
+SELECT '\xAA'::BLOB || '\xBB'::BLOB || '\xCC'::BLOB AS r
+----
+r
+\\xaabbcc
+
+query
+SELECT [1] || [2, 3] || [4] AS r
+----
+r
+{1,2,3,4}
+
+query
+SELECT [1] || [2] || NULL::INT[] AS r
+----
+r
+NULL
+
+query
+SELECT x || '' || 'b' || '' || x AS r FROM (VALUES (1, 'a'), (2, NULL)) t(k, x) ORDER BY k
+----
+r
+aba
+NULL
+
+statement ok
+DROP TABLE cc_t

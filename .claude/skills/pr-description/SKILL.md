@@ -6,6 +6,6 @@ argument-hint: "[PR-number | branch]"
 
 # PR title and description
 
-Write them by `.claude/rules/pull-requests.md` (prefixes, title, description, references to other repositories); the template is `.github/PULL_REQUEST_TEMPLATE.md`.
+Write them by `.claude/rules/pull-requests.md`; the template is `.github/PULL_REQUEST_TEMPLATE.md`.
 
 Show the title and body to the user, and create or edit the PR only after they agree.

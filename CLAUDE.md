@@ -10,9 +10,7 @@ it.
 - Don't use python/sed for normal code editing or reading, only for real
 scripting changes.
 
-- Read `CONTRIBUTING.md` -- it covers the build and links the topic pages in
-`.claude/rules/`, which load by themselves when you open a file they cover.
-This file only flags traps that aren't in there.
+- Read `CONTRIBUTING.md`.
 
 - A user-visible change is not finished until `docs/` describes it. Write the
 page in the same change, following `.claude/rules/docs.md`, and say in your
@@ -33,10 +31,10 @@ yours and leave a cross-reference on it.
 
 - Post, file or comment on GitHub only after the user agrees to the text.
 
-- A bug rarely comes alone. When you find one, look for the same mistake
-elsewhere -- the other callers, the sibling functions and types, the same
-pattern in other files -- and fix the whole family in one change, with a test
-for each, or file the ones that don't belong in it.
+- When you find a bug, look for the same mistake elsewhere -- the other callers,
+the sibling functions and types, the same pattern in other files -- and fix the
+whole family in one change, with a test for each, or file the ones that don't
+belong in it.
 
 - Never present an estimated or remembered number as measured: measure it or
 say it is unknown.
@@ -61,14 +59,13 @@ the server can't start means `clangd` itself is missing. Ask the user to
 install what is missing. clangd reads `build/compile_commands.json`; without
 one there, use grep.
 
-- Repo-wide knowledge goes into the repo, not into personal memory, which is
-per machine and invisible to the team. What every contributor needs goes into
-its topic page in `.claude/rules/` (a new topic gets a page with `paths:` for
-the files it covers, and a link from `CONTRIBUTING.md`); instructions only for
-Claude go into this file or a skill in `.claude/skills/`. Never copy a rule
-into a second place: point to it. Propose the change in the same PR; when the
-user rejects a rule, save that to memory and never propose that kind of rule
-again.
+- Repo-wide knowledge goes into the repo, not into personal memory. What every
+contributor needs goes into its topic page in `.claude/rules/` (a new topic gets
+a page with `paths:` for the files it covers, and a link from
+`CONTRIBUTING.md`); instructions only for Claude go into this file or a skill in
+`.claude/skills/`. Never copy a rule into a second place: point to it. Propose
+the change in the same PR; when the user rejects a rule, save that to memory and
+never propose that kind of rule again.
 
 ## Parallel work
 
@@ -95,35 +92,30 @@ created.
 Code is never formatted by hand: serenedb's own code goes through pre-commit
 (`.clang-format`), the submodules as `.claude/rules/third-party.md` says.
 
-Before saying done, run `pre-commit run --files <changed files>`: it also
-rewrites typographic Unicode (arrows, the multiplication sign, em/en dashes,
-ellipsis, curly quotes) to ASCII, rejects `/tmp` in sqllogic tests and checks
-the license header. It skips `docs/` and `resources/`. As a git hook it stashes
-unstaged changes, so in a checkout another session also edits, use `--files`.
+Before saying done, run `pre-commit run --files <changed files>`. As a git hook
+it stashes unstaged changes, so in a checkout another session also edits, use
+`--files`.
 
 ## Before writing tests
 
 Read a sibling test in the same `tests/<area>/` directory first and mirror its
-style; opening it also loads the test rules from `.claude/rules/`.
+style.
 
 ## Local smoke server
 
-Start a server this way, not as `CONTRIBUTING.md` "Launch" does (a fixed port
-and data dir assume a machine of your own). Pick a free `<port>`
-(`ss -ltn | grep :<port>` prints nothing) and a fresh data dir (`mktemp -d`).
-Note the pid the start prints: it is how you check and stop your server, since
-another session can take the port between your check and the bind. Stop it
-when you're done, so nobody inherits a stale serened.
+Start a server this way, not as `CONTRIBUTING.md` "Launch" does. Pick a free
+`<port>` (`ss -ltn | grep :<port>` prints nothing) and a fresh data dir
+(`mktemp -d`). Note the pid the start prints: it is how you check and stop your
+server, since another session can take the port between your check and the bind.
+Stop it when you're done.
 
 ```bash
-# The log lands in the file you redirect to. DuckDB's LogManager writes to
-# in-memory storage by default; query `SELECT * FROM duckdb_logs` (or
-# `sdb_logs`) from psql.
+# DuckDB's LogManager writes to in-memory storage by default; query
+# `SELECT * FROM duckdb_logs` (or `sdb_logs`) from psql.
 ./build/bin/serened <datadir> --listen='postgres://0.0.0.0:<port>' \
   >/tmp/$USER-serened-<port>.log 2>&1 & echo $!
 
 # A busy port or a retired flag makes serened exit; only the log says why.
-# Default database is `postgres` (serenedb has no separate default).
 kill -0 <pid> && psql -h 127.0.0.1 -p <port> -U postgres -d postgres -c 'SELECT 1'
 
 # when finished

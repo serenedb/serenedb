@@ -6,15 +6,13 @@ paths:
 
 # Tests
 
-The test tree is split by what runs the test and what it covers:
-
-- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both. `any/pg` runs through the symlinks `sdb/pg/any` and `pg/any`, never directly. Validate new SQL behaviour on real PostgreSQL before pinning it (`PG_CHANGED_TESTS=any/pg/<file>.test ./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>` for one file, the whole `pg/**` suite without the variable; CI's `validate pg` runs PostgreSQL 18 with PostGIS from the fixture image `tests/sqllogic/fixtures/postgres`; locally, run that image on a free port): outcomes must match, error text may differ.
+- `tests/sqllogic/any/...` -- sqllogic against any engine (PG and SereneDB); use for behaviour we expect from both. Validate new SQL behaviour on real PostgreSQL before pinning it (`PG_CHANGED_TESTS=any/pg/<file>.test ./tests/sqllogic/run_pg_tests.sh --host <host> --single-port <port>` for one file, the whole `pg/**` suite without the variable; CI's `validate pg` runs PostgreSQL 18 with PostGIS from the fixture image `tests/sqllogic/fixtures/postgres`; locally, run that image on a free port): outcomes must match, error text may differ.
 - `tests/sqllogic/sdb/...` -- sqllogic against SereneDB only (SereneDB-specific syntax / extensions).
 - `tests/sqllogic/pg/...` -- sqllogic against Postgres only (used to validate the spec).
 - `tests/sqllogic/recovery/...` -- sqllogic with crash injection (`SET sdb_faults = '...'`) plus a restart; each test runs against a fresh serened + datadir. Fault points are armed only here (see "Fault points" in [sqllogic.md](sqllogic.md)).
 - `tests/server/<area>/...`, `tests/iresearch/...` -- gtest unit tests; use for isolated C++ logic where a sqllogic test would be awkward (library classes / pure functions).
 - `tests/bench/micro/...` -- microbenchmarks for performance claims.
-- `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's (see "Running DuckDB's own test suites" below).
+- `tests/duckdb/` -- driver for the **DuckDB-level** suites: DuckDB core's own test tree and each vendored extension's.
 
 When a change needs a test:
 
@@ -38,7 +36,7 @@ SDB_SQLLOGIC_SCOPE=ours ./tests/sqllogic/run_sdb_tests.sh --single-port <port>
 # Specific tests
 ./tests/sqllogic/run.sh --single-port <port> --test 'tests/sqllogic/any/pg/simple/*.test' --debug true
 
-# Recovery tests (auto-restarts serened on injected crashes; needs build/bin/serened)
+# Recovery tests (needs build/bin/serened)
 ./tests/sqllogic/run_recovery_tests.sh
 
 # One recovery test against another build
@@ -67,18 +65,13 @@ C++ unit tests:
 ## Other suites
 
 - **Drivers:** `tests/drivers/run.sh --port <port> --lang python` against a running serened (default port 5432). Languages: python, java, js, go, rust, php, csharp, c, ruby, r and psql; `--lang sqlsmith` is the fuzzer.
-- **Network:** `tests/drivers/network/run.sh` starts its own serened and checks pg_hba CIDR and mask matching from different `127.x` source addresses.
-- **Stress:** `tests/drivers/stress/run.sh --profile smoke` (`smoke`, `soak`, `soak-tsan`, `wedge-probe`, `biglake-reindex-smoke`; `--seconds` and `--workers` override the profile). Parallel DDL, DML and RBAC churn with a consistency oracle and a hang detector, against a serened it starts, kills and crashes itself. It saturates the machine.
+- **Network:** `tests/drivers/network/run.sh` starts its own serened and checks pg_hba CIDR and mask matching.
+- **Stress:** `tests/drivers/stress/run.sh --profile smoke` (`smoke`, `soak`, `soak-tsan`, `wedge-probe`, `biglake-reindex-smoke`; `--seconds` and `--workers` override the profile). It saturates the machine.
 - **iresearch load test:** `CORPUS_PATH=$(scripts/ci/steps/iresearch-load-fetch-corpus.bash) build/bin/iresearch-load-tests --gtest_filter='LoadTest*'`; fetching the corpus needs `SEARCHBENCH_S3_KEY_ID` and `SEARCHBENCH_S3_SECRET`.
 - **Packages (RTA):** `scripts/ci/steps/08-ci-{deb,docker,tarball}-rta.bash` install the `.deb`, the Docker image or the tarball built by `05-ci-in-docker-package.bash`, start it, and run sqllogic and the network tests against it (the drivers too with `RTA_DRIVERS`).
 - The recovery, network and stress runners take `BUILD_DIR=<dir>` (default `build`).
 
 ## Running DuckDB's own test suites
-
-DuckDB core and each vendored extension ship sqllogic-style test suites under
-`third_party/duckdb/test/` and `third_party/duckdb_<name>/test/`. They run
-through DuckDB's `unittest` binary, which is built by default (opt out with
-`-DSDB_BUILD_DUCKDB_UNITTESTS=OFF` if you want to skip its ~1.3GB output).
 
 ```bash
 ./tests/duckdb/run.sh                    # every suite
@@ -86,6 +79,8 @@ through DuckDB's `unittest` binary, which is built by default (opt out with
 ./tests/duckdb/run.sh --suite interop    # DuckDB files against the official duckdb/duckdb image
 ./tests/duckdb/run.sh --list             # suite names
 ```
+
+`run.sh` builds DuckDB's `unittest` binary only when it is missing: after a change, run `ninja unittest` first.
 
 A suite can carry a checked-in skip list (`tests/duckdb/config/<suite>.json`)
 naming the SereneDB divergences that can't pass, with a reason per entry;

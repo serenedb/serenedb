@@ -14,9 +14,9 @@ paths:
 
 # C++ Code Style
 
-Based on common sense, Google C++ style guide, and Abseil best practices. These rules apply to serenedb and iresearch code, and to the DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) in DuckDB's own style: there DuckDB's formatting, naming, `template <class T>`, `override` and helpers (`D_ASSERT`, `make_uniq`, `StringUtil`, its exception types, logging and settings) stay, and our pre-commit C++ checks don't run, so nothing catches a slip.
+These rules apply to serenedb and iresearch code, and to the DuckDB family (the duckdb submodules, `database-connector`, `duckdb_clickhouse`) in DuckDB's own style: there DuckDB's formatting, naming, `template <class T>`, `override` and helpers (`D_ASSERT`, `make_uniq`, `StringUtil`, its exception types, logging and settings) stay, and our pre-commit C++ checks don't run, so nothing catches a slip.
 
-Formatting and naming nits shouldn't block PRs -- what the tools don't catch can be fixed later; the "never" and "forbidden" rules do block. This is a living document.
+Formatting and naming nits shouldn't block PRs; the "never" and "forbidden" rules do block.
 
 ## Standard
 
@@ -43,7 +43,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Head
 - Avoid pimpl (exception: abstracting over multiple library backends)
 - Avoid duplicating directory name in filename
 - `inline` only for linkage; `IRS_FORCE_INLINE` for optimization hints
-- Templates/inline everything is bad -- binary size matters
+- Templates/inline everything is bad
 - Avoid manual template instantiation in `.cpp` (switch-like dispatch is ok)
 
 ## Scoping
@@ -61,12 +61,12 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Scop
 
 ## Initialization
 
-- Prefer braced init `{}` over `make_*` for pair/tuple (faster to compile)
+- Prefer braced init `{}` over `make_*` for pair/tuple
 - Prefer braced init over parenthesized constructors
 - POD-like types: use designated initializers `{.foo = 1, .bar = 2,}`
 - Default `operator==`/`<=>`/`=` and constructors when possible
 - Trailing comma required for multi-line initializer lists
-- A class type with a default constructor: `Type var;`, never `Type var{};` or `Type var = {};`. Scalars, pointers and trivial aggregates still get an initializer (`= 0`, `= nullptr`, `{}`): nothing zeroes them otherwise
+- A class type with a default constructor: `Type var;`, never `Type var{};` or `Type var = {};`. Scalars, pointers and trivial aggregates still get an initializer (`= 0`, `= nullptr`, `{}`)
 - Prefer `auto` with factory functions: `auto x = MakeFoo()`
 - `const` strongly recommended on methods, references, and pointees; on variables it's the author's call
 - Prefer `const auto*` over plain `auto` for pointers
@@ -101,12 +101,12 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ## Error Handling
 
-- Always `THROW_SQL_ERROR`, so the real SQLSTATE goes on the wire. In `server/`, pre-commit `check-no-raw-throw` rejects any other `throw` except a rethrow (`throw;`), `irs::SqlException` and `duckdb::NotImplementedException`
+- Always `THROW_SQL_ERROR`. In `server/`, pre-commit `check-no-raw-throw` rejects any other `throw` except a rethrow (`throw;`), `irs::SqlException` and `duckdb::NotImplementedException`
 - Cleanup that must run on every way out is an `absl::Cleanup` declared before the call (`absl::Cleanup cleanup = [&] { Clean(); };`), never `try { Func(); } catch (...) { Clean(); throw; }`
-- `SDB_ASSERT` and `SDB_ENSURE` are debug checks of invariants: they fire in dev builds (`SDB_DEV`: the `lldb`, `clangd` and sanitizer presets). `SDB_ENSURE` also throws an internal error in other builds, but nothing relies on that: a condition that can really fail gets real handling.
+- `SDB_ASSERT` and `SDB_ENSURE` are debug checks of invariants. `SDB_ENSURE` also throws an internal error in other builds, but nothing relies on that: a condition that can really fail gets real handling.
 - `SDB_VERIFY` crashes in every build.
 - Prefer an `SDB_ASSERT` to a comment about an invariant; reach for `SDB_ENSURE` or `SDB_VERIFY` only when the guarantee is genuinely hard to follow locally.
-- Write `SDB_ASSERT(cond)` without a message: the expression is the documentation.
+- Write `SDB_ASSERT(cond)` without a message.
 
 ## Async
 
@@ -133,7 +133,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 
 ## Templates
 
-- Prefer `template + static_assert` over concepts when possible -- gives better errors and compiles faster
+- Prefer `template + static_assert` over concepts when possible
 - Use C++20 concepts when `static_assert` would be awkward (e.g. constrained overload sets)
 - Avoid SFINAE / `enable_if` in new code
 - `template <typename T>`, never `template <class T>` (pre-commit `fix-template-typename` rewrites it)
@@ -159,7 +159,6 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Pre-increment/pre-decrement: [Google style](https://google.github.io/styleguide/cppguide.html#Preincrement_and_Predecrement)
 - Casting: [Google style](https://google.github.io/styleguide/cppguide.html#Casting)
 - Avoid RTTI
-- `noexcept`: see dedicated section below
 - No `&&` references for trivially copyable types
 - Don't misuse `std::forward` and `std::move`
 - References over pointers when ownership doesn't matter
@@ -171,7 +170,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 - Hash containers and hashing are absl's: never `std::unordered_*` (pre-commit `check-banned-calls` rejects it in `server/` and `iresearch/`) or `std::hash`:
   - in our code, `irs::containers::FlatHashMap` and `FlatHashSet` (`absl::flat_hash_map` and `flat_hash_set`), and `NodeHashMap` when references to elements must survive inserts;
   - in the DuckDB family, `unordered_map` and `unordered_set`, which in our fork are `absl::node_hash_map` and `absl::node_hash_set`, and the `case_insensitive_map_t` and `case_insensitive_set_t` built on them.
-- All of them take the `std::string_view` or `const char*` key you have wherever a key goes: `find`, `contains`, `count`, `operator[]`, `at`, `try_emplace`, `insert_or_assign`, `erase`. `std::map` and `std::set` take it in the lookups (`find`, `contains`, `count`, `lower_bound`, `equal_range`), because our patched libc++ makes `std::less<>` their default comparator, but not in `operator[]`, `at`, `try_emplace` or `erase`.
+- All of them take the `std::string_view` or `const char*` key you have wherever a key goes: `find`, `contains`, `count`, `operator[]`, `at`, `try_emplace`, `insert_or_assign`, `erase`. `std::map` and `std::set` take it in the lookups (`find`, `contains`, `count`, `lower_bound`, `equal_range`), but not in `operator[]`, `at`, `try_emplace` or `erase`.
 - Never `find` followed by an insert of the same key: `try_emplace` or `operator[]` looks the key up once.
 - Key a map by `std::string_view` when the strings outlive it.
 - `absl::btree_*` over `std::set`/`std::map`, unless references or iterators must survive inserts and erases.
@@ -179,9 +178,9 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 ## noexcept
 
 - Destructors must be `noexcept` (implicit, but be explicit if non-trivial)
-- Move constructors and move assignment must be `noexcept` (required for efficient container operations)
+- Move constructors and move assignment must be `noexcept`
 - Other functions: only mark `noexcept` when truly noexcept or required for correctness
-- Don't add `noexcept` speculatively -- it's a contract that's hard to remove later
+- Don't add `noexcept` speculatively
 
 ## Idioms
 
@@ -191,8 +190,7 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
   just `if`:
   - `if (p)` / `if (!p)`, not `if (p != nullptr)`.
   - `if (opt)`, not `if (opt.has_value())`.
-  - `*p` / `*opt`, not `opt.value()` (`.value()` adds a redundant throw
-    once you've verified the optional is engaged).
+  - `*p` / `*opt`, not `opt.value()`.
 - `std::optional` only where no value of the type can mean "none": an empty vector or string, a null pointer or a sentinel id usually can, so `std::optional<std::vector<T>>` is almost always a plain `std::vector<T>`.
 - Don't add includes speculatively -- only when clangd or the compiler
   asks for them.
@@ -216,20 +214,19 @@ Similar to [Google style](https://google.github.io/styleguide/cppguide.html#Func
 ## Performance
 
 - Avoid every unnecessary copy and allocation, however small; in hot paths avoid allocations altogether
-- Avoid virtual calls in hot paths (prevents inlining, which is the main cost)
-- Large buffers should be heap-allocated separately, not inlined as arrays/members in objects (inflates object size, fitting poorly into allocator size classes)
+- Avoid virtual calls in hot paths
+- Large buffers should be heap-allocated separately, not inlined as arrays/members in objects
 - Prefer contiguous memory (vectors, arrays) over node-based containers (lists, maps)
 - Measure before optimizing -- don't guess
 - Measure on a quiet machine: check `uptime` and `ps -eo user,pcpu,comm --sort=-pcpu | head` first, never time while a build or test runs on the box, and discard numbers that overlapped one
 - Binary size matters: excessive inlining/templates hurt icache and build times
-- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `<build dir>/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`. The same binary answers to `search-benchmark-game-build` and `search-benchmark-game-query`, the search benchmark game's tools.
-- Measure and profile with the `perf` preset (`-O3` with frame pointers). `bench` is configured like the release packages and omits frame pointers, so `perf record -g` call graphs break there.
+- Validate performance claims with microbenchmarks under `tests/bench/micro/` (Google Benchmark). Register one with `add_bench(<name>)` in that directory's `CMakeLists.txt` -- `<name>.cpp` either registers `BENCHMARK`s or defines its own `Main` with `sdb::bench::AddMain` -- build with `ninja serenedb-bench-micro`, run it as `<build dir>/bin/serenedb-bench-micro <name> [--benchmark_filter=...]`.
+- Measure and profile with the `perf` preset. `bench` omits frame pointers, so `perf record -g` call graphs break there.
 - When optimizing for a benchmark, don't tune for its workload at the expense of the use cases it doesn't measure.
 - A microbench fits when the change is a few well-scoped functions. When the
   change is broader (a whole query path, an end-to-end pipeline, anything that
   doesn't sit neatly inside one fixture), drive a small standalone repro script
-  through `perf stat` / `perf record` instead -- it locates the hot spot
-  without forcing the change into a microbench shape that doesn't fit.
+  through `perf stat` / `perf record` instead.
 
 ## Testing
 

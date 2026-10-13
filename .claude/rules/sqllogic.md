@@ -17,14 +17,14 @@ paths:
   db error: ERROR: <exact message>
   ```
 
-  `<slt:ignore>` wildcards a volatile part (a "Did you mean" list, oids, generated names); use it sparingly, since an ignored part asserts nothing. The one exception to exact text is `any/pg/` when PostgreSQL and SereneDB word an error differently: a one-line `statement error <regex>` that matches both, or a `skipif`/`onlyif` pair.
+  `<slt:ignore>` wildcards a volatile part (a "Did you mean" list, oids, generated names); use it sparingly. The one exception to exact text is `any/pg/` when PostgreSQL and SereneDB word an error differently: a one-line `statement error <regex>` that matches both, or a `skipif`/`onlyif` pair.
 - Fill expectations with `run.sh --override` only with `--test` naming the file you are writing, then check every result against PostgreSQL or the spec, not against what the build happens to return. A record you didn't write that changes is a failure to investigate.
 - `connection <name>` runs the next record on that named session, and only that record: repeat it before every record that needs it.
 - Results must not depend on execution order: `ORDER BY` every multi-row result and round floating-point aggregates.
-- Each file runs in its own database, created per run under a unique name (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global: other files run against the same server at the same time, and the other wire engine reruns the file afterwards. Suffix their names with the database, `<name>_${__DATABASE__}`; for an ATTACH that is the alias (`AS <name>_${__DATABASE__}`), or the file name when there's no `AS`, since DuckDB then names the database after the file's basename.
+- Each file runs in its own database, created per run under a unique name (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global: other files run against the same server at the same time, and the other wire engine reruns the file afterwards. Suffix their names with the database, `<name>_${__DATABASE__}`; for an ATTACH that is the alias (`AS <name>_${__DATABASE__}`), or the file name when there's no `AS`.
 - Server-wide listings (`duckdb_tables()`, `duckdb_databases()`, `pg_database`, ...) also show other files' objects: filter them, e.g. `WHERE database_name = current_database()`.
 - Files go under `${__TEST_DIR__}`, never a literal `/tmp` (pre-commit `check-no-tmp-in-sqllogic`). Any `${...}` needs `control substitution on` before its first use (pre-commit `check-substitution-directive`).
-- Outside `recovery/`, never `SET GLOBAL`: the value reaches other files' sessions before any reset. A test that needs it goes under `recovery/`, where each file gets its own serened.
+- Outside `recovery/`, never `SET GLOBAL`: the value reaches other files' sessions before any reset. A test that needs it goes under `recovery/`.
 - A test that needs a service carries the service's suffix and `.test_slow`: `_s3`, `_azure`, `_iceberg`, `_ollama`, `_kev`, `_pgscan`, `_pgscan_tls`, `_chscan` (`<name>_pgscan.test_slow`). `run.sh` starts the service from the name, and `--fast` skips the file.
 
 ## Races
@@ -35,7 +35,7 @@ Races are testable in sqllogic, so a concurrency bug still gets a test:
 - `wait` blocks until every background record has finished; a later synchronous record on a busy named connection waits for that connection only.
 - Records are dispatched in file order, and dispatching a record on a busy named connection first waits for that connection. To keep a step in flight while others run, put the steps that should overlap on different connections right after it, then `wait`.
 - `control max-async-connections N` caps parallel background records (default 10); `control always-async on` makes every record async.
-- There are no loops, and repeating records only widens a window: a race test parks a statement on a fault point (below), so it fails before the fix every time.
+- There are no loops, and repeating records only widens a window: a race test parks a statement on a fault point.
 - `tests/sqllogic/pg/simple/async.test` is a minimal example.
 
 ## Fault points
@@ -44,5 +44,5 @@ Fault points force what a plain test can't reach: a rare interleaving, an error 
 
 - In C++ (`iresearch/utils/debugging.hpp`): `SDB_IF_FAILURE("<name>") { ... }` runs its block when the point is armed, usually `THROW_SQL_ERROR(ERR_MSG("intentional debug error"))` or `SDB_IMMEDIATE_ABORT()`; `SDB_WAIT_ON_FAILURE("<name>")` holds every thread that reaches it until the point is disarmed; `SDB_PARK_ONCE_ON_FAILURE("<name>")` parks the first thread that reaches it until the test releases it.
 - A test arms a point with `SET sdb_faults = '<name>'` and disarms it with `SET sdb_faults = '-<name>'`; `RESET sdb_faults` clears all. Arming an armed point or disarming an unarmed one is an error. Only a superuser can set them, and an armed point fires in every session.
-- Only under `recovery/`, where each file gets its own serened, and only in builds with fault injection (the `lldb`, `clangd` and sanitizer presets, not `bench` or `perf`). Pre-commit `check-fault-points` also requires every point a test arms to exist in the code, and every point in the code to be used by some test.
+- Only under `recovery/`, and only in builds with fault injection (the `lldb`, `clangd` and sanitizer presets, not `bench` or `perf`). Pre-commit `check-fault-points` also requires every point a test arms to exist in the code, and every point in the code to be used by some test.
 - A race, step by step: arm a park point; start the statement on its own connection with `statement async ok`; wait until it is parked with `statement ok retry 40 backoff 250ms` on `SET sdb_faults = '-<name>:parked'`, which fails until the thread parks; run the competing statements on other connections; release the parked thread with `SET sdb_faults = '<name>:release'` (a wait point: disarm it) and `wait`. Release it from another connection than the parked one, or the runner deadlocks. `tests/sqllogic/recovery/inverted_index_checkpoint_during_refresh.test` does exactly this.

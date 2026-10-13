@@ -25,7 +25,7 @@ Claude leaves CI alone until the user asks: it changes nothing in CI (the workfl
   - `asan`, `tsan`: sqllogic and drivers; the "Extra ASAN" / "Extra TSAN" checkboxes add the rest except recovery.
   - `perf` (optimized, no asserts): sqllogic and drivers, plus the gated sqlite subtree and sqlsmith.
 - The nightly (`jobs-schedule.yml`) runs everything on `dev` at 05:00 UTC, plus the stress soak, a macOS build and the package tests. Monday to Thursday at 01:00 UTC one sanitizer runs the full set except recovery, plus stress: msan, asan, ubsan, tsan. Stress runs only at night, apart from the `biglake-reindex-smoke` profile that the BigLake checkbox adds to a PR run.
-- The CI steps run the suites in Docker with the service containers they need (PostgreSQL, MinIO, iceberg-rest, ClickHouse). The same wrappers run locally:
+- The CI steps run the suites in Docker with the service containers they need. The same wrappers run locally:
 
   ```bash
   SDB_SQLLOGIC_SCOPE=ours BUILD_DIR=build_clangd tests/sqllogic/run_in_docker.sh
@@ -46,9 +46,7 @@ A red run:
 ## Testing CI workflows locally
 
 Run or dry-run the GitHub Actions workflows locally with
-[`act`](https://github.com/nektos/act), via `scripts/ci/act-local.sh`
-(self-bootstrapping -- installs `act` on first use, shares the host Docker
-socket so the in-container build steps work):
+[`act`](https://github.com/nektos/act), via `scripts/ci/act-local.sh`:
 
 ```bash
 ./scripts/ci/act-local.sh list                       # list workflows + jobs
@@ -57,8 +55,7 @@ socket so the in-container build steps work):
 ./scripts/ci/act-local.sh classify                   # run the PR change-classifier alone
 ```
 
-`validate` always works and catches YAML / job-graph errors before you push --
-run it whenever you touch `.github/workflows/`. Full `run` needs the build image
+Run `validate` whenever you touch `.github/workflows/`. Full `run` needs the build image
 and `/mnt/data` caches for heavy jobs; put fake secrets in `.secrets`
 (gitignored) for workflows that reference them.
 
@@ -69,14 +66,14 @@ language runtimes and test fixtures come from images:
 
 - `scripts/ci/build-ubuntu.Dockerfile` is the build and test image. It installs each driver's
   dependencies from the manifests in `tests/drivers/` (`requirements.txt`, `package-lock.json`,
-  `composer.lock`, `go.sum`, `pom.xml`, `*.csproj`, `Cargo.lock`) and turns the package managers
-  offline. Regenerate it with the `build-images` workflow whenever one of those changes.
+  `composer.lock`, `go.sum`, `pom.xml`, `*.csproj`, `Cargo.lock`). Regenerate it with the
+  `build-images` workflow whenever one of those changes.
 - Service fixtures that need content baked in (models, extensions) get their own image, built by
   the same workflow (`tests/sqllogic/fixtures/ollama`).
 - Runners never install a missing dependency or skip a missing toolchain; they fail and name what
   is missing. Locally, install it yourself once (e.g. `npm ci` in `tests/drivers/js`).
 - The one exception is our own test tooling built from source (`third_party/sqllogictest-rs`): it
-  is rebuilt every run so it can change in a PR, with its crates cached on the CI machine.
+  is rebuilt every run so it can change in a PR.
 
 ### Adding or changing a CI dependency
 
@@ -84,14 +81,14 @@ language runtimes and test fixtures come from images:
    - a system package or toolchain: the `apt-get install` list in `scripts/ci/build-ubuntu.Dockerfile`;
    - a driver's package: that driver's manifest in `tests/drivers/`;
    - a Python package for test data or fixtures (Spark, pyiceberg, boto3, ...): `scripts/ci/test-data-requirements.txt`;
-   - a service with baked-in content: its own Dockerfile under `tests/sqllogic/fixtures/<name>/`. Its tag is the Dockerfile's `*VERSION` ARG plus a hash of the Dockerfile (`tests/sqllogic/fixtures/image_tag.sh`), so a changed Dockerfile gets a new image that runners pick up without any edit, and `scripts/ci/build_images.sh` builds it. The kev image's tag is pinned in `tests/sqllogic/run.sh`.
+   - a service with baked-in content: its own Dockerfile under `tests/sqllogic/fixtures/<name>/` with the service's version in an `ARG <NAME>_VERSION=` line, and `<name>` in the fixture loop of `scripts/ci/build_images.sh`. Runners tag the image with `tests/sqllogic/fixtures/image_tag.sh`, so a changed Dockerfile gets a new image without any edit. The kev image's tag is pinned in `tests/sqllogic/run.sh`.
 
    Pin versions, and never add a runtime fallback that installs the dependency when it is missing.
 2. Build and try it locally: `docker buildx build --load -t serenedb-build-ubuntu:local --build-context drivers=../../tests/drivers -f build-ubuntu.Dockerfile .` in `scripts/ci`, then run the affected runner with `BUILD_IMAGE=serenedb-build-ubuntu:local` (e.g. `tests/sqllogic/run_in_docker.sh`).
-3. Publish from your branch: run the `serenedb | create infra` workflow (`build-images.yml`) on it with `PUSH_IMAGES_2_REGISTRY=true`, `TAG_LATEST=false` and `TAG=<your branch>`. It pushes the build image as `serenedb/serenedb-build-ubuntu:<os>_clang-<version>_commit-<sha>` and as `:<your branch>` with `/` turned into `-`, plus the fixture images. `:latest`, which every other branch's CI uses, does not move.
+3. Publish from your branch: run the `serenedb | create infra` workflow (`build-images.yml`) on it with `PUSH_IMAGES_2_REGISTRY=true`, `TAG_LATEST=false` and `TAG=<your branch>`.
 4. Run CI on that image. The PR's "Trigger Jobs" uses `:latest`, so dispatch the build yourself with the image in `BUILD_CONFIG`:
    ```bash
    gh workflow run build-manual.yml --ref <branch> -f PR_NUMBER=<pr> -f PR_SHA=$(git rev-parse HEAD) \
      -f BUILD_CONFIG='{"BUILD_IMAGE":"serenedb/serenedb-build-ubuntu:<branch with - for />"}'
    ```
-5. After the PR merges, run `serenedb | create infra` on main with `TAG_LATEST=true`; that moves `:latest` to the new image for everyone.
+5. After the PR merges, run `serenedb | create infra` on main with `TAG_LATEST=true`.

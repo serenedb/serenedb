@@ -19,19 +19,29 @@ SereneDB uses the [RE2 library](https://github.com/google/re2) as its regular ex
 
 ## Functions
 
-All functions accept an optional set of [options](#options-for-regular-expression-functions).
+All functions accept an optional set of [options](#options-for-regular-expression-functions). The functions that take a `start` position accept [PostgreSQL's `flags`](#flags-for-position-based-functions) instead.
 
 | Name                                                                                                            | Description                                                                                                                                                                                                                                                                                                               |
 | :-------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`regexp_count(string, pattern[, start[, flags]])`](#regexp_countstring-pattern-start-flags) | Returns the number of times `pattern` matches in `string`, searching from character `start`. |
 | [`regexp_extract(string, pattern[, group = 0][, options])`](#regexp_extractstring-pattern-group--0-options)     | If `string` contains the regexp `pattern`, returns the capturing group specified by optional parameter `group`; otherwise, returns the empty string. The `group` must be a constant value. If no `group` is given, it defaults to 0. A set of optional [`options`](#options-for-regular-expression-functions) can be set. |
 | [`regexp_extract(string, pattern, name_list[, options])`](#regexp_extractstring-pattern-name_list-options)      | If `string` contains the regexp `pattern`, returns the capturing groups as a struct with corresponding names from `name_list`; otherwise, returns a struct with the same keys and empty strings as values.                                                                                                                |
 | [`regexp_extract_all(string, regex[, group = 0][, options])`](#regexp_extract_allstring-regex-group--0-options) | Finds non-overlapping occurrences of `regex` in `string` and returns the corresponding values of `group`.                                                                                                                                                                                                                 |
 | [`regexp_extract_all(string, regex, name_list[, options])`](#regexp_extract_allstring-regex-name_list-options)  | Finds non-overlapping occurrences of `regex` in `string` and returns the capturing groups as a list of structs with corresponding names from `name_list`.                                                                                                                                                                 |
 | [`regexp_full_match(string, regex[, options])`](#regexp_full_matchstring-regex-options)                         | Returns `true` if the entire `string` matches the `regex`.                                                                                                                                                                                                                                                                |
+| [`regexp_instr(string, pattern[, start[, N[, endoption[, flags[, subexpr]]]]])`](#regexp_instrstring-pattern-start-n-endoption-flags-subexpr) | Returns the character position where the `N`th match of `pattern` in `string` begins, or the position after its end when `endoption` is 1. Returns 0 if there is no such match. |
 | [`regexp_matches(string, pattern[, options])`](#regexp_matchesstring-pattern-options)                           | Returns `true` if `string` contains the regexp `pattern`, `false` otherwise.                                                                                                                                                                                                                                              |
 | [`regexp_replace(string, pattern, replacement[, options])`](#regexp_replacestring-pattern-replacement-options)  | If `string` contains the regexp `pattern`, replaces the matching part with `replacement`. By default, only the first occurrence is replaced. A set of optional [`options`](#options-for-regular-expression-functions), including the global flag `g`, can be set.                                                         |
+| [`regexp_replace(string, pattern, replacement, start[, N[, flags]])`](#regexp_replacestring-pattern-replacement-start-n-flags) | Replaces the `N`th match of `pattern` in `string`, searching from character `start`. `N` = 0 replaces every match. |
 | [`regexp_split_to_array(string, regex[, options])`](#regexp_split_to_arraystring-regex-options)                 | Alias of `string_split_regex`. Splits the `string` along the `regex`.                                                                                                                                                                                                                                                     |
 | [`regexp_split_to_table(string, regex[, options])`](#regexp_split_to_tablestring-regex-options)                 | Splits the `string` along the `regex` and returns a row for each part.                                                                                                                                                                                                                                                    |
+| [`regexp_substr(string, pattern[, start[, N[, flags[, subexpr]]]])`](#regexp_substrstring-pattern-start-n-flags-subexpr) | Returns the text of the `N`th match of `pattern` in `string`, or NULL if there is no such match. |
+
+#### `regexp_count(string, pattern[, start[, flags]])`
+
+Returns the number of times `pattern` matches in `string`, searching from character `start` (default 1). Matches don't overlap. Accepts [`flags`](#flags-for-position-based-functions).
+
+<SqlLogicTest id="sql/functions/regular_expressions/regexp_count" />
 
 #### `regexp_extract(string, pattern[, group = 0][, options])`
 
@@ -63,6 +73,12 @@ Returns `true` if the entire `string` matches the `regex`. A set of optional [`o
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_full_match" />
 
+#### `regexp_instr(string, pattern[, start[, N[, endoption[, flags[, subexpr]]]]])`
+
+Returns the character position where the `N`th match (default 1) of `pattern` in `string` begins, searching from character `start` (default 1). With `endoption` = 1 it returns the position just after the match instead. With `subexpr` > 0 it reports the position of that capturing group instead of the whole match. Returns 0 if there is no such match. Accepts [`flags`](#flags-for-position-based-functions).
+
+<SqlLogicTest id="sql/functions/regular_expressions/regexp_instr" />
+
 #### `regexp_matches(string, pattern[, options])`
 
 Returns `true` if `string` contains the regexp `pattern`, `false` otherwise. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
@@ -75,6 +91,12 @@ If `string` contains the regexp `pattern`, replaces the matching part with `repl
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_replace" />
 
+#### `regexp_replace(string, pattern, replacement, start[, N[, flags]])`
+
+Replaces the `N`th match of `pattern` in `string`, searching from character `start`. `N` = 0 replaces every match from `start` on. Without `N`, replaces the first match, or every match with the `g` flag. In `replacement`, `\1` to `\9` insert the capturing groups, `\&` inserts the whole match, and `\\` inserts a backslash. Accepts [`flags`](#flags-for-position-based-functions).
+
+<SqlLogicTest id="sql/functions/regular_expressions/regexp_replace_position" />
+
 #### `regexp_split_to_array(string, regex[, options])`
 
 Alias of `string_split_regex`. Splits the `string` along the `regex`. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
@@ -86,6 +108,12 @@ Alias of `string_split_regex`. Splits the `string` along the `regex`. A set of o
 Splits the `string` along the `regex` and returns a row for each part. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_split_to_table" />
+
+#### `regexp_substr(string, pattern[, start[, N[, flags[, subexpr]]]])`
+
+Returns the text of the `N`th match (default 1) of `pattern` in `string`, searching from character `start` (default 1). With `subexpr` > 0 it returns that capturing group instead of the whole match. Returns NULL if there is no such match. Accepts [`flags`](#flags-for-position-based-functions).
+
+<SqlLogicTest id="sql/functions/regular_expressions/regexp_substr" />
 
 The `regexp_matches` function is similar to the `SIMILAR TO` operator, however, it does not require the entire string to match. Instead, `regexp_matches` returns `true` if the string merely contains the pattern (unless the special tokens `^` and `$` are used to anchor the regular expression to the start and end of the string). Below are some examples:
 
@@ -107,6 +135,23 @@ The regex functions support the following `options`.
 For example:
 
 <SqlLogicTest id="sql/functions/regular_expressions/example_002" />
+
+### Flags for Position-Based Functions
+
+`regexp_count`, `regexp_instr`, `regexp_substr`, and `regexp_replace` with a `start` position take PostgreSQL's `flags`. When flags conflict, the last one wins.
+
+| Flag  | Description                                                          |
+| :---- | :------------------------------------------------------------------- |
+| `'c'` | Case-sensitive matching (the default)                                |
+| `'i'` | Case-insensitive matching                                            |
+| `'n'`, `'m'` | Newline-sensitive matching: `.` stops at newlines, `^` and `$` match at them |
+| `'p'` | `.` stops at newlines; `^` and `$` match only at the string's ends  |
+| `'w'` | `.` matches newlines; `^` and `$` also match at newlines             |
+| `'s'` | Newlines are ordinary characters (the default)                       |
+| `'q'` | Match `pattern` literally                                            |
+| `'e'` | Match `pattern` as a regular expression (the default)                |
+| `'t'` | Tight syntax (the default)                                           |
+| `'g'` | Replace every match, only available for `regexp_replace`             |
 
 ### Using `regexp_matches`
 

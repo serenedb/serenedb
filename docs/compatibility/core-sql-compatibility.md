@@ -395,7 +395,7 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | regexp_like               | Yes           |                                                     |
 | regexp_match              | Yes           |                                                     |
 | regexp_matches            | Partial       |                                                     |
-| regexp_replace            | Partial       | Currently not supporting replacing N'th match       |
+| regexp_replace            | Yes           |                                                     |
 | regexp_split_to_array     | Yes           |                                                     |
 | regexp_split_to_table     | Yes           |                                                     |
 | regexp_substr             | Yes           |                                                     |

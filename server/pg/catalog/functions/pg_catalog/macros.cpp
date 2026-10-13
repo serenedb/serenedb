@@ -263,16 +263,6 @@ constexpr SystemMacro kMacros[] = {
              0::BIGINT AS wal_buffers_full,
              NULL::TIMESTAMPTZ AS stats_reset)"},
 
-  // PG regexp functions wrapping DuckDB builtins
-
-  {"pg_catalog","regexp_count",
-   R"((text, pattern) AS len(regexp_extract_all(text, pattern)),
-      (text, pattern, start) AS len(regexp_extract_all(text[start:], pattern)))"},
-
-  {"pg_catalog","regexp_substr",
-   R"((text, pattern) AS CASE WHEN regexp_matches(text, pattern) THEN regexp_extract(text, pattern) END,
-      (text, pattern, start) AS CASE WHEN regexp_matches(text[start:], pattern) THEN regexp_extract(text[start:], pattern) END)"},
-
   // PG array functions missing from DuckDB
 
   {"pg_catalog","array_remove",

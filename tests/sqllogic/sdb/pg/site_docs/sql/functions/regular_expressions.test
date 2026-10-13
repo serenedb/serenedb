@@ -188,6 +188,14 @@ SELECT regexp_extract('serened_0_7_1', '^(\w+)_(\d+)_(\d+)', ['tool', 'major', '
 db error: ERROR: Not enough capturing groups (3) for provided names (4)
 
 
+# DOCS_TEST: regexp_count
+# DOCS_TEST_BODY
+query
+SELECT regexp_count('ABCABCAXYaxy', 'A.', 1, 'i') AS result;
+----
+result
+4
+
 # DOCS_TEST: regexp_extract
 # DOCS_TEST_BODY
 query
@@ -228,6 +236,14 @@ SELECT regexp_full_match('anabanana', '(an)*') AS result;
 result
 f
 
+# DOCS_TEST: regexp_instr
+# DOCS_TEST_BODY
+query
+SELECT regexp_instr('ABCDEFGHI', '(c..)(...)', 1, 1, 0, 'i', 2) AS result;
+----
+result
+6
+
 # DOCS_TEST: regexp_matches
 # DOCS_TEST_BODY
 query
@@ -243,6 +259,14 @@ SELECT regexp_replace('hello', '[lo]', '-') AS result;
 ----
 result
 he-lo
+
+# DOCS_TEST: regexp_replace_position
+# DOCS_TEST_BODY
+query
+SELECT regexp_replace('Thomas', '.', 'X', 3, 2) AS result;
+----
+result
+ThoXas
 
 # DOCS_TEST: regexp_split_to_array
 # DOCS_TEST_BODY
@@ -261,3 +285,11 @@ regexp_split_to_table
 hello
 world
 42
+
+# DOCS_TEST: regexp_substr
+# DOCS_TEST_BODY
+query
+SELECT regexp_substr('ABCDEFGHI', '(c..)(...)', 1, 1, 'i', 2) AS result;
+----
+result
+FGH

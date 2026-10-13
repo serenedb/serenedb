@@ -1,0 +1,50 @@
+query
+SELECT regexp_count('ABCABCAXYaxy', 'A.') AS a, regexp_count('ABCABCAXYaxy', 'A.', 1, 'i') AS b, regexp_count('ABCABCAXYaxy', 'A.', 4) AS c, regexp_count('xabc', '^abc', 2) AS d;
+----
+a	b	c	d
+3	4	2	0
+
+
+query
+SELECT regexp_instr('ABCDEFGHI', '(c..)(...)', 1, 1, 0, 'i') AS a, regexp_instr('ABCDEFGHI', '(c..)(...)', 1, 1, 0, 'i', 2) AS b, regexp_instr('ABCDEF', 'C', 1, 1, 1) AS c, regexp_instr('abcabc', 'b', 3) AS d, regexp_instr('abcabc', 'b', 1, 2) AS e, regexp_instr('abc', 'z') AS f;
+----
+a	b	c	d	e	f
+3	6	4	5	5	0
+
+
+query
+SELECT regexp_substr('ABCDEFGHI', '(c..)(...)', 1, 1, 'i', 2) AS a, regexp_substr('abcabc', 'b.', 1, 2) AS b, regexp_substr('ABCDEF', 'c', 1, 1, 'i') AS c, regexp_substr('xabc', '^abc', 2, 1) AS d, regexp_substr('abc', 'z', 1, 1) AS e;
+----
+a	b	c	d	e
+FGH	bc	C	NULL	NULL
+
+
+query
+SELECT regexp_replace('Thomas', '.[mN]a.', 'M', 1, 1, 'i') AS a, regexp_replace('foobarbaz', 'b(..)', 'X\1Y', 1, 2) AS b, regexp_replace('foobarbaz', 'b(..)', 'X\1Y', 1, 0) AS c, regexp_replace('xabc', '^a', 'X', 2) AS d, regexp_replace('aaa', 'a', 'b', 2, 0) AS e;
+----
+a	b	c	d	e
+ThM	foobarXazY	fooXarYXazY	xabc	abb
+
+
+statement error
+SELECT regexp_count('abc', 'a', 0);
+----
+db error: ERROR: invalid value for parameter "start": 0
+
+
+statement error
+SELECT regexp_instr('abc', 'a', 1, 0);
+----
+db error: ERROR: invalid value for parameter "n": 0
+
+
+statement error
+SELECT regexp_substr('abc', 'a', 1, 1, 'g');
+----
+db error: ERROR: regexp_substr() does not support the "global" option
+
+
+statement error
+SELECT regexp_replace('abc', 'a', 'b', 1, -1);
+----
+db error: ERROR: invalid value for parameter "n": -1

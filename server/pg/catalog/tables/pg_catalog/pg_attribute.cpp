@@ -62,7 +62,7 @@ struct TableAttribute {
   duckdb::idx_t relid;
   const duckdb::ColumnDefinition& column;
   const std::vector<bool>& not_null;
-  const SystemSqlColumn* system;
+  std::span<const SystemSqlColumn> system;
   mutable std::optional<ColumnType> described = std::nullopt;
 
   duckdb::idx_t Relid() const noexcept { return relid; }
@@ -73,11 +73,7 @@ struct TableAttribute {
   bool NotNull() const { return not_null[column.Logical().index]; }
   const ColumnType& Described() const {
     if (!described) {
-      described = DescribeColumnType(column.Type());
-      if (system) {
-        described->collation = system->collation;
-        described->ndims = system->ndims;
-      }
+      described = DescribeColumn(column, system);
     }
     return *described;
   }
@@ -151,14 +147,9 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
     if (Allows<"attrelid">(table.oid)) {
       const auto not_null =
         Reads<"attnotnull">() ? NotNullColumns(table) : std::vector<bool>{};
-      const auto* system =
-        table.internal ? dynamic_cast<const catalog::SystemTableEntry*>(&table)
-                       : nullptr;
+      const auto system = SystemColumns(table);
       for (const auto& column : table.GetColumns().Logical()) {
-        Emit<kTableColumn>(
-          {table.oid, column, not_null,
-           system ? &system->Table().Sql().columns[column.Logical().index]
-                  : nullptr});
+        Emit<kTableColumn>({table.oid, column, not_null, system});
       }
     }
     for (const auto& key : KeyIndexes(table)) {

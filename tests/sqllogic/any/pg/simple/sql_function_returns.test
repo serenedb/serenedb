@@ -1,0 +1,87 @@
+statement ok
+DROP SCHEMA IF EXISTS fnr CASCADE;
+
+
+statement ok
+CREATE SCHEMA fnr;
+
+
+statement ok
+CREATE FUNCTION fnr.widened() RETURNS bigint LANGUAGE sql RETURN 1;
+
+
+statement ok
+CREATE FUNCTION fnr.widened_select() RETURNS bigint LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION fnr.maybe(x integer) RETURNS bigint LANGUAGE sql AS 'SELECT x WHERE x > 0';
+
+
+statement ok
+CREATE FUNCTION fnr.as_text() RETURNS text LANGUAGE sql RETURN 42;
+
+
+statement ok
+CREATE FUNCTION fnr.as_varchar() RETURNS varchar(3) LANGUAGE sql RETURN 'abcdef';
+
+
+statement ok
+CREATE FUNCTION fnr.rounded() RETURNS integer LANGUAGE sql RETURN 4.7;
+
+
+statement ok
+CREATE FUNCTION fnr.as_real() RETURNS real LANGUAGE sql RETURN 1.5;
+
+
+statement ok
+CREATE FUNCTION fnr.as_numeric(a integer) RETURNS numeric LANGUAGE sql RETURN a / 2;
+
+
+statement ok
+CREATE FUNCTION fnr.keeps_scale() RETURNS numeric(10,2) LANGUAGE sql RETURN 1.23456;
+
+
+statement ok
+CREATE FUNCTION fnr.as_date() RETURNS date LANGUAGE sql RETURN TIMESTAMPTZ '2024-03-05 10:00:00+00';
+
+
+statement ok
+CREATE FUNCTION fnr.too_big() RETURNS smallint LANGUAGE sql RETURN 100000;
+
+
+query
+SELECT pg_typeof(fnr.widened()) AS a, fnr.widened() AS b, pg_typeof(fnr.widened_select()) AS c, fnr.maybe(-1) IS NULL AS d, pg_typeof(fnr.maybe(1)) AS e;
+----
+a	b	c	d	e
+bigint	1	bigint	t	bigint
+
+
+query
+SELECT fnr.as_text() AS a, pg_typeof(fnr.as_text()) AS b, fnr.as_varchar() AS c, fnr.rounded() AS d, fnr.as_real() AS e, pg_typeof(fnr.as_real()) AS f;
+----
+a	b	c	d	e	f
+42	text	abcdef	5	1.5	real
+
+
+query
+SELECT pg_typeof(fnr.as_numeric(5)) AS a, fnr.keeps_scale() AS b, pg_typeof(fnr.keeps_scale()) AS c, fnr.as_date() AS d, pg_typeof(fnr.as_date()) AS e;
+----
+a	b	c	d	e
+numeric	1.23456	numeric	2024-03-05	date
+
+
+statement error out of range
+SELECT fnr.too_big();
+
+
+statement error return type mismatch in function declared to return integer
+CREATE FUNCTION fnr.from_text() RETURNS integer LANGUAGE sql RETURN '12'::text;
+
+
+statement error return type mismatch in function declared to return boolean
+CREATE FUNCTION fnr.to_bool() RETURNS boolean LANGUAGE sql RETURN 1;
+
+
+statement ok
+DROP SCHEMA fnr CASCADE;

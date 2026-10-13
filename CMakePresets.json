@@ -46,6 +46,48 @@
       }
     },
     {
+      "name": "asan",
+      "binaryDir": "build_asan",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "Address",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS"
+      }
+    },
+    {
+      "name": "tsan",
+      "binaryDir": "build_tsan",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "Thread",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS"
+      }
+    },
+    {
+      "name": "msan",
+      "binaryDir": "build_msan",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "MemoryWithOrigins",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS"
+      }
+    },
+    {
       "name": "bench",
       "inherits": [
         "common"

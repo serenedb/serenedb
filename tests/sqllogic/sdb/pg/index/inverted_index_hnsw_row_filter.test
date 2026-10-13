@@ -184,14 +184,14 @@ pk
 8
 9
 
-statement error
+query
 SELECT pk FROM hnsw_r_idx
   WHERE label = 'even' OR other < 10
   ORDER BY emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 2;
 ----
-db error: ERROR: an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges, not a distance for every row
-DETAIL: The WHERE reads column "other" from the table, which a graph walk cannot filter on.
-HINT: Add it to the index's INCLUDE list.
+pk
+100
+102
 
 
 statement ok

@@ -331,6 +331,8 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     if (state->top_k) {
       vs.top_k = static_cast<uint32_t>(*state->top_k);
+    } else if (vs.radius == std::numeric_limits<float>::max()) {
+      vs.exact = true;
     }
     if (vs.kind == irs::AnnKind::Hnsw && vs.ef_search == 0) {
       vs.ef_search = std::max(

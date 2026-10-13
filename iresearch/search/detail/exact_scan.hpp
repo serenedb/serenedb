@@ -40,7 +40,9 @@ class ExactScanner {
 
   explicit ExactScanner(const ExactVectorQuery& query)
     : _reader{query.Column(), query.Columns(),
-              static_cast<uint32_t>(query.Column().ArraySize())} {
+              static_cast<uint32_t>(query.Column().ArraySize())},
+      _threshold{query.Threshold()},
+      _inclusive{query.Inclusive()} {
     _reader.SetQuery(query.Query(), query.Metric());
     const auto rows = static_cast<doc_id_t>(query.Segment().docs_count());
     _last = doc_limits::min() + rows;
@@ -71,11 +73,37 @@ class ExactScanner {
   // The next run of docs and their distances ("larger = nearer"); 0 at the
   // end of the window.
   uint32_t Next(doc_id_t* docs, score_t* dists) {
-    const auto n = NextDocs(docs);
-    if (n != 0) {
+    for (;;) {
+      const auto n = NextDocs(docs);
+      if (n == 0) {
+        return 0;
+      }
       Distances({docs, n}, dists);
+      if (!_threshold) {
+        return n;
+      }
+      uint32_t kept = 0;
+      for (uint32_t i = 0; i < n; ++i) {
+        if (Inside(dists[i])) {
+          docs[kept] = docs[i];
+          dists[kept] = dists[i];
+          ++kept;
+        }
+      }
+      if (kept != 0) {
+        return kept;
+      }
     }
-    return n;
+  }
+
+  bool Gated() const noexcept { return _threshold.has_value(); }
+
+  bool Inside(score_t distance) const noexcept {
+    if (!_threshold) {
+      return true;
+    }
+    return _inclusive ? RadiusGate<true>::Inside(distance, *_threshold)
+                      : RadiusGate<false>::Inside(distance, *_threshold);
   }
 
   uint32_t NextDocs(doc_id_t* docs) {
@@ -131,6 +159,8 @@ class ExactScanner {
   RawVectorReader _reader;
   std::optional<LazyBitset> _set;
   std::optional<Validity> _validity;
+  std::optional<score_t> _threshold;
+  bool _inclusive;
   doc_id_t _doc;
   doc_id_t _end;
   doc_id_t _last;

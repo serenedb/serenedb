@@ -21,6 +21,7 @@
 #include "iresearch/search/filters/vector_exact_filter.hpp"
 
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/queries/vector_exact_query.hpp"
@@ -44,9 +45,14 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   if (const auto* ann = segment.Ann(opts.centroids_id); ann != nullptr) {
     codes = ann->PrepareExact(segment, opts.query, opts.metric);
   }
+  std::optional<score_t> threshold;
+  if (opts.radius != std::numeric_limits<float>::max()) {
+    threshold = VectorMetricIsAngular(opts.metric) ? opts.radius : -opts.radius;
+  }
   auto built = memory::make_tracked<ExactVectorQuery>(
     ctx.memory, segment, *column, *columns, opts.query, opts.metric,
-    ctx.boost * GetBoost(), std::move(inner), std::move(codes));
+    ctx.boost * GetBoost(), std::move(inner), std::move(codes), threshold,
+    opts.inclusive);
   built->SetStats(ctx.Record());
   return built;
 }

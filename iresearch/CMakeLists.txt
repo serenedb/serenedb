@@ -128,6 +128,7 @@ set(IResearch_core_sources
     ./search/filters/levenshtein_filter.cpp
     ./search/count/make.cpp
     ./search/count/make_hnsw.cpp
+    ./search/count/make_exact.cpp
     ./search/count/make_ivf.cpp
     ./search/count/make_constant.cpp
     ./search/count/make_boolean.cpp
@@ -267,6 +268,7 @@ set(IResearch_core_sources
     ./search/fill/make_geo_distance_scored.cpp
     ./search/docs/make.cpp
     ./search/docs/make_hnsw.cpp
+    ./search/docs/make_exact.cpp
     ./search/docs/make_ivf.cpp
     ./search/docs/make_posting.cpp
     ./search/docs/make_single_posting.cpp

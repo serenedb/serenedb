@@ -543,6 +543,8 @@ QUERY PLAN
 │ Index: cos_index                      │
 │ Lookup: table                         │
 │ Score: cosine_distance(emb, FLOAT[3]) │
+│ Exact:                                │
+│ brute force over the stored vectors   │
 │ Projections: id                       │
 │ Column Filter:                        │
 │ sdb_inverted_index_score > 0.5        │
@@ -662,6 +664,8 @@ QUERY PLAN
 │ Index: ip_index                     │
 │ Lookup: table                       │
 │ Score: inner_product(emb, FLOAT[3]) │
+│ Exact:                              │
+│ brute force over the stored vectors │
 │ Projections: id                     │
 │ Column Filter:                      │
 │ sdb_inverted_index_score > 50       │
@@ -793,6 +797,8 @@ QUERY PLAN
 │ Index: l2_index                                         │
 │ Lookup: table                                           │
 │ Score: l2_distance(emb, FLOAT[3])                       │
+│ Exact:                                                  │
+│ brute force over the stored vectors                     │
 │ Projections: id, sdb_inverted_index_score               │
 │ Column Filter:                                          │
 │ optional: Dynamic Filter (sdb_inverted_index_score < ?) │

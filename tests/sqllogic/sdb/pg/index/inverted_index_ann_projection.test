@@ -1,0 +1,161 @@
+statement ok
+CREATE TABLE pj_hnsw (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX pj_hnsw_idx ON pj_hnsw
+  USING inverted(id, label, emb hnsw (metric = 'l2', quant = 'sq8'))
+  INCLUDE (num);
+
+statement ok
+CREATE TABLE pj_ivf (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX pj_ivf_idx ON pj_ivf
+  USING inverted(id, label, emb ivf (metric = 'l2', quant = 'sq8'))
+  INCLUDE (num);
+
+statement ok
+CREATE TABLE pj_search (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, emb FLOAT[8])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX pj_search_idx ON pj_search
+  USING inverted(id, label, num, extra, emb ivf (metric = 'l2', quant = 'none'));
+
+statement ok
+INSERT INTO pj_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) pj_hnsw;
+
+statement ok
+INSERT INTO pj_ivf SELECT * FROM pj_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) pj_ivf;
+
+statement ok
+INSERT INTO pj_search SELECT * FROM pj_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) pj_search;
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_hnsw_idx
+) t;
+----
+n	s
+3000	2250001
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_ivf_idx
+) t;
+----
+n	s
+3000	2250001
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_search
+) t;
+----
+n	s
+3000	2250001
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_hnsw_idx
+  WHERE label = 'l3'
+) t;
+----
+n	s
+300	225000
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_ivf_idx
+  WHERE num = 7
+) t;
+----
+n	s
+30	22500
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_hnsw_idx
+  WHERE extra = 7
+) t;
+----
+n	s
+300	225000
+
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
+  SELECT emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_ivf_idx
+  WHERE extra = 7
+) t;
+----
+n	s
+300	225000
+
+query
+SELECT id FROM (
+  SELECT id, emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_hnsw_idx
+) t WHERE d > 1499 ORDER BY id;
+----
+id
+0
+1
+
+query
+SELECT id FROM (
+  SELECT id, emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_ivf_idx
+) t WHERE d > 1499 ORDER BY id;
+----
+id
+0
+1
+
+query
+SELECT id, round(d::DOUBLE, 1) AS d FROM (
+  SELECT id, emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM pj_ivf_idx
+  WHERE label = 'l0' AND num < 10
+) t ORDER BY id;
+----
+id	d
+0	1500.4
+100	1400.4
+200	1300.4
+300	1200.4
+400	1100.4
+500	1000.4
+600	900.4
+700	800.4
+800	700.4
+900	600.4
+1000	500.4
+1100	400.4
+1200	300.4
+1300	200.4
+1400	100.4
+1500	0.4
+1600	99.6
+1700	199.6
+1800	299.6
+1900	399.6
+2000	499.6
+2100	599.6
+2200	699.6
+2300	799.6
+2400	899.6
+2500	999.6
+2600	1099.6
+2700	1199.6
+2800	1299.6
+2900	1399.6

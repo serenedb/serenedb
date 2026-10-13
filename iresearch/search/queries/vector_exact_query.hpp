@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -41,7 +42,9 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
                    const ColReader& columns, std::vector<float> query,
                    VectorMetric metric, score_t boost,
                    QueryBuilder::ptr&& inner = nullptr,
-                   AnnExactCodes codes = {})
+                   AnnExactCodes codes = {},
+                   std::optional<score_t> threshold = {},
+                   bool inclusive = false)
     : QueryBuilderImpl{segment},
       _column{&column},
       _columns{&columns},
@@ -49,7 +52,9 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
       _codes{std::move(codes)},
       _query{std::move(query)},
       _metric{metric},
-      _boost{boost} {}
+      _boost{boost},
+      _threshold{threshold},
+      _inclusive{inclusive} {}
 
   const ColumnReader& Column() const noexcept { return *_column; }
   const ColReader& Columns() const noexcept { return *_columns; }
@@ -57,6 +62,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   VectorMetric Metric() const noexcept { return _metric; }
   const QueryBuilder* Inner() const noexcept { return _inner.get(); }
   const AnnExactCodes& Codes() const noexcept { return _codes; }
+  std::optional<score_t> Threshold() const noexcept { return _threshold; }
+  bool Inclusive() const noexcept { return _inclusive; }
 
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
@@ -70,6 +77,8 @@ class ExactVectorQuery : public QueryBuilderImpl<ExactVectorQuery> {
   std::vector<float> _query;
   VectorMetric _metric;
   score_t _boost;
+  std::optional<score_t> _threshold;
+  bool _inclusive;
 };
 
 }  // namespace irs

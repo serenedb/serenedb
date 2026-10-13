@@ -38,6 +38,8 @@ struct ByVectorExactOptions {
   std::vector<float> query;
   field_id centroids_id = field_limits::invalid();
   VectorMetric metric = VectorMetric::L2Sqr;
+  float radius = std::numeric_limits<float>::max();
+  bool inclusive = false;
   std::shared_ptr<const Filter> inner;
 
   bool operator==(const ByVectorExactOptions& rhs) const noexcept = default;

@@ -333,7 +333,10 @@ pk
 113
 
 
-query error an hnsw vector index answers ORDER BY <distance> LIMIT k and distance ranges
-SELECT count(*) FROM (
+query
+SELECT count(*) AS n, round(sum(d))::BIGINT AS s FROM (
   SELECT pk, emb <-> [100.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] AS d FROM hnsw_l_idx
 ) s;
+----
+n	s
+300	24911

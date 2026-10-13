@@ -181,7 +181,6 @@ struct PlanCacheSpec {
 struct LookupSpec {
   std::string label;
   bool supports_filters = true;
-  std::vector<std::string> filter_columns;
 };
 
 struct ViewSpec {
@@ -252,8 +251,6 @@ struct ScanBindData final : duckdb::FunctionData {
   std::string DisplayColumnName(ColumnId col_id) const;
   bool IsColumnNotNull(ColumnId col_id) const;
   void IterateColumns(const ColumnVisitor& cb) const;
-
-  bool IsHnswScored() const noexcept;
 
   duckdb::idx_t RelationId() const {
     return view ? view->id : relation.table_entry->oid;

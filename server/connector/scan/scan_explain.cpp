@@ -357,7 +357,7 @@ void ScanBindData::AppendSummary(
     out.insert("Score",
                absl::StrCat(VectorMetricFunctionName(vector->metric), "(",
                             name_of(col_id), ", ", ctype.ToString(), ")"));
-    if (vector->exact) {
+    if (vector->exact || (!score.top_k && !score.top_k_expr)) {
       out.insert("Exact", "brute force over the stored vectors");
     }
   }

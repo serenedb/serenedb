@@ -76,7 +76,7 @@ class ExactChain : public Root {
       const auto bar = Bar(collector);
       uint32_t kept = 0;
       for (uint32_t i = 0; i < n; ++i) {
-        if (_dists[i] > bar) {
+        if (_dists[i] > bar && _scanner.Inside(_dists[i])) {
           _docs[kept] = _docs[i];
           _block[kept] = _dists[i];
           ++kept;
@@ -123,7 +123,9 @@ class ExactChain : public Root {
     _codes.bound->Bounds({_approx, coded}, _lower, _upper);
     if (_ranked) {
       for (uint32_t j = 0; j < coded; ++j) {
-        Offer(_lower[j]);
+        if (_scanner.Inside(_lower[j])) {
+          Offer(_lower[j]);
+        }
       }
     }
     const auto bar = Bar(collector);
@@ -134,7 +136,7 @@ class ExactChain : public Root {
     for (uint32_t i = 0, j = 0; i < n; ++i) {
       if (j < coded && _slots[j] == i) {
         const auto upper = _upper[j++];
-        if (upper <= bar || upper < floor) {
+        if (upper <= bar || upper < floor || !_scanner.Inside(upper)) {
           continue;
         }
       }

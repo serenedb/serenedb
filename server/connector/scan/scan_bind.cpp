@@ -374,15 +374,6 @@ void ScanBindData::IterateColumns(const ColumnVisitor& cb) const {
   }
 }
 
-bool ScanBindData::IsHnswScored() const noexcept {
-  if (!score.vector) {
-    return false;
-  }
-  const auto info =
-    relation.inverted_config->GetColumnOptions(score.vector->field_id).ann_info;
-  return info && info->kind == irs::AnnKind::Hnsw;
-}
-
 std::string_view ScanBindData::RelationName() const {
   if (relation.IsInvertedIndex()) {
     return relation.inverted_index->name.GetIdentifierName();
@@ -691,13 +682,15 @@ DeferredBuild BuildDeferredFilter(
 irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
                                   std::shared_ptr<const irs::Filter> inner,
                                   float radius) {
-  if (vs.exact && vs.radius == std::numeric_limits<float>::max()) {
+  if (vs.exact) {
     auto f = std::make_unique<irs::ByVectorExact>();
     *f->mutable_field_id() = vs.field_id;
     auto* o = f->mutable_options();
     o->query = vs.query_vector;
     o->centroids_id = vs.centroids_id;
     o->metric = vs.metric;
+    o->radius = radius;
+    o->inclusive = vs.radius_inclusive;
     o->inner = std::move(inner);
     return f;
   }

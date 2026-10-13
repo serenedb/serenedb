@@ -1,0 +1,188 @@
+statement ok
+CREATE TABLE er_hnsw (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX er_hnsw_idx ON er_hnsw
+  USING inverted(id, label, emb hnsw (metric = 'l2', quant = 'sq8'))
+  INCLUDE (num);
+
+statement ok
+CREATE TABLE er_ivf (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, emb FLOAT[8]);
+
+statement ok
+CREATE INDEX er_ivf_idx ON er_ivf
+  USING inverted(id, label, emb ivf (metric = 'l2', quant = 'sq8'))
+  INCLUDE (num);
+
+statement ok
+CREATE TABLE er_search (id INTEGER PRIMARY KEY, label VARCHAR, num INTEGER,
+  extra INTEGER, emb FLOAT[8])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX er_search_idx ON er_search
+  USING inverted(id, label, num, extra, emb hnsw (metric = 'l2', quant = 'sq4'));
+
+statement ok
+INSERT INTO er_hnsw SELECT i, 'l' || (i % 10)::VARCHAR, i % 100, i % 10,
+  [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(3000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) er_hnsw;
+
+statement ok
+INSERT INTO er_ivf SELECT * FROM er_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) er_ivf;
+
+statement ok
+INSERT INTO er_search SELECT * FROM er_hnsw;
+
+statement ok
+VACUUM (REFRESH_TABLE) er_search;
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT count(*) FROM er_hnsw_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5;
+----
+count
+61
+
+query
+SELECT count(*) FROM er_ivf_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5;
+----
+count
+61
+
+query
+SELECT count(*) FROM er_search
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5;
+----
+count
+61
+
+query
+SELECT count(*) FROM er_hnsw_idx
+  WHERE emb <-> [1500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] <= 30;
+----
+count
+61
+
+query
+SELECT count(*) FROM er_hnsw_idx
+  WHERE emb <-> [1500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30;
+----
+count
+59
+
+query
+SELECT count(*) FROM er_ivf_idx
+  WHERE emb <-> [1500, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] <= 30;
+----
+count
+61
+
+query
+SELECT id FROM er_hnsw_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 3 ORDER BY id;
+----
+id
+1498
+1499
+1500
+1501
+1502
+1503
+
+query
+SELECT id FROM er_ivf_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 3 ORDER BY id;
+----
+id
+1498
+1499
+1500
+1501
+1502
+1503
+
+query
+SELECT id FROM er_hnsw_idx
+  WHERE label = 'l3' AND emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5
+  ORDER BY id;
+----
+id
+1473
+1483
+1493
+1503
+1513
+1523
+
+query
+SELECT id FROM er_ivf_idx
+  WHERE num = 3 AND emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5
+  ORDER BY id;
+----
+id
+1503
+
+query
+SELECT id FROM er_hnsw_idx
+  WHERE extra = 3 AND emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5
+  ORDER BY id;
+----
+id
+1473
+1483
+1493
+1503
+1513
+1523
+
+query
+SELECT id FROM er_hnsw_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+id
+1500
+1501
+1499
+
+query
+SELECT id FROM er_ivf_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 1
+  ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
+----
+id
+1500
+1501
+
+query
+SELECT id, round((emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8])::DOUBLE, 1) AS d
+  FROM er_search
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 2 ORDER BY id;
+----
+id	d
+1499	1.4
+1500	0.4
+1501	0.6
+1502	1.6
+
+query
+SELECT count(*) FROM er_hnsw_idx
+  WHERE emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] < 30.5 AND extra = 11;
+----
+count
+0
+
+statement ok
+RESET sdb_ann_force_exact;

@@ -1,0 +1,61 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/search/count/make.hpp"
+#include "iresearch/search/detail/exact_scan.hpp"
+
+namespace irs::count {
+namespace {
+
+class ExactCount : public Root {
+ public:
+  ExactCount(const ExactVectorQuery& query, detail::TableFilter* table)
+    : _scanner{query}, _table{table} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    _scanner.Reset(min, max);
+    uint64_t count = 0;
+    for (;;) {
+      auto n = _scanner.Gated() ? _scanner.Next(_docs, _dists)
+                                : _scanner.NextDocs(_docs);
+      if (n == 0) {
+        return count;
+      }
+      if (_table != nullptr) {
+        n = _table->Narrow(_docs, nullptr, n);
+      }
+      count += n;
+    }
+  }
+
+ private:
+  irs::detail::ExactScanner _scanner;
+  detail::TableFilter* _table;
+  doc_id_t _docs[irs::detail::ExactScanner::kRun];
+  score_t _dists[irs::detail::ExactScanner::kRun];
+};
+
+}  // namespace
+
+Root::ptr Make(const ExactVectorQuery& query, const Context& ctx) {
+  return memory::make_managed<ExactCount>(query, ctx.table);
+}
+
+}  // namespace irs::count

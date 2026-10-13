@@ -1,0 +1,59 @@
+query
+WITH RECURSIVE m(x, it) AS (SELECT range, 0 FROM range(50000) UNION ALL SELECT x, it + 1 FROM m WHERE it < x % 16)
+SELECT count(*) AS c, sum(mx) AS s FROM (SELECT x, max(it) AS mx FROM m GROUP BY x) t
+----
+c	s
+50000	375000
+
+query
+WITH RECURSIVE m(x, it) AS (SELECT range, 0 FROM range(50000) UNION ALL SELECT x, it + 1 FROM m WHERE it < x % 16)
+SELECT count(*) AS c, sum(it) AS s FROM m
+----
+c	s
+425000	2125000
+
+query
+WITH RECURSIVE t(n, d) AS (SELECT 0::BIGINT, 0 UNION ALL SELECT n * 2 + b, d + 1 FROM t, (VALUES (0), (1)) v(b) WHERE d < 16)
+SELECT count(*) AS c, sum(n) AS s, count(DISTINCT n) AS d FROM t
+----
+c	s	d
+131071	2863245995	65536
+
+query
+WITH RECURSIVE r(n) AS (SELECT range FROM range(10000) UNION SELECT (n * 7 + 3) % 20000 FROM r)
+SELECT count(*) AS c, sum(n) AS s FROM r
+----
+c	s
+20000	199990000
+
+query
+WITH RECURSIVE r(n) AS (SELECT range FROM range(10000) UNION SELECT (n * 7 + 3) % 20000 FROM r)
+SELECT count(*) AS c, sum(k) AS s FROM (SELECT n % 100 AS k, count(*) AS cnt FROM r GROUP BY k) t
+----
+c	s
+100	4950
+
+query
+WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM t)
+SELECT count(*) AS c, max(n) AS m FROM (SELECT n FROM t LIMIT 1000) t
+----
+c	m
+1000	1000
+
+query
+WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n FROM t, (VALUES (1), (2)) v(x))
+SELECT count(*) AS c FROM (SELECT n FROM t LIMIT 100000) t
+----
+c
+100000
+
+query
+WITH RECURSIVE o(i, total) AS (
+  SELECT 0, 0::HUGEINT
+  UNION ALL
+  SELECT i + 1, total + (SELECT sum(n) FROM (WITH RECURSIVE r(n) AS (SELECT range FROM range(5000) UNION ALL SELECT n + 5000 FROM r WHERE n < 20000 + o.i) SELECT n FROM r) q)
+  FROM o WHERE i < 3)
+SELECT count(*) AS c, max(total) AS m FROM o
+----
+c	m
+4	937537501

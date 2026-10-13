@@ -333,6 +333,77 @@ GRANT INSERT ON cxd_db.public.cxd_conflict TO cxd_grantee
 
 
 statement ok
+CREATE TABLE cxd_db.public.cxd_race (a INTEGER)
+
+
+connection cxd_c1
+statement ok
+BEGIN
+
+
+connection cxd_c1
+statement ok
+CREATE VIEW cxd_race_v AS SELECT a FROM cxd_db.public.cxd_race
+
+
+connection default
+statement ok
+DROP TABLE cxd_db.public.cxd_race
+
+
+connection cxd_c1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "cxd_race" has been deleted
+
+
+connection default
+statement ok
+CREATE TABLE cxd_db.public.cxd_race (a INTEGER)
+
+
+connection cxd_c1
+statement ok
+BEGIN
+
+
+connection cxd_c1
+statement ok
+DROP TABLE cxd_db.public.cxd_race
+
+
+connection default
+statement ok
+CREATE VIEW cxd_race_v AS SELECT a FROM cxd_db.public.cxd_race
+
+
+connection cxd_c1
+statement error
+COMMIT
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "cxd_race" because a dependency was created after the transaction started
+
+
+connection default
+query
+SELECT count(*) AS n FROM cxd_race_v
+----
+n
+0
+
+
+connection default
+statement ok
+DROP VIEW cxd_race_v
+
+
+connection default
+statement ok
+DROP TABLE cxd_db.public.cxd_race
+
+
+statement ok
 DROP TABLE cxd_db.public.cxd_conflict
 
 

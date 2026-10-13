@@ -99,6 +99,8 @@ A view or macro may read objects of another database, and a table may take a col
 
 <SqlLogicTest id="sql/statements/drop/cross_database_dependency/example_015" />
 
+The same holds between concurrent transactions: when one transaction drops an object and another adds a reference to it from another database, whichever commits second fails at `COMMIT` and changes nothing.
+
 ## Limitations on Reclaiming Disk Space
 
 Running `DROP TABLE` should free the memory used by the table, but not always disk space.

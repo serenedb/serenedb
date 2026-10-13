@@ -40,13 +40,11 @@
 #include <limits>
 #include <numeric>
 #include <vector>
-#include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
-#include "search/compaction/pool_merge_executor.h"
-#include "search/compaction/task_merge_executor.h"
+#include "search/compaction/pipeline_merge_executor.h"
 
 namespace {
 
@@ -122,7 +120,7 @@ class NoColumnsDirectory final : public irs::Directory {
   irs::Directory& _impl;
 };
 
-class TaskMergeExecutorTest : public ::testing::Test {
+class PipelineMergeExecutorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     irs::IndexWriterOptions options;
@@ -216,11 +214,10 @@ class TaskMergeExecutorTest : public ::testing::Test {
   irs::IndexWriter::ptr _writer;
 };
 
-TEST_F(TaskMergeExecutorTest, MergesKeepEveryRow) {
+TEST_F(PipelineMergeExecutorTest, MergesKeepEveryRow) {
   const auto before = Rows();
   ASSERT_EQ(4, _writer->GetSnapshot().size());
-  search::TaskMergeExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(TestDb()), 8};
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 8};
   const auto result = irs::GetReady(
     _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor));
   ASSERT_TRUE(result);
@@ -231,10 +228,10 @@ TEST_F(TaskMergeExecutorTest, MergesKeepEveryRow) {
   EXPECT_EQ(before, Rows());
 }
 
-TEST_F(TaskMergeExecutorTest, OneThreadRunsEveryUnitItself) {
+TEST_F(PipelineMergeExecutorTest, OneThreadRunsEveryUnitItself) {
   const auto before = Rows();
-  search::TaskMergeExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(TestDb()), 1};
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 1};
+  EXPECT_EQ(1, executor.Threads());
   ASSERT_TRUE(irs::GetReady(
     _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
   _writer->RefreshCommit();
@@ -242,13 +239,26 @@ TEST_F(TaskMergeExecutorTest, OneThreadRunsEveryUnitItself) {
   EXPECT_EQ(before, Rows());
 }
 
-TEST_F(TaskMergeExecutorTest, CallerRunsTheHelpersNoWorkerTook) {
+TEST_F(PipelineMergeExecutorTest, MergesRunOnTheSchedulerTheyAreGiven) {
   const auto before = Rows();
-  duckdb::DBConfig config;
-  config.SetOptionByName("threads", duckdb::Value::BIGINT(1));
-  duckdb::DuckDB lonely{nullptr, &config};
-  search::TaskMergeExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(*lonely.instance), 4};
+  duckdb::TaskScheduler own{TestDb()};
+  own.SetThreads(4, 0);
+  own.RelaunchThreads();
+  search::PipelineMergeExecutor executor{TestDb(), &own, 4};
+  ASSERT_TRUE(irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
+  own.Join();
+  _writer->RefreshCommit();
+  EXPECT_EQ(1, _writer->GetSnapshot().size());
+  EXPECT_EQ(before, Rows());
+}
+
+TEST_F(PipelineMergeExecutorTest, CallerRunsTheUnitsNoWorkerTook) {
+  const auto before = Rows();
+  duckdb::TaskScheduler lonely{TestDb()};
+  lonely.SetThreads(1, 1);
+  lonely.RelaunchThreads();
+  search::PipelineMergeExecutor executor{TestDb(), &lonely, 4};
   ASSERT_TRUE(irs::GetReady(
     _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
   _writer->RefreshCommit();
@@ -256,10 +266,9 @@ TEST_F(TaskMergeExecutorTest, CallerRunsTheHelpersNoWorkerTook) {
   EXPECT_EQ(before, Rows());
 }
 
-TEST_F(TaskMergeExecutorTest, StoppedMergeKeepsTheInputs) {
+TEST_F(PipelineMergeExecutorTest, StoppedMergeKeepsTheInputs) {
   const auto before = Rows();
-  search::TaskMergeExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(TestDb()), 4};
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
   std::atomic<size_t> calls{0};
   const auto result = irs::GetReady(_writer->CompactAsync(
     FullMerge(), nullptr, [&] { return calls.fetch_add(1) < 2; }, nullptr,
@@ -270,81 +279,7 @@ TEST_F(TaskMergeExecutorTest, StoppedMergeKeepsTheInputs) {
   EXPECT_EQ(before, Rows());
 }
 
-constexpr int kPoolSlots = 3;
-std::atomic<int> gPoolSlots{0};
-
-bool AcquirePoolSlot() noexcept {
-  auto cur = gPoolSlots.load();
-  while (cur < kPoolSlots) {
-    if (gPoolSlots.compare_exchange_weak(cur, cur + 1)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void ReleasePoolSlot() noexcept { gPoolSlots.fetch_sub(1); }
-
-TEST_F(TaskMergeExecutorTest, PoolHelpersKeepEveryRowAndGiveTheirSlotsBack) {
-  const auto before = Rows();
-  auto pool = yaclib::MakeFairThreadPool(4);
-  search::PoolMergeExecutor executor{*pool, 8, AcquirePoolSlot,
-                                     ReleasePoolSlot};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
-  pool->SoftStop();
-  pool->Wait();
-  EXPECT_EQ(0, gPoolSlots.load());
-  _writer->RefreshCommit();
-  EXPECT_EQ(1, _writer->GetSnapshot().size());
-  EXPECT_EQ(before, Rows());
-}
-
-TEST_F(TaskMergeExecutorTest, StoppedPoolDropsTheHelpers) {
-  const auto before = Rows();
-  auto pool = yaclib::MakeFairThreadPool(1);
-  pool->Stop();
-  pool->Wait();
-  search::PoolMergeExecutor executor{*pool, 4, AcquirePoolSlot,
-                                     ReleasePoolSlot};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
-  EXPECT_EQ(0, gPoolSlots.load());
-  _writer->RefreshCommit();
-  EXPECT_EQ(before, Rows());
-}
-
-TEST_F(TaskMergeExecutorTest, PoolWithoutFreeSlotsRunsTheUnitsOnTheCaller) {
-  const auto before = Rows();
-  gPoolSlots = kPoolSlots;
-  auto pool = yaclib::MakeFairThreadPool(2);
-  search::PoolMergeExecutor executor{*pool, 4, AcquirePoolSlot,
-                                     ReleasePoolSlot};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
-  EXPECT_EQ(kPoolSlots, gPoolSlots.load());
-  gPoolSlots = 0;
-  pool->SoftStop();
-  pool->Wait();
-  _writer->RefreshCommit();
-  EXPECT_EQ(before, Rows());
-}
-
-TEST_F(TaskMergeExecutorTest, PoolWithoutHelpersRunsTheUnitsOnTheCaller) {
-  const auto before = Rows();
-  auto pool = yaclib::MakeFairThreadPool(2);
-  search::PoolMergeExecutor executor{*pool, 0, AcquirePoolSlot,
-                                     ReleasePoolSlot};
-  ASSERT_TRUE(irs::GetReady(
-    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor)));
-  EXPECT_EQ(0, gPoolSlots.load());
-  pool->SoftStop();
-  pool->Wait();
-  _writer->RefreshCommit();
-  EXPECT_EQ(before, Rows());
-}
-
-TEST_F(TaskMergeExecutorTest, UnitErrorReachesTheCaller) {
+TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {
   const auto reader = _writer->GetSnapshot();
   irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
   for (const auto& segment : reader) {
@@ -356,8 +291,7 @@ TEST_F(TaskMergeExecutorTest, UnitErrorReachesTheCaller) {
   irs::MergePlan plan{failing,  doc_map, meta, nullptr,
                       TestDb(), nullptr, {},   nullptr};
   ASSERT_TRUE(plan.Prepare());
-  search::TaskMergeExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(TestDb()), 4};
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
   EXPECT_THROW(executor.Run(plan), irs::IoError);
 }
 

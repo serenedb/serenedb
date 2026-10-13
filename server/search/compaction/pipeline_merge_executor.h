@@ -23,30 +23,28 @@
 #include <cstddef>
 #include <iresearch/index/merge/merge_plan.hpp>
 
-namespace yaclib {
+namespace duckdb {
 
-class IExecutor;
+class DatabaseInstance;
+class TaskScheduler;
 
-}  // namespace yaclib
+}  // namespace duckdb
 namespace sdb::search {
 
-class PoolMergeExecutor final : public irs::MergeExecutor {
+class PipelineMergeExecutor final : public irs::MergeExecutor {
  public:
-  using AcquireFn = bool (*)() noexcept;
-  using ReleaseFn = void (*)() noexcept;
-
-  PoolMergeExecutor(yaclib::IExecutor& pool, size_t helpers, AcquireFn acquire,
-                    ReleaseFn release) noexcept
-    : _pool{pool}, _helpers{helpers}, _acquire{acquire}, _release{release} {}
+  PipelineMergeExecutor(duckdb::DatabaseInstance& db,
+                        duckdb::TaskScheduler* scheduler,
+                        size_t threads) noexcept
+    : _db{db}, _scheduler{scheduler}, _threads{threads} {}
 
   bool Run(irs::MergePlan& plan) final;
-  size_t Threads() const noexcept final { return _helpers + 1; }
+  size_t Threads() const noexcept final { return _threads; }
 
  private:
-  yaclib::IExecutor& _pool;
-  size_t _helpers;
-  AcquireFn _acquire;
-  ReleaseFn _release;
+  duckdb::DatabaseInstance& _db;
+  duckdb::TaskScheduler* _scheduler;
+  size_t _threads;
 };
 
 }  // namespace sdb::search

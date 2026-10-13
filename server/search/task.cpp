@@ -21,6 +21,7 @@
 
 #include "task.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/time/time.h>
 
 #include <algorithm>
@@ -49,7 +50,7 @@
 #include "search/compaction/merge_planner.h"
 #include "search/compaction/merge_policies.h"
 #include "search/compaction/merge_scheduler.h"
-#include "search/compaction/pool_merge_executor.h"
+#include "search/compaction/pipeline_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/lifecycle.h"
@@ -126,12 +127,6 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
-bool AcquireMergeHelper() noexcept {
-  return GetSearchEngine().TryAcquireCompaction();
-}
-
-void ReleaseMergeHelper() noexcept { GetSearchEngine().ReleaseCompaction(); }
-
 template<class Storage>
 class StorageMergeJob final : public MergeJob {
  public:
@@ -169,8 +164,18 @@ class StorageMergeJob final : public MergeJob {
     const irs::MergeWriter::FlushProgress progress = [&stop] {
       return !stop.load(std::memory_order_relaxed);
     };
-    PoolMergeExecutor executor{BackgroundScheduler::instance().executor(),
-                               helpers, AcquireMergeHelper, ReleaseMergeHelper};
+    size_t granted = 0;
+    while (granted != helpers && GetSearchEngine().TryAcquireCompaction()) {
+      ++granted;
+    }
+    absl::Cleanup release = [granted] {
+      for (size_t i = 0; i != granted; ++i) {
+        GetSearchEngine().ReleaseCompaction();
+      }
+    };
+    PipelineMergeExecutor executor{irs::DuckDBEngine::Instance().instance(),
+                                   &GetSearchEngine().MergeTasks(),
+                                   1 + granted};
     bool empty_compaction = false;
     irs::CompactionResult outcome;
     auto [res, time_ms] = co_await _storage->RunMergeAsync(

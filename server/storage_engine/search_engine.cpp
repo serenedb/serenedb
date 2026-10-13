@@ -26,6 +26,7 @@
 #include <absl/strings/escaping.h>
 
 #include <algorithm>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/analysis/nearest_neighbors_tokenizer.hpp>
@@ -93,6 +94,10 @@ const irs::AnnBuildEnv& AnnBuildEnv() {
 
 void SearchEngine::start() {
   const auto threads = static_cast<size_t>(MaxConcurrentCompactions());
+  _merge_tasks = std::make_unique<duckdb::TaskScheduler>(
+    irs::DuckDBEngine::Instance().instance());
+  _merge_tasks->SetThreads(threads, 0);
+  _merge_tasks->RelaunchThreads();
   _merges = std::make_unique<MergeScheduler>(
     BackgroundScheduler::instance().executor(),
     MergeScheduler::Options{.threads = threads,
@@ -114,6 +119,7 @@ void SearchEngine::stop() {
   _merges->Stop();
   _loops.Done();
   _loops.Wait();
+  _merge_tasks->Join();
 }
 
 template<class Storage>

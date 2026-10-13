@@ -5,7 +5,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-build_cov}"
 LLVM_BIN="${LLVM_BIN:-}"
 IRESEARCH_FILTER="${IRESEARCH_FILTER:-*MergeWriterTestCase*:*MergeOracle*:*MergeCharacterization*:*MergeGolden*:*MergeColumns*:*MergeNorms*:*MergeIvf*:*ScorePruneNormMerge*:*compact*:*Compact*:*consolidat*:*Consolidat*:*Adopt*:*adopt*:*Hnsw*:MergePlan*:ColumnSplit*:ColumnCopy*:ColCopyCheck*:ColBlockSink*:InputNorms*:*Norm*}"
-SERVER_FILTER="${SERVER_FILTER:-MergeRegistry*:MergeRecorder*:AnnBuildPool*}"
+SERVER_FILTER="${SERVER_FILTER:-MergeRegistry*:MergeRecorder*:AnnBuildPool*:PipelineMergeExecutorTest*}"
 SQLLOGIC_TESTS="${SQLLOGIC_TESTS:-}"
 SQLLOGIC_PORT="${SQLLOGIC_PORT:-7931}"
 

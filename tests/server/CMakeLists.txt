@@ -55,7 +55,7 @@ add_executable(
     search/compaction/merge_registry_test.cpp
     search/compaction/merge_scheduler_test.cpp
     search/compaction/merge_simulator_test.cpp
-    search/compaction/task_merge_executor_test.cpp
+    search/compaction/pipeline_merge_executor_test.cpp
 )
 
 target_link_libraries(

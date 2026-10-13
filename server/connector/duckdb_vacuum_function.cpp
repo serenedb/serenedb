@@ -53,7 +53,7 @@
 #include "query/config.h"
 #include "search/compaction/copy_check.h"
 #include "search/compaction/merge_planner.h"
-#include "search/compaction/task_merge_executor.h"
+#include "search/compaction/pipeline_merge_executor.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "storage_engine/search_engine.h"
@@ -516,8 +516,8 @@ void DispatchInverted(duckdb::ClientContext& context,
     pg::ProgressMetrics::Set(progress->items_total, total);
     progress->SetPhase(pg::progress_phase::Vacuum::VacuumingIndexes);
   }
-  search::TaskMergeExecutor executor{
-    duckdb::TaskScheduler::GetScheduler(context),
+  search::PipelineMergeExecutor executor{
+    *context.db, &duckdb::TaskScheduler::GetScheduler(context),
     duckdb::TaskScheduler::QueryThreads(context)};
   for (auto& step : steps) {
     context.InterruptCheck();

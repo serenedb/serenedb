@@ -51,12 +51,6 @@ struct MergeUnitRun {
     wake.notify_all();
   }
 
-  void Drain() {
-    while (const auto unit = schedule.Claim()) {
-      Run(*unit);
-    }
-  }
-
   std::optional<size_t> Next() {
     std::optional<size_t> unit;
     std::unique_lock lock{mutex};
@@ -82,7 +76,6 @@ struct MergeUnitRun {
   std::chrono::steady_clock::time_point begin;
   std::mutex mutex;
   std::condition_variable wake;
-  size_t active = 0;
   std::exception_ptr error;
 };
 

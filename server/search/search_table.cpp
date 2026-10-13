@@ -55,7 +55,6 @@
 #include "search/inverted_index_storage.h"
 #include "search/scorer_options.h"
 #include "search/task.h"
-#include "search/tick_domain.h"
 #include "storage_engine/search_engine.h"
 
 namespace sdb::search {
@@ -190,11 +189,9 @@ void SearchTable::OpenWriter(bool in_memory) {
   }
 
   if (_is_new) {
-    _last_committed_tick.store(TickDomain::Instance().Current(),
-                               std::memory_order_release);
     _writer->RefreshCommit();
   }
-  TickDomain::Instance().SeedAtLeast(CommittedTick());
+  _writer->RaiseTick(CommittedTick());
 }
 
 void SearchTable::StartTasks() {
@@ -610,19 +607,23 @@ void SearchTable::FinishReplay() {
     const uint64_t first_tick = session.max_tick - queries;
     for (const auto& pending : session.adopts) {
       const uint64_t tick = first_tick + pending.queries_before;
-      const bool adopted = AdoptSegment(pending.meta_file, tick);
-      SDB_FATAL_IF(SEARCH, !adopted,
-                   "search-table WAL recovery: failed to adopt segment '",
-                   pending.meta_file, "' for table ", _table_id,
-                   " tick=", tick);
+      try {
+        AdoptSegment(pending.meta_file, tick);
+      } catch (const std::exception& e) {
+        SDB_FATAL(SEARCH,
+                  "search-table WAL recovery: failed to adopt segment '",
+                  pending.meta_file, "' for table ", _table_id, " tick=", tick,
+                  ": ", duckdb::ErrorData{e}.RawMessage());
+      }
     }
-    const bool committed = session.trx.Commit(session.max_tick);
+    const bool committed =
+      session.trx.Commit(session.max_tick, {.offset = session.max_tick});
     SDB_FATAL_IF(SEARCH, !committed,
                  "search-table WAL recovery: iresearch trx Commit failed for "
                  "table ",
                  _table_id, " tick=", session.max_tick);
-    _writer->RefreshCommit({.tick = session.max_tick});
-    TickDomain::Instance().SeedAtLeast(session.max_tick);
+    _writer->RefreshCommit();
+    _writer->RaiseTick(session.max_tick);
     _replay.reset();
   }
   FinishRecovery();

@@ -42,7 +42,6 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "search/search_table.h"
-#include "search/tick_domain.h"
 #include "server/utils/primary_key.h"
 
 namespace sdb::search {
@@ -143,8 +142,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
     }
     // A clearing TRUNCATE adds no trx but needs one tick for its Clear at the
     // band top.
-    _tick = TickDomain::Instance().Next(ShardTickSpan(_writes) +
-                                        (_changes.ClearsShard() ? 1 : 0));
+    _tick = _writes.shard->NextTick(ShardTickSpan(_writes) +
+                                    (_changes.ClearsShard() ? 1 : 0));
     wal.WriteSetTable(*_writes.table, _tick);
     wal.WriteEntries(_entries);
   }
@@ -158,7 +157,8 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
         shard.Clear(_tick);
       } catch (const std::exception& e) {
         SDB_FATAL(SEARCH, "search-table commit: Clear failed for table ",
-                  shard.GetTableId(), " tick=", _tick, ": ", e.what());
+                  shard.GetTableId(), " tick=", _tick, ": ",
+                  duckdb::ErrorData{e}.RawMessage());
       }
     }
     _checkpoint_lock.reset();
@@ -171,7 +171,7 @@ class SearchTableLogWriter final : public duckdb::TransactionLogWriter {
     for (size_t i = _writes.transactions.size(); i-- > 0;) {
       auto& trx = *_writes.transactions[i];
 
-      const bool committed = trx.Commit(tick);
+      const bool committed = trx.Commit(tick, {.offset = _tick});
       SDB_FATAL_IF(
         SEARCH, !committed,
         "search-table commit: iresearch trx Commit failed for table ",

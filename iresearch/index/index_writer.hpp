@@ -402,6 +402,13 @@ class IndexWriter : private util::Noncopyable {
     return _tick.fetch_add(queries, std::memory_order_relaxed) + queries;
   }
 
+  void RaiseTick(uint64_t tick) noexcept {
+    auto current = _tick.load(std::memory_order_relaxed);
+    while (current < tick && !_tick.compare_exchange_weak(
+                               current, tick, std::memory_order_relaxed)) {
+    }
+  }
+
   CompactionResult Compact(const CompactionPolicy& policy,
                            const IndexFieldOptions* field_options = nullptr,
                            const MergeWriter::FlushProgress& progress = {});

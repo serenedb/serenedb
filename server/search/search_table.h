@@ -152,6 +152,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
 
   void Clear(uint64_t tick) { _writer->Clear({.offset = tick}); }
 
+  uint64_t NextTick(uint64_t count) noexcept {
+    return _writer->NextTick(count);
+  }
+
   uint64_t CommittedTick() const noexcept {
     return _last_committed_tick.load(std::memory_order_acquire);
   }

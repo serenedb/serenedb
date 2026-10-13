@@ -1,0 +1,55 @@
+hash-threshold 100
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(range) AS s FROM range(50000000)
+----
+c	s
+50000000	1249999975000000
+
+query
+SELECT count(*) AS c, sum(generate_series) AS s FROM generate_series(1, 30000000)
+----
+c	s
+30000000	450000015000000

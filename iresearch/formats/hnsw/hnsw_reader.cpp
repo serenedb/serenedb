@@ -150,8 +150,9 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
     return QueryBuilder::Empty();
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
-  auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
+  auto codebook = data->stats ? data->stats->MakeRangeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
+  const auto* exact = data->stats ? segment.Column(opts.centroids_id) : nullptr;
   const bool angular = opts.metric == VectorMetric::InnerProduct ||
                        opts.metric == VectorMetric::Cosine;
   const score_t threshold = angular ? radius : -radius;
@@ -162,7 +163,8 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, /*ef=*/uint32_t{0}, threshold,
-    static_cast<size_t>(_header.rows), inclusive, ctx.boost, std::move(inner));
+    static_cast<size_t>(_header.rows), inclusive, ctx.boost, std::move(inner),
+    opts.hnsw_filter_mode, opts.hnsw_column_filter, exact);
   built->SetStats(ctx.Record());
   return built;
 }

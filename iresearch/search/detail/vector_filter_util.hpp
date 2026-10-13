@@ -45,14 +45,22 @@ inline bool SeekClusterTerm(auto& terms, uint32_t cluster_id,
   return terms.seek(bytes_view{term_buf.data(), term_buf.size()});
 }
 
+enum class CodebookUse : uint8_t {
+  Search,
+  Range,
+};
+
 inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
   const CentroidsTree& ivf, IndexInput& idx_in, VectorQuantization quant,
-  uint32_t d, VectorMetric metric, std::span<const float> query) {
+  uint32_t d, VectorMetric metric, std::span<const float> query,
+  CodebookUse use) {
   idx_in.Seek(ivf.QuantStatsOffset());
   const auto stats_size = static_cast<size_t>(idx_in.ReadI64());
   std::span<const byte_type> stats;
   bstring owned;
-  if (const byte_type* p = idx_in.ReadVolatile(stats_size)) {
+  if (stats_size == 0) {
+    stats = {};
+  } else if (const byte_type* p = idx_in.ReadVolatile(stats_size)) {
     stats = {p, stats_size};
   } else {
     owned.resize(stats_size);
@@ -60,13 +68,17 @@ inline std::shared_ptr<const QuantizerCodebook> ReadQuantizerCodebook(
     stats = owned;
   }
   auto quant_stats = MakeQuantizerStats(quant, d, stats, metric);
-  return quant_stats ? quant_stats->MakeCodebook(query) : nullptr;
+  if (!quant_stats) {
+    return nullptr;
+  }
+  return use == CodebookUse::Range ? quant_stats->MakeRangeCodebook(query)
+                                   : quant_stats->MakeCodebook(query);
 }
 
 inline bool PrepareVectorState(
   const CentroidsTree& ivf, const SubReader& segment, const PrepareContext& ctx,
   const VectorFilterOptions& opts, uint32_t nprobe, VectorState& state,
-  QueryBuilder::ptr& inner_query, uint32_t beam = 0) {
+  QueryBuilder::ptr& inner_query, CodebookUse use, uint32_t beam = 0) {
   if (opts.query.empty() || nprobe == 0 ||
       !field_limits::valid(opts.centroids_id) ||
       !field_limits::valid(opts.postings_id)) {
@@ -94,7 +106,7 @@ inline bool PrepareVectorState(
   }
 
   auto codebook =
-    ReadQuantizerCodebook(ivf, *idx_in, opts.quant, d, opts.metric, query);
+    ReadQuantizerCodebook(ivf, *idx_in, opts.quant, d, opts.metric, query, use);
   if (!codebook) {
     return false;
   }

@@ -611,7 +611,7 @@ class VectorClusters {
   bool _filled = false;
 };
 
-template<typename Cluster, bool HasInner, bool Rescore>
+template<typename Cluster, typename Gate, bool HasInner, bool Rescore>
 class VectorSlots {
  public:
   template<typename Args>
@@ -619,7 +619,8 @@ class VectorSlots {
               const RawRecipe& raw)
     : _clusters{count, std::forward<Args>(args)},
       _inner{std::move(inner)},
-      _raw{raw} {
+      _raw{raw},
+      _edge{edge} {
     _clusters.SetThreshold(edge);
   }
 
@@ -641,6 +642,9 @@ class VectorSlots {
     }
     if constexpr (Rescore) {
       _raw.ComputeDistances({&doc, 1}, {&_distance, 1});
+      if constexpr (!Gate::kAll) {
+        return Gate::Inside(_distance, _edge);
+      }
     } else {
       _distance = distance;
     }
@@ -654,6 +658,7 @@ class VectorSlots {
   [[no_unique_address]] utils::Need<HasInner, probe::Erased> _inner;
   [[no_unique_address]] utils::Need<Rescore, RawVectorReader> _raw;
   score_t _distance = 0.f;
+  score_t _edge;
 };
 
 struct ClusterFeed {
@@ -719,7 +724,7 @@ auto ResolveVector(const Query& query, score_t edge, probe::Node::ptr inner,
   return ResolveClusters<Gate>(
     query, [&]<typename Cluster>(size_t count, const ClusterFeed& feed) {
       return ResolveBool(inner != nullptr, [&]<bool HasInner>() {
-        using Slots = VectorSlots<Cluster, HasInner, Rescore>;
+        using Slots = VectorSlots<Cluster, Gate, HasInner, Rescore>;
         return emit.template operator()<Slots>(count, feed, edge,
                                                std::move(inner), recipe);
       });
@@ -730,13 +735,17 @@ template<template<typename> class Walk, typename Result, typename Gate,
          template<typename> class Two, typename Query, typename... Prefix>
 Result MakeVectorDocs(const Query& query, score_t edge, probe::Node::ptr inner,
                       Prefix&&... prefix) {
-  return ResolveVector<Gate, false>(
-    query, edge, std::move(inner),
-    [&]<typename Slots>(auto&&... args) -> Result {
-      using Node = Two<Slots>;
-      return memory::make_managed<Walk<Node>>(
-        std::forward<Prefix>(prefix)..., std::forward<decltype(args)>(args)...);
-    });
+  return ResolveBool(!Gate::kAll && query.Rescored(),
+                     [&]<bool Rescore>() -> Result {
+                       return ResolveVector<Gate, Rescore>(
+                         query, edge, std::move(inner),
+                         [&]<typename Slots>(auto&&... args) -> Result {
+                           using Node = Two<Slots>;
+                           return memory::make_managed<Walk<Node>>(
+                             std::forward<Prefix>(prefix)...,
+                             std::forward<decltype(args)>(args)...);
+                         });
+                     });
 }
 
 template<template<typename> class Walk, typename Result, typename Gate,

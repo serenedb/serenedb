@@ -195,6 +195,50 @@ count
 4
 
 
+statement ok
+CREATE TABLE hnsw_rq4 (pk INTEGER PRIMARY KEY, emb FLOAT[3]);
+
+
+statement ok
+CREATE INDEX hnsw_rq4_idx ON hnsw_rq4
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'sq4'));
+
+
+statement ok
+INSERT INTO hnsw_rq4 VALUES
+  (1, [2, 0, 0]::FLOAT[3]),
+  (2, [6, 0, 0]::FLOAT[3]),
+  (3, [100, 0, 0]::FLOAT[3]),
+  (4, [-20, 0, 0]::FLOAT[3]);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) hnsw_rq4;
+
+
+query
+SELECT count(*) FROM hnsw_rq4_idx
+  WHERE emb <-> [0, 0, 0]::FLOAT[3] < 1;
+----
+count
+0
+
+
+query
+SELECT pk FROM hnsw_rq4_idx
+  WHERE emb <-> [0, 0, 0]::FLOAT[3] < 1;
+----
+pk
+
+
+query
+SELECT pk, round(emb <-> [0, 0, 0]::FLOAT[3], 3) AS d FROM hnsw_rq4_idx
+  WHERE emb <-> [0, 0, 0]::FLOAT[3] < 3 ORDER BY pk;
+----
+pk	d
+1	2
+
+
 # ============================================================================
 # Strict vs inclusive at an exact boundary.
 #

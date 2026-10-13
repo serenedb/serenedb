@@ -28,6 +28,7 @@
 #include <utility>
 
 #include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -637,7 +638,14 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
                                                _max_results, scratch);
                  });
                });
-  return CollectHits(scratch.nearest, _segment);
+  auto hits = CollectHits(scratch.nearest, _segment);
+  if (_ef == 0 && _exact != nullptr && !hits.empty()) {
+    RerankExactDistances(_segment, *_exact, _d, _query, _metric, hits);
+    std::erase_if(hits, [&](const ScoreDoc& hit) {
+      return _inclusive ? hit.score < _threshold : hit.score <= _threshold;
+    });
+  }
+  return hits;
 }
 
 }  // namespace irs

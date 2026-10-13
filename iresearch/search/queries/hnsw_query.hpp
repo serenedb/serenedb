@@ -46,11 +46,13 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             size_t max_results, bool inclusive, score_t boost,
             QueryBuilder::ptr&& inner = nullptr,
             HnswFilterMode filter_mode = HnswFilterMode::Auto,
-            HnswColumnFilter column_filter = HnswColumnFilter::Auto)
+            HnswColumnFilter column_filter = HnswColumnFilter::Auto,
+            const ColumnReader* exact = nullptr)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
       _inner{std::move(inner)},
+      _exact{exact},
       _query{query.size(),
              [&](float& slot, size_t i) noexcept { slot = query[i]; }},
       _metric{metric},
@@ -86,6 +88,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;
   QueryBuilder::ptr _inner;
+  const ColumnReader* _exact;
   containers::Fixed<float> _query;
   VectorMetric _metric;
   uint32_t _d;

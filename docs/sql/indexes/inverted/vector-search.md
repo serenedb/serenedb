@@ -77,6 +77,8 @@ SELECT id FROM index_name WHERE emb <-> $query_vector < radius;
 
 The two forms combine: add `ORDER BY emb <-> $query_vector LIMIT k` to a range query to take the closest `k` *within* the radius.
 
+On a quantized index the codes pick the candidates and each candidate is then checked against its exact distance, so every returned row is inside the radius. A row whose code places it farther away than it really is can still be missed, more often with coarser codes.
+
 ## Quantization {#quantization}
 
 An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size — recoverable with [oversampling](#oversampling), which re-scores a candidate pool with exact distances before picking the final `k`:

@@ -49,8 +49,7 @@ uint32_t IvfAutoNprobe(uint64_t rows, uint32_t posting_size, uint32_t top_k,
   const double k = std::max<uint32_t>(top_k, 10);
   const double n =
     std::ceil(1.3 * std::log10(k) * std::sqrt(static_cast<double>(lists)));
-  return static_cast<uint32_t>(
-    std::clamp(n, 1.0, static_cast<double>(lists)));
+  return static_cast<uint32_t>(std::clamp(n, 1.0, static_cast<double>(lists)));
 }
 
 uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
@@ -111,14 +110,14 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
   const auto nprobe =
-    effort != 0 ? effort
-                : IvfAutoNprobe(segment.docs_count(), opts.posting_size,
-                                opts.top_k,
-                                _tree.Levels() == 1 ? _tree.RootSize() : 0);
-  if (!PrepareVectorState(
-        _tree, segment, ctx, opts, nprobe, state, inner,
-        IvfSearchBeam(nprobe, opts.min_search_fanout,
-                      opts.max_search_fanout))) {
+    effort != 0
+      ? effort
+      : IvfAutoNprobe(segment.docs_count(), opts.posting_size, opts.top_k,
+                      _tree.Levels() == 1 ? _tree.RootSize() : 0);
+  if (!PrepareVectorState(_tree, segment, ctx, opts, nprobe, state, inner,
+                          CodebookUse::Search,
+                          IvfSearchBeam(nprobe, opts.min_search_fanout,
+                                        opts.max_search_fanout))) {
     return QueryBuilder::Empty();
   }
 
@@ -137,7 +136,8 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
   if (!PrepareVectorState(_tree, segment, ctx, opts,
-                          std::numeric_limits<uint32_t>::max(), state, inner)) {
+                          std::numeric_limits<uint32_t>::max(), state, inner,
+                          CodebookUse::Range)) {
     return QueryBuilder::Empty();
   }
 

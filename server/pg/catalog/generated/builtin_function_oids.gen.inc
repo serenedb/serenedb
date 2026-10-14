@@ -4395,7 +4395,7 @@
 {"table_macro pg_catalog.pg_get_wait_events()", 6318},
 {"table_macro pg_catalog.pg_ident_file_mappings()", 6250},
 {"table_macro pg_catalog.pg_lock_status()", 1371},
-{"table_macro pg_catalog.pg_mcv_list_items(VARCHAR)", 30281},
+{"table_macro pg_catalog.pg_mcv_list_items(pg_mcv_list)", 3427},
 {"table_macro pg_catalog.pg_options_to_table(UNKNOWN)", 30286},
 {"table_macro pg_catalog.pg_partition_ancestors(UNKNOWN)", 30288},
 {"table_macro pg_catalog.pg_prepared_statement()", 2510},

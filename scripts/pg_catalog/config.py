@@ -31,5 +31,3 @@ COLLATIONS = {
     'C': 'kCCollation',
     'POSIX': 'kPosixCollation',
 }
-
-STUB_TYPES = {'pg_lsn': 'text', 'pg_mcv_list': 'text'}

@@ -135,54 +135,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 ## Data Types 
 
 ### Types
-| Type                                              | Support State | Details                  |
-|---------------------------------------------------|---------------|--------------------------|
-| array                                             | Yes           |    |
-| bigint                                            | Yes           |  |
-| bigserial                                         | Yes           |                          |
-| bit [ (n) ]                                       | Yes           |                          |
-| bit varying [ (n) ]                               | Yes           |                          |
-| boolean                                           | Yes           |  |
-| box                                               | No            |                          |
-| bytea                                             | Yes           | |
-| character [ (n) ]                                 | Yes           | CHAR(n) not supported; use TEXT |
-| character varying [ (n) ]                         | Yes           | VARCHAR works, VARCHAR(n) does not |
-| cidr                                              | No            |                          |
-| circle                                            | No            |                          |
-| date                                              | Yes           |     |
-| double precision                                  | Yes           |    |
-| inet                                              | No            |                          |
-| integer                                           | Yes           |    |
-| interval [ fields ] [ (p) ]                       | Yes           |   |
-| json                                              | Yes           |       |
-| jsonb                                             | No            |                          |
-| line                                              | No            |                          |
-| lseg                                              | No            |                          |
-| macaddr                                           | No            |                          |
-| macaddr8                                          | No            |                          |
-| money                                             | No            |                          |
-| numeric [ (p, s) ]                                | Yes           |    |
-| path                                              | No            |                          |
-| pg_lsn                                            | No            |                          |
-| pg_snapshot                                       | No            |                          |
-| point                                             | No            |                          |
-| polygon                                           | No            |                          |
-| real                                              | Yes           |      |
-| regclass, regtype, regproc, regprocedure, regnamespace, regrole, regcollation, regdictionary | Yes | Object identifier types: input resolves names on the search path, output prints names |
-| regoper, regoperator, regconfig                   | Partial       | Numeric input and output only: there are no operator or text search configuration catalogs |
-| smallint                                          | Yes           |    |
-| smallserial                                       | Yes           |                          |
-| serial                                            | Yes           |                          |
-| text                                              | Yes           |       |
-| time [ (p) ] [ without time zone ]                | Partial       |                          |
-| time [ (p) ] with time zone                       | Yes           |                          |
-| timestamp [ (p) ] [ without time zone ]           | Yes           |  |
-| timestamp [ (p) ] with time zone                  | Yes          |  |
-| tsquery                                           | Yes           | [SereneDB `TSQUERY`](../sql/data_types/tsquery.md) (inverted index), not PG tsvector/tsquery |
-| tsvector                                          | No            |                          |
-| txid_snapshot                                     | No            |                          |
-| uuid                                              | Yes           |       |
-| xml                                               | No            |                          |
+
+[Data Type Compatibility](./data-type-compatibility.md) lists every PostgreSQL type and how SereneDB supports it.
 
 ### Operators & Functions
 

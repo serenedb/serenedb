@@ -447,7 +447,7 @@ statement error
 SELECT NULL::path;
 
 # types: pg_lsn
-statement error
+statement ok
 SELECT NULL::pg_lsn;
 
 # types: regclass, regtype, regproc, regprocedure, regnamespace, regrole, regcollation, regdictionary

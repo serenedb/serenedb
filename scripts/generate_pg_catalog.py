@@ -23,12 +23,14 @@ views are tables) and in server/pg/catalog/views/<schema>/<view>.cpp (view
 bodies SereneDB writes).
 Those outputs are server/pg/catalog/generated/*.gen.inc.
 
-Two outputs come from this repository alone: generated/registry.gen.inc,
+Three outputs come from this repository alone: generated/registry.gen.inc,
 which registers each server/pg/catalog/tables/<folder>/<table>.cpp and
-server/pg/catalog/views/<folder>/<view>.cpp, and the sqllogic test that
-checks the claims of docs/compatibility/system-table-compatibility.md.
---check verifies every output is current without writing anything; without
-the third_party/postgres submodule it checks those two only.
+server/pg/catalog/views/<folder>/<view>.cpp, and the sqllogic tests that
+check the claims of docs/compatibility/system-table-compatibility.md and
+docs/compatibility/data-type-compatibility.md; the type page must list
+every PostgreSQL type. --check verifies every output is current without
+writing anything; without the third_party/postgres submodule it checks those
+three only.
 """
 
 import argparse
@@ -56,9 +58,11 @@ def dump_builtins(serened, directory):
 def outputs(serened):
     lock = Lock()
     out = {relations.REGISTRY: relations.registry(),
-           str(claims.TEST): claims.output()}
+           str(claims.TEST): claims.output(),
+           str(claims.TYPE_TEST): claims.type_output()}
     if source.available():
         gen = Generator(lock)
+        claims.check_types(gen)
         constants, types, procs = builtins.generate(gen)
         if serened:
             with tempfile.TemporaryDirectory() as directory:

@@ -103,12 +103,12 @@
                 "active_pid" int4,
                 "xmin" xid,
                 "catalog_xmin" xid,
-                "restart_lsn" text,
-                "confirmed_flush_lsn" text,
+                "restart_lsn" pg_lsn,
+                "confirmed_flush_lsn" pg_lsn,
                 "wal_status" text,
                 "safe_wal_size" int8,
                 "two_phase" bool,
-                "two_phase_at" text,
+                "two_phase_at" pg_lsn,
                 "inactive_since" timestamptz,
                 "conflicting" bool,
                 "invalidation_reason" text,
@@ -116,7 +116,7 @@
                 "synced" bool)
   LANGUAGE SQL
   BEGIN ATOMIC
-    SELECT NULL::name, NULL::name, NULL::text, NULL::oid, NULL::bool, NULL::bool, NULL::int4, NULL::xid, NULL::xid, NULL::text, NULL::text, NULL::text, NULL::int8, NULL::bool, NULL::text, NULL::timestamptz, NULL::bool, NULL::text, NULL::bool, NULL::bool WHERE false;
+    SELECT NULL::name, NULL::name, NULL::text, NULL::oid, NULL::bool, NULL::bool, NULL::int4, NULL::xid, NULL::xid, NULL::pg_lsn, NULL::pg_lsn, NULL::text, NULL::int8, NULL::bool, NULL::pg_lsn, NULL::timestamptz, NULL::bool, NULL::text, NULL::bool, NULL::bool WHERE false;
   END;)"},
 {"pg_catalog", "pg_get_shmem_allocations",
  R"(()
@@ -199,7 +199,7 @@
     SELECT NULL::text, NULL::oid, NULL::oid, NULL::int4, NULL::int2, NULL::text, NULL::xid, NULL::oid, NULL::oid, NULL::int2, NULL::text, NULL::int4, NULL::text, NULL::bool, NULL::bool, NULL::timestamptz WHERE false;
   END;)"},
 {"pg_catalog", "pg_mcv_list_items",
- R"(("mcv_list" text)
+ R"(("mcv_list" pg_mcv_list)
   RETURNS TABLE("index" int4,
                 "values" text[],
                 "nulls" bool[],
@@ -282,11 +282,11 @@
  R"(()
   RETURNS TABLE("local_id" oid,
                 "external_id" text,
-                "remote_lsn" text,
-                "local_lsn" text)
+                "remote_lsn" pg_lsn,
+                "local_lsn" pg_lsn)
   LANGUAGE SQL
   BEGIN ATOMIC
-    SELECT NULL::oid, NULL::text, NULL::text, NULL::text WHERE false;
+    SELECT NULL::oid, NULL::text, NULL::pg_lsn, NULL::pg_lsn WHERE false;
   END;)"},
 {"pg_catalog", "pg_stat_get_activity",
  R"(("pid" int4)
@@ -446,15 +446,15 @@
                 "relid" oid,
                 "pid" int4,
                 "leader_pid" int4,
-                "received_lsn" text,
+                "received_lsn" pg_lsn,
                 "last_msg_send_time" timestamptz,
                 "last_msg_receipt_time" timestamptz,
-                "latest_end_lsn" text,
+                "latest_end_lsn" pg_lsn,
                 "latest_end_time" timestamptz,
                 "worker_type" text)
   LANGUAGE SQL
   BEGIN ATOMIC
-    SELECT NULL::oid, NULL::oid, NULL::int4, NULL::int4, NULL::text, NULL::timestamptz, NULL::timestamptz, NULL::text, NULL::timestamptz, NULL::text WHERE false;
+    SELECT NULL::oid, NULL::oid, NULL::int4, NULL::int4, NULL::pg_lsn, NULL::timestamptz, NULL::timestamptz, NULL::pg_lsn, NULL::timestamptz, NULL::text WHERE false;
   END;)"},
 {"pg_catalog", "pg_stat_get_subscription_stats",
  R"(("subid" oid)
@@ -488,14 +488,14 @@
  R"(()
   RETURNS TABLE("pid" int4,
                 "status" text,
-                "receive_start_lsn" text,
+                "receive_start_lsn" pg_lsn,
                 "receive_start_tli" int4,
-                "written_lsn" text,
-                "flushed_lsn" text,
+                "written_lsn" pg_lsn,
+                "flushed_lsn" pg_lsn,
                 "received_tli" int4,
                 "last_msg_send_time" timestamptz,
                 "last_msg_receipt_time" timestamptz,
-                "latest_end_lsn" text,
+                "latest_end_lsn" pg_lsn,
                 "latest_end_time" timestamptz,
                 "slot_name" text,
                 "sender_host" text,
@@ -503,16 +503,16 @@
                 "conninfo" text)
   LANGUAGE SQL
   BEGIN ATOMIC
-    SELECT NULL::int4, NULL::text, NULL::text, NULL::int4, NULL::text, NULL::text, NULL::int4, NULL::timestamptz, NULL::timestamptz, NULL::text, NULL::timestamptz, NULL::text, NULL::text, NULL::int4, NULL::text WHERE false;
+    SELECT NULL::int4, NULL::text, NULL::pg_lsn, NULL::int4, NULL::pg_lsn, NULL::pg_lsn, NULL::int4, NULL::timestamptz, NULL::timestamptz, NULL::pg_lsn, NULL::timestamptz, NULL::text, NULL::text, NULL::int4, NULL::text WHERE false;
   END;)"},
 {"pg_catalog", "pg_stat_get_wal_senders",
  R"(()
   RETURNS TABLE("pid" int4,
                 "state" text,
-                "sent_lsn" text,
-                "write_lsn" text,
-                "flush_lsn" text,
-                "replay_lsn" text,
+                "sent_lsn" pg_lsn,
+                "write_lsn" pg_lsn,
+                "flush_lsn" pg_lsn,
+                "replay_lsn" pg_lsn,
                 "write_lag" interval,
                 "flush_lag" interval,
                 "replay_lag" interval,
@@ -521,7 +521,7 @@
                 "reply_time" timestamptz)
   LANGUAGE SQL
   BEGIN ATOMIC
-    SELECT NULL::int4, NULL::text, NULL::text, NULL::text, NULL::text, NULL::text, NULL::interval, NULL::interval, NULL::interval, NULL::int4, NULL::text, NULL::timestamptz WHERE false;
+    SELECT NULL::int4, NULL::text, NULL::pg_lsn, NULL::pg_lsn, NULL::pg_lsn, NULL::pg_lsn, NULL::interval, NULL::interval, NULL::interval, NULL::int4, NULL::text, NULL::timestamptz WHERE false;
   END;)"},
 {"pg_catalog", "pg_timezone_abbrevs_abbrevs",
  R"(()

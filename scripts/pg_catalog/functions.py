@@ -1,6 +1,6 @@
 import re
 
-from . import builtins, config
+from . import builtins
 from .common import array, camel, oid
 
 PG_CATALOG = '11'
@@ -42,10 +42,6 @@ def generate(gen, constants, all_types, bodies):
          row['proname'] in called),
         key=lambda row: (row['proname'], int(row['oid'])))]
 
-    def typed(oid):
-        typname = names[oid]
-        return config.STUB_TYPES.get(typname, typname)
-
     out, scalars = [], []
     for name, argnames, modes, types, rettype, retset, volatility in rows:
         modes = modes or ['i'] * len(types)
@@ -63,16 +59,16 @@ def generate(gen, constants, all_types, bodies):
                            f'{STABILITIES[volatility]}}},')
             continue
         if 'v' in modes:
-            select = ', '.join(f'NULL::{typed(types[i])} AS "{argnames[i]}"'
+            select = ', '.join(f'NULL::{names[types[i]]} AS "{argnames[i]}"'
                                for i in columns)
             variadic = ', '.join(argnames[i] for i in inputs)
             out.append(f'{{"pg_catalog", "{name}",\n R"(({variadic}) '
                        f'AS TABLE SELECT {select} WHERE false)"}},')
             continue
-        args = ', '.join(f'"{argnames[i]}" {typed(types[i])}' for i in inputs)
+        args = ', '.join(f'"{argnames[i]}" {names[types[i]]}' for i in inputs)
         returns = ',\n                '.join(
-            f'"{argnames[i]}" {typed(types[i])}' for i in columns)
-        nulls = ', '.join(f'NULL::{typed(types[i])}' for i in columns)
+            f'"{argnames[i]}" {names[types[i]]}' for i in columns)
+        nulls = ', '.join(f'NULL::{names[types[i]]}' for i in columns)
         out.append(f'{{"pg_catalog", "{name}",\n R"(({args})\n'
                    f'  RETURNS TABLE({returns})\n'
                    f'  LANGUAGE SQL\n'

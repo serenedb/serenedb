@@ -2399,9 +2399,9 @@ pg_catalog	pg_prepared_statements	parameter_types	bigint[]	f
 pg_catalog	pg_prepared_statements	result_types	bigint[]	f
 pg_catalog	pg_replication_origin_status	remote_lsn	text	f
 pg_catalog	pg_replication_origin_status	local_lsn	text	f
-pg_catalog	pg_replication_slots	restart_lsn	text	f
-pg_catalog	pg_replication_slots	confirmed_flush_lsn	text	f
-pg_catalog	pg_replication_slots	two_phase_at	text	f
+pg_catalog	pg_replication_slots	restart_lsn	pg_lsn	f
+pg_catalog	pg_replication_slots	confirmed_flush_lsn	pg_lsn	f
+pg_catalog	pg_replication_slots	two_phase_at	pg_lsn	f
 pg_catalog	pg_stat_io	read_bytes	numeric(18,3)	f
 pg_catalog	pg_stat_io	write_bytes	numeric(18,3)	f
 pg_catalog	pg_stat_io	extend_bytes	numeric(18,3)	f
@@ -2414,18 +2414,18 @@ pg_catalog	pg_stat_progress_create_table_as	phase	text	f
 pg_catalog	pg_stat_progress_create_table_as	tuples_processed	bigint	f
 pg_catalog	pg_stat_progress_create_table_as	bytes_processed	bigint	f
 pg_catalog	pg_stat_progress_create_table_as	tuples_total	bigint	f
-pg_catalog	pg_stat_replication	sent_lsn	text	f
-pg_catalog	pg_stat_replication	write_lsn	text	f
-pg_catalog	pg_stat_replication	flush_lsn	text	f
-pg_catalog	pg_stat_replication	replay_lsn	text	f
+pg_catalog	pg_stat_replication	sent_lsn	pg_lsn	f
+pg_catalog	pg_stat_replication	write_lsn	pg_lsn	f
+pg_catalog	pg_stat_replication	flush_lsn	pg_lsn	f
+pg_catalog	pg_stat_replication	replay_lsn	pg_lsn	f
 pg_catalog	pg_stat_ssl	client_serial	bigint	f
 pg_catalog	pg_stat_subscription	received_lsn	text	f
 pg_catalog	pg_stat_subscription	latest_end_lsn	text	f
 pg_catalog	pg_stat_wal	wal_bytes	bigint	f
-pg_catalog	pg_stat_wal_receiver	receive_start_lsn	text	f
-pg_catalog	pg_stat_wal_receiver	written_lsn	text	f
-pg_catalog	pg_stat_wal_receiver	flushed_lsn	text	f
-pg_catalog	pg_stat_wal_receiver	latest_end_lsn	text	f
+pg_catalog	pg_stat_wal_receiver	receive_start_lsn	pg_lsn	f
+pg_catalog	pg_stat_wal_receiver	written_lsn	pg_lsn	f
+pg_catalog	pg_stat_wal_receiver	flushed_lsn	pg_lsn	f
+pg_catalog	pg_stat_wal_receiver	latest_end_lsn	pg_lsn	f
 
 
 query

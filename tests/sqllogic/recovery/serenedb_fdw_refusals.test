@@ -43,50 +43,105 @@ statement ok
 CREATE SERVER sfx_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfx_snap/5');
 
 
-statement error attached in read-only mode
+statement error
 INSERT INTO sfx_snap.public.sfx_docs VALUES (3, 'delta');
+----
+db error: ERROR: Cannot execute statement of type "INSERT" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 UPDATE sfx_snap.public.sfx_docs SET body = 'changed' WHERE id = 1;
+----
+db error: ERROR: Cannot execute statement of type "UPDATE" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 DELETE FROM sfx_snap.public.sfx_docs WHERE id = 1;
+----
+db error: ERROR: Cannot execute statement of type "DELETE" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 INSERT INTO sfx_snap.public.sfx_notes VALUES (2, 'delta');
+----
+db error: ERROR: Cannot execute statement of type "INSERT" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 DELETE FROM sfx_snap.public.sfx_notes;
+----
+db error: ERROR: Cannot execute statement of type "DELETE" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 TRUNCATE sfx_snap.public.sfx_notes;
+----
+db error: ERROR: Cannot execute statement of type "DELETE" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 CREATE TABLE sfx_snap.public.sfx_more(a INTEGER);
+----
+db error: ERROR: Cannot execute statement of type "CREATE" on database "sfx_snap" which is attached in read-only mode!
 
-statement error cannot CREATE INDEX on sfx_snap
+
+statement error
 CREATE INDEX sfx_more_idx ON sfx_snap.public.sfx_docs USING inverted(body);
+----
+db error: ERROR: cannot CREATE INDEX on sfx_snap<slt:ignore>
 
-statement error attached in read-only mode
+
+statement error
 DROP TABLE sfx_snap.public.sfx_docs;
+----
+db error: ERROR: Cannot execute statement of type "DROP" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 ALTER TABLE sfx_snap.public.sfx_docs ADD COLUMN extra INTEGER;
+----
+db error: ERROR: Cannot execute statement of type "ALTER" on database "sfx_snap" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 SELECT nextval('sfx_snap.public.sfx_seq');
+----
+db error: ERROR: Cannot execute statement of type "SELECT" on database "sfx_snap" which is attached in read-only mode!
 
-statement error cannot run VACUUM .* on database "sfx_snap": it is attached read-only
+
+system ok
+echo 3,delta > $__TEST_DIR__/sfx_rows.csv
+
+statement error
+COPY sfx_snap.public.sfx_docs FROM '${__TEST_DIR__}/sfx_rows.csv';
+----
+db error: ERROR: Cannot execute statement of type "COPY" on database "sfx_snap" which is attached in read-only mode!
+
+
+statement error
 VACUUM (REFRESH_TABLE) sfx_snap.public.sfx_notes;
+----
+db error: ERROR: cannot run VACUUM (refresh_table) on database "sfx_snap": it is attached read-only
 
-statement error cannot run VACUUM .* on database "sfx_snap": it is attached read-only
+
+statement error
 VACUUM (COMPACT_TABLE) sfx_snap.public.sfx_docs;
+----
+db error: ERROR: cannot run VACUUM (compact_table) on database "sfx_snap": it is attached read-only
 
-statement error cannot run VACUUM .* on database "sfx_snap": it is attached read-only
+
+statement error
 VACUUM (REFRESH_DATABASE) sfx_snap;
+----
+db error: ERROR: cannot run VACUUM (refresh_database) on database "sfx_snap": it is attached read-only
 
-statement error its database is attached read-only
+
+statement error
 REINDEX INDEX sfx_snap.public.sfx_view_idx;
+----
+db error: ERROR: cannot REINDEX "sfx_view_idx": its database is attached read-only
+
+
 
 query
 SELECT id FROM sfx_snap.public.sfx_view_idx WHERE body @@ 'beta';

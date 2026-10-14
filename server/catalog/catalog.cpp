@@ -469,6 +469,18 @@ void SereneDBCatalog::FinalizeLoad(
               "\" of database directory \"", path.string(), "\""));
   }
   auto& storage = GetAttached().GetStorageManager();
+  const auto wal = storage.GetWALPath();
+  const bool wal_entries = std::filesystem::exists(wal, ec) &&
+                           std::filesystem::file_size(wal, ec) != 0;
+  if (wal_entries ||
+      std::filesystem::exists(storage.GetCheckpointWALPath(), ec) ||
+      std::filesystem::exists(storage.GetRecoveryWALPath(), ec)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("database directory \"", path.string(),
+              "\" holds changes made after its last checkpoint: stop its "
+              "server cleanly or run CHECKPOINT before attaching it"));
+  }
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log.string(), oid);
   auto attached = GetAttached().shared_from_this();
   duckdb::MetaTransaction::Get(*context).UseDatabase(attached);

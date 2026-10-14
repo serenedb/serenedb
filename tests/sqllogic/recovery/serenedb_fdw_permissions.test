@@ -24,8 +24,11 @@ CREATE ROLE sfp_reader LOGIN PASSWORD 'sfp_pw';
 
 
 connection sfp_reader user=sfp_reader password=sfp_pw
-statement error permission denied for foreign server sfp_snap
+statement error
 SELECT count(*) FROM sfp_snap.public.sfp_docs;
+----
+db error: ERROR: permission denied for foreign server sfp_snap
+
 
 connection default
 statement ok
@@ -50,8 +53,11 @@ statement ok
 REVOKE USAGE ON FOREIGN SERVER sfp_snap FROM sfp_reader;
 
 connection sfp_reader user=sfp_reader password=sfp_pw
-statement error permission denied for foreign server sfp_snap
+statement error
 SELECT count(*) FROM sfp_snap.public.sfp_docs;
+----
+db error: ERROR: permission denied for foreign server sfp_snap
+
 
 connection default
 statement ok

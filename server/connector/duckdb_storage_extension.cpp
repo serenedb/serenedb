@@ -75,26 +75,14 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  const auto engine_dir = std::filesystem::canonical(
-    catalog::ClusterLayout(catalog::ClusterOf(context).GetAttached())
-      .EngineDir(),
-    ec);
-  if (!ec && path.parent_path() == engine_dir) {
+  if (std::filesystem::equivalent(
+        path.parent_path(),
+        catalog::ClusterLayout(catalog::ClusterOf(context).GetAttached())
+          .EngineDir(),
+        ec)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                     ERR_MSG("cannot attach \"", info.path,
                             "\" read-only: it is a database of this server"));
-  }
-  for (const auto& attached :
-       duckdb::DatabaseManager::Get(context).GetDatabases()) {
-    auto& other = attached->GetCatalog();
-    if (other.GetCatalogType() ==
-          catalog::SereneDBCatalog::kReadOnlyStorageType &&
-        other.Cast<catalog::SereneDBCatalog>().Directory()->Path() == path) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
-                      ERR_MSG("database directory \"", info.path,
-                              "\" is already attached as \"",
-                              attached->GetName().GetIdentifierName(), "\""));
-    }
   }
   auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
   info.path = directory->DataFile();

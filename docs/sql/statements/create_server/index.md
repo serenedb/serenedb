@@ -156,22 +156,27 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 ### What a read-only database does
 
 - **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
-- **It serves the last checkpoint.** The write-ahead log is not replayed, so rows written after the database's last checkpoint are not visible, and neither are search-table rows that had not been refreshed. Stop the server cleanly, or run `CHECKPOINT <database>` while nothing writes to it, before copying the directory.
+- **It serves the last checkpoint.** The write-ahead log is never replayed. A directory that holds changes made after its last checkpoint is refused, because its catalog and its files would not agree without that log. Search-table rows that had not been refreshed are not visible, as on the server that wrote them. Stop the server cleanly, or run `CHECKPOINT <database>` while nothing writes to it, before copying the directory.
 - **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, DDL, `CREATE INDEX` and `nextval` fail as on any read-only attachment, and `VACUUM` and `REINDEX` fail with `it is attached read-only`.
 - **`USAGE` on the server is the only privilege checked.** Owners and grants recorded in the directory belong to the other server's roles and are not used.
 - **`DROP SERVER` only detaches.** It never removes files from the directory.
 
-### Nothing may write the directory
+### Many readers or one writer
 
-A read-only database relies on nothing writing its directory while it is attached: it runs no recovery and checks nothing for consistency. Attach a copy, a disk snapshot or the directory of a stopped server.
+A database file is locked for reading by every read-only attachment and for writing by the server that owns it, so the two exclude each other:
+
+- Any number of read-only attachments, in one server or in several, can read the same directory at once.
+- `CREATE SERVER` fails while a running server has the database open, and that server cannot open the database, so it does not start, while any read-only attachment holds it.
+- A server never attaches its own databases read-only, also through a symbolic link, a hard-linked copy or another mount of the same files.
+
+The lock is the file system's: on a file system without POSIX locks nothing detects a running server, so attach a copy, a disk snapshot or the directory of a stopped server there.
 
 `CREATE SERVER` refuses a directory:
 
-- that a running server holds open — its database file is locked,
+- that holds changes made after its last checkpoint,
+- whose catalog log does not match its database file, such as a `catalog.wal` copied from another server or at another time,
 - whose name is not a database oid, or that has no `catalog.wal` beside it, or
-- that belongs to the attaching server itself, or is already attached by it.
-
-Several SereneDB servers can attach the same directory at once.
+- that belongs to the attaching server itself.
 
 ## Persistence and boot replay
 

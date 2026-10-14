@@ -37,8 +37,11 @@ statement ok
 DETACH dfw_src_${__DATABASE__};
 
 
-statement error option "path" is required for duckdb_fdw
+statement error
 CREATE SERVER dfw_ro_${__DATABASE__} FOREIGN DATA WRAPPER duckdb_fdw;
+----
+db error: ERROR: option "path" is required for duckdb_fdw
+
 
 
 statement ok
@@ -58,22 +61,34 @@ SELECT readonly FROM duckdb_databases() WHERE database_name = 'dfw_ro_${__DATABA
 readonly
 t
 
-statement error attached in read-only mode
+statement error
 INSERT INTO dfw_ro_${__DATABASE__}.main.docs VALUES (3, 'gamma');
+----
+db error: ERROR: Cannot execute statement of type "<slt:ignore>" on database "<slt:ignore>" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 DELETE FROM dfw_ro_${__DATABASE__}.main.docs;
+----
+db error: ERROR: Cannot execute statement of type "<slt:ignore>" on database "<slt:ignore>" which is attached in read-only mode!
 
-statement error attached in read-only mode
+
+statement error
 CREATE TABLE dfw_ro_${__DATABASE__}.main.more(a INTEGER);
+----
+db error: ERROR: Cannot execute statement of type "<slt:ignore>" on database "<slt:ignore>" which is attached in read-only mode!
+
 
 
 statement ok
 CREATE ROLE dfw_reader LOGIN PASSWORD 'dfw_pw';
 
 connection dfw_reader user=dfw_reader password=dfw_pw
-statement error permission denied for foreign server dfw_ro_
+statement error
 SELECT count(*) FROM dfw_ro_${__DATABASE__}.main.docs;
+----
+db error: ERROR: permission denied for foreign server dfw_ro_<slt:ignore>
+
 
 connection default
 statement ok

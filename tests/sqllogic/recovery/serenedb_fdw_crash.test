@@ -1,0 +1,197 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.sfc_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO postgres.public.sfc_docs VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfc_copy && mkdir $__TEST_DIR__/sfc_copy && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfc_copy/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfc_copy/catalog.wal
+
+system ok
+rm -rf $__TEST_DIR__/sfc_gone $__TEST_DIR__/sfc_locked && cp -r $__TEST_DIR__/sfc_copy $__TEST_DIR__/sfc_gone && cp -r $__TEST_DIR__/sfc_copy $__TEST_DIR__/sfc_locked
+
+statement ok
+CREATE TABLE sfc_files AS
+SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfc_copy/**');
+
+
+connection crash_before
+statement ok
+SET sdb_faults = 'crash_before_commit';
+
+connection crash_before
+statement error
+CREATE SERVER sfc_before FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfc_copy/5');
+
+
+connection after_before
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'sfc_before';
+----
+n
+0
+
+connection after_before
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfc_before';
+----
+n
+0
+
+
+connection crash_after
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection crash_after
+statement error
+CREATE SERVER sfc_after FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfc_copy/5');
+
+
+connection after_after
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM sfc_after.public.sfc_docs;
+----
+n
+2
+
+
+connection drop_after
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection drop_after
+statement error
+DROP SERVER sfc_after;
+
+
+connection after_drop
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM pg_foreign_server WHERE srvname = 'sfc_after';
+----
+n
+0
+
+connection after_drop
+query
+SELECT count(*) AS changed FROM (
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfc_copy/**')
+   EXCEPT SELECT * FROM sfc_files)
+  UNION ALL
+  (SELECT * FROM sfc_files
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfc_copy/**')));
+----
+changed
+0
+
+
+connection after_drop
+statement ok
+CREATE SERVER sfc_kept FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfc_copy/5');
+
+connection after_drop
+statement ok
+CREATE SERVER sfc_gone FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfc_gone/5');
+
+connection after_drop
+statement ok
+CREATE SERVER sfc_locked FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfc_locked/5');
+
+system ok
+rm -rf $__TEST_DIR__/sfc_gone && rm -f $__TEST_DIR__/sfc_locked.locked $__TEST_DIR__/sfc_locked.release
+
+system async ok
+python3 -c "import fcntl,os,sys,time; f=open(sys.argv[1],'r+b'); fcntl.lockf(f,fcntl.LOCK_EX); open(sys.argv[2],'w').close(); [time.sleep(0.05) for _ in iter(lambda: os.path.exists(sys.argv[3]),True)]" $__TEST_DIR__/sfc_locked/5/data.db $__TEST_DIR__/sfc_locked.locked $__TEST_DIR__/sfc_locked.release
+
+connection restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection restart
+statement error
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM sfc_kept.public.sfc_docs;
+----
+n
+2
+
+system ok
+test -f $__TEST_DIR__/sfc_locked.locked
+
+connection after_restart
+query
+SELECT srvname FROM pg_foreign_server WHERE srvname LIKE 'sfc_%' ORDER BY srvname;
+----
+srvname
+sfc_gone
+sfc_kept
+sfc_locked
+
+connection after_restart
+query
+SELECT database_name FROM duckdb_databases() WHERE database_name LIKE 'sfc_%' ORDER BY database_name;
+----
+database_name
+sfc_kept
+
+connection after_restart
+statement error
+SELECT count(*) FROM sfc_gone.public.sfc_docs;
+----
+db error: ERROR: Table with name "sfc_gone.public.sfc_docs" does not exist because schema "sfc_gone.public" does not exist.<slt:ignore>
+
+
+connection after_restart
+statement error
+SELECT count(*) FROM sfc_locked.public.sfc_docs;
+----
+db error: ERROR: Table with name "sfc_locked.public.sfc_docs" does not exist because schema "sfc_locked.public" does not exist.<slt:ignore>
+
+
+connection after_restart
+query
+SELECT count(*) AS n FROM postgres.public.sfc_docs;
+----
+n
+2
+
+system ok
+touch $__TEST_DIR__/sfc_locked.release
+
+wait
+
+connection after_restart
+statement ok
+DROP SERVER sfc_gone;
+
+connection after_restart
+statement ok
+DROP SERVER sfc_locked;
+
+connection after_restart
+statement ok
+CREATE SERVER sfc_locked FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfc_locked/5');
+
+connection after_restart
+query
+SELECT count(*) AS n FROM sfc_locked.public.sfc_docs;
+----
+n
+2
+
+connection after_restart
+statement ok
+DROP SERVER sfc_locked;
+
+connection after_restart
+statement ok
+DROP SERVER sfc_kept;

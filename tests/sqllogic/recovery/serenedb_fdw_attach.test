@@ -13,40 +13,43 @@ statement ok
 INSERT INTO postgres.public.sfa_docs VALUES (2, 'beta');
 
 system ok
-rm -rf $__TEST_DIR__/sfa_wal && mkdir $__TEST_DIR__/sfa_wal && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_wal/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_wal/catalog.wal
-
-query
-SELECT size > 0 AS has_entries FROM read_blob('${__TEST_DIR__}/sfa_wal/5/data.db.wal');
-----
-has_entries
-t
+rm -rf $__TEST_DIR__/sfa_dirty && mkdir $__TEST_DIR__/sfa_dirty && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_dirty/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_dirty/catalog.wal
 
 statement ok
 CREATE TABLE sfa_files AS
-SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_wal/**');
+SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_dirty/**');
 
-statement ok
-CREATE SERVER sfa_wal FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_wal/5');
-
-query
-SELECT id, body FROM sfa_wal.public.sfa_docs ORDER BY id;
+statement error
+CREATE SERVER sfa_dirty FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_dirty/5');
 ----
-id	body
-1	alpha
+db error: ERROR: database directory "<slt:ignore>" holds changes made after its last checkpoint: stop its server cleanly or run CHECKPOINT before attaching it
 
-statement ok
-DROP SERVER sfa_wal;
 
 query
 SELECT count(*) AS changed FROM (
-  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_wal/**')
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_dirty/**')
    EXCEPT SELECT * FROM sfa_files)
   UNION ALL
   (SELECT * FROM sfa_files
-   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_wal/**')));
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_dirty/**')));
 ----
 changed
 0
+
+
+statement ok
+CHECKPOINT postgres;
+
+statement ok
+ALTER TABLE postgres.public.sfa_docs ADD COLUMN extra INTEGER DEFAULT 7;
+
+system ok
+rm -rf $__TEST_DIR__/sfa_altered && mkdir $__TEST_DIR__/sfa_altered && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_altered/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_altered/catalog.wal
+
+statement error
+CREATE SERVER sfa_altered FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_altered/5');
+----
+db error: ERROR: database directory "<slt:ignore>" holds changes made after its last checkpoint: stop its server cleanly or run CHECKPOINT before attaching it
 
 
 statement ok
@@ -59,45 +62,217 @@ statement ok
 CREATE SERVER sfa_new FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new/5');
 
 query
-SELECT id, body FROM sfa_new.public.sfa_docs ORDER BY id;
+SELECT id, body, extra FROM sfa_new.public.sfa_docs ORDER BY id;
 ----
-id	body
-1	alpha
-2	beta
+id	body	extra
+1	alpha	7
+2	beta	7
 
-statement error is already attached as "sfa_new"
+statement ok
 CREATE SERVER sfa_twice FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new/5');
+
+query
+SELECT (SELECT count(*) FROM sfa_new.public.sfa_docs) AS first, (SELECT count(*) FROM sfa_twice.public.sfa_docs) AS second;
+----
+first	second
+2	2
 
 statement ok
 DROP SERVER sfa_new;
 
+query
+SELECT count(*) AS n FROM sfa_twice.public.sfa_docs;
+----
+n
+2
 
-statement error option "path" is required for serenedb_fdw
+statement ok
+DROP SERVER sfa_twice;
+
+
+statement ok
+CREATE TABLE postgres.public.sfa_notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO postgres.public.sfa_notes SELECT i, 'note' FROM range(1, 4) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.sfa_notes;
+
+statement ok
+INSERT INTO postgres.public.sfa_notes SELECT i, 'note' FROM range(4, 6) t(i);
+
+statement ok
+CHECKPOINT postgres;
+
+query
+SELECT count(*) AS n FROM postgres.public.sfa_notes;
+----
+n
+3
+
+system ok
+rm -rf $__TEST_DIR__/sfa_search && mkdir $__TEST_DIR__/sfa_search && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_search/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_search/catalog.wal
+
+statement ok
+CREATE SERVER sfa_search FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_search/5');
+
+query
+SELECT count(*) AS n FROM sfa_search.public.sfa_notes;
+----
+n
+3
+
+statement ok
+DROP SERVER sfa_search;
+
+
+system ok
+cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_old_catalog.wal
+
+statement ok
+CREATE TABLE postgres.public.sfa_later(a INTEGER);
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfa_stale && mkdir $__TEST_DIR__/sfa_stale && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_stale/5 && cp $__TEST_DIR__/sfa_old_catalog.wal $__TEST_DIR__/sfa_stale/catalog.wal
+
+statement error
+CREATE SERVER sfa_stale FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_stale/5');
+----
+db error: ERROR: The catalog of database "sfa_stale" does not match its database file: the file holds table "sfa_later", which the catalog does not define
+
+
+system ok
+rm -rf $__TEST_DIR__/sfa_ahead && mkdir $__TEST_DIR__/sfa_ahead && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_ahead/5
+
+statement ok
+CREATE TABLE postgres.public.sfa_newer(a INTEGER);
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_ahead/catalog.wal
+
+statement error
+CREATE SERVER sfa_ahead FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_ahead/5');
+----
+db error: ERROR: The catalog of database "sfa_ahead" does not match its database file: table "sfa_newer" is not in the file
+
+
+
+statement error
 CREATE SERVER sfa_nopath FOREIGN DATA WRAPPER serenedb_fdw;
+----
+db error: ERROR: option "path" is required for serenedb_fdw
 
-statement error could not open database directory
+
+statement error
 CREATE SERVER sfa_missing FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nowhere');
+----
+db error: ERROR: could not open database directory "<slt:ignore>": No such file or directory
 
-statement error it is a database of this server
+
+statement error
 CREATE SERVER sfa_own FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/5');
+----
+db error: ERROR: cannot attach "<slt:ignore>" read-only: it is a database of this server
 
-statement error a SereneDB database is created with CREATE DATABASE
-CREATE SERVER sfa_rw FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new/5', read_only 'false');
 
 system ok
-rm -rf $__TEST_DIR__/sfa_named && mkdir $__TEST_DIR__/sfa_named && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_named/shop && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_named/catalog.wal
+rm -f $__TEST_DIR__/sfa_own_link && ln -s ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_own_link
 
-statement error its name is not a database oid
+statement error
+CREATE SERVER sfa_own_link FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_own_link');
+----
+db error: ERROR: cannot attach "<slt:ignore>" read-only: it is a database of this server
+
+
+statement error
+CREATE SERVER sfa_rw FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_dirty/5', read_only 'false');
+----
+db error: ERROR: cannot attach "<slt:ignore>" as a SereneDB database: a SereneDB database is created with CREATE DATABASE
+
+
+system ok
+rm -rf $__TEST_DIR__/sfa_named && mkdir $__TEST_DIR__/sfa_named && cp -r $__TEST_DIR__/sfa_new/5 $__TEST_DIR__/sfa_named/shop && cp $__TEST_DIR__/sfa_new/catalog.wal $__TEST_DIR__/sfa_named/catalog.wal
+
+statement error
 CREATE SERVER sfa_named FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_named/shop');
+----
+db error: ERROR: "<slt:ignore>" is not a SereneDB database directory: its name is not a database oid
+
 
 system ok
-rm -rf $__TEST_DIR__/sfa_nolog && mkdir $__TEST_DIR__/sfa_nolog && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_nolog/5
+rm -rf $__TEST_DIR__/sfa_nolog && mkdir $__TEST_DIR__/sfa_nolog && cp -r $__TEST_DIR__/sfa_new/5 $__TEST_DIR__/sfa_nolog/5
 
-statement error could not open the catalog log
+statement error
 CREATE SERVER sfa_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nolog/5');
+----
+db error: ERROR: could not open the catalog log "<slt:ignore>" of database directory "<slt:ignore>"
+
 
 query
 SELECT count(*) AS n FROM duckdb_databases() WHERE database_name LIKE 'sfa_%';
 ----
 n
 0
+
+
+statement ok
+INSERT INTO postgres.public.sfa_docs VALUES (3, 'gamma', 8);
+
+statement ok
+SET debug_checkpoint_abort = 'before_header';
+
+statement error
+CHECKPOINT postgres;
+----
+db error: ERROR: Checkpoint failed for database "postgres". The database has been invalidated. Original error: Checkpoint aborted before header write because of PRAGMA checkpoint_abort flag
+
+
+system ok
+rm -rf $__TEST_DIR__/sfa_aborted && mkdir $__TEST_DIR__/sfa_aborted && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_aborted/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_aborted/catalog.wal
+
+statement error
+CREATE SERVER sfa_aborted FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_aborted/5');
+----
+db error: ERROR: database directory "<slt:ignore>" holds changes made after its last checkpoint: stop its server cleanly or run CHECKPOINT before attaching it
+
+
+connection restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection restart
+statement error
+SELECT 1;
+
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfa_recovered && mkdir $__TEST_DIR__/sfa_recovered && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_recovered/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_recovered/catalog.wal
+
+connection after_restart
+statement ok
+CREATE SERVER sfa_recovered FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_recovered/5');
+
+connection after_restart
+query
+SELECT id, body, extra FROM sfa_recovered.public.sfa_docs ORDER BY id;
+----
+id	body	extra
+1	alpha	7
+2	beta	7
+3	gamma	8
+
+connection after_restart
+statement ok
+DROP SERVER sfa_recovered;

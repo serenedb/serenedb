@@ -56,11 +56,11 @@ a	b	c	d
 2024-02-01	2024-02-29	pg_class	pg_class
 
 
-statement error Parameter expressions within macro's are not supported
+statement error (Parameter expressions within macro's are not supported|there is no parameter \$2)
 CREATE FUNCTION fnp.add_missing(integer) RETURNS integer LANGUAGE sql RETURN $2;
 
 
-statement error does not support the supplied arguments
+statement error (does not support the supplied arguments|function fnp\.next_day\(character varying\) does not exist)
 SELECT fnp.next_day('2024-01-31'::varchar);
 
 
@@ -89,6 +89,29 @@ SELECT fnp.doubled(21) AS a, fnp.plus_one(41) AS b, fnp.as_name()::text AS c, ar
 ----
 a	b	c	d	e
 42	42	abc	1,2	01:02:03
+
+
+statement ok
+CREATE TABLE fnp.named_rows (id integer, v text);
+
+
+statement ok
+INSERT INTO fnp.named_rows VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+
+statement ok
+CREATE FUNCTION fnp.count_named_below(v text) RETURNS bigint LANGUAGE sql AS 'SELECT count(*) FROM fnp.named_rows WHERE named_rows.v < $1';
+
+
+statement ok
+CREATE FUNCTION fnp.count_named_atomic(v text) RETURNS bigint LANGUAGE sql BEGIN ATOMIC SELECT count(*) FROM fnp.named_rows WHERE named_rows.v < $1; END;
+
+
+query
+SELECT fnp.count_named_below('c') AS a, fnp.count_named_atomic('b') AS b;
+----
+a	b
+2	1
 
 
 statement ok

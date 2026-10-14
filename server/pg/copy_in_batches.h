@@ -38,8 +38,9 @@
 
 namespace sdb::pg {
 
-inline constexpr size_t kCopyBatchBytes = 16 << 10;
+inline constexpr size_t kCopyBatchBytes = 64 << 10;
 inline constexpr size_t kCopyBatchesInFlight = 64;
+inline constexpr size_t kCopyWakeBacklog = 4;
 
 struct CopyBatch {
   uint64_t seq = 0;
@@ -86,6 +87,7 @@ class CopyInBatches {
   size_t RetainedBytes() const;
   void Push(std::unique_ptr<CopyBatch> batch, message::Chain released);
   void Release(message::Chain released);
+  void Flush();
   void Finish();
   void Fail(std::exception_ptr error);
   void Abort();
@@ -110,6 +112,8 @@ class CopyInBatches {
   bool Full() const;
   bool TakeReady(size_t max, std::vector<CopyBatch*>& out);
   std::vector<duckdb::InterruptState> TakeOneWaiter()
+    DUCKDB_REQUIRES(_waiters.lock);
+  std::vector<duckdb::InterruptState> TakeWaitersIfQueued()
     DUCKDB_REQUIRES(_waiters.lock);
   void ThrowIfFailed(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
   void WaitForPush(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;

@@ -148,6 +148,7 @@ class CopyFileReader {
       while (!_ended.load(std::memory_order_acquire) && HasRoom()) {
         ReadBatch();
       }
+      _batches.Flush();
     } catch (...) {
       _ended.store(true, std::memory_order_release);
       _batches.Fail(std::current_exception());

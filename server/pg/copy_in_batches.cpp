@@ -48,11 +48,16 @@ bool CopyInBatches::Full() const {
 }
 
 bool CopyInBatches::NeedSpace() {
-  Guard guard{_waiters.lock};
-  if (_aborted || !Full()) {
-    return false;
+  std::vector<duckdb::InterruptState> waiters;
+  {
+    Guard guard{_waiters.lock};
+    if (_aborted || !Full()) {
+      return false;
+    }
+    _space_waiter = true;
+    waiters = TakeWaitersIfQueued();
   }
-  _space_waiter = true;
+  Wake(waiters);
   return true;
 }
 
@@ -78,7 +83,9 @@ void CopyInBatches::Push(std::unique_ptr<CopyBatch> batch,
     }
     ++_pushed;
     ++_outstanding;
-    waiters = TakeOneWaiter();
+    if (_pushed - _taken >= kCopyWakeBacklog) {
+      waiters = TakeOneWaiter();
+    }
   }
   Wake(waiters);
 }
@@ -91,6 +98,15 @@ void CopyInBatches::Release(message::Chain released) {
   if (_pushed != _watermark) {
     _released.emplace_back(_pushed - 1, std::move(released));
   }
+}
+
+void CopyInBatches::Flush() {
+  std::vector<duckdb::InterruptState> waiters;
+  {
+    Guard guard{_waiters.lock};
+    waiters = TakeWaitersIfQueued();
+  }
+  Wake(waiters);
 }
 
 void CopyInBatches::Finish() {
@@ -221,6 +237,13 @@ std::vector<duckdb::InterruptState> CopyInBatches::TakeOneWaiter() {
   }
   waiters.resize(std::min<size_t>(waiters.size(), 1));
   return waiters;
+}
+
+std::vector<duckdb::InterruptState> CopyInBatches::TakeWaitersIfQueued() {
+  if (_taken == _pushed) {
+    return {};
+  }
+  return _waiters.TakeBlockedTasks();
 }
 
 bool CopyInBatches::CanPark(const duckdb::TableFunctionInput& input) {

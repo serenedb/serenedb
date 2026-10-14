@@ -47,6 +47,7 @@ using sdb::pg::CopyBatchBuilder;
 using sdb::pg::CopyBatchFormat;
 using sdb::pg::CopyInBatches;
 using sdb::pg::CopyTake;
+using sdb::pg::kCopyWakeBacklog;
 
 std::string Join(const CopyBatch& batch) {
   std::string out;
@@ -324,17 +325,67 @@ struct BlockingInput {
   duckdb::TableFunctionInput input{nullptr, nullptr, nullptr};
 };
 
-TEST(PgCopyInBatches, EmptyQueueParksTaskUntilPush) {
+TEST(PgCopyInBatches, ParkedTaskWakesOnceBatchesBackUp) {
+  CopyInBatches queue;
+  BlockingInput consumer;
+  std::vector<CopyBatch*> taken;
+  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
+            CopyTake::Blocked);
+  for (size_t i = 0; i < kCopyWakeBacklog; ++i) {
+    queue.Push(MakeBatch(std::to_string(i)), {});
+  }
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
+            CopyTake::Batches);
+  EXPECT_EQ(taken.size(), kCopyWakeBacklog);
+  queue.Finish();
+  EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+  for (auto* batch : taken) {
+    queue.Done(batch->seq);
+  }
+}
+
+TEST(PgCopyInBatches, FinishWakesParkedTaskForFewBatches) {
   CopyInBatches queue;
   BlockingInput consumer;
   std::vector<CopyBatch*> taken;
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
   queue.Push(MakeBatch("0"), {});
+  queue.Finish();
   consumer.signal->Await();
   ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
-  queue.Finish();
   EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
   queue.Done(taken.front()->seq);
+}
+
+TEST(PgCopyInBatches, FlushWakesParkedTaskForFewBatches) {
+  CopyInBatches queue;
+  BlockingInput consumer;
+  std::vector<CopyBatch*> taken;
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
+  queue.Flush();
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  queue.Done(taken.front()->seq);
+  queue.Finish();
+}
+
+TEST(PgCopyInBatches, FullQueueWakesParkedTasks) {
+  CopyInBatches queue{2};
+  BlockingInput consumer;
+  std::vector<CopyBatch*> taken;
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
+  queue.Push(MakeBatch("1"), {});
+  EXPECT_TRUE(queue.NeedSpace());
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, 2, taken), CopyTake::Batches);
+  EXPECT_EQ(taken.size(), 2);
+  for (auto* batch : taken) {
+    queue.Done(batch->seq);
+  }
+  queue.Finish();
 }
 
 TEST(PgCopyInBatches, RetainedBytesCountUntilBatchesAreFreedInOrder) {

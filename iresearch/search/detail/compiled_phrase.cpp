@@ -61,8 +61,9 @@ void AddWordStats(const ByPhraseOptions& phrase, const TermReader& reader,
   }
 }
 
-TermPredicate::ptr PatternOf(const ByPhraseOptions::PhrasePart& part) {
-  return std::visit(
+TermPredicate::ptr PatternOf(const ByPhraseOptions::PhrasePart& part,
+                             bytes_view separator) {
+  auto pattern = std::visit(
     []<typename Part>(const Part& options) -> TermPredicate::ptr {
       if constexpr (std::is_same_v<Part, ByPrefixOptions>) {
         return MakeTermPredicate(
@@ -81,6 +82,13 @@ TermPredicate::ptr PatternOf(const ByPhraseOptions::PhrasePart& part) {
       }
     },
     part);
+  if (!pattern || separator.empty()) {
+    return pattern;
+  }
+  return MakeTermPredicate([separator = bstring{separator},
+                            word = std::move(pattern)](bytes_view term) {
+    return term.find(separator) == bytes_view::npos && word->Accepts(term);
+  });
 }
 
 void LayoutSlop(CompiledPhrase& phrase) {
@@ -101,17 +109,19 @@ void LayoutSlop(CompiledPhrase& phrase) {
     }
     return x;
   };
-  for (const auto& [term, entry] : phrase.accept) {
+  phrase.accept.ForEachMapped([&](const CompiledPhrase::Accept& entry) {
     const auto root = find(entry.slots.front());
     for (size_t i = 1; i < entry.slots.size(); ++i) {
       groups[find(entry.slots[i])] = root;
     }
-  }
+  });
   for (const auto p : phrase.pattern_slots) {
     groups[find(p)] = find(phrase.pattern_slots.front());
-    for (const auto& [term, entry] : phrase.accept) {
-      if (phrase.Plain(term) && slots[p].pattern->Accepts(term)) {
-        groups[find(entry.slots.front())] = find(p);
+    for (const auto& term : phrase.terms) {
+      if (slots[p].pattern->Accepts(term)) {
+        const auto* entry =
+          phrase.accept.Find(ViewCast<char>(bytes_view{term}));
+        groups[find(entry->slots.front())] = find(p);
       }
     }
   }
@@ -146,11 +156,11 @@ void LayoutAutomaton(CompiledPhrase& phrase) {
     slot.bit = uint64_t{1} << bit;
   }
   layout.last = uint64_t{1} << bit;
-  for (auto& [term, entry] : phrase.accept) {
+  phrase.accept.ForEachMapped([&](CompiledPhrase::Accept& entry) {
     for (const auto slot : entry.slots) {
       entry.mask |= phrase.slots[slot].bit;
     }
-  }
+  });
   phrase.automaton = std::move(layout);
 }
 
@@ -255,7 +265,7 @@ bool HasPatternParts(const ByPhraseOptions& phrase) noexcept {
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
                                std::span<const std::vector<bstring>> expanded,
                                std::span<const PhraseWordStat> words)
-  : slop{.max = phrase.slop()}, separator{phrase.word_separator()} {
+  : slop{.max = phrase.slop()} {
   SDB_ASSERT(!expanded.empty() || IsStandalone(phrase));
   const auto n = static_cast<uint32_t>(WordCount(phrase));
   slots.resize(n);
@@ -298,7 +308,8 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
           for (const auto& term : expanded[part]) {
             add(term);
           }
-        } else if (auto pattern = PatternOf(info.part)) {
+        } else if (auto pattern =
+                     PatternOf(info.part, phrase.word_separator())) {
           slots[slot].pattern = std::move(pattern);
           pattern_slots.emplace_back(slot);
         }
@@ -307,9 +318,9 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
     ++slot;
     ++part;
   }
-  accept.reserve(terms.size());
+  accept.Reserve(terms.size());
   for (size_t i = 0; i != terms.size(); ++i) {
-    auto& listed = accept[terms[i]].slots;
+    auto& listed = accept[ViewCast<char>(bytes_view{terms[i]})].slots;
     if (listed.empty() || listed.back() != term_slots[i]) {
       listed.emplace_back(term_slots[i]);
     }
@@ -333,22 +344,20 @@ CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
 
 bool CompiledPhrase::AcceptsTerm(const Slot& slot,
                                  const duckdb::string_t& term) const {
-  const auto view = AsBytesView(term);
   if (slot.pattern) {
-    return Plain(view) && slot.pattern->Accepts(view);
+    return slot.pattern->Accepts(AsBytesView(term));
   }
-  const auto* found = Find(view);
+  const auto* found = accept.Find(term);
   return found && absl::c_linear_search(
                     found->slots, static_cast<uint32_t>(&slot - slots.data()));
 }
 
 uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
-  const auto view = AsBytesView(term);
   uint64_t mask = 0;
-  if (const auto* found = Find(view)) {
+  if (const auto* found = accept.Find(term)) {
     mask = found->mask;
   }
-  ForEachPattern(view, [&](uint32_t slot) { mask |= slots[slot].bit; });
+  ForEachPattern(term, [&](uint32_t slot) { mask |= slots[slot].bit; });
   return mask;
 }
 

@@ -703,10 +703,9 @@ TEST(PhraseCheckTest, duplicate_expanded_terms_list_their_slot_once) {
   const std::vector<std::vector<irs::bstring>> expanded{
     {}, {irs::bstring{Bytes("brown")}, irs::bstring{Bytes("brown")}}};
   const irs::CompiledPhrase compiled{phrase, expanded, {}};
-  ASSERT_EQ(2U, compiled.accept.size());
-  for (const auto& [term, entry] : compiled.accept) {
-    EXPECT_EQ(1U, entry.slots.size());
-  }
+  ASSERT_EQ(2U, compiled.accept.Size());
+  compiled.accept.ForEachMapped(
+    [](const auto& entry) { EXPECT_EQ(1U, entry.slots.size()); });
   EXPECT_EQ(2U, Verify(phrase, "quick brown x quick brown", expanded).freq);
 }
 

@@ -25,15 +25,16 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
+#include "iresearch/analysis/text/dict/string_table.hpp"
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -106,31 +107,22 @@ struct CompiledPhrase {
 
   template<typename Visitor>
   void ForEachSlot(const duckdb::string_t& term, Visitor&& visit) const {
-    const auto view = AsBytesView(term);
-    if (const auto* found = Find(view)) {
+    if (const auto* found = accept.Find(term)) {
       for (const auto slot : found->slots) {
         visit(slot);
       }
     }
-    ForEachPattern(view, visit);
-  }
-
-  const Accept* Find(bytes_view term) const noexcept {
-    const auto it = accept.find(term);
-    return it == accept.end() ? nullptr : &it->second;
-  }
-
-  bool Plain(bytes_view term) const noexcept {
-    return separator.empty() || term.find(separator) == bytes_view::npos;
+    ForEachPattern(term, visit);
   }
 
   template<typename Visitor>
-  void ForEachPattern(bytes_view term, Visitor&& visit) const {
-    if (pattern_slots.empty() || !Plain(term)) {
+  void ForEachPattern(const duckdb::string_t& term, Visitor&& visit) const {
+    if (pattern_slots.empty()) {
       return;
     }
+    const auto view = AsBytesView(term);
     for (const auto slot : pattern_slots) {
-      if (slots[slot].pattern->Accepts(term)) {
+      if (slots[slot].pattern->Accepts(view)) {
         visit(slot);
       }
     }
@@ -139,8 +131,7 @@ struct CompiledPhrase {
   std::vector<Slot> slots;
   std::vector<bstring> terms;
   Slop slop;
-  bstring separator;
-  containers::FlatHashMap<bytes_view, Accept> accept;
+  analysis::dict::StringMap<std::string_view, Accept> accept;
   std::vector<uint32_t> pattern_slots;
   std::optional<Anchor> anchor;
   std::optional<Automaton> automaton;

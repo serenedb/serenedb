@@ -2677,6 +2677,46 @@ TEST(bq_quantizer_test, codes_rank_like_exact) {
   }
 }
 
+TEST(bq_quantizer_test,
+     four_bit_query_ranks_like_eight_bit_on_wide_dimensions) {
+  constexpr uint32_t d = 64;
+  constexpr size_t n = 4000;
+  constexpr size_t nq = 32;
+  auto all = MakeShifted(d, n + nq, 101);
+  for (size_t r = 0; r < n + nq; ++r) {
+    for (uint32_t i = 0; i < d; i += 16) {
+      all[r * d + i] *= 8.f;
+    }
+  }
+  const std::vector<float> points(all.begin(), all.begin() + n * d);
+  for (const uint32_t bits : {1U, 2U}) {
+    for (const VectorMetric metric : kBqMetrics) {
+      const auto f4 =
+        BuildBqCodes(d, BqMode{bits, false, 4, 0}, metric, points, n);
+      const auto f8 =
+        BuildBqCodes(d, BqMode{bits, false, 8, 0}, metric, points, n);
+      double recall4 = 0;
+      double recall8 = 0;
+      for (size_t qi = 0; qi < nq; ++qi) {
+        const std::span<const float> q{all.data() + (n + qi) * d, d};
+        std::vector<float> want(n);
+        for (size_t i = 0; i < n; ++i) {
+          want[i] = ExactScore(metric, q.data(), points.data() + i * d, d);
+        }
+        std::vector<score_t> got(n);
+        MakeKeyedReader(f4, q, nullptr)
+          ->ComputeBlock(f4.codes, kNoPrune, got.data());
+        recall4 += RecallInPool(want, got, 10, 40);
+        MakeKeyedReader(f8, q, nullptr)
+          ->ComputeBlock(f8.codes, kNoPrune, got.data());
+        recall8 += RecallInPool(want, got, 10, 40);
+      }
+      EXPECT_GE(recall4 / nq, recall8 / nq - 0.02)
+        << "bq" << bits << " metric " << static_cast<int>(metric);
+    }
+  }
+}
+
 TEST(bq_quantizer_test, scalar_query_estimates_the_distance) {
   constexpr uint32_t d = 48;
   constexpr size_t n = 1500;

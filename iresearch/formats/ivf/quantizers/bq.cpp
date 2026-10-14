@@ -57,6 +57,9 @@ constexpr size_t kBqCells = 4;
 constexpr size_t kBqSampleRows = 16384;
 constexpr size_t kBqSampleFloats = size_t{1} << 24;
 constexpr uint32_t kBqLloydIters = 64;
+constexpr int kBqQueryTop = 127;
+constexpr uint32_t kBqQueryBins = 2 * kBqQueryTop + 1;
+constexpr uint32_t kBqMaxQueryLevels = 16;
 constexpr uint64_t kBqSampleSeed = 0x6271b5a3c0ffee11ULL;
 constexpr double kBqUnitNormSlack = 1e-3;
 
@@ -210,6 +213,67 @@ BqLloyd BqLloydCuts(std::vector<float>& col, uint32_t levels) {
     out.means[k] = static_cast<float>(mean[k]);
   }
   return out;
+}
+
+void BqFitQueryLevels(uint32_t levels, std::vector<int8_t>& q0,
+                      std::vector<int8_t>& q1) noexcept {
+  SDB_ASSERT(levels >= 2 && levels <= kBqMaxQueryLevels);
+  std::array<uint32_t, kBqQueryBins> count{};
+  for (const int8_t v : q0) {
+    ++count[v + kBqQueryTop];
+  }
+  for (const int8_t v : q1) {
+    ++count[v + kBqQueryTop];
+  }
+  std::array<double, kBqQueryBins + 1> mass{};
+  for (uint32_t bin = 0; bin < kBqQueryBins; ++bin) {
+    mass[bin + 1] = mass[bin] + std::cbrt(static_cast<double>(count[bin]));
+  }
+  std::array<double, kBqMaxQueryLevels> level{};
+  for (uint32_t c = 0, bin = 0; c < levels; ++c) {
+    const double t = (c + 0.5) / levels * mass[kBqQueryBins];
+    while (bin + 1 < kBqQueryBins && mass[bin + 1] < t) {
+      ++bin;
+    }
+    level[c] = static_cast<double>(bin) - kBqQueryTop;
+    if (c != 0) {
+      level[c] = std::max(level[c], level[c - 1] + 1.0);
+    }
+  }
+  std::array<uint8_t, kBqQueryBins> nearest{};
+  for (uint32_t it = 0; it < kBqLloydIters; ++it) {
+    std::array<double, kBqMaxQueryLevels> sum{};
+    std::array<double, kBqMaxQueryLevels> weight{};
+    for (uint32_t bin = 0, c = 0; bin < kBqQueryBins; ++bin) {
+      const double v = static_cast<double>(bin) - kBqQueryTop;
+      while (c + 1 < levels && level[c + 1] - v < v - level[c]) {
+        ++c;
+      }
+      nearest[bin] = static_cast<uint8_t>(c);
+      sum[c] += count[bin] * v;
+      weight[c] += count[bin];
+    }
+    bool moved = false;
+    for (uint32_t c = 0; c < levels; ++c) {
+      if (weight[c] > 0.0 && sum[c] / weight[c] != level[c]) {
+        level[c] = sum[c] / weight[c];
+        moved = true;
+      }
+    }
+    if (!moved) {
+      break;
+    }
+  }
+  std::array<int8_t, kBqQueryBins> snap{};
+  for (uint32_t bin = 0; bin < kBqQueryBins; ++bin) {
+    snap[bin] = static_cast<int8_t>(std::lround(level[nearest[bin]]));
+  }
+  for (auto& v : q0) {
+    v = snap[v + kBqQueryTop];
+  }
+  for (auto& v : q1) {
+    v = snap[v + kBqQueryTop];
+  }
 }
 
 bool BqSolveNormal3(std::array<std::array<double, 4>, 3>& g,
@@ -569,11 +633,14 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
     for (const float w : _w1) {
       top_w = std::max(top_w, std::fabs(w));
     }
-    const int top = (1 << (_query_bits - 1)) - 1;
-    const float scale = top_w > 0.f ? static_cast<float>(top) / top_w : 0.f;
+    const float scale =
+      top_w > 0.f ? static_cast<float>(kBqQueryTop) / top_w : 0.f;
     _inv_scale = scale > 0.f ? 1.f / scale : 0.f;
-    Quantize(_w0, scale, top, _q0);
-    Quantize(_w1, scale, top, _q1);
+    Quantize(_w0, scale, _q0);
+    Quantize(_w1, scale, _q1);
+    if (_query_bits < 8) {
+      BqFitQueryLevels(1U << _query_bits, _q0, _q1);
+    }
   }
 
   std::unique_ptr<QuantizerReader> MakeReader() const final;
@@ -601,11 +668,12 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
   }
 
  private:
-  static void Quantize(std::span<const float> w, float scale, int top,
+  static void Quantize(std::span<const float> w, float scale,
                        std::vector<int8_t>& q) noexcept {
+    constexpr auto kTop = static_cast<float>(kBqQueryTop);
     for (size_t k = 0; k < w.size(); ++k) {
       q[k] = static_cast<int8_t>(
-        std::clamp<long>(std::lround(w[k] * scale), -top, top));
+        std::clamp(std::nearbyint(w[k] * scale), -kTop, kTop));
     }
   }
 

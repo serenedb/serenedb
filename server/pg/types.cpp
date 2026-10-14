@@ -106,12 +106,44 @@ constexpr PgTypeMapping kMappings[] = {
 };
 // clang-format on
 
-const PgTypeMapping* FindMapping(int32_t oid) {
-  const auto* it = absl::c_find_if(
-    kMappings,
-    [&](const PgTypeMapping& mapping) { return mapping.oid == oid; });
-  return it == std::end(kMappings) ? nullptr : it;
+constexpr auto kMappingIndex = OidIndex<uint8_t>(kMappings);
+
+constexpr const PgTypeMapping* FindMapping(int32_t oid) {
+  return FindByOid(kMappings, kMappingIndex, oid);
 }
+
+static_assert(absl::c_all_of(kMappings,
+                             [](const PgTypeMapping& mapping) -> bool {
+                               return FindByOid(kBuiltinTypes, mapping.oid);
+                             }));
+
+static_assert(absl::c_all_of(kPgTypes, [](const BuiltinType& type) {
+  return type.IsArray() || type.type == 'p' || FindMapping(type.oid);
+}));
+
+struct BuiltinRef {
+  consteval BuiltinRef(int32_t oid)
+    : BuiltinRef{*FindByOid(kBuiltinTypes, oid)} {
+    if (const auto& type = *FindByOid(kBuiltinTypes, oid); type.type == 'd') {
+      const auto& base = *FindByOid(kBuiltinTypes, type.basetype);
+      wire = static_cast<uint32_t>(base.oid);
+      wire_len = base.len;
+    }
+  }
+
+  constexpr BuiltinRef(const BuiltinType& type)
+    : oid{static_cast<uint32_t>(type.oid)},
+      array{static_cast<uint32_t>(type.array)},
+      len{type.len},
+      wire{oid},
+      wire_len{len} {}
+
+  uint32_t oid;
+  uint32_t array;
+  int16_t len;
+  uint32_t wire;
+  int16_t wire_len;
+};
 
 std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   const auto ext = type.GetExtensionInfo();
@@ -126,17 +158,18 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   return it->second.GetValue<uint64_t>();
 }
 
-PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
+PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
+                      bool wire) {
   int32_t typmod = -1;
-  const auto make = [&](int32_t oid) -> PgTypeInfo {
-    const auto& builtin = *FindBuiltinType(oid);
+  const auto make = [&](BuiltinRef builtin) -> PgTypeInfo {
     if (!in_array) {
-      return {static_cast<uint32_t>(builtin.oid), builtin.len, typmod};
+      return wire ? PgTypeInfo{builtin.wire, builtin.wire_len, typmod}
+                  : PgTypeInfo{builtin.oid, builtin.len, typmod};
     }
     if (builtin.array == 0) {
-      return Logical2Pg(duckdb::LogicalType{type.id()}, true);
+      return Logical2Pg(duckdb::LogicalType{type.id()}, true, wire);
     }
-    return {static_cast<uint32_t>(builtin.array), -1, typmod};
+    return {builtin.array, -1, typmod};
   };
   switch (type.id()) {
     using enum TypeId;
@@ -252,6 +285,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
     case UUID:
       return make(kUuid);
     case VARCHAR:
+      if (!type.HasAlias()) {
+        return make(kText);
+      }
       if (type.IsJSONType()) {
         return make(kJson);
       }
@@ -307,10 +343,12 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
         return {static_cast<uint32_t>(in_array ? TypeArrayOid(*oid) : *oid), -1,
                 -1};
       }
-      for (const auto& schema : kSystemNamespaces) {
-        if (const auto* row = FindBuiltinType(schema.oid, type.GetAlias());
-            row && row->relid != 0) {
-          return make(row->oid);
+      if (type.HasAlias()) {
+        for (const auto& schema : kSystemNamespaces) {
+          if (const auto* row = FindBuiltinType(schema.oid, type.GetAlias());
+              row && row->relid != 0) {
+            return make(*row);
+          }
         }
       }
       return make(kRecord);
@@ -323,9 +361,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       if (IsOidvector(type)) {
         return make(kOidvector);
       }
-      return Logical2Pg(duckdb::ListType::GetChildType(type), true);
+      return Logical2Pg(duckdb::ListType::GetChildType(type), true, wire);
     case ARRAY:
-      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true);
+      return Logical2Pg(duckdb::ArrayType::GetChildType(type), true, wire);
     case SQLNULL:
       if (IsVoid(type)) {
         return make(kVoid);
@@ -357,24 +395,18 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
 }  // namespace
 
 PgTypeInfo WireType(const duckdb::LogicalType& type) {
-  auto info = Logical2Pg(type, false);
+  const auto info = Logical2Pg(type, false, true);
   if (info.oid == kAclitem) {
     return {kText, -1, -1};
   }
   if (info.oid == kAclitemArray) {
     return {kTextArray, -1, -1};
   }
-  if (const auto* domain = FindBuiltinType(info.oid);
-      domain && domain->type == 'd') {
-    const auto& base = *FindBuiltinType(domain->basetype);
-    info.oid = base.oid;
-    info.typlen = base.len;
-  }
   return info;
 }
 
 uint32_t Type2Oid(const duckdb::LogicalType& type) {
-  return Logical2Pg(type, false).oid;
+  return Logical2Pg(type, false, false).oid;
 }
 
 duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
@@ -428,7 +460,7 @@ duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
 }
 
 ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
-  const auto info = Logical2Pg(type, false);
+  const auto info = Logical2Pg(type, false, false);
   int16_t ndims = 0;
   const auto* element = &type;
   while ((element->id() == TypeId::LIST || element->id() == TypeId::ARRAY) &&

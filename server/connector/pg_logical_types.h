@@ -39,7 +39,7 @@ namespace sdb::pg {
   inline constexpr std::string_view k##Name##Alias = alias_str;   \
   inline bool Is##Name(const duckdb::LogicalType& type) {         \
     return type.id() == duckdb::LogicalTypeId::BaseTypeId &&      \
-           type.GetAlias() == alias_str;                          \
+           type.GetTypeInfo().alias == alias_str;                 \
   }                                                               \
   inline duckdb::LogicalType UPPER() {                            \
     return duckdb::LogicalType(duckdb::LogicalTypeId::BaseTypeId) \
@@ -124,12 +124,12 @@ inline constexpr std::string_view kOidvectorAlias = "oidvector";
 
 inline bool IsInt2vector(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::LIST &&
-         type.GetAlias() == kInt2vectorAlias;
+         type.GetTypeInfo().alias == kInt2vectorAlias;
 }
 
 inline bool IsOidvector(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::LIST &&
-         type.GetAlias() == kOidvectorAlias;
+         type.GetTypeInfo().alias == kOidvectorAlias;
 }
 
 inline duckdb::LogicalType INT2VECTOR() {

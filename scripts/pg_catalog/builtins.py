@@ -46,7 +46,7 @@ MAPPINGS_TABLE = re.compile(r'kMappings\[\] = \{\n(.*?)\n\};', re.S)
 MAPPED_TYPE = re.compile(r'^\s*\{k(\w+),', re.M)
 
 SDB_TYPES = os.path.join(REPO_ROOT, 'server', 'pg', 'catalog', 'builtin',
-                         'builtin.cpp')
+                         'builtin.h')
 SDB_TYPE = re.compile(r'Sdb(?:Type|Array)\(\s*k\w+,\s*"(\w+)"')
 
 

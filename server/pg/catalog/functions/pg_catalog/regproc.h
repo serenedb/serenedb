@@ -69,6 +69,8 @@ template<RegKind Kind>
 std::optional<uint64_t> RegIn(const Session& session, std::string_view text,
                               bool missing_ok);
 
+std::optional<uint64_t> SchemaOid(const Session& session,
+                                  std::string_view schema, bool missing_ok);
 uint64_t ResolveRelation(const Session& session,
                          const duckdb::QualifiedName& name);
 OutText RelationName(const Session& session, std::string_view schema,

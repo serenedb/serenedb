@@ -81,7 +81,6 @@ std::string QualifiedOutName(std::string_view schema, std::string_view name) {
 
 namespace {
 
-constexpr size_t kMaxIdentifierLength = 63;
 constexpr size_t kMaxFunctionArgs = 100;
 constexpr int32_t kMaxAttrSize = 10 * 1024 * 1024;
 constexpr int32_t kMaxNumericPrecision = 1000;
@@ -129,6 +128,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
   return entry;
 }
 
+}  // namespace
+
 std::optional<uint64_t> SchemaOid(const Session& session,
                                   std::string_view schema, bool missing_ok) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, schema)) {
@@ -141,6 +142,8 @@ std::optional<uint64_t> SchemaOid(const Session& session,
                             ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                             ERR_MSG("schema \"", schema, "\" does not exist")));
 }
+
+namespace {
 
 IRS_NO_INLINE uint64_t UserRelationOid(const Session& session,
                                        duckdb::SchemaCatalogEntry& schema,
@@ -215,24 +218,6 @@ bool IsWordStart(char c) {
          static_cast<unsigned char>(c) >= 0x80;
 }
 
-void TruncateIdentifier(std::string& name) {
-  if (name.size() <= kMaxIdentifierLength) {
-    return;
-  }
-  auto length = kMaxIdentifierLength;
-  while (length > 0 &&
-         (static_cast<unsigned char>(name[length]) & 0xC0) == 0x80) {
-    --length;
-  }
-  name.resize(length);
-}
-
-std::string DowncaseIdentifier(std::string_view ident) {
-  auto name = absl::AsciiStrToLower(ident);
-  TruncateIdentifier(name);
-  return name;
-}
-
 std::optional<NameList> SplitNames(std::string_view text) {
   NameList names;
   size_t pos = 0;
@@ -252,7 +237,6 @@ std::optional<NameList> SplitNames(std::string_view text) {
           name.empty()) {
         return std::nullopt;
       }
-      TruncateIdentifier(name);
     } else {
       const auto start = pos;
       while (pos < text.size() && text[pos] != '.' &&
@@ -262,7 +246,7 @@ std::optional<NameList> SplitNames(std::string_view text) {
       if (start == pos) {
         return std::nullopt;
       }
-      name = DowncaseIdentifier(text.substr(start, pos - start));
+      name = absl::AsciiStrToLower(text.substr(start, pos - start));
     }
     names.emplace_back(std::move(name));
     skip_spaces();
@@ -359,7 +343,6 @@ std::vector<Token> Tokenize(std::string_view text) {
           ERR_CODE(ERRCODE_SYNTAX_ERROR),
           ERR_MSG("zero-length delimited identifier at or near \"\"\"\""));
       }
-      TruncateIdentifier(name);
       tokens.emplace_back(
         Token{.kind = TokenKind::Quoted, .text = std::move(name)});
     } else if (IsWordStart(c)) {
@@ -371,7 +354,7 @@ std::vector<Token> Tokenize(std::string_view text) {
       }
       tokens.emplace_back(
         Token{.kind = TokenKind::Word,
-              .text = DowncaseIdentifier(text.substr(start, pos - start))});
+              .text = absl::AsciiStrToLower(text.substr(start, pos - start))});
     } else if (absl::ascii_isdigit(c) || (c == '-' && pos + 1 < text.size() &&
                                           absl::ascii_isdigit(text[pos + 1]))) {
       const auto start = pos++;
@@ -920,6 +903,7 @@ std::string_view SqlTypeName(int32_t oid) {
   static constexpr std::pair<int32_t, std::string_view> kNames[] = {
     {kBool, "boolean"},
     {kChar, "\"char\""},
+    {kAny, "\"any\""},
     {kInt8, "bigint"},
     {kInt2, "smallint"},
     {kInt4, "integer"},
@@ -1558,8 +1542,14 @@ OutText FormatTypeOut(const Session& session, uint64_t oid,
         return absl::StrCat(sql, "(", *typmod, ")");
       case kBpchar:
       case kVarchar:
+        if (*typmod <= kVarHdrSz) {
+          return sql;
+        }
         return absl::StrCat(sql, "(", *typmod - kVarHdrSz, ")");
       case kNumeric:
+        if (*typmod < kVarHdrSz) {
+          return sql;
+        }
         return absl::StrCat(sql, "(", NumericTypmodPrecision(*typmod), ",",
                             NumericTypmodScale(*typmod), ")");
       case kTime:
@@ -1632,7 +1622,7 @@ IRS_NO_INLINE std::string_view CacheRegOut(const Session& session, uint64_t oid,
 template<RegKind Kind>
 std::string_view RegOut(const Session& session, uint64_t oid) {
   if (oid == kInvalidOid) {
-    return "-";
+    return Kind == RegKind::Oper || Kind == RegKind::Operator ? "0" : "-";
   }
   const auto kind = std::to_underlying(Kind);
   auto& recent = session.reg_out_recent[((oid ^ (uint64_t{kind} << 56)) *
@@ -1648,7 +1638,7 @@ template<RegKind Kind>
 std::optional<uint64_t> RegIn(const Session& session, std::string_view text,
                               bool missing_ok) {
   using enum RegKind;
-  if (text == "-") {
+  if (text == "-" && Kind != Oper && Kind != Operator) {
     return kInvalidOid;
   }
   if (const auto oid = ParseOid(text)) {

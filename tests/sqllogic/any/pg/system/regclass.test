@@ -199,3 +199,18 @@ DROP SCHEMA regclass_first CASCADE
 
 statement ok
 DROP SCHEMA regclass_second CASCADE
+
+
+statement ok
+CREATE TABLE regclass_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int)
+
+
+query
+SELECT to_regclass('regclass_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') IS NOT NULL AS found
+----
+found
+t
+
+
+statement ok
+DROP TABLE regclass_long_name_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

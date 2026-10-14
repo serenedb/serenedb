@@ -186,12 +186,12 @@ bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   auto& part = phrase.mutable_options()->begin()->part;
-  if (!std::holds_alternative<ByTermOptions>(part) &&
-      ScoreDependsOnTerms(phrase, ctx)) {
+  const bool constant = ScoreIsConstant(phrase, ctx);
+  if (ByPhraseOptions::KindOf(part) != SlotKind::Term && !constant &&
+      !ScoreIsIgnored(phrase, ctx)) {
     return false;
   }
-  auto lowered = PartFilter(phrase.field_id(), std::move(part),
-                            ScoreIsConstant(phrase, ctx));
+  auto lowered = PartFilter(phrase.field_id(), std::move(part), constant);
   lowered->SetBoost(phrase.GetBoost());
   lowered->SetScorer(phrase.GetScorer());
   slot = std::move(lowered);

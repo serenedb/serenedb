@@ -55,19 +55,6 @@ inline const Scorer* ScorerOf(const Filter& node,
   return scorer != nullptr ? scorer : ctx.scorer;
 }
 
-inline bool ScoreDependsOnTerms(const Filter& node,
-                                const OptimizeContext& ctx) noexcept {
-  if (!ctx.scored) {
-    return false;
-  }
-  const auto* const scorer = ScorerOf(node, ctx);
-  if (scorer == nullptr) {
-    return true;
-  }
-  return !IsUnscored(*scorer) &&
-         scorer->type() != irs::Type<ConstantScore>::id();
-}
-
 inline bool ScoreIsIgnored(const Filter& node,
                            const OptimizeContext& ctx) noexcept {
   if (!ctx.scored) {

@@ -164,13 +164,6 @@ bool HasPositions(const SearchColumnInfo& column_info) {
                          column_info.tokenizer.features);
 }
 
-bool HasText(const SearchColumnInfo& column_info) {
-  return column_info.tokenizer.analyzer.get_deleter().tokenizer &&
-         irs::field_limits::valid(column_info.text) &&
-         (column_info.logical_type.IsJSONType() ||
-          !irs::field_limits::valid(column_info.numeric_field_id));
-}
-
 void CheckTokens(const SearchColumnInfo& column_info,
                  duckdb::ClientContext& context, irs::ByPhraseOptions& options,
                  std::optional<irs::ByPhraseOptions> spec, bool words,
@@ -178,7 +171,7 @@ void CheckTokens(const SearchColumnInfo& column_info,
   if (HasPositions(column_info)) {
     return;
   }
-  if (!HasText(column_info)) {
+  if (!MatchesPhrases(column_info)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG(label,
@@ -291,7 +284,11 @@ void EmitPhrase(BoolTarget parent, const FilterContext& ctx,
 }  // namespace
 
 bool MatchesPhrases(const SearchColumnInfo& column_info) {
-  return HasPositions(column_info) || HasText(column_info);
+  return HasPositions(column_info) ||
+         (column_info.tokenizer.analyzer.get_deleter().tokenizer &&
+          irs::field_limits::valid(column_info.text) &&
+          (column_info.logical_type.IsJSONType() ||
+           !irs::field_limits::valid(column_info.numeric_field_id)));
 }
 
 irs::analysis::Tokenizer& PhraseAnalyzer(const FilterContext& ctx,

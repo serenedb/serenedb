@@ -1,12 +1,7 @@
-# regclass returns OID in binary protocol and our test runner can't
-# resolve OIDs back to table names, so we only run with simple protocol
-
-skipif pg-wire-extended
 statement ok
 CREATE TABLE regclass_test_table (id int, name text);
 
 
-skipif pg-wire-extended
 query
 SELECT pg_typeof('regclass_test_table'::regclass);
 ----
@@ -14,7 +9,6 @@ pg_typeof
 regclass
 
 
-skipif pg-wire-extended
 query
 SELECT 'regclass_test_table'::regclass;
 ----
@@ -22,12 +16,10 @@ regclass
 regclass_test_table
 
 
-skipif pg-wire-extended
 statement error
 SELECT 'nonexistent_table'::regclass;
 
 
-skipif pg-wire-extended
 query
 SELECT 'public.regclass_test_table'::regclass;
 ----
@@ -35,7 +27,6 @@ regclass
 regclass_test_table
 
 
-skipif pg-wire-extended
 query
 SELECT 'pg_type'::regclass;
 ----
@@ -43,7 +34,6 @@ regclass
 pg_type
 
 
-skipif pg-wire-extended
 query
 SELECT 'pg_catalog.pg_type'::regclass;
 ----
@@ -51,7 +41,6 @@ regclass
 pg_type
 
 
-skipif pg-wire-extended
 query
 SELECT 'pg_class'::regclass;
 ----
@@ -59,7 +48,6 @@ regclass
 pg_class
 
 
-skipif pg-wire-extended
 query
 SELECT 'regclass_test_table'::regclass <> 0::bigint;
 ----
@@ -67,7 +55,6 @@ SELECT 'regclass_test_table'::regclass <> 0::bigint;
 t
 
 
-skipif pg-wire-extended
 statement ok
 DROP TABLE regclass_test_table;
 

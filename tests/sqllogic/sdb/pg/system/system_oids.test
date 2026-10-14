@@ -148,7 +148,7 @@ abs_int4	lower	upper	length	sqrt	now
 
 
 query
-SELECT oid::regprocedure::text AS oid FROM pg_proc WHERE oid IN (1397, 870, 871, 1317) ORDER BY pg_proc.oid;
+SELECT oid::regprocedure FROM pg_proc WHERE oid IN (1397, 870, 871, 1317) ORDER BY oid;
 ----
 oid
 lower(text)

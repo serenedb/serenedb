@@ -23,6 +23,7 @@
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
@@ -46,6 +47,8 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <duckdb/parser/query_node/select_node.hpp>
+#include <duckdb/parser/query_node/set_operation_node.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -165,6 +168,32 @@ const duckdb::ViewCatalogEntry* UserView(const pg::Session& session,
   return view;
 }
 
+std::string ViewQuery(const duckdb::ViewCatalogEntry& view) {
+  if (view.aliases.empty()) {
+    return view.query->ToString();
+  }
+  auto query = view.query->node->Copy();
+  auto* node = query.get();
+  while (node->type == duckdb::QueryNodeType::SET_OPERATION_NODE) {
+    node = node->Cast<duckdb::SetOperationNode>().children[0].get();
+  }
+  if (node->type == duckdb::QueryNodeType::SELECT_NODE) {
+    auto& targets = node->Cast<duckdb::SelectNode>().select_list;
+    if (absl::c_none_of(targets, [](const auto& target) {
+          return target->GetExpressionType() == duckdb::ExpressionType::STAR;
+        })) {
+      for (size_t i = 0; i < std::min(targets.size(), view.aliases.size());
+           ++i) {
+        if (targets[i]->GetName().GetIdentifierName() !=
+            view.aliases[i].GetIdentifierName()) {
+          targets[i]->SetAlias(view.aliases[i]);
+        }
+      }
+    }
+  }
+  return query->ToString();
+}
+
 Definition ViewDefinition(const pg::Session& session, int64_t oid) {
   if (const auto* system = pg::FindSystemView(oid)) {
     return absl::StrCat(system->info->query->ToString(), ";");
@@ -173,24 +202,24 @@ Definition ViewDefinition(const pg::Session& session, int64_t oid) {
   if (!view) {
     return std::nullopt;
   }
-  return absl::StrCat(view->query->ToString(), ";");
+  return absl::StrCat(ViewQuery(*view), ";");
 }
 
 Definition RuleDefinition(const pg::Session& session, int64_t oid,
                           bool pretty) {
   std::string relation;
-  const duckdb::SelectStatement* query;
+  std::string query;
   if (const auto* system = pg::FindSystemView(oid)) {
     relation = RelationName(session, system->schema, system->name, !pretty);
-    query = system->info->query.get();
+    query = system->info->query->ToString();
   } else if (const auto* view = UserView(session, oid)) {
     relation = RelationName(session, *view, !pretty);
-    query = view->query.get();
+    query = ViewQuery(*view);
   } else {
     return std::nullopt;
   }
   return absl::StrCat("CREATE RULE \"_RETURN\" AS\n    ON SELECT TO ", relation,
-                      " DO INSTEAD  ", query->ToString(), ";");
+                      " DO INSTEAD  ", query, ";");
 }
 
 std::string ForeignKeyDefinition(const pg::Session& session,

@@ -245,6 +245,30 @@ struct TurboQuantInt8Seg {
   alignas(16) std::array<int8_t, 16> c8{};
   alignas(16) std::array<uint8_t, 16> a8{};
 };
+
+float FillInt8Seg(const TurboQuantLayout& lay, const TurboQuantCentroids& tc,
+                  size_t i, TurboQuantInt8Seg& seg) noexcept {
+  const bool uniform = lay.bits_hi == lay.bits_lo;
+  seg.bits = i == 0 ? lay.bits_hi : lay.bits_lo;
+  seg.byte0 = i == 0 ? 0 : lay.m_hi / 2;
+  seg.bytes =
+    uniform ? lay.m1 / 2 : (i == 0 ? lay.m_hi / 2 : (lay.m1 - lay.m_hi) / 2);
+  const float* cent = tc.cent[i];
+  const uint32_t k = 1U << seg.bits;
+  float maxc = 0.f;
+  for (uint32_t c = 0; c < k; ++c) {
+    maxc = std::max(maxc, std::fabs(cent[c]));
+  }
+  const float scale_c = maxc > 0.f ? 127.f / maxc : 0.f;
+  seg.c8.fill(0);
+  seg.a8.fill(0);
+  for (uint32_t c = 0; c < k; ++c) {
+    const auto v = static_cast<int8_t>(std::lround(cent[c] * scale_c));
+    seg.c8[c] = v;
+    seg.a8[c] = static_cast<uint8_t>(v < 0 ? -v : v);
+  }
+  return scale_c;
+}
 #ifdef __AVX2__
 int32_t TurboQuantDot1(const uint8_t* code, const TurboQuantInt8Seg& seg,
                        const int8_t* q) noexcept {
@@ -323,6 +347,52 @@ int32_t TurboQuantDot8(const uint8_t* code, const TurboQuantInt8Seg& seg,
     for (uint32_t t = 0; t < kPlanes; ++t) {
       sum += int32_t{q[size_t{t} * bytes + p]} *
              int32_t{seg.c8[(b >> (t * Bits)) & kMask]};
+    }
+  }
+  return sum;
+}
+
+template<uint32_t Bits>
+int32_t TurboQuantPairDot8(const uint8_t* a, const uint8_t* b,
+                           const TurboQuantInt8Seg& seg) noexcept {
+  constexpr uint32_t kPlanes = 8 / Bits;
+  constexpr auto kMask = static_cast<uint8_t>((1U << Bits) - 1);
+  const uint32_t bytes = seg.bytes;
+  const __m256i tc = _mm256_broadcastsi128_si256(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(seg.c8.data())));
+  const __m256i ta = _mm256_broadcastsi128_si256(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(seg.a8.data())));
+  const __m256i mask = _mm256_set1_epi8(static_cast<char>(kMask));
+  const __m256i ones = _mm256_set1_epi16(1);
+  __m256i acc = _mm256_setzero_si256();
+  uint32_t p = 0;
+  for (; p + 32 <= bytes; p += 32) {
+    const __m256i va =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(a + p));
+    const __m256i vb =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(b + p));
+    for (uint32_t t = 0; t < kPlanes; ++t) {
+      const auto shift = static_cast<int>(t * Bits);
+      const __m256i ia = _mm256_and_si256(_mm256_srli_epi16(va, shift), mask);
+      const __m256i ib = _mm256_and_si256(_mm256_srli_epi16(vb, shift), mask);
+      const __m256i ca = _mm256_shuffle_epi8(tc, ia);
+      const __m256i cb = _mm256_shuffle_epi8(tc, ib);
+      const __m256i ab = _mm256_shuffle_epi8(ta, ib);
+      acc = _mm256_add_epi32(
+        acc, _mm256_madd_epi16(
+               _mm256_maddubs_epi16(ab, _mm256_sign_epi8(ca, cb)), ones));
+    }
+  }
+  const __m128i h = _mm_add_epi32(_mm256_castsi256_si128(acc),
+                                  _mm256_extracti128_si256(acc, 1));
+  const __m128i h2 = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0x4E));
+  int32_t sum =
+    _mm_cvtsi128_si32(_mm_add_epi32(h2, _mm_shuffle_epi32(h2, 0xB1)));
+  for (; p < bytes; ++p) {
+    for (uint32_t t = 0; t < kPlanes; ++t) {
+      const auto shift = t * Bits;
+      sum += int32_t{seg.c8[(a[p] >> shift) & kMask]} *
+             int32_t{seg.c8[(b[p] >> shift) & kMask]};
     }
   }
   return sum;
@@ -772,25 +842,8 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     uint32_t q_off = 0;
     for (size_t i = 0; i < _nsegs; ++i) {
       auto& seg = _segs[i];
-      seg.bits = i == 0 ? lay.bits_hi : lay.bits_lo;
-      seg.byte0 = i == 0 ? 0 : lay.m_hi / 2;
-      seg.bytes = uniform ? lay.m1 / 2
-                          : (i == 0 ? lay.m_hi / 2 : (lay.m1 - lay.m_hi) / 2);
+      const float scale_c = FillInt8Seg(lay, tc, i, seg);
       seg.q_off = q_off;
-      const float* cent = tc.cent[i];
-      const uint32_t k = 1U << seg.bits;
-      float maxc = 0.f;
-      for (uint32_t c = 0; c < k; ++c) {
-        maxc = std::max(maxc, std::fabs(cent[c]));
-      }
-      const float scale_c = maxc > 0.f ? 127.f / maxc : 0.f;
-      seg.c8.fill(0);
-      seg.a8.fill(0);
-      for (uint32_t c = 0; c < k; ++c) {
-        const auto v = static_cast<int8_t>(std::lround(cent[c] * scale_c));
-        seg.c8[c] = v;
-        seg.a8[c] = static_cast<uint8_t>(v < 0 ? -v : v);
-      }
       seg.inv_scale =
         scale_q > 0.f && scale_c > 0.f ? 1.f / (scale_q * scale_c) : 0.f;
       const uint32_t planes = 8 / seg.bits;
@@ -1031,6 +1084,32 @@ class TurboQuantizerReader final : public QuantizerReader {
     const byte_type* ra = base + size_t{from} * record_size;
     const float sa = terms[2 * size_t{from}];
     const float ta = terms[2 * size_t{from} + 1];
+#ifdef __AVX2__
+    if (_pair_int) {
+      const auto* ua = reinterpret_cast<const uint8_t*>(ra);
+      for (size_t i = 0; i < ids.size(); ++i) {
+        const byte_type* rb = base + size_t{ids[i]} * record_size;
+        const auto* ub = reinterpret_cast<const uint8_t*>(rb);
+        float sum = 0.f;
+        for (size_t seg = 0; seg < _pair_nsegs; ++seg) {
+          const TurboQuantInt8Seg& s = _pair_segs[seg];
+          const int32_t d =
+            s.bits == 2 ? TurboQuantPairDot8<2>(ua + s.byte0, ub + s.byte0, s)
+                        : TurboQuantPairDot8<4>(ua + s.byte0, ub + s.byte0, s);
+          sum += static_cast<float>(d) * s.inv_scale;
+        }
+        const float sb = LoadFloat(rb + _lay.RowNormOffset()) * _inv_sqrt_rd;
+        const float tb = terms[2 * size_t{ids[i]} + 1];
+        const float dot = sa * sb * sum;
+        if constexpr (M == VectorMetric::L2Sqr) {
+          out[i] = -(ta + tb - 2.f * dot);
+        } else {
+          out[i] = _cc + ta + tb + dot;
+        }
+      }
+      return;
+    }
+#endif
     for (size_t i = 0; i < ids.size(); ++i) {
       SDB_ASSERT(2 * size_t{ids[i]} < terms.size());
       const byte_type* rb = base + size_t{ids[i]} * record_size;
@@ -1061,6 +1140,16 @@ class TurboQuantizerReader final : public QuantizerReader {
       _cluster, _cluster, static_cast<uint16_t>(_lay.d));
     const TurboQuantCentroids& tc = _cb->Stats().Centroids();
     const size_t segs = _lay.bits_hi == _lay.bits_lo ? 1 : 2;
+#ifdef __AVX2__
+    _pair_int = _lay.row_major && !_lay.full;
+    for (size_t seg = 0; seg < segs; ++seg) {
+      auto& s = _pair_segs[seg];
+      const float scale_c = FillInt8Seg(_lay, tc, seg, s);
+      s.inv_scale = scale_c > 0.f ? 1.f / (scale_c * scale_c) : 0.f;
+      _pair_int = _pair_int && s.bits >= 2;
+    }
+    _pair_nsegs = segs;
+#endif
     constexpr uint32_t kNib = 1U << kFastScanBits;
     std::array<float, size_t{kNib} * kNib> nib;
     _pair_lut.assign(segs * kPairLutSize, 0.f);
@@ -1308,6 +1397,11 @@ class TurboQuantizerReader final : public QuantizerReader {
   float _qc = 0.f;
   float _cc = 0.f;
   std::vector<float> _pair_lut;
+#ifdef __AVX2__
+  std::array<TurboQuantInt8Seg, 2> _pair_segs{};
+  size_t _pair_nsegs = 0;
+  bool _pair_int = false;
+#endif
   std::vector<uint8_t> _packed1;
   std::vector<uint8_t> _packed2;
   std::array<float, kFastScanBbs> _rm_norms{};

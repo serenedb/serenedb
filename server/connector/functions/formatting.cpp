@@ -56,6 +56,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "connector/common.h"
+
 namespace sdb::connector {
 namespace {
 
@@ -130,24 +132,12 @@ constexpr std::string_view kGmtZoneIds[] = {
 constexpr std::string_view kZeroOffsetAbbreviations[] = {
   "gmt", "uct", "ut", "utc", "z", "zulu",
 };
-constexpr std::array<std::array<int32_t, 12>, 2> kDaysInMonth = {{
-  {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-  {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31},
-}};
-constexpr std::array<std::array<int32_t, 13>, 2> kDaysBeforeMonth = {{
-  {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365},
-  {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366},
-}};
 constexpr std::array<int64_t, kMaxTimestampPrecision + 1> kTimestampScales = {
   1000000, 100000, 10000, 1000, 100, 10, 1,
 };
 constexpr std::array<int64_t, kMaxTimestampPrecision + 1> kTimestampOffsets = {
   500000, 50000, 5000, 500, 50, 5, 0,
 };
-
-bool IsLeap(int32_t year) {
-  return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-}
 
 int32_t DateToJulian(int32_t year, int32_t month, int32_t day) {
   int64_t shifted_year = year;
@@ -210,48 +200,30 @@ int32_t WrappingNegate(int32_t value) {
   return static_cast<int32_t>(0U - static_cast<uint32_t>(value));
 }
 
-int32_t DateToIsoWeek(int32_t year, int32_t month, int32_t day) {
-  const int32_t day_number = DateToJulian(year, month, day);
-  int32_t day4 = DateToJulian(year, 1, 4);
-  int32_t day0 = JulianToWeekday(day4 - 1);
-  if (day_number < day4 - day0) {
-    day4 = DateToJulian(year - 1, 1, 4);
-    day0 = JulianToWeekday(day4 - 1);
-  }
-  int32_t result = (day_number - (day4 - day0)) / 7 + 1;
-  if (result >= 52) {
-    day4 = DateToJulian(year + 1, 1, 4);
-    day0 = JulianToWeekday(day4 - 1);
-    if (day_number >= day4 - day0) {
-      result = (day_number - (day4 - day0)) / 7 + 1;
-    }
-  }
-  return result;
-}
+struct IsoWeek {
+  int32_t year;
+  int32_t week;
+};
 
-int32_t DateToIsoYear(int32_t year, int32_t month, int32_t day) {
+IsoWeek DateToIsoWeek(int32_t year, int32_t month, int32_t day) {
   const int32_t day_number = DateToJulian(year, month, day);
-  int32_t day4 = DateToJulian(year, 1, 4);
-  int32_t day0 = JulianToWeekday(day4 - 1);
-  if (day_number < day4 - day0) {
-    day4 = DateToJulian(year - 1, 1, 4);
-    day0 = JulianToWeekday(day4 - 1);
-    --year;
+  int32_t start = IsoWeekToJulian(year, 1);
+  if (day_number < start) {
+    start = IsoWeekToJulian(--year, 1);
   }
-  const int32_t week = (day_number - (day4 - day0)) / 7 + 1;
+  int32_t week = (day_number - start) / 7 + 1;
   if (week >= 52) {
-    day4 = DateToJulian(year + 1, 1, 4);
-    day0 = JulianToWeekday(day4 - 1);
-    if (day_number >= day4 - day0) {
+    if (const int32_t next = IsoWeekToJulian(year + 1, 1); day_number >= next) {
       ++year;
+      week = (day_number - next) / 7 + 1;
     }
   }
-  return year;
+  return {year, week};
 }
 
 int32_t DateToIsoYearDay(int32_t year, int32_t month, int32_t day) {
   return DateToJulian(year, month, day) -
-         IsoWeekToJulian(DateToIsoYear(year, month, day), 1) + 1;
+         IsoWeekToJulian(DateToIsoWeek(year, month, day).year, 1) + 1;
 }
 
 bool IsValidJulian(int32_t year, int32_t month) {
@@ -1037,9 +1009,10 @@ int32_t AdjustYear(int32_t year, bool is_interval) {
 }
 
 int32_t ReportedYear(const TmToChar& tm, bool is_interval, bool iso_year) {
-  return AdjustYear(
-    iso_year ? DateToIsoYear(tm.tm_year, tm.tm_mon, tm.tm_mday) : tm.tm_year,
-    is_interval);
+  return AdjustYear(iso_year
+                      ? DateToIsoWeek(tm.tm_year, tm.tm_mon, tm.tm_mday).year
+                      : tm.tm_year,
+                    is_interval);
 }
 
 size_t FullNameWidth(const DchNode& node) {
@@ -1270,9 +1243,9 @@ void DchToChar(std::span<const DchNode> nodes, bool is_interval,
                             node.suffix);
         break;
       case DchKey::kIw:
-        AppendOrdinalNumber(out,
-                            DateToIsoWeek(tm.tm_year, tm.tm_mon, tm.tm_mday),
-                            fill_mode ? 0 : 2, node.suffix);
+        AppendOrdinalNumber(
+          out, DateToIsoWeek(tm.tm_year, tm.tm_mon, tm.tm_mday).week,
+          fill_mode ? 0 : 2, node.suffix);
         break;
       case DchKey::kQ:
         if (tm.tm_mon) {
@@ -1913,7 +1886,9 @@ bool IsValidDate(int32_t mask, const PgTm& tm) {
     return false;
   }
   return (mask & kFieldDate) != kFieldDate ||
-         tm.tm_mday <= kDaysInMonth[IsLeap(tm.tm_year)][tm.tm_mon - 1];
+         tm.tm_mday <= (duckdb::Date::IsLeapYear(tm.tm_year)
+                          ? duckdb::Date::LEAP_DAYS
+                          : duckdb::Date::NORMAL_DAYS)[tm.tm_mon];
 }
 
 void ApplyCentury(TmFromChar& tmfc, PgTm& tm, const char* text) {
@@ -1955,7 +1930,9 @@ void ApplyDayOfYear(const TmFromChar& tmfc, PgTm& tm, int32_t& mask) {
     mask |= kFieldDate;
     return;
   }
-  const auto& days = kDaysBeforeMonth[IsLeap(tm.tm_year)];
+  const auto* days = duckdb::Date::IsLeapYear(tm.tm_year)
+                       ? duckdb::Date::CUMULATIVE_LEAP_DAYS
+                       : duckdb::Date::CUMULATIVE_DAYS;
   int32_t month = 1;
   while (month <= kMonthsPerYear && tmfc.ddd > days[month]) {
     ++month;
@@ -3011,7 +2988,8 @@ NumberText PrepareInt64(int64_t value, NumDesc& num) {
 }
 
 template<typename T>
-NumberText PrepareFloat(T value, NumDesc& num, int32_t max_digits) {
+NumberText PrepareFloat(T value, NumDesc& num) {
+  constexpr int32_t max_digits = std::numeric_limits<T>::digits10;
   NumberText text;
   if (num.Has(kNumRoman)) {
     const T rounded = static_cast<T>(std::rint(value));
@@ -3166,10 +3144,6 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitZonedFormattingState(
   return state;
 }
 
-std::string_view FormatView(const duckdb::string_t& text) {
-  return {text.GetData(), text.GetSize()};
-}
-
 TmToChar TimestampToTm(int64_t micros) {
   duckdb::date_t date;
   duckdb::dtime_t time;
@@ -3207,7 +3181,7 @@ TmToChar IntervalToTm(duckdb::interval_t span) {
 duckdb::string_t FormatDateTime(FormattingState& local, duckdb::Vector& result,
                                 duckdb::string_t format, bool is_interval,
                                 const TmToChar& tm) {
-  const auto& parsed = local.datetime_formats.Get(FormatView(format));
+  const auto& parsed = local.datetime_formats.Get(AsView(format));
   local.output.clear();
   DchToChar(parsed.nodes, is_interval, tm, local.output);
   return duckdb::StringVector::AddString(result, local.output);
@@ -3306,7 +3280,7 @@ void NumberToChar(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       if (format.GetSize() == 0) {
         return duckdb::string_t{""};
       }
-      const auto& parsed = local.number_formats.Get(FormatView(format));
+      const auto& parsed = local.number_formats.Get(AsView(format));
       auto num = parsed.num;
       auto text = prepare(value, num);
       local.output.assign(
@@ -3318,32 +3292,11 @@ void NumberToChar(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     });
 }
 
-void Int32ToCharFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
-  NumberToChar<int32_t>(args, state, result, PrepareInt32);
-}
-
-void Int64ToCharFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
-  NumberToChar<int64_t>(args, state, result, PrepareInt64);
-}
-
-void FloatToCharFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
-                         duckdb::Vector& result) {
-  NumberToChar<float>(args, state, result, [](float value, NumDesc& num) {
-    return PrepareFloat(value, num, FLT_DIG);
-  });
-}
-
-void DoubleToCharFunction(duckdb::DataChunk& args,
+template<typename T, auto Prepare>
+void NumberToCharFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
-  NumberToChar<double>(args, state, result, [](double value, NumDesc& num) {
-    return PrepareFloat(value, num, DBL_DIG);
-  });
+  NumberToChar<T>(args, state, result, Prepare);
 }
 
 template<typename T>
@@ -3414,11 +3367,11 @@ void ToNumberFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       if (format.GetSize() == 0) {
         return duckdb::nullopt;
       }
-      const auto& parsed = local.number_formats.Get(FormatView(format));
+      const auto& parsed = local.number_formats.Get(AsView(format));
       auto num = parsed.num;
       return DecimalToStorage(
-        ReadNumber(local, parsed, num, FormatView(value), format.GetSize()),
-        width, scale);
+        ReadNumber(local, parsed, num, AsView(value), format.GetSize()), width,
+        scale);
     });
 }
 
@@ -3463,7 +3416,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindToNumber(
 ParsedDateTime ParseDateTime(FormattingState& local, duckdb::string_t text,
                              duckdb::string_t format) {
   local.input.assign(text.GetData(), text.GetSize());
-  const auto& parsed = local.datetime_formats.Get(FormatView(format));
+  const auto& parsed = local.datetime_formats.Get(AsView(format));
   return DoToTimestamp(parsed.nodes, local.input.c_str());
 }
 
@@ -3549,128 +3502,66 @@ void ToTimestampFunction(duckdb::DataChunk& args,
 }  // namespace
 
 void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
+  using duckdb::LogicalType;
+  struct Overload {
+    LogicalType input;
+    LogicalType result;
+    duckdb::scalar_function_t function;
+    duckdb::bind_scalar_function_t bind;
+    duckdb::init_local_state_t init;
+  };
   duckdb::ExtensionLoader loader{db, "serenedb"};
-
-  {
-    duckdb::ScalarFunctionSet set{"to_char"};
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::TIMESTAMP, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      TimestampToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::TIMESTAMP_TZ, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      TimestampTzToCharFunction,
-      duckdb::ICUDateFunc::Bind,
-      nullptr,
-      InitZonedFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::INTERVAL, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      IntervalToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::TIME, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      TimeToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::INTEGER, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      Int32ToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::BIGINT, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      Int64ToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::FLOAT, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      FloatToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      DoubleToCharFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_char",
-      {duckdb::LogicalType{duckdb::LogicalTypeId::DECIMAL},
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::VARCHAR,
-      nullptr,
-      BindDecimalToChar,
-      nullptr,
-      InitFormattingState});
+  const auto add = [&](std::string_view name,
+                       std::initializer_list<Overload> overloads) {
+    const duckdb::Identifier identifier{name};
+    duckdb::ScalarFunctionSet set{identifier};
+    for (const auto& overload : overloads) {
+      set.AddFunction(
+        duckdb::ScalarFunction{identifier,
+                               {overload.input, LogicalType::VARCHAR},
+                               overload.result,
+                               overload.function,
+                               overload.bind,
+                               nullptr,
+                               overload.init});
+    }
     set.SetFallible();
     loader.RegisterFunction(std::move(set));
-  }
-
-  {
-    duckdb::ScalarFunctionSet set{"to_number"};
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_number",
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::DECIMAL(kNumericWidth, kNumericDefaultScale),
-      ToNumberFunction,
-      BindToNumber,
-      nullptr,
-      InitFormattingState});
-    set.SetFallible();
-    loader.RegisterFunction(std::move(set));
-  }
-
-  {
-    duckdb::ScalarFunctionSet set{"to_date"};
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_date",
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::DATE,
-      ToDateFunction,
-      nullptr,
-      nullptr,
-      InitFormattingState});
-    set.SetFallible();
-    loader.RegisterFunction(std::move(set));
-  }
-
-  {
-    duckdb::ScalarFunctionSet set{"to_timestamp"};
-    set.AddFunction(duckdb::ScalarFunction{
-      "to_timestamp",
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::TIMESTAMP_TZ,
-      ToTimestampFunction,
-      duckdb::ICUDateFunc::Bind,
-      nullptr,
-      InitZonedFormattingState});
-    set.SetFallible();
-    loader.RegisterFunction(std::move(set));
-  }
+  };
+  add("to_char",
+      {
+        {LogicalType::TIMESTAMP, LogicalType::VARCHAR, TimestampToCharFunction,
+         nullptr, InitFormattingState},
+        {LogicalType::TIMESTAMP_TZ, LogicalType::VARCHAR,
+         TimestampTzToCharFunction, duckdb::ICUDateFunc::Bind,
+         InitZonedFormattingState},
+        {LogicalType::INTERVAL, LogicalType::VARCHAR, IntervalToCharFunction,
+         nullptr, InitFormattingState},
+        {LogicalType::TIME, LogicalType::VARCHAR, TimeToCharFunction, nullptr,
+         InitFormattingState},
+        {LogicalType::INTEGER, LogicalType::VARCHAR,
+         NumberToCharFunction<int32_t, PrepareInt32>, nullptr,
+         InitFormattingState},
+        {LogicalType::BIGINT, LogicalType::VARCHAR,
+         NumberToCharFunction<int64_t, PrepareInt64>, nullptr,
+         InitFormattingState},
+        {LogicalType::FLOAT, LogicalType::VARCHAR,
+         NumberToCharFunction<float, PrepareFloat<float>>, nullptr,
+         InitFormattingState},
+        {LogicalType::DOUBLE, LogicalType::VARCHAR,
+         NumberToCharFunction<double, PrepareFloat<double>>, nullptr,
+         InitFormattingState},
+        {LogicalType{duckdb::LogicalTypeId::DECIMAL}, LogicalType::VARCHAR,
+         nullptr, BindDecimalToChar, InitFormattingState},
+      });
+  add("to_number", {{LogicalType::VARCHAR,
+                     LogicalType::DECIMAL(kNumericWidth, kNumericDefaultScale),
+                     ToNumberFunction, BindToNumber, InitFormattingState}});
+  add("to_date", {{LogicalType::VARCHAR, LogicalType::DATE, ToDateFunction,
+                   nullptr, InitFormattingState}});
+  add("to_timestamp",
+      {{LogicalType::VARCHAR, LogicalType::TIMESTAMP_TZ, ToTimestampFunction,
+        duckdb::ICUDateFunc::Bind, InitZonedFormattingState}});
 }
 
 }  // namespace sdb::connector

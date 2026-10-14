@@ -25,6 +25,7 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
@@ -108,28 +109,19 @@ void RegisterInformationSchemaFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view information_schema =
     irs::StaticStrings::kInformationSchema;
 
-  RegisterScalar(
-    loader, information_schema, "_pg_char_max_length", CONSISTENT,
-    {duckdb::ScalarFunction{{oid, int4}, int4, TypmodFunction<CharMaxLength>}});
-  RegisterScalar(loader, information_schema, "_pg_char_octet_length",
-                 CONSISTENT,
-                 {duckdb::ScalarFunction{
-                   {oid, int4}, int4, TypmodFunction<CharOctetLength>}});
-  RegisterScalar(loader, information_schema, "_pg_numeric_precision",
-                 CONSISTENT,
-                 {duckdb::ScalarFunction{
-                   {oid, int4}, int4, TypmodFunction<NumericPrecision>}});
-  RegisterScalar(loader, information_schema, "_pg_numeric_precision_radix",
-                 CONSISTENT,
-                 {duckdb::ScalarFunction{
-                   {oid, int4}, int4, TypmodFunction<NumericPrecisionRadix>}});
-  RegisterScalar(
-    loader, information_schema, "_pg_numeric_scale", CONSISTENT,
-    {duckdb::ScalarFunction{{oid, int4}, int4, TypmodFunction<NumericScale>}});
-  RegisterScalar(loader, information_schema, "_pg_datetime_precision",
-                 CONSISTENT,
-                 {duckdb::ScalarFunction{
-                   {oid, int4}, int4, TypmodFunction<DatetimePrecision>}});
+  for (const auto& [name, function] : {
+         std::pair{"_pg_char_max_length", &TypmodFunction<CharMaxLength>},
+         std::pair{"_pg_char_octet_length", &TypmodFunction<CharOctetLength>},
+         std::pair{"_pg_numeric_precision", &TypmodFunction<NumericPrecision>},
+         std::pair{"_pg_numeric_precision_radix",
+                   &TypmodFunction<NumericPrecisionRadix>},
+         std::pair{"_pg_numeric_scale", &TypmodFunction<NumericScale>},
+         std::pair{"_pg_datetime_precision",
+                   &TypmodFunction<DatetimePrecision>},
+       }) {
+    RegisterScalar(loader, information_schema, name, CONSISTENT,
+                   {duckdb::ScalarFunction{{oid, int4}, int4, function}});
+  }
   RegisterScalar(
     loader, information_schema, "_pg_interval_type", CONSISTENT,
     {duckdb::ScalarFunction{{oid, int4}, text, IntervalTypeFunction}});

@@ -112,7 +112,7 @@ void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto writer =
     duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(result,
                                                                          count);
-  std::vector<std::string> items;
+  std::string text;
   for (duckdb::idx_t row = 0; row < count; ++row) {
     const auto objtype = objtypes[row];
     const auto owner = owners[row];
@@ -129,26 +129,16 @@ void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                       ERR_MSG("unrecognized object type abbreviation: ", type));
     }
     const auto owner_id = static_cast<duckdb::idx_t>(owner.GetValue());
-    items.clear();
+    absl::InlinedVector<duckdb::AclItem, 2> items;
     if (it->world != AclMode::NoRights) {
-      AppendAcl(
-        items.emplace_back(),
-        duckdb::AclItem{
-          .grantee = kPublicGrantee, .grantor = owner_id, .privs = it->world},
-        *roles);
+      items.emplace_back(duckdb::AclItem{
+        .grantee = kPublicGrantee, .grantor = owner_id, .privs = it->world});
     }
     if (it->owner != AclMode::NoRights) {
-      AppendAcl(items.emplace_back(),
-                duckdb::AclItem{
-                  .grantee = owner_id, .grantor = owner_id, .privs = it->owner},
-                *roles);
+      items.emplace_back(duckdb::AclItem{
+        .grantee = owner_id, .grantor = owner_id, .privs = it->owner});
     }
-    size_t i = 0;
-    for (auto& child : writer.WriteList(items.size())) {
-      child.WriteValue(duckdb::string_t{
-        items[i].data(), static_cast<uint32_t>(items[i].size())});
-      ++i;
-    }
+    WriteAclTexts(writer, items, *roles, text);
   }
 }
 

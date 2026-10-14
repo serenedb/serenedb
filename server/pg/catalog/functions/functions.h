@@ -26,7 +26,9 @@
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <initializer_list>
+#include <ranges>
 #include <span>
+#include <string>
 #include <string_view>
 
 #include "pg/catalog/lookup.h"
@@ -67,6 +69,17 @@ inline const Session& SessionOf(duckdb::ExpressionState& state) {
   return duckdb::ExecuteFunctionState::GetFunctionState(state)
     ->Cast<SessionState>()
     .session;
+}
+
+template<typename Writer, typename Items>
+void WriteAclTexts(Writer& writer, const Items& items,
+                   const auth::RoleGraph& roles, std::string& text) {
+  auto item = std::ranges::begin(items);
+  for (auto& child : writer.WriteList(std::ranges::size(items))) {
+    text.clear();
+    AppendAcl(text, *item++, roles);
+    child.WriteValue(duckdb::string_t{text});
+  }
 }
 
 void RegisterAclFunctions(duckdb::ExtensionLoader& loader);

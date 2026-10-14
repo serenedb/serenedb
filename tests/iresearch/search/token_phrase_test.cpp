@@ -947,7 +947,7 @@ class DeadRange final : public irs::detail::TableFilter {
 
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final {
-    const uint64_t live = Narrow(base, mask, nullptr, words);
+    const uint64_t live = Narrow(base, mask, mask, nullptr, words);
     std::memset(mask, 0, words * sizeof(uint64_t));
     return live;
   }
@@ -967,18 +967,20 @@ class DeadRange final : public irs::detail::TableFilter {
     return kept;
   }
 
-  uint32_t Narrow(irs::doc_id_t base, uint64_t* mask, irs::score_t*,
-                  uint32_t words) final {
+  uint32_t Narrow(irs::doc_id_t base, const uint64_t* in, uint64_t* out,
+                  irs::score_t*, uint32_t words) final {
     uint32_t kept = 0;
     for (uint32_t w = 0; w != words; ++w) {
-      for (auto bits = mask[w]; bits != 0; bits &= bits - 1) {
+      auto word = in[w];
+      for (auto bits = in[w]; bits != 0; bits &= bits - 1) {
         const auto bit = std::countr_zero(bits);
         if (Dead(base + static_cast<irs::doc_id_t>(w * 64 + bit))) {
-          mask[w] &= ~(uint64_t{1} << bit);
+          word &= ~(uint64_t{1} << bit);
         } else {
           ++kept;
         }
       }
+      out[w] = word;
     }
     return kept;
   }

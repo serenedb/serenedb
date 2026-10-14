@@ -40,14 +40,30 @@ class SystemTable;
 }  // namespace sdb::pg
 namespace sdb::connector {
 
+struct SystemTableBindData final : duckdb::FunctionData {
+  SystemTableBindData(const pg::SystemTable& table,
+                      duckdb::DuckCatalog& catalog,
+                      catalog::SystemTableEntry* entry)
+    : table{table}, catalog{catalog}, entry{entry} {}
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<SystemTableBindData>(*this);
+  }
+
+  bool Equals(const duckdb::FunctionData& other) const final {
+    const auto& data = other.Cast<SystemTableBindData>();
+    return &table == &data.table && &catalog == &data.catalog &&
+           entry == data.entry;
+  }
+
+  const pg::SystemTable& table;
+  duckdb::DuckCatalog& catalog;
+  catalog::SystemTableEntry* entry;
+};
+
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
-
-duckdb::DuckCatalog& BoundSystemCatalog(
-  const duckdb::TableFunctionInitInput& input);
-const pg::SystemTable& BoundSystemTable(
-  const duckdb::TableFunctionInitInput& input);
 
 void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db);
 

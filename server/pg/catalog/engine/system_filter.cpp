@@ -31,6 +31,7 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iterator>
 #include <ranges>
 #include <utf8proc_wrapper.hpp>
 
@@ -230,9 +231,7 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
       set.emplace_back(std::move(*constant));
     }
     if (excluded) {
-      condition.excluded.insert(condition.excluded.end(),
-                                std::make_move_iterator(set.begin()),
-                                std::make_move_iterator(set.end()));
+      absl::c_move(set, std::back_inserter(condition.excluded));
     } else {
       Intersect(condition.keys, std::move(set));
     }
@@ -263,12 +262,10 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
     for (const auto& child :
          expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
       SystemCondition<T> branch;
-      if (!Capture(*child, branch) || !branch.keys ||
-          !branch.excluded.empty() || branch.lower || branch.upper ||
-          branch.null) {
+      if (!Capture(*child, branch) || !branch.KeysOnly()) {
         return false;
       }
-      set.insert(set.end(), branch.keys->begin(), branch.keys->end());
+      absl::c_move(*branch.keys, std::back_inserter(set));
     }
     Intersect(condition.keys, std::move(set));
     return true;
@@ -309,14 +306,11 @@ bool Capture(const duckdb::Expression& expr, SystemCondition<T>& condition) {
         nulls = nulls || constant.GetValue().IsNull();
       });
     SystemCondition<T> negated;
-    if (nulls || !Capture(child, negated) || !negated.keys ||
-        !negated.excluded.empty() || negated.lower || negated.upper ||
-        negated.null || negated.not_null) {
+    if (nulls || !Capture(child, negated) || !negated.KeysOnly() ||
+        negated.not_null) {
       return false;
     }
-    condition.excluded.insert(condition.excluded.end(),
-                              std::make_move_iterator(negated.keys->begin()),
-                              std::make_move_iterator(negated.keys->end()));
+    absl::c_move(*negated.keys, std::back_inserter(condition.excluded));
     return true;
   }
   return false;
@@ -336,9 +330,6 @@ void Seal(SystemCondition<T>& condition) {
   }
   std::erase_if(*keys, [&](const T& key) { return !condition.Passes(key); });
   condition = {.keys = std::move(keys),
-               .excluded = {},
-               .lower = {},
-               .upper = {},
                .null = condition.null,
                .not_null = condition.not_null};
 }

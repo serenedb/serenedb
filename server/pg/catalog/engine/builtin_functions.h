@@ -56,7 +56,10 @@ class BuiltinFunctions {
   const BuiltinFunction* Find(duckdb::idx_t oid) const {
     return FindByOid(_functions, oid);
   }
-  std::span<const uint32_t> Named(std::string_view name) const;
+  std::span<const uint32_t> Named(std::string_view name) const {
+    const auto it = _by_name.find(name);
+    return it == _by_name.end() ? std::span<const uint32_t>{} : it->second;
+  }
 
  private:
   friend std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(

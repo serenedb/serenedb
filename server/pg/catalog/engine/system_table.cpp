@@ -29,14 +29,12 @@
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/utils/assert.hpp>
 
-#include "catalog/entry/system_table.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/lookup.h"
-#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/types.h"
 
@@ -104,9 +102,9 @@ duckdb::LogicalType SystemRowType(const SystemSql& sql) {
 SystemScan::SystemScan(duckdb::ClientContext& context,
                        duckdb::TableFunctionInitInput& input)
   : _context{context},
-    _database{connector::BoundSystemCatalog(input)},
+    _database{input.bind_data->Cast<connector::SystemTableBindData>().catalog},
     _transaction{_database.GetCatalogTransaction(context)},
-    _table{connector::BoundSystemTable(input)} {
+    _table{input.bind_data->Cast<connector::SystemTableBindData>().table} {
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {
@@ -193,7 +191,7 @@ void SystemScan::PutConcat(const SystemVector& target, duckdb::idx_t row,
   auto text = duckdb::StringVector::EmptyString(*target.vector, size);
   auto* out = text.GetDataWriteable();
   for (const auto part : value.parts) {
-    out = std::ranges::copy(part, out).out;
+    out = absl::c_copy(part, out);
   }
   text.Finalize();
   Cells<duckdb::string_t>(target)[row] = text;

@@ -157,6 +157,41 @@ CREATE RULE "_RETURN" AS\n    ON SELECT TO rs.v DO INSTEAD  SELECT a, b FROM rs.
 
 
 statement ok
+CREATE VIEW rs.v_alias (x, y) AS SELECT 1, 'a'::text;
+
+
+statement ok
+CREATE VIEW rs.v_partly (a, renamed) AS SELECT a, b FROM rs.t;
+
+
+statement ok
+CREATE VIEW rs.v_union (u) AS SELECT 1 UNION ALL SELECT 2;
+
+
+query
+SELECT pg_get_viewdef('rs.v_alias'::regclass) AS aliased,
+       pg_get_viewdef('rs.v_partly'::regclass) AS partly,
+       pg_get_viewdef('rs.v_union'::regclass) AS unioned;
+----
+aliased	partly	unioned
+SELECT 1 AS x, CAST('a' AS text) AS y;	SELECT a, b AS renamed FROM rs.t;	(SELECT 1 AS u) UNION ALL (SELECT 2);
+
+
+query
+SELECT definition FROM pg_views WHERE schemaname = 'rs' AND viewname = 'v_alias';
+----
+definition
+SELECT 1 AS x, CAST('a' AS text) AS y;
+
+
+query
+SELECT pg_get_ruledef(oid) AS def FROM pg_rewrite WHERE ev_class = 'rs.v_alias'::regclass;
+----
+def
+CREATE RULE "_RETURN" AS\n    ON SELECT TO rs.v_alias DO INSTEAD  SELECT 1 AS x, CAST('a' AS text) AS y;
+
+
+statement ok
 CREATE TABLE rs.audit (a integer);
 
 

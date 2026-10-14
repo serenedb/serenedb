@@ -59,6 +59,7 @@
 #include <duckdb/planner/operator/logical_merge_into.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
+#include <duckdb/storage/block_manager.hpp>
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/write_ahead_log.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
@@ -480,6 +481,16 @@ void SereneDBCatalog::FinalizeLoad(
       ERR_MSG("database directory \"", path.string(),
               "\" holds changes made after its last checkpoint: stop its "
               "server cleanly or run CHECKPOINT before attaching it"));
+  }
+  const auto iteration = storage.GetBlockManager().GetCheckpointIteration();
+  if (iteration != 0 &&
+      std::filesystem::exists(storage.GetRetainedWALPath(iteration - 1), ec)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("database directory \"", path.string(),
+              "\" holds search table rows that are not refreshed yet: run "
+              "VACUUM (REFRESH_TABLE) on its search tables, then CHECKPOINT, "
+              "before attaching it"));
   }
   duckdb::WriteAheadLog::ReplayCatalog(*context, storage, log.string(), oid);
   auto attached = GetAttached().shared_from_this();

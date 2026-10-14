@@ -76,7 +76,7 @@ DatabasePathFeature::DatabasePathFeature()
   // Fatal paths (_exit / abort) skip static dtors; the stale lockfile that
   // remains is handled by VerifyLockFile on the next start.
   std::string lock_filename =
-    utils::file_utils::BuildFilename(_directory, "LOCK");
+    utils::file_utils::BuildFilename(_directory, kLockFile);
   if (const auto status = VerifyLockFile(lock_filename.c_str()); !status.ok()) {
     SDB_FATAL(GENERAL, status.message());
   }

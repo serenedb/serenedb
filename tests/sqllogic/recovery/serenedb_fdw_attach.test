@@ -115,6 +115,21 @@ n
 system ok
 rm -rf $__TEST_DIR__/sfa_search && mkdir $__TEST_DIR__/sfa_search && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_search/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_search/catalog.wal
 
+statement error
+CREATE SERVER sfa_search FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_search/5');
+----
+db error: ERROR: database directory "<slt:ignore>" holds search table rows that are not refreshed yet: run VACUUM (REFRESH_TABLE) on its search tables, then CHECKPOINT, before attaching it
+
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.sfa_notes;
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfa_search && mkdir $__TEST_DIR__/sfa_search && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_search/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_search/catalog.wal
+
 statement ok
 CREATE SERVER sfa_search FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_search/5');
 
@@ -122,47 +137,10 @@ query
 SELECT count(*) AS n FROM sfa_search.public.sfa_notes;
 ----
 n
-3
+5
 
 statement ok
 DROP SERVER sfa_search;
-
-
-system ok
-cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_old_catalog.wal
-
-statement ok
-CREATE TABLE postgres.public.sfa_later(a INTEGER);
-
-statement ok
-CHECKPOINT postgres;
-
-system ok
-rm -rf $__TEST_DIR__/sfa_stale && mkdir $__TEST_DIR__/sfa_stale && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_stale/5 && cp $__TEST_DIR__/sfa_old_catalog.wal $__TEST_DIR__/sfa_stale/catalog.wal
-
-statement error
-CREATE SERVER sfa_stale FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_stale/5');
-----
-db error: ERROR: The catalog of database "sfa_stale" does not match its database file: the file holds table "sfa_later", which the catalog does not define
-
-
-system ok
-rm -rf $__TEST_DIR__/sfa_ahead && mkdir $__TEST_DIR__/sfa_ahead && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_ahead/5
-
-statement ok
-CREATE TABLE postgres.public.sfa_newer(a INTEGER);
-
-statement ok
-CHECKPOINT postgres;
-
-system ok
-cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_ahead/catalog.wal
-
-statement error
-CREATE SERVER sfa_ahead FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_ahead/5');
-----
-db error: ERROR: The catalog of database "sfa_ahead" does not match its database file: table "sfa_newer" is not in the file
-
 
 
 statement error

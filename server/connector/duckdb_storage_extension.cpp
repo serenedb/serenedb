@@ -61,6 +61,7 @@
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 #include "server/utils/app_server.h"
+#include "server/utils/lockfile.h"
 
 namespace sdb::connector {
 namespace {
@@ -75,19 +76,26 @@ duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
                     ERR_MSG("could not open database directory \"", info.path,
                             "\": ", ec.message()));
   }
-  if (std::filesystem::equivalent(
-        path.parent_path(),
-        catalog::ClusterLayout(catalog::ClusterOf(context).GetAttached())
-          .EngineDir(),
-        ec)) {
+  const auto& layout =
+    catalog::ClusterLayout(catalog::ClusterOf(context).GetAttached());
+  if (std::filesystem::equivalent(path.parent_path(), layout.EngineDir(), ec)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                     ERR_MSG("cannot attach \"", info.path,
                             "\" read-only: it is a database of this server"));
   }
+  const auto lock_file = path.parent_path().parent_path() / kLockFile;
+  if (!std::filesystem::equivalent(
+        lock_file, std::filesystem::path{layout.directory} / kLockFile, ec)) {
+    if (const auto holder = LockFileHolder(lock_file.c_str())) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                      ERR_MSG("cannot attach \"", info.path,
+                              "\" read-only: the server with process id ",
+                              *holder, " is running on its data directory"));
+    }
+  }
   auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
   info.path = directory->DataFile();
   options.defer_storage_load = true;
-  options.recovery_mode = duckdb::RecoveryMode::NO_WAL_REPLAY;
   db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
     std::shared_ptr<duckdb::StorageExtensionInfo>{directory}});
   catalog::RequestSereneDBStorageVersion(options);

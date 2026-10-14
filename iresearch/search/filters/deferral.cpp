@@ -23,10 +23,11 @@
 #include <memory>
 #include <utility>
 
+#include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/token_phrase.hpp"
+#include "iresearch/search/detail/compiled_phrase.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/geo_filter.hpp"

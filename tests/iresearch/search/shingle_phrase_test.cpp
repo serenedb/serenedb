@@ -26,9 +26,10 @@
 
 #include <functional>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
+#include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
-#include <iresearch/search/detail/token_phrase.hpp>
+#include <iresearch/search/detail/term_predicate.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>

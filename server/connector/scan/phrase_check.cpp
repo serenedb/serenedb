@@ -22,6 +22,7 @@
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/search/detail/compiled_phrase.hpp>
 #include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>

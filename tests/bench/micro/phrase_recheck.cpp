@@ -45,7 +45,6 @@
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
-#include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>

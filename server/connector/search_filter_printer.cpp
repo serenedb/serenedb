@@ -26,7 +26,6 @@
 
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
-#include <iresearch/search/detail/token_phrase.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/automaton_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>

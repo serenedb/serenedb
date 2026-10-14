@@ -27,7 +27,7 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/token_phrase.hpp"
+#include "iresearch/search/detail/compiled_phrase.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 
 namespace irs {

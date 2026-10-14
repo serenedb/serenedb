@@ -25,7 +25,7 @@
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
-#include <iresearch/search/detail/token_phrase.hpp>
+#include <iresearch/search/detail/compiled_phrase.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/shingle_phrase.hpp>

@@ -104,6 +104,7 @@ set(IResearch_core_sources
     ./search/scorers/make_window.cpp
     ./search/scorers/root_window.cpp
     ./search/detail/collectors.cpp
+    ./search/detail/compiled_phrase.cpp
     ./search/detail/pattern_cache.cpp
     ./search/detail/term_acceptor.cpp
     ./search/detail/token_phrase.cpp

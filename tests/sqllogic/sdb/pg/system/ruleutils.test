@@ -258,6 +258,20 @@ args	identity	result	d1	d2	proargnames
 a, b DEFAULT 3	a, b	NULL	NULL	3	{a,b}
 
 
+statement ok
+CREATE FUNCTION rs.out_default(a integer, OUT r integer, b integer := 7) LANGUAGE sql AS 'SELECT a + b';
+
+
+query
+SELECT pg_get_function_arg_default('rs.out_default'::regproc, 1) AS d1,
+       pg_get_function_arg_default('rs.out_default'::regproc, 2) AS d2,
+       pg_get_function_arg_default('rs.out_default'::regproc, 3) AS d3,
+       pg_get_function_arg_default('rs.out_default'::regproc, 4) AS d4;
+----
+d1	d2	d3	d4
+NULL	NULL	7	NULL
+
+
 query
 SELECT pg_get_function_arguments(oid) AS args, pg_get_function_result(oid) AS result
 FROM pg_proc WHERE proname = 'lower' AND pronamespace = 'pg_catalog'::regnamespace ORDER BY args LIMIT 1;

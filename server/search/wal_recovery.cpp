@@ -39,6 +39,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
+#include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <memory>
@@ -196,6 +197,17 @@ void RecoverSearchStorages() {
       }));
   }
   executor.WorkOnTasks();
+  for (auto& catalog : SereneDBCatalogs()) {
+    auto& db = catalog.get().GetAttached();
+    auto& storage = db.GetStorageManager();
+    if (storage.InMemory()) {
+      continue;
+    }
+    const auto checkpoint =
+      duckdb::DuckTransactionManager::Get(db).SharedCheckpointLock();
+    auto commit_lock = storage.GetCommitLock();
+    storage.ReleaseRetainedWAL(commit_lock);
+  }
   if (recovering.empty() && tables.empty()) {
     return;
   }

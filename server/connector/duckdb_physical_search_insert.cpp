@@ -277,10 +277,12 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
   duckdb::ClientContext& context,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
   if (!gstate.flushed_segments.empty()) {
-    gstate.sdb_txn->SearchTxn().AddSegments(gstate.search_table,
-                                            std::move(gstate.flushed_segments));
+    search_txn.AddSegments(gstate.search_table,
+                           std::move(gstate.flushed_segments));
   }
+  search_txn.FlushBufferTransaction(gstate.table_id);
 
   if (_ctas_info) {
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }

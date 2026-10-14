@@ -84,15 +84,6 @@ connection checkpointer
 statement async ok
 CHECKPOINT;
 
-sleep 1s
-
-connection default
-query
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
-----
-n
-1
-
 connection default
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs:release';
@@ -114,15 +105,6 @@ SET sdb_faults = '-pause_search_commit_before_irs:parked';
 connection checkpointer
 statement async ok
 CHECKPOINT;
-
-sleep 1s
-
-connection default
-query
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
-----
-n
-1
 
 connection default
 statement ok
@@ -162,15 +144,6 @@ connection checkpointer
 statement async ok
 CHECKPOINT;
 
-sleep 1s
-
-connection default
-query
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
-----
-n
-1
-
 connection default
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs:release';
@@ -197,15 +170,6 @@ connection checkpointer
 statement async ok
 CHECKPOINT;
 
-sleep 1s
-
-connection default
-query
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
-----
-n
-1
-
 connection default
 statement ok
 SET sdb_faults = 'pause_search_commit_before_irs:release';
@@ -227,15 +191,6 @@ SET sdb_faults = '-pause_search_commit_before_irs:parked';
 connection checkpointer
 statement async ok
 CHECKPOINT;
-
-sleep 1s
-
-connection default
-query
-SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'CHECKPOINT%';
-----
-n
-1
 
 connection default
 statement ok

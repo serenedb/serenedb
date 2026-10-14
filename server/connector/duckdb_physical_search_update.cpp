@@ -218,6 +218,7 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::Pipeline&, duckdb::Event&, duckdb::ClientContext&,
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& state = input.global_state.Cast<SearchUpdateGlobalState>();
+  state.sdb_txn->SearchTxn().FlushBufferTransaction(_table.oid);
   if (state.table_lock.owns_lock()) {
     state.table_lock.unlock();
   }

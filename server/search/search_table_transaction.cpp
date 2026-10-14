@@ -234,10 +234,16 @@ void SearchTableTransaction::FlushBuffer(
   }
   auto& trx = EnsureBufferTransaction(shard);
   ReplayBuffer(*shard, it->second, trx, context);
-  trx.Flush();
   // The rows are this transaction's to make durable now, so the record stops
   // carrying them. The removals stay: no segment holds those.
   it->second.ClearBufferedRows();
+}
+
+void SearchTableTransaction::FlushBufferTransaction(duckdb::idx_t shard_id) {
+  if (const auto it = _writes.find(shard_id);
+      it != _writes.end() && it->second.buffer_trx != nullptr) {
+    it->second.buffer_trx->Flush();
+  }
 }
 
 void SearchTableTransaction::AddSearchDeletes(
@@ -334,6 +340,7 @@ void SearchTableTransaction::Stage(const irs::SourcePosition& position,
     }
     w.first_tick = w.shard->NextTick(queries) - queries;
     w.position = position;
+    w.shard->MarkStaged(position);
   }
 }
 

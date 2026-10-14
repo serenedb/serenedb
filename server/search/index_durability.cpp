@@ -114,7 +114,10 @@ IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
     dir, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
     std::move(options));
   _position = stamp.position;
+  absl::MutexLock lock{&_positions_mutex};
   _published = stamp.position;
+  _durable = stamp.position;
+  _staged = stamp.position;
   return {std::move(writer), std::move(stamp)};
 }
 
@@ -175,12 +178,22 @@ void IndexDurability::ResolvePendingSave(irs::Directory& dir) const {
   }
 }
 
-uint64_t IndexDurability::ReplayFrom(duckdb::AttachedDatabase& db) const {
-  if (_position.generation !=
-      db.GetStorageManager().GetBlockManager().GetCheckpointIteration()) {
-    return 0;
+void IndexDurability::MarkStaged(const irs::SourcePosition& position) {
+  absl::MutexLock lock{&_positions_mutex};
+  _staged = std::max(_staged, position);
+}
+
+std::optional<uint64_t> IndexDurability::NeededWAL() const {
+  absl::MutexLock lock{&_positions_mutex};
+  if (_staged <= _durable) {
+    return std::nullopt;
   }
-  return _position.offset;
+  return _durable.generation;
+}
+
+void IndexDurability::MarkPublished() {
+  absl::MutexLock lock{&_positions_mutex};
+  _published = _position;
 }
 
 absl::Status IndexDurability::Refresh(
@@ -202,10 +215,10 @@ absl::Status IndexDurability::Refresh(
                 " is already in progress, waiting");
       refresh_lock.lock();
     }
-    while (wait && _pending_checkpoint != 0 && CanPersist()) {
-      refresh_lock.unlock();
-      WaitForCheckpoint();
-      refresh_lock.lock();
+    if (wait) {
+      AwaitPendingSave(refresh_lock, writer);
+    } else {
+      FinishPendingSave(writer);
     }
 
     if (!CanPersist()) {
@@ -229,7 +242,7 @@ absl::Status IndexDurability::Refresh(
       if (were_changes && _pending_checkpoint == 0) {
         SDB_PARK_ONCE_ON_FAILURE("pause_index_refresh_begun");
         writer.RefreshFinish();
-        _published = _position;
+        MarkPublished();
         _directory_dirty.store(true, std::memory_order_relaxed);
       }
     } catch (...) {
@@ -245,8 +258,7 @@ absl::Status IndexDurability::Refresh(
     if (_pending_checkpoint != 0) {
       code = RefreshResult::InProgress;
       if (wait) {
-        refresh_lock.unlock();
-        WaitForCheckpoint();
+        AwaitPendingSave(refresh_lock, writer);
       }
       return absl::OkStatus();
     }
@@ -272,11 +284,7 @@ void IndexDurability::ReplaceSegments(
   absl::FunctionRef<bool(irs::IndexWriter::QueryContext::FilterPtr&)>
     removal_provider) {
   std::unique_lock lock{_refresh_mutex};
-  while (_pending_checkpoint != 0 && CanPersist()) {
-    lock.unlock();
-    WaitForCheckpoint();
-    lock.lock();
-  }
+  AwaitPendingSave(lock, writer);
   writer.ReplaceSegments(replaced, adopted_metas, removal_provider);
 }
 
@@ -285,7 +293,7 @@ void IndexDurability::Clear(irs::IndexWriter& writer,
   absl::MutexLock lock{&_refresh_mutex};
   SDB_ASSERT(_pending_checkpoint == 0);
   writer.Clear(position);
-  _published = _position;
+  MarkPublished();
   _directory_dirty.store(true, std::memory_order_relaxed);
 }
 
@@ -325,7 +333,18 @@ bool IndexDurability::FinishCheckpoint(irs::IndexWriter& writer) {
   SDB_IF_FAILURE("crash_before_index_checkpoint_finish") {
     SDB_IMMEDIATE_ABORT();
   }
-  if (_pending_checkpoint == 0) {
+  return FinishPendingSave(writer);
+}
+
+void IndexDurability::FinishCheckpointIfIdle(irs::IndexWriter& writer) {
+  std::unique_lock lock{_refresh_mutex, std::try_to_lock};
+  if (lock.owns_lock()) {
+    FinishPendingSave(writer);
+  }
+}
+
+bool IndexDurability::FinishPendingSave(irs::IndexWriter& writer) {
+  if (_pending_checkpoint == 0 || !CheckpointWritten(_pending_checkpoint)) {
     return false;
   }
   try {
@@ -336,9 +355,20 @@ bool IndexDurability::FinishCheckpoint(irs::IndexWriter& writer) {
               duckdb::ErrorData{e}.RawMessage());
   }
   _pending_checkpoint = 0;
-  _published = _position;
+  MarkPublished();
   _directory_dirty.store(true, std::memory_order_relaxed);
   return true;
+}
+
+void IndexDurability::AwaitPendingSave(std::unique_lock<absl::Mutex>& lock,
+                                       irs::IndexWriter& writer) {
+  if (FinishPendingSave(writer) || _pending_checkpoint == 0 || !CanPersist()) {
+    return;
+  }
+  lock.unlock();
+  WaitForCheckpoint();
+  lock.lock();
+  FinishPendingSave(writer);
 }
 
 std::pair<irs::DirectoryReader, irs::SourcePosition> IndexDurability::Snapshot(
@@ -352,12 +382,19 @@ void IndexDurability::SyncDirectory() {
       !_directory_dirty.exchange(false, std::memory_order_acq_rel)) {
     return;
   }
+  irs::SourcePosition published;
+  {
+    absl::MutexLock lock{&_positions_mutex};
+    published = _published;
+  }
   try {
     catalog::SyncDirectory(_path);
   } catch (...) {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;
   }
+  absl::MutexLock lock{&_positions_mutex};
+  _durable = std::max(_durable, published);
 }
 
 absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
@@ -392,6 +429,14 @@ uint64_t IndexDurability::RunningCheckpoint(uint64_t generation) const {
   const auto header =
     store->GetStorageManager().GetBlockManager().GetCheckpointIteration();
   return generation > header ? generation : 0;
+}
+
+bool IndexDurability::CheckpointWritten(uint64_t iteration) const {
+  const auto store = AttachedDatabaseById(_db_id);
+  return store && store->HasStorageManager() &&
+         store->GetStorageManager()
+             .GetBlockManager()
+             .GetCheckpointIteration() >= iteration;
 }
 
 void IndexDurability::WaitForCheckpoint() const {

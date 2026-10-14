@@ -471,9 +471,10 @@ void SearchTable::Publish() {
 
 SearchTable::ReplaySession* SearchTable::BeginReplay(
   duckdb::AttachedDatabase& db) {
-  const auto offset =
-    duckdb::DuckTransactionManager::Get(db).GetReplayCommitOffset();
-  if (offset != 0 && offset < _durability.ReplayFrom(db)) {
+  auto& manager = duckdb::DuckTransactionManager::Get(db);
+  const irs::SourcePosition position{manager.GetReplayGeneration(),
+                                     manager.GetReplayCommitOffset()};
+  if (position.offset != 0 && position < _durability.Position()) {
     return nullptr;
   }
   if (!_replay) {
@@ -553,6 +554,7 @@ bool SearchTable::FinishReplay(duckdb::AttachedDatabase& db) {
                "search-table WAL recovery: iresearch trx Commit failed for "
                "table ",
                _table_id);
+  _durability.MarkStaged(end);
   _replay.reset();
   return true;
 }

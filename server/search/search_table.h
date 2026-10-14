@@ -130,10 +130,11 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
   bool FinishReplay(duckdb::AttachedDatabase& db);
 
   void Publish();
-  void PrepareCheckpoint(uint64_t iteration) {
-    _durability.PrepareCheckpoint(*_writer, iteration);
+  void FinishCheckpoint() { _durability.FinishCheckpointIfIdle(*_writer); }
+  void MarkStaged(const irs::SourcePosition& position) {
+    _durability.MarkStaged(position);
   }
-  void FinishCheckpoint() { _durability.FinishCheckpoint(*_writer); }
+  std::optional<uint64_t> NeededWAL() const { return _durability.NeededWAL(); }
 
   irs::DirectoryReader GetDirectoryReader() noexcept {
     return _writer->GetSnapshot();

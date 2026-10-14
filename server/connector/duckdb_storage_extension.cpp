@@ -159,19 +159,13 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
                                 duckdb::CheckpointOptions) final {
     const auto iteration =
       db.GetStorageManager().GetBlockManager().GetCheckpointIteration() + 1;
-    Saves saves;
-    const auto prepare = [&](auto storages, auto& prepared) {
-      for (auto& storage : storages) {
-        storage->PrepareCheckpoint(iteration);
-        prepared.push_back(storage);
-      }
-    };
-    prepare(BoundStorages(db), saves.indexes);
-    prepare(
-      catalog::SearchTableStorages(db.GetCatalog().Cast<duckdb::DuckCatalog>()),
-      saves.tables);
+    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
+    for (auto& storage : BoundStorages(db)) {
+      storage->PrepareCheckpoint(iteration);
+      saves.push_back(storage);
+    }
     duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
-    if (saves.indexes.empty() && saves.tables.empty()) {
+    if (saves.empty()) {
       _saves.erase(db.oid);
     } else {
       _saves[db.oid] = std::move(saves);
@@ -180,35 +174,43 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
 
   void OnCheckpointEnd(duckdb::AttachedDatabase& db,
                        duckdb::CheckpointOptions) final {
-    Saves saves;
+    std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
     {
       duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
-      const auto it = _saves.find(db.oid);
-      if (it == _saves.end()) {
-        return;
+      if (const auto it = _saves.find(db.oid); it != _saves.end()) {
+        saves = std::move(it->second);
+        _saves.erase(it);
       }
-      saves = std::move(it->second);
-      _saves.erase(it);
     }
-    const auto finish = [](const auto& prepared) {
-      for (const auto& save : prepared) {
-        if (const auto storage = save.lock()) {
-          storage->FinishCheckpoint();
-        }
+    for (const auto& save : saves) {
+      if (const auto storage = save.lock()) {
+        storage->FinishCheckpoint();
       }
-    };
-    finish(saves.indexes);
-    finish(saves.tables);
+    }
+    for (auto& table : catalog::SearchTableStorages(
+           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+      table->FinishCheckpoint();
+    }
+  }
+
+  duckdb::optional_idx NeededWALGeneration(duckdb::AttachedDatabase& db) final {
+    duckdb::optional_idx needed;
+    for (auto& table : catalog::SearchTableStorages(
+           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+      const auto generation = table->NeededWAL();
+      if (generation &&
+          (!needed.IsValid() || *generation < needed.GetIndex())) {
+        needed = *generation;
+      }
+    }
+    return needed;
   }
 
  private:
-  struct Saves {
-    std::vector<std::weak_ptr<search::InvertedIndexStorage>> indexes;
-    std::vector<std::weak_ptr<search::SearchTable>> tables;
-  };
-
   duckdb::mutex _saves_mutex;
-  absl::flat_hash_map<duckdb::idx_t, Saves> _saves;
+  absl::flat_hash_map<duckdb::idx_t,
+                      std::vector<std::weak_ptr<search::InvertedIndexStorage>>>
+    _saves;
 };
 
 }  // namespace

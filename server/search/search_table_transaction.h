@@ -119,6 +119,7 @@ class SearchTableTransaction {
   // the record has to carry those either way.
   void FlushBuffer(const std::shared_ptr<SearchTable>& shard,
                    duckdb::ClientContext& context);
+  void FlushBufferTransaction(duckdb::idx_t shard_id);
 
   // Rowids to remove, in issue order with the buffered rows.
   void AddSearchDeletes(const std::shared_ptr<SearchTable>& shard,

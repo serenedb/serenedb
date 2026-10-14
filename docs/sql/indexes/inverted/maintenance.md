@@ -122,6 +122,12 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 
 </DocCallout>
 
+## Durability {#durability}
+
+A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that no refresh has saved, and a later checkpoint deletes the kept logs no table needs anymore. After a crash, the server replays the kept logs and the current one into the tables that need them.
+
+With automatic refresh disabled (`refresh_interval = 0`), kept logs pile up until `VACUUM (REFRESH_TABLE)` saves the table or the server restarts.
+
 ## Session settings {#session-settings}
 
 Beyond the per-index `WITH` options, a few **`sdb_`-prefixed session settings** tune search at query time. Set them per connection with `SET` (and restore with `RESET`); they affect only the current session:

@@ -1,0 +1,275 @@
+statement ok
+CREATE TABLE rejected_t(id INTEGER PRIMARY KEY, a INTEGER);
+
+statement ok
+CREATE INDEX rejected_t_idx ON rejected_t USING inverted(id, a);
+
+statement ok
+INSERT INTO rejected_t SELECT i, i % 7 FROM range(1, 2001) r(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rejected_t;
+
+statement ok
+CREATE TABLE rejected_u(id INTEGER PRIMARY KEY, w INTEGER);
+
+statement ok
+INSERT INTO rejected_u SELECT i, i * 10 FROM range(1, 20001) r(i);
+
+query
+SELECT count(*) FROM rejected_u u JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count
+2000
+
+query
+SELECT count(*) FROM (SELECT * FROM rejected_u ORDER BY id LIMIT 10) u JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count
+10
+
+query
+SELECT count(i.id) FROM rejected_u u LEFT JOIN (SELECT * FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) i ON i.id = u.id;
+----
+count
+2000
+
+query
+SELECT count(*) FROM (SELECT * FROM rejected_u ORDER BY id LIMIT 10) u JOIN rejected_t_idx i ON i.id < u.id WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count
+45
+
+query
+SELECT count(*) FROM (SELECT * FROM rejected_u ORDER BY id LIMIT 3) u CROSS JOIN rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count
+6000
+
+query
+SELECT count(*) FROM rejected_u u WHERE u.id IN (SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass);
+----
+count
+2000
+
+query
+SELECT count(*) FROM rejected_u u WHERE NOT EXISTS (SELECT 1 FROM rejected_t_idx i WHERE i.id = u.id AND i.tableoid = 'rejected_t'::regclass);
+----
+count
+18000
+
+query
+SELECT max(r) FROM (SELECT row_number() OVER (ORDER BY i.id) AS r FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+max
+2000
+
+query
+SELECT count(*) FROM (SELECT rank() OVER (PARTITION BY i.a ORDER BY i.id) AS r FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s WHERE r = 1;
+----
+count
+7
+
+query
+SELECT count(*) FROM (SELECT i.a, count(*) FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass GROUP BY i.a) s;
+----
+count
+7
+
+query
+SELECT count(*) FROM (SELECT DISTINCT i.a FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+count
+7
+
+query
+SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass ORDER BY i.id DESC LIMIT 2;
+----
+id
+2000
+1999
+
+query
+SELECT count(*) FROM (SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass UNION ALL SELECT 1) s;
+----
+count
+2001
+
+query
+SELECT count(*) FROM (SELECT i.a FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass UNION SELECT 99) s;
+----
+count
+8
+
+query
+WITH c AS MATERIALIZED (SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) SELECT count(*) FROM c;
+----
+count
+2000
+
+query
+SELECT count(*), sum(i.id) FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count	sum
+2000	2001000
+
+query
+SELECT max(r), sum(id) FROM (SELECT i.id, row_number() OVER () AS r FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+max	sum
+2000	2001000
+
+query
+SELECT count(*), sum(c) FROM (SELECT count(*) OVER (PARTITION BY i.a) AS c FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+count	sum
+2000	571430
+
+query
+SELECT count(*) FILTER (WHERE m), count(*) FROM (SELECT i.id IN (SELECT id FROM rejected_u WHERE id <= 100) AS m FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+count	count
+100	2000
+
+query
+SELECT count(*) FROM rejected_t_idx a JOIN rejected_t_idx b ON a.id = b.id WHERE a.tableoid = 'rejected_t'::regclass AND b.tableoid = 'rejected_t'::regclass;
+----
+count
+2000
+
+query
+SELECT count(*) FROM rejected_u u RIGHT JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count
+2000
+
+query
+SELECT count(*), sum(i.id) FROM (SELECT * FROM rejected_u WHERE id > 1990) u FULL JOIN (SELECT * FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) i ON i.id = u.id;
+----
+count	sum
+20000	2001000
+
+query
+SELECT count(*) FROM rejected_u u LEFT JOIN rejected_t_idx i ON i.id = u.id AND i.tableoid = 'rejected_t'::regclass;
+----
+count
+20000
+
+query
+SELECT count(*) FROM rejected_u u ASOF JOIN rejected_t_idx i ON u.id >= i.id WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count
+20000
+
+query
+SELECT count(*), sum(s.id) FROM (SELECT * FROM rejected_u ORDER BY id LIMIT 10) u POSITIONAL JOIN (SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+count	sum
+2000	2001000
+
+query
+SELECT count(*) FROM rejected_u u WHERE u.id <= 10 AND (SELECT count(*) FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass AND i.id = u.id) = 1;
+----
+count
+10
+
+query
+SELECT sum(c) FROM rejected_u u, LATERAL (SELECT count(*) AS c FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass AND i.id <= u.id) l WHERE u.id <= 10;
+----
+sum
+55
+
+query
+SELECT count(*), sum(g) FROM rejected_t_idx i, generate_series(1, 2) g(g) WHERE i.tableoid = 'rejected_t'::regclass;
+----
+count	sum
+4000	6000
+
+query
+SELECT count(*), sum(x) FROM (SELECT unnest([i.id, i.a]) AS x FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+count	sum
+4000	2007000
+
+query
+SELECT count(*) FROM (SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass AND i.id IN (SELECT id FROM rejected_u WHERE id <= 30)) s JOIN rejected_u u ON u.id = s.id;
+----
+count
+30
+
+query
+SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass ORDER BY i.a, i.id OFFSET 1997;
+----
+id
+1980
+1987
+1994
+
+query
+SELECT count(*) FROM (SELECT i.a FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass INTERSECT SELECT 3) s;
+----
+count
+1
+
+query
+SELECT count(*) FROM (SELECT i.a FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass EXCEPT SELECT 3) s;
+----
+count
+6
+
+query
+SELECT count(*) FROM (WITH RECURSIVE r(n) AS (SELECT i.id FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass AND i.id <= 3 UNION ALL SELECT n + 10 FROM r WHERE n < 50) SELECT * FROM r) s;
+----
+count
+18
+
+query
+SELECT count(*) FROM rejected_u u JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid <> 'rejected_u'::regclass;
+----
+count
+2000
+
+query
+SELECT count(*) FROM rejected_u u JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid = 'rejected_u'::regclass;
+----
+count
+0
+
+query
+SELECT count(*), sum(u.w) FROM rejected_u u JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid = 'rejected_t'::regclass AND i.a = 3;
+----
+count	sum
+286	2861430
+
+query
+SELECT count(*), max(r) FROM (SELECT i.tableoid::regclass AS t, row_number() OVER (ORDER BY i.id) AS r FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass) s;
+----
+count	max
+2000	2000
+
+statement ok
+PREPARE rejected_join AS SELECT count(*) FROM rejected_u u JOIN rejected_t_idx i ON i.id = u.id WHERE i.tableoid = $1::regclass;
+
+query
+EXECUTE rejected_join('rejected_t');
+----
+count
+2000
+
+query
+EXECUTE rejected_join('rejected_u');
+----
+count
+0
+
+statement ok
+CREATE TABLE rejected_numbered AS SELECT i.id, row_number() OVER () AS r FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass;
+
+statement count 2000
+INSERT INTO rejected_numbered SELECT i.id, row_number() OVER () FROM rejected_t_idx i WHERE i.tableoid = 'rejected_t'::regclass;
+
+query
+SELECT count(*), count(DISTINCT id), max(r), sum(id) FROM rejected_numbered;
+----
+count	count	max	sum
+4000	2000	2000	4002000

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -118,8 +120,11 @@ struct CentroidsNode {
       }
       const auto k = std::min<size_t>(fanout, scored.size());
       const auto mid = scored.begin() + k;
-      std::ranges::nth_element(scored, mid, std::greater{}, &Scored::dist);
-      std::ranges::sort(scored.begin(), mid, std::greater{}, &Scored::dist);
+      const auto by_dist_desc = [](const Scored& l, const Scored& r) {
+        return l.dist > r.dist;
+      };
+      absl::c_nth_element(scored, mid, by_dist_desc);
+      std::sort(scored.begin(), mid, by_dist_desc);
       for (auto it = scored.begin(); it != mid; ++it) {
         starts.emplace_back(it->start);
         sizes.emplace_back(it->count);

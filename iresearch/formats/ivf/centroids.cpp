@@ -461,10 +461,12 @@ void CentroidsTree::Search(std::span<const float> query, IndexInput& in,
                                   _root.size, leaves);
     const auto k = std::min<size_t>(nprobe, leaves.size());
     const auto mid = leaves.begin() + k;
-    std::ranges::nth_element(leaves, mid, std::greater{},
-                             &CentroidsNode::Candidate::dist);
-    std::ranges::sort(leaves.begin(), mid, std::greater{},
-                      &CentroidsNode::Candidate::dist);
+    const auto by_dist_desc = [](const CentroidsNode::Candidate& l,
+                                 const CentroidsNode::Candidate& r) {
+      return l.dist > r.dist;
+    };
+    absl::c_nth_element(leaves, mid, by_dist_desc);
+    std::sort(leaves.begin(), mid, by_dist_desc);
     out_ids.reserve(out_ids.size() + k);
     if (out_centroids) {
       out_centroids->reserve(out_centroids->size() + k * _head.d);

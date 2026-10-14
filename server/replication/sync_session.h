@@ -142,6 +142,7 @@ class SyncSession : public PublisherSession {
   yaclib::OneShotEvent _setup_done;
 
  private:
+  bool PostJob(Job job);
   yaclib::Task<bool> CopyTable(const SyncTable& table, bool binary);
   yaclib::Task<bool> RunDuckJob(Job job);
   bool BeginSync();

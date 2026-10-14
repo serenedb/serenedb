@@ -1,0 +1,90 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tai (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO tai VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) tai;
+
+statement ok
+INSERT INTO tai VALUES (3, 'c');
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_delete_log';
+
+connection truncator
+statement async error connection closed
+TRUNCATE tai;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_delete_log:parked';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_after_irs';
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_delete_log:release';
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) tai;
+
+connection default
+query
+SELECT count(*) AS n FROM tai;
+----
+n
+0
+
+connection writer
+statement error
+INSERT INTO tai VALUES (4, 'd');
+----
+db error: ERROR: Attempting to write to table tai but another transaction is truncating it
+
+
+connection default
+statement ok
+VACUUM (COMPACT_TABLE) tai;
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM tai;
+----
+n
+0
+
+connection after_crash
+statement ok
+INSERT INTO tai VALUES (4, 'd');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) tai;
+
+connection after_crash
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tai;
+----
+ids
+4

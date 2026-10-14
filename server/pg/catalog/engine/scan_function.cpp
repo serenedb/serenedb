@@ -45,22 +45,6 @@
 namespace sdb::connector {
 namespace {
 
-struct SystemTableBindData final : duckdb::FunctionData {
-  const pg::SystemTable* table = nullptr;
-  duckdb::DuckCatalog* catalog = nullptr;
-  catalog::SystemTableEntry* entry = nullptr;
-
-  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
-    return duckdb::make_uniq<SystemTableBindData>(*this);
-  }
-
-  bool Equals(const duckdb::FunctionData& other) const final {
-    const auto& data = other.Cast<SystemTableBindData>();
-    return table == data.table && catalog == data.catalog &&
-           entry == data.entry;
-  }
-};
-
 struct SystemFunctionInfo final : duckdb::TableFunctionInfo {
   explicit SystemFunctionInfo(const pg::SystemTable& table) : table{table} {}
 
@@ -78,12 +62,12 @@ void SystemTableNoScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
 duckdb::unique_ptr<duckdb::NodeStatistics> SystemTableCardinality(
   duckdb::ClientContext&, const duckdb::FunctionData* bind_data) {
   return duckdb::make_uniq<duckdb::NodeStatistics>(
-    bind_data->Cast<SystemTableBindData>().table->Rows());
+    bind_data->Cast<SystemTableBindData>().table.Rows());
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> SystemTableStatistics(
   duckdb::ClientContext&, duckdb::TableFunctionGetStatisticsInput& input) {
-  const auto& table = *input.bind_data->Cast<SystemTableBindData>().table;
+  const auto& table = input.bind_data->Cast<SystemTableBindData>().table;
   const auto column = input.column_index.GetPrimaryIndex();
   const auto& sql = table.Sql();
   if (column >= sql.columns.size()) {
@@ -131,7 +115,7 @@ bool SystemTablePushdownExpression(duckdb::ClientContext&,
       column = get.GetColumnIndex(ref.Binding()).GetPrimaryIndex();
     });
   return column && pg::SystemPushdown(
-                     *get.bind_data->Cast<SystemTableBindData>().table, *column,
+                     get.bind_data->Cast<SystemTableBindData>().table, *column,
                      expr) != duckdb::TableFilterPushdown::Reject;
 }
 
@@ -139,7 +123,7 @@ duckdb::TableFilterPushdown SystemTableSupportsPushdownFilter(
   duckdb::FunctionData& bind_data, duckdb::idx_t column,
   duckdb::TableFilter& filter) {
   return pg::SystemPushdown(
-    *bind_data.Cast<SystemTableBindData>().table, column,
+    bind_data.Cast<SystemTableBindData>().table, column,
     *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr);
 }
 
@@ -168,16 +152,14 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemTableScanDeserialize(
   const auto table =
     deserializer.ReadProperty<duckdb::Identifier>(102, "table");
   auto& entry = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
-    deserializer.Get<duckdb::ClientContext&>(),
-    duckdb::QualifiedName(catalog, schema, table));
-  auto data = duckdb::make_uniq<SystemTableBindData>();
-  data->entry = &entry.Cast<catalog::SystemTableEntry>();
-  data->table = &data->entry->Table();
-  data->catalog = &entry.catalog.Cast<duckdb::DuckCatalog>();
-  const auto& functions = data->table->Functions();
+                  deserializer.Get<duckdb::ClientContext&>(),
+                  duckdb::QualifiedName(catalog, schema, table))
+                  .Cast<catalog::SystemTableEntry>();
+  const auto& functions = entry.Table().Functions();
   function.init_global = functions.init;
   function.function = functions.scan;
-  return data;
+  return duckdb::make_uniq<SystemTableBindData>(
+    entry.Table(), entry.catalog.Cast<duckdb::DuckCatalog>(), &entry);
 }
 
 duckdb::TableFunction CreateSystemTableScanFunction(
@@ -215,16 +197,15 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
     }
   }
   for (const auto& column : table.Columns().Logical()) {
-    types.push_back(column.Type());
-    names.push_back(column.Name());
+    types.emplace_back(column.Type());
+    names.emplace_back(column.Name());
   }
-  auto data = duckdb::make_uniq<SystemTableBindData>();
-  data->table = &table;
-  data->catalog =
-    &duckdb::Catalog::GetCatalog(
-       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-       .Cast<duckdb::DuckCatalog>();
-  return data;
+  return duckdb::make_uniq<SystemTableBindData>(
+    table,
+    duckdb::Catalog::GetCatalog(
+      context, duckdb::DatabaseManager::GetDefaultDatabase(context))
+      .Cast<duckdb::DuckCatalog>(),
+    nullptr);
 }
 
 }  // namespace
@@ -232,11 +213,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
   duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  auto data = duckdb::make_uniq<SystemTableBindData>();
-  data->table = &entry.Table();
-  data->catalog = &entry.catalog.Cast<duckdb::DuckCatalog>();
-  data->entry = &entry;
-  bind_data = std::move(data);
+  bind_data = duckdb::make_uniq<SystemTableBindData>(
+    entry.Table(), entry.catalog.Cast<duckdb::DuckCatalog>(), &entry);
   return CreateSystemTableScanFunction(entry.Table().Functions());
 }
 
@@ -259,16 +237,6 @@ void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db) {
     info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
     loader.RegisterFunction(std::move(info));
   }
-}
-
-duckdb::DuckCatalog& BoundSystemCatalog(
-  const duckdb::TableFunctionInitInput& input) {
-  return *input.bind_data->Cast<SystemTableBindData>().catalog;
-}
-
-const pg::SystemTable& BoundSystemTable(
-  const duckdb::TableFunctionInitInput& input) {
-  return *input.bind_data->Cast<SystemTableBindData>().table;
 }
 
 }  // namespace sdb::connector

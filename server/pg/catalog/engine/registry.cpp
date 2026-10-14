@@ -215,15 +215,12 @@ void InitSystemFunctions(duckdb::Parser& parser) {
   for (const auto macros : {kPgCatalogMacros, kInformationSchemaMacros}) {
     for (const auto& macro : macros) {
       auto info = ParseMacro(parser, macro);
-      FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
-      const auto it = built.find(key);
-      if (it == built.end()) {
-        built.emplace(key, std::move(info));
-        continue;
-      }
-      auto& existing = *it->second;
-      for (auto& m : info->macros) {
-        existing.macros.emplace_back(std::move(m));
+      const FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
+      if (const auto [it, inserted] = built.try_emplace(key, std::move(info));
+          !inserted) {
+        for (auto& m : info->macros) {
+          it->second->macros.emplace_back(std::move(m));
+        }
       }
     }
   }

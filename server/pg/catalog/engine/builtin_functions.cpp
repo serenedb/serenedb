@@ -215,11 +215,6 @@ std::shared_ptr<const BuiltinFunctions> gBuiltins
 
 }  // namespace
 
-std::span<const uint32_t> BuiltinFunctions::Named(std::string_view name) const {
-  const auto it = _by_name.find(name);
-  return it == _by_name.end() ? std::span<const uint32_t>{} : it->second;
-}
-
 std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   duckdb::ClientContext& context) {
   const auto system_version =

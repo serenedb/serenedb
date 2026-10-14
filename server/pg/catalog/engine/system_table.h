@@ -55,7 +55,6 @@
 #include <functional>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/shared.hpp>
 #include <iresearch/utils/system_compiler.hpp>
@@ -180,8 +179,6 @@ struct SystemSql {
 
 template<irs::utils::detail::FixedString Name, typename Get>
 struct SystemColumn {
-  using Getter = Get;
-
   static constexpr std::string_view kName{Name};
 
   Get get;
@@ -220,16 +217,6 @@ struct SystemShape {
   std::tuple<Cols...> columns;
 };
 
-template<typename Column>
-constexpr std::tuple<Column> SystemColumns(Column column) {
-  return {column};
-}
-
-template<typename... Columns>
-constexpr std::tuple<Columns...> SystemColumns(std::tuple<Columns...> columns) {
-  return columns;
-}
-
 template<const SystemSql& Sql, typename Ctx, typename... Args>
 consteval auto Shape(Args... args) {
   return std::apply(
@@ -237,7 +224,7 @@ consteval auto Shape(Args... args) {
       return SystemShape<Sql, Ctx, decltype(columns)...>{
         std::tuple{columns...}};
     },
-    std::tuple_cat(SystemColumns(args)...));
+    std::tuple_cat(std::tuple{args}...));
 }
 
 template<const auto& Shape>
@@ -366,14 +353,6 @@ constexpr bool kSystemCheckable =
   std::is_convertible_v<const V&, std::string_view> || std::is_integral_v<V> ||
   std::is_enum_v<V>;
 
-template<typename Get, typename Ctx>
-struct SystemValueOf {
-  using Type = std::remove_cvref_t<typename std::conditional_t<
-    std::is_invocable_v<const Get&, Ctx&, SystemScan&>,
-    std::invoke_result<const Get&, Ctx&, SystemScan&>,
-    std::invoke_result<const Get&, Ctx&>>::type>;
-};
-
 struct CatalogSource {
   std::span<const duckdb::CatalogType> types;
   SystemSchemas schemas;
@@ -384,6 +363,9 @@ struct SystemPrefix {
   duckdb::Identifier lower;
   duckdb::Identifier upper;
 };
+
+using SystemEdge =
+  std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>;
 
 struct SystemSet {
   std::shared_ptr<const catalog::CatalogSnapshot> snapshot;
@@ -456,6 +438,14 @@ struct SystemCondition {
 
   bool Empty() const noexcept {
     return !keys && excluded.empty() && !lower && !upper && !null && !not_null;
+  }
+
+  bool KeysOnly() const noexcept {
+    return keys && excluded.empty() && !lower && !upper && !null;
+  }
+
+  std::span<const T> Keys() const noexcept {
+    return keys ? std::span<const T>{*keys} : std::span<const T>{};
   }
 
   bool PassesNull() const noexcept {
@@ -581,7 +571,6 @@ class SystemScan {
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
   duckdb::DuckCatalog& Database() const noexcept { return _database; }
-  const SystemTable& Table() const noexcept { return _table; }
   std::shared_ptr<const auth::RoleClosure> SessionClosure() const;
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
@@ -590,7 +579,7 @@ class SystemScan {
     return *_database.GetDependencyManager();
   }
 
-  SystemEntries Resolve(const CatalogSource& source);
+  SystemEntries Resolve(const CatalogSource& source) const;
   SystemEntries Resolve(const CatalogSetSource& source) const;
   void VisitKey(const SystemEntries& entries, size_t key,
                 absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
@@ -744,9 +733,7 @@ class SystemScan {
   SystemSet SetOf(catalog::SnapshotCatalog& catalog, duckdb::CatalogSet& set,
                   const duckdb::CatalogTransaction& transaction) const;
 
-  std::span<
-    const std::pair<duckdb::CatalogEntry*, duckdb::DependencyDependentFlags>>
-  WalkedSubjects(duckdb::CatalogEntry& entry) const;
+  std::span<const SystemEdge> WalkedSubjects(duckdb::CatalogEntry& entry) const;
 
   template<typename Get, typename Ctx>
   IRS_FORCE_INLINE decltype(auto) Value(const Get& get, Ctx& ctx) {
@@ -757,12 +744,6 @@ class SystemScan {
     }
   }
 
-  template<const auto& Shape, size_t I>
-  using ValueOf = typename SystemValueOf<
-    typename std::tuple_element_t<
-      I, decltype(SystemShapeOf<Shape>::columns)>::Getter,
-    typename SystemShapeOf<Shape>::Context>::Type;
-
   template<const auto& Shape, size_t I, bool Checked>
   IRS_FORCE_INLINE static bool Write(
     SystemScan& scan, typename SystemShapeOf<Shape>::Context& ctx) {
@@ -771,10 +752,9 @@ class SystemScan {
     constexpr auto& kMeta = T::kSql.columns[kColumn];
     constexpr bool kNullDefault = !kMeta.zero_default;
     const auto put = [&](const auto& value) {
-      static_assert(
-        !std::is_same_v<std::remove_cvref_t<decltype(value)>, char> ||
-          kMeta.type == kChar,
-        "a char getter feeds a \"char\" column");
+      using V = std::remove_cvref_t<decltype(value)>;
+      static_assert(!std::is_same_v<V, char> || kMeta.type == kChar,
+                    "a char getter feeds a \"char\" column");
       if constexpr (Checked) {
         if (!scan.Passes(kColumn, value)) {
           return false;
@@ -783,13 +763,23 @@ class SystemScan {
           return true;
         }
       }
-      scan
-        .PutValue<kMeta.physical, kMeta.element, kNullDefault, kMeta.not_null>(
-          kColumn, value);
+      const auto& target = scan._vectors[scan._slots[kColumn]];
+      if constexpr (kNullDefault) {
+        target.validity->SetValid(scan._row);
+      }
+      if constexpr (std::is_integral_v<V> || std::is_enum_v<V>) {
+        SDB_ASSERT(scan._table.Holds(kColumn, Integer<int64_t>(value)));
+      }
+      if constexpr (kMeta.physical == duckdb::PhysicalType::LIST) {
+        scan.PutList<kMeta.element, kNullDefault && !kMeta.not_null>(target,
+                                                                     value);
+      } else {
+        scan.Put<kMeta.physical>(target, scan._row, value);
+      }
       return true;
     };
     decltype(auto) value = scan.Value(std::get<I>(Shape.columns).get, ctx);
-    if constexpr (SystemOptional<ValueOf<Shape, I>>::value) {
+    if constexpr (SystemOptional<std::remove_cvref_t<decltype(value)>>::value) {
       static_assert(!(kMeta.not_null && kNullDefault),
                     "a NOT NULL column without a default is always set");
       if (value) {
@@ -817,8 +807,10 @@ class SystemScan {
     using Checker = bool (*)(SystemScan&, typename T::Context&);
     std::array<Checker, 64> checks{};
     ((checks[T::kColumns[I]] = [] -> Checker {
-       if constexpr (kSystemCheckable<
-                       typename SystemOptional<ValueOf<Shape, I>>::Type>) {
+       using V = std::remove_cvref_t<decltype(std::declval<SystemScan&>().Value(
+         std::get<I>(Shape.columns).get,
+         std::declval<typename T::Context&>()))>;
+       if constexpr (kSystemCheckable<typename SystemOptional<V>::Type>) {
          return &Write<Shape, I, true>;
        } else {
          return nullptr;
@@ -831,23 +823,6 @@ class SystemScan {
   template<const auto& Shape>
   static constexpr auto kChecks =
     MakeChecks<Shape>(std::make_index_sequence<SystemShapeOf<Shape>::kSize>{});
-
-  template<duckdb::PhysicalType P, duckdb::PhysicalType E, bool NullDefault,
-           bool NotNull, typename V>
-  IRS_FORCE_INLINE void PutValue(uint32_t column, const V& value) {
-    const auto& target = _vectors[_slots[column]];
-    if constexpr (NullDefault) {
-      target.validity->SetValid(_row);
-    }
-    if constexpr (std::is_integral_v<V> || std::is_enum_v<V>) {
-      SDB_ASSERT(_table.Holds(column, Integer<int64_t>(value)));
-    }
-    if constexpr (P == duckdb::PhysicalType::LIST) {
-      PutList<E, NullDefault && !NotNull>(target, value);
-    } else {
-      Put<P>(target, _row, value);
-    }
-  }
 
   bool Filtered(uint32_t column) const noexcept {
     return ((_filtered >> column) & 1) != 0;
@@ -1005,11 +980,7 @@ class SystemScan {
   std::vector<duckdb::SchemaCatalogEntry*> Schemas(SystemSchemas system) const;
   duckdb::optional_ptr<duckdb::CatalogEntry> FindOwned(
     duckdb::idx_t oid, SystemSchemas system) const;
-  void VisitNamed(std::string_view name,
-                  std::span<const duckdb::CatalogType> types,
-                  SystemSchemas system,
-                  std::span<duckdb::SchemaCatalogEntry* const> schemas,
-                  const std::bitset<256>& wanted,
+  void VisitNamed(std::string_view name, const SystemEntries& entries,
                   absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) const;
 
   duckdb::ClientContext& _context;
@@ -1279,10 +1250,8 @@ class SystemCursor<SystemEntries> final {
   irs::containers::FlatHashMap<const duckdb::CatalogEntry*, size_t> _seen;
 };
 
-SystemCursor(SystemEntries) -> SystemCursor<SystemEntries>;
-template<typename Row, typename Holder>
-SystemCursor(SystemArray<Row, Holder>)
-  -> SystemCursor<SystemArray<Row, Holder>>;
+template<typename Source>
+SystemCursor(Source) -> SystemCursor<Source>;
 
 template<typename T>
 auto SystemCursors(T& table) {
@@ -1301,16 +1270,13 @@ class SystemScanState final : public duckdb::GlobalTableFunctionState {
     : _table{context, input}, _cursors{SystemCursors(_table)} {}
 
   void Next(duckdb::DataChunk& output) {
-    while (!_finished) {
-      _table.Begin(output);
-      _finished = !std::apply(
-        [&](auto&... cursors) { return (... || cursors.Run(_table)); },
-        _cursors);
-      _table.End(output);
-      if (output.size() != 0) {
-        return;
-      }
+    if (_finished) {
+      return;
     }
+    _table.Begin(output);
+    _finished = !std::apply(
+      [&](auto&... cursors) { return (... || cursors.Run(_table)); }, _cursors);
+    _table.End(output);
   }
 
  private:

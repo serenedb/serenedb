@@ -16,12 +16,12 @@
 
         SELECT
           x, y,
-          zx * zx - zy * zy + (-2.5 + x * 3.5 / 1399),
-          2.0 * zx * zy + (-1.0 + y * 2.0 / 799),
+          zx * zx - zy * zy + (-2.5::DOUBLE + x * 3.5::DOUBLE / 1399),
+          2.0::DOUBLE * zx * zy + (-1.0::DOUBLE + y * 2.0::DOUBLE / 799),
           iteration + 1
         FROM mandelbrot_iterations
         WHERE iteration < 256
-          AND (zx * zx + zy * zy) <= 4.0
+          AND (zx * zx + zy * zy) <= 4.0::DOUBLE
       )
     SELECT x, y, MAX(iteration) AS depth
     FROM mandelbrot_iterations

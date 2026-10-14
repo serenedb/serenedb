@@ -37,9 +37,6 @@ inline constexpr size_t kBlockHeader = 4;
 inline constexpr size_t kEndMark = 4;
 inline constexpr size_t kSlice = kMaxWrite - kBlockHeader - kEndMark;
 
-constexpr LZ4F_CustomMem kMemory{CodecPool::Allocate, nullptr, CodecPool::Free,
-                                 nullptr};
-
 LZ4F_preferences_t Preferences(int level) {
   LZ4F_preferences_t prefs{};
   prefs.autoFlush = 1;
@@ -65,13 +62,14 @@ void Lz4Decoder::Deleter::operator()(LZ4F_dctx* dctx) const noexcept {
 }
 
 Lz4Encoder::Lz4Encoder(int level)
-  : _cctx{LZ4F_createCompressionContext_advanced(kMemory, LZ4F_VERSION)},
+  : _cctx{LZ4F_createCompressionContext_advanced(LZ4F_defaultCMem,
+                                                 LZ4F_VERSION)},
     _prefs{Preferences(level)},
     _out_size{std::max(LZ4F_compressBound(kSlice, &_prefs),
                        LZ4F_compressBound(0, &_prefs))} {
   SDB_ASSERT(kLz4Levels.Contains(level));
   SDB_ASSERT(_out_size <= kMaxWrite);
-  if (_cctx == nullptr) {
+  if (!_cctx) {
     ThrowCodecError("lz4", "cannot initialize the encoder");
   }
 }
@@ -92,7 +90,7 @@ void Lz4Encoder::Encode(std::string_view in, bool finish,
       continue;
     }
     if (!_pending) {
-      _pending.emplace(2 * kSlice);
+      _pending = std::make_unique_for_overwrite<uint8_t[]>(2 * kSlice);
     }
     const auto take = std::min(kSlice - _pending_size, in.size());
     std::memcpy(PendingData() + _pending_size, in.data(), take);
@@ -129,7 +127,7 @@ void Lz4Encoder::EncodeAll(std::string_view in, message::Writer& out) {
 }
 
 uint8_t* Lz4Encoder::PendingData() const noexcept {
-  return _pending->Data() + _pending_half * kSlice;
+  return _pending.get() + _pending_half * kSlice;
 }
 
 std::string_view Lz4Encoder::Pending() const noexcept {
@@ -146,30 +144,30 @@ void Lz4Encoder::Compress(std::string_view slice, bool stable,
 }
 
 Lz4Decoder::Lz4Decoder()
-  : _dctx{LZ4F_createDecompressionContext_advanced(kMemory, LZ4F_VERSION)},
-    _out{kOutBlock} {
-  if (_dctx == nullptr) {
+  : _dctx{LZ4F_createDecompressionContext_advanced(LZ4F_defaultCMem,
+                                                   LZ4F_VERSION)} {
+  if (!_dctx) {
     ThrowCodecError("lz4", "cannot initialize the decoder");
   }
 }
 
 void Lz4Decoder::Decode(std::string_view in, bool finish, DecodeSink sink) {
   for (;;) {
-    size_t produced = _out.Size();
+    size_t produced = _out.size();
     size_t consumed = in.size();
-    const size_t rc = LZ4F_decompress(_dctx.get(), _out.Data(), &produced,
+    const size_t rc = LZ4F_decompress(_dctx.get(), _out.data(), &produced,
                                       in.data(), &consumed, nullptr);
     if (LZ4F_isError(rc)) {
       ThrowCorrupt("lz4", LZ4F_getErrorName(rc));
     }
     in.remove_prefix(consumed);
     if (produced != 0) {
-      sink({reinterpret_cast<const char*>(_out.Data()), produced});
+      sink({reinterpret_cast<const char*>(_out.data()), produced});
     }
     if (consumed != 0 || produced != 0) {
       _pending = rc;
     }
-    if (in.empty() && produced < _out.Size()) {
+    if (in.empty() && produced < _out.size()) {
       break;
     }
   }

@@ -187,7 +187,7 @@ void HttpResponseWriter::WriteHeadChunked(HttpStatus status,
     _encoder.emplace(_coding, _level);
   }
   message::Writer writer{_send};
-  EncodeHead(writer, status, content_type, nullptr, _encoder.has_value(),
+  EncodeHead(writer, status, content_type, nullptr, static_cast<bool>(_encoder),
              extra_headers);
   writer.Commit(false);
   _state = State::kChunkedBody;
@@ -203,7 +203,7 @@ void HttpResponseWriter::EndChunk() { EndRawChunk(); }
 void HttpResponseWriter::Finish() {
   switch (_state) {
     case State::kChunkedBody: {
-      SDB_ASSERT(!_chunk.has_value());
+      SDB_ASSERT(!_chunk);
       if (_encoder) {
         EncodeChunks({}, true);
         _encoder.reset();
@@ -249,7 +249,7 @@ void HttpResponseWriter::WriteChunk(std::string_view data) {
 }
 
 void HttpResponseWriter::BeginRawChunk() {
-  SDB_ASSERT(_state == State::kChunkedBody && !_chunk.has_value());
+  SDB_ASSERT(_state == State::kChunkedBody && !_chunk);
   if (_head_only) {
     return;
   }
@@ -262,7 +262,7 @@ void HttpResponseWriter::EndRawChunk() {
   if (_head_only) {
     return;
   }
-  SDB_ASSERT(_chunk.has_value());
+  SDB_ASSERT(_chunk);
   const size_t payload = _chunk->Written() - _chunk_start;
   // A zero-size chunk would terminate the body (RFC 9112 7.1); callers
   // must write payload between Begin/End.
@@ -310,7 +310,7 @@ std::span<uint8_t> HttpResponseWriter::EncodeHead(
   writer.Write(content_type);
   if (Bodiless(status)) {
     // no Content-Length, no Transfer-Encoding
-  } else if (content_length != nullptr) {
+  } else if (content_length) {
     writer.Write("\r\nContent-Length: ");
     length = WriteNumber(writer, *content_length);
   } else {

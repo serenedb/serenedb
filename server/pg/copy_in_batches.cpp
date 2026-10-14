@@ -78,7 +78,7 @@ void CopyInBatches::Push(std::unique_ptr<CopyBatch> batch,
     _retained_bytes += batch->bytes;
     _window.emplace_back(std::move(batch));
     _done.emplace_back(0);
-    if (released.head != nullptr) {
+    if (released.head) {
       _released.emplace_back(_pushed, std::move(released));
     }
     ++_pushed;
@@ -91,7 +91,7 @@ void CopyInBatches::Push(std::unique_ptr<CopyBatch> batch,
 }
 
 void CopyInBatches::Release(message::Chain released) {
-  if (released.head == nullptr) {
+  if (!released.head) {
     return;
   }
   Guard guard{_waiters.lock};

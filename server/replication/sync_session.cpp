@@ -331,7 +331,7 @@ yaclib::Task<bool> SyncSession::RunLocalCopy() {
   } catch (const std::exception& ex) {
     ApplyFailed(network::pg::ToSqlError(ex));
   }
-  if (!ok && batches != nullptr) {
+  if (!ok && batches) {
     batches->Abort();
   }
   co_return ok;

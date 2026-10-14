@@ -31,6 +31,12 @@
 
 namespace sdb::pg {
 
+size_t TrailingBackslashes(std::string_view bytes) noexcept;
+
+size_t FindRowEnd(std::string_view bytes, size_t from,
+                  size_t backslashes_before = 0) noexcept;
+size_t FindLastRowEnd(std::string_view bytes) noexcept;
+
 enum class CopyBatchFormat : uint8_t {
   Text,
   Binary,

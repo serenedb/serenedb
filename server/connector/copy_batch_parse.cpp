@@ -29,10 +29,11 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
+#include "pg/copy_batch_builder.h"
+
 namespace sdb::connector {
 namespace {
 
-constexpr char kRowSep = '\n';
 constexpr size_t kFieldCountBytes = sizeof(int16_t);
 constexpr size_t kFieldLengthBytes = sizeof(int32_t);
 constexpr int32_t kNullFieldLength = -1;
@@ -142,6 +143,14 @@ size_t ScanField(std::string_view line, char delim, size_t pos,
   return line.size();
 }
 
+std::string_view TrimCarriageReturn(std::string_view line) {
+  if (!line.ends_with('\r')) {
+    return line;
+  }
+  const auto body = line.substr(0, line.size() - 1);
+  return pg::TrailingBackslashes(body) % 2 == 0 ? body : line;
+}
+
 }  // namespace
 
 CopyDeserializers MakeCopyDeserializers(
@@ -233,9 +242,9 @@ duckdb::idx_t CopyBatchParser::ParseText(duckdb::DataChunk& output,
       continue;
     }
     const auto rest = data.substr(_pos);
-    const auto end = rest.find(kRowSep);
-    const auto line =
-      end == std::string_view::npos ? rest : rest.substr(0, end);
+    const auto end = pg::FindRowEnd(rest, 0);
+    const auto line = TrimCarriageReturn(
+      end == std::string_view::npos ? rest : rest.substr(0, end));
     _pos += end == std::string_view::npos ? rest.size() : end + 1;
     if (std::exchange(_skip, false)) {
       continue;

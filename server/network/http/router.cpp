@@ -35,7 +35,7 @@ void HttpRouter::Add(HttpMethod method, std::string_view pattern,
              "HTTP route pattern must start with '/': '", pattern, "'");
   auto* raw = _handlers.emplace_back(std::move(handler)).get();
   auto& slot = _methods[HandlersOf(pattern)][static_cast<size_t>(method)];
-  if (slot == nullptr) {
+  if (!slot) {
     slot = raw;
   }
 }
@@ -98,7 +98,7 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   }
   for (auto& route : _parameterized) {
     auto* handler = _methods[route.handlers][method];
-    if (handler == nullptr || !route.path.fast_test(path)) {
+    if (!handler || !route.path.fast_test(path)) {
       continue;
     }
     auto groups = route.path.fast_match(path);

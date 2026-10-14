@@ -179,7 +179,8 @@ class BulkHandler final : public HttpHandler {
 
     const auto sql =
       absl::StrCat("INSERT INTO \"es\".", SqlIdentifier(index),
-                   " SELECT * FROM es_bulk_source(", SqlLiteral(index), ")");
+                   " SELECT * FROM es_bulk_source(", SqlLiteral(index),
+                   connector::EsBulkIsParallel(body.size()) ? ", true)" : ")");
     auto prepared = PrepareCached(ctx, PreparedSlotId::EsBulk, sql);
     if (prepared.error) {
       WriteSqlError(writer, *prepared.error, index);
@@ -229,6 +230,10 @@ class BulkHandler final : public HttpHandler {
         if (staging.size() >= kBulkResponseFlushBytes) {
           writer.Write(staging);
           staging.clear();
+          co_await writer.Drain();
+          if (writer.Broken()) {
+            co_return {};
+          }
         }
       }
     }

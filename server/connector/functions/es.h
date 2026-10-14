@@ -69,6 +69,8 @@ struct EsBulkInput {
 std::string_view GenerateEsDocId(std::array<char, kEsDocIdSize>& out);
 std::string GenerateEsDocId();
 
+bool EsBulkIsParallel(size_t body_size) noexcept;
+
 // The inverted index on an ES index's text properties is the relation
 // "<index>$text" ('$' cannot appear in a validated index name); _search
 // queries with match clauses run against it.

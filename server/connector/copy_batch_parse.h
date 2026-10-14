@@ -49,7 +49,7 @@ class CopyBatchParser {
   CopyBatchParser(duckdb::ClientContext& context, pg::CopyInTarget target);
 
   void Start(const pg::CopyBatch& batch);
-  bool Active() const noexcept { return _batch != nullptr; }
+  bool Active() const noexcept { return static_cast<bool>(_batch); }
   bool Exhausted() const noexcept {
     return _segment == _batch->segments.size();
   }

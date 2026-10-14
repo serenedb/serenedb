@@ -41,7 +41,44 @@ constexpr int32_t kNullFieldLength = -1;
                   ERR_MSG("COPY FROM: ", message));
 }
 
+bool EndsRow(std::string_view bytes, size_t pos,
+             size_t backslashes_before) noexcept {
+  const auto run = TrailingBackslashes(bytes.substr(0, pos));
+  return (run == pos ? run + backslashes_before : run) % 2 == 0;
+}
+
 }  // namespace
+
+size_t TrailingBackslashes(std::string_view bytes) noexcept {
+  const auto last = bytes.find_last_not_of('\\');
+  return last == std::string_view::npos ? bytes.size()
+                                        : bytes.size() - last - 1;
+}
+
+size_t FindRowEnd(std::string_view bytes, size_t from,
+                  size_t backslashes_before) noexcept {
+  for (auto pos = bytes.find('\n', from); pos != std::string_view::npos;
+       pos = bytes.find('\n', pos + 1)) {
+    if (EndsRow(bytes, pos, backslashes_before)) {
+      return pos;
+    }
+  }
+  return std::string_view::npos;
+}
+
+size_t FindLastRowEnd(std::string_view bytes) noexcept {
+  for (auto end = bytes.size(); end != 0;) {
+    const auto pos = bytes.rfind('\n', end - 1);
+    if (pos == std::string_view::npos) {
+      break;
+    }
+    if (EndsRow(bytes, pos, 0)) {
+      return pos;
+    }
+    end = pos;
+  }
+  return std::string_view::npos;
+}
 
 CopyBatch& CopyBatchBuilder::Current() {
   if (!_batch) {
@@ -78,7 +115,7 @@ void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
 void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
   while (!bytes.empty()) {
     if (!_partial.empty()) {
-      const auto end = bytes.find('\n');
+      const auto end = FindRowEnd(bytes, 0, TrailingBackslashes(_partial));
       if (end == std::string_view::npos) {
         _partial.append(bytes);
         return;
@@ -88,7 +125,7 @@ void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
       bytes.remove_prefix(end + 1);
       continue;
     }
-    const auto last = bytes.rfind('\n');
+    const auto last = FindLastRowEnd(bytes);
     if (last == std::string_view::npos) {
       _partial.assign(bytes);
       return;

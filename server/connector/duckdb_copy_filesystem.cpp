@@ -114,9 +114,9 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
     auto* out = static_cast<char*>(buf);
     int64_t read = 0;
     while (read < nr_bytes) {
-      if (_batch == nullptr) {
+      if (!_batch) {
         _batch = _batches.Next();
-        if (_batch == nullptr) {
+        if (!_batch) {
           break;
         }
         _segment = 0;

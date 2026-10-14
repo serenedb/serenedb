@@ -26,6 +26,7 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <simdjson.h>
+#include <simdutf.h>
 
 #include <algorithm>
 #include <array>
@@ -71,6 +72,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_index_bind.h"
 #include "connector/inverted_store_index.h"
@@ -1057,7 +1059,9 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
   absl::once_flag lines_once;
   std::vector<size_t> chunk_lines;
 
-  duckdb::idx_t MaxThreads() const final { return chunks; }
+  duckdb::idx_t MaxThreads() const final {
+    return std::clamp<size_t>(body.size() / kInsertBytesPerWorker, 1, chunks);
+  }
 
   size_t LinesBefore(size_t pos) {
     absl::call_once(lines_once, [&] {
@@ -1086,7 +1090,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
     if (data.from_side_channel) {
       const auto* request =
         GetSereneDBContext(context).GetSideChannel<const EsBulkInput>();
-      if (request == nullptr) {
+      if (!request) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                         ERR_MSG("es_bulk_source can only be called by the "
                                 "Elasticsearch _bulk endpoint"));
@@ -1106,7 +1110,7 @@ struct EsBulkState final : duckdb::GlobalTableFunctionState {
     state->starts.resize(state->chunks);
     state->ends.resize(state->chunks);
     state->failure.Resize(state->chunks);
-    if (state->items != nullptr) {
+    if (state->items) {
       state->items->assign(state->chunks, {});
     }
     return state;
@@ -1185,6 +1189,9 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkBind(
   }
   data->body_size = data->body.size();
   data->body.resize(data->body_size + kJsonPadding);
+  if (EsBulkIsParallel(data->body_size)) {
+    input.table_function.get_partition_data = EsBulkPartitionData;
+  }
   return data;
 }
 
@@ -1194,6 +1201,9 @@ duckdb::unique_ptr<duckdb::FunctionData> EsBulkSourceBind(
   duckdb::vector<duckdb::Identifier>& names) {
   auto data = BindWriteTarget(context, input.inputs[0], return_types, names);
   data->from_side_channel = true;
+  if (input.inputs.size() > 1 && input.inputs[1].GetValue<bool>()) {
+    input.table_function.get_partition_data = EsBulkPartitionData;
+  }
   return data;
 }
 
@@ -1328,7 +1338,7 @@ bool Claim(EsBulkState& state, EsBulkLocalState& local,
       state.ends[chunk] = local.pos;
       continue;
     }
-    local.items = state.items == nullptr ? nullptr : &(*state.items)[chunk];
+    local.items = state.items ? &(*state.items)[chunk] : nullptr;
     local.active = true;
     return true;
   }
@@ -1448,26 +1458,23 @@ duckdb::unique_ptr<duckdb::FunctionData> EsRefreshBind(
 std::string_view GenerateEsDocId(std::array<char, kEsDocIdSize>& out) {
   // ES-style ids: 20 chars of unpadded base64url. 15 bytes from a v4 UUID
   // (the few fixed version bits are an acceptable entropy loss).
-  static constexpr std::string_view kAlphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   const auto uuid = duckdb::UUID::GenerateRandomUUID();
-  uint8_t bytes[15];
+  char bytes[15];
   std::memcpy(bytes, &uuid.lower, 8);
   std::memcpy(bytes + 8, &uuid.upper, 7);
-  for (size_t in = 0, at = 0; in < sizeof bytes; in += 3) {
-    const uint32_t group =
-      uint32_t{bytes[in]} << 16 | uint32_t{bytes[in + 1]} << 8 | bytes[in + 2];
-    out[at++] = kAlphabet[group >> 18];
-    out[at++] = kAlphabet[(group >> 12) & 63];
-    out[at++] = kAlphabet[(group >> 6) & 63];
-    out[at++] = kAlphabet[group & 63];
-  }
-  return {out.data(), out.size()};
+  const size_t size = simdutf::binary_to_base64(bytes, sizeof bytes, out.data(),
+                                                simdutf::base64_url);
+  SDB_ASSERT(size == out.size());
+  return {out.data(), size};
 }
 
 std::string GenerateEsDocId() {
   std::array<char, kEsDocIdSize> out;
   return std::string{GenerateEsDocId(out)};
+}
+
+bool EsBulkIsParallel(size_t body_size) noexcept {
+  return body_size / kInsertBytesPerWorker >= 2;
 }
 
 void RegisterEsFunctions(duckdb::DatabaseInstance& db) {
@@ -1502,13 +1509,14 @@ void RegisterEsFunctions(duckdb::DatabaseInstance& db) {
   duckdb::TableFunction bulk{"es_bulk",         {kVarchar, kVarchar},
                              EsBulkExecute,     EsBulkBind,
                              EsBulkState::Init, EsBulkLocalState::Init};
-  bulk.get_partition_data = EsBulkPartitionData;
   loader.RegisterFunction(std::move(bulk));
-  duckdb::TableFunction bulk_source{"es_bulk_source",  {kVarchar},
-                                    EsBulkExecute,     EsBulkSourceBind,
-                                    EsBulkState::Init, EsBulkLocalState::Init};
-  bulk_source.get_partition_data = EsBulkPartitionData;
-  loader.RegisterFunction(std::move(bulk_source));
+  for (auto arguments : {duckdb::vector<duckdb::LogicalType>{kVarchar},
+                         duckdb::vector<duckdb::LogicalType>{
+                           kVarchar, duckdb::LogicalType::BOOLEAN}}) {
+    loader.RegisterFunction(duckdb::TableFunction{
+      "es_bulk_source", std::move(arguments), EsBulkExecute, EsBulkSourceBind,
+      EsBulkState::Init, EsBulkLocalState::Init});
+  }
   loader.RegisterFunction(duckdb::TableFunction{"es_refresh",
                                                 {kVarchar},
                                                 EsRefreshExecute,

@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <gtest/gtest.h>
 
@@ -146,6 +147,28 @@ TEST(PgCopyBatchBuilder, TextBatchesEndOnRowBoundaries) {
       ASSERT_FALSE(bytes.empty());
       EXPECT_EQ(bytes.back(), '\n');
     }
+  }
+}
+
+TEST(PgCopyBatchBuilder, TextBatchesSkipEscapedNewlines) {
+  const std::string input = "a\\\nb\nc\\\\\n\\\\\\\nd\n\ne";
+  const std::vector<size_t> row_ends{4, 8, 14, 15};
+  for (const size_t piece : {1, 2, 3, 5, 7}) {
+    CopyBatchBuilder builder{CopyBatchFormat::Text, 1};
+    std::string out;
+    for (size_t pos = 0; pos < input.size(); pos += piece) {
+      builder.Feed(std::string_view{input}.substr(pos, piece), false);
+      if (builder.Ready()) {
+        out += Join(*builder.Take());
+        EXPECT_NE(absl::c_find(row_ends, out.size() - 1), row_ends.end())
+          << "piece=" << piece << " batch end=" << out.size();
+      }
+    }
+    builder.Finish();
+    if (builder.HasRows()) {
+      out += Join(*builder.Take());
+    }
+    EXPECT_EQ(out, input) << "piece=" << piece;
   }
 }
 

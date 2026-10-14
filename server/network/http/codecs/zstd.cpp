@@ -34,8 +34,6 @@ static_assert(kZstdLevels.min == -ZSTD_TARGETLENGTH_MAX);
 // need not accept windows above 8 MiB.
 inline constexpr int kMaxWindowLog = 23;
 
-constexpr ZSTD_customMem kMemory{CodecPool::Allocate, CodecPool::Free, nullptr};
-
 }  // namespace
 
 void ZstdEncoder::Deleter::operator()(ZSTD_CCtx* cctx) const noexcept {
@@ -47,9 +45,9 @@ void ZstdDecoder::Deleter::operator()(ZSTD_DCtx* dctx) const noexcept {
 }
 
 // https://facebook.github.io/zstd/zstd_manual.html#Chapter9
-ZstdEncoder::ZstdEncoder(int level) : _cctx{ZSTD_createCCtx_advanced(kMemory)} {
+ZstdEncoder::ZstdEncoder(int level) : _cctx{ZSTD_createCCtx()} {
   SDB_ASSERT(kZstdLevels.Contains(level));
-  if (_cctx == nullptr) {
+  if (!_cctx) {
     ThrowCodecError("zstd", "cannot initialize the encoder");
   }
   const size_t rc =
@@ -89,9 +87,8 @@ void ZstdEncoder::EncodeAll(std::string_view in, message::Writer& out) {
   });
 }
 
-ZstdDecoder::ZstdDecoder()
-  : _dctx{ZSTD_createDCtx_advanced(kMemory)}, _out{kOutBlock} {
-  if (_dctx == nullptr) {
+ZstdDecoder::ZstdDecoder() : _dctx{ZSTD_createDCtx()} {
+  if (!_dctx) {
     ThrowCodecError("zstd", "cannot initialize the decoder");
   }
   ZSTD_DCtx_setParameter(_dctx.get(), ZSTD_d_windowLogMax, kMaxWindowLog);
@@ -101,7 +98,7 @@ void ZstdDecoder::Decode(std::string_view in, bool finish, DecodeSink sink) {
   ZSTD_inBuffer input{in.data(), in.size(), 0};
   size_t consumed = 0;
   for (;;) {
-    ZSTD_outBuffer output{_out.Data(), _out.Size(), 0};
+    ZSTD_outBuffer output{_out.data(), _out.size(), 0};
     const size_t rc = ZSTD_decompressStream(_dctx.get(), &output, &input);
     if (ZSTD_isError(rc)) {
       ThrowCorrupt("zstd", ZSTD_getErrorName(rc));

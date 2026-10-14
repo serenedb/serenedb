@@ -21,30 +21,24 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
+#include <brotli/decode.h>
+#include <brotli/encode.h>
 #include <lz4frame.h>
 #include <zlib.h>
+#include <zstd.h>
+#include <zxc.h>
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <iresearch/utils/noncopyable.hpp>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 
 #include "network/http/compression.h"
-#include "server/utils/byte_pool.h"
-
-struct BrotliEncoderStateStruct;
-struct BrotliDecoderStateStruct;
-struct ZSTD_CCtx_s;
-struct ZSTD_DCtx_s;
-struct zxc_cstream_s;
-struct zxc_dstream_s;
 
 namespace sdb::network::http {
-
-using CodecPool = utils::BytePool<struct HttpCodecsTag>;
-using CodecBytes = utils::PooledBytes<CodecPool>;
 
 inline constexpr size_t kOutBlock = 16 * 1024;
 
@@ -70,10 +64,10 @@ class ZstdEncoder : irs::util::Noncopyable {
 
  private:
   struct Deleter {
-    void operator()(ZSTD_CCtx_s* cctx) const noexcept;
+    void operator()(ZSTD_CCtx* cctx) const noexcept;
   };
 
-  std::unique_ptr<ZSTD_CCtx_s, Deleter> _cctx;
+  std::unique_ptr<ZSTD_CCtx, Deleter> _cctx;
 };
 
 class ZstdDecoder : irs::util::Noncopyable {
@@ -84,11 +78,11 @@ class ZstdDecoder : irs::util::Noncopyable {
 
  private:
   struct Deleter {
-    void operator()(ZSTD_DCtx_s* dctx) const noexcept;
+    void operator()(ZSTD_DCtx* dctx) const noexcept;
   };
 
-  std::unique_ptr<ZSTD_DCtx_s, Deleter> _dctx;
-  CodecBytes _out;
+  std::unique_ptr<ZSTD_DCtx, Deleter> _dctx;
+  std::array<uint8_t, kOutBlock> _out;
   size_t _pending = 1;
 };
 
@@ -101,7 +95,7 @@ class BrotliEncoder : irs::util::Noncopyable {
   void EncodeAll(std::string_view in, message::Writer& out);
 
  private:
-  BrotliEncoderStateStruct* _state;
+  BrotliEncoderState* _state;
 };
 
 class BrotliDecoder : irs::util::Noncopyable {
@@ -112,27 +106,14 @@ class BrotliDecoder : irs::util::Noncopyable {
   void Decode(std::string_view in, bool finish, DecodeSink sink);
 
  private:
-  BrotliDecoderStateStruct* _state;
-  CodecBytes _out;
+  BrotliDecoderState* _state;
+  std::array<uint8_t, kOutBlock> _out;
   bool _done = false;
 };
 
-// https://www.zlib.net/manual.html#Advanced : windowBits 15 + 16 selects the
-// gzip wrapper around deflate.
-struct GzipFormat {
-  static constexpr std::string_view kName = "gzip";
-  static constexpr int kWindowBits = 15 + 16;
-};
-
-struct ZlibFormat {
-  static constexpr std::string_view kName = "deflate";
-  static constexpr int kWindowBits = 15;
-};
-
-template<typename Format>
 class ZlibEncoder : irs::util::Noncopyable {
  public:
-  explicit ZlibEncoder(int level);
+  ZlibEncoder(ContentCoding coding, int level);
   ~ZlibEncoder();
 
   void Encode(std::string_view in, bool finish, message::Writer& out);
@@ -140,27 +121,23 @@ class ZlibEncoder : irs::util::Noncopyable {
 
  private:
   z_stream _stream;
+  ContentCoding _coding;
 };
 
-template<typename Format>
 class ZlibDecoder : irs::util::Noncopyable {
  public:
-  ZlibDecoder();
+  explicit ZlibDecoder(ContentCoding coding);
   ~ZlibDecoder();
 
   void Decode(std::string_view in, bool finish, DecodeSink sink);
 
  private:
   z_stream _stream;
-  CodecBytes _out;
+  std::array<uint8_t, kOutBlock> _out;
+  ContentCoding _coding;
   bool _started = false;
   bool _done = false;
 };
-
-using GzipEncoder = ZlibEncoder<GzipFormat>;
-using GzipDecoder = ZlibDecoder<GzipFormat>;
-using DeflateEncoder = ZlibEncoder<ZlibFormat>;
-using DeflateDecoder = ZlibDecoder<ZlibFormat>;
 
 class ZxcEncoder : irs::util::Noncopyable {
  public:
@@ -170,7 +147,7 @@ class ZxcEncoder : irs::util::Noncopyable {
   void Encode(std::string_view in, bool finish, message::Writer& out);
 
  private:
-  zxc_cstream_s* _stream;
+  zxc_cstream* _stream;
 };
 
 class ZxcDecoder : irs::util::Noncopyable {
@@ -181,11 +158,12 @@ class ZxcDecoder : irs::util::Noncopyable {
 
  private:
   struct Deleter {
-    void operator()(zxc_dstream_s* stream) const noexcept;
+    void operator()(zxc_dstream* stream) const noexcept;
   };
 
-  std::unique_ptr<zxc_dstream_s, Deleter> _stream;
-  CodecBytes _out;
+  std::unique_ptr<zxc_dstream, Deleter> _stream;
+  size_t _out_size;
+  std::unique_ptr<uint8_t[]> _out;
 };
 
 class Lz4Encoder : irs::util::Noncopyable {
@@ -207,7 +185,7 @@ class Lz4Encoder : irs::util::Noncopyable {
   std::unique_ptr<LZ4F_cctx, Deleter> _cctx;
   LZ4F_preferences_t _prefs;
   size_t _out_size;
-  std::optional<CodecBytes> _pending;
+  std::unique_ptr<uint8_t[]> _pending;
   size_t _pending_half = 0;
   size_t _pending_size = 0;
   bool _started = false;
@@ -225,7 +203,7 @@ class Lz4Decoder : irs::util::Noncopyable {
   };
 
   std::unique_ptr<LZ4F_dctx, Deleter> _dctx;
-  CodecBytes _out;
+  std::array<uint8_t, kOutBlock> _out;
   size_t _pending = 1;
 };
 

@@ -100,7 +100,7 @@ yaclib::Future<> BackgroundScheduler::Delay(clock::duration d) {
     return std::move(f);
   }
   auto* pool = Server::instance().IoPool();
-  SDB_ASSERT(pool, "OpenDelays() ran before Server::StartIoPool()");
+  SDB_ASSERT(pool);
   auto timer =
     std::make_shared<asio_ns::steady_timer>(pool->Next().Context(), d);
   timer->async_wait(

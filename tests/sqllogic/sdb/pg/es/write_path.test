@@ -134,3 +134,56 @@ CALL es_drop_index('slt_es_w');
 ----
 acknowledged
 t
+
+
+statement ok
+CALL es_create_index('slt_es_big', '{"mappings":{"properties":{"n":{"type":"long"}}}}');
+
+
+query
+EXPLAIN INSERT INTO es.slt_es_big SELECT * FROM es_bulk('slt_es_big', '{"index":{}}' || chr(10) || '{"n":1}' || chr(10));
+----
+QUERY PLAN
+╭─ INSERT ──────────╮
+╰─────────┬─────────╯
+╭─ ES_BULK ─────────╮
+│ Function: ES_BULK │
+│ ~1 row            │
+╰───────────────────╯
+
+
+query
+EXPLAIN INSERT INTO es.slt_es_big SELECT * FROM es_bulk('slt_es_big', repeat('{"index":{}}' || chr(10) || '{"n":1}' || chr(10), 450000));
+----
+QUERY PLAN
+╭─ BATCH_INSERT ────╮
+╰─────────┬─────────╯
+╭─ ES_BULK ─────────╮
+│ Function: ES_BULK │
+│ ~1 row            │
+╰───────────────────╯
+
+
+statement count 450000
+INSERT INTO es.slt_es_big SELECT * FROM es_bulk('slt_es_big', repeat('{"index":{}}' || chr(10) || '{"n":1}' || chr(10), 450000));
+
+
+query
+CALL es_refresh('slt_es_big');
+----
+acknowledged
+t
+
+
+query
+SELECT count(*), count(DISTINCT _id), sum(n) FROM es.slt_es_big;
+----
+count	count	sum
+450000	450000	450000
+
+
+query
+CALL es_drop_index('slt_es_big');
+----
+acknowledged
+t

@@ -52,7 +52,6 @@ namespace {
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
 constexpr size_t kOrderedRun = 16;
 constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
-constexpr char kRowSep = '\n';
 
 pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
                                         bool binary) {
@@ -60,7 +59,7 @@ pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
   auto* state =
     context.registered_state->Get<SereneDBClientState>(kSereneDBClientStateKey)
       .get();
-  if (state == nullptr) {
+  if (!state) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,
                             ") is only valid on a server-side PostgreSQL wire "
@@ -68,7 +67,7 @@ pg::CopyInBatches& RequireCopyInBatches(duckdb::ClientContext& context,
   }
   auto* batches =
     state->GetConnectionContext().GetSideChannel<pg::CopyInBatches>();
-  if (batches == nullptr) {
+  if (!batches) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("COPY ... FROM STDIN (FORMAT ", format,
                             ") requires a PG wire connection (transport not "
@@ -336,9 +335,19 @@ size_t ReadAt(RangesGlobalState& g, std::string& buffer, uint64_t location,
   return bytes;
 }
 
+size_t FindCut(std::string_view bytes, size_t from) {
+  for (auto pos = bytes.find('\n', from); pos != std::string_view::npos;
+       pos = bytes.find('\n', pos + 1)) {
+    if (pos == 0 || bytes[pos - 1] != '\\') {
+      return pos;
+    }
+  }
+  return std::string_view::npos;
+}
+
 uint64_t RangeFrom(uint64_t range) {
   const uint64_t begin = range * kCopyFileRangeBytes;
-  return begin == 0 ? 0 : begin - 1;
+  return begin == 0 ? 0 : begin - 2;
 }
 
 void ReadRange(RangesGlobalState& g, RangeJobState& job) {
@@ -370,20 +379,20 @@ bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
   }
   size_t first = 0;
   if (job.range != 0) {
-    const auto row_sep = buffer.find(kRowSep);
-    if (row_sep == std::string::npos || row_sep + 1 == buffer.size()) {
+    const auto cut = FindCut(buffer, 1);
+    if (cut == std::string::npos || cut + 1 == buffer.size()) {
       return false;
     }
-    first = row_sep + 1;
+    first = cut + 1;
   }
-  auto last = buffer.find(kRowSep, buffer.size() - 1);
+  auto last = FindCut(buffer, buffer.size() - 1);
   while (last == std::string::npos) {
     const auto scanned = buffer.size();
     if (ReadAt(g, buffer, from + scanned, pg::kCopyBatchBytes) == 0) {
       last = scanned - 1;
       break;
     }
-    last = buffer.find(kRowSep, scanned);
+    last = FindCut(buffer, scanned);
   }
   batch.segments.clear();
   batch.bytes = 0;
@@ -411,7 +420,7 @@ bool AcquireRange(duckdb::ClientContext& context,
     if (l.job) {
       ReadRange(g, *l.job);
     }
-    return l.job != nullptr;
+    return static_cast<bool>(l.job);
   }
   duckdb::unique_ptr<duckdb::ScanReadAheadJob> claimed;
   const auto acquired = g.read_ahead->AcquireJob(
@@ -488,7 +497,7 @@ bool BindCopyFrom(duckdb::ClientContext& context,
     context, input.info.GetQualifiedName(),
     duckdb::OnEntryNotFound::RETURN_NULL);
   const bool ordered =
-    table != nullptr && table->IsDuckTable() &&
+    table && table->IsDuckTable() &&
     duckdb::Settings::Get<duckdb::PreserveInsertionOrderSetting>(context);
   if (ordered) {
     input.tf.get_partition_data = CopyFromPartitionData;

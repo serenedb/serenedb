@@ -912,9 +912,11 @@ TEST(NetworkHttpCompression, NegotiateLevels) {
   ASSERT_NE(negotiated.coding, ContentCoding::Identity);
   EXPECT_EQ(negotiated.level, kNoLevel);
 
-  for (const auto header : {"zstd(x)", "zstd(1", "zstd()", "zstd(1)x"}) {
+  for (const auto header :
+       {"zstd(x)", "zstd(1", "zstd()", "zstd(1)x", "(1)", "gzip, (1)"}) {
     EXPECT_EQ(NegotiateContentCoding(header).acceptance, Acceptance::Malformed)
       << header;
+    EXPECT_FALSE(ParseContentEncoding(header).has_value()) << header;
   }
 }
 
@@ -1044,40 +1046,6 @@ TEST(NetworkHttpCompression, EncoderDoesNotReadWritesAfterTheyReturn) {
     EXPECT_TRUE(reused.Bytes() == kept.Bytes()) << token;
     EXPECT_EQ(Decode(token, reused.Bytes()), body) << token;
   }
-}
-
-TEST(NetworkHttpCompression, DefaultZstdContextsFitAPooledBlock) {
-  const auto body = Payload(8 << 20);
-  std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> cctx{ZSTD_createCCtx(),
-                                                            ZSTD_freeCCtx};
-  ZSTD_CCtx_setParameter(cctx.get(), ZSTD_c_compressionLevel,
-                         ZSTD_CLEVEL_DEFAULT);
-  std::array<char, network::http::kOutBlock> block;
-  std::string compressed;
-  ZSTD_inBuffer input{body.data(), body.size(), 0};
-  size_t remaining = 0;
-  do {
-    ZSTD_outBuffer output{block.data(), block.size(), 0};
-    remaining = ZSTD_compressStream2(cctx.get(), &output, &input, ZSTD_e_end);
-    ASSERT_FALSE(ZSTD_isError(remaining));
-    compressed.append(block.data(), output.pos);
-  } while (remaining != 0);
-  EXPECT_LE(ZSTD_sizeof_CCtx(cctx.get()),
-            network::http::CodecPool::kMaxPooledBytes);
-
-  std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> dctx{ZSTD_createDCtx(),
-                                                            ZSTD_freeDCtx};
-  ZSTD_inBuffer packed{compressed.data(), compressed.size(), 0};
-  size_t decoded = 0;
-  while (packed.pos < packed.size) {
-    ZSTD_outBuffer output{block.data(), block.size(), 0};
-    ASSERT_FALSE(
-      ZSTD_isError(ZSTD_decompressStream(dctx.get(), &output, &packed)));
-    decoded += output.pos;
-  }
-  EXPECT_EQ(decoded, body.size());
-  EXPECT_LE(ZSTD_sizeof_DCtx(dctx.get()),
-            network::http::CodecPool::kMaxPooledBytes);
 }
 
 std::string VariedJson() {

@@ -1486,7 +1486,7 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   const auto& relation = *_batch.rel;
   const auto& shape = _batch.shape;
   auto* statement = _stmts.Find(StmtKeyView{_batch.relid, shape});
-  if (statement == nullptr) {
+  if (!statement) {
     const auto names = [&](const std::vector<size_t>& indexes) {
       std::vector<std::string> result;
       result.reserve(indexes.size());

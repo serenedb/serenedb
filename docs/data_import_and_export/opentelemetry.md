@@ -79,10 +79,7 @@ value the column cannot hold) answers `400`, which clients do not retry, and
 a transient server condition (a transaction conflict, out of memory, shutdown)
 answers `503`, which they do.
 
-Each export is written in one transaction, so a failed export stores nothing:
-a metrics export whose points span several `otel_metrics_*` tables is written
-to all of them or to none, and a client retry cannot duplicate the tables
-that succeeded the first time.
+Each export is written in one transaction, so a failed export stores nothing: a metrics export whose points span several `otel_metrics_*` tables is written to all of them or to none, and a client retry cannot duplicate the tables that succeeded the first time.
 
 ### Encodings
 
@@ -106,24 +103,13 @@ Both decoders feed the same mapper, and the conformance fixtures ship as an
 `.json` and a `.pb` of the same payload: a test asserts that each
 row shape arrives twice, once per decoder.
 
-Request bodies may be compressed with any coding the HTTP listener supports —
-`gzip` (the collector's default), `zstd`, `br`, `lz4`, `zxc` or `snappy`; see
-[HTTP Compression](../configuration/http_compression.md). An unsupported
-`Content-Encoding` answers `415`, and a corrupt compressed body `400`, both
-before the payload is decoded.
+Request bodies may be compressed with any coding the HTTP listener supports — `gzip` (the collector's default), `zstd`, `br`, `deflate`, `lz4`, `zxc` or `snappy`; see [HTTP Compression](../configuration/http_compression.md). An unsupported `Content-Encoding` answers `415`, and a corrupt compressed body `400`, both before the payload is decoded.
 
-A request body is at most 100 MiB, and a larger one answers `413`. The limit
-applies to the body after decompression too. A listener that also serves other
-APIs (`?api=otel&api=es`) applies the largest of their limits to every request.
+A request body is at most 100 MiB, and a larger one answers `413`. The limit applies to the body after decompression too. A listener that also serves other APIs (`?api=otel&api=es`) applies the largest of their limits to every request.
 
 ### Batching
 
-Send few large requests rather than many small ones. Each export is one
-transaction with a fixed cost, and an export is parsed and inserted on one
-thread per 4 MiB of its decoded body, so throughput grows with the request size
-up to the 100 MiB limit. SDKs export small batches, so put an OpenTelemetry Collector in front
-of SereneDB as a batching proxy: the SDKs send to the collector, and its
-`batch` processor merges their exports into large requests to SereneDB:
+Send few large requests rather than many small ones. Each export is one transaction with a fixed cost, and a large export is parsed and inserted on several threads, so throughput grows with the request size up to the 100 MiB limit. SDKs export small batches, so put an OpenTelemetry Collector in front of SereneDB as a batching proxy: the SDKs send to the collector, and its `batch` processor merges their exports into large requests to SereneDB:
 
 ```yaml
 processors:
@@ -146,9 +132,7 @@ service:
       exporters: [otlphttp]
 ```
 
-The batch sizes count items (log records, spans or metric data points), not
-bytes: keep `send_batch_max_size` low enough that a request stays under
-100 MiB after decompression.
+The batch sizes count items (log records, spans or metric data points), not bytes: keep `send_batch_max_size` low enough that a request stays under 100 MiB after decompression.
 
 Errors of the export itself use `google.rpc.Status`, encoded the same way as
 the request: `400` for an undecodable payload.

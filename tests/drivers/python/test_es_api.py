@@ -307,10 +307,10 @@ def test_large_bulk_keeps_items_in_request_order(conn, index):
 
 def test_large_bulk_reports_the_failing_line(conn, index):
     good = '{"index":{}}\n{"year":1}\n'
-    payload = good * 130_000 + '{"delete":{"_id":"x"}}\n{"year":1}\n' + good
+    payload = good * 360_000 + '{"delete":{"_id":"x"}}\n{"year":1}\n' + good
     status, body = _bulk(conn, index, payload)
     assert status == 400
-    assert "line [260001]" in body["error"]["reason"], body
+    assert "line [720001]" in body["error"]["reason"], body
     status, body = _request(conn, "GET", f"/{index}/_count")
     assert body["count"] == 0
 
@@ -330,10 +330,10 @@ def test_large_bulk_with_documents_shaped_like_actions(conn, index):
 
 def test_large_bulk_reports_a_stray_line(conn, index):
     good = '{"index":{}}\n{"year":1}\n'
-    payload = good * 100_000 + '{"year":2}\n' + good * 100_000
+    payload = good * 180_000 + '{"year":2}\n' + good * 180_000
     status, body = _bulk(conn, index, payload)
     assert status == 400
-    assert "line [200001]" in body["error"]["reason"], body
+    assert "line [360001]" in body["error"]["reason"], body
     status, body = _request(conn, "GET", f"/{index}/_count")
     assert body["count"] == 0
 

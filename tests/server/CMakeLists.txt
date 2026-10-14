@@ -5,7 +5,6 @@ add_executable(
     tests_main.cpp
     assertions_tests.cpp
     background_scheduler_test.cpp
-    byte_pool_test.cpp
     database_directory_test.cpp
     docs_search_test.cpp
     duckdb_detach_test.cpp

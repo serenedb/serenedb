@@ -35,10 +35,9 @@ inline constexpr int kDefaultQuality = 5;
 
 // https://github.com/google/brotli/blob/master/c/include/brotli/encode.h
 BrotliEncoder::BrotliEncoder(int level)
-  : _state{BrotliEncoderCreateInstance(CodecPool::Allocate, CodecPool::Free,
-                                       nullptr)} {
+  : _state{BrotliEncoderCreateInstance(nullptr, nullptr, nullptr)} {
   SDB_ASSERT(kBrotliLevels.Contains(level));
-  if (_state == nullptr) {
+  if (!_state) {
     ThrowCodecError("br", "cannot initialize the encoder");
   }
   BrotliEncoderSetParameter(
@@ -96,10 +95,8 @@ void BrotliEncoder::EncodeAll(std::string_view in, message::Writer& out) {
 
 // https://github.com/google/brotli/blob/master/c/include/brotli/decode.h
 BrotliDecoder::BrotliDecoder()
-  : _state{BrotliDecoderCreateInstance(CodecPool::Allocate, CodecPool::Free,
-                                       nullptr)},
-    _out{kOutBlock} {
-  if (_state == nullptr) {
+  : _state{BrotliDecoderCreateInstance(nullptr, nullptr, nullptr)} {
+  if (!_state) {
     ThrowCodecError("br", "cannot initialize the decoder");
   }
 }
@@ -116,13 +113,13 @@ void BrotliDecoder::Decode(std::string_view in, bool finish, DecodeSink sink) {
       }
       break;
     }
-    size_t avail_out = _out.Size();
-    uint8_t* next_out = _out.Data();
+    size_t avail_out = _out.size();
+    uint8_t* next_out = _out.data();
     const auto rc = BrotliDecoderDecompressStream(
       _state, &avail_in, &next_in, &avail_out, &next_out, nullptr);
-    const size_t produced = _out.Size() - avail_out;
+    const size_t produced = _out.size() - avail_out;
     if (produced != 0) {
-      sink({reinterpret_cast<const char*>(_out.Data()), produced});
+      sink({reinterpret_cast<const char*>(_out.data()), produced});
     }
     if (rc == BROTLI_DECODER_RESULT_ERROR) {
       ThrowCorrupt("br",

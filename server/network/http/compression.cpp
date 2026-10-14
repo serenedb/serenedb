@@ -20,6 +20,7 @@
 
 #include "network/http/compression.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
@@ -62,7 +63,7 @@ constexpr std::array kContentCodings = {
   CodingInfo{ContentCoding::Unknown, {}, {}},
 };
 
-static_assert(std::ranges::all_of(
+static_assert(absl::c_all_of(
   std::views::iota(size_t{0}, kContentCodings.size()), [](size_t i) {
     return static_cast<size_t>(kContentCodings[i].coding) == i;
   }));
@@ -120,12 +121,14 @@ bool SplitLevel(std::string_view& token, int& level) {
   if (token.back() != ')') {
     return false;
   }
+  const auto coding = absl::StripTrailingAsciiWhitespace(token.substr(0, open));
   int value = 0;
-  if (!absl::SimpleAtoi(token.substr(open + 1, token.size() - open - 2),
+  if (coding.empty() ||
+      !absl::SimpleAtoi(token.substr(open + 1, token.size() - open - 2),
                         &value)) {
     return false;
   }
-  token = absl::StripTrailingAsciiWhitespace(token.substr(0, open));
+  token = coding;
   level = value;
   return true;
 }
@@ -179,11 +182,12 @@ ContentCoding FindContentCoding(std::string_view token) {
 }
 
 struct ContentEncoder::Codec {
-  template<typename Encoder>
-  Codec(std::in_place_type_t<Encoder> type, int level) : impl{type, level} {}
+  template<typename Encoder, typename... Args>
+  explicit Codec(std::in_place_type_t<Encoder> type, Args... args)
+    : impl{type, args...} {}
 
-  std::variant<ZstdEncoder, BrotliEncoder, GzipEncoder, DeflateEncoder,
-               ZxcEncoder, Lz4Encoder, SnappyEncoder>
+  std::variant<ZstdEncoder, BrotliEncoder, ZlibEncoder, ZxcEncoder, Lz4Encoder,
+               SnappyEncoder>
     impl;
 };
 
@@ -197,11 +201,9 @@ ContentEncoder::ContentEncoder(ContentCoding coding, int level) {
         std::make_unique<Codec>(std::in_place_type<BrotliEncoder>, level);
       return;
     case ContentCoding::Gzip:
-      _codec = std::make_unique<Codec>(std::in_place_type<GzipEncoder>, level);
-      return;
     case ContentCoding::Deflate:
       _codec =
-        std::make_unique<Codec>(std::in_place_type<DeflateEncoder>, level);
+        std::make_unique<Codec>(std::in_place_type<ZlibEncoder>, coding, level);
       return;
     case ContentCoding::Zxc:
       _codec = std::make_unique<Codec>(std::in_place_type<ZxcEncoder>, level);
@@ -243,11 +245,12 @@ void ContentEncoder::EncodeAll(std::string_view in, message::Writer& out) {
 }
 
 struct ContentDecoder::Codec {
-  template<typename Decoder>
-  explicit Codec(std::in_place_type_t<Decoder> type) : impl{type} {}
+  template<typename Decoder, typename... Args>
+  explicit Codec(std::in_place_type_t<Decoder> type, Args... args)
+    : impl{type, args...} {}
 
-  std::variant<ZstdDecoder, BrotliDecoder, GzipDecoder, DeflateDecoder,
-               ZxcDecoder, Lz4Decoder, SnappyDecoder>
+  std::variant<ZstdDecoder, BrotliDecoder, ZlibDecoder, ZxcDecoder, Lz4Decoder,
+               SnappyDecoder>
     impl;
 };
 
@@ -260,10 +263,8 @@ ContentDecoder::ContentDecoder(ContentCoding coding) {
       _codec = std::make_unique<Codec>(std::in_place_type<BrotliDecoder>);
       return;
     case ContentCoding::Gzip:
-      _codec = std::make_unique<Codec>(std::in_place_type<GzipDecoder>);
-      return;
     case ContentCoding::Deflate:
-      _codec = std::make_unique<Codec>(std::in_place_type<DeflateDecoder>);
+      _codec = std::make_unique<Codec>(std::in_place_type<ZlibDecoder>, coding);
       return;
     case ContentCoding::Zxc:
       _codec = std::make_unique<Codec>(std::in_place_type<ZxcDecoder>);

@@ -62,7 +62,7 @@ zxc_cstream* CreateCStream(int level) {
 
 zxc_dstream* CreateDStream() {
   auto* stream = zxc_dstream_create(nullptr);
-  if (stream == nullptr) {
+  if (!stream) {
     ThrowCodecError("zxc", "stream creation failed");
   }
   return stream;
@@ -72,7 +72,7 @@ zxc_dstream* CreateDStream() {
 
 // https://github.com/serenedb/zxc/blob/main/include/zxc_pstream.h
 ZxcEncoder::ZxcEncoder(int level) : _stream{CreateCStream(level)} {
-  if (_stream == nullptr) {
+  if (!_stream) {
     ThrowCodecError("zxc", "stream creation failed");
   }
 }
@@ -98,18 +98,19 @@ void ZxcDecoder::Deleter::operator()(zxc_dstream* stream) const noexcept {
 
 ZxcDecoder::ZxcDecoder()
   : _stream{CreateDStream()},
-    _out{std::max(zxc_dstream_out_size(_stream.get()), kOutBlock)} {}
+    _out_size{std::max(zxc_dstream_out_size(_stream.get()), kOutBlock)},
+    _out{std::make_unique_for_overwrite<uint8_t[]>(_out_size)} {}
 
 void ZxcDecoder::Decode(std::string_view in, bool finish, DecodeSink sink) {
   zxc_inbuf_t input{.src = in.data(), .size = in.size(), .pos = 0};
   for (;;) {
-    zxc_outbuf_t output{.dst = _out.Data(), .size = _out.Size(), .pos = 0};
+    zxc_outbuf_t output{.dst = _out.get(), .size = _out_size, .pos = 0};
     const int64_t rc = zxc_dstream_decompress(_stream.get(), &output, &input);
     if (rc < 0) {
       ThrowCorrupt("zxc", zxc_error_name(static_cast<int>(rc)));
     }
     if (output.pos != 0) {
-      sink({reinterpret_cast<const char*>(_out.Data()), output.pos});
+      sink({reinterpret_cast<const char*>(_out.get()), output.pos});
     }
     if (rc == 0) {
       break;

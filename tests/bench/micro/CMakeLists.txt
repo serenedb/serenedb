@@ -55,7 +55,6 @@ endfunction()
 
 add_bench(bm25_byte_norm)
 add_bench(ascii_probe)
-add_bench(byte_pool)
 add_bench(vector_access)
 add_bench(crc32c)
 add_bench(delimited_scan)

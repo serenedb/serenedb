@@ -43,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "connector/common.h"
 #include "connector/duckdb_client_state.h"
 #include "otel/mapper.h"
 #include "otel/protobuf.h"
@@ -405,10 +406,6 @@ struct RecordPosition {
   auto operator<=>(const RecordPosition&) const = default;
 };
 
-// Measured empirically: below 4 MiB per worker, the per-worker segment flush
-// costs more than parallel parsing saves.
-inline constexpr size_t kBytesPerWorker = 4 << 20;
-
 template<typename Source>
 std::vector<RecordPosition> SplitIntoBatches(
   const typename Source::Request& request) {
@@ -720,7 +717,7 @@ struct MetricsSource {
 
   static size_t Rows(const otel::Metric& metric) {
     const auto* data = std::get_if<typename MetricShape::Data>(&metric.data);
-    return data == nullptr ? 0 : data->data_points.size();
+    return data ? data->data_points.size() : 0;
   }
 
   template<Column C>
@@ -885,7 +882,7 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
   std::atomic<size_t> next{0};
 
   duckdb::idx_t MaxThreads() const final {
-    return std::clamp<size_t>(request->wire_bytes / kBytesPerWorker, 1,
+    return std::clamp<size_t>(request->wire_bytes / kInsertBytesPerWorker, 1,
                               bounds.size() - 1);
   }
 

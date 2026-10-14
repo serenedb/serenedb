@@ -453,6 +453,74 @@ def test_large_text_copy_header_and_last_row_without_newline(
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
+@pytest.mark.parametrize("source", _SOURCES)
+def test_text_copy_crlf_line_endings(conn: psycopg.Connection,
+                                     table_name: str, source: str,
+                                     shared_path: Path) -> None:
+    payload = b"x\tlabel\r\n0\tzero\r\n1\tone\\r\r\n2\ttwo\\\\\r\n3\tthree"
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_from(cur, table_name, payload, "FORMAT TEXT, HEADER", source,
+                       shared_path)
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(0, "zero"), (1, "one\r"), (2, "two\\"),
+                                      (3, "three")]
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+def test_text_copy_escaped_newlines(conn: psycopg.Connection,
+                                    table_name: str, source: str,
+                                    shared_path: Path) -> None:
+    payload = b"0\tline\\\nbreak\n1\tslash\\\\\n2\t\\\\\\\nx\n3\tlast"
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_from(cur, table_name, payload, "FORMAT TEXT", source,
+                       shared_path)
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(0, "line\nbreak"), (1, "slash\\"),
+                                      (2, "\\\nx"), (3, "last")]
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+def _escaped_boundary_payload() -> tuple[bytes, list[str]]:
+    rows = [b"0\t" + b"y" * (_RANGE - 4) + b"\\\ntail\n",
+            b"1\t" + b"y" * (_RANGE - 10) + b"\\\\\n",
+            b"2\t" + b"y" * (_RANGE - 6) + b"\\\\\\\nz\n"]
+    labels = ["y" * (_RANGE - 4) + "\ntail", "y" * (_RANGE - 10) + "\\",
+              "y" * (_RANGE - 6) + "\\\nz"]
+    for x in range(3, 8):
+        rows.append(b"%d\tz\n" % x)
+        labels.append("z")
+    return b"".join(rows), labels
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+def test_text_copy_escaped_newlines_on_range_boundaries(
+        conn: psycopg.Connection, table_name: str, source: str,
+        shared_path: Path) -> None:
+    payload, labels = _escaped_boundary_payload()
+    assert payload[_RANGE - 2:_RANGE] == b"\\\n"
+    assert payload[2 * _RANGE - 3:2 * _RANGE] == b"\\\\\n"
+    assert payload[3 * _RANGE - 4:3 * _RANGE] == b"\\\\\\\n"
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_from(cur, table_name, payload, "FORMAT TEXT", source,
+                       shared_path)
+            cur.execute(f'SELECT x, length(label), right(label, 6) FROM '
+                        f'public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == [(x, len(label), label[-6:])
+                                      for x, label in enumerate(labels)]
+            _assert_insertion_order(cur, table_name, "", len(labels))
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
 def _label_length(i: int) -> int:
     if i == 1:
         return 17_000_000

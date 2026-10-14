@@ -20,9 +20,9 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/container/node_hash_map.h>
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/main/prepared_statement.hpp>
@@ -51,10 +51,12 @@ class PreparedCache {
     Key key, duckdb::unique_ptr<duckdb::PreparedStatement> statement,
     size_t capacity) {
     SDB_ASSERT(capacity != 0);
-    SDB_ASSERT(statement != nullptr);
+    SDB_ASSERT(statement);
     if (_entries.size() >= capacity) {
-      _entries.erase(std::ranges::min_element(
-        _entries, {}, [](const auto& entry) { return entry.second.last_use; }));
+      _entries.erase(
+        absl::c_min_element(_entries, [](const auto& l, const auto& r) {
+          return l.second.last_use < r.second.last_use;
+        }));
     }
     auto& entry =
       _entries

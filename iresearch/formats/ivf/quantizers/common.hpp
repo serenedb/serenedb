@@ -222,12 +222,16 @@ class FastScanLut {
 
 inline constexpr size_t kGatherAhead = 4;
 inline constexpr uintptr_t kCacheLine = 64;
+inline constexpr size_t kGatherLines = 36;
 
 template<typename Score>
 void ScoreGatheredRows(const byte_type* base, uint32_t record_size,
                        std::span<const uint32_t> ids, score_t* out,
                        Score&& score) {
   const size_t n = ids.size();
+  const size_t ahead = std::clamp<size_t>(
+    kGatherLines * kCacheLine / std::max<size_t>(record_size, 1), 1,
+    kGatherAhead);
   const auto row = [&](size_t i) {
     return base + static_cast<size_t>(ids[i]) * record_size;
   };
@@ -242,12 +246,12 @@ void ScoreGatheredRows(const byte_type* base, uint32_t record_size,
       __builtin_prefetch(reinterpret_cast<const void*>(p), 0, 3);
     }
   };
-  for (size_t i = 0; i < std::min(n, kGatherAhead); ++i) {
+  for (size_t i = 0; i < std::min(n, ahead); ++i) {
     rest(i);
   }
   for (size_t i = 0; i < n; ++i) {
-    if (i + kGatherAhead < n) {
-      rest(i + kGatherAhead);
+    if (i + ahead < n) {
+      rest(i + ahead);
     }
     out[i] = score(row(i));
   }

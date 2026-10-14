@@ -2213,7 +2213,12 @@ TEST(hnsw_pq_quantizer_test, pair_scores_are_decoded_distances) {
                                         decoded.data() + b * d, d);
           EXPECT_NEAR(pair[b], want, 1e-4f * (1.f + std::fabs(want)))
             << "a=" << a << " b=" << b;
-          EXPECT_NEAR(keyed[b], want, 1e-4f * (1.f + std::fabs(want)))
+          const float* va = decoded.data() + a * d;
+          const float* vb = decoded.data() + b * d;
+          const float norms =
+            ExactScore(VectorMetric::InnerProduct, va, va, d) +
+            ExactScore(VectorMetric::InnerProduct, vb, vb, d);
+          EXPECT_NEAR(keyed[b], want, 1e-3f * (1.f + std::fabs(want) + norms))
             << "a=" << a << " b=" << b;
         }
       }
@@ -2280,7 +2285,7 @@ TEST(hnsw_pq_quantizer_test, gathered_matches_block_at_every_batch_size) {
   const auto query = MakeSpread(d, 1, 79);
   for (const VectorMetric metric :
        {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
-    for (const uint32_t pq_m : {96U, 48U, 24U}) {
+    for (const uint32_t pq_m : {96U, 48U, 24U, 12U, 6U, 32U}) {
       const auto f = BuildPqCodes(d, pq_m, metric, points, n);
       auto reader = MakeKeyedReader(f, query, centroid.data());
       std::vector<score_t> block(n);

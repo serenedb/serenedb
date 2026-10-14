@@ -20,6 +20,7 @@
 
 #include <absl/random/distributions.h>
 #include <faiss/impl/ProductQuantizer.h>
+#include <faiss/utils/fp16.h>
 
 #include <core_functions/array_kernels.hpp>
 #include <limits>
@@ -35,6 +36,10 @@ constexpr uint32_t kPqNbits = 4;
 constexpr uint32_t kPq8Nbits = 8;
 constexpr size_t kPq8Ksub = size_t{1} << kPq8Nbits;
 constexpr size_t kPq8TrainRows = 32768;
+
+constexpr bool Pq8Direct(size_t dsub) noexcept {
+  return dsub == 1 || dsub == 2 || dsub == 4 || dsub == 8 || dsub == 16;
+}
 
 constexpr size_t kPqTrainResiduals = kFastScanKsub * 256;
 
@@ -826,6 +831,12 @@ class ProductQuantizer8Stats final : public QuantizerStats {
         }
       }
     }
+    if (Pq8Direct(_pq.dsub)) {
+      _cent_h.resize(_pq.centroids.size());
+      for (size_t i = 0; i < _cent_h.size(); ++i) {
+        _cent_h[i] = faiss::encode_fp16(_pq.centroids[i]);
+      }
+    }
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -838,11 +849,13 @@ class ProductQuantizer8Stats final : public QuantizerStats {
   const faiss::ProductQuantizer& Pq() const noexcept { return _pq; }
   const float* CentroidNorms() const noexcept { return _norms.data(); }
   const float* TransposedCentroids() const noexcept { return _cent_t.data(); }
+  const uint16_t* HalfCentroids() const noexcept { return _cent_h.data(); }
 
  private:
   faiss::ProductQuantizer _pq;
   std::vector<float> _norms;
   std::vector<float> _cent_t;
+  std::vector<uint16_t> _cent_h;
 };
 
 template<VectorMetric M>
@@ -858,6 +871,10 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
   void Rekey(std::span<const float> query) {
     const faiss::ProductQuantizer& pq = _stats->Pq();
     const size_t dsub = pq.dsub;
+    if (Pq8Direct(dsub)) {
+      _query.assign(query.begin(), query.end());
+      return;
+    }
     _lut.resize(pq.M * kPq8Ksub);
     const float* cent_t = _stats->TransposedCentroids();
     const float* norms = _stats->CentroidNorms();
@@ -900,10 +917,15 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
   }
   const faiss::ProductQuantizer& Pq() const noexcept { return _stats->Pq(); }
   const float* Lut() const noexcept { return _lut.data(); }
+  const float* Query() const noexcept { return _query.data(); }
+  const uint16_t* HalfCentroids() const noexcept {
+    return _stats->HalfCentroids();
+  }
 
  private:
   std::shared_ptr<const ProductQuantizer8Stats<M>> _stats;
   std::vector<float> _lut;
+  std::vector<float> _query;
 };
 
 template<VectorMetric M>
@@ -1085,8 +1107,24 @@ class ProductQuantizer8Reader final : public QuantizerReader {
     return n / kGroup * kGroup + (n % kGroup >= kHalfGroup ? kHalfGroup : 0);
   }
 
-  template<size_t G>
-  static void ScoreRows(const uint8_t* const* rows, float* acc, const float* l,
+  template<size_t Dsub>
+  static float SubspaceScore(const float* q, const uint16_t* c) noexcept {
+    float s = 0.f;
+    for (size_t t = 0; t < Dsub; ++t) {
+      const float v = faiss::decode_fp16(c[t]);
+      if constexpr (M == VectorMetric::L2Sqr) {
+        const float e = q[t] - v;
+        s += e * e;
+      } else {
+        s += q[t] * v;
+      }
+    }
+    return s;
+  }
+
+  template<size_t G, size_t Dsub>
+  static void ScoreRows(const uint8_t* const* rows, float* acc,
+                        const float* lut, const uint16_t* half, const float* q,
                         size_t m0, size_t m1) noexcept {
     const uint8_t* r[G];
     float a[G];
@@ -1094,9 +1132,18 @@ class ProductQuantizer8Reader final : public QuantizerReader {
       r[g] = rows[g];
       a[g] = acc[g];
     }
-    for (size_t m = m0; m < m1; ++m, l += kPq8Ksub) {
-      for (size_t g = 0; g < G; ++g) {
-        a[g] += l[r[g][m]];
+    for (size_t m = m0; m < m1; ++m) {
+      if constexpr (Dsub == 0) {
+        for (size_t g = 0; g < G; ++g) {
+          a[g] += lut[r[g][m]];
+        }
+        lut += kPq8Ksub;
+      } else {
+        const float* qm = q + m * Dsub;
+        for (size_t g = 0; g < G; ++g) {
+          a[g] += SubspaceScore<Dsub>(qm, half + size_t{r[g][m]} * Dsub);
+        }
+        half += kPq8Ksub * Dsub;
       }
     }
     for (size_t g = 0; g < G; ++g) {
@@ -1104,6 +1151,25 @@ class ProductQuantizer8Reader final : public QuantizerReader {
     }
   }
 
+  void ScoreGrouped(const byte_type* base, uint32_t record_size,
+                    std::span<const uint32_t> ids, score_t* out) const {
+    switch (_dsub) {
+      case 1:
+        return ScoreGrouped<1>(base, record_size, ids, out);
+      case 2:
+        return ScoreGrouped<2>(base, record_size, ids, out);
+      case 4:
+        return ScoreGrouped<4>(base, record_size, ids, out);
+      case 8:
+        return ScoreGrouped<8>(base, record_size, ids, out);
+      case 16:
+        return ScoreGrouped<16>(base, record_size, ids, out);
+      default:
+        return ScoreGrouped<0>(base, record_size, ids, out);
+    }
+  }
+
+  template<size_t Dsub>
   void ScoreGrouped(const byte_type* base, uint32_t record_size,
                     std::span<const uint32_t> ids, score_t* out) const {
     const uint8_t* rows[kSlice];
@@ -1116,6 +1182,8 @@ class ProductQuantizer8Reader final : public QuantizerReader {
       __builtin_prefetch(rows[k], 0, 3);
     }
     const float* lut = _cur->Lut();
+    const uint16_t* half = _cur->HalfCentroids();
+    const float* q = _cur->Query();
     for (size_t m0 = 0; m0 < _m; m0 += kChunk) {
       const size_t m1 = std::min(_m, m0 + kChunk);
       if (m0 % kLine == 0 && m0 + kLine < _m) {
@@ -1123,13 +1191,14 @@ class ProductQuantizer8Reader final : public QuantizerReader {
           __builtin_prefetch(rows[k] + m0 + kLine, 0, 3);
         }
       }
-      const float* l = lut + m0 * kPq8Ksub;
+      const float* l = Dsub == 0 ? lut + m0 * kPq8Ksub : nullptr;
+      const uint16_t* h = Dsub == 0 ? nullptr : half + m0 * kPq8Ksub * Dsub;
       size_t k = 0;
       for (; k + kGroup <= n; k += kGroup) {
-        ScoreRows<kGroup>(rows + k, acc + k, l, m0, m1);
+        ScoreRows<kGroup, Dsub>(rows + k, acc + k, l, h, q, m0, m1);
       }
       if (k < n) {
-        ScoreRows<kHalfGroup>(rows + k, acc + k, l, m0, m1);
+        ScoreRows<kHalfGroup, Dsub>(rows + k, acc + k, l, h, q, m0, m1);
       }
     }
     for (size_t k = 0; k < n; ++k) {
@@ -1141,7 +1210,38 @@ class ProductQuantizer8Reader final : public QuantizerReader {
     }
   }
 
+  template<size_t Dsub>
+  float ScoreDirect(const uint8_t* code) const noexcept {
+    const uint16_t* half = _cur->HalfCentroids();
+    const float* q = _cur->Query();
+    float a[4] = {};
+    for (size_t j = 0; j < _m; ++j, half += kPq8Ksub * Dsub) {
+      a[j & 3] +=
+        SubspaceScore<Dsub>(q + j * Dsub, half + size_t{code[j]} * Dsub);
+    }
+    const float s = (a[0] + a[1]) + (a[2] + a[3]);
+    if constexpr (M == VectorMetric::L2Sqr) {
+      return -s;
+    } else {
+      return s;
+    }
+  }
+
   float Score(const uint8_t* code) const noexcept {
+    switch (_dsub) {
+      case 1:
+        return ScoreDirect<1>(code);
+      case 2:
+        return ScoreDirect<2>(code);
+      case 4:
+        return ScoreDirect<4>(code);
+      case 8:
+        return ScoreDirect<8>(code);
+      case 16:
+        return ScoreDirect<16>(code);
+      default:
+        break;
+    }
     const float* lut = _cur->Lut();
     float a0 = 0.f;
     float a1 = 0.f;

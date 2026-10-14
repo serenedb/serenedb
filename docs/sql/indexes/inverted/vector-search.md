@@ -9,11 +9,11 @@ import DocCallout from "@site/src/components/DocCallout";
 
 The [inverted index](./index.md) also indexes **vector embeddings** for approximate nearest neighbor (ANN) search. This powers semantic search, recommendations and other similarity workloads over `FLOAT` vectors. Two index kinds are available: **IVF** (`ivf (...)`), which partitions the vectors into clusters, and **[HNSW](#hnsw)** (`hnsw (...)`), which links them into a navigable graph.
 
-IVF partitions the vectors into `nlist` coarse clusters (found by k-means at build time). A query first identifies the clusters closest to the query vector, then computes distances only within those, so a search touches a small fraction of the vectors instead of scanning them all. That is what makes it *approximate* — it trades a little recall for a large speed-up, and the number of clusters scanned (`nprobe`, a query-time setting) tunes that trade-off. Optional quantization (`quant`) compresses each stored vector to shrink the index further, at some additional recall cost that can be recovered by reranking.
+IVF partitions the vectors into `nlist` coarse clusters (found by k-means at build time). A query first identifies the clusters closest to the query vector, then computes distances only within those, so a search touches a small fraction of the vectors instead of scanning them all. That is what makes it *approximate* -- it trades a little recall for a large speed-up, and the number of clusters scanned (`nprobe`, a query-time setting) tunes that trade-off. Optional quantization (`quant`) compresses each stored vector to shrink the index further, at some additional recall cost that can be recovered by reranking.
 
 ## Creating a vector index
 
-A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class. The column must be a fixed-size `FLOAT` array (`FLOAT[N]`) — every row shares the same dimension `N`:
+A vector column uses the `ivf (...)` or [`hnsw (...)`](#hnsw) operator class. The column must be a fixed-size `FLOAT` array (`FLOAT[N]`) -- every row shares the same dimension `N`:
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_001" />
 
@@ -24,7 +24,7 @@ For `ivf`, the `metric` is required. Everything else is optional: the index is s
 | `metric` | Distance metric: `l2` (Euclidean), `cosine`, `ip` (inner product) or `l1` (Manhattan) |
 | `nlist` | Number of coarse clusters. Higher values narrow each cluster (faster, more precise probes) at the cost of build time. Mutually exclusive with `nlist_factor` |
 | `nlist_factor` | Sizes `nlist` relative to the row count as `round(nlist_factor * sqrt(rows))`. Default `2.0`. Mutually exclusive with `nlist` |
-| `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq`, `osq` or `none` (the default for `l1`) — see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
+| `quant` | Vector compression: `sq8` (the default for `l2`, `ip` and `cosine`), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq`, `osq` or `none` (the default for `l1`) -- see [Quantization](#quantization) below. `l1` indexes are always unquantized, and `rabitq` needs `l2` or `ip` |
 | `pq_m` | Number of subquantizers for `quant = 'pq'`. Must evenly divide the vector dimension `N`. Defaults to a value close to a 2-dimensional subvector |
 | `rabitq_bits` | Extra magnitude bits per dimension for `quant = 'rabitq'`, `1` to `9`. Default `1` (sign-only). Also spelled `nb_bits` |
 | `nb_bits` | Bits per dimension for `quant = 'tq'`: a whole number from `1` to `5`, or `1.5`. Default `3`. For `quant = 'bq'`: `1`, `1.5` or `2`, default `1`. For `quant = 'osq'`: `1`, `2`, `4`, `7` or `8`, default `1` |
@@ -35,7 +35,7 @@ There are two ways to query a vector index: **k-nearest-neighbor** search (the c
 
 ### k-nearest-neighbor (kNN)
 
-Order by the distance to a query vector and `LIMIT` to the number of neighbors you want. Each distance operator computes a **fixed** metric — `<->` is L2, `<=>` is cosine, `<+>` is L1 and `<#>` is inner product — so use the one matching the metric your index was built with; the optimizer then routes the query through the IVF index, and `EXPLAIN` shows the distance as the scan's `Score` with a `Top: k` row. With another operator the query still returns correct distances, but from a full scan: a `TOP_N` over a `PROJECTION` that computes each distance.
+Order by the distance to a query vector and `LIMIT` to the number of neighbors you want. Each distance operator computes a **fixed** metric -- `<->` is L2, `<=>` is cosine, `<+>` is L1 and `<#>` is inner product -- so use the one matching the metric your index was built with; the optimizer then routes the query through the IVF index, and `EXPLAIN` shows the distance as the scan's `Score` with a `Top: k` row. With another operator the query still returns correct distances, but from a full scan: a `TOP_N` over a `PROJECTION` that computes each distance.
 
 ```sql
 SELECT id FROM index_name ORDER BY emb <-> $query_vector LIMIT k;
@@ -85,28 +85,28 @@ A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `
 
 ## Quantization {#quantization}
 
-An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size — recoverable with [oversampling](#oversampling), which re-scores a candidate pool with exact distances before picking the final `k`:
+An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `quant` says otherwise, `ivf` and [`hnsw`](#hnsw) alike; an `l1` index stores full-precision vectors. Quantization shrinks the index, trading some recall for size -- recoverable with [oversampling](#oversampling), which re-scores a candidate pool with exact distances before picking the final `k`:
 
 | `quant` | Compression | Notes |
 |---|---|---|
-| `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 4096 dimensions, an `hnsw` segment of at least eight rows per dimension stores its vectors in a basis fitted to the index's vectors, which every segment of the index shares so a query is turned into it once, and stops reading a candidate once its distance can no longer make the result; the answer is unchanged |
-| `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine` and 256 to 4096 dimensions, an `hnsw` segment quantizes its vectors in the same shared basis as `none`, keeps each row's remaining length every 128 dimensions, and stops reading a candidate once its score can no longer make the result |
+| `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster with the same answer; it stores one more float per row, and holds a `N` x `N` float matrix in memory |
+| `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine`, 256 to 4096 dimensions and at least eight rows per dimension, an `hnsw` index searches faster; it stores one more float per row for every 128 dimensions, and holds the same matrix as `none` in memory, plus a half-precision copy of it |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |
 | `fp16` / `bf16` | Every component stored as a 16-bit float: IEEE half precision, or bfloat16 (the float exponent with a shorter mantissa) | Half the size of `none` with scores nearly as exact, so they are not re-scored by default; `bf16` keeps the full float range, `fp16` keeps more precision |
-| `pq` | Product quantization — the vector is split into `pq_m` subvectors, each quantized against its own codebook: 16 centroids (4 bits) per subvector under `ivf`, 256 centroids (one byte) under `hnsw` | Highest compression; recall is sensitive to `pq_m` (must divide `N`) |
-| `rabitq` | RaBitQ binary quantization, 1 bit per dimension plus `rabitq_bits` − 1 extra magnitude bits | Very compact; `rabitq_bits` (1 to 9) trades size for recall. Needs `l2` or `ip` |
+| `pq` | Product quantization -- the vector is split into `pq_m` subvectors, each quantized against its own codebook: 16 centroids (4 bits) per subvector under `ivf`, 256 centroids (one byte) under `hnsw` | Highest compression; recall is sensitive to `pq_m` (must divide `N`) |
+| `rabitq` | RaBitQ binary quantization, 1 bit per dimension plus `rabitq_bits` - 1 extra magnitude bits | Very compact; `rabitq_bits` (1 to 9) trades size for recall. Needs `l2` or `ip` |
 | `tq` | Low-bit quantization with `nb_bits` (1 to 5 or 1.5, default 3) bits per dimension | Size and recall grow with `nb_bits` |
 | `bq` | Binary quantization: 1 bit per dimension, set above a cut point fitted to that dimension's values; with `nb_bits = 2`, a second bit splits each dimension into a low, middle and high range; `1.5` shares the second bit between two neighbouring dimensions | Smallest and cheapest to compare. With `query_bits = 1` a nearest-neighbor score is a bit count, so rely on [oversampling](#oversampling); `4` or `8` estimate the real distance, as a range query always does |
 | `osq` | `nb_bits` (1, 2, 4, 7 or 8, default 1) bits per dimension relative to the centroid, on a quantization interval fitted to each vector, with a few correction terms stored beside the codes; the query is quantized to `query_bits` | Scores estimate the real distance; per-vector intervals pay off most at 1 to 4 bits. Each vector carries 16 extra bytes |
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
 
-Quantization also speeds up the scan itself, not just the index size: quantized codes are stored inline in each cluster's postings, laid out contiguously per cluster, so a probe reads them sequentially instead of chasing full vectors elsewhere; and comparing quantized codes (a table lookup for `pq`, a popcount for `rabitq` and `bq`, integer arithmetic for `sq8`/`sq4` and `osq`) is cheaper than a full-precision `FLOAT[N]` distance. So `quant` is a query-latency optimization as much as a storage one — the smaller, posting-aware layout is what lets `nprobe` scan more clusters for the same latency budget.
+Quantization also speeds up the scan itself, not just the index size: quantized codes are stored inline in each cluster's postings, laid out contiguously per cluster, so a probe reads them sequentially instead of chasing full vectors elsewhere; and comparing quantized codes (a table lookup for `pq`, a popcount for `rabitq` and `bq`, integer arithmetic for `sq8`/`sq4` and `osq`) is cheaper than a full-precision `FLOAT[N]` distance. So `quant` is a query-latency optimization as much as a storage one -- the smaller, posting-aware layout is what lets `nprobe` scan more clusters for the same latency budget.
 
 ### Oversampling {#oversampling}
 
-A quantized score is an *estimate*, and two segments' estimates are not comparable — each segment trains its own quantizer. [`sdb_ann_oversample`](./maintenance.md#session-settings) says how much of that to undo: the search runs on the codes, `ceil(sdb_ann_oversample * k)` of each segment's candidates are read back at full precision and re-ordered, and only then are segments compared against each other.
+A quantized score is an *estimate*, and two segments' estimates are not comparable -- each segment trains its own quantizer. [`sdb_ann_oversample`](./maintenance.md#session-settings) says how much of that to undo: the search runs on the codes, `ceil(sdb_ann_oversample * k)` of each segment's candidates are read back at full precision and re-ordered, and only then are segments compared against each other.
 
 - `-1` (the default) re-scores every quantized index at `1`: each segment's top `k` are read back at full precision, so segments are compared on exact distances and a query the engine answers by scanning comes back exact. `fp16` and `bf16` are the exception and answer from their codes, which are close to exact already.
 - `0` answers from the codes, which is faster and caps recall at whatever the codes can tell apart.
@@ -123,17 +123,17 @@ A quantized score is an *estimate*, and two segments' estimates are not comparab
 | `metric` | Distance metric: `l2`, `cosine`, `ip` or `l1`. Required |
 | `m` | Neighbours kept per node per layer, `2m` on the bottom layer, at least `2`. Default `32`. Higher = better recall and a larger index |
 | `ef_construction` | Beam width while building. Default `200`, must be `>= m`. Higher = a better graph and a slower build; it does not affect query time |
-| `quant` | `none`, `sq8` (the default), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq` or `osq` — see [Quantization](#quantization). `metric = 'l1'` accepts `none` only |
+| `quant` | `none`, `sq8` (the default), `sq4`, `usq8`, `usq4`, `fp16`, `bf16`, `pq`, `rabitq`, `tq`, `bq` or `osq` -- see [Quantization](#quantization). `metric = 'l1'` accepts `none` only |
 | `pq_m` | Number of subquantizers for `quant = 'pq'`, each coded in one byte. Must evenly divide the vector dimension `N`. Defaults to a value close to a 4-dimensional subvector, 2 bits per dimension |
 | `nb_bits` | Bits per dimension for `quant = 'tq'`, `1` to `5` or `1.5`, default `3`; for `quant = 'bq'`, `1`, `1.5` or `2`, default `1`; for `quant = 'osq'`, `1`, `2`, `4`, `7` or `8`, default `1`; extra magnitude bits for `quant = 'rabitq'`, `1` to `9`, default `1` |
-| `query_bits` | Query encoding for `quant = 'bq'` and `quant = 'osq'` — see the `ivf` table above |
+| `query_bits` | Query encoding for `quant = 'bq'` and `quant = 'osq'` -- see the `ivf` table above |
 | `compression` | Whether the stored vectors are compressed. Default `true` |
 
 A graph walk reads a great many candidate vectors, so the smaller code pays for itself, and [oversampling](#oversampling) restores the recall it costs.
 
 ### Filtered search {#filtered-search}
 
-A `WHERE` beside a kNN `ORDER BY` is answered **inside** the graph walk rather than after it — the walk keeps moving through every node but admits only the rows the predicate passes, so a selective filter does not empty the result the way filtering the top `k` afterwards would:
+A `WHERE` beside a kNN `ORDER BY` is answered **inside** the graph walk rather than after it -- the walk keeps moving through every node but admits only the rows the predicate passes, so a selective filter does not empty the result the way filtering the top `k` afterwards would:
 
 ```sql
 SELECT id FROM idx
@@ -155,7 +155,7 @@ How a rejected row is treated is [`sdb_hnsw_filter_mode`](./maintenance.md#sessi
 
 Every walk is capped at what the scan would have cost and falls back to it, forced ones included: a mode is a preference, never a way to spend more than the exact answer costs.
 
-A predicate on an `INCLUDE`d column — one the index stores but does not index — is answered from the columnstore, in one of two ways. The predicate is either folded over the whole segment before the walk starts, a vectorised compare per row, or the walk reads the columns of each row it reaches, one positioned read per row at the cost of a few dozen rows of the fold. The walk reads while it is expected to reach few enough rows for that to be the cheaper — a narrow beam over a large segment — and folds otherwise. A column compressed with `zstd`, whose read decompresses its block up to the row, is priced at a few hundred rows of the fold. [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either for measurement.
+A predicate on an `INCLUDE`d column -- one the index stores but does not index -- is answered from the columnstore, in one of two ways. The predicate is either folded over the whole segment before the walk starts, a vectorised compare per row, or the walk reads the columns of each row it reaches, one positioned read per row at the cost of a few dozen rows of the fold. The walk reads while it is expected to reach few enough rows for that to be the cheaper -- a narrow beam over a large segment -- and folds otherwise. A column compressed with `zstd`, whose read decompresses its block up to the row, is priced at a few hundred rows of the fold. [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either for measurement.
 
 The predicate need not be a single comparison. An `IN` list or an `OR` on one `INCLUDE`d column, an expression over several of them, and `AND`s and `OR`s that mix them with predicates on indexed fields are all answered inside the walk too:
 
@@ -166,14 +166,14 @@ ORDER BY emb <-> $query_vector
 LIMIT 10;
 ```
 
-Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields — a comparison, a range, a full-text `@@` match — is answered from the index once per segment, and the rest is read from the columnstore for each row the walk reaches. `EXPLAIN` shows such a predicate as the scan's `Row Filter`. A predicate on a column that is neither indexed nor `INCLUDE`d needs the base table, which the walk cannot read. Its rows are checked after the search, nearest first. If fewer than `k` pass, every row is ranked by its exact distance and checked in that order until `k` pass or none are left: the answer is complete, but it can cost a scan of the whole index. When such a predicate is `OR`ed with the others, the distance is computed exactly for every row instead. Add the column to `INCLUDE` to filter inside the walk.
+Here `lang` is `INCLUDE`d and `id` is indexed: the part on indexed fields -- a comparison, a range, a full-text `@@` match -- is answered from the index once per segment, and the rest is read from the columnstore for each row the walk reaches. `EXPLAIN` shows such a predicate as the scan's `Row Filter`. A predicate on a column that is neither indexed nor `INCLUDE`d needs the base table, which the walk cannot read. Its rows are checked after the search, nearest first. If fewer than `k` pass, every row is ranked by its exact distance and checked in that order until `k` pass or none are left: the answer is complete, but it can cost a scan of the whole index. When such a predicate is `OR`ed with the others, the distance is computed exactly for every row instead. Add the column to `INCLUDE` to filter inside the walk.
 
 ## Column types
 
-A vector column must be a fixed-size `FLOAT[N]` array — all rows share dimension `N` (an unsized `FLOAT[]` is rejected). Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec — use `quant` instead to control its on-disk size.
+A vector column must be a fixed-size `FLOAT[N]` array -- all rows share dimension `N` (an unsized `FLOAT[]` is rejected). Unlike text and `INCLUDE`d columns, a vector column does not take a storage `compression` codec -- use `quant` instead to control its on-disk size.
 
 ## See also
 
-- [Hybrid Search](./hybrid-search.md) — combine vector ranking with full-text or structured filters
+- [Hybrid Search](./hybrid-search.md) -- combine vector ranking with full-text or structured filters
 - [Inverted Index](./index.md) · [Full-Text Search](./full-text-search.md)
-- [Vector Functions](../../functions/vector.md) — distance functions and the `<->` operator
+- [Vector Functions](../../functions/vector.md) -- distance functions and the `<->` operator

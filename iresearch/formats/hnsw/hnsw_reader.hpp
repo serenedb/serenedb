@@ -26,14 +26,13 @@
 #include <memory>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 
 namespace irs {
-
-class HnswBases;
 
 struct HnswHeader {
   uint32_t d = 0;
@@ -49,6 +48,7 @@ struct HnswData {
   HnswGraph graph;
   std::vector<float> vectors;
   std::shared_ptr<const std::vector<float>> rotation;
+  std::shared_ptr<const std::vector<uint16_t>> half_rotation;
   std::vector<float> norms;
   std::vector<float> tails;
   bstring codes;

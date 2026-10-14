@@ -35,6 +35,7 @@ namespace irs {
 class HnswBases {
  public:
   using Basis = std::shared_ptr<const std::vector<float>>;
+  using HalfBasis = std::shared_ptr<const std::vector<uint16_t>>;
 
   Basis Find(field_id field) const;
 
@@ -42,11 +43,21 @@ class HnswBases {
 
   Basis Share(field_id field, std::vector<float> basis);
 
+  HalfBasis Half(const Basis& basis);
+
  private:
+  struct Halved {
+    std::weak_ptr<const std::vector<float>> basis;
+    std::weak_ptr<const std::vector<uint16_t>> half;
+  };
+
   mutable absl::Mutex _mutex;
   absl::flat_hash_map<field_id, Basis> _published;
   std::vector<std::weak_ptr<const std::vector<float>>> _loaded;
+  std::vector<Halved> _halves;
 };
+
+HnswBases::HalfBasis MakeHalfBasis(std::span<const float> basis);
 
 struct PanoramaQuery {
   std::vector<float> rotated;
@@ -56,12 +67,14 @@ struct PanoramaQuery {
 class AnnQueryCache {
  public:
   using Basis = HnswBases::Basis;
+  using HalfBasis = HnswBases::HalfBasis;
 
   AnnQueryCache() = default;
   AnnQueryCache(const AnnQueryCache&) noexcept {}
   AnnQueryCache& operator=(const AnnQueryCache&) noexcept { return *this; }
 
   std::shared_ptr<const PanoramaQuery> Get(const Basis& basis,
+                                           const HalfBasis& half,
                                            std::span<const float> query);
 
  private:

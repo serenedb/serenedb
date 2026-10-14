@@ -740,8 +740,9 @@ TEST(AnnQueryCacheTest, ThreadsShareOneRotationPerBasis) {
   std::vector<std::shared_ptr<const irs::PanoramaQuery>> got(2 * kThreads);
   std::vector<std::thread> threads;
   for (size_t t = 0; t < 2 * kThreads; ++t) {
-    threads.emplace_back(
-      [&, t] { got[t] = cache.Get(t % 2 == 0 ? first : second, query); });
+    threads.emplace_back([&, t] {
+      got[t] = cache.Get(t % 2 == 0 ? first : second, nullptr, query);
+    });
   }
   for (auto& thread : threads) {
     thread.join();
@@ -775,7 +776,44 @@ TEST(AnnQueryCacheTest, ThreadsShareOneRotationPerBasis) {
   EXPECT_NE(got[0], got[1]);
 
   auto copy = cache;
-  EXPECT_NE(got[0], copy.Get(first, query));
+  EXPECT_NE(got[0], copy.Get(first, nullptr, query));
+}
+
+TEST(AnnQueryCacheTest, HalfBasisRotatesWithinItsPrecision) {
+  constexpr uint32_t kD = 4 * irs::kHnswPanoramaLevel + 17;
+  pcg32 rng{kD + 1};
+  const auto random = [&](size_t n) {
+    std::vector<float> out(n);
+    for (auto& v : out) {
+      v = absl::Uniform<float>(rng, -1.f, 1.f);
+    }
+    return out;
+  };
+  const auto basis =
+    std::make_shared<const std::vector<float>>(random(size_t{kD} * kD));
+  const auto query = random(kD);
+  irs::HnswBases bases;
+  const auto half = bases.Half(basis);
+  ASSERT_EQ(half->size(), basis->size());
+  EXPECT_EQ(half, bases.Half(basis));
+  irs::AnnQueryCache cache;
+  const auto got = cache.Get(basis, half, query);
+  double norm = 0;
+  for (const auto v : query) {
+    norm += double{v} * v;
+  }
+  norm = std::sqrt(norm);
+  for (uint32_t row = 0; row < kD; ++row) {
+    double sum = 0;
+    double scale = 0;
+    for (uint32_t col = 0; col < kD; ++col) {
+      const double b = (*basis)[size_t{row} * kD + col];
+      sum += b * query[col];
+      scale += b * b;
+    }
+    ASSERT_NEAR(got->rotated[row], sum, 1e-3 * std::sqrt(scale) * norm)
+      << "row " << row;
+  }
 }
 
 TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {

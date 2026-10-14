@@ -121,6 +121,8 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
       }
       if (_header.rotated) {
         read_rotation();
+        data->half_rotation = _bases ? _bases->Half(data->rotation)
+                                     : MakeHalfBasis(*data->rotation);
         read_floats(data->tails, static_cast<size_t>(_header.rows) *
                                    HnswCodeTails(_header.d));
       }
@@ -137,8 +139,8 @@ std::shared_ptr<const PanoramaQuery> MakePanoramaQuery(
   if (!data.rotation) {
     return nullptr;
   }
-  return cache ? cache->Get(data.rotation, query)
-               : AnnQueryCache{}.Get(data.rotation, query);
+  return cache ? cache->Get(data.rotation, data.half_rotation, query)
+               : AnnQueryCache{}.Get(data.rotation, data.half_rotation, query);
 }
 
 }  // namespace

@@ -27,7 +27,6 @@
 #include <absl/strings/str_format.h>
 
 #include <algorithm>
-#include <boost/utility/compare_pointees.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -453,8 +452,8 @@ void ApplyTermGroups(const ByPhraseOptions& options,
   }
 }
 
-std::vector<std::vector<bstring>> SpecTerms(
-  const ByPhraseOptions& options, const ByPhraseOptions& spec,
+std::vector<std::vector<bstring>> CheckedTerms(
+  const ByPhraseOptions& options, const ByPhraseOptions& checked,
   std::span<std::vector<bstring>> part_terms) {
   std::vector<size_t> sources;
   size_t slot = 0;
@@ -464,10 +463,10 @@ std::vector<std::vector<bstring>> SpecTerms(
     }
     ++slot;
   }
-  std::vector<std::vector<bstring>> out(spec.size());
+  std::vector<std::vector<bstring>> out(checked.size());
   auto source = sources.begin();
   slot = 0;
-  for (const auto& info : spec) {
+  for (const auto& info : checked) {
     if (ByPhraseOptions::KindOf(info.part) == SlotKind::Expansion) {
       SDB_ASSERT(source != sources.end());
       out[slot] = std::move(part_terms[*source++]);
@@ -480,15 +479,16 @@ std::vector<std::vector<bstring>> SpecTerms(
 QueryBuilder::ptr MakeTokenPhraseQuery(
   const SubReader& segment, const PrepareContext& ctx, const TermReader& reader,
   const PhraseState& state, const ByPhraseOptions& options,
-  const ColumnReader& column, std::span<std::vector<bstring>> part_terms) {
-  const auto& tokens = options.tokens();
+  const ByPhraseOptions& checked, const ColumnReader& column,
+  std::span<std::vector<bstring>> part_terms) {
+  const bool covered = &checked != &options;
   auto sub = ctx;
   sub.collector = nullptr;
   BooleanBuilder builder{segment, ctx.memory, 0, kNoBoost,
                          ScoreMergeType::Noop};
   SDB_ASSERT(state.Slots() == options.size());
   containers::FlatHashSet<bytes_view> words;
-  std::vector<PhraseWordStat> stats(tokens->spec ? 0 : options.size());
+  std::vector<PhraseWordStat> stats(covered ? 0 : options.size());
   std::vector<const PostingMeta*> word_metas(stats.size());
   size_t slot = 0;
   for (const auto& info : options) {
@@ -496,7 +496,7 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
     const auto end = state.offsets[++slot];
     if (end - begin == 1) {
       const auto* word = std::get_if<ByTermOptions>(&info.part);
-      if (word && !tokens->spec) {
+      if (word && !covered) {
         const auto& meta = state.metas[begin];
         stats[slot - 1] = {.docs = meta.docs_count, .freq = meta.freq};
         word_metas[slot - 1] = &meta;
@@ -516,17 +516,17 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
   }
   auto approx = builder.Finish();
   SDB_ASSERT(approx && !QueryBuilder::IsEmpty(*approx));
-  std::vector<std::vector<bstring>> spec_terms;
-  if (tokens->spec) {
-    spec_terms = SpecTerms(options, *tokens->spec, part_terms);
+  std::vector<std::vector<bstring>> checked_terms;
+  if (covered) {
+    checked_terms = CheckedTerms(options, checked, part_terms);
     const TermReader* readers[] = {&reader};
-    stats = PhraseWordStats(*tokens->spec, readers);
+    stats = PhraseWordStats(checked, readers);
   }
   auto query = memory::make_tracked<TokenPhraseQuery>(
-    ctx.memory, segment, reader, std::move(approx), tokens, column,
-    tokens->Check(options),
-    tokens->spec ? std::span<const std::vector<bstring>>{spec_terms}
-                 : std::span<const std::vector<bstring>>{part_terms},
+    ctx.memory, segment, reader, std::move(approx), checked.tokenizer(), column,
+    checked,
+    covered ? std::span<const std::vector<bstring>>{checked_terms}
+            : std::span<const std::vector<bstring>>{part_terms},
     stats, word_metas, ctx.boost);
   query->SetStats(ctx.Record());
   return query;
@@ -535,7 +535,8 @@ QueryBuilder::ptr MakeTokenPhraseQuery(
 QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        irs::field_id field,
-                                       const ByPhraseOptions& options) {
+                                       const ByPhraseOptions& options,
+                                       const ByPhraseOptions& checked) {
   const auto phrase_size = options.size();
   auto* collector = ctx.collector
                       ? &irs::utils::downCast<SlotsCollector>(*ctx.collector)
@@ -547,12 +548,12 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   state.reader = reader;
   const ColumnReader* column = nullptr;
   if (!detail::ResolvePhrase(reader, state.handles)) {
-    const auto& tokens = options.tokens();
-    if (!tokens || !reader || !detail::DocOf(*reader)) {
+    if (!field_limits::valid(checked.text()) || !reader ||
+        !detail::DocOf(*reader)) {
       return QueryBuilder::Empty();
     }
     const auto* col_reader = segment.GetColReader();
-    column = col_reader ? col_reader->Column(tokens->text) : nullptr;
+    column = col_reader ? col_reader->Column(checked.text()) : nullptr;
     if (!column) {
       return QueryBuilder::Empty();
     }
@@ -673,8 +674,8 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   }
 
   if (column) {
-    return MakeTokenPhraseQuery(segment, ctx, *reader, state, options, *column,
-                                part_terms);
+    return MakeTokenPhraseQuery(segment, ctx, *reader, state, options, checked,
+                                *column, part_terms);
   }
 
   if (phrase_size == 1 && state.metas.size() == 1) {
@@ -703,6 +704,22 @@ QueryBuilder::ptr PhrasePrepareSegment(const SubReader& segment,
   return query;
 }
 
+PrepareCollector::ptr MakeSlotsCollector(irs::field_id field,
+                                         const ByPhraseOptions& options,
+                                         const Scorer* scorer,
+                                         StatsArena& stats, uint32_t threads) {
+  if (IsEmpty(field, options)) {
+    return nullptr;
+  }
+  const auto counts = CountSlots(options);
+  if (counts.expanded == 0) {
+    return std::make_unique<SlotsCollector>(scorer, counts.terms, stats,
+                                            threads);
+  }
+  return std::make_unique<ExpandedSlotsCollector>(
+    scorer, counts.terms, counts.expanded, stats, threads);
+}
+
 }  // namespace
 
 QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
@@ -714,22 +731,32 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
   }
   SDB_ENSURE(options().slop() == 0 || !HasIntervalOffsets(options()),
              "slop and intervals are mutually exclusive");
-  return PhrasePrepareSegment(segment, sub_ctx, field_id(), options());
+  return PhrasePrepareSegment(segment, sub_ctx, field_id(), options(),
+                              options());
 }
 
 PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
                                                   StatsArena& stats,
                                                   uint32_t threads) const {
-  if (IsEmpty(field_id(), options())) {
-    return nullptr;
+  return MakeSlotsCollector(field_id(), options(), scorer, stats, threads);
+}
+
+QueryBuilder::ptr ByShinglePhrase::PrepareSegment(
+  const SubReader& segment, const PrepareContext& ctx) const {
+  auto sub_ctx = ctx;
+  sub_ctx.Boost(GetBoost());
+  const auto& cover = options().cover;
+  if (IsEmpty(field_id(), cover)) {
+    return QueryBuilder::Empty();
   }
-  const auto counts = CountSlots(options());
-  if (counts.expanded == 0) {
-    return std::make_unique<SlotsCollector>(scorer, counts.terms, stats,
-                                            threads);
-  }
-  return std::make_unique<ExpandedSlotsCollector>(
-    scorer, counts.terms, counts.expanded, stats, threads);
+  return PhrasePrepareSegment(segment, sub_ctx, field_id(), cover,
+                              options().words);
+}
+
+PrepareCollector::ptr ByShinglePhrase::MakeCollectorImpl(
+  const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
+  return MakeSlotsCollector(field_id(), options().cover, scorer, stats,
+                            threads);
 }
 
 Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
@@ -761,19 +788,11 @@ Filter::ptr PartFilter(field_id field, ByPhraseOptions::PhrasePart part,
 
 bool ByPhraseOptions::operator==(const ByPhraseOptions& rhs) const noexcept {
   return _phrase == rhs._phrase && _slop == rhs._slop &&
-         _word_separator == rhs._word_separator &&
-         boost::equal_pointees(_tokens, rhs._tokens);
+         _word_separator == rhs._word_separator && _text == rhs._text;
 }
 
 bool ByPhraseOptions::LowerParts() {
   bool changed = false;
-  if (_tokens && _tokens->spec) {
-    auto tokens = std::make_shared<PhraseTokens>(*_tokens);
-    if (tokens->spec->LowerParts()) {
-      _tokens = std::move(tokens);
-      changed = true;
-    }
-  }
   for (auto& info : _phrase) {
     if (const auto* t = std::get_if<TermSetOptions>(&info.part);
         t != nullptr && t->terms.size() == 1) {
@@ -854,6 +873,12 @@ bool ByPhraseOptions::LowerParts() {
     changed = true;
   }
   return changed;
+}
+
+bool ByShinglePhraseOptions::LowerParts() {
+  const bool lowered_words = words.LowerParts();
+  const bool lowered_cover = cover.LowerParts();
+  return lowered_words || lowered_cover;
 }
 
 }  // namespace irs

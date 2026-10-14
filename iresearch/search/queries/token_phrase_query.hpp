@@ -36,7 +36,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
  public:
   TokenPhraseQuery(const SubReader& segment, const TermReader& reader,
                    QueryBuilder::ptr&& approx,
-                   std::shared_ptr<const PhraseTokens> tokens,
+                   ByPhraseOptions::TokenizerFactory tokenizer,
                    const ColumnReader& column, const ByPhraseOptions& phrase,
                    std::span<const std::vector<bstring>> expanded,
                    std::span<const PhraseWordStat> words,
@@ -45,7 +45,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
     : QueryBuilderImpl{segment, approx->EstimateMax(), QueryKind::Other},
       _approx{std::move(approx)},
       _reader{&reader},
-      _tokens{std::move(tokens)},
+      _tokenizer{std::move(tokenizer)},
       _column{&column},
       _compiled{phrase, expanded, words},
       _boost{boost} {
@@ -70,7 +70,9 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
 
   const CompiledPhrase& Compiled() const noexcept { return _compiled; }
 
-  const PhraseTokens& Tokens() const noexcept { return *_tokens; }
+  const ByPhraseOptions::TokenizerFactory& Tokenizer() const noexcept {
+    return _tokenizer;
+  }
 
   const ColumnReader& Column() const noexcept { return *_column; }
 
@@ -83,7 +85,7 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
  private:
   QueryBuilder::ptr _approx;
   const TermReader* _reader;
-  std::shared_ptr<const PhraseTokens> _tokens;
+  ByPhraseOptions::TokenizerFactory _tokenizer;
   const ColumnReader* _column;
   CompiledPhrase _compiled;
   std::optional<PostingMeta> _anchor;

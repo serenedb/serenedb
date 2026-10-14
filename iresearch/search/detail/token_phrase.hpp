@@ -23,7 +23,6 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -39,28 +38,11 @@
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
-#include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
 
 struct IndexReader;
 struct TermReader;
-
-struct PhraseTokens {
-  using Factory = std::function<std::shared_ptr<analysis::Tokenizer>()>;
-
-  field_id text = field_limits::invalid();
-  Factory tokenizer;
-  std::optional<ByPhraseOptions> spec;
-
-  const ByPhraseOptions& Check(const ByPhraseOptions& phrase) const noexcept {
-    return spec ? *spec : phrase;
-  }
-
-  bool operator==(const PhraseTokens& rhs) const noexcept {
-    return text == rhs.text && spec == rhs.spec;
-  }
-};
 
 struct PhraseVerdict {
   uint32_t freq = 0;
@@ -213,8 +195,8 @@ class PhraseCheck final : public TokenConsumer {
  public:
   static constexpr TokenLayout kLayout = TokenLayout::TermsPos;
 
-  PhraseCheck(const CompiledPhrase& phrase, const PhraseTokens& tokens,
-              bool count);
+  PhraseCheck(const CompiledPhrase& phrase,
+              const ByPhraseOptions::TokenizerFactory& tokenizer, bool count);
 
   void Bind(duckdb::Vector& values, duckdb::idx_t count) {
     _rows.Bind(values, count);

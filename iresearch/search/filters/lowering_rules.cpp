@@ -67,7 +67,8 @@ struct EditDistanceSimplifyRule {
 
 struct PhraseLowerRule {
   static constexpr std::string_view kName = "phrase_lower";
-  static constexpr std::array kTargets{Type<ByPhrase>::id()};
+  static constexpr std::array kTargets{Type<ByPhrase>::id(),
+                                       Type<ByShinglePhrase>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -169,6 +170,11 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
 }
 
 bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
+  if (slot->type() == Type<ByShinglePhrase>::id()) {
+    return irs::utils::downCast<ByShinglePhrase>(*slot)
+      .mutable_options()
+      ->LowerParts();
+  }
   return irs::utils::downCast<ByPhrase>(*slot).mutable_options()->LowerParts();
 }
 
@@ -182,7 +188,8 @@ bool PhraseSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext& ctx) {
     }
   }
   if (phrase.options().size() != 1 ||
-      !phrase.options().word_separator().empty() || phrase.options().tokens()) {
+      !phrase.options().word_separator().empty() ||
+      field_limits::valid(phrase.options().text())) {
     return false;
   }
   auto& part = phrase.mutable_options()->begin()->part;

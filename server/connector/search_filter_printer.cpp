@@ -284,6 +284,23 @@ struct FilterPrinter {
     return s;
   }
 
+  ExplainNode PhraseNode(field_id field, const ByPhraseOptions& options) const {
+    ExplainNode node{"Phrase"};
+    node.attributes["Field"] = FieldName(field);
+    node.attributes["Parts"] = PhraseParts(options);
+    if (const auto separator = options.word_separator(); !separator.empty()) {
+      node.attributes["Separator"] =
+        absl::StrCat("'", TermToString(separator), "'");
+    }
+    if (const auto slop = options.slop(); slop > 0) {
+      node.attributes["Slop"] = absl::StrCat(slop);
+    }
+    if (field_limits::valid(options.text())) {
+      node.attributes["Verify"] = "inline";
+    }
+    return node;
+  }
+
   std::string NGramList(const ByNGramSimilarity& filter) const {
     return absl::StrJoin(filter.options().ngrams, "",
                          [](std::string* o, const auto& ngram) {
@@ -533,23 +550,13 @@ struct FilterPrinter {
     }
     if (type == Type<ByPhrase>::id()) {
       const auto& f = downCast<const ByPhrase>(filter);
-      ExplainNode node{"Phrase"};
-      node.attributes["Field"] = FieldName(f.field_id());
-      node.attributes["Parts"] = PhraseParts(f.options());
-      if (const auto separator = f.options().word_separator();
-          !separator.empty()) {
-        node.attributes["Separator"] =
-          absl::StrCat("'", TermToString(separator), "'");
-      }
-      if (const auto slop = f.options().slop(); slop > 0) {
-        node.attributes["Slop"] = absl::StrCat(slop);
-      }
-      if (const auto& tokens = f.options().tokens()) {
-        node.attributes["Verify"] = "inline";
-        if (tokens->spec) {
-          node.attributes["Words"] = PhraseParts(*tokens->spec);
-        }
-      }
+      return PhraseNode(f.field_id(), f.options());
+    }
+    if (type == Type<ByShinglePhrase>::id()) {
+      const auto& f = downCast<const ByShinglePhrase>(filter);
+      auto node = PhraseNode(f.field_id(), f.options().cover);
+      node.attributes["Verify"] = "inline";
+      node.attributes["Words"] = PhraseParts(f.options().words);
       return node;
     }
     if (type == Type<GeoFilter>::id()) {

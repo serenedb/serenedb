@@ -418,8 +418,9 @@ void PhraseCheck::PositionsMatch::Reset(size_t n) {
 }
 
 PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
-                         const PhraseTokens& tokens, bool count)
-  : _tokenizer{tokens.tokenizer()},
+                         const ByPhraseOptions::TokenizerFactory& tokenizer,
+                         bool count)
+  : _tokenizer{tokenizer()},
     _state{.phrase = &phrase, .count = count},
     _dense{!_tokenizer->Traits().explicit_pos} {}
 

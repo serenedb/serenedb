@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <variant>
@@ -38,6 +39,11 @@
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 
 namespace irs {
+namespace analysis {
+
+class Tokenizer;
+
+}  // namespace analysis
 
 struct TermSetOptions {
   std::set<bstring, std::less<>> terms;
@@ -46,7 +52,6 @@ struct TermSetOptions {
 };
 
 class ByPhrase;
-struct PhraseTokens;
 
 enum class SlotKind : uint8_t {
   Term,
@@ -80,6 +85,8 @@ class ByPhraseOptions {
   }
 
   using FilterType = ByPhrase;
+  using TokenizerFactory =
+    std::function<std::shared_ptr<analysis::Tokenizer>()>;
 
   template<typename PhrasePart>
   PhrasePart& push_back(PosAttr::value_t offs = 0) {
@@ -104,7 +111,8 @@ class ByPhraseOptions {
     _phrase.clear();
     _slop = 0;
     _word_separator.clear();
-    _tokens.reset();
+    _text = field_limits::invalid();
+    _tokenizer = nullptr;
   }
 
   bool simple() const noexcept {
@@ -130,11 +138,11 @@ class ByPhraseOptions {
   bytes_view word_separator() const noexcept { return _word_separator; }
   void set_word_separator(bytes_view value) { _word_separator = value; }
 
-  const std::shared_ptr<const PhraseTokens>& tokens() const noexcept {
-    return _tokens;
-  }
-  void set_tokens(std::shared_ptr<const PhraseTokens> tokens) noexcept {
-    _tokens = std::move(tokens);
+  field_id text() const noexcept { return _text; }
+  const TokenizerFactory& tokenizer() const noexcept { return _tokenizer; }
+  void set_text(field_id text, TokenizerFactory tokenizer) {
+    _text = text;
+    _tokenizer = std::move(tokenizer);
   }
 
  private:
@@ -156,10 +164,34 @@ class ByPhraseOptions {
   std::vector<PhrasePartInfo> _phrase;
   PosAttr::value_t _slop{0};
   bstring _word_separator;
-  std::shared_ptr<const PhraseTokens> _tokens;
+  field_id _text{field_limits::invalid()};
+  TokenizerFactory _tokenizer;
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {
+ public:
+  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
+                                   const PrepareContext& ctx) const final;
+
+  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
+                                          StatsArena& stats,
+                                          uint32_t threads) const final;
+};
+
+class ByShinglePhrase;
+
+struct ByShinglePhraseOptions {
+  using FilterType = ByShinglePhrase;
+
+  bool operator==(const ByShinglePhraseOptions&) const = default;
+
+  bool LowerParts();
+
+  ByPhraseOptions words;
+  ByPhraseOptions cover;
+};
+
+class ByShinglePhrase : public FilterWithField<ByShinglePhraseOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;

@@ -136,7 +136,7 @@ bool FreqBoundedByAnchor(const TokenPhraseQuery& query) {
                              [](const CompiledPhrase::Slot& slot) {
                                return slot.offs_min == slot.offs_max;
                              }) &&
-         !query.Tokens().tokenizer()->Traits().explicit_pos;
+         !query.Tokenizer()()->Traits().explicit_pos;
 }
 
 Root::ptr MakePruned(const TokenPhraseQuery& query, const Context& ctx,

@@ -198,13 +198,9 @@ inline constexpr irs::field_id kShingleId = 2;
 inline constexpr irs::field_id kPlainId = 3;
 inline constexpr irs::field_id kPositionalId = 4;
 
-std::shared_ptr<const irs::PhraseTokens> StoredWords(
-  std::optional<irs::ByPhraseOptions> spec = std::nullopt) {
-  auto tokens = std::make_shared<irs::PhraseTokens>();
-  tokens->text = kStoreId;
-  tokens->tokenizer = [] { return std::make_shared<WhitespaceTokenizer>(); };
-  tokens->spec = std::move(spec);
-  return tokens;
+void StoreWords(irs::ByPhraseOptions& options) {
+  options.set_text(kStoreId,
+                   [] { return std::make_shared<WhitespaceTokenizer>(); });
 }
 
 std::optional<std::string> TermOf(const ShingleTokenizer& shingles,
@@ -315,12 +311,18 @@ irs::Filter::ptr PlanFilter(const ShingleTokenizer& shingles,
   if (!cover) {
     return nullptr;
   }
+  if (!positional) {
+    auto filter = std::make_unique<irs::ByShinglePhrase>();
+    *filter->mutable_field_id() = kShingleId;
+    auto& options = *filter->mutable_options();
+    options.words = phrase;
+    StoreWords(options.words);
+    options.cover = std::move(*cover);
+    return filter;
+  }
   auto filter = std::make_unique<irs::ByPhrase>();
   *filter->mutable_field_id() = kShingleId;
   *filter->mutable_options() = std::move(*cover);
-  if (!positional) {
-    filter->mutable_options()->set_tokens(StoredWords(phrase));
-  }
   return filter;
 }
 
@@ -342,7 +344,7 @@ irs::Filter::ptr ShingleFilter(const ShingleTokenizer& shingles,
   *fallback->mutable_options() = phrase;
   fallback->mutable_options()->set_word_separator(Bytes(" "));
   if (!positional) {
-    fallback->mutable_options()->set_tokens(StoredWords());
+    StoreWords(*fallback->mutable_options());
   }
   return fallback;
 }
@@ -1049,9 +1051,15 @@ TEST(ShinglePhraseIndexTest, phrase_without_positions_needs_stored_text) {
   }
   EXPECT_EQ((std::vector<irs::doc_id_t>{0}),
             index.Docs(PlainPhrase(kPositionalId, "quick brown")));
-  plain.mutable_options()->set_tokens(StoredWords());
-  cover.mutable_options()->set_tokens(StoredWords(Phrase("quick brown fox")));
-  for (const auto* filter : {&plain, &cover}) {
+  StoreWords(*plain.mutable_options());
+  irs::ByShinglePhrase shingled;
+  *shingled.mutable_field_id() = kShingleId;
+  shingled.mutable_options()->words = Phrase("quick brown fox");
+  StoreWords(shingled.mutable_options()->words);
+  shingled.mutable_options()->cover = cover.options();
+  for (const irs::Filter* filter :
+       {static_cast<const irs::Filter*>(&plain),
+        static_cast<const irs::Filter*>(&shingled)}) {
     EXPECT_EQ((std::vector<irs::doc_id_t>{0}), index.Docs(*filter));
     EXPECT_EQ(1U, index.Run(*filter).count);
   }

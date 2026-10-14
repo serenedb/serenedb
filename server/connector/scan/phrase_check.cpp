@@ -34,13 +34,14 @@ namespace sdb::connector {
 namespace {
 
 struct PhraseCheckData {
-  PhraseCheckData(std::shared_ptr<const irs::PhraseTokens> tokens,
+  PhraseCheckData(irs::ByPhraseOptions::TokenizerFactory tokenizer,
                   const irs::ByPhraseOptions& checked,
                   irs::bytes_view word_separator,
                   std::span<const irs::PhraseWordStat> words)
-    : tokens{std::move(tokens)}, compiled{checked, word_separator, words} {}
+    : tokenizer{std::move(tokenizer)},
+      compiled{checked, word_separator, words} {}
 
-  std::shared_ptr<const irs::PhraseTokens> tokens;
+  irs::ByPhraseOptions::TokenizerFactory tokenizer;
   irs::CompiledPhrase compiled;
 };
 
@@ -48,7 +49,7 @@ using PhraseCheckBind = SharedCheckBind<PhraseCheckData>;
 
 struct PhraseCheckState final : duckdb::FunctionLocalState {
   explicit PhraseCheckState(const PhraseCheckData& data)
-    : check{data.compiled, *data.tokens, false} {}
+    : check{data.compiled, data.tokenizer, false} {}
 
   irs::PhraseCheck check;
 };
@@ -66,20 +67,32 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   }
 }
 
+struct CheckedPhrase {
+  irs::field_id field;
+  const irs::ByPhraseOptions& index;
+  const irs::ByPhraseOptions& checked;
+};
+
+CheckedPhrase CheckedOf(const irs::Filter& filter) {
+  if (filter.type() == irs::Type<irs::ByShinglePhrase>::id()) {
+    const auto& phrase = irs::utils::downCast<irs::ByShinglePhrase>(filter);
+    return {phrase.field_id(), phrase.options().cover, phrase.options().words};
+  }
+  const auto& phrase = irs::utils::downCast<irs::ByPhrase>(filter);
+  return {phrase.field_id(), phrase.options(), phrase.options()};
+}
+
 }  // namespace
 
 DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
                               irs::field_id column,
                               const duckdb::LogicalType& type,
                               const irs::IndexReader& reader) {
-  const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*source);
-  const auto& options = phrase.options();
-  const auto& tokens = options.tokens();
-  const auto& checked = tokens->Check(options);
+  const auto phrase = CheckedOf(*source);
   auto bind =
     duckdb::make_uniq<PhraseCheckBind>(std::make_shared<const PhraseCheckData>(
-      tokens, checked, options.word_separator(),
-      irs::PhraseWordStats(checked, reader, phrase.field_id())));
+      phrase.checked.tokenizer(), phrase.checked, phrase.index.word_separator(),
+      irs::PhraseWordStats(phrase.checked, reader, phrase.field)));
   return Split(std::move(source), column, type, "sdb_phrase_check", CheckPhrase,
                std::move(bind), InitCheck<PhraseCheckState, PhraseCheckData>);
 }

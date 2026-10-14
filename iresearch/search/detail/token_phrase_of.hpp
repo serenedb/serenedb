@@ -85,7 +85,7 @@ class PhraseRows {
       _column{&query.Column()},
       _state{_column->InitScan(_ctx)},
       _out{_column->Type()},
-      _check{query.Compiled(), query.Tokens(), count} {}
+      _check{query.Compiled(), query.Tokenizer(), count} {}
 
   PhraseRows(PhraseRows&&) = delete;
   PhraseRows& operator=(PhraseRows&&) = delete;

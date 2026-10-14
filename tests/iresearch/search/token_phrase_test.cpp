@@ -234,11 +234,8 @@ struct Outcome {
 };
 
 template<typename Words>
-irs::PhraseTokens TextOf() {
-  irs::PhraseTokens tokens;
-  tokens.text = 0;
-  tokens.tokenizer = [] { return std::make_shared<Words>(); };
-  return tokens;
+irs::ByPhraseOptions::TokenizerFactory TextOf() {
+  return [] { return std::make_shared<Words>(); };
 }
 
 bool CheckText(irs::PhraseCheck& check, std::string_view text,
@@ -827,12 +824,18 @@ void ExpectFamilies(const tests::Families& expected,
   }
 }
 
+struct StoredText {
+  irs::field_id column;
+  irs::ByPhraseOptions::TokenizerFactory tokenizer;
+};
+
 template<typename Words>
-std::shared_ptr<const irs::PhraseTokens> Tokens(
-  irs::field_id column = kStoreId) {
-  auto tokens = std::make_shared<irs::PhraseTokens>(TextOf<Words>());
-  tokens->text = column;
-  return tokens;
+StoredText Tokens(irs::field_id column = kStoreId) {
+  return {column, TextOf<Words>()};
+}
+
+void SetText(irs::ByPhraseOptions& options, StoredText text) {
+  options.set_text(text.column, std::move(text.tokenizer));
 }
 
 struct Layout {
@@ -949,11 +952,13 @@ class DeadRange final : public irs::detail::TableFilter {
 };
 
 irs::ByPhrase PhraseOn(irs::field_id field, irs::ByPhraseOptions options,
-                       std::shared_ptr<const irs::PhraseTokens> tokens = {}) {
+                       std::optional<StoredText> text = std::nullopt) {
   irs::ByPhrase filter;
   *filter.mutable_field_id() = field;
   *filter.mutable_options() = std::move(options);
-  filter.mutable_options()->set_tokens(std::move(tokens));
+  if (text) {
+    SetText(*filter.mutable_options(), std::move(*text));
+  }
   return filter;
 }
 
@@ -989,7 +994,7 @@ irs::Filter::ptr IndexPart(const irs::ByPhrase& phrase, const Index& index,
   EXPECT_EQ(1U, deferral.filters.size());
   const auto& deferred = deferral.filters.front();
   EXPECT_EQ(irs::Type<irs::ByPhrase>::id(), deferred.filter->type());
-  EXPECT_EQ(phrase.options().tokens()->text, deferred.column);
+  EXPECT_EQ(phrase.options().text(), deferred.column);
   return root;
 }
 
@@ -1161,7 +1166,7 @@ void ExpectDeferredLikeInline(const Index& index,
     SCOPED_TRACE(MatchName(match));
     irs::CompiledPhrase compiled{options, options.word_separator(), stats};
     Force(compiled, match);
-    irs::PhraseCheck check{compiled, *options.tokens(), false};
+    irs::PhraseCheck check{compiled, options.tokenizer(), false};
     duckdb::DataChunk chunk;
     chunk.Initialize(duckdb::Allocator::DefaultAllocator(),
                      {duckdb::LogicalType::VARCHAR});
@@ -1927,11 +1932,10 @@ TEST(TokenPhraseIndexTest, nested_boosted_conjunction_scores_like_positions) {
   const std::vector<std::string> docs{"quick brown fox", "quick brown",
                                       "brown quick fox", "fox quick brown fox"};
   const Index index{docs, std::type_identity<DenseWords>{}};
-  const auto nested = [](irs::field_id field,
-                         std::shared_ptr<const irs::PhraseTokens> tokens) {
+  const auto nested = [](irs::field_id field, std::optional<StoredText> text) {
     auto inner = std::make_unique<irs::BooleanFilter>();
     inner->Add(std::make_unique<irs::ByPhrase>(
-                 PhraseOn(field, Phrase("quick brown"), std::move(tokens))),
+                 PhraseOn(field, Phrase("quick brown"), std::move(text))),
                irs::Occur::Must);
     inner->Add(
       irs::TermClause{.field = field, .term = irs::bstring{Bytes("fox")}},
@@ -1944,7 +1948,7 @@ TEST(TokenPhraseIndexTest, nested_boosted_conjunction_scores_like_positions) {
       irs::Occur::Must);
     return root;
   };
-  ExpectFamilies(index.Run(*nested(kPositionalId, nullptr)),
+  ExpectFamilies(index.Run(*nested(kPositionalId, std::nullopt)),
                  index.Run(*nested(kPlainId, Tokens<DenseWords>())));
 }
 
@@ -1959,27 +1963,26 @@ TEST(TokenPhraseFilterTest, equality_covers_slop) {
 
 TEST(TokenPhraseFilterTest, equality_covers_tokens) {
   const auto base = Phrase("quick brown");
-  const auto tokens = Tokens<DenseWords>();
   auto checked = base;
-  checked.set_tokens(tokens);
+  SetText(checked, Tokens<DenseWords>());
   EXPECT_NE(base, checked);
 
   auto twin = base;
-  twin.set_tokens(Tokens<DenseWords>());
+  SetText(twin, Tokens<DenseWords>());
   EXPECT_EQ(checked, twin);
 
   auto elsewhere = base;
-  elsewhere.set_tokens(Tokens<DenseWords>(irs::field_id{42}));
+  SetText(elsewhere, Tokens<DenseWords>(irs::field_id{42}));
   EXPECT_NE(checked, elsewhere);
 
-  auto spec = std::make_shared<irs::PhraseTokens>(*tokens);
-  spec->spec = Phrase("quick brown fox");
-  auto words = base;
-  words.set_tokens(std::move(spec));
-  EXPECT_NE(checked, words);
+  const irs::ByShinglePhraseOptions shingled{.words = checked, .cover = base};
+  auto longer = shingled;
+  longer.words = Phrase("quick brown fox");
+  SetText(longer.words, Tokens<DenseWords>());
+  EXPECT_NE(shingled, longer);
 
   checked.clear();
-  EXPECT_FALSE(checked.tokens());
+  EXPECT_FALSE(irs::field_limits::valid(checked.text()));
   EXPECT_EQ(irs::ByPhraseOptions{}, checked);
 }
 
@@ -1992,24 +1995,17 @@ TEST(TokenPhraseFilterTest, simplify_keeps_one_slot_phrases_with_tokens) {
 }
 
 TEST(TokenPhraseFilterTest, lowering_reaches_the_checked_words) {
-  auto tokens = std::make_shared<irs::PhraseTokens>(*Tokens<DenseWords>());
-  irs::ByPhraseOptions words;
-  PushTerm(words, "quick", 0, 0);
-  words.push_back<irs::ByWildcardOptions>().term = Bytes("br%");
-  tokens->spec = words;
-  irs::ByPhraseOptions cover;
-  PushTerm(cover, "quick", 0, 0);
-  cover.push_back<irs::ByWildcardOptions>().term = Bytes("br%");
-  cover.set_tokens(tokens);
-  EXPECT_TRUE(cover.LowerParts());
-  ASSERT_TRUE(cover.tokens());
-  ASSERT_TRUE(cover.tokens()->spec);
-  const auto& lowered = *cover.tokens()->spec;
-  ASSERT_EQ(2U, lowered.size());
-  EXPECT_TRUE(
-    std::holds_alternative<irs::ByPrefixOptions>((lowered.begin() + 1)->part));
-  EXPECT_FALSE(cover.LowerParts());
-  EXPECT_TRUE(tokens->spec);
-  EXPECT_TRUE(std::holds_alternative<irs::ByWildcardOptions>(
-    (tokens->spec->begin() + 1)->part));
+  irs::ByShinglePhraseOptions options;
+  for (auto* phrase : {&options.words, &options.cover}) {
+    PushTerm(*phrase, "quick", 0, 0);
+    phrase->push_back<irs::ByWildcardOptions>().term = Bytes("br%");
+  }
+  SetText(options.words, Tokens<DenseWords>());
+  EXPECT_TRUE(options.LowerParts());
+  for (const auto* phrase : {&options.words, &options.cover}) {
+    ASSERT_EQ(2U, phrase->size());
+    EXPECT_TRUE(std::holds_alternative<irs::ByPrefixOptions>(
+      (phrase->begin() + 1)->part));
+  }
+  EXPECT_FALSE(options.LowerParts());
 }

@@ -322,7 +322,7 @@ TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
 
 TEST_F(PipelineMergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
   const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
-  Reopen(spec);
+  Reopen({});
   Insert(std::vector<int64_t>{1, 3, 5, 7});
   Insert(std::vector<int64_t>{6, 4, 2, 0});
   const auto reader = _writer->GetSnapshot();

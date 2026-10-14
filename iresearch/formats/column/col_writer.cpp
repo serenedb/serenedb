@@ -118,6 +118,31 @@ void ColWriter::SetFieldOptions(
   _field_options = field_options;
 }
 
+void ColWriter::StageAll() noexcept {
+  SDB_ASSERT(Empty() && _norms.empty());
+  _stage_all = true;
+}
+
+ColumnWriter* ColWriter::StagedColumn(field_id id) noexcept {
+  SDB_ASSERT(_stage_all);
+  const auto it = _by_id.find(id);
+  return it == _by_id.end() ? nullptr : it->second;
+}
+
+uint64_t ColWriter::StagedBytes() const noexcept {
+  if (!_stage_all) {
+    return 0;
+  }
+  uint64_t bytes = 0;
+  for (const auto& column : _columns) {
+    bytes += column->StagedBytes();
+  }
+  for (const auto& norm : _norms) {
+    bytes += norm->StagedBytes();
+  }
+  return bytes;
+}
+
 ColumnWriter& ColWriter::OpenColumnInternal(
   field_id id, duckdb::LogicalType type, bool skip_validity,
   uint32_t row_group_size, duckdb::CompressionType forced, bool hyperloglog,
@@ -139,6 +164,9 @@ ColumnWriter& ColWriter::OpenColumnInternal(
   auto col = std::make_unique<ColumnWriter>(*_write_ctx, id, std::move(type),
                                             skip_validity, row_group_size,
                                             forced, hyperloglog, codec_params);
+  if (_stage_all) {
+    col->StageAll();
+  }
   auto* ptr = col.get();
   _by_id.emplace(id, ptr);
   _columns.push_back(std::move(col));
@@ -278,6 +306,9 @@ NormColumnWriter& ColWriter::AddNormColumn(field_id id,
       EnsureOut();
       return *_blocks;
     }));
+  if (_stage_all) {
+    writer.StageAll();
+  }
   _norm_by_id.emplace(id, &writer);
   return writer;
 }
@@ -370,15 +401,19 @@ bool ColWriter::ComputeAnn(const AnnBuildEnv* env) {
   return ComputeAnn(env, kNoCancel);
 }
 
-bool ColWriter::Commit(uint64_t target_row,
-                       absl::FunctionRef<bool()> progress) {
+bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
+                       std::span<const uint32_t> new2old) {
   if (_committed) {
     return true;
   }
+  SDB_ASSERT(new2old.empty() || (_stage_all && new2old.size() == target_row));
   std::vector<const NormColumnWriter*> norms;
   for (auto& writer : _norms) {
     if (writer->RowCount() < target_row) {
       writer->PadTo(target_row);
+    }
+    if (_stage_all) {
+      writer->Reorder(new2old);
     }
     writer->Finalize();
     SDB_ASSERT(writer->Meta().row_count == target_row,
@@ -399,6 +434,10 @@ bool ColWriter::Commit(uint64_t target_row,
   for (auto& cw : _columns) {
     if (!progress()) {
       return false;
+    }
+    if (_stage_all) {
+      cw->PadNullsTo(target_row);
+      cw->Reorder(new2old);
     }
     cw->Finish();
   }

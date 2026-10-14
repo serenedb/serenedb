@@ -619,17 +619,22 @@ class IndexWriter : private util::Noncopyable {
   struct FlushedSegment : public IndexSegment {
     FlushedSegment() = default;
     explicit FlushedSegment(IndexSegment&& segment, DocumentMask&& docs_mask,
-                            DocContexts&& docs, size_t committed_docs) noexcept
+                            DocContexts&& docs, size_t committed_docs,
+                            DocOrder&& order) noexcept
       : IndexSegment{std::move(segment)},
         docs_mask{std::move(docs_mask)},
         docs{std::move(docs)},
-        committed_docs{committed_docs} {
+        committed_docs{committed_docs},
+        order{std::move(order)} {
       SDB_ASSERT(this->docs.size() == meta.docs_count);
+      SDB_ASSERT(this->order.Empty() ||
+                 this->order.new2old.size() == meta.docs_count);
     }
 
     DocumentMask docs_mask;
     DocContexts docs;
     size_t committed_docs;
+    DocOrder order;
     bool meta_on_disk = false;
   };
 

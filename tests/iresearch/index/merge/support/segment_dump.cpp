@@ -40,6 +40,9 @@
 #include <map>
 #include <numeric>
 #include <set>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "index/merge/support/segment_gen.hpp"
 #include "postings_cursor.hpp"
@@ -254,6 +257,34 @@ std::string FirstOf(std::string_view what, const std::vector<T>& expected,
   return {};
 }
 
+std::vector<std::string> DocSignatures(const SegmentDump& dump) {
+  std::vector<std::string> out(dump.docs);
+  for (const auto& field : dump.fields) {
+    for (const auto& term : field.terms) {
+      for (const auto& posting : term.postings) {
+        absl::StrAppend(&out[posting.doc - irs::doc_limits::min()], "|t",
+                        field.id, ":", Escape(term.value), ":", posting.freq,
+                        ":", absl::StrJoin(posting.positions, ","), ":",
+                        absl::StrJoin(posting.offsets, ",",
+                                      [](std::string* s, const auto& o) {
+                                        absl::StrAppend(s, o.first, "-",
+                                                        o.second);
+                                      }));
+      }
+    }
+    for (size_t row = 0; row != field.norms.size(); ++row) {
+      absl::StrAppend(&out[row], "|n", field.id, ":", field.norms[row]);
+    }
+  }
+  for (const auto& column : dump.columns) {
+    for (size_t row = 0; row != column.values.size(); ++row) {
+      absl::StrAppend(&out[row], "|c", column.id, ":",
+                      absl::CHexEscape(column.values[row]));
+    }
+  }
+  return out;
+}
+
 }  // namespace
 
 std::vector<duckdb::Value> LiveValues(const irs::SubReader& segment,
@@ -419,6 +450,59 @@ SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
     }
     return false;
   });
+  return Permute(std::move(expected), order);
+}
+
+SegmentDump AlignTies(SegmentDump expected, const SegmentDump& actual,
+                      const irs::SubReader& segment,
+                      const irs::SortSpec& spec) {
+  if (expected.docs != actual.docs) {
+    return expected;
+  }
+  std::vector<std::vector<duckdb::Value>> keys;
+  for (const auto& key : spec.keys) {
+    keys.push_back(LiveValues(segment, key.column));
+  }
+  const auto tied = [&](size_t lhs, size_t rhs) {
+    for (size_t k = 0; k != keys.size(); ++k) {
+      if (CompareKeyValues(keys[k][lhs], keys[k][rhs], spec.keys[k]) != 0) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const auto want = DocSignatures(expected);
+  const auto have = DocSignatures(actual);
+  std::vector<size_t> order(expected.docs);
+  for (size_t begin = 0; begin != order.size();) {
+    auto end = begin + 1;
+    while (end != order.size() && tied(begin, end)) {
+      ++end;
+    }
+    std::map<std::string_view, std::vector<size_t>> rows;
+    for (auto row = end; row != begin; --row) {
+      rows[want[row - 1]].push_back(row - 1);
+    }
+    std::vector<size_t> unmatched;
+    for (auto row = begin; row != end; ++row) {
+      auto& same = rows[have[row]];
+      if (same.empty()) {
+        unmatched.push_back(row);
+        continue;
+      }
+      order[row] = same.back();
+      same.pop_back();
+    }
+    std::vector<size_t> left;
+    for (const auto& [signature, rest] : rows) {
+      left.insert(left.end(), rest.begin(), rest.end());
+    }
+    std::ranges::sort(left);
+    for (size_t i = 0; i != unmatched.size(); ++i) {
+      order[unmatched[i]] = left[i];
+    }
+    begin = end;
+  }
   return Permute(std::move(expected), order);
 }
 

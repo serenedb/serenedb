@@ -99,6 +99,7 @@ set(IResearch_core_sources
     ./index/directory_reader_impl.cpp
     ./index/field_meta.cpp
     ./index/file_names.cpp
+    ./index/flush_order.cpp
     ./index/index_writer.cpp
     ./index/index_reader.cpp
     ./index/iterators.cpp

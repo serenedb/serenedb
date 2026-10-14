@@ -61,6 +61,12 @@ class ColWriter final {
 
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
 
+  void StageAll() noexcept;
+
+  ColumnWriter* StagedColumn(field_id id) noexcept;
+
+  uint64_t StagedBytes() const noexcept;
+
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
@@ -99,7 +105,8 @@ class ColWriter final {
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
   bool Commit(uint64_t target_row);
-  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
+  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
+              std::span<const uint32_t> new2old = {});
 
   bool ComputeAnn(const AnnBuildEnv* env);
   bool ComputeAnn(const AnnBuildEnv* env, absl::FunctionRef<bool()> progress);
@@ -158,6 +165,7 @@ class ColWriter final {
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
+  bool _stage_all = false;
   bool _committed = false;
 };
 

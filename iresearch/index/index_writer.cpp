@@ -80,9 +80,14 @@ struct FlushedSegmentContext {
     const auto committed = static_cast<doc_id_t>(flushed.docs.size());
     SDB_ASSERT(0 < committed);
     SDB_ASSERT(committed <= docs_count);
-    if (committed != docs_count) {
+    if (committed != docs_count && flushed.order.Empty()) {
       flushed.docs_mask.AddRange(doc_limits::min() + committed,
                                  doc_limits::min() + docs_count);
+    }
+    if (committed != docs_count && !flushed.order.Empty()) {
+      for (auto old = committed; old != docs_count; ++old) {
+        flushed.docs_mask.Add(flushed.order.old2new[old] + doc_limits::min());
+      }
     }
     if (flushed.docs_mask.Count() == docs_count) {
       return true;
@@ -163,9 +168,18 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query,
   }
 
   auto& document_mask = flushed.docs_mask;
+  const auto& new2old = flushed.order.new2old;
 
   if (query.removal) {
     const auto docs = removals.Docs(*query.removal, *reader);
+    if (!new2old.empty()) {
+      for (const auto doc : docs) {
+        if (new2old[doc - doc_limits::min()] < bound) {
+          document_mask.Add(doc);
+        }
+      }
+      return;
+    }
     const auto end =
       std::lower_bound(docs.begin(), docs.end(), bound + doc_limits::min());
     for (auto it = docs.begin(); it != end; ++it) {
@@ -174,11 +188,19 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query,
     return;
   }
 
+  std::optional<DocumentMask> hidden;
+  if (!new2old.empty() && bound < new2old.size()) {
+    hidden.emplace(document_mask);
+    for (auto old = bound; old != new2old.size(); ++old) {
+      hidden->Add(flushed.order.old2new[old] + doc_limits::min());
+    }
+  }
+
   // A deletion never scores, so nothing under it collects statistics. The
   // batch's own deletions so far are handed over: a document an earlier query
   // of this batch removed is not alive, and the segment's mask predates it.
   auto prepared = query.filter->PrepareSegment(
-    *reader, {.pending_docs_mask = &document_mask});
+    *reader, {.pending_docs_mask = hidden ? &*hidden : &document_mask});
 
   if (!prepared) [[unlikely]] {
     return;  // Skip invalid prepared filters
@@ -188,6 +210,15 @@ void FlushedSegmentContext::Remove(const IndexWriter::QueryContext& query,
 
   if (!plan) [[unlikely]] {
     return;  // Skip a query kind that has no plan
+  }
+
+  if (!new2old.empty()) {
+    for (auto doc = plan->Next(); !doc_limits::eof(doc); doc = plan->Next()) {
+      if (new2old[doc - doc_limits::min()] < bound) {
+        document_mask.Add(doc);
+      }
+    }
+    return;
   }
 
   for (auto doc = plan->Next();
@@ -1040,7 +1071,8 @@ void IndexWriter::SegmentContext::Flush() {
   };
 
   DocumentMask docs_mask;
-  writer->flush(writer_meta, docs_mask);
+  DocOrder order;
+  writer->flush(writer_meta, docs_mask, order);
   if (writer_meta.meta.live_docs_count == 0) {
     return;
   }
@@ -1050,7 +1082,8 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_ASSERT(writer_meta.meta.docs_count == docs_context.size());
 
   flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
-                       std::move(docs_context), committed_buffered_docs);
+                       std::move(docs_context), committed_buffered_docs,
+                       std::move(order));
   flushed_queries = queries.size();
 }
 
@@ -1996,7 +2029,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
-    .sort = compaction ? &_sort : nullptr,
+    .sort = &_sort,
   };
 }
 

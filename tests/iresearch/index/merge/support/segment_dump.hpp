@@ -88,6 +88,9 @@ SegmentDump ExpectedMerge(std::span<const irs::SubReader* const> inputs);
 SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
                                 const irs::SortSpec& spec);
 
+SegmentDump AlignTies(SegmentDump expected, const SegmentDump& actual,
+                      const irs::SubReader& segment, const irs::SortSpec& spec);
+
 std::string Describe(const SegmentDump& dump);
 
 std::string FirstDifference(const SegmentDump& expected,

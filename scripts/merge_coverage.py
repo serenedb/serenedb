@@ -13,6 +13,7 @@ DEFAULT_PATHS = [
     "iresearch/index/merge/",
     "iresearch/index/compaction/",
     "iresearch/index/merge_writer.cpp",
+    "iresearch/index/flush_order.cpp",
     "iresearch/formats/column/merge.cpp",
     "server/search/compaction/",
     "server/connector/segment_rewrite/",

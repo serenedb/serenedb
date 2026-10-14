@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <utility>
 
 #include "iresearch/formats/column/col_block_sink.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -111,6 +112,35 @@ void NormColumnWriter::PadTo(uint64_t target) {
     if (_values.size() == _row_group_size) {
       FlushRowGroup();
     }
+  }
+}
+
+void NormColumnWriter::StageAll() noexcept {
+  SDB_ASSERT(_row_group_size != 0 && RowCount() == 0);
+  _staged_row_group_size = _row_group_size;
+  _row_group_size = std::numeric_limits<uint32_t>::max();
+}
+
+void NormColumnWriter::Reorder(std::span<const uint32_t> new2old) {
+  SDB_ASSERT(_staged_row_group_size != 0);
+  SDB_ASSERT(_meta.row_count == 0);
+  SDB_ASSERT(new2old.empty() || _values.size() == new2old.size());
+  const auto values = std::exchange(_values, {});
+  _row_group_size = std::exchange(_staged_row_group_size, 0);
+  const auto append = [&](uint32_t value) {
+    _values.push_back(value);
+    if (_values.size() == _row_group_size) {
+      FlushRowGroup();
+    }
+  };
+  if (new2old.empty()) {
+    for (const auto value : values) {
+      append(value);
+    }
+    return;
+  }
+  for (const auto old : new2old) {
+    append(values[old]);
   }
 }
 

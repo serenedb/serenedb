@@ -116,6 +116,14 @@ class NormColumnWriter final {
 
   void PadTo(uint64_t target);
 
+  void StageAll() noexcept;
+
+  void Reorder(std::span<const uint32_t> new2old);
+
+  uint64_t StagedBytes() const noexcept {
+    return _values.size() * sizeof(uint32_t);
+  }
+
   void OpenRegion(const NormStats& planned);
 
   void Write(std::span<const uint32_t> values);
@@ -145,6 +153,7 @@ class NormColumnWriter final {
   ColBlockSink* _blocks = nullptr;
   Open _open;
   uint32_t _row_group_size;
+  uint32_t _staged_row_group_size = 0;
   NormColumnMeta _meta;
   std::vector<uint32_t> _values;
   NormRegionMeta _region;

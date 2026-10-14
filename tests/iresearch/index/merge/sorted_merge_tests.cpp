@@ -176,6 +176,43 @@ INSTANTIATE_TEST_SUITE_P(seeds, SortedMergeOracleTest,
                          ::testing::Combine(::testing::Range<uint64_t>(0, 32),
                                             ::testing::Values(1, 2, 8)));
 
+class SortedFlushOracleTest : public ::testing::TestWithParam<uint64_t> {};
+
+TEST_P(SortedFlushOracleTest, FlushedSegmentsComeOutInKeyOrder) {
+  const auto seed = GetParam();
+  Generator gen{seed};
+  const auto spec = RandomSpec(gen);
+  const uint32_t row_group_size =
+    gen.Coin(0.5) ? kSmallRowGroup : DEFAULT_ROW_GROUP_SIZE;
+  const auto shape = RandomShape(gen);
+  irs::MemoryDirectory plain_dir;
+  irs::MemoryDirectory sorted_dir;
+  auto plain = MakeWriter(plain_dir, row_group_size, SketchedColumns);
+  auto sorted = MakeWriter(sorted_dir, row_group_size, SketchedColumns, spec);
+  for (auto* writer : {plain.get(), sorted.get()}) {
+    Generator docs{seed + 1000};
+    size_t next_id = 0;
+    WriteSegment(*writer, docs, shape, next_id);
+  }
+  const auto plain_reader = plain->GetSnapshot();
+  const auto sorted_reader = sorted->GetSnapshot();
+  const auto plain_segments = Segments(plain_reader);
+  const auto sorted_segments = Segments(sorted_reader);
+  SCOPED_TRACE(absl::StrCat("seed ", seed, ", ", shape.docs, " docs, ",
+                            spec.keys.size(), " keys"));
+  ASSERT_EQ(plain_segments.size(), sorted_segments.size());
+  for (size_t i = 0; i != plain_segments.size(); ++i) {
+    const std::vector<const irs::SubReader*> input{plain_segments[i]};
+    const auto actual = Dump(*sorted_segments[i]);
+    EXPECT_EQ("", FirstDifference(AlignTies(ExpectedSortedMerge(input, spec),
+                                            actual, *sorted_segments[i], spec),
+                                  actual));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(seeds, SortedFlushOracleTest,
+                         ::testing::Range<uint64_t>(0, 64));
+
 class SortedMergeTest : public ::testing::Test {
  protected:
   void SetUp() final {

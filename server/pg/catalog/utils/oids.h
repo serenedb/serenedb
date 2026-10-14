@@ -42,6 +42,8 @@ inline constexpr duckdb::idx_t kMaxSystem = 65536;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
+inline constexpr duckdb::idx_t kClusterCatalog = kMinSystem + 1;
+
 inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
 
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
@@ -129,8 +131,10 @@ inline constexpr const SystemObject* FindSystemObject(
 }
 
 inline constexpr duckdb::idx_t kFirstCollation = kMinSystem + 1'000;
+inline constexpr duckdb::idx_t kFirstUnfrozenCollation = kMinSystem + 9'000;
 
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = kMinSystem + 10'000;
+inline constexpr duckdb::idx_t kFirstUnfrozenFunction = kMinSystem + 26'000;
 
 inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;
 inline constexpr uint64_t kRowArrayTypeOidBit = uint64_t{1} << 31;

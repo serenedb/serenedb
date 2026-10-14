@@ -47,8 +47,6 @@
 namespace sdb::search {
 namespace {
 
-constexpr uint64_t kWalInlineMaxBytes = uint64_t{4} << 20;
-
 uint64_t SerializedSizeHint(const LocalTableChangesEntry& changes) {
   uint64_t size = changes.BufferedBytes();
   for (const auto& op : changes.ops) {
@@ -236,6 +234,7 @@ void SearchTableTransaction::FlushBuffer(
   }
   auto& trx = EnsureBufferTransaction(shard);
   ReplayBuffer(*shard, it->second, trx, context);
+  trx.Flush();
   // The rows are this transaction's to make durable now, so the record stops
   // carrying them. The removals stay: no segment holds those.
   it->second.ClearBufferedRows();
@@ -297,22 +296,14 @@ void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
       SDB_IF_FAILURE("search_feed_pending_fails") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
-      if (w.buffer_trx != nullptr ||
-          entry.BufferedBytes() > kWalInlineMaxBytes) {
-        FlushBuffer(w.shard, context);
-      } else {
-        // Never overran: a pooled transaction keeps the freelist coalescing
-        // that makes small writes cheap, and the record carries the rows
-        // inline.
-        if (w.transactions.empty()) {
-          w.transactions.push_back(
-            std::make_unique<irs::IndexWriter::Transaction>(
-              w.shard->GetTransaction()));
-        }
-        ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
+      if (w.transactions.empty() ||
+          w.transactions.back().get() == w.buffer_trx) {
+        w.transactions.push_back(
+          std::make_unique<irs::IndexWriter::Transaction>(
+            w.shard->GetTransaction()));
       }
+      ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
     }
-    // The one and the only flush a transaction gets
     if (w.buffer_trx != nullptr) {
       for (const auto& segment : w.buffer_trx->FlushAndFsync()) {
         entry.segments.push_back(segment.filename);

@@ -103,11 +103,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   duckdb::idx_t GetTableId() const noexcept { return _table_id; }
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
-  uint64_t GetWriteBufferMaxBytes() const noexcept {
-    return _segment_memory_max == 0
-             ? std::numeric_limits<uint64_t>::max()
-             : std::max<uint64_t>(_segment_memory_max / 2, 1);
-  }
   auto& GetTableLock() noexcept { return _table_lock; }
 
   void MarkDropped() noexcept {

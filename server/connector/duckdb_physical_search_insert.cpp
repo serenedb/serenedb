@@ -29,6 +29,7 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/operator/logical_insert.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -144,7 +145,8 @@ SereneDBSearchInsert::GetGlobalSinkState(duckdb::ClientContext& context) const {
   state->chunk_types = columns.GetColumnTypes();
   state->generated_pk_seq = table->GeneratedPkSequence(context);
   SDB_ASSERT(state->generated_pk_seq);
-  state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
+  state->write_buffer_max_bytes =
+    duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
   state->sdb_txn = &conn_ctx;
   if (_return_chunk) {

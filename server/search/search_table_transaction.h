@@ -56,8 +56,7 @@ struct SearchShardWrites {
   std::vector<std::unique_ptr<irs::IndexWriter::Transaction>> transactions;
   // The transaction the write buffer flushes into once it has overrun, owned by
   // `transactions` above. Exclusive, so its segments can be named in the
-  // record, and flushed to disk exactly once -- at commit, which is all
-  // FlushAndFsync permits. Null while the buffer has never overrun.
+  // record. Null while the buffer has never overrun.
   irs::IndexWriter::Transaction* buffer_trx = nullptr;
   // The writer-generation slot this transaction registered in on `shard`,
   // released when the transaction settles. -1 until it registers.

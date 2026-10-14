@@ -106,7 +106,7 @@ Memory held while writing to a search table is bounded by `segment_memory_max`, 
 
 | Write | Peak memory |
 | :--- | :--- |
-| Serial `INSERT` / `UPDATE` | ≈ 1.5 × `segment_memory_max` |
+| Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
 | Parallel `INSERT` | ≈ `segment_memory_max` × threads |
 
 Lower it to cap what a write can hold, raise it for larger segments and less compaction work.

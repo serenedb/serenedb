@@ -20,6 +20,12 @@ statement ok
 SET threads = 1;
 
 statement ok
+SET GLOBAL checkpoint_threshold = '1MB';
+
+statement ok
+SET GLOBAL debug_skip_checkpoint_on_commit = true;
+
+statement ok
 BEGIN;
 
 statement ok
@@ -32,7 +38,7 @@ statement ok
 COMMIT;
 
 query
-SELECT sum(size) < 1048576 AS rows_not_in_wal
+SELECT sum(size) < 2097152 AS rows_not_in_wal
 FROM read_blob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal')
 WHERE filename LIKE '%/engine_v1/' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '/data.db.wal';
 ----

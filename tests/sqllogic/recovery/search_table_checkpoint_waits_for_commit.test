@@ -4,6 +4,12 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
 
 statement ok
+SET GLOBAL checkpoint_threshold = '1MB';
+
+statement ok
+SET GLOBAL debug_skip_checkpoint_on_commit = true;
+
+statement ok
 CREATE TABLE cwi (id BIGINT, body TEXT)
   WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
@@ -17,7 +23,7 @@ CREATE TABLE cwt (id BIGINT, body TEXT)
 
 statement ok
 CREATE TABLE cwb (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0, segment_memory_max = 2097152);
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
 
 statement ok
 CREATE TABLE cw1 (id BIGINT, body TEXT)

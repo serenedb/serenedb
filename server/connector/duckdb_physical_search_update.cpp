@@ -23,6 +23,7 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/transaction/duck_transaction.hpp>
@@ -96,7 +97,8 @@ SereneDBSearchUpdate::GetGlobalSinkState(duckdb::ClientContext& context) const {
     state->column_ids.emplace_back(column.Oid());
   }
   state->chunk_types = columns.GetColumnTypes();
-  state->write_buffer_max_bytes = state->search_table->GetWriteBufferMaxBytes();
+  state->write_buffer_max_bytes =
+    duckdb::DBConfig::GetConfig(context).options.checkpoint_wal_size;
 
   const auto p = state->column_ids.size();
   state->new_row_src.assign(p, duckdb::DConstants::INVALID_INDEX);

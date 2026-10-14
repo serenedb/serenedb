@@ -2367,6 +2367,48 @@ TEST(hnsw_pq_quantizer_test, gathered_matches_block_at_every_batch_size) {
   }
 }
 
+TEST(hnsw_pq_quantizer_test, wide_codes_score_against_decoded_rows) {
+  constexpr uint32_t pq_m = 264;
+  constexpr size_t n = 300;
+  constexpr size_t chunk = 13;
+  for (const uint32_t dsub : {1U, 2U, 4U, 8U, 16U}) {
+    const uint32_t d = pq_m * dsub;
+    const auto points = MakeSpread(d, n, 89);
+    const auto query = MakeSpread(d, 1, 97);
+    const std::vector<float> centroid(d, 0.f);
+    const float qq =
+      ExactScore(VectorMetric::InnerProduct, query.data(), query.data(), d);
+    for (const VectorMetric metric :
+         {VectorMetric::L2Sqr, VectorMetric::InnerProduct}) {
+      const auto f = BuildPqCodes(d, pq_m, metric, points, n);
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<uint32_t> ids(n);
+      for (uint32_t i = 0; i < n; ++i) {
+        ids[i] = static_cast<uint32_t>((i * 37) % n);
+      }
+      std::vector<score_t> got(n);
+      for (size_t off = 0; off < n; off += chunk) {
+        const size_t take = std::min(chunk, n - off);
+        reader->ComputeGathered(
+          f.codes.data(), f.record_size,
+          std::span<const uint32_t>{ids}.subspan(off, take), kNoPrune,
+          got.data() + off);
+      }
+      std::vector<float> row(d);
+      for (size_t i = 0; i < n; ++i) {
+        ASSERT_TRUE(reader->Decode(
+          f.codes.data() + size_t{ids[i]} * f.record_size, row.data()));
+        const float want = ExactScore(metric, query.data(), row.data(), d);
+        const float rr =
+          ExactScore(VectorMetric::InnerProduct, row.data(), row.data(), d);
+        EXPECT_NEAR(got[i], want, 1e-3f * (1.f + std::fabs(want) + qq + rr))
+          << "dsub=" << dsub << " metric " << static_cast<int>(metric)
+          << " i=" << i;
+      }
+    }
+  }
+}
+
 TEST(hnsw_pq_quantizer_test, encode_into_matches_encode) {
   constexpr uint32_t d = 32;
   constexpr uint32_t pq_m = 16;

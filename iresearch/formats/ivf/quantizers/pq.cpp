@@ -37,8 +37,11 @@ constexpr uint32_t kPq8Nbits = 8;
 constexpr size_t kPq8Ksub = size_t{1} << kPq8Nbits;
 constexpr size_t kPq8TrainRows = 32768;
 
-constexpr bool Pq8Direct(size_t dsub) noexcept {
-  return dsub == 1 || dsub == 2 || dsub == 4 || dsub == 8 || dsub == 16;
+constexpr size_t kPq8LutBytes = size_t{256} << 10;
+
+constexpr bool Pq8Direct(size_t dsub, size_t m) noexcept {
+  return dsub == 2 || ((dsub == 1 || dsub == 4 || dsub == 8 || dsub == 16) &&
+                       m * kPq8Ksub * sizeof(float) > kPq8LutBytes);
 }
 
 constexpr size_t kPqTrainResiduals = kFastScanKsub * 256;
@@ -831,7 +834,7 @@ class ProductQuantizer8Stats final : public QuantizerStats {
         }
       }
     }
-    if (Pq8Direct(_pq.dsub)) {
+    if (Pq8Direct(_pq.dsub, _pq.M)) {
       _cent_h.resize(_pq.centroids.size());
       for (size_t i = 0; i < _cent_h.size(); ++i) {
         _cent_h[i] = faiss::encode_fp16(_pq.centroids[i]);
@@ -871,7 +874,7 @@ class ProductQuantizer8Codebook final : public QuantizerCodebook {
   void Rekey(std::span<const float> query) {
     const faiss::ProductQuantizer& pq = _stats->Pq();
     const size_t dsub = pq.dsub;
-    if (Pq8Direct(dsub)) {
+    if (Pq8Direct(dsub, pq.M)) {
       _query.assign(query.begin(), query.end());
       return;
     }
@@ -936,7 +939,8 @@ class ProductQuantizer8Reader final : public QuantizerReader {
     : _cb{std::move(cb)},
       _cur{_cb.get()},
       _m{_cb->Pq().M},
-      _dsub{_cb->Pq().dsub} {}
+      _dsub{_cb->Pq().dsub},
+      _kernel{Pq8Direct(_dsub, _m) ? _dsub : 0} {}
 
   PayloadBlockSetting BlockSetting() const noexcept final {
     return {.group_size = 1, .record_size = static_cast<uint32_t>(_m)};
@@ -1153,7 +1157,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
 
   void ScoreGrouped(const byte_type* base, uint32_t record_size,
                     std::span<const uint32_t> ids, score_t* out) const {
-    switch (_dsub) {
+    switch (_kernel) {
       case 1:
         return ScoreGrouped<1>(base, record_size, ids, out);
       case 2:
@@ -1291,7 +1295,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   }
 
   float Score(const uint8_t* code) const noexcept {
-    switch (_dsub) {
+    switch (_kernel) {
       case 1:
         return ScoreDirect<1>(code);
       case 2:
@@ -1333,6 +1337,7 @@ class ProductQuantizer8Reader final : public QuantizerReader {
   std::unique_ptr<ProductQuantizer8Codebook<M>> _own;
   size_t _m;
   size_t _dsub;
+  size_t _kernel;
   std::vector<float> _pair_a;
   const uint8_t* _pair_code = nullptr;
 };

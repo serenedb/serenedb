@@ -2100,6 +2100,64 @@ INSTANTIATE_TEST_SUITE_P(
     BoundCase{VectorQuantization::SQ8, VectorMetric::Cosine}),
   BoundCaseName);
 
+TEST(sq8_quantizer_test, inner_product_tracks_decoded_rows) {
+  constexpr uint32_t d = 512;
+  constexpr size_t n = 400;
+  constexpr size_t kTop = 10;
+  for (const auto quant : {VectorQuantization::SQ8, VectorQuantization::USQ8}) {
+    const auto points = MakeSpread(d, n, 21);
+    const std::vector<float> centroid(d, 0.f);
+    const auto f =
+      BuildCodes(quant, d, 0, VectorMetric::InnerProduct, points, n, centroid);
+    std::vector<uint32_t> ids(n);
+    std::iota(ids.begin(), ids.end(), 0U);
+    for (uint32_t seed = 0; seed < 8; ++seed) {
+      const auto query = MakeSpread(d, 1, 100 + seed);
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<score_t> got(n);
+      reader->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                              got.data());
+      std::vector<float> decoded(d);
+      std::vector<double> want(n);
+      for (size_t i = 0; i < n; ++i) {
+        ASSERT_TRUE(
+          reader->Decode(f.codes.data() + i * f.record_size, decoded.data()));
+        double dot = 0;
+        for (uint32_t j = 0; j < d; ++j) {
+          dot += double{query[j]} * double{decoded[j]};
+        }
+        want[i] = dot;
+      }
+      const auto [lo, hi] = std::ranges::minmax(want);
+      double offset = 0;
+      for (size_t i = 0; i < n; ++i) {
+        offset += got[i] - want[i];
+      }
+      offset /= static_cast<double>(n);
+      EXPECT_LT(std::abs(offset), 2e-2 * (hi - lo)) << "query " << seed;
+      for (size_t i = 0; i < n; ++i) {
+        ASSERT_NEAR(got[i] - offset, want[i], 1e-2 * (hi - lo))
+          << (quant == VectorQuantization::SQ8 ? "sq8" : "usq8") << " query "
+          << seed << " row " << i;
+      }
+      const auto top = [&](const auto& scores) {
+        std::vector<uint32_t> order(n);
+        std::iota(order.begin(), order.end(), 0U);
+        std::partial_sort(
+          order.begin(), order.begin() + kTop, order.end(),
+          [&](uint32_t a, uint32_t b) { return scores[a] > scores[b]; });
+        order.resize(kTop);
+        std::ranges::sort(order);
+        return order;
+      };
+      std::vector<uint32_t> common;
+      std::ranges::set_intersection(top(got), top(want),
+                                    std::back_inserter(common));
+      EXPECT_GE(common.size(), kTop - 1) << "query " << seed;
+    }
+  }
+}
+
 TEST(code_bound_test, only_byte_scalar_codes_are_bounded) {
   constexpr uint32_t kDim = 16;
   constexpr size_t kRows = 64;

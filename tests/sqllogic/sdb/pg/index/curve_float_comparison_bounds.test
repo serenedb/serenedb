@@ -1,0 +1,85 @@
+statement ok
+CREATE TABLE curve_float_bounds(id INTEGER PRIMARY KEY, x FLOAT, y INTEGER);
+
+statement ok
+INSERT INTO curve_float_bounds VALUES (1, 16777216, 0), (2, 16777218, 0), (3, 16777220, 0);
+
+statement ok
+CREATE INDEX curve_float_bounds_morton ON curve_float_bounds USING inverted(id, (curve(x, y))) INCLUDE (x, y);
+
+statement ok
+CREATE INDEX curve_float_bounds_hilbert ON curve_float_bounds USING inverted(id, (curve(x, y, kind := 'hilbert', lower := ROW(16777216, 0), upper := ROW(16777220, 1)))) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_float_bounds;
+
+query
+SELECT id FROM curve_float_bounds_morton WHERE curve(x, y) @@ ts_between(ROW(16777217, 0), ROW(16777217, 0), true, true) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM curve_float_bounds_morton WHERE curve(x, y) @@ ts_between(ROW(16777216, 0), ROW(16777219, 0), true, true) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM curve_float_bounds_morton WHERE curve(x, y) @@ ts_between(ROW(16777217, 0), ROW(16777218, 0), true, true) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM curve_float_bounds_morton WHERE curve(x, y) @@ ts_between(ROW(16777217.0::DECIMAL(20,1), 0), ROW(16777217.0::DECIMAL(20,1), 0), true, true) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM curve_float_bounds_morton WHERE x BETWEEN 16777217 AND 16777218 AND y = 0 ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM curve_float_bounds_hilbert WHERE curve(x, y, kind := 'hilbert', lower := ROW(16777216, 0), upper := ROW(16777220, 1)) @@ ts_between(ROW(16777217, 0), ROW(16777217, 0), true, true) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM curve_float_bounds_hilbert WHERE curve(x, y, kind := 'hilbert', lower := ROW(16777216, 0), upper := ROW(16777220, 1)) @@ ts_between(ROW(16777216, 0), ROW(16777219, 0), true, true) ORDER BY id;
+----
+id
+1
+2
+3
+
+query
+SELECT id FROM curve_float_bounds_hilbert WHERE curve(x, y, kind := 'hilbert', lower := ROW(16777216, 0), upper := ROW(16777220, 1)) @@ ts_between(ROW(16777217, 0), ROW(16777218, 0), true, true) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM curve_float_bounds_hilbert WHERE curve(x, y, kind := 'hilbert', lower := ROW(16777216, 0), upper := ROW(16777220, 1)) @@ ts_between(ROW(16777217.0::DECIMAL(20,1), 0), ROW(16777217.0::DECIMAL(20,1), 0), true, true) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM curve_float_bounds_hilbert WHERE x BETWEEN 16777217 AND 16777218 AND y = 0 ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+DROP TABLE curve_float_bounds;

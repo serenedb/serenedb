@@ -27,6 +27,8 @@
 
 namespace sdb::connector {
 
+inline constexpr char kCartesianCRS[] = "SDB:CARTESIAN";
+
 // CRS84 covers GeoJSON / S2 / our index encoding. Compare by identifier
 // rather than attempting semantic CRS equivalence (which would need a
 // PROJ-style library): PROJJSON / WKT2 CRS84 definitions that don't hand
@@ -34,6 +36,21 @@ namespace sdb::connector {
 // with the short form.
 inline bool IsCRS84Identifier(std::string_view id) noexcept {
   return id == "OGC:CRS84" || id == "EPSG:4326" || id == "4326";
+}
+
+inline bool IsCartesianIdentifier(std::string_view id) noexcept {
+  return id == kCartesianCRS;
+}
+
+inline void ValidateGeometryCartesian(const duckdb::LogicalType& type,
+                                      std::string_view subject) {
+  if (!duckdb::GeoType::HasCRS(type) ||
+      !IsCartesianIdentifier(duckdb::GeoType::GetCRS(type).GetIdentifier())) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG(subject,
+                            ": Cartesian geometry requires "
+                            "GEOMETRY('SDB:CARTESIAN')"));
+  }
 }
 
 // Validate that a GEOMETRY-typed value or column declares a CRS84-compatible

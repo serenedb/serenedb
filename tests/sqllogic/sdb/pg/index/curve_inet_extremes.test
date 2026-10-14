@@ -1,0 +1,148 @@
+statement ok
+CREATE TABLE curve_inet_extremes(id INTEGER PRIMARY KEY, ip INET, y BIGINT);
+
+statement ok
+INSERT INTO curve_inet_extremes SELECT i,
+ CASE i % 10
+  WHEN 0 THEN '0.0.0.0'::INET
+  WHEN 1 THEN '255.255.255.255'::INET
+  WHEN 2 THEN '::'::INET
+  WHEN 3 THEN '::ffff:255.255.255.255'::INET
+  WHEN 4 THEN ('7fff:ffff:ffff:ffff::1/' || (i % 129))::INET
+  WHEN 5 THEN ('8000::1/' || (i % 129))::INET
+  WHEN 6 THEN ('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/' || (i % 129))::INET
+  WHEN 7 THEN ('10.0.0.1/' || (i % 33))::INET
+  WHEN 8 THEN '::1'::INET
+  ELSE NULL END,
+ CASE WHEN i % 113 = 0 THEN NULL ELSE (i * 7919) % 301 - 100 END
+FROM range(4000) t(i);
+
+statement ok
+CREATE INDEX curve_inet_extremes_m ON curve_inet_extremes USING inverted(id, (curve(ip,y))) INCLUDE (ip,y);
+
+statement ok
+CREATE INDEX curve_inet_extremes_h ON curve_inet_extremes USING inverted(id, (curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)))) INCLUDE (ip,y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_inet_extremes;
+
+statement ok
+CREATE MACRO curve_inet_extremes_scan(lo,hi,li,ui) AS TABLE
+ SELECT id FROM curve_inet_extremes WHERE y IS NOT NULL
+ AND CASE WHEN CASE WHEN ui THEN ip > hi ELSE ip >= hi END THEN false
+ ELSE CASE WHEN li THEN ip >= lo ELSE ip > lo END END;
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,true,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,true,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,true,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,true,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,false,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,false,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,false,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('0.0.0.0'::INET,NULL),ROW('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('0.0.0.0'::INET,'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff'::INET,false,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,true,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,true,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,true,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,true,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,false,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,false,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,false,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('7fff:ffff:ffff:ffff::1/0'::INET,NULL),ROW('8000::1/128'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('7fff:ffff:ffff:ffff::1/0'::INET,'8000::1/128'::INET,false,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,true,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,true,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,true,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,true,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,false,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,false,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,false,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('10.0.0.1/0'::INET,NULL),ROW('10.0.0.1/32'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('10.0.0.1/0'::INET,'10.0.0.1/32'::INET,false,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,true,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,true,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,true,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,true,false)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,false,true)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,false,true)) AS h;
+----
+m	h
+t	t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_inet_extremes_m WHERE curve(ip,y) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,false,false)) AS m,
+ (SELECT list(id ORDER BY id) FROM curve_inet_extremes_h WHERE curve(ip,y, kind := 'hilbert', max_level := 63, level_step := 7, max_cells := 4096, lower := ROW('10.0.0.1'::INET,0), upper := ROW('8000::'::INET,100)) @@ ts_between(ROW('::'::INET,NULL),ROW('::ffff:255.255.255.255'::INET,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_inet_extremes_scan('::'::INET,'::ffff:255.255.255.255'::INET,false,false)) AS h;
+----
+m	h
+t	t
+
+statement ok
+DROP TABLE curve_inet_extremes CASCADE;

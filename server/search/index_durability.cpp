@@ -36,6 +36,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -84,6 +85,38 @@ IndexStamp IndexStamp::Read(duckdb::BinaryDeserializer& in) {
 
 IndexDurability::IndexDurability(duckdb::idx_t db_id, std::string name)
   : _db_id{db_id}, _name{std::move(name)} {}
+
+std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp>
+IndexDurability::OpenWriter(irs::Directory& dir, std::filesystem::path path,
+                            bool on_disk, bool is_new,
+                            irs::IndexWriterOptions options,
+                            ManifestSource manifest) {
+  _path = std::move(path);
+  _on_disk = on_disk;
+  options.meta_payload_writer = [this, manifest = std::move(manifest)](
+                                  const irs::SourcePosition& position,
+                                  duckdb::BinarySerializer& out) {
+    const auto current = manifest ? manifest() : nullptr;
+    WritePayload(position, current.get(), out);
+  };
+  IndexStamp stamp;
+  options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
+    stamp = IndexStamp::Read(in);
+  };
+  if (!on_disk || is_new) {
+    auto writer =
+      irs::IndexWriter::Make(dir, irs::OpenMode::kOmCreate, std::move(options));
+    writer->RefreshCommit();
+    return {std::move(writer), std::move(stamp)};
+  }
+  ResolvePendingSave(dir);
+  auto writer = irs::IndexWriter::Make(
+    dir, irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate,
+    std::move(options));
+  _position = stamp.position;
+  _published = stamp.position;
+  return {std::move(writer), std::move(stamp)};
+}
 
 void IndexDurability::WritePayload(const irs::SourcePosition& position,
                                    const FileManifest* manifest,
@@ -325,6 +358,21 @@ void IndexDurability::SyncDirectory() {
     _directory_dirty.store(true, std::memory_order_relaxed);
     throw;
   }
+}
+
+absl::Status IndexDurability::Cleanup(irs::Directory& dir) {
+  try {
+    SyncDirectory();
+    irs::directory_utils::RemoveAllUnreferenced(dir);
+  } catch (const std::exception& e) {
+    return absl::InternalError(
+      absl::StrCat("caught exception while cleaning up ", _name, ": ",
+                   duckdb::ErrorData{e}.RawMessage()));
+  } catch (...) {
+    return absl::InternalError(
+      absl::StrCat("caught exception while cleaning up ", _name));
+  }
+  return absl::OkStatus();
 }
 
 bool IndexDurability::CanPersist() const {

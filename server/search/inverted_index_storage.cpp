@@ -26,8 +26,6 @@
 
 #include <chrono>
 #include <duckdb/common/error_data.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <filesystem>
 #include <iresearch/formats/index_meta_reader.hpp>
 #include <iresearch/formats/index_meta_writer.hpp>
@@ -69,14 +67,7 @@ InvertedIndexStorage::InvertedIndexStorage(
     _directory{std::move(directory)},
     _search{GetSearchEngine()},
     _durability{db_id, absl::StrCat("inverted index ", index_id)} {
-  _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
-  _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
-  _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
-  _tasks_settings.compaction_max_segments = options.compaction_max_segments;
-  _tasks_settings.compaction_max_segments_bytes =
-    options.compaction_max_segments_bytes;
-  _tasks_settings.compaction_floor_segment_bytes =
-    options.compaction_floor_segment_bytes;
+  SetTasksSettings(options);
 
   SDB_ASSERT(index_id != 0);
 
@@ -90,11 +81,6 @@ InvertedIndexStorage::InvertedIndexStorage(
                                      resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
-  _durability.Open(Path(), opened.on_disk);
-  const bool reopen = opened.on_disk && !is_new;
-  const auto open_mode =
-    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-           : irs::OpenMode::kOmCreate;
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -122,36 +108,19 @@ InvertedIndexStorage::InvertedIndexStorage(
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_writer =
-    [this](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
-      _durability.WritePayload(position, GetFileManifest().get(), out);
-    };
-
-  IndexStamp stamp;
-  writer_options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
-    stamp = IndexStamp::Read(in);
-  };
-
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;
   }
 
-  if (reopen) {
-    _durability.ResolvePendingSave(*_dir);
-  }
-  _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
-
-  if (!reopen) {
-    _writer->RefreshCommit();
-  }
+  auto [writer, stamp] = _durability.OpenWriter(
+    *_dir, Path(), opened.on_disk, is_new, std::move(writer_options),
+    [this] { return GetFileManifest(); });
+  _writer = std::move(writer);
 
   auto reader = _writer->GetSnapshot();
   SDB_ASSERT(reader);
 
-  if (reopen) {
-    _durability.Reopen(stamp.position);
-    SetFileManifest(stamp.manifest);
-  }
+  SetFileManifest(stamp.manifest);
   StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
     std::move(reader), std::move(stamp.manifest)));
 }
@@ -183,14 +152,7 @@ InvertedIndexStorage::~InvertedIndexStorage() {
 
 void InvertedIndexStorage::ApplyOptions(
   const catalog::InvertedIndexSettings& options) {
-  _tasks_settings.refresh_interval_msec = options.refresh_interval_ms;
-  _tasks_settings.compaction_interval_msec = options.compaction_interval_ms;
-  _tasks_settings.cleanup_interval_step = options.cleanup_interval_step;
-  _tasks_settings.compaction_max_segments = options.compaction_max_segments;
-  _tasks_settings.compaction_max_segments_bytes =
-    options.compaction_max_segments_bytes;
-  _tasks_settings.compaction_floor_segment_bytes =
-    options.compaction_floor_segment_bytes;
+  SetTasksSettings(options);
 
   irs::SegmentOptions segment_options;
   segment_options.segment_count_max = 0;
@@ -253,27 +215,12 @@ StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
 
 ResultWithTime InvertedIndexStorage::CleanupUnsafe() {
   auto begin = std::chrono::steady_clock::now();
-  auto result = CleanupUnsafeImpl();
+  auto result = _durability.Cleanup(*_dir);
   uint64_t time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
   _maintenance.RecordCleanup(result, time_ms);
   return {std::move(result), time_ms};
-}
-
-absl::Status InvertedIndexStorage::CleanupUnsafeImpl() {
-  try {
-    _durability.SyncDirectory();
-    irs::directory_utils::RemoveAllUnreferenced(*_dir);
-  } catch (const std::exception& e) {
-    return absl::InternalError(
-      absl::StrCat("caught exception while cleaning up Search index '", GetId(),
-                   "': ", duckdb::ErrorData{e}.RawMessage()));
-  } catch (...) {
-    return absl::InternalError(absl::StrCat(
-      "caught exception while cleaning up Search index '", GetId(), "'"));
-  }
-  return absl::OkStatus();
 }
 
 auto InvertedIndexStorage::CompactUnsafeAsync(

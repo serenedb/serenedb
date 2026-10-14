@@ -21,6 +21,7 @@
 #include "search/wal_recovery.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/functional/any_invocable.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/time/clock.h>
@@ -61,56 +62,14 @@ using BoundIndexHandle =
 
 struct FinishReplayTask final : duckdb::BaseExecutorTask {
   FinishReplayTask(duckdb::TaskExecutor& executor,
-                   std::optional<BoundIndexHandle> index,
-                   std::shared_ptr<InvertedIndexStorage> storage,
-                   std::atomic_size_t& replayed)
-    : BaseExecutorTask{executor},
-      index{std::move(index)},
-      storage{std::move(storage)},
-      replayed{replayed} {}
+                   absl::AnyInvocable<void()> finish)
+    : BaseExecutorTask{executor}, finish{std::move(finish)} {}
 
-  void ExecuteTask() final {
-    if (index && (*index)->FinishReplay()) {
-      replayed.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (const auto status = storage->Refresh(); !status.ok()) {
-      SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
-               "' after WAL replay failed: ", status.message());
-    }
-  }
+  void ExecuteTask() final { finish(); }
 
-  std::string TaskType() const final { return "InvertedFinishReplay"; }
+  std::string TaskType() const final { return "SearchFinishReplay"; }
 
-  std::optional<BoundIndexHandle> index;
-  std::shared_ptr<InvertedIndexStorage> storage;
-  std::atomic_size_t& replayed;
-};
-
-struct FinishTableReplayTask final : duckdb::BaseExecutorTask {
-  FinishTableReplayTask(duckdb::TaskExecutor& executor,
-                        duckdb::AttachedDatabase& db,
-                        std::shared_ptr<SearchTable> table,
-                        std::atomic_size_t& replayed)
-    : BaseExecutorTask{executor},
-      db{db},
-      table{std::move(table)},
-      replayed{replayed} {}
-
-  void ExecuteTask() final {
-    if (table->FinishReplay(db)) {
-      replayed.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (const auto status = table->VacuumRefresh(); !status.ok()) {
-      SDB_WARN(SEARCH, "refresh of search table '", table->GetTableId(),
-               "' after WAL replay failed: ", status.message());
-    }
-  }
-
-  std::string TaskType() const final { return "SearchTableFinishReplay"; }
-
-  duckdb::AttachedDatabase& db;
-  std::shared_ptr<SearchTable> table;
-  std::atomic_size_t& replayed;
+  absl::AnyInvocable<void()> finish;
 };
 
 std::vector<duckdb::reference<catalog::SereneDBCatalog>> SereneDBCatalogs() {
@@ -214,11 +173,27 @@ void RecoverSearchStorages() {
   std::atomic_size_t replayed_tables{0};
   for (auto& [index, storage] : recovering) {
     executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, std::move(index), storage, replayed));
+      executor, [&replayed, index = std::move(index), storage]() mutable {
+        if (index && (*index)->FinishReplay()) {
+          replayed.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (const auto status = storage->Refresh(); !status.ok()) {
+          SDB_WARN(SEARCH, "refresh of index '", storage->GetId(),
+                   "' after WAL replay failed: ", status.message());
+        }
+      }));
   }
   for (auto& [db, table] : tables) {
-    executor.ScheduleTask(duckdb::make_uniq<FinishTableReplayTask>(
-      executor, db.get(), table, replayed_tables));
+    executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
+      executor, [&replayed_tables, &db = db.get(), table] {
+        if (table->FinishReplay(db)) {
+          replayed_tables.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (const auto status = table->VacuumRefresh(); !status.ok()) {
+          SDB_WARN(SEARCH, "refresh of search table '", table->GetTableId(),
+                   "' after WAL replay failed: ", status.message());
+        }
+      }));
   }
   executor.WorkOnTasks();
   if (recovering.empty() && tables.empty()) {

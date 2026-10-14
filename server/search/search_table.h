@@ -67,7 +67,8 @@ class DataChunk;
 }  // namespace duckdb
 namespace sdb::search {
 
-class SearchTable final : public std::enable_shared_from_this<SearchTable> {
+class SearchTable final : public std::enable_shared_from_this<SearchTable>,
+                          public MaintainedStore {
  public:
   // `is_new` opens a fresh index; otherwise the durable one is reopened.
   // `options` carries the maintenance intervals resolved and persisted by the
@@ -151,30 +152,9 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     return _writer->NextTick(count);
   }
 
-  // --- Background maintenance ---
-  // Mirrors the interface InvertedIndexStorage exposes, so the shared refresh /
-  // compaction loops (search/task.h) drive a search table too.
   duckdb::idx_t GetId() const noexcept { return _table_id; }
-  auto& GetTasksSettings() { return _maint_settings; }
-  void ApplyOptions(const catalog::SearchTableOptions& options);
-
-  // Wake the compaction loop after a refresh produced new segments.
-  void NudgeCompaction() noexcept {
-    _compaction_gen.fetch_add(1, std::memory_order_release);
-  }
-  uint64_t CompactionGeneration() const noexcept {
-    return _compaction_gen.load(std::memory_order_acquire);
-  }
-  // Compaction leaves unreferenced files behind; raising stale pressure signals
-  // the refresh loop to run cleanup.
-  void BumpStalePressure() noexcept {
-    _stale_pressure.fetch_add(1, std::memory_order_relaxed);
-  }
-  uint32_t StalePressure() const noexcept {
-    return _stale_pressure.load(std::memory_order_relaxed);
-  }
-  void ClearStalePressure() noexcept {
-    _stale_pressure.store(0, std::memory_order_relaxed);
+  void ApplyOptions(const catalog::SearchTableOptions& options) {
+    SetTasksSettings(options);
   }
 
   // Launch this table's refresh + compaction loops (via SearchEngine). Call
@@ -332,11 +312,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   IndexDurability _durability;
   std::unique_ptr<ReplaySession> _replay;
 
-  // Background maintenance state (mirrors InvertedIndexStorage). A zero
-  // refresh/compaction interval disables the loops.
-  TasksSettings _maint_settings;
-  MaintenanceCounters _maintenance;
-
   WriterGenerations _writers;
   std::atomic<bool> _build_in_flight{false};
 
@@ -351,8 +326,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   // keeps waiting.
   static constexpr absl::Duration kWriterWaitPoll = absl::Milliseconds(100);
 
-  std::atomic<uint64_t> _compaction_gen{0};
-  std::atomic<uint32_t> _stale_pressure{0};
 #ifdef SDB_DEV
   // Dev-only tripwire: asserts StartTasks runs at most once, so a bug can't
   // spawn competing maintenance loops.

@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -54,21 +55,14 @@ struct IndexStamp {
 
 class IndexDurability {
  public:
+  using ManifestSource =
+    absl::AnyInvocable<std::shared_ptr<const FileManifest>() const>;
+
   IndexDurability(duckdb::idx_t db_id, std::string name);
 
-  void Open(std::filesystem::path path, bool on_disk) {
-    _path = std::move(path);
-    _on_disk = on_disk;
-  }
-
-  void WritePayload(const irs::SourcePosition& position,
-                    const FileManifest* manifest,
-                    duckdb::BinarySerializer& out);
-  void ResolvePendingSave(irs::Directory& dir) const;
-  void Reopen(const irs::SourcePosition& position) noexcept {
-    _position = position;
-    _published = position;
-  }
+  std::pair<std::shared_ptr<irs::IndexWriter>, IndexStamp> OpenWriter(
+    irs::Directory& dir, std::filesystem::path path, bool on_disk, bool is_new,
+    irs::IndexWriterOptions options, ManifestSource manifest = nullptr);
 
   const irs::SourcePosition& Position() const noexcept { return _position; }
   uint64_t ReplayFrom(duckdb::AttachedDatabase& db) const;
@@ -89,6 +83,7 @@ class IndexDurability {
     irs::IndexWriter& writer);
 
   void SyncDirectory();
+  absl::Status Cleanup(irs::Directory& dir);
   void MarkOutOfSync() noexcept {
     _out_of_sync.store(true, std::memory_order_relaxed);
   }
@@ -97,6 +92,10 @@ class IndexDurability {
   }
 
  private:
+  void WritePayload(const irs::SourcePosition& position,
+                    const FileManifest* manifest,
+                    duckdb::BinarySerializer& out);
+  void ResolvePendingSave(irs::Directory& dir) const;
   bool CanPersist() const;
   uint64_t RunningCheckpoint(uint64_t generation) const;
   void WaitForCheckpoint() const;

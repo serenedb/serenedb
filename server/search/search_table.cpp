@@ -28,8 +28,6 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/storage/block_manager.hpp>
@@ -42,7 +40,6 @@
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/debugging.hpp>
-#include <iresearch/utils/directory_utils.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/log.hpp>
@@ -107,17 +104,6 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
   ApplyOptions(options);
 }
 
-void SearchTable::ApplyOptions(const catalog::SearchTableOptions& options) {
-  _maint_settings.refresh_interval_msec = options.refresh_interval_ms;
-  _maint_settings.compaction_interval_msec = options.compaction_interval_ms;
-  _maint_settings.cleanup_interval_step = options.cleanup_interval_step;
-  _maint_settings.compaction_max_segments = options.compaction_max_segments;
-  _maint_settings.compaction_max_segments_bytes =
-    options.compaction_max_segments_bytes;
-  _maint_settings.compaction_floor_segment_bytes =
-    options.compaction_floor_segment_bytes;
-}
-
 SearchTable::~SearchTable() {
   _replay.reset();
   _writer.reset();
@@ -134,12 +120,6 @@ void SearchTable::OpenWriter(bool in_memory) {
                                      in_memory, resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
-  _durability.Open(Path(), opened.on_disk);
-
-  const bool reopen = opened.on_disk && !_is_new;
-  const auto open_mode =
-    reopen ? (irs::OpenMode::kOmAppend | irs::OpenMode::kOmCreate)
-           : irs::OpenMode::kOmCreate;
 
   irs::IndexWriterOptions writer_options;
   writer_options.segment_memory_max = _segment_memory_max;
@@ -151,19 +131,10 @@ void SearchTable::OpenWriter(bool in_memory) {
     writer_options.reader_options.scorer = _topk_scorer.get();
   }
 
-  writer_options.meta_payload_writer =
-    [this](const irs::SourcePosition& position, duckdb::BinarySerializer& out) {
-      _durability.WritePayload(position, nullptr, out);
-    };
-  IndexStamp stamp;
-  writer_options.meta_payload_reader = [&](duckdb::BinaryDeserializer& in) {
-    stamp = IndexStamp::Read(in);
-  };
-
-  if (reopen) {
-    _durability.ResolvePendingSave(*_dir);
-  }
-  _writer = irs::IndexWriter::Make(*_dir, open_mode, std::move(writer_options));
+  _writer = _durability
+              .OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
+                          std::move(writer_options))
+              .first;
 
   auto& db_manager =
     duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance());
@@ -181,12 +152,6 @@ void SearchTable::OpenWriter(bool in_memory) {
         claim(column->Id());
       }
     }
-  }
-
-  if (reopen) {
-    _durability.Reopen(stamp.position);
-  } else {
-    _writer->RefreshCommit();
   }
 }
 
@@ -427,15 +392,7 @@ auto SearchTable::CompactUnsafeAsync(
 
 ResultWithTime SearchTable::CleanupUnsafe() {
   const auto begin = std::chrono::steady_clock::now();
-  auto result = absl::OkStatus();
-  try {
-    _durability.SyncDirectory();
-    irs::directory_utils::RemoveAllUnreferenced(*_dir);
-  } catch (const std::exception& e) {
-    result = absl::InternalError(
-      absl::StrCat("cleanup failed for search table ", GetTableId(), ": ",
-                   duckdb::ErrorData{e}.RawMessage()));
-  }
+  auto result = _durability.Cleanup(*_dir);
   const uint64_t time_ms =
     std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::steady_clock::now() - begin)

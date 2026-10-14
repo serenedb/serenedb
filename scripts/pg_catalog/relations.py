@@ -1,73 +1,14 @@
 import os
 
-from . import config
-from .common import (CATALOG_DIR, GENERATED_DIR, SUPERUSER_ONLY_SQL, camel,
-                     cpp_bool, cpp_char, cpp_str, generated)
+from . import config, source
+from .common import (CATALOG_DIR, GENERATED_DIR, array, camel, cpp_bool,
+                     cpp_char, cpp_str, generated, oid)
 
 PG_FOLDERS = ('pg_catalog', 'information_schema')
 
 SDB_FOLDER = 'sdb'
 
-RELATIONS_SQL = f"""
-SELECT c.oid::int8, n.nspname, c.relname, c.relkind, c.relisshared,
-       {SUPERUSER_ONLY_SQL}, c.reltype::int4, coalesce(t.typarray, 0)::int4,
-       c.relreplident
-FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-LEFT JOIN pg_type t ON t.oid = c.reltype
-WHERE n.nspname IN ('pg_catalog', 'information_schema')
-  AND (c.relkind = 'r'
-       OR (c.relkind = 'v' AND (n.nspname, c.relname) IN
-           (SELECT * FROM unnest(%s::text[], %s::text[]))))
-ORDER BY n.nspname, c.relname
-"""
-
-ELEMENT_JOIN = """
-LEFT JOIN pg_type e ON e.oid = t.typelem
-                   AND t.typsubscript = 'array_subscript_handler'::regproc
-"""
-
-COLUMNS_SQL = f"""
-SELECT a.attname, a.atttypid::int8, coalesce(e.oid, 0)::int8, e.typrelid <> 0,
-       a.attnotnull, a.attcollation::int8, a.attndims,
-       EXISTS (SELECT FROM aclexplode(a.attacl)
-               WHERE grantee = 0 AND privilege_type = 'SELECT')
-FROM pg_attribute a
-JOIN pg_type t ON t.oid = a.atttypid
-{ELEMENT_JOIN}
-WHERE a.attrelid = %s AND a.attnum > 0 AND NOT a.attisdropped
-ORDER BY a.attnum
-"""
-
-KEYS_SQL = """
-SELECT a.attname, bool_or(i.indisunique AND i.indnkeyatts = 1)
-FROM pg_index i
-JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-WHERE i.indrelid = %s
-GROUP BY a.attname
-"""
-
-FUNCTIONS_SQL = """
-SELECT p.oid::int8, n.nspname, p.proname,
-       NOT EXISTS (SELECT FROM aclexplode(coalesce(p.proacl,
-                                                   acldefault('f', p.proowner)))
-                   WHERE grantee = 0 AND privilege_type = 'EXECUTE')
-FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE p.proretset
-  AND (n.nspname, p.proname) IN (SELECT * FROM unnest(%s::text[], %s::text[]))
-ORDER BY n.nspname, p.proname
-"""
-
-FUNCTION_COLUMNS_SQL = f"""
-SELECT a.name, a.type::int8, coalesce(e.oid, 0)::int8, e.typrelid <> 0,
-       t.typcollation::int8
-FROM pg_proc p
-CROSS JOIN LATERAL unnest(p.proargnames, p.proallargtypes, p.proargmodes)
-  WITH ORDINALITY AS a(name, type, mode, ordinal)
-JOIN pg_type t ON t.oid = a.type
-{ELEMENT_JOIN}
-WHERE p.oid = %s AND a.mode IN ('o', 't')
-ORDER BY a.ordinal
-"""
+PG_CATALOG = '11'
 
 MAX_COLUMNS = 64
 
@@ -83,21 +24,77 @@ def column_line(column, type_oid, element, composite, notnull, collation,
             f'{cpp_bool(notnull)}, {collation}, {ndims}, SystemKey::{key}}},')
 
 
-def table_lines(gen, oid, schema, name, relkind, shared, superuser, row_type,
-                row_array_type, replident, types):
-    columns = gen.query(COLUMNS_SQL, (oid,))
+class Types:
+    def __init__(self, gen, rows):
+        self.by_oid = {row[0]: row for row in rows}
+        self.array_handler = int(gen.one('pg_proc',
+                                         proname='array_subscript_handler')
+                                 ['oid'])
+        self.c_collation = int(gen.one('pg_collation', collname='C')['oid'])
+        for name, (row_type, array_type) in gen.row_types.items():
+            self.by_oid.setdefault(row_type, (
+                row_type, name, 'pg_catalog', -1, False, 'c', 'C', False,
+                ',', 0, 0, array_type) + (0,) * 7 + ('d', 'x', 0, 0,
+                                                     gen.relations[name].oid,
+                                                     -1, False, ''))
+            self.by_oid.setdefault(array_type, (
+                array_type, '_' + name, 'pg_catalog', -1, False, 'b', 'A',
+                False, ',', self.array_handler, row_type, 0) + (0,) * 7 +
+                ('d', 'x', 0, 0, 0, -1, False, ''))
+        self.by_name = {row[1]: row for row in self.by_oid.values()}
+
+    def element(self, type_oid):
+        row = self.by_oid[type_oid]
+        if row[9] != self.array_handler:
+            return 0, False
+        return row[10], self.by_oid[row[10]][23] != 0
+
+
+def catalog_columns(gen, relation, types):
+    columns, fixed_not_null = [], True
+    for name, type_name, force in relation.columns:
+        row = types.by_name[type_name]
+        fixed_not_null = fixed_not_null and row[3] > 0
+        notnull = (force == 'FORCE NOT NULL' or
+                   (not force and fixed_not_null))
+        fixed_not_null = fixed_not_null and notnull
+        element, composite = types.element(row[0])
+        columns.append((name, row[0], element, composite, notnull,
+                        types.c_collation if row[21] else 0,
+                        1 if element else 0))
+    return columns
+
+
+def domain_columns(columns, types):
+    out = []
+    for name, type_name in columns:
+        row = types.by_name[type_name]
+        out.append((name, row[0], 0, False, False, row[21], 0))
+    return out
+
+
+def keys(gen, table):
+    out = {}
+    for index in gen.indexes:
+        if index.table != table:
+            continue
+        for column in index.columns:
+            unique = index.unique and len(index.columns) == 1
+            out[column] = ('Unique' if unique or out.get(column) == 'Unique'
+                           else 'Indexed')
+    return out
+
+
+def table_lines(schema, name, relkind, shared, superuser, row_type,
+                row_array_type, replident, columns, keys, public, types):
     if len(columns) > MAX_COLUMNS:
         raise SystemExit(f'{schema}.{name} has more than {MAX_COLUMNS} columns')
-    keys = {column: 'Unique' if unique else 'Indexed'
-            for column, unique in gen.query(KEYS_SQL, (oid,))}
     const = relation_constant(schema, name)
     public_columns = sum(1 << i for i, column in enumerate(columns)
-                         if column[-1])
+                         if column[0] in public)
     return ([f'inline constexpr SystemSqlColumn {const}Columns[] = {{'] +
-            [column_line(column, type_oid, element, composite, notnull,
-                         collation, ndims, keys.get(column, 'None'), types)
-             for column, type_oid, element, composite, notnull, collation,
-             ndims, _ in columns] +
+            [column_line(*column, keys.get(column[0], 'None'), types)
+             for column in columns] +
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Table, '
              f'{cpp_str(schema)}, {cpp_str(name)}, {row_type}, '
@@ -106,13 +103,20 @@ def table_lines(gen, oid, schema, name, relkind, shared, superuser, row_type,
              f'{public_columns:#x}, {cpp_bool(shared)}, {const}Columns}};'])
 
 
-def function_lines(gen, oid, schema, name, superuser, types):
+def function_lines(proc, schema, name, superuser, types, constants):
+    names = array(proc['proargnames'])
+    modes = array(proc['proargmodes'])
+    columns = []
+    for argname, argtype, mode in zip(names, array(proc['proallargtypes']),
+                                      modes):
+        if mode not in ('o', 't'):
+            continue
+        element, composite = types.element(int(argtype))
+        columns.append((argname, int(argtype), element, composite, False,
+                        types.by_oid[int(argtype)][21], 0))
     const = relation_constant(schema, name)
     return ([f'inline constexpr SystemSqlColumn {const}Columns[] = {{'] +
-            [column_line(column, type_oid, element, composite, False,
-                         collation, 0, 'None', types)
-             for column, type_oid, element, composite, collation
-             in gen.query(FUNCTION_COLUMNS_SQL, (oid,))] +
+            [column_line(*column, 'None', constants) for column in columns] +
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Function, '
              f"{cpp_str(schema)}, {cpp_str(name)}, 0, 0, '\\0', '\\0', "
@@ -171,64 +175,93 @@ def registry():
         [f'  &g{const},' for const in sdb_views] + ['};'])
 
 
-def named_oids(gen, sql, names):
-    return [f'inline constexpr duckdb::idx_t {const} = '
-            f'{gen.query(sql, (name,))[0][0]};'
+def named_oids(names, lookup):
+    return [f'inline constexpr duckdb::idx_t {const} = {oid(lookup(name))};'
             for name, const in names.items()]
 
 
-def generate(gen, types):
-    reserved = {row[0] for row in gen.query(
-        "SELECT word FROM pg_get_keywords() WHERE catcode <> 'U'")}
-    oids = (named_oids(gen, 'SELECT %s::regnamespace::oid::int8',
-                       config.SCHEMAS) +
-            named_oids(gen, 'SELECT oid::int8 FROM pg_database '
-                            'WHERE datname = %s', config.DATABASES) +
-            named_oids(gen, 'SELECT oid::int8 FROM pg_tablespace '
-                            'WHERE spcname = %s', config.TABLESPACES) +
-            named_oids(gen, 'SELECT oid::int8 FROM pg_am WHERE amname = %s',
-                       config.ACCESS_METHODS) +
-            named_oids(gen, 'SELECT amhandler::int8 FROM pg_am '
-                            'WHERE amname = %s',
-                       {name: const + 'Handler'
-                        for name, const in config.ACCESS_METHODS.items()}) +
-            named_oids(gen, 'SELECT oid::int8 FROM pg_language '
-                            'WHERE lanname = %s', config.LANGUAGES) +
-            named_oids(gen, 'SELECT lanvalidator::int8 FROM pg_language '
-                            'WHERE lanname = %s',
-                       {name: const + 'Validator'
-                        for name, const in config.LANGUAGES.items()}) +
-            named_oids(gen, 'SELECT %s::regproc::oid::int8',
-                       config.PROCEDURES) +
-            named_oids(gen, 'SELECT oid::int8 FROM pg_collation WHERE '
-                            "collname = %s AND collnamespace = "
-                            "'pg_catalog'::regnamespace",
-                       config.COLLATIONS))
+def schema_oid(gen, name):
+    if name == 'information_schema':
+        return gen.initdb.namespace
+    return gen.one('pg_namespace', nspname=name)['oid']
+
+
+def relations(gen, coded, types):
+    out = []
+    for name, relation in gen.relations.items():
+        out.append((relation.oid, 'pg_catalog', name, 'r', relation.shared,
+                    *gen.row_types[name], 'n',
+                    catalog_columns(gen, relation, types), keys(gen, name)))
+    for table in gen.initdb.tables.values():
+        out.append((table.oid, 'information_schema', table.name, 'r', False,
+                    table.row_type, table.row_array_type, 'd',
+                    domain_columns(table.columns, types), {}))
+    for view in gen.initdb.views:
+        if (view.schema, view.name) in coded:
+            out.append((view.oid, view.schema, view.name, 'v', False,
+                        view.row_type, view.row_array_type, 'n',
+                        domain_columns(gen.initdb.cast_columns(view), types),
+                        {}))
+    return sorted(out, key=lambda relation: relation[1:3])
+
+
+def generate(gen, constants, all_types):
+    types = Types(gen, all_types.values())
+    reserved = [word for word, category in source.keywords()
+                if category != 'UNRESERVED_KEYWORD']
+    oids = (named_oids(config.SCHEMAS, lambda name: schema_oid(gen, name)) +
+            named_oids(config.DATABASES,
+                       lambda name: source.oid_macro('pg_database.h',
+                                                     camel(name) + 'DbOid')) +
+            named_oids(config.TABLESPACES,
+                       lambda name: gen.one('pg_tablespace',
+                                            spcname=name)['oid']) +
+            named_oids(config.ACCESS_METHODS,
+                       lambda name: gen.one('pg_am', amname=name)['oid']) +
+            named_oids({name: const + 'Handler'
+                        for name, const in config.ACCESS_METHODS.items()},
+                       lambda name: gen.one('pg_am',
+                                            amname=name)['amhandler']) +
+            named_oids(config.LANGUAGES,
+                       lambda name: gen.one('pg_language',
+                                            lanname=name)['oid']) +
+            named_oids({name: const + 'Validator'
+                        for name, const in config.LANGUAGES.items()},
+                       lambda name: gen.one('pg_language',
+                                            lanname=name)['lanvalidator']) +
+            named_oids(config.PROCEDURES,
+                       lambda name: gen.one('pg_proc', proname=name,
+                                            pronamespace=PG_CATALOG)['oid']) +
+            named_oids(config.COLLATIONS,
+                       lambda name: gen.one('pg_collation', collname=name,
+                                            collnamespace=PG_CATALOG)['oid']))
     coded = table_files()
     tables, all_tables, known = [], [], set()
-    for (oid, schema, name, relkind, shared, superuser, row_type,
-         row_array_type, replident) in gen.query(RELATIONS_SQL,
-                                                 ([s for s, _ in coded],
-                                                  [n for _, n in coded])):
+    for (relation_oid, schema, name, relkind, shared, row_type,
+         row_array_type, replident, columns, indexed) in relations(
+            gen, set(coded), types):
         known.add((schema, name))
         const = relation_constant(schema, name)
-        oids.append(f'inline constexpr duckdb::idx_t {const}Table = {oid};')
-        tables += table_lines(gen, oid, schema, name, relkind, shared,
-                              superuser, row_type, row_array_type, replident,
-                              types)
+        oids.append(f'inline constexpr duckdb::idx_t {const}Table = '
+                    f'{relation_oid};')
+        tables += table_lines(schema, name, relkind, shared,
+                              gen.initdb.superuser_only(schema, name),
+                              row_type, row_array_type, replident, columns,
+                              indexed, gen.initdb.public_columns.get(name, []),
+                              constants)
         all_tables.append(f'&{const}Sql,')
-    functions = function_files()
-    found = []
-    for oid, schema, name, superuser in gen.query(
-            FUNCTIONS_SQL, ([s for s, _ in functions], [n for _, n in functions])):
-        found.append((schema, name))
-        const = relation_constant(schema, name)
-        oids.append(f'inline constexpr duckdb::idx_t {const}Function = {oid};')
-        tables += function_lines(gen, oid, schema, name, superuser, types)
-    for schema, name in functions:
-        if found.count((schema, name)) != 1:
+    for schema, name in sorted(function_files()):
+        procs = (gen.find('pg_proc', proname=name, pronamespace=PG_CATALOG,
+                          proretset='t') if schema == 'pg_catalog' else [])
+        if len(procs) != 1:
             raise SystemExit(f'table_functions/{schema}/{name}.cpp names no '
                              f'single set-returning function')
+        const = relation_constant(schema, name)
+        oids.append(f'inline constexpr duckdb::idx_t {const}Function = '
+                    f'{procs[0]["oid"]};')
+        tables += function_lines(procs[0], schema, name,
+                                 name in gen.initdb.revoked_functions, types,
+                                 constants)
     tables.append('inline constexpr const SystemSql* kGeneratedTables[] = {')
     tables += ['  ' + line for line in all_tables]
     tables.append('};')

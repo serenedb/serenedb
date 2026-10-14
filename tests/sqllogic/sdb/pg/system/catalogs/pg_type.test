@@ -65,13 +65,13 @@ oid	typname	typnamespace	typlen	typbyval	typtype	typcategory	typispreferred	typi
 query
 SELECT oid, typname, typnamespace::regnamespace::text AS nsp, typlen, typbyval, typtype, typcategory, typarray, typinput::text AS typinput, typoutput::text AS typoutput, typreceive::text AS typreceive, typsend::text AS typsend, typalign, typstorage, typbasetype, typcollation, typdefault IS NULL AS no_default
 FROM pg_type
-WHERE oid IN (13306, 13307, 13312)
+WHERE oid IN (12241, 12242, 12246)
 ORDER BY oid;
 ----
 oid	typname	nsp	typlen	typbyval	typtype	typcategory	typarray	typinput	typoutput	typreceive	typsend	typalign	typstorage	typbasetype	typcollation	no_default
-13306	_cardinal_number	information_schema	-1	f	b	A	0	array_in	array_out	array_recv	array_send	i	x	0	0	t
-13307	cardinal_number	information_schema	4	t	d	N	13306	domain_in	int4out	domain_recv	int4send	i	p	23	0	t
-13312	sql_identifier	information_schema	64	f	d	S	13311	domain_in	nameout	domain_recv	namesend	c	p	19	950	t
+12241	_cardinal_number	information_schema	-1	f	b	A	0	array_in	array_out	array_recv	array_send	i	x	0	0	t
+12242	cardinal_number	information_schema	4	t	d	N	12241	domain_in	int4out	domain_recv	int4send	i	p	23	0	t
+12246	sql_identifier	information_schema	64	f	d	S	12245	domain_in	nameout	domain_recv	namesend	c	p	19	950	t
 
 
 query
@@ -296,16 +296,16 @@ query
 SELECT count(*) AS diff
 FROM (
   (SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
-   WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_hook'::regtype, 'pudge_typ_meat'::regtype, 'pudge_typ_dmg'::regtype, 16, 25, 1007, 13307)
+   WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_hook'::regtype, 'pudge_typ_meat'::regtype, 'pudge_typ_dmg'::regtype, 16, 25, 1007, 12242)
    EXCEPT
    SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
-   WHERE oid::int8 + 0 IN ('pudge_typ_mood'::regtype::int8, '_pudge_typ_hook'::regtype::int8, 'pudge_typ_meat'::regtype::int8, 'pudge_typ_dmg'::regtype::int8, 16, 25, 1007, 13307))
+   WHERE oid::int8 + 0 IN ('pudge_typ_mood'::regtype::int8, '_pudge_typ_hook'::regtype::int8, 'pudge_typ_meat'::regtype::int8, 'pudge_typ_dmg'::regtype::int8, 16, 25, 1007, 12242))
   UNION ALL
   (SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
-   WHERE oid::int8 + 0 IN ('pudge_typ_mood'::regtype::int8, '_pudge_typ_hook'::regtype::int8, 'pudge_typ_meat'::regtype::int8, 'pudge_typ_dmg'::regtype::int8, 16, 25, 1007, 13307)
+   WHERE oid::int8 + 0 IN ('pudge_typ_mood'::regtype::int8, '_pudge_typ_hook'::regtype::int8, 'pudge_typ_meat'::regtype::int8, 'pudge_typ_dmg'::regtype::int8, 16, 25, 1007, 12242)
    EXCEPT
    SELECT oid, typname, typtype, typelem, typarray, typrelid, typinput FROM pg_type
-   WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_hook'::regtype, 'pudge_typ_meat'::regtype, 'pudge_typ_dmg'::regtype, 16, 25, 1007, 13307))
+   WHERE oid IN ('pudge_typ_mood'::regtype, '_pudge_typ_hook'::regtype, 'pudge_typ_meat'::regtype, 'pudge_typ_dmg'::regtype, 16, 25, 1007, 12242))
 ) d;
 ----
 diff
@@ -340,7 +340,7 @@ pudge_typ_mood	pudge_typ_mood[]	pudge_typ_hook	pudge_typ_mood[]	pudge_typ_hook	t
 
 
 query
-SELECT format_type(1043, 24) AS vc, format_type(1700, 655366) AS num, format_type(1007, NULL) AS arr, format_type(23, NULL) AS i4, format_type(13307, NULL) AS card, format_type(NULL, NULL) IS NULL AS null_in, 23::regtype::text AS reg, 'integer'::regtype::oid AS by_alias, 'int4[]'::regtype::oid AS arr_oid;
+SELECT format_type(1043, 24) AS vc, format_type(1700, 655366) AS num, format_type(1007, NULL) AS arr, format_type(23, NULL) AS i4, format_type(12242, NULL) AS card, format_type(NULL, NULL) IS NULL AS null_in, 23::regtype::text AS reg, 'integer'::regtype::oid AS by_alias, 'int4[]'::regtype::oid AS arr_oid;
 ----
 vc	num	arr	i4	card	null_in	reg	by_alias	arr_oid
 character varying(20)	numeric(10,2)	integer[]	integer	information_schema.cardinal_number	t	integer	23	1007

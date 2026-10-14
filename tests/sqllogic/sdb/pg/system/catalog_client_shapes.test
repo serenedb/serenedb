@@ -79,7 +79,7 @@ oid	(empty)	(empty)
 query
 SELECT typname, typtypmod, typdefault, typnotnull
 FROM pg_type
-WHERE oid IN (13318, 13320, 13307)
+WHERE oid IN (12251, 12253, 12242)
 ORDER BY typname;
 ----
 typname	typtypmod	typdefault	typnotnull

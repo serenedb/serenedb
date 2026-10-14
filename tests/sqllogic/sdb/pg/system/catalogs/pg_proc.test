@@ -128,7 +128,7 @@ SELECT t.typname, p.proname AS input, q.proname AS output
 FROM pg_type t
 JOIN pg_proc p ON p.oid = t.typinput
 JOIN pg_proc q ON q.oid = t.typoutput
-WHERE t.oid IN (16, 23, 1007, 2249, 13307)
+WHERE t.oid IN (16, 23, 1007, 2249, 12242)
 ORDER BY t.oid;
 ----
 typname	input	output

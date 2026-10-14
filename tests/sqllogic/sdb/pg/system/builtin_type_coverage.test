@@ -102,7 +102,7 @@ ORDER BY t.oid
 oid	typname	relation	array_oid	array_name	reltype
 83	pg_class	pg_class	273	_pg_class	t
 10029	pg_statistic	pg_statistic	10028	_pg_statistic	t
-13618	_pg_foreign_tables	information_schema._pg_foreign_tables	13617	__pg_foreign_tables	t
+12442	_pg_foreign_tables	information_schema._pg_foreign_tables	12441	__pg_foreign_tables	t
 
 
 query

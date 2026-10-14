@@ -6,12 +6,6 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
 CATALOG_DIR = os.path.join(REPO_ROOT, 'server', 'pg', 'catalog')
 GENERATED_DIR = os.path.join(CATALOG_DIR, 'generated')
 
-SUPERUSER_ONLY_SQL = """
-NOT EXISTS (SELECT FROM aclexplode(coalesce(c.relacl,
-                                            acldefault('r', c.relowner)))
-            WHERE grantee = 0 AND privilege_type = 'SELECT')
-"""
-
 
 def cpp_str(value):
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
@@ -44,23 +38,35 @@ def write(path, text):
     print(f'wrote {os.path.relpath(path, REPO_ROOT)}')
 
 
+def oid(value):
+    return 0 if value in ('-', None) else int(value)
+
+
+def array(value):
+    items = '' if value is None else value.strip('{}')
+    return [item.strip().strip('"') for item in items.split(',')] if items else []
+
+
 class Generator:
-    def __init__(self, pg, pg_src):
-        import psycopg
+    def __init__(self):
+        from . import initdb, source
 
-        host, port = pg.rsplit(':', 1)
-        self.conn = psycopg.connect(host=host, port=int(port),
-                                    user='postgres', dbname='postgres',
-                                    autocommit=True)
-        version = self.query('SELECT version()')[0][0]
-        self.version = version.split(' on ')[0]
-        self.pg_src = pg_src
+        self.version = f'PostgreSQL {source.version()} in third_party/postgres'
+        self.relations, self.rows, self.indexes = source.bki()
+        self.row_types = source.row_types(self.relations, self.rows['pg_type'])
+        self.initdb = initdb.Initdb()
+        self.outputs = {}
 
-    def query(self, sql, params=None):
-        return self.conn.execute(sql, params).fetchall()
+    def find(self, catalog, **match):
+        return [row for row in self.rows[catalog]
+                if all(row[key] == value for key, value in match.items())]
 
-    def source(self, relpath):
-        return os.path.join(self.pg_src, relpath)
+    def one(self, catalog, **match):
+        rows = self.find(catalog, **match)
+        if len(rows) != 1:
+            raise SystemExit(f'{catalog} has {len(rows)} rows for {match}')
+        return rows[0]
 
     def write(self, name, lines):
-        write(os.path.join(GENERATED_DIR, name), generated(self.version, lines))
+        self.outputs[os.path.join(GENERATED_DIR, name)] = generated(
+            self.version, lines)

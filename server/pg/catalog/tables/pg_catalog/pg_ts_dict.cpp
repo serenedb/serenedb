@@ -43,7 +43,8 @@ class PgTsDict final : public SystemTableScan<kPgTsDictSql> {
       Col<"oid">(&duckdb::CatalogEntry::oid),
       Col<"dictname">(&duckdb::CatalogEntry::name),
       Col<"dictnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-      Col<"dictowner">(kOwner));
+      Col<"dictowner">(
+        [](const auto& dictionary) { return dictionary.permissions.owner; }));
 
   void Row(const catalog::TokenizerCatalogEntry& tokenizer) {
     Emit<kDictionary>(tokenizer);

@@ -62,7 +62,10 @@ class PgInitPrivs final : public SystemTableScan<kPgInitPrivsSql> {
   static constexpr auto kPrivilege = Shape<kSql, const InitPrivilege>(
     Col<"objoid">(&InitPrivilege::objoid),
     Col<"classoid">(&InitPrivilege::classoid),
-    Col<"privtype">([](const auto&) { return 'i'; }), Col<"initprivs">(kAcl));
+    Col<"privtype">([](const auto&) { return 'i'; }),
+    Col<"initprivs">([](const auto& privilege) -> const auto& {
+      return privilege.permissions.acl;
+    }));
 
   void Row(const InitPrivilege& privilege) { Emit<kPrivilege>(privilege); }
 };

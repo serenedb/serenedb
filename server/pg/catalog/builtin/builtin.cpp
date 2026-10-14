@@ -59,13 +59,18 @@ static_assert(absl::c_all_of(kFrozenCollations, [](const FrozenOid& row) {
   return row.oid >= kFirstCollation && row.oid < kFirstUnfrozenCollation;
 }));
 
-constexpr auto kByOid = [](const auto& lhs, const auto& rhs) {
-  return lhs.oid < rhs.oid;
-};
-
-static_assert(absl::c_is_sorted(kBuiltinTypes, kByOid) &&
-              absl::c_is_sorted(kProcs, kByOid) &&
-              absl::c_is_sorted(kCollations, kByOid));
+static_assert(absl::c_is_sorted(kBuiltinTypes,
+                                [](const auto& lhs, const auto& rhs) {
+                                  return lhs.oid < rhs.oid;
+                                }) &&
+              absl::c_is_sorted(kProcs,
+                                [](const auto& lhs, const auto& rhs) {
+                                  return lhs.oid < rhs.oid;
+                                }) &&
+              absl::c_is_sorted(kCollations,
+                                [](const auto& lhs, const auto& rhs) {
+                                  return lhs.oid < rhs.oid;
+                                }));
 
 constexpr void VisitRowTypes(auto&& visit) {
   for (const auto* sql : kGeneratedTables) {
@@ -132,7 +137,9 @@ constexpr auto kAllTypes = [] {
     element.align = 'd';
     *out++ = element;
   });
-  absl::c_sort(types, kByOid);
+  absl::c_sort(types, [](const BuiltinType& lhs, const BuiltinType& rhs) {
+    return lhs.oid < rhs.oid;
+  });
   return types;
 }();
 
@@ -180,7 +187,10 @@ const std::vector<BuiltinCollation>& Collations() {
                          .deterministic = entry->not_required_for_equality});
     }
     SDB_ASSERT(unfrozen <= kFirstBuiltinFunction);
-    absl::c_sort(collations, kByOid);
+    absl::c_sort(collations,
+                 [](const BuiltinCollation& lhs, const BuiltinCollation& rhs) {
+                   return lhs.oid < rhs.oid;
+                 });
     return collations;
   }();
   return kAll;

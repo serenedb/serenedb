@@ -93,7 +93,8 @@ constexpr std::tuple kRelationBase{
   Col<"oid">(&duckdb::CatalogEntry::oid),
   Col<"relname">(&duckdb::CatalogEntry::name),
   Col<"relnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-  Col<"relowner">(kOwner)};
+  Col<"relowner">(
+    [](const auto& relation) { return relation.permissions.owner; })};
 
 constexpr std::tuple kRelationState{
   Col<"relpersistence">([](const auto&) { return 'p'; }),
@@ -155,7 +156,10 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return entry.Table().Sql().shared ? kPgGlobalTablespace
                                         : duckdb::idx_t{0};
     }),
-    Col<"reltype">(&RelationRowType), Col<"relacl">(kAcl));
+    Col<"reltype">(&RelationRowType),
+    Col<"relacl">([](const auto& relation) -> const auto& {
+      return relation.permissions.acl;
+    }));
 
   static constexpr auto kOrdinary = Shape<kSql, const Ordinary>(
     Col<"oid">([](const auto& row) { return row.table.oid; }),
@@ -267,12 +271,16 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
         }
         return absl::StrSplit(system->options, ',');
       }),
-    Col<"relacl">(kAcl));
+    Col<"relacl">(
+      [](const auto& view) -> const auto& { return view.permissions.acl; }));
 
   static constexpr auto kSequence =
     Shape<kSql, const duckdb::SequenceCatalogEntry>(
       kRelation<'S'>, Col<"relnatts">([](const auto&) { return 3; }),
-      Col<"reltuples">([](const auto&) { return 1.0F; }), Col<"relacl">(kAcl));
+      Col<"reltuples">([](const auto&) { return 1.0F; }),
+      Col<"relacl">([](const auto& sequence) -> const auto& {
+        return sequence.permissions.acl;
+      }));
 
   static constexpr auto kComposite =
     Shape<kSql, const duckdb::TypeCatalogEntry>(

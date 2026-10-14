@@ -759,31 +759,28 @@ int32_t TypmodIn(uint64_t oid, std::span<const int32_t> typmods,
   if (typmods.empty()) {
     return -1;
   }
-  const auto is = [&](PgTypeOID type) {
-    return oid == static_cast<uint64_t>(type);
-  };
-  if (is(kBpchar)) {
+  if (oid == kBpchar) {
     return LengthTypmod(typmods, "char", kMaxAttrSize, kVarHdrSz);
   }
-  if (is(kVarchar)) {
+  if (oid == kVarchar) {
     return LengthTypmod(typmods, "varchar", kMaxAttrSize, kVarHdrSz);
   }
-  if (is(kBit)) {
+  if (oid == kBit) {
     return LengthTypmod(typmods, "bit", kMaxAttrSize * 8, 0);
   }
-  if (is(kVarbit)) {
+  if (oid == kVarbit) {
     return LengthTypmod(typmods, "varbit", kMaxAttrSize * 8, 0);
   }
-  if (is(kNumeric)) {
+  if (oid == kNumeric) {
     return NumericTypmodIn(typmods);
   }
-  if (is(kTime) || is(kTimetz)) {
-    return TimeTypmod(typmods, "TIME", is(kTimetz));
+  if (oid == kTime || oid == kTimetz) {
+    return TimeTypmod(typmods, "TIME", oid == kTimetz);
   }
-  if (is(kTimestamp) || is(kTimestamptz)) {
-    return TimeTypmod(typmods, "TIMESTAMP", is(kTimestamptz));
+  if (oid == kTimestamp || oid == kTimestamptz) {
+    return TimeTypmod(typmods, "TIMESTAMP", oid == kTimestamptz);
   }
-  if (is(kInterval)) {
+  if (oid == kInterval) {
     return IntervalTypmod(typmods);
   }
   THROW_SQL_ERROR(
@@ -848,25 +845,19 @@ struct ResolvedType {
 std::optional<ResolvedType> ResolveType(const Session& session,
                                         std::string_view text,
                                         bool missing_ok) {
-  const auto invalid = [&] {
+  if (absl::c_all_of(text, absl::ascii_isspace)) {
     return Miss(missing_ok,
                 SQL_ERROR_DATA(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                                ERR_MSG("invalid type name \"", text, "\"")));
-  };
-  if (absl::c_all_of(text, absl::ascii_isspace)) {
-    return invalid();
   }
   const auto parsed = TypeParser{text}.Parse();
   if (!parsed) {
-    return invalid();
+    return Miss(missing_ok,
+                SQL_ERROR_DATA(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                               ERR_MSG("invalid type name \"", text, "\"")));
   }
   const auto display =
     absl::StrCat(absl::StrJoin(parsed->names, "."), parsed->array ? "[]" : "");
-  const auto not_found = [&] {
-    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                                           ERR_MSG("type \"", display,
-                                                   "\" does not exist")));
-  };
   uint64_t element = kInvalidOid;
   if (parsed->keyword) {
     const auto* builtin =
@@ -884,7 +875,9 @@ std::optional<ResolvedType> ResolveType(const Session& session,
     }
   }
   if (element == kInvalidOid) {
-    return not_found();
+    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                                           ERR_MSG("type \"", display,
+                                                   "\" does not exist")));
   }
   const auto typmod = TypmodIn(element, parsed->typmods, display);
   if (!parsed->array) {
@@ -892,7 +885,9 @@ std::optional<ResolvedType> ResolveType(const Session& session,
   }
   const auto array = ArrayTypeOf(session, element);
   if (array == kInvalidOid) {
-    return not_found();
+    return Miss(missing_ok, SQL_ERROR_DATA(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                                           ERR_MSG("type \"", display,
+                                                   "\" does not exist")));
   }
   return ResolvedType{.oid = array, .typmod = typmod};
 }
@@ -1152,16 +1147,13 @@ std::optional<ProcInfo> FindProc(const Session& session,
 bool ProcVisible(const Session& session, const BuiltinFunctions& builtins,
                  const ProcInfo& info, bool signature) {
   const auto candidates = VisibleProcs(session, builtins, info.name);
-  const auto same_namespace = [&](const ProcCandidate& candidate) {
-    return candidate.nsp == info.nsp;
-  };
   return signature
            ? absl::c_any_of(candidates,
                             [&](const ProcCandidate& candidate) {
                               return candidate.args == info.args &&
-                                     same_namespace(candidate);
+                                     candidate.nsp == info.nsp;
                             })
-           : candidates.size() == 1 && same_namespace(candidates.front());
+           : candidates.size() == 1 && candidates.front().nsp == info.nsp;
 }
 
 std::string ProcOut(const Session& session, uint64_t oid, bool signature) {
@@ -1217,11 +1209,6 @@ struct Signature {
 std::optional<Signature> ParseSignature(const Session& session,
                                         std::string_view text, bool allow_none,
                                         bool missing_ok) {
-  const auto invalid = [&](std::string_view message) {
-    return Miss(missing_ok,
-                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                               ERR_MSG(message)));
-  };
   bool quoted = false;
   size_t open = 0;
   for (; open < text.size(); ++open) {
@@ -1232,7 +1219,9 @@ std::optional<Signature> ParseSignature(const Session& session,
     }
   }
   if (open == text.size()) {
-    return invalid("expected a left parenthesis");
+    return Miss(missing_ok,
+                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                               ERR_MSG("expected a left parenthesis")));
   }
   auto names = ParseNames(text.substr(0, open), missing_ok);
   if (!names) {
@@ -1240,7 +1229,9 @@ std::optional<Signature> ParseSignature(const Session& session,
   }
   auto rest = absl::StripTrailingAsciiWhitespace(text.substr(open + 1));
   if (!absl::ConsumeSuffix(&rest, ")")) {
-    return invalid("expected a right parenthesis");
+    return Miss(missing_ok,
+                SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                               ERR_MSG("expected a right parenthesis")));
   }
   std::vector<duckdb::idx_t> args;
   size_t pos = 0;
@@ -1251,7 +1242,9 @@ std::optional<Signature> ParseSignature(const Session& session,
     }
     if (pos == rest.size()) {
       if (had_comma) {
-        return invalid("expected a type name");
+        return Miss(missing_ok, SQL_ERROR_DATA(
+                                  ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                                  ERR_MSG("expected a type name")));
       }
       break;
     }
@@ -1270,7 +1263,9 @@ std::optional<Signature> ParseSignature(const Session& session,
       }
     }
     if (quoted || depth != 0) {
-      return invalid("improper type name");
+      return Miss(missing_ok,
+                  SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                                 ERR_MSG("improper type name")));
     }
     const auto type_name =
       absl::StripTrailingAsciiWhitespace(rest.substr(start, pos - start));
@@ -1279,7 +1274,9 @@ std::optional<Signature> ParseSignature(const Session& session,
       ++pos;
     }
     if (args.size() >= kMaxFunctionArgs) {
-      return invalid("too many arguments");
+      return Miss(missing_ok,
+                  SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                                 ERR_MSG("too many arguments")));
     }
     if (allow_none && absl::EqualsIgnoreCase(type_name, "none")) {
       args.emplace_back(0);

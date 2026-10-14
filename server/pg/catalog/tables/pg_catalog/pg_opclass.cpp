@@ -69,7 +69,8 @@ class PgOpclass final : public SystemTableScan<kPgOpclassSql> {
       Col<"oid">(&duckdb::CatalogEntry::oid), kOpclassMethod,
       Col<"opcname">(&duckdb::CatalogEntry::name),
       Col<"opcnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-      Col<"opcowner">(kOwner),
+      Col<"opcowner">(
+        [](const auto& opclass) { return opclass.permissions.owner; }),
       Col<"opcintype">([](const auto&) { return int64_t{kText}; }));
 
   void Row(const Opclass& opclass) { Emit<kBuiltin>(opclass); }

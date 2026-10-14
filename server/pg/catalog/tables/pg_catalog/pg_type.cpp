@@ -224,7 +224,9 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"oid">([](const auto& relation) { return RowTypeOid(relation.oid); }),
     Col<"typname">(&duckdb::CatalogEntry::name),
     Col<"typnamespace">(&duckdb::CatalogEntry::ParentSchemaOid),
-    Col<"typowner">(kOwner), Col<"typarray">([](const auto& relation) {
+    Col<"typowner">(
+      [](const auto& relation) { return relation.permissions.owner; }),
+    Col<"typarray">([](const auto& relation) {
       return TypeArrayOid(RowTypeOid(relation.oid));
     }),
     TypeColumns([](const auto&) -> const BuiltinType& { return kComposite; },
@@ -262,20 +264,18 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
   void Row(const duckdb::TypeCatalogEntry& entry) {
     const UserType type{entry};
     const auto id = entry.user_type.id();
-    const auto visible = [&] { return Visible(entry.oid); };
-    const auto array_visible = [&] { return Visible(TypeArrayOid(entry.oid)); };
     if (id == duckdb::LogicalTypeId::ENUM) {
-      Emit<kEnumType>(type, visible);
+      Emit<kEnumType>(type, [&] { return Visible(entry.oid); });
       Emit<kArrayType>({entry, entry.oid, 'i', nullptr, _arrays},
-                       array_visible);
+                       [&] { return Visible(TypeArrayOid(entry.oid)); });
     } else if (duckdb::StructType::IsStruct(id)) {
-      Emit<kStructType>(type, visible);
+      Emit<kStructType>(type, [&] { return Visible(entry.oid); });
       Emit<kArrayType>({entry, entry.oid, kComposite.align, nullptr, _arrays},
-                       array_visible);
+                       [&] { return Visible(TypeArrayOid(entry.oid)); });
     } else {
-      Emit<kDomainType>(type, visible);
+      Emit<kDomainType>(type, [&] { return Visible(entry.oid); });
       Emit<kArrayType>({entry, entry.oid, char{}, &type, _arrays},
-                       array_visible);
+                       [&] { return Visible(TypeArrayOid(entry.oid)); });
     }
   }
 

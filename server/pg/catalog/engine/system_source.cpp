@@ -254,15 +254,11 @@ SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
   if (prefix) {
     const duckdb::IdentifierCompare compare{
       schema.ParentCatalog().IsCaseSensitive()};
-    const auto name =
-      [](const duckdb::CatalogEntry* entry) -> const duckdb::Identifier& {
-      return entry->name;
-    };
-    const auto first =
-      std::ranges::lower_bound(result.entries, prefix->lower, compare, name);
-    result.entries = {first,
-                      std::ranges::upper_bound(first, result.entries.end(),
-                                               prefix->upper, compare, name)};
+    const auto first = std::ranges::lower_bound(
+      result.entries, prefix->lower, compare, &duckdb::CatalogEntry::name);
+    result.entries = {first, std::ranges::upper_bound(
+                               first, result.entries.end(), prefix->upper,
+                               compare, &duckdb::CatalogEntry::name)};
   }
   return result;
 }

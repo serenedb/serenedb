@@ -30,11 +30,6 @@ constexpr SystemIndex kAuthidIndexes[] = {
   {kPgAuthidSql["rolname"], SystemLookup::Object},
 };
 
-template<catalog::RoleOption Option>
-constexpr auto kRoleOption = [](const catalog::RoleCatalogEntry& role) {
-  return HasOption(role.Options(), Option);
-};
-
 class PgAuthid final : public SystemTableScan<kPgAuthidSql> {
  public:
   using SystemTableScan::SystemTableScan;
@@ -48,12 +43,22 @@ class PgAuthid final : public SystemTableScan<kPgAuthidSql> {
     Col<"oid">(&duckdb::CatalogEntry::oid),
     Col<"rolname">(&duckdb::CatalogEntry::name),
     Col<"rolsuper">(&catalog::RoleCatalogEntry::IsSuperuser),
-    Col<"rolinherit">(kRoleOption<catalog::RoleOption::Inherit>),
-    Col<"rolcreaterole">(kRoleOption<catalog::RoleOption::CreateRole>),
-    Col<"rolcreatedb">(kRoleOption<catalog::RoleOption::CreateDb>),
+    Col<"rolinherit">([](const auto& role) {
+      return HasOption(role.Options(), catalog::RoleOption::Inherit);
+    }),
+    Col<"rolcreaterole">([](const auto& role) {
+      return HasOption(role.Options(), catalog::RoleOption::CreateRole);
+    }),
+    Col<"rolcreatedb">([](const auto& role) {
+      return HasOption(role.Options(), catalog::RoleOption::CreateDb);
+    }),
     Col<"rolcanlogin">(&catalog::RoleCatalogEntry::CanLogin),
-    Col<"rolreplication">(kRoleOption<catalog::RoleOption::Replication>),
-    Col<"rolbypassrls">(kRoleOption<catalog::RoleOption::BypassRls>),
+    Col<"rolreplication">([](const auto& role) {
+      return HasOption(role.Options(), catalog::RoleOption::Replication);
+    }),
+    Col<"rolbypassrls">([](const auto& role) {
+      return HasOption(role.Options(), catalog::RoleOption::BypassRls);
+    }),
     Col<"rolconnlimit">(&catalog::RoleCatalogEntry::ConnLimit),
     Col<"rolpassword">([](const auto& role) {
       return NonEmpty<std::string_view>(role.Password());

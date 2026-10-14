@@ -558,13 +558,13 @@ void PgIdentifyObjectFunction(duckdb::DataChunk& args,
         field.WriteNull();
       }
     };
-    const auto quoted = [](const std::optional<std::string>& text) {
-      return text ? std::optional{QuoteIdentifier(*text)} : std::nullopt;
-    };
     writer.WriteValue([&](auto& type, auto& schema, auto& name, auto& id) {
       put(type, identity->type);
-      put(schema, quoted(identity->schema));
-      put(name, quoted(identity->name));
+      put(schema, identity->schema
+                    ? std::optional{QuoteIdentifier(*identity->schema)}
+                    : std::nullopt);
+      put(name, identity->name ? std::optional{QuoteIdentifier(*identity->name)}
+                               : std::nullopt);
       put(id, identity->identity);
     });
   });

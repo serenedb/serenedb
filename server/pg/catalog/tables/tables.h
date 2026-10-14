@@ -81,14 +81,6 @@ inline ColumnType DescribeColumn(const duckdb::ColumnDefinition& column,
   return described;
 }
 
-inline constexpr auto kOwner = [](const auto& entry) {
-  return entry.permissions.owner;
-};
-
-inline constexpr auto kAcl = [](const auto& entry) -> const auto& {
-  return entry.permissions.acl;
-};
-
 using Builtins = SystemRows<BuiltinFunction, BuiltinFunctions>;
 
 inline Builtins LoadBuiltins(SystemScan& scan) {

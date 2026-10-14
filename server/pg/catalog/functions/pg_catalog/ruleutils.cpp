@@ -97,11 +97,6 @@ std::string RelationName(const pg::Session& session,
   return RelationName(session, schema, name, qualified);
 }
 
-constexpr auto kQuotedName = [](std::string* out,
-                                const duckdb::Identifier& name) {
-  out->append(pg::QuoteIdentifier(name.GetIdentifierName()));
-};
-
 template<typename Index>
 std::string ColumnName(const duckdb::TableCatalogEntry& table, Index index) {
   return pg::QuoteIdentifier(
@@ -240,7 +235,11 @@ std::string ForeignKeyDefinition(const pg::Session& session,
     pk_columns = columns(*target, fk.info.pk_keys);
     target_name = RelationName(session, *target, false);
   } else {
-    pk_columns = absl::StrJoin(fk.pk_columns, ", ", kQuotedName);
+    pk_columns = absl::StrJoin(
+      fk.pk_columns, ", ",
+      [](std::string* out, const duckdb::Identifier& name) {
+        out->append(pg::QuoteIdentifier(name.GetIdentifierName()));
+      });
     target_name = pg::QualifiedOutName(fk.info.schema.GetIdentifierName(),
                                        fk.info.table.GetIdentifierName());
   }
@@ -471,8 +470,13 @@ Definition TriggerDefinition(const pg::Session& session, int64_t oid,
       break;
   }
   if (!trigger.columns.empty()) {
-    absl::StrAppend(&definition, " OF ",
-                    absl::StrJoin(trigger.columns, ", ", kQuotedName));
+    absl::StrAppend(
+      &definition, " OF ",
+      absl::StrJoin(trigger.columns, ", ",
+                    [](std::string* out, const duckdb::Identifier& name) {
+                      out->append(
+                        pg::QuoteIdentifier(name.GetIdentifierName()));
+                    }));
   }
   absl::StrAppend(&definition, " ON ", RelationName(session, *table, !pretty));
   if (!trigger.referencing_old_table.empty() ||

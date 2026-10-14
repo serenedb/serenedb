@@ -43,7 +43,9 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
   static constexpr auto kDatabase =
     Shape<kSql, const catalog::DatabaseCatalogEntry>(
       Col<"oid">(&duckdb::CatalogEntry::oid),
-      Col<"datname">(&duckdb::CatalogEntry::name), Col<"datdba">(kOwner),
+      Col<"datname">(&duckdb::CatalogEntry::name),
+      Col<"datdba">(
+        [](const auto& database) { return database.permissions.owner; }),
       Col<"encoding">([](const auto&) { return 6; }),
       Col<"datlocprovider">([](const auto&) { return 'c'; }),
       Col<"datallowconn">([](const auto&) { return true; }),
@@ -52,7 +54,9 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
       Col<"datcollate">(
         [](const auto&) { return std::string_view{"C.UTF-8"}; }),
       Col<"datctype">([](const auto&) { return std::string_view{"C.UTF-8"}; }),
-      Col<"datacl">(kAcl));
+      Col<"datacl">([](const auto& database) -> const auto& {
+        return database.permissions.acl;
+      }));
 
   void Row(const catalog::DatabaseCatalogEntry& database) {
     Emit<kDatabase>(database);

@@ -320,22 +320,30 @@ SELECT pg_has_role(current_user, 'postgres', 'USAGE');
 pg_has_role
 t
 
-query error db error: ERROR: relation "seq_name" does not exist
+statement error
 SELECT has_sequence_privilege('seq_name', 'USAGE');
+----
+db error: ERROR: relation "seq_name" does not exist
 
 
-query error db error: ERROR: relation "seq_name" does not exist
+statement error
 SELECT has_sequence_privilege(current_user, 'seq_name', 'USAGE');
+----
+db error: ERROR: relation "seq_name" does not exist
 
 
 onlyif serenedb
-query error db error: ERROR: server "server_name" does not exist
+statement error
 SELECT has_server_privilege('server_name', 'USAGE');
+----
+db error: ERROR: server "server_name" does not exist
 
 
 onlyif serenedb
-query error db error: ERROR: server "server_name" does not exist
+statement error
 SELECT has_server_privilege(current_user, 'server_name', 'USAGE');
+----
+db error: ERROR: server "server_name" does not exist
 
 
 query
@@ -353,13 +361,17 @@ t
 
 
 onlyif serenedb
-query error db error: ERROR: foreign\-data wrapper "fdw_name" does not exist
+statement error
 SELECT has_foreign_data_wrapper_privilege('fdw_name', 'USAGE');
+----
+db error: ERROR: foreign-data wrapper "fdw_name" does not exist
 
 
 onlyif serenedb
-query error db error: ERROR: foreign\-data wrapper "fdw_name" does not exist
+statement error
 SELECT has_foreign_data_wrapper_privilege(current_user, 'fdw_name', 'USAGE');
+----
+db error: ERROR: foreign-data wrapper "fdw_name" does not exist
 
 
 skipif serenedb

@@ -1034,6 +1034,7 @@ inline constexpr size_t kPanoramaApplyRows = 4096;
 
 bool RotateForPanorama(std::vector<float>& vectors,
                        std::span<const uint8_t> valid, uint32_t d,
+                       std::span<const float> basis, const AnnBuildEnv* env,
                        std::vector<float>& rotation,
                        std::vector<float>& norms) {
   const size_t rows = valid.size();
@@ -1043,28 +1044,38 @@ bool RotateForPanorama(std::vector<float>& vectors,
   if (live < floor) {
     return false;
   }
-  const size_t step = std::max<size_t>(1, live / want);
-  std::vector<float> sample;
-  sample.reserve(std::min(live, want) * d);
-  for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
-       ++row) {
-    if (valid[row] == 0) {
-      continue;
+  faiss::LinearTransform transform{static_cast<int>(d), static_cast<int>(d),
+                                   /*have_bias=*/false};
+  if (basis.size() == size_t{d} * d) {
+    transform.A.assign(basis.begin(), basis.end());
+  } else {
+    const size_t step = std::max<size_t>(1, live / want);
+    std::vector<float> sample;
+    sample.reserve(std::min(live, want) * d);
+    for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
+         ++row) {
+      if (valid[row] == 0) {
+        continue;
+      }
+      if (seen++ % step == 0) {
+        sample.insert(sample.end(), vectors.begin() + row * d,
+                      vectors.begin() + (row + 1) * d);
+      }
     }
-    if (seen++ % step == 0) {
-      sample.insert(sample.end(), vectors.begin() + row * d,
-                    vectors.begin() + (row + 1) * d);
-    }
+    transform.A =
+      std::move(TrainPcaRotation(sample.data(), sample.size() / d, d).A);
   }
-  const auto pca = TrainPcaRotation(sample.data(), sample.size() / d, d);
-  rotation.assign(pca.A.begin(), pca.A.end());
-  std::vector<float> chunk(kPanoramaApplyRows * d);
-  for (size_t first = 0; first < rows; first += kPanoramaApplyRows) {
-    const size_t n = std::min(kPanoramaApplyRows, rows - first);
-    pca.apply_noalloc(static_cast<faiss::idx_t>(n), vectors.data() + first * d,
-                      chunk.data());
-    std::copy_n(chunk.data(), n * d, vectors.data() + first * d);
-  }
+  transform.is_trained = true;
+  rotation.assign(transform.A.begin(), transform.A.end());
+  FanOut(env, (rows + kPanoramaApplyRows - 1) / kPanoramaApplyRows,
+         [&](size_t part) {
+           const size_t first = part * kPanoramaApplyRows;
+           const size_t n = std::min(kPanoramaApplyRows, rows - first);
+           std::vector<float> chunk(n * d);
+           transform.apply_noalloc(static_cast<faiss::idx_t>(n),
+                                   vectors.data() + first * d, chunk.data());
+           std::copy_n(chunk.data(), n * d, vectors.data() + first * d);
+         });
   norms.resize(rows);
   for (size_t row = 0; row < rows; ++row) {
     norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
@@ -1177,6 +1188,12 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _vectors.resize(static_cast<size_t>(_rows) * _d);
   }
 
+  const auto m = _info.m;
+  const auto ef = _info.ef_construction;
+  SDB_ASSERT(m != 0 && ef != 0);
+  const auto donor =
+    PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
+
   if (encoding) {
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
                             _record_size, valid, env);
@@ -1194,11 +1211,20 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                                 n * _d * sizeof(float));
                   }
                 });
-    if (!_qw && _d >= kHnswPanoramaMinDim &&
-        PanoramaApplies(_info.metric, _d) &&
-        !RotateForPanorama(_vectors, valid, _d, _rotation, _norms)) {
-      _rotation.clear();
-      _norms.clear();
+    if (!_qw && _d >= kHnswPanoramaMinDim && _d <= kHnswPanoramaMaxDim &&
+        PanoramaApplies(_info.metric, _d)) {
+      std::shared_ptr<const HnswData> donor_data;
+      if (donor.index != nullptr) {
+        donor_data = donor.index->Load(*donor.reader);
+      }
+      const std::span<const float> basis =
+        donor_data ? std::span<const float>{donor_data->rotation}
+                   : std::span<const float>{};
+      if (!RotateForPanorama(_vectors, valid, _d, basis, env, _rotation,
+                             _norms)) {
+        _rotation.clear();
+        _norms.clear();
+      }
     }
   }
 
@@ -1211,12 +1237,6 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
       std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
       EffectiveQuantMetric(_info.metric), /*row_major=*/true);
   }
-
-  const auto m = _info.m;
-  const auto ef = _info.ef_construction;
-  SDB_ASSERT(m != 0 && ef != 0);
-  const auto donor =
-    PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
 
   if (stats) {
     HnswCodeDistFactory factory{

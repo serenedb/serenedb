@@ -115,4 +115,89 @@ same
 t
 
 statement ok
+CREATE TABLE rot_st (id INTEGER PRIMARY KEY, emb FLOAT[256])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rot_st_l2 ON rot_st
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'none'));
+
+statement ok
+CREATE TABLE rot_st_ip (id INTEGER PRIMARY KEY, emb FLOAT[256])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rot_st_ip_idx ON rot_st_ip
+  USING inverted(id, emb hnsw (metric = 'ip', quant = 'none'));
+
+statement ok
+INSERT INTO rot_st SELECT i, rot_vec(i) FROM range(0, 2500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_st;
+
+statement ok
+INSERT INTO rot_st SELECT i, rot_vec(i) FROM range(2500, 5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_st;
+
+statement ok
+INSERT INTO rot_st SELECT i, rot_vec(i) FROM range(5000, 7500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_st;
+
+statement ok
+INSERT INTO rot_st_ip SELECT * FROM rot_st WHERE id < 2500;
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_st_ip;
+
+statement ok
+INSERT INTO rot_st_ip SELECT * FROM rot_st WHERE id >= 2500;
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_st_ip;
+
+statement ok
+VACUUM (COMPACT_TABLE) rot_st;
+
+statement ok
+VACUUM (COMPACT_TABLE) rot_st_ip;
+
+statement ok
+SET sdb_hnsw_ef_search = 2000;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('rot_st') WHERE column_name = 'id';
+----
+segments
+1
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_st ORDER BY emb <-> rot_vec(4321.5) LIMIT 25)
+  EXCEPT (SELECT i FROM range(7500) t(i) ORDER BY rot_vec(i) <-> rot_vec(4321.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_st_ip ORDER BY emb <#> rot_vec(6100.5) LIMIT 25)
+  EXCEPT (SELECT i FROM range(7500) t(i) ORDER BY rot_vec(i) <#> rot_vec(6100.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT id, round((emb <-> rot_vec(5555))::DOUBLE, 4) AS d
+FROM rot_st ORDER BY emb <-> rot_vec(5555) LIMIT 1;
+----
+id	d
+5555	0
+
+statement ok
 RESET sdb_hnsw_ef_search;

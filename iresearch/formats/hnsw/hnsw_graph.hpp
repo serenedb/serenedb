@@ -354,6 +354,7 @@ inline constexpr score_t kHnswNoThreshold =
 
 inline constexpr uint32_t kHnswPanoramaLevel = 64;
 inline constexpr uint32_t kHnswPanoramaMinDim = 4 * kHnswPanoramaLevel;
+inline constexpr uint32_t kHnswPanoramaMaxDim = 16 * kHnswPanoramaLevel;
 inline constexpr float kHnswPanoramaSlack = 1e-4f;
 inline constexpr float kHnswPanoramaMargin = 1e-5f;
 

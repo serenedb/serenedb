@@ -89,7 +89,7 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 
 | `quant` | Compression | Notes |
 |---|---|---|
-| `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 or more dimensions, an `hnsw` segment of at least eight rows per dimension stores its vectors in a basis fitted to them and stops reading a candidate once its distance can no longer make the result; the answer is unchanged |
+| `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 1024 dimensions, an `hnsw` segment of at least eight rows per dimension stores its vectors in a basis fitted to them and stops reading a candidate once its distance can no longer make the result; the answer is unchanged |
 | `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |

@@ -24,6 +24,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/types/data_chunk.hpp>
+#include <duckdb/main/connection.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_order.hpp>
@@ -836,5 +839,58 @@ TEST(SortedMergeBytesTest, PostingsAndScoreBoundsMatchASortedRebuild) {
     EXPECT_EQ(bytes(rebuilt, nullptr), bytes(inputs, &spec));
   }
 }
+
+class SortedMergeListTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(SortedMergeListTest, RepeatedListsKeepTheirValues) {
+  constexpr irs::field_id kKey = 3000;
+  const bool interleaved = GetParam();
+  duckdb::Connection connection{irs::DuckDBEngine::Instance().instance()};
+  irs::MemoryDirectory dir;
+  auto writer = MakeWriter(dir, DEFAULT_ROW_GROUP_SIZE, PlainColumns);
+  for (int64_t s = 0; s != 2; ++s) {
+    const auto key = interleaved ? absl::StrCat("i * 2 + ", s)
+                                 : absl::StrCat("i + ", s * 100000);
+    auto result = connection.Query(absl::StrCat(
+      "SELECT (", key, ")::BIGINT AS k, MAP {'a': i % 5, 'b': i % 3} AS m, ",
+      "[i % 4, i % 6] AS l, {'x': i % 3, 'tags': ['t' || (i % 4), 'u']} AS st ",
+      "FROM range(5000) t(i) ORDER BY k"));
+    ASSERT_FALSE(result->HasError()) << result->GetError();
+    auto trx = writer->GetBatch();
+    while (auto chunk = result->Fetch()) {
+      chunk->Flatten();
+      irs::ColWriter* columns = nullptr;
+      uint64_t first = 0;
+      for (duckdb::idx_t i = 0; i != chunk->size(); ++i) {
+        auto doc = trx.Insert();
+        if (i == 0) {
+          first = doc.DocId() - irs::doc_limits::min();
+        }
+        columns = doc.GetColWriter();
+      }
+      for (duckdb::idx_t col = 0; col != chunk->ColumnCount(); ++col) {
+        columns
+          ->OpenColumn(static_cast<irs::field_id>(kKey + col),
+                       chunk->data[col].GetType())
+          .Append(first, chunk->data[col], chunk->size());
+      }
+    }
+    ASSERT_TRUE(trx.Commit());
+    ASSERT_TRUE(writer->RefreshCommit());
+  }
+  const auto reader = writer->GetSnapshot();
+  const auto inputs = Segments(reader);
+  ASSERT_EQ(2, inputs.size());
+  const irs::SortSpec spec{{{.column = kKey}}};
+  irs::MemoryDirectory out;
+  bool flushed = false;
+  const auto merged = SortedMerge(out, inputs, &spec, DEFAULT_ROW_GROUP_SIZE,
+                                  PlainColumns, flushed);
+  ASSERT_TRUE(flushed);
+  EXPECT_EQ("",
+            FirstDifference(ExpectedSortedMerge(inputs, spec), Dump(*merged)));
+}
+
+INSTANTIATE_TEST_SUITE_P(keys, SortedMergeListTest, ::testing::Bool());
 
 }  // namespace

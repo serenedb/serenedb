@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/column/merge.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/call_once.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
@@ -37,6 +38,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -176,6 +178,19 @@ std::vector<std::shared_ptr<ReadContext>> OpenContexts(
     }
   }
   return ctxs;
+}
+
+bool IngestsLists(const duckdb::LogicalType& type) {
+  if (type.InternalType() == duckdb::PhysicalType::LIST) {
+    return true;
+  }
+  if (type.id() != duckdb::LogicalTypeId::STRUCT) {
+    return false;
+  }
+  return absl::c_any_of(
+    duckdb::StructType::GetChildTypes(type), [](const auto& field) {
+      return field.second.InternalType() == duckdb::PhysicalType::LIST;
+    });
 }
 
 }  // namespace
@@ -354,11 +369,21 @@ struct ColumnMerger::State {
   }
 
   struct OrderedInput {
-    explicit OrderedInput(const duckdb::LogicalType& type) : scratch{type} {}
+    OrderedInput(const duckdb::LogicalType& type, bool fresh)
+      : scratch{type}, fresh{fresh} {}
+
+    duckdb::Vector& NextBatch() {
+      if (fresh) {
+        return owned.emplace(scratch.vector.GetType(), STANDARD_VECTOR_SIZE);
+      }
+      return scratch.Reset();
+    }
 
     const ColumnReader* col = nullptr;
     ColumnReader::ScanState state;
     ColumnReader::VectorScratch scratch;
+    std::optional<duckdb::Vector> owned;
+    bool fresh;
     const duckdb::Vector* batch = nullptr;
     const duckdb::sel_t* rows = nullptr;
     duckdb::SelectionVector pending_sel{STANDARD_VECTOR_SIZE};
@@ -412,7 +437,7 @@ struct ColumnMerger::State {
 
   void LoadOrdered(OrderedInput& in, size_t si) {
     const uint64_t total = in.col->RowCount();
-    auto& batch = in.scratch.Reset();
+    auto& batch = in.NextBatch();
     if (!in.masked) {
       const auto take =
         std::min<uint64_t>(total - in.window, STANDARD_VECTOR_SIZE);
@@ -455,7 +480,9 @@ struct ColumnMerger::State {
     order->LiveRowsBefore(begin, live);
     std::vector<std::unique_ptr<OrderedInput>> cursors(sources.size());
     std::vector<uint32_t> active;
+    const bool fresh = IngestsLists(type);
     ColumnReader::VectorScratch staging{type};
+    std::optional<duckdb::Vector> owned;
     const duckdb::Vector null_row{duckdb::Value{type}, duckdb::count_t{1}};
     duckdb::SelectionVector out_sel{STANDARD_VECTOR_SIZE};
     std::array<uint16_t, STANDARD_VECTOR_SIZE> slot_input;
@@ -471,7 +498,8 @@ struct ColumnMerger::State {
         auto& in = *cursors[active.front()];
         visit(chunk_at, duckdb::Vector{*in.batch, in.pending_sel, n}, n);
       } else {
-        auto& out = staging.Reset();
+        auto& out =
+          fresh ? owned.emplace(type, STANDARD_VECTOR_SIZE) : staging.Reset();
         uint32_t off = 0;
         for (const auto a : active) {
           auto& in = *cursors[a];
@@ -507,7 +535,7 @@ struct ColumnMerger::State {
       }
       auto& cursor = cursors[i];
       if (!cursor) {
-        cursor = std::make_unique<OrderedInput>(type);
+        cursor = std::make_unique<OrderedInput>(type, fresh);
         OpenOrdered(*cursor, i, column, live[i]);
       }
       auto& in = *cursor;

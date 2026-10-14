@@ -254,6 +254,30 @@ id	score
 5250	0.444
 5000	0.444
 
+query
+SELECT id, round(BM25(ptk_text_idx.tableoid)::numeric, 4) AS score
+FROM ptk_text_idx WHERE body @@ ts_phrase('w1 w2') AND n > 4
+ORDER BY BM25(ptk_text_idx.tableoid) DESC LIMIT 5
+----
+id	score
+6001	0.450
+6003	0.449
+4750	0.443
+4500	0.443
+4250	0.442
+
+query
+SELECT id, round(BM25(ptk_pos_idx.tableoid)::numeric, 4) AS score
+FROM ptk_pos_idx WHERE body @@ ts_phrase('w1 w2') AND n > 4
+ORDER BY BM25(ptk_pos_idx.tableoid) DESC LIMIT 5
+----
+id	score
+6001	0.450
+6003	0.449
+4750	0.443
+4500	0.443
+4250	0.442
+
 statement ok
 SET sdb_disable_top_k_optimization = true
 
@@ -268,6 +292,18 @@ id	score
 5750	0.445
 5250	0.444
 5000	0.444
+
+query
+SELECT id, round(BM25(ptk_text_idx.tableoid)::numeric, 4) AS score
+FROM ptk_text_idx WHERE body @@ ts_phrase('w1 w2') AND n > 4
+ORDER BY BM25(ptk_text_idx.tableoid) DESC LIMIT 5
+----
+id	score
+6001	0.450
+6003	0.449
+4750	0.443
+4500	0.443
+4250	0.442
 
 statement ok
 RESET sdb_disable_top_k_optimization

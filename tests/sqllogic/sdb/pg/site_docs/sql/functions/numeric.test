@@ -102,6 +102,14 @@ SELECT ceiling(17.4) AS ceiling;
 ceiling
 18
 
+# DOCS_TEST: clamp
+# DOCS_TEST_BODY
+query
+SELECT clamp(17.4, 0, 10) AS clamp;
+----
+clamp
+10.0
+
 # DOCS_TEST: cos
 # DOCS_TEST_BODY
 query

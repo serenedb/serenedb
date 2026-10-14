@@ -65,6 +65,7 @@ The table below shows the available mathematical functions.
 | [`cbrt(x)`](#cbrtx)                                                    | Returns the cube root of the number.                                                                                                                                                           |
 | [`ceil(x)`](#ceilx)                                                    | Rounds the number up.                                                                                                                                                                          |
 | [`ceiling(x)`](#ceilingx)                                              | Rounds the number up. Alias of `ceil`.                                                                                                                                                         |
+| [`clamp(x, min, max)`](#clampx-min-max)                                | Limits `x` to the range from `min` to `max`.                                                                                                                                                   |
 | [`cos(x)`](#cosx)                                                      | Computes the cosine of `x`.                                                                                                                                                                    |
 | [`cot(x)`](#cotx)                                                      | Computes the cotangent of `x`.                                                                                                                                                                 |
 | [`degrees(x)`](#degreesx)                                              | Converts radians to degrees.                                                                                                                                                                   |
@@ -200,6 +201,12 @@ Rounds the number up.
 Rounds the number up. Alias of `ceil`.
 
 <SqlLogicTest id="sql/functions/numeric/ceiling" />
+
+#### `clamp(x, min, max)`
+
+Returns `min` if `x` is smaller than `min`, `max` if `x` is larger than `max`, and `x` otherwise. The arguments are converted to their common type, so `clamp` works on any ordered type: numbers, strings, dates, intervals, lists. The result is NULL if any argument is NULL, and it is an error if `min` is larger than `max`. As in comparisons, NaN is larger than every other number.
+
+<SqlLogicTest id="sql/functions/numeric/clamp" />
 
 #### `cos(x)`
 

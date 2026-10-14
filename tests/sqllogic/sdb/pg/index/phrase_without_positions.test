@@ -1385,29 +1385,27 @@ query
 EXPLAIN SELECT id FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick brown fox')
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
-│ Index: pwp_shingled_idx                                  │
-│ Lookup: table                                            │
-│ Index Filter:                                            │
-│ ╭─ And ──────────────────────────────╮                   │
-│ ╰──────────────────┬─────────────────╯                   │
-│ ╭─ Terms ──────────┴─────────────────╮                   │
-│ │ Field: body(string)                │                   │
-│ │ Values: 'brown fox', 'quick brown' │                   │
-│ ╰────────────────────────────────────╯                   │
-│ Table Filter:                                            │
-│ ╭─ Phrase ─────────────────────────────────────────────╮ │
-│ │ Field: body(string)                                  │ │
-│ │ Parts:                                               │ │
-│ │ Term:quick brown(0, 0); Term:brown fox(1, 1);        │ │
-│ │ Separator: ' '                                       │ │
-│ │ Verify: table filter                                 │ │
-│ │ Words:                                               │ │
-│ │ Term:quick(0, 0); Term:brown(1, 1); Term:fox(1, 1);  │ │
-│ ╰──────────────────────────────────────────────────────╯ │
-│ Projections: id                                          │
-│ ~1 row                                                   │
-╰──────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────╮
+│ Index: pwp_shingled_idx                                                            │
+│ Lookup: table                                                                      │
+│ Index Filter:                                                                      │
+│ ╭─ And ──────────────────────────────╮                                             │
+│ ╰──────────────────┬─────────────────╯                                             │
+│ ╭─ Terms ──────────┴─────────────────╮                                             │
+│ │ Field: body(string)                │                                             │
+│ │ Values: 'brown fox', 'quick brown' │                                             │
+│ ╰────────────────────────────────────╯                                             │
+│ Table Filter:                                                                      │
+│ ╭─ Phrase ───────────────────────────────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                                            │ │
+│ │ Parts:                                                                         │ │
+│ │ Shingle:quick brown['quick','brown',](0, 0); Shingle:brown fox['fox',](1, 1);  │ │
+│ │ Separator: ' '                                                                 │ │
+│ │ Verify: table filter                                                           │ │
+│ ╰────────────────────────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                                    │
+│ ~1 row                                                                             │
+╰────────────────────────────────────────────────────────────────────────────────────╯
 
 query
 SELECT id FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick', 1, 'fox') ORDER BY id

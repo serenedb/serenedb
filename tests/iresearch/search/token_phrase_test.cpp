@@ -219,6 +219,24 @@ void PushTerm(irs::ByPhraseOptions& phrase, std::string_view word,
   phrase.push_back<irs::ByTermOptions>(offs_min, offs_max).term = Bytes(word);
 }
 
+void PushShingle(irs::ByPhraseOptions& phrase, std::string_view term,
+                 std::initializer_list<std::string_view> words,
+                 irs::PosAttr::value_t offs_min,
+                 irs::PosAttr::value_t offs_max) {
+  auto& shingle = phrase.push_back<irs::ShingleOptions>(offs_min, offs_max);
+  shingle.term = Bytes(term);
+  for (const auto word : words) {
+    shingle.words.emplace_back(Bytes(word));
+  }
+}
+
+irs::ByPhraseOptions QuickBrownFoxShingles() {
+  irs::ByPhraseOptions phrase;
+  PushShingle(phrase, "quick brown", {"quick", "brown"}, 0, 0);
+  PushShingle(phrase, "brown fox", {"fox"}, 1, 1);
+  return phrase;
+}
+
 std::string Repeat(std::string_view word, size_t n) {
   std::string out;
   for (size_t i = 0; i != n; ++i) {
@@ -633,6 +651,29 @@ TEST(PhraseCheckTest, stacked_parts_check_positions) {
   EXPECT_EQ(PhraseMatch::Positions, RouteOf(compiled));
   EXPECT_EQ(1U, Verify<StackedWords>(phrase, "a red|car b").freq);
   EXPECT_FALSE(Matches<StackedWords>(phrase, "a red car"));
+}
+
+TEST(PhraseCheckTest, shingle_parts_check_the_words_they_add) {
+  const auto phrase = QuickBrownFoxShingles();
+  EXPECT_TRUE(irs::IsStandalone(phrase));
+  EXPECT_TRUE(irs::IsAnchored(phrase));
+  const std::span<const std::vector<irs::bstring>> expanded;
+  const irs::CompiledPhrase compiled{phrase, expanded, {}};
+  ASSERT_EQ(3U, compiled.slots.size());
+  for (uint32_t slot = 1; slot != 3; ++slot) {
+    EXPECT_EQ(1U, compiled.slots[slot].offs_min);
+    EXPECT_EQ(1U, compiled.slots[slot].offs_max);
+  }
+  const auto words = Phrase("quick brown fox");
+  for (const std::string_view text :
+       {"the quick brown fox jumps", "quick brown dog fox", "fox brown quick",
+        "quick brown fox quick brown fox", "quick brown brown fox"}) {
+    SCOPED_TRACE(text);
+    const auto expected = Verify(words, text);
+    const auto shingled = Verify(phrase, text);
+    EXPECT_EQ(expected.matched, shingled.matched);
+    EXPECT_EQ(expected.freq, shingled.freq);
+  }
 }
 
 TEST(PhraseCheckTest, standalone_fuzzy_part_needs_a_source) {
@@ -1673,6 +1714,22 @@ TEST(TokenPhraseIndexTest, word_stats_sample_the_largest_segments) {
   }
 }
 
+TEST(TokenPhraseIndexTest, word_stats_follow_the_shingle_words) {
+  const std::vector<std::string> docs{"quick brown fox", "quick fox", "fox"};
+  const Index index{docs, std::type_identity<DenseWords>{}};
+  const auto stats =
+    irs::PhraseWordStats(QuickBrownFoxShingles(), index.Reader(), kPlainId);
+  const auto words =
+    irs::PhraseWordStats(Phrase("quick brown fox"), index.Reader(), kPlainId);
+  ASSERT_EQ(3U, stats.size());
+  ASSERT_EQ(words.size(), stats.size());
+  for (size_t i = 0; i != stats.size(); ++i) {
+    EXPECT_EQ(words[i].docs, stats[i].docs);
+    EXPECT_EQ(words[i].freq, stats[i].freq);
+  }
+  EXPECT_EQ(3U, stats[2].docs);
+}
+
 TEST(TokenPhraseIndexTest, seeks_within_and_past_the_checked_batch) {
   const std::vector<std::string> docs{
     "quick brown",   "brown quick", "quick brown", "quick brown",
@@ -1975,12 +2032,6 @@ TEST(TokenPhraseFilterTest, equality_covers_tokens) {
   SetText(elsewhere, Tokens<DenseWords>(irs::field_id{42}));
   EXPECT_NE(checked, elsewhere);
 
-  const irs::ByShinglePhraseOptions shingled{.words = checked, .cover = base};
-  auto longer = shingled;
-  longer.words = Phrase("quick brown fox");
-  SetText(longer.words, Tokens<DenseWords>());
-  EXPECT_NE(shingled, longer);
-
   checked.clear();
   EXPECT_FALSE(irs::field_limits::valid(checked.text()));
   EXPECT_EQ(irs::ByPhraseOptions{}, checked);
@@ -1994,18 +2045,21 @@ TEST(TokenPhraseFilterTest, simplify_keeps_one_slot_phrases_with_tokens) {
   EXPECT_NE(irs::Type<irs::ByPhrase>::id(), plain->type());
 }
 
-TEST(TokenPhraseFilterTest, lowering_reaches_the_checked_words) {
-  irs::ByShinglePhraseOptions options;
-  for (auto* phrase : {&options.words, &options.cover}) {
-    PushTerm(*phrase, "quick", 0, 0);
-    phrase->push_back<irs::ByWildcardOptions>().term = Bytes("br%");
-  }
-  SetText(options.words, Tokens<DenseWords>());
-  EXPECT_TRUE(options.LowerParts());
-  for (const auto* phrase : {&options.words, &options.cover}) {
-    ASSERT_EQ(2U, phrase->size());
-    EXPECT_TRUE(std::holds_alternative<irs::ByPrefixOptions>(
-      (phrase->begin() + 1)->part));
-  }
-  EXPECT_FALSE(options.LowerParts());
+TEST(TokenPhraseFilterTest, shingle_parts_compare_terms_and_words) {
+  const auto base = QuickBrownFoxShingles();
+  EXPECT_EQ(base, QuickBrownFoxShingles());
+
+  irs::ByPhraseOptions overlapping;
+  PushShingle(overlapping, "quick brown", {"quick", "brown"}, 0, 0);
+  PushShingle(overlapping, "brown fox", {"brown", "fox"}, 1, 1);
+  EXPECT_NE(base, overlapping);
+
+  irs::ByPhraseOptions terms;
+  PushTerm(terms, "quick brown", 0, 0);
+  PushTerm(terms, "brown fox", 1, 1);
+  EXPECT_NE(base, terms);
+
+  auto lowered = base;
+  EXPECT_FALSE(lowered.LowerParts());
+  EXPECT_EQ(base, lowered);
 }

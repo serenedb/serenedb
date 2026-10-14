@@ -52,8 +52,7 @@ std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
   return std::nullopt;
 }
 
-Filter::ptr PartsConjunction(const Filter& phrase, field_id field,
-                             const ByPhraseOptions& options,
+Filter::ptr PartsConjunction(const ByPhrase& phrase,
                              const OptimizeContext& ctx) {
   const auto* scorer = ScorerOf(phrase, ctx);
   const bool constant =
@@ -62,8 +61,9 @@ Filter::ptr PartsConjunction(const Filter& phrase, field_id field,
     return nullptr;
   }
   auto conjunction = std::make_unique<BooleanFilter>();
-  for (const auto& info : options) {
-    conjunction->Add(PartFilter(field, info.part, constant), Occur::Must);
+  for (const auto& info : phrase.options()) {
+    conjunction->Add(PartFilter(phrase.field_id(), info.part, constant),
+                     Occur::Must);
   }
   if (scorer != nullptr) {
     conjunction->SetScorer(phrase.GetScorer());
@@ -75,10 +75,10 @@ Filter::ptr PartsConjunction(const Filter& phrase, field_id field,
   return conjunction;
 }
 
-bool DeferPhrase(Filter::ptr& slot, field_id field,
-                 const ByPhraseOptions& options, const ByPhraseOptions& checked,
-                 const OptimizeContext& ctx) {
-  const auto column = checked.text();
+bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
+  const auto& phrase = downCast<ByPhrase>(*slot);
+  const auto& options = phrase.options();
+  const auto column = options.text();
   if (!field_limits::valid(column)) {
     return false;
   }
@@ -86,12 +86,12 @@ bool DeferPhrase(Filter::ptr& slot, field_id field,
   if (!type) {
     return false;
   }
-  if (!IsStandalone(checked) ||
-      (checked.slop() != 0 && HasPatternParts(checked) &&
-       checked.tokenizer()()->Traits().explicit_pos)) {
+  if (!IsStandalone(options) ||
+      (options.slop() != 0 && HasPatternParts(options) &&
+       options.tokenizer()()->Traits().explicit_pos)) {
     return false;
   }
-  auto index = PartsConjunction(*slot, field, options, ctx);
+  auto index = PartsConjunction(phrase, ctx);
   if (!index) {
     return false;
   }
@@ -140,14 +140,7 @@ bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
 bool Defer(Filter::ptr& slot, const OptimizeContext& ctx) {
   const auto type = slot->type();
   if (type == Type<ByPhrase>::id()) {
-    const auto& phrase = downCast<ByPhrase>(*slot);
-    return DeferPhrase(slot, phrase.field_id(), phrase.options(),
-                       phrase.options(), ctx);
-  }
-  if (type == Type<ByShinglePhrase>::id()) {
-    const auto& phrase = downCast<ByShinglePhrase>(*slot);
-    return DeferPhrase(slot, phrase.field_id(), phrase.options().cover,
-                       phrase.options().words, ctx);
+    return DeferPhrase(slot, ctx);
   }
   if (type == Type<ByWildcardNGram>::id()) {
     return DeferWildcard(slot, ctx);

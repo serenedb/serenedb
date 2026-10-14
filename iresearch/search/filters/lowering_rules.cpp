@@ -67,8 +67,7 @@ struct EditDistanceSimplifyRule {
 
 struct PhraseLowerRule {
   static constexpr std::string_view kName = "phrase_lower";
-  static constexpr std::array kTargets{Type<ByPhrase>::id(),
-                                       Type<ByShinglePhrase>::id()};
+  static constexpr std::array kTargets{Type<ByPhrase>::id()};
   static constexpr bool kEnable = true;
 
   static bool Apply(Filter::ptr& slot, const OptimizeContext& ctx);
@@ -170,11 +169,6 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
 }
 
 bool PhraseLowerRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
-  if (slot->type() == Type<ByShinglePhrase>::id()) {
-    return irs::utils::downCast<ByShinglePhrase>(*slot)
-      .mutable_options()
-      ->LowerParts();
-  }
   return irs::utils::downCast<ByPhrase>(*slot).mutable_options()->LowerParts();
 }
 

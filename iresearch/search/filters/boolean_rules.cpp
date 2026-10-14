@@ -504,8 +504,7 @@ field_id AnyFieldOf(const Filter& node) {
 
 field_id RequiringLeafFieldOf(const Filter& node) {
   return AnyFieldOf<ByTerm, ByPrefix, ByRange, ByGranularRange, ByPhrase,
-                    ByShinglePhrase, AutomatonFilter,
-                    LevenshteinAutomatonFilter>(node);
+                    AutomatonFilter, LevenshteinAutomatonFilter>(node);
 }
 
 void CollectAnchors(const Filter& node,

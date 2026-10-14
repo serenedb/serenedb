@@ -77,8 +77,7 @@ std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral,
     if (type == irs::Type<irs::ByWildcardNGram>::id()) {
       checks.emplace_back(
         MakeWildcardCheck(std::move(source), deferred.column, deferred.type));
-    } else if (type == irs::Type<irs::ByPhrase>::id() ||
-               type == irs::Type<irs::ByShinglePhrase>::id()) {
+    } else if (type == irs::Type<irs::ByPhrase>::id()) {
       checks.emplace_back(MakePhraseCheck(std::move(source), deferred.column,
                                           deferred.type, deferral.reader));
     } else {

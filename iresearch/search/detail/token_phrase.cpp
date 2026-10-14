@@ -35,6 +35,18 @@
 #include "iresearch/utils/json_leaf.hpp"
 
 namespace irs {
+namespace {
+
+size_t WordCount(const ByPhraseOptions& phrase) noexcept {
+  size_t count = 0;
+  for (const auto& info : phrase) {
+    const auto* shingle = std::get_if<ShingleOptions>(&info.part);
+    count += shingle ? shingle->words.size() : 1;
+  }
+  return count;
+}
+
+}  // namespace
 
 bool IsAnchored(const ByPhraseOptions& phrase) noexcept {
   return phrase.slop() == 0 &&
@@ -49,16 +61,23 @@ std::vector<PhraseWordStat> PhraseWordStats(
   if (!IsAnchored(phrase)) {
     return words;
   }
-  words.resize(phrase.size());
+  words.resize(WordCount(phrase));
   for (const auto* reader : readers) {
     auto* stat = words.data();
-    for (const auto& info : phrase) {
-      if (const auto* word = std::get_if<ByTermOptions>(&info.part)) {
-        const auto meta = reader->Lookup(word->term);
-        stat->docs += meta.docs_count;
-        stat->freq += meta.freq;
-      }
+    const auto lookup = [&](bytes_view word) {
+      const auto meta = reader->Lookup(word);
+      stat->docs += meta.docs_count;
+      stat->freq += meta.freq;
       ++stat;
+    };
+    for (const auto& info : phrase) {
+      if (const auto* shingle = std::get_if<ShingleOptions>(&info.part)) {
+        absl::c_for_each(shingle->words, lookup);
+      } else if (const auto* word = std::get_if<ByTermOptions>(&info.part)) {
+        lookup(word->term);
+      } else {
+        ++stat;
+      }
     }
   }
   return words;
@@ -89,6 +108,7 @@ bool IsStandalone(const ByPhraseOptions& phrase) noexcept {
     return std::visit(
       []<typename Part>(const Part& part) {
         if constexpr (std::is_same_v<Part, ByTermOptions> ||
+                      std::is_same_v<Part, ShingleOptions> ||
                       std::is_same_v<Part, TermSetOptions> ||
                       std::is_same_v<Part, ByPrefixOptions> ||
                       std::is_same_v<Part, ByRangeOptions>) {
@@ -131,7 +151,7 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
                           std::span<const std::vector<bstring>> expanded,
                           bool predicates,
                           std::span<const PhraseWordStat> words) {
-  const auto n = static_cast<uint32_t>(phrase.size());
+  const auto n = static_cast<uint32_t>(WordCount(phrase));
   slots.resize(n);
   std::vector<uint32_t> term_slots;
   std::vector<std::optional<size_t>> word_of(n);
@@ -140,14 +160,28 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
     terms.emplace_back(term);
     term_slots.emplace_back(slot);
   };
+  const auto add_word = [&](bytes_view word) {
+    word_of[slot] = terms.size();
+    add(word);
+  };
+  size_t part = 0;
   for (const auto& info : phrase) {
     slots[slot].offs_min = info.offs_min;
     slots[slot].offs_max = info.offs_max;
     switch (ByPhraseOptions::KindOf(info.part)) {
-      case SlotKind::Term:
-        word_of[slot] = terms.size();
-        add(std::get<ByTermOptions>(info.part).term);
-        break;
+      case SlotKind::Term: {
+        const auto* shingle = std::get_if<ShingleOptions>(&info.part);
+        if (!shingle) {
+          add_word(std::get<ByTermOptions>(info.part).term);
+          break;
+        }
+        add_word(shingle->words.front());
+        for (const auto& word : std::span{shingle->words}.subspan(1)) {
+          ++slot;
+          slots[slot].offs_min = slots[slot].offs_max = 1;
+          add_word(word);
+        }
+      } break;
       case SlotKind::Set:
         for (const auto& term : std::get<TermSetOptions>(info.part).terms) {
           add(term);
@@ -156,14 +190,15 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
       case SlotKind::Expansion:
         if (predicates) {
           AddPattern(slot, info.part);
-        } else if (slot < expanded.size()) {
-          for (const auto& term : expanded[slot]) {
+        } else if (part < expanded.size()) {
+          for (const auto& term : expanded[part]) {
             add(term);
           }
         }
         break;
     }
     ++slot;
+    ++part;
   }
   for (uint32_t i = 0; i != n; ++i) {
     if (word_of[i]) {

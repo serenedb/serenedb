@@ -51,6 +51,13 @@ struct TermSetOptions {
   bool operator==(const TermSetOptions& rhs) const = default;
 };
 
+struct ShingleOptions {
+  bstring term;
+  std::vector<bstring> words;
+
+  bool operator==(const ShingleOptions& rhs) const = default;
+};
+
 class ByPhrase;
 
 enum class SlotKind : uint8_t {
@@ -64,7 +71,8 @@ class ByPhraseOptions {
   using PhrasePart =
     std::variant<ByTermOptions, ByPrefixOptions, ByWildcardOptions,
                  ByRegexpOptions, ByEditDistanceOptions, TermSetOptions,
-                 ByRangeOptions, AutomatonOptions, LevenshteinAutomatonOptions>;
+                 ByRangeOptions, AutomatonOptions, LevenshteinAutomatonOptions,
+                 ShingleOptions>;
 
   struct PhrasePartInfo {
     PhrasePart part;
@@ -75,13 +83,21 @@ class ByPhraseOptions {
   };
 
   static SlotKind KindOf(const PhrasePart& part) noexcept {
-    if (std::holds_alternative<ByTermOptions>(part)) {
+    if (std::holds_alternative<ByTermOptions>(part) ||
+        std::holds_alternative<ShingleOptions>(part)) {
       return SlotKind::Term;
     }
     if (std::holds_alternative<TermSetOptions>(part)) {
       return SlotKind::Set;
     }
     return SlotKind::Expansion;
+  }
+
+  static bytes_view TermOf(const PhrasePart& part) noexcept {
+    if (const auto* shingle = std::get_if<ShingleOptions>(&part)) {
+      return shingle->term;
+    }
+    return std::get_if<ByTermOptions>(&part)->term;
   }
 
   using FilterType = ByPhrase;
@@ -169,29 +185,6 @@ class ByPhraseOptions {
 };
 
 class ByPhrase : public FilterWithField<ByPhraseOptions> {
- public:
-  QueryBuilder::ptr PrepareSegment(const SubReader& segment,
-                                   const PrepareContext& ctx) const final;
-
-  PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
-                                          StatsArena& stats,
-                                          uint32_t threads) const final;
-};
-
-class ByShinglePhrase;
-
-struct ByShinglePhraseOptions {
-  using FilterType = ByShinglePhrase;
-
-  bool operator==(const ByShinglePhraseOptions&) const = default;
-
-  bool LowerParts();
-
-  ByPhraseOptions words;
-  ByPhraseOptions cover;
-};
-
-class ByShinglePhrase : public FilterWithField<ByShinglePhraseOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;

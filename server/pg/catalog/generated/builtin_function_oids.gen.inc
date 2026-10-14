@@ -4127,6 +4127,7 @@
 {"table system.main.enable_profiling(VARCHAR[], ANY...)", 28347},
 {"table system.main.es_bulk(VARCHAR, VARCHAR)", 28400},
 {"table system.main.es_bulk_source(VARCHAR)", 28401},
+{"table system.main.es_bulk_source(VARCHAR, BOOLEAN)", 30316},
 {"table system.main.es_cat_indices()", 28402},
 {"table system.main.es_create_index(VARCHAR, VARCHAR)", 28403},
 {"table system.main.es_doc(VARCHAR, VARCHAR, VARCHAR)", 28404},

@@ -53,7 +53,6 @@ missing_database	string	postmaster	refuse	f
 pg_max_message_bytes	integer	postmaster	67108864	f
 remap_executable	bool	postmaster	true	f
 s2shape_index_min_short_edge_fraction	real	postmaster	0.2	f
-skip_search_recovery	bool	postmaster	false	f
 tls_min_version	string	postmaster	1.2	f
 
 

@@ -24,13 +24,9 @@
 
 #include <algorithm>
 #include <cstring>
-#include <duckdb/common/vector/array_vector.hpp>
-#include <duckdb/common/vector/list_vector.hpp>
 #include <limits>
 #include <numeric>
 #include <utility>
-
-#include "iresearch/utils/json_leaf.hpp"
 
 namespace irs {
 
@@ -96,60 +92,6 @@ PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
     _match{std::in_place_type<AnchorMatch>, _analyzer.Batch()},
     _state{.phrase = &phrase, .count = count},
     _dense{!_tokenizer->Traits().explicit_pos} {}
-
-RowValues::~RowValues() = default;
-
-void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
-  const auto& type = values.GetType();
-  _type = type.id();
-  if (!_json && type.IsJSONType()) {
-    _json = std::make_unique<JsonLeafReader>();
-  }
-  values.ToUnifiedFormat(count, _format);
-  if (_type == duckdb::LogicalTypeId::LIST) {
-    duckdb::ListVector::GetEntry(values).ToUnifiedFormat(
-      duckdb::ListVector::GetListSize(values), _children);
-  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
-    _array_size = duckdb::ArrayType::GetSize(type);
-    duckdb::ArrayVector::GetEntry(values).ToUnifiedFormat(
-      duckdb::ArrayVector::GetTotalSize(values), _children);
-  }
-}
-
-void RowValues::ForEach(duckdb::idx_t row,
-                        absl::FunctionRef<bool(duckdb::string_t)> visit) {
-  const auto idx = _format.sel->get_index(row);
-  if (!_format.validity.RowIsValid(idx)) {
-    return;
-  }
-  const auto children = [&](uint64_t begin, uint64_t size) {
-    const auto* data =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
-    analysis::ForEachValidRow(
-      _children, begin, static_cast<uint32_t>(size),
-      [&](uint32_t, uint32_t child) { return visit(data[child]); });
-  };
-  if (_type == duckdb::LogicalTypeId::LIST) {
-    const auto entry =
-      duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(_format)[idx];
-    children(entry.offset, entry.length);
-    return;
-  }
-  if (_type == duckdb::LogicalTypeId::ARRAY) {
-    children(idx * _array_size, _array_size);
-    return;
-  }
-  const auto value =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format)[idx];
-  if (!_json) {
-    visit(value);
-    return;
-  }
-  const auto leaf = _json->Read({value.GetData(), value.GetSize()});
-  if (leaf.kind == JsonLeafKind::String) {
-    visit({leaf.string.data(), static_cast<uint32_t>(leaf.string.size())});
-  }
-}
 
 PhraseVerdict PhraseCheck::Check(duckdb::idx_t row, uint32_t anchors) {
   Start(_state.phrase->anchor.has_value(), anchors);

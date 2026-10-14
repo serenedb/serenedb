@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
@@ -34,6 +32,7 @@
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/detail/compiled_phrase.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
+#include "iresearch/search/detail/row_values.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 
 namespace irs {
@@ -41,24 +40,6 @@ namespace irs {
 struct PhraseVerdict {
   uint32_t freq = 0;
   score_t scale = kNoBoost;
-};
-
-class JsonLeafReader;
-
-class RowValues {
- public:
-  ~RowValues();
-
-  void Bind(duckdb::Vector& values, duckdb::idx_t count);
-  void ForEach(duckdb::idx_t row,
-               absl::FunctionRef<bool(duckdb::string_t)> visit);
-
- private:
-  duckdb::UnifiedVectorFormat _format;
-  duckdb::UnifiedVectorFormat _children;
-  duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
-  uint64_t _array_size = 0;
-  std::unique_ptr<JsonLeafReader> _json;
 };
 
 class PhraseCheck final : public TokenConsumer {

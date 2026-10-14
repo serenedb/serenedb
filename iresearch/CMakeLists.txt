@@ -106,6 +106,7 @@ set(IResearch_core_sources
     ./search/detail/collectors.cpp
     ./search/detail/compiled_phrase.cpp
     ./search/detail/pattern_cache.cpp
+    ./search/detail/row_values.cpp
     ./search/detail/term_acceptor.cpp
     ./search/detail/token_phrase.cpp
     ./search/filters/filter.cpp

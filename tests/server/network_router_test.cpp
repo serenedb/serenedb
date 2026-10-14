@@ -192,10 +192,10 @@ TEST(NetworkRouter, RouteTableIsFilteredByApi) {
 
 TEST(NetworkRouter, BodyLimitIsTheLargestOfTheApis) {
   EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Es}), uint64_t{100} << 20);
-  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel}), uint64_t{20} << 20);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel}), uint64_t{100} << 20);
   EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Mcp}), uint64_t{4} << 20);
   EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel, HttpApi::Mcp}),
-            uint64_t{20} << 20);
+            uint64_t{100} << 20);
   EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel, HttpApi::Es}),
             uint64_t{100} << 20);
 }

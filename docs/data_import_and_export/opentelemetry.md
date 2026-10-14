@@ -119,9 +119,9 @@ APIs (`?api=otel&api=es`) applies the largest of their limits to every request.
 ### Batching
 
 Send few large requests rather than many small ones. Each export is one
-transaction with a fixed cost, and a large one is parsed and inserted on
-several threads, so throughput grows with the request size up to the 100 MiB
-limit. SDKs export small batches, so put an OpenTelemetry Collector in front
+transaction with a fixed cost, and an export is parsed and inserted on one
+thread per 4 MiB of its decoded body, so throughput grows with the request size
+up to the 100 MiB limit. SDKs export small batches, so put an OpenTelemetry Collector in front
 of SereneDB as a batching proxy: the SDKs send to the collector, and its
 `batch` processor merges their exports into large requests to SereneDB:
 

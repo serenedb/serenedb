@@ -46,6 +46,7 @@ services:
       - SDB_DRV_HTTP_PORT=9200
       - SDB_DRV_HTTP_TOKEN=drivers-ci-token
       - SDB_DRV_SERENED_BIN=/serenedb/${BUILD_DIR}/bin/serened
+      - SDB_DRV_SHARED_DIR=/serenedb/out/drivers-shared
       - SDB_FUZZ_QUERIES
       - SDB_FUZZ_PARALLEL
     networks:

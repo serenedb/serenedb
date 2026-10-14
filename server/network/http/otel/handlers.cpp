@@ -357,6 +357,7 @@ class ExportHandler final : public HttpHandler {
     typename Signal::Request decoded;
     try {
       Signal::Decode(raw, protobuf, parser, decoded);
+      decoded.wire_bytes = raw.size();
     } catch (const std::exception& error) {
       WriteStatus(writer, HttpStatus::BadRequest, kCodeInvalidArgument,
                   error.what(), protobuf);

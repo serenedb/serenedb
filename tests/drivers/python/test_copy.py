@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import threading
 import uuid
 from pathlib import Path
@@ -24,6 +25,18 @@ def conn() -> psycopg.Connection:
 @pytest.fixture()
 def table_name() -> str:
     return f"copy_probe_{uuid.uuid4().hex[:12]}"
+
+
+@pytest.fixture()
+def shared_path(tmp_path: Path) -> Path:
+    shared = os.environ.get("SDB_DRV_SHARED_DIR")
+    if not shared:
+        yield tmp_path
+        return
+    path = Path(shared) / f"{tmp_path.name}-{uuid.uuid4().hex[:8]}"
+    path.mkdir(parents=True)
+    yield path
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def _create_int_varchar(conn: psycopg.Connection, table: str) -> None:
@@ -373,9 +386,9 @@ def _text_rows(count: int, first: int = 0) -> bytes:
 
 
 def _copy_from(cur, table: str, payload: bytes, options: str, source: str,
-               tmp_path: Path) -> None:
+               shared_path: Path) -> None:
     if source == "file":
-        path = tmp_path / "copy.dat"
+        path = shared_path / "copy.dat"
         path.write_bytes(payload)
         cur.execute(f"COPY public.\"{table}\" FROM '{path}' ({options})")
         return
@@ -401,13 +414,13 @@ def _assert_insertion_order(cur, table: str, storage: str, rows: int) -> None:
 @pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
 def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
                                          table_name: str, storage: str,
-                                         source: str, tmp_path: Path) -> None:
+                                         source: str, shared_path: Path) -> None:
     with conn.cursor() as cur:
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
                     f" {storage}")
         try:
             _copy_from(cur, table_name, _text_rows(_ROWS), "FORMAT TEXT",
-                       source, tmp_path)
+                       source, shared_path)
             assert _count(cur, table_name, storage) == _ROWS
             cur.execute(f'SELECT sum(x), count(DISTINCT x) FROM '
                         f'public."{table_name}"')
@@ -424,14 +437,14 @@ def test_large_text_copy_keeps_every_row(conn: psycopg.Connection,
 @pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
 def test_large_text_copy_header_and_last_row_without_newline(
         conn: psycopg.Connection, table_name: str, storage: str, source: str,
-        tmp_path: Path) -> None:
+        shared_path: Path) -> None:
     payload = b"x\tlabel\n" + _text_rows(_ROWS) + b"%d\tlast" % _ROWS
     with conn.cursor() as cur:
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
                     f" {storage}")
         try:
             _copy_from(cur, table_name, payload, "FORMAT TEXT, HEADER", source,
-                       tmp_path)
+                       shared_path)
             assert _count(cur, table_name, storage) == _ROWS + 1
             cur.execute(f'SELECT label FROM public."{table_name}" '
                         f"WHERE x = {_ROWS}")
@@ -453,7 +466,7 @@ def _label_length(i: int) -> int:
 def test_large_text_copy_rows_longer_than_a_read(conn: psycopg.Connection,
                                                  table_name: str,
                                                  storage: str, source: str,
-                                                 tmp_path: Path) -> None:
+                                                 shared_path: Path) -> None:
     rows = 3_000
     payload = b"".join(
         b"%d\t%s\n" % (i, b"y" * _label_length(i)) for i in range(rows))
@@ -462,7 +475,7 @@ def test_large_text_copy_rows_longer_than_a_read(conn: psycopg.Connection,
                     f" {storage}")
         try:
             _copy_from(cur, table_name, payload, "FORMAT TEXT", source,
-                       tmp_path)
+                       shared_path)
             assert _count(cur, table_name, storage) == rows
             cur.execute(f'SELECT sum(x), sum(length(label)) FROM '
                         f'public."{table_name}"')
@@ -478,7 +491,7 @@ def test_large_text_copy_rows_longer_than_a_read(conn: psycopg.Connection,
 def test_large_text_copy_bad_row_inserts_nothing(conn: psycopg.Connection,
                                                  table_name: str, storage: str,
                                                  source: str,
-                                                 tmp_path: Path) -> None:
+                                                 shared_path: Path) -> None:
     payload = (_text_rows(200_000) + b"oops\n" +
                _text_rows(_ROWS - 200_000, 200_000))
     with conn.cursor() as cur:
@@ -487,7 +500,7 @@ def test_large_text_copy_bad_row_inserts_nothing(conn: psycopg.Connection,
         try:
             with pytest.raises(psycopg.Error):
                 _copy_from(cur, table_name, payload, "FORMAT TEXT", source,
-                           tmp_path)
+                           shared_path)
             assert _count(cur, table_name, storage) == 0
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
@@ -504,14 +517,14 @@ def _binary_rows(cur, count: int) -> bytes:
 def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
                                            table_name: str, storage: str,
                                            source: str,
-                                           tmp_path: Path) -> None:
+                                           shared_path: Path) -> None:
     with conn.cursor() as cur:
         payload = _binary_rows(cur, _ROWS)
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
                     f" {storage}")
         try:
             _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
-                       tmp_path)
+                       shared_path)
             assert _count(cur, table_name, storage) == _ROWS
             cur.execute(f'SELECT sum(x), count(DISTINCT label) FROM '
                         f'public."{table_name}"')
@@ -528,7 +541,7 @@ def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
 @pytest.mark.parametrize("damage", ["after_trailer", "truncated"])
 def test_large_binary_copy_damaged_stream_inserts_nothing(
         conn: psycopg.Connection, table_name: str, storage: str,
-        damage: str, source: str, tmp_path: Path) -> None:
+        damage: str, source: str, shared_path: Path) -> None:
     with conn.cursor() as cur:
         payload = _binary_rows(cur, _ROWS)
         payload = (payload + b"\x00\x01" if damage == "after_trailer"
@@ -538,7 +551,7 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
         try:
             with pytest.raises(psycopg.Error):
                 _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
-                           tmp_path)
+                           shared_path)
             assert _count(cur, table_name, storage) == 0
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
@@ -577,14 +590,14 @@ def _assert_lengths(cur, table: str, storage: str,
 def test_text_file_rows_on_range_boundaries(conn: psycopg.Connection,
                                             table_name: str, storage: str,
                                             header: bool,
-                                            tmp_path: Path) -> None:
+                                            shared_path: Path) -> None:
     payload, lengths = _boundary_payload(header)
     options = "FORMAT TEXT, HEADER" if header else "FORMAT TEXT"
     with conn.cursor() as cur:
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)'
                     f" {storage}")
         try:
-            _copy_from(cur, table_name, payload, options, "file", tmp_path)
+            _copy_from(cur, table_name, payload, options, "file", shared_path)
             _assert_lengths(cur, table_name, storage, lengths)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
@@ -592,8 +605,8 @@ def test_text_file_rows_on_range_boundaries(conn: psycopg.Connection,
 
 @pytest.mark.parametrize("storage", _STORAGES, ids=["duckdb", "search"])
 def test_text_copy_from_named_pipe(conn: psycopg.Connection, table_name: str,
-                                   storage: str, tmp_path: Path) -> None:
-    pipe = tmp_path / "rows.pipe"
+                                   storage: str, shared_path: Path) -> None:
+    pipe = shared_path / "rows.pipe"
     os.mkfifo(pipe)
     writer = threading.Thread(target=pipe.write_bytes,
                               args=(b"x\tlabel\n" + _text_rows(_ROWS),),
@@ -616,7 +629,7 @@ def test_text_copy_from_named_pipe(conn: psycopg.Connection, table_name: str,
 @pytest.mark.parametrize("fmt", ["text", "binary"])
 def test_file_copy_without_read_ahead(conn: psycopg.Connection,
                                       table_name: str, setting: str, fmt: str,
-                                      tmp_path: Path) -> None:
+                                      shared_path: Path) -> None:
     with conn.cursor() as cur:
         cur.execute(f"SET {setting} = 0")
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
@@ -624,11 +637,11 @@ def test_file_copy_without_read_ahead(conn: psycopg.Connection,
             if fmt == "text":
                 payload, lengths = _boundary_payload(False)
                 _copy_from(cur, table_name, payload, "FORMAT TEXT", "file",
-                           tmp_path)
+                           shared_path)
                 _assert_lengths(cur, table_name, "", lengths)
             else:
                 _copy_from(cur, table_name, _binary_rows(cur, _ROWS),
-                           "FORMAT BINARY", "file", tmp_path)
+                           "FORMAT BINARY", "file", shared_path)
                 assert _count(cur, table_name, "") == _ROWS
                 _assert_insertion_order(cur, table_name, "", _ROWS)
         finally:
@@ -643,11 +656,11 @@ def test_file_copy_without_read_ahead(conn: psycopg.Connection,
     ids=["empty", "header_only", "header_without_newline"])
 def test_text_file_copy_without_rows(conn: psycopg.Connection,
                                      table_name: str, payload: bytes,
-                                     options: str, tmp_path: Path) -> None:
+                                     options: str, shared_path: Path) -> None:
     with conn.cursor() as cur:
         cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
         try:
-            _copy_from(cur, table_name, payload, options, "file", tmp_path)
+            _copy_from(cur, table_name, payload, options, "file", shared_path)
             assert _count(cur, table_name, "") == 0
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')

@@ -559,6 +559,7 @@ template<typename Record>
 struct ExportRequest {
   std::vector<ResourceRecords<Record>> resources;
   ValueArena arena;
+  size_t wire_bytes = 0;
 };
 
 // https://github.com/open-telemetry/opentelemetry-proto/blob/main/opentelemetry/proto/collector/logs/v1/logs_service.proto

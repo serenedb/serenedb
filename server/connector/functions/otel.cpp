@@ -405,6 +405,10 @@ struct RecordPosition {
   auto operator<=>(const RecordPosition&) const = default;
 };
 
+// Measured empirically: below 4 MiB per worker, the per-worker segment flush
+// costs more than parallel parsing saves.
+inline constexpr size_t kBytesPerWorker = 4 << 20;
+
 template<typename Source>
 std::vector<RecordPosition> SplitIntoBatches(
   const typename Source::Request& request) {
@@ -880,7 +884,10 @@ struct SourceState final : duckdb::GlobalTableFunctionState {
   std::vector<RecordPosition> bounds;
   std::atomic<size_t> next{0};
 
-  duckdb::idx_t MaxThreads() const final { return bounds.size() - 1; }
+  duckdb::idx_t MaxThreads() const final {
+    return std::clamp<size_t>(request->wire_bytes / kBytesPerWorker, 1,
+                              bounds.size() - 1);
+  }
 
   std::optional<typename Source::Cursor> Claim() {
     const size_t batch = next.fetch_add(1, std::memory_order_relaxed);
@@ -1010,6 +1017,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ParseBind(
   parsed->wire.append(otel::kJsonPadding, '\0');
   Decode(std::string_view{parsed->wire.data(), size}, protobuf, parsed->parser,
          parsed->request);
+  parsed->request.wire_bytes = size;
   data->request = &parsed->request;
   data->parsed = std::move(parsed);
   return data;

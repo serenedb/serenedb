@@ -70,10 +70,10 @@ t
 
 
 query
-SELECT pg_relation_size(101, 'init') IS NULL AS missing;
+SELECT pg_relation_size(101, 'init') = 0 AS init_is_empty;
 ----
-missing
-t
+init_is_empty
+NULL
 
 
 query

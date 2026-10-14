@@ -201,16 +201,16 @@ def render(rows):
     ]
     for section, schema, name, mark in rows:
         out.append(f"# {section}: {name} ({mark})")
+        out.append("statement ok")
+        out.append(f'SELECT * FROM {schema}."{name}" LIMIT 0;')
+        out.append("")
         if mark == "🟢" and name not in EXEMPT:
             out.append("query")
             out.append(f'SELECT count(*) > 0 AS populated FROM {schema}."{name}";')
             out.append("----")
             out.append("populated")
             out.append("t")
-        else:
-            out.append("statement ok")
-            out.append(f'SELECT * FROM {schema}."{name}" LIMIT 0;')
-        out.append("")
+            out.append("")
     out.append(TEARDOWN)
     return "\n".join(out)
 

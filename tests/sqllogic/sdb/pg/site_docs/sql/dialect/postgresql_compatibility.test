@@ -194,6 +194,17 @@ SELECT regexp_extract('abc', 'x') AS result, regexp_extract('abc', 'x') IS NULL 
 result	is_null
 (empty)	f
 
+# DOCS_TEST: example_015
+
+# DOCS_TEST_BODY
+
+query
+SELECT to_date('2024-01-01', 'YYYY-MM-DD');
+----
+to_date
+2024-01-01
+
+
 # DOCS_TEST: example_016
 
 # DOCS_TEST_BODY

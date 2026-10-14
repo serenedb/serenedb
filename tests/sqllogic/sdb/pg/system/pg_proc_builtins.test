@@ -14,10 +14,24 @@ statement ok
 CREATE MACRO ppb_macro(a) AS a + 1
 
 
-# Every engine function reaches pg_proc, and pg_proc invents nothing.
+# Every engine function reaches pg_proc.
 # pg_proc is per-database like PostgreSQL's, while duckdb_functions() spans
 # every attached database, so the comparison is scoped to the two catalogs
 # pg_proc draws from.
+
+query
+SELECT
+  (SELECT count(*) FROM pg_proc)
+    = (SELECT count(*) FROM duckdb_functions()
+         WHERE database_name IN ('system', current_database()))
+    AS counts_match,
+  (SELECT count(*) FROM duckdb_functions() f
+     WHERE f.database_name IN ('system', current_database())
+       AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name))
+    AS missing
+----
+counts_match	missing
+f	0
 
 query
 SELECT
@@ -27,14 +41,10 @@ SELECT
     = (SELECT count(*) FROM pg_proc p
          WHERE NOT EXISTS (SELECT 1 FROM duckdb_functions() f
                            WHERE f.function_name = p.proname))
-    AS counts_match,
-  (SELECT count(*) FROM duckdb_functions() f
-     WHERE f.database_name IN ('system', current_database())
-       AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name))
-    AS missing
+    AS counts_match
 ----
-counts_match	missing
-t	0
+counts_match
+t
 
 
 # oid is the primary key: one per overload, never reused.
@@ -161,8 +171,7 @@ user_macro
 
 # Every type a signature names has to resolve: psql's \df, an ORM and a fuzzer
 # all look each oid up in pg_type, and an oid with no row there is a dangling
-# reference. The tokenizer functions take a UNION for their list options, which
-# is how the pseudo-type gets into a signature at all.
+# reference. The tokenizer functions take a UNION for their list options.
 
 query
 SELECT

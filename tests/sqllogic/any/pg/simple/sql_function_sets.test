@@ -22,6 +22,18 @@ statement ok
 CREATE FUNCTION fns.one() RETURNS bigint LANGUAGE sql RETURN 1;
 
 
+statement ok
+CREATE FUNCTION fns.col() RETURNS TABLE(c int) LANGUAGE sql AS 'SELECT 1 UNION ALL SELECT 2';
+
+
+query
+SELECT x, pg_typeof(x) AS t FROM fns.col() AS x ORDER BY 1;
+----
+x	t
+1	integer
+2	integer
+
+
 query
 SELECT * FROM fns.three() ORDER BY 1;
 ----
@@ -80,6 +92,7 @@ query
 SELECT proname, proretset, prorettype::regtype::text AS prorettype, pg_get_function_result(oid) FROM pg_proc WHERE pronamespace = 'fns'::regnamespace ORDER BY 1;
 ----
 proname	proretset	prorettype	pg_get_function_result
+col	t	integer	TABLE(c integer)
 one	f	bigint	bigint
 pair	t	record	TABLE(a bigint, b text)
 three	t	integer	SETOF integer

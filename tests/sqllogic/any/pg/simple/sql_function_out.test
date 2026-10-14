@@ -63,6 +63,13 @@ b
 
 
 query
+SELECT x, pg_typeof(x) AS t, x.b FROM fno.doubled(4) AS x;
+----
+x	t	b
+8	bigint	8
+
+
+query
 SELECT * FROM fno.swap(2);
 ----
 a	b
@@ -83,6 +90,14 @@ n
 1
 2
 3
+
+
+query
+SELECT x FROM fno.upto(2) AS x ORDER BY 1;
+----
+x
+1
+2
 
 
 query
@@ -114,6 +129,17 @@ upto	integer	t	1	integer,integer	i,o	a,n	a integer, OUT n integer	SETOF integer
 
 statement error OUT and INOUT arguments aren't allowed in TABLE functions
 CREATE FUNCTION fno.bad(a int, OUT b int) RETURNS TABLE(c int) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION fno.empty(OUT a int, OUT b text) LANGUAGE sql AS 'SELECT 1, ''x'' WHERE false';
+
+
+query
+SELECT a IS NULL AS a, b IS NULL AS b FROM fno.empty();
+----
+a	b
+t	t
 
 
 statement ok

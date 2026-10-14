@@ -10,9 +10,6 @@ SUPERUSER_ONLY_SQL = """
 NOT EXISTS (SELECT FROM aclexplode(coalesce(c.relacl,
                                             acldefault('r', c.relowner)))
             WHERE grantee = 0 AND privilege_type = 'SELECT')
-AND NOT EXISTS (SELECT FROM pg_attribute a, aclexplode(a.attacl) x
-                WHERE a.attrelid = c.oid AND x.grantee = 0
-                  AND x.privilege_type = 'SELECT')
 """
 
 

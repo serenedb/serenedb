@@ -99,16 +99,12 @@ std::string_view RelationKind(const RelationAccess& relation) {
 
 const duckdb::ColumnDefinition* TableColumn(const RelationAccess& relation,
                                             int32_t attnum) {
-  if (relation.key || !relation.entry ||
-      relation.entry->type != duckdb::CatalogType::TABLE_ENTRY || attnum < 1) {
+  const auto* columns = TableColumns(relation);
+  if (!columns || attnum < 1 ||
+      static_cast<duckdb::idx_t>(attnum) > columns->LogicalColumnCount()) {
     return nullptr;
   }
-  const auto& columns =
-    relation.entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
-  if (static_cast<duckdb::idx_t>(attnum) > columns.LogicalColumnCount()) {
-    return nullptr;
-  }
-  return &columns.GetColumn(duckdb::LogicalIndex(attnum - 1));
+  return &columns->GetColumn(duckdb::LogicalIndex(attnum - 1));
 }
 
 template<typename R>

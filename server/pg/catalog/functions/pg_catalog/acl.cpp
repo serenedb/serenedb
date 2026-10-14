@@ -530,10 +530,8 @@ struct AnyColumnPrivileges : RelationPrivileges<AnyColumnPrivileges> {
       return std::nullopt;
     }
     ObjectTarget target{relation->permissions, {}, OwnerOnly(*relation)};
-    if (!target.owner_only &&
-        RelationType(*relation) == CatalogType::TABLE_ENTRY) {
-      target.any_column =
-        &relation->entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
+    if (!target.owner_only) {
+      target.any_column = TableColumns(*relation);
     }
     return target;
   }
@@ -552,24 +550,19 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       return std::nullopt;
     }
     const Identifier name{AsView(column)};
-    const auto type = RelationType(*relation);
     if (OwnerOnly(*relation)) {
       if (absl::c_linear_search(OwnerOnlyColumns(session, *relation), name)) {
         return ObjectTarget{relation->permissions, {}, true};
       }
-    } else if (type == CatalogType::TABLE_ENTRY) {
-      const auto& columns =
-        relation->entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
-      if (columns.ColumnExists(name)) {
+    } else if (const auto* columns = TableColumns(*relation)) {
+      if (columns->ColumnExists(name)) {
         return ObjectTarget{relation->permissions,
-                            {columns.GetColumn(name).Acl()}};
+                            {columns->GetColumn(name).Acl()}};
       }
-    } else if (type == CatalogType::VIEW_ENTRY
-                 ? ViewAttnum(*session.context,
-                              relation->entry->Cast<duckdb::ViewCatalogEntry>(),
-                              name) != 0
-                 : relation->system &&
-                     relation->system->Columns().ColumnExists(name)) {
+    } else if (RelationType(*relation) == CatalogType::VIEW_ENTRY &&
+               ViewAttnum(*session.context,
+                          relation->entry->Cast<duckdb::ViewCatalogEntry>(),
+                          name) != 0) {
       return ObjectTarget{relation->permissions};
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
@@ -591,26 +584,21 @@ struct ColumnPrivileges : RelationPrivileges<ColumnPrivileges> {
       }
       return ObjectTarget{relation->permissions, {}, true};
     }
-    const auto type = RelationType(*relation);
-    if (type == CatalogType::TABLE_ENTRY) {
-      const auto& columns =
-        relation->entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
-      if (static_cast<duckdb::idx_t>(attnum) > columns.LogicalColumnCount()) {
+    if (const auto* columns = TableColumns(*relation)) {
+      if (static_cast<duckdb::idx_t>(attnum) > columns->LogicalColumnCount()) {
         return std::nullopt;
       }
       return ObjectTarget{
         relation->permissions,
-        {columns.GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl()}};
+        {columns->GetColumn(duckdb::LogicalIndex(attnum - 1)).Acl()}};
     }
     duckdb::idx_t count = 0;
-    if (type == CatalogType::VIEW_ENTRY) {
+    if (RelationType(*relation) == CatalogType::VIEW_ENTRY) {
       if (const auto info =
             ViewColumns(*session.context,
                         relation->entry->Cast<duckdb::ViewCatalogEntry>())) {
         count = info->types.size();
       }
-    } else if (relation->system) {
-      count = relation->system->Columns().LogicalColumnCount();
     }
     if (static_cast<duckdb::idx_t>(attnum) > count) {
       return std::nullopt;

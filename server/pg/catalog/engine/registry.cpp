@@ -64,10 +64,6 @@ const duckdb::AclItem kOwnerAcl{.grantee = kRootUser,
                                 .privs = duckdb::Permissions::AllPrivileges(
                                   duckdb::CatalogType::TABLE_ENTRY)};
 
-constexpr duckdb::AclItem kPublicSelect{.grantee = kPublicGrantee,
-                                        .grantor = kRootUser,
-                                        .privs = duckdb::AclMode::Select};
-
 using Key = std::pair<std::string_view, std::string_view>;
 using FunctionKey =
   std::tuple<std::string_view, std::string_view, duckdb::MacroType>;

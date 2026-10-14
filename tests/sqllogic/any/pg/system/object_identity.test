@@ -236,6 +236,13 @@ count
 0
 
 
+query
+SELECT pg_get_acl('pg_proc'::regclass, 'ident_s.t'::regclass, 0) IS NULL AS proc, pg_get_acl('pg_type'::regclass, 'ident_s.t'::regclass, 0) IS NULL AS type, pg_get_acl('pg_namespace'::regclass, 'ident_s.t'::regclass, 0) IS NULL AS namespace;
+----
+proc	type	namespace
+t	t	t
+
+
 statement ok
 DROP SCHEMA ident_s CASCADE;
 

@@ -394,7 +394,8 @@ std::optional<std::span<const duckdb::AclItem>> ObjectAcl(
   }
   if (classid == kPgProcTable || classid == kPgTypeTable ||
       classid == kPgNamespaceTable) {
-    if (const auto entry = ObjectEntry(session, objid)) {
+    if (const auto entry = ObjectEntry(session, objid);
+        entry && CatalogClassOid(entry->type) == classid) {
       return entry->permissions.acl;
     }
   }

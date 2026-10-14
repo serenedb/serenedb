@@ -48,3 +48,12 @@ statement error
 SELECT regexp_replace('abc', 'a', 'b', 1, -1);
 ----
 db error: ERROR: invalid value for parameter "n": -1
+
+
+query
+SELECT regexp_count('abc', '', 5) AS count_past, regexp_instr('abc', '', 5) AS instr_past,
+       regexp_substr('abc', '', 5) IS NULL AS substr_past, regexp_replace('abc', '', 'X', 5) AS replace_past,
+       regexp_count('abc', '', 4) AS count_at_end;
+----
+count_past	instr_past	substr_past	replace_past	count_at_end
+0	0	t	abc	1

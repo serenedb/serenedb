@@ -420,7 +420,7 @@ constexpr SystemMacro kMacros[] = {
       to_months(years::BIGINT * 12 + months) +
       to_days(weeks::BIGINT * 7 + days) +
       to_microseconds(hours::BIGINT * 3600000000 + mins::BIGINT * 60000000 +
-                      round(secs * 1000000)::BIGINT))"},
+                      round_even(secs * 1000000, 0)::BIGINT))"},
   // pg_backend_pid() is a C++ scalar (PgBackendPidFunction) -- it reads the
   // per-connection backend PID from the ConnectionContext.
   // clang-format on

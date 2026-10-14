@@ -69,6 +69,10 @@ statement ok
 DROP SCHEMA "Osh_Mixed";
 
 
+statement error role "PUBLIC" does not exist
+SELECT has_schema_privilege('PUBLIC', 'pg_catalog', 'USAGE');
+
+
 # ---- cleanup ----
 
 statement ok

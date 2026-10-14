@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -458,7 +457,7 @@ const catalog::RoleCatalogEntry* FindRole(duckdb::ClientContext& context,
 
 std::optional<duckdb::idx_t> RoleOrPublic(duckdb::ClientContext& context,
                                           std::string_view name) {
-  if (absl::EqualsIgnoreCase(name, irs::StaticStrings::kPublic)) {
+  if (name == irs::StaticStrings::kPublic) {
     return kPublicGrantee;
   }
   if (const auto* role = FindRole(context, name)) {

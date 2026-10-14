@@ -111,7 +111,10 @@ struct CompiledPhrase {
   CompiledPhrase(CompiledPhrase&&) = delete;
   CompiledPhrase& operator=(CompiledPhrase&&) = delete;
 
-  bool Accepts(uint32_t slot, const duckdb::string_t& term) const;
+  bool Accepts(const Slot& slot, const duckdb::string_t& term) const {
+    return slot.word ? *slot.word == term : AcceptsTerm(slot, term);
+  }
+  bool AcceptsTerm(const Slot& slot, const duckdb::string_t& term) const;
   uint64_t MaskOf(const duckdb::string_t& term) const;
 
   template<typename Visitor>
@@ -184,7 +187,7 @@ class PhraseCheck final : public TokenConsumer {
   void Bind(duckdb::Vector& values, duckdb::idx_t count) {
     _rows.Bind(values, count);
   }
-  bool Check(duckdb::idx_t row, PhraseVerdict& out, uint32_t anchors = 0);
+  PhraseVerdict Check(duckdb::idx_t row, uint32_t anchors = 0);
 
   void Prepare(duckdb::string_t) noexcept { _value_base = _last_pos; }
   void Discard() noexcept { _fed = 0; }
@@ -193,7 +196,7 @@ class PhraseCheck final : public TokenConsumer {
 
  private:
   struct State {
-    bool Counted(PhraseVerdict& out) const noexcept;
+    PhraseVerdict Verdict() const noexcept;
 
     const CompiledPhrase* phrase;
     bool count;
@@ -211,7 +214,7 @@ class PhraseCheck final : public TokenConsumer {
     void Consumed(const TokenBatch& batch, const State& state);
     void Drain(State& state);
     bool Overran() const noexcept { return _overran; }
-    bool Finish(State& state, PhraseVerdict& out);
+    PhraseVerdict Finish(const State& state) const;
 
    private:
     static constexpr uint64_t kStepsPerToken = 4;
@@ -232,7 +235,7 @@ class PhraseCheck final : public TokenConsumer {
                               : _batch_pos[at - _batch_base];
     }
 
-    void Carry(uint64_t span);
+    void Carry(uint64_t left);
     bool Hit(size_t at, State& state);
     template<bool Right>
     uint64_t Ways(uint32_t slot, size_t at, State& state);
@@ -244,7 +247,6 @@ class PhraseCheck final : public TokenConsumer {
     size_t _end = 0;
     size_t _carry_base = 0;
     std::vector<Token> _carry;
-    std::vector<Token> _next;
     duckdb::ArenaAllocator _arena{duckdb::Allocator::DefaultAllocator()};
     std::vector<size_t> _pending;
     uint32_t _last = 0;
@@ -257,7 +259,7 @@ class PhraseCheck final : public TokenConsumer {
    public:
     void Reset();
     void Feed(const TokenBatch& batch, uint32_t from, State& state);
-    bool Finish(State& state, PhraseVerdict& out);
+    PhraseVerdict Finish(State& state);
 
    private:
     void Step(uint64_t mask, State& state);
@@ -272,7 +274,7 @@ class PhraseCheck final : public TokenConsumer {
    public:
     void Reset(size_t slots);
     void Feed(const TokenBatch& batch, uint32_t from, State& state);
-    bool Finish(State& state, PhraseVerdict& out);
+    PhraseVerdict Finish(State& state);
 
    private:
     struct Way {

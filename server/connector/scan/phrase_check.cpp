@@ -68,9 +68,8 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                   .check;
   check.Bind(args.data[0], args.size());
   auto* out = duckdb::FlatVector::GetDataMutable<bool>(result);
-  irs::PhraseVerdict verdict;
   for (duckdb::idx_t row = 0, count = args.size(); row != count; ++row) {
-    out[row] = check.Check(row, verdict);
+    out[row] = check.Check(row).freq != 0;
   }
 }
 

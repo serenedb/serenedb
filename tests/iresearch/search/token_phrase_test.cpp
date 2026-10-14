@@ -265,7 +265,8 @@ bool CheckText(irs::PhraseCheck& check, std::string_view text,
   duckdb::FlatVector::GetDataMutable<duckdb::string_t>(chunk.data[0])[0] = {
     text.data(), static_cast<uint32_t>(text.size())};
   check.Bind(chunk.data[0], 1);
-  return check.Check(0, verdict);
+  verdict = check.Check(0);
+  return verdict.freq != 0;
 }
 
 template<typename Words>
@@ -801,9 +802,8 @@ TEST(PhraseCheckTest, json_rows_of_every_kind) {
   const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
   irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
   check.Bind(rows, std::size(kRows));
-  irs::PhraseVerdict verdict;
   for (size_t i = 0; i != std::size(kRows); ++i) {
-    EXPECT_EQ(kMatches[i], check.Check(i, verdict)) << kRows[i];
+    EXPECT_EQ(kMatches[i], check.Check(i).freq != 0) << kRows[i];
   }
 }
 
@@ -826,11 +826,10 @@ TEST(PhraseCheckTest, array_rows_skip_null_rows_and_elements) {
   const irs::CompiledPhrase compiled{Phrase("quick brown"), expanded, {}};
   irs::PhraseCheck check{compiled, TextOf<DenseWords>(), true};
   check.Bind(rows, 4);
-  irs::PhraseVerdict verdict;
-  EXPECT_TRUE(check.Check(0, verdict));
-  EXPECT_FALSE(check.Check(1, verdict));
-  EXPECT_TRUE(check.Check(2, verdict));
-  EXPECT_FALSE(check.Check(3, verdict));
+  EXPECT_NE(0U, check.Check(0).freq);
+  EXPECT_EQ(0U, check.Check(1).freq);
+  EXPECT_NE(0U, check.Check(2).freq);
+  EXPECT_EQ(0U, check.Check(3).freq);
 }
 
 TEST(PhraseCheckTest, progress_tokens_are_fed_once) {
@@ -1235,8 +1234,7 @@ void ExpectDeferredLikeInline(const Index& index,
     check.Bind(chunk.data[0], candidates.size());
     std::vector<irs::doc_id_t> actual;
     for (size_t i = 0; i != candidates.size(); ++i) {
-      irs::PhraseVerdict verdict;
-      if (check.Check(i, verdict)) {
+      if (check.Check(i).freq != 0) {
         actual.push_back(candidates[i]);
       }
     }

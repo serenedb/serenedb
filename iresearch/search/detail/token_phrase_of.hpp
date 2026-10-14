@@ -107,8 +107,8 @@ class PhraseRows {
     return n;
   }
 
-  bool Check(size_t row, PhraseVerdict& verdict, uint32_t anchors) {
-    return _check.Check(row, verdict, anchors);
+  PhraseVerdict Check(size_t row, uint32_t anchors) {
+    return _check.Check(row, anchors);
   }
 
  private:
@@ -168,10 +168,10 @@ class TokenPhraseSlots {
     if constexpr (requires(Approx& approx) { approx.Next(); }) {
       SDB_ASSERT(_pos < _hits.size() && _hits[_pos] == doc);
       if (_pos < _gathered) {
-        _rows.Check(_pos, _verdict, AnchorsAt(doc));
+        _verdict = _rows.Check(_pos, AnchorsAt(doc));
       }
     } else if (_rows.Gather({&doc, 1}) != 0) {
-      _rows.Check(0, _verdict, AnchorsAt(doc));
+      _verdict = _rows.Check(0, AnchorsAt(doc));
     }
     return _verdict.freq != 0;
   }

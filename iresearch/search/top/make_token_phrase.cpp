@@ -102,14 +102,17 @@ class PrunedTokenPhrase : public Root {
   void Flush(LoserScoreCollector& collector) {
     const auto rows = _rows.Gather({_docs, _size});
     for (size_t i = 0; i != rows; ++i) {
-      if (_bounds[i] <= collector.ScoreThreshold() ||
-          !_rows.Check(i, _verdict, _freqs[i])) {
+      if (_bounds[i] <= collector.ScoreThreshold()) {
+        continue;
+      }
+      const auto verdict = _rows.Check(i, _freqs[i]);
+      if (verdict.freq == 0) {
         continue;
       }
       auto score = _bounds[i];
-      if (_verdict.freq != _freqs[i]) {
-        SDB_ASSERT(_verdict.freq < _freqs[i]);
-        score = Score(_docs[i], _verdict.freq);
+      if (verdict.freq != _freqs[i]) {
+        SDB_ASSERT(verdict.freq < _freqs[i]);
+        score = Score(_docs[i], verdict.freq);
       }
       _admit.Add(collector, score, _docs[i]);
     }
@@ -125,7 +128,6 @@ class PrunedTokenPhrase : public Root {
   irs::detail::LeafProvider _provider;
   ScoreFunction _score;
   ColumnArgsFetcher& _fetcher;
-  PhraseVerdict _verdict;
   uint32_t _size = 0;
   uint32_t _freq = 0;
   [[no_unique_address]] Admit<Table> _admit;

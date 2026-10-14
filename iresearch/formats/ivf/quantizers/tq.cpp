@@ -984,6 +984,11 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
       maxq = std::max(maxq, std::fabs(_rot_query[j]));
     }
     const float scale_q = maxq > 0.f ? 127.f / maxq : 0.f;
+    _qi.resize(lay.rd);
+    for (uint32_t j = 0; j < lay.rd; ++j) {
+      _qi[j] = static_cast<int8_t>(
+        std::clamp(std::nearbyint(_rot_query[j] * scale_q), -127.f, 127.f));
+    }
     const bool uniform = lay.bits_hi == lay.bits_lo;
     _nsegs = uniform ? 1 : 2;
     _q8.resize(lay.rd);
@@ -999,9 +1004,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
       seg.q_sum = 0;
       for (uint32_t t = 0; t < planes; ++t) {
         for (uint32_t p = 0; p < seg.bytes; ++p) {
-          const auto v = static_cast<int8_t>(std::clamp<long>(
-            std::lround(_rot_query[base + p * planes + t] * scale_q), -127,
-            127));
+          const int8_t v = _qi[base + p * planes + t];
           const uint32_t at =
             seg.bits == 1 ? p * planes + t : t * seg.bytes + p;
           _q8[q_off + at] = v;
@@ -1052,6 +1055,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   std::vector<float> _byte_lut;
   std::array<TurboQuantInt8Seg, 2> _segs;
   size_t _nsegs = 0;
+  std::vector<int8_t> _qi;
   std::vector<int8_t> _q8;
   float _qjl_error_coeff = 0.f;
   float _qjl_sum = 0.f;

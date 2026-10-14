@@ -3223,3 +3223,27 @@ TEST(quantizer_kernel_test, bit_kernels_match_a_bit_by_bit_sum) {
       << bytes;
   }
 }
+
+TEST(quantizer_kernel_test, fwht_matches_the_scalar_butterflies) {
+  std::mt19937 rng{103};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  for (uint32_t len = 1; len <= 4096; len <<= 1) {
+    std::vector<float> want(len);
+    for (auto& v : want) {
+      v = nd(rng);
+    }
+    auto got = want;
+    for (uint32_t h = 1; h < len; h <<= 1) {
+      for (uint32_t i = 0; i < len; i += h << 1) {
+        for (uint32_t j = i; j < i + h; ++j) {
+          const float x = want[j];
+          const float y = want[j + h];
+          want[j] = x + y;
+          want[j + h] = x - y;
+        }
+      }
+    }
+    quantizers::Fwht(got.data(), len);
+    EXPECT_EQ(got, want) << len;
+  }
+}

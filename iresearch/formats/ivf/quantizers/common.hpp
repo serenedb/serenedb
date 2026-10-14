@@ -66,6 +66,31 @@ inline uint32_t RotatedDim(uint32_t d) noexcept {
 
 // In-place Fast Walsh-Hadamard transform; len must be a power of two.
 inline void Fwht(float* a, uint32_t len) noexcept {
+#ifdef __AVX2__
+  if (len >= 8) {
+    for (uint32_t i = 0; i < len; i += 8) {
+      __m256 v = _mm256_loadu_ps(a + i);
+      __m256 s = _mm256_permute_ps(v, 0xB1);
+      v = _mm256_blend_ps(_mm256_add_ps(v, s), _mm256_sub_ps(s, v), 0xAA);
+      s = _mm256_permute_ps(v, 0x4E);
+      v = _mm256_blend_ps(_mm256_add_ps(v, s), _mm256_sub_ps(s, v), 0xCC);
+      s = _mm256_permute2f128_ps(v, v, 0x01);
+      v = _mm256_blend_ps(_mm256_add_ps(v, s), _mm256_sub_ps(s, v), 0xF0);
+      _mm256_storeu_ps(a + i, v);
+    }
+    for (uint32_t h = 8; h < len; h <<= 1) {
+      for (uint32_t i = 0; i < len; i += h << 1) {
+        for (uint32_t j = i; j < i + h; j += 8) {
+          const __m256 x = _mm256_loadu_ps(a + j);
+          const __m256 y = _mm256_loadu_ps(a + j + h);
+          _mm256_storeu_ps(a + j, _mm256_add_ps(x, y));
+          _mm256_storeu_ps(a + j + h, _mm256_sub_ps(x, y));
+        }
+      }
+    }
+    return;
+  }
+#endif
   for (uint32_t h = 1; h < len; h <<= 1) {
     for (uint32_t i = 0; i < len; i += (h << 1)) {
       for (uint32_t j = i; j < i + h; ++j) {

@@ -252,7 +252,7 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   seg->reader =
     std::make_unique<irs::ColReader>(seg->dir, std::string{kSeg}, CsDb());
   seg->col = seg->reader->Column(kField);
-  if (seg->col == nullptr) {
+  if (!seg->col) {
     std::fprintf(stderr, "BuildSeg: column missing\n");
     std::abort();
   }

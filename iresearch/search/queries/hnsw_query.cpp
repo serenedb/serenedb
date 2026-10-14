@@ -83,7 +83,7 @@ struct HnswCodeDist {
 
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t threshold = kHnswNoThreshold) {
-    if (bound.rows != nullptr &&
+    if (bound.rows &&
         qr->ComputeGatheredBounded(
           codes, record_size, ids, bound,
           threshold == kHnswNoThreshold
@@ -112,7 +112,7 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     HnswCodeDist dist{.codes = data.codes.data(),
                       .record_size = record_size,
                       .qr = reader.get()};
-    if (panorama != nullptr && !data.tails.empty()) {
+    if (panorama && !data.tails.empty()) {
       dist.bound = {.width = kHnswCodeLevel,
                     .query_step = kHnswPanoramaLevel,
                     .query = panorama->tails,
@@ -126,7 +126,7 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
       if constexpr (M == VectorMetric::L2Sqr ||
                     M == VectorMetric::InnerProduct) {
-        if (panorama != nullptr) {
+        if (panorama) {
           HnswPanoramaDist<M> dist{.base = data.vectors.data(),
                                    .d = d,
                                    .q = panorama->rotated.data(),
@@ -165,9 +165,6 @@ std::vector<ScoreDoc> CollectHits(std::span<const HnswCandidate> found,
   return hits;
 }
 
-}  // namespace
-namespace {
-
 // The set the segment's predicates fold into for the graph walk: the inner
 // query's docs (every doc, without one), narrowed by the table filter's
 // column predicates. The walk asks about nodes in graph order, not doc order,
@@ -176,12 +173,12 @@ namespace {
 // Deleted docs are not dropped here: the hits are masked once, in CollectHits.
 detail::LazyBitset MakeSet(const QueryBuilder* inner,
                            detail::TableFilter* table, doc_id_t docs_count) {
-  if (inner == nullptr) {
+  if (!inner) {
     return detail::LazyBitset{docs_count, fill::DocsMask{nullptr}, table};
   }
   auto node = inner->PlanFill({}, ScoreMergeType::Noop);
   SDB_ASSERT(node);
-  if (auto* folded = node->Folded(); folded != nullptr) {
+  if (auto* folded = node->Folded()) {
     return detail::LazyBitset{std::move(*folded), fill::DocsMask{nullptr},
                               table};
   }
@@ -522,16 +519,16 @@ void HnswScanTopK(detail::LazyBitset& set, const HnswGraph& graph, Dist& dist,
 template<typename Dist>
 void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                             HnswSearchScratch& scratch) const {
-  SDB_ASSERT(_inner != nullptr || table != nullptr);
+  SDB_ASSERT(_inner || table);
   const auto& graph = _data->graph;
   const auto docs_count = static_cast<doc_id_t>(_segment.docs_count());
   std::optional<detail::LazyBitset> probe;
   uint64_t matches = 0;
   bool bounded = true;
-  if (table != nullptr || _inner->Kind() == QueryKind::Boolean) {
+  if (table || _inner->Kind() == QueryKind::Boolean) {
     probe.emplace(MakeSet(_inner.get(), table, docs_count));
-    matches = table == nullptr ? probe->Count()
-                               : probe->EstimateCount(kCountSampleWindows);
+    matches =
+      table ? probe->EstimateCount(kCountSampleWindows) : probe->Count();
     bounded = probe->Filled() >= probe->End();
   } else {
     matches = _inner->EstimateMax();
@@ -551,13 +548,13 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   // costs more than the fold it saves, the walk still runs -- against the
   // folded set, one bit test a node.
   const auto point_read =
-    table == nullptr || two_hop ? detail::PointRead::None : table->PointReads();
+    !table || two_hop ? detail::PointRead::None : table->PointReads();
   const auto probe_ratio =
     point_read == detail::PointRead::Row      ? kPointReadFoldRatio
     : point_read == detail::PointRead::Vector ? kVectorPointReadFoldRatio
                                               : kProbeFoldRatio;
   const bool ask_per_hop =
-    table != nullptr && _ef != 0 && mode == HnswFilterMode::Walk &&
+    table && _ef != 0 && mode == HnswFilterMode::Walk &&
     (_column_filter == HnswColumnFilter::Read ||
      (_column_filter == HnswColumnFilter::Auto &&
       HnswWalkNodes(matches, _ef, graph.M0(), graph.Size()) * probe_ratio <=
@@ -621,9 +618,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
   if (ask_per_hop) {
     const WalkFilter walk_filter{*table, docs_count, scratch.walk_filter};
     const bool done =
-      _inner == nullptr
-        ? run(walk_filter)
-        : run(InnerAndTableFilter{set, walk_filter, scratch.walk_filter});
+      _inner ? run(InnerAndTableFilter{set, walk_filter, scratch.walk_filter})
+             : run(walk_filter);
     if (done) {
       return;
     }
@@ -648,12 +644,12 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
 
 std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   HnswSearchScratch scratch;
-  if (table != nullptr && !table->Foldable()) {
+  if (table && !table->Foldable()) {
     table = nullptr;
   }
   WithHnswDist(*_data, _query, _codebook, _panorama.get(), _metric, _d,
                _record_size, [&](auto& dist) {
-                 if (_inner != nullptr || table != nullptr) {
+                 if (_inner || table) {
                    RunFiltered(dist, table, scratch);
                    return;
                  }
@@ -667,7 +663,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
                  });
                });
   auto hits = CollectHits(scratch.nearest, _segment);
-  if (_ef == 0 && _exact != nullptr && !hits.empty()) {
+  if (_ef == 0 && _exact && !hits.empty()) {
     RerankExactDistances(_segment, *_exact, _d, _query, _metric, hits);
     std::erase_if(hits, [&](const ScoreDoc& hit) {
       return _inclusive ? hit.score < _threshold : hit.score <= _threshold;

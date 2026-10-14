@@ -855,10 +855,10 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   // Stable: the links the last heuristic kept are already in its order, and a
   // score tie between two of them must not reshuffle them, or the pairs it
   // cleared below stop lining up.
-  absl::c_stable_sort(
-    items, [](const HnswReverseItem& l, const HnswReverseItem& r) {
-      return l.score > r.score;
-    });
+  absl::c_stable_sort(items,
+                      [](const HnswReverseItem& l, const HnswReverseItem& r) {
+                        return l.score > r.score;
+                      });
 
   auto& kept = s.rev_kept;
   auto& kept_scores = s.rev_kept_scores;

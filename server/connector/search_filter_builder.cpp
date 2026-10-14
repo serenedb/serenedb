@@ -856,7 +856,7 @@ inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
 
 std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
                                  double hi) {
-  if (info.stats == nullptr || !duckdb::NumericStats::HasMinMax(*info.stats)) {
+  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
     return std::nullopt;
   }
   const auto min = duckdb::NumericStats::Min(*info.stats).GetValue<double>();
@@ -1106,7 +1106,7 @@ absl::Status FromBetween(BoolTarget filter, const FilterContext& ctx,
   if (ctx.wide_ranges == WideRanges::DeclineWide && !ctx.negated &&
       !lower_val->IsNull() && !upper_val->IsNull()) {
     const auto* column_info = FindColumnInfoForExpr(ctx, between_input);
-    if (column_info != nullptr && column_info->column_stored &&
+    if (column_info && column_info->column_stored &&
         column_info->logical_type.IsIntegral()) {
       if (const auto share =
             RangeShare(*column_info, lower_val->GetValue<double>(),

@@ -48,7 +48,7 @@ class ColFilterVerify : public irs::detail::TableFilter {
 
   // Only a predicate on the computed score needs a score to decide; the
   // column chain narrows a window before one exists.
-  bool Foldable() const noexcept final { return _score_filter == nullptr; }
+  bool Foldable() const noexcept final { return !_score_filter; }
 
   irs::doc_id_t Live(irs::doc_id_t doc) final {
     if (_chain.Empty()) {
@@ -68,14 +68,14 @@ class ColFilterVerify : public irs::detail::TableFilter {
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;
 
-  void Rewind() {
+  void Rewind() final {
     if (_ctx) {
       _chain.Rewind(*_ctx);
     }
   }
 
   irs::detail::PointRead PointReads() const noexcept final {
-    if (_score_filter != nullptr || _chain.Empty()) {
+    if (_score_filter || _chain.Empty()) {
       return irs::detail::PointRead::None;
     }
     return _chain.PointReads();

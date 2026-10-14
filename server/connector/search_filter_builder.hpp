@@ -25,6 +25,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter.hpp>
@@ -37,11 +38,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "connector/term_dict.h"
 
-namespace duckdb {
-
-class BaseStatistics;
-
-}  // namespace duckdb
 namespace sdb::connector {
 
 enum class WideRanges : uint8_t {

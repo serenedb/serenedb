@@ -543,7 +543,7 @@ DeferredBuild BuildDeferredFilter(
     duckdb::ExpressionIterator::VisitExpression<
       duckdb::BoundColumnRefExpression>(
       *range, [&](const duckdb::BoundColumnRefExpression& r) { ref = &r; });
-    SDB_ENSURE(ref != nullptr, "a deferred range reads one column");
+    SDB_ENSURE(ref, "a deferred range reads one column");
     const auto it =
       claim.columns->find({ref->Binding().table_index.index,
                            ref->Binding().column_index.GetIndex()});

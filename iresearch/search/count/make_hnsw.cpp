@@ -25,7 +25,7 @@ namespace irs::count {
 
 Root::ptr Make(const HnswQuery& query, const Context& ctx) {
   auto hits = query.RunSearch(ctx.table);
-  if (ctx.table == nullptr || ctx.table->Foldable()) {
+  if (!ctx.table || ctx.table->Foldable()) {
     return MakeConstant(hits.size());
   }
   uint64_t live = 0;

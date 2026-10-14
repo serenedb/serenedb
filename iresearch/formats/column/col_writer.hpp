@@ -35,6 +35,7 @@
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/store/data_output.hpp"
 #include "iresearch/store/directory.hpp"
@@ -44,7 +45,6 @@
 namespace irs {
 
 class AnnWriter;
-class HnswBases;
 class IdxWriter;
 struct AnnBuildEnv;
 

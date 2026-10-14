@@ -482,7 +482,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
     const auto& sq = _cb->Sq();
     if (!_fast || _weights.l2 || sq.qtype != faiss::ScalarQuantizer::QT_8bit ||
         bound.width == 0 || bound.width % 32 != 0 || bound.query_step == 0 ||
-        bound.width % bound.query_step != 0 || bound.rows == nullptr) {
+        bound.width % bound.query_step != 0 || !bound.rows) {
       return false;
     }
     const auto d = static_cast<uint32_t>(sq.d);

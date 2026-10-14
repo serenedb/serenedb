@@ -28,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/store/data_input.hpp"  // IndexInput
@@ -40,7 +41,6 @@ namespace irs {
 struct Directory;
 struct AnnIndex;
 struct IResourceManager;
-class HnswBases;
 
 struct TermDictMeta {
   IndexFeatures features{IndexFeatures::None};

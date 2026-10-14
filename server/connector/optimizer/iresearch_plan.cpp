@@ -374,7 +374,7 @@ bool TryClaimIResearchConjunctImpl(
   // it cannot, duckdb rebinds the statement with the values as constants
   // before every execution, so declining here costs nothing.
   if (conjunct->HasParameter()) {
-    if (deferred == nullptr) {
+    if (!deferred) {
       return false;
     }
     deferred->any_parameter = true;
@@ -413,7 +413,7 @@ bool TryClaimIResearchConjunctImpl(
   const connector::ExpressionGetter* expression_getter = &expr_getter;
   connector::ColumnGetter recording_columns;
   connector::ExpressionGetter recording_expressions;
-  if (deferred != nullptr) {
+  if (deferred) {
     recording_columns = deferred->Recording(getter);
     recording_expressions = deferred->Recording(expr_getter);
     column_getter = &recording_columns;
@@ -1479,7 +1479,7 @@ bool ClaimSearchConjuncts(
   irs::Filter::ptr root = std::move(root_and);
   connector::EnsureIncludeSides(*root);
   if (has_clauses) {
-    irs::Optimize(root, {.scored = scan.score.text.has_value(),
+    irs::Optimize(root, {.scored = static_cast<bool>(scan.score.text),
                          .analyzed_fields = std::move(analyzed_fields),
                          .null_markers = &null_markers});
   }
@@ -1559,7 +1559,7 @@ bool StoredColumn(const duckdb::LogicalGet& get,
     return false;
   }
   const auto* info = bind_data.relation.ScannedIndex().FindColumnInfo(col_id);
-  return info != nullptr && info->IsStored();
+  return info && info->IsStored();
 }
 
 bool CallsSearchStub(const duckdb::Expression& expr) {
@@ -1894,13 +1894,13 @@ duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
     const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
     const auto* col = CastOfIntegerColumn(left);
     const auto* constant = &right;
-    if (col == nullptr) {
+    if (!col) {
       col = CastOfIntegerColumn(right);
       constant = &left;
       op = duckdb::FlipComparisonExpression(op);
     }
-    if (col == nullptr || constant->GetExpressionClass() !=
-                            duckdb::ExpressionClass::BOUND_CONSTANT) {
+    if (!col || constant->GetExpressionClass() !=
+                  duckdb::ExpressionClass::BOUND_CONSTANT) {
       return expr;
     }
     const auto& value =
@@ -1917,7 +1917,7 @@ duckdb::unique_ptr<duckdb::Expression> FoldColumnCast(
       CastOfIntegerColumn(duckdb::BoundBetweenExpression::Input(between));
     const auto& lower = duckdb::BoundBetweenExpression::LowerBound(between);
     const auto& upper = duckdb::BoundBetweenExpression::UpperBound(between);
-    if (col == nullptr ||
+    if (!col ||
         lower.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT ||
         upper.GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
       return expr;

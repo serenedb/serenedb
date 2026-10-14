@@ -293,8 +293,7 @@ bool IsSearchStub(const duckdb::BoundFunctionExpression& call) {
     void (*)(duckdb::DataChunk&, duckdb::ExpressionState&, duckdb::Vector&);
   const auto callback = call.Function().GetFunctionCallback();
   if (const auto* target = callback.target<Callback>();
-      target != nullptr &&
-      (*target == &SearchStubFn || *target == &ScorerStubFn)) {
+      target && (*target == &SearchStubFn || *target == &ScorerStubFn)) {
     return true;
   }
   const auto tsquery = MakeTSQueryType();

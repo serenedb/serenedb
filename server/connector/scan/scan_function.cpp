@@ -128,13 +128,13 @@ bool SameLimit(const duckdb::BoundLimitNode& node,
                const duckdb::Expression* expr) {
   switch (node.Type()) {
     case duckdb::LimitNodeType::UNSET:
-      return expr == nullptr;
+      return !expr;
     case duckdb::LimitNodeType::CONSTANT_VALUE:
-      return expr != nullptr &&
+      return expr &&
              expr->Equals(duckdb::BoundConstantExpression{duckdb::Value::BIGINT(
                static_cast<int64_t>(node.GetConstantValue()))});
     case duckdb::LimitNodeType::EXPRESSION_VALUE:
-      return expr != nullptr && expr->Equals(node.GetValueExpression());
+      return expr && expr->Equals(node.GetValueExpression());
     default:
       return false;
   }

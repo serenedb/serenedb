@@ -270,7 +270,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
       std::memcpy(ex_code + _lay.ex_code_size, &ex,
                   sizeof(faiss::rabitq_utils::ExtraBitsFactors));
     }
-    if (norm_out != nullptr) {
+    if (norm_out) {
       float sum = 0.f;
       for (uint32_t j = 0; j < _lay.rd; ++j) {
         sum += _residual[j] * _residual[j];
@@ -481,7 +481,7 @@ class RaBitQuantizerReader final : public QuantizerReader {
   /// the residual's direction, the stored norm its length, and the rotation is
   /// orthogonal so it inverts by transpose.
   bool Decode(const byte_type* code, float* out) const final {
-    if (!_lay.row_major || _cluster == nullptr) {
+    if (!_lay.row_major || !_cluster) {
       return false;
     }
     float norm = 0.f;

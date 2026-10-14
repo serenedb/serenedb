@@ -123,8 +123,7 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
     // A pool that exists to survive a lookup filter is not a rescore and keeps
     // the old shape, as does an index whose scores are already exact.
     l.per_segment_rescore =
-      g.topk.rerank_pool != 0 && !g.has_lookup_filter &&
-      g.vector_scorer != nullptr &&
+      g.topk.rerank_pool != 0 && !g.has_lookup_filter && g.vector_scorer &&
       g.vector_scorer->quant != irs::VectorQuantization::None;
     l.collector.emplace(
       l.per_segment_rescore ? l.segment_kth_score : g.topk.global_kth_score,
@@ -449,7 +448,7 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, TopKLocalState& l) {
                .fetcher = l.score_fetcher,
                .table = BeginVerify(l.col_verify, segment, g, l),
                .k = static_cast<uint32_t>(slots)});
-    EnsurePlanned(root != nullptr);
+    EnsurePlanned(static_cast<bool>(root));
     root->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
     ranked.resize(base + collector.AcceptedCount());
   }
@@ -526,7 +525,7 @@ void BuildAnswer(duckdb::ClientContext& ctx, ScanGlobalState& g,
       MaterializeHits(ctx, g, l, *t.fetched[u], *t.fetched_pk[u],
                       {t.answer.data() + fu.first, fu.count}, batch, row_hits);
     }
-    if (g.has_lookup_filter && g.vector_scorer != nullptr) {
+    if (g.has_lookup_filter && g.vector_scorer) {
       VerifyMore(ctx, g, l, row_hits);
     }
   }
@@ -574,7 +573,7 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
   t.offset = g.top_offset;
   t.shared_fetch = g.has_lookup_filter || t.limit > STANDARD_VECTOR_SIZE;
   const auto* vs = g.vector_scorer;
-  if (vs != nullptr && !vs->exact &&
+  if (vs && !vs->exact &&
       (vs->quant != irs::VectorQuantization::None || g.has_lookup_filter)) {
     const auto k = static_cast<double>(*g.top_k);
     // The search walks on quantized codes and this many of its candidates are
@@ -600,7 +599,7 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& context) {
              static_cast<double>(std::numeric_limits<uint32_t>::max())}));
   }
   t.pool = t.rerank_pool != 0 ? t.rerank_pool : static_cast<uint32_t>(*g.top_k);
-  if (vs != nullptr && vs->exact && g.has_lookup_filter) {
+  if (vs && vs->exact && g.has_lookup_filter) {
     g.workers = 1;
     t.pool = static_cast<uint32_t>(
       std::clamp<uint64_t>(g.reader->live_docs_count(), t.pool,

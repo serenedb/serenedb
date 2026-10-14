@@ -22,14 +22,11 @@
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 
 #include "catalog/entry/tokenizer.h"
-namespace duckdb {
 
-class BoundFunctionExpression;
-
-}  // namespace duckdb
 namespace sdb::connector {
 
 inline constexpr std::string_view kTSQueryTypeName = "TSQUERY";

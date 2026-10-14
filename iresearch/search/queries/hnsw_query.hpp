@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_reader.hpp"
@@ -36,8 +37,6 @@
 #include "iresearch/utils/containers/fixed.hpp"
 
 namespace irs {
-
-struct PanoramaQuery;
 
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:

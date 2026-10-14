@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 
@@ -32,7 +33,6 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
-class HnswBases;
 class IndexFieldOptions;
 struct AnnBuildEnv;
 

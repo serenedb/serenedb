@@ -48,10 +48,10 @@ class ExactScanner {
     _last = doc_limits::min() + rows;
     _doc = _last;
     _end = _last;
-    if (const auto* inner = query.Inner(); inner != nullptr) {
+    if (const auto* inner = query.Inner()) {
       auto node = inner->PlanFill({}, ScoreMergeType::Noop);
       SDB_ASSERT(node);
-      if (auto* folded = node->Folded(); folded != nullptr) {
+      if (auto* folded = node->Folded()) {
         _set.emplace(std::move(*folded), fill::DocsMask{nullptr});
       } else {
         _set.emplace(std::move(node), rows, fill::DocsMask{nullptr});
@@ -96,7 +96,7 @@ class ExactScanner {
     }
   }
 
-  bool Gated() const noexcept { return _threshold.has_value(); }
+  bool Gated() const noexcept { return static_cast<bool>(_threshold); }
 
   bool Inside(score_t distance) const noexcept {
     if (!_threshold) {

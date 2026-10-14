@@ -25,6 +25,8 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
@@ -32,9 +34,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-
-class AnnQueryCache;
-class QuantizerCodeBound;
 
 struct AnnExactCodes {
   std::shared_ptr<const void> owner;

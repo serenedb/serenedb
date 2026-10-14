@@ -1010,8 +1010,7 @@ TEST(centroids_builder_test, beam_recall_on_boundary_queries) {
       }
       std::partial_sort(scored.begin(), scored.begin() + k, scored.end());
       std::vector<uint32_t> got;
-      tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr,
-                  beam);
+      tree.Search(std::span<const float>{q, d}, in, nprobe, got, nullptr, beam);
       for (size_t t = 0; t < k; ++t) {
         if (std::ranges::find(got, scored[t].second) != got.end()) {
           ++hit;

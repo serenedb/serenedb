@@ -299,10 +299,9 @@ inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 class HnswCrew {
  public:
   HnswCrew(const AnnBuildEnv* env, uint32_t want) noexcept
-    : _env{env != nullptr && env->executor != nullptr && want > 1 ? env
-                                                                  : nullptr},
-      _want{_env != nullptr ? want : 1U} {
-    if (_env != nullptr) {
+    : _env{env && env->executor && want > 1 ? env : nullptr},
+      _want{_env ? want : 1U} {
+    if (_env) {
       _held = _env->acquire(_want, 0);
     }
   }
@@ -312,16 +311,16 @@ class HnswCrew {
 
   ~HnswCrew() {
     Join();
-    if (_env != nullptr) {
+    if (_env) {
       _env->release(_held);
     }
   }
 
-  bool CanGrow() const noexcept { return _env != nullptr; }
+  bool CanGrow() const noexcept { return _env; }
   uint32_t Want() const noexcept { return _want; }
 
   uint32_t Take() {
-    if (_env != nullptr && _held < _want) {
+    if (_env && _held < _want) {
       _held += _env->acquire(_want - _held, _held);
     }
     return _held;
@@ -596,7 +595,7 @@ struct HnswCodeDistFactory {
       dist.pair_reader = MakeQuantizerReader(dist.pair_book);
       dist.pair_reader->StartCluster(centroid);
     }
-    dist.SetWindow(resident, 0, resident != nullptr ? rows : 0);
+    dist.SetWindow(resident, 0, resident ? rows : 0);
     return dist;
   }
 
@@ -679,7 +678,7 @@ struct HnswInsertJob {
     if (!slot) {
       slot = std::make_unique<WorkerSlot>(_factory.Make());
       slot->scratch.search.visited.Reset(_rows);
-      if (_window.base != nullptr) {
+      if (_window.base) {
         slot->dist.SetWindow(_window.base, _window.first, _window.count);
       }
     }
@@ -1103,10 +1102,10 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
                               std::span<const uint8_t> valid, uint32_t d,
                               bool enough) {
   HnswBases::Basis basis;
-  if (bases != nullptr) {
+  if (bases) {
     basis = bases->Find(field);
   }
-  if (!basis && donor.index != nullptr) {
+  if (!basis && donor.index) {
     if (auto data = donor.index->Load(*donor.reader)) {
       basis = data->rotation;
     }
@@ -1115,7 +1114,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
     basis = std::make_shared<const std::vector<float>>(
       TrainPanoramaBasis(vectors, valid, d));
   }
-  if (basis && bases != nullptr) {
+  if (basis && bases) {
     basis = bases->Publish(field, std::move(basis));
   }
   SDB_ASSERT(!basis || basis->size() == size_t{d} * d);
@@ -1224,7 +1223,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
         _info.quant.kind, _d,
         std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
         EffectiveQuantMetric(_info.metric), /*row_major=*/true);
-      SDB_ENSURE(stats != nullptr, "hnsw: sq8 statistics round-trip");
+      SDB_ENSURE(stats, "hnsw: sq8 statistics round-trip");
       ComputeCodeTails(*stats, _codes.data(), _record_size, _rows, _d, env,
                        _tails);
       HnswCodeDistFactory factory{.codes = _codes.data(),

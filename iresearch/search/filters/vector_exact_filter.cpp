@@ -33,7 +33,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   const auto& opts = options();
   const auto* column = segment.Column(field_id());
   const auto* columns = segment.GetColReader();
-  if (column == nullptr || columns == nullptr || column->Child() == nullptr ||
+  if (!column || !columns || !column->Child() ||
       column->ArraySize() != opts.query.size() || column->RowCount() == 0) {
     return QueryBuilder::Empty();
   }
@@ -42,7 +42,7 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
     return QueryBuilder::Empty();
   }
   AnnExactCodes codes;
-  if (const auto* ann = segment.Ann(opts.centroids_id); ann != nullptr) {
+  if (const auto* ann = segment.Ann(opts.centroids_id)) {
     codes = ann->PrepareExact(segment, opts.query, opts.metric);
   }
   std::optional<score_t> threshold;

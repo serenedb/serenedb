@@ -961,7 +961,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
         float* out = _byte_lut.data() + size_t{p} * kByteLutSize;
         const float* hi = 2 * p + 1 < lay.m1 ? lo + kFastScanKsub : nullptr;
         for (uint32_t h = 0; h < kFastScanKsub; ++h) {
-          const float hv = hi != nullptr ? hi[h] : 0.f;
+          const float hv = hi ? hi[h] : 0.f;
           for (uint32_t l = 0; l < kFastScanKsub; ++l) {
             out[h * kFastScanKsub + l] = lo[l] + hv;
           }
@@ -1080,7 +1080,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   void StartCluster(const float* centroid) final {
-    SDB_ASSERT(centroid != nullptr);
+    SDB_ASSERT(centroid);
     _cluster = centroid;
     _cluster_rot.clear();
     RefreshClusterCorrection();
@@ -1150,7 +1150,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   bool Decode(const byte_type* code, float* out) const final {
-    if (!_lay.row_major || _cluster == nullptr) {
+    if (!_lay.row_major || !_cluster) {
       return false;
     }
     const auto& stats = _cb->Stats();
@@ -1196,7 +1196,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   bool SupportsPairScores() const noexcept final {
-    return _lay.row_major && !_lay.full && _cluster != nullptr;
+    return _lay.row_major && !_lay.full && _cluster;
   }
 
   bool PreparePairTerms(const byte_type* base, uint32_t record_size,
@@ -1294,7 +1294,7 @@ class TurboQuantizerReader final : public QuantizerReader {
     if (!_pair_lut.empty()) {
       return;
     }
-    SDB_ASSERT(_cluster != nullptr);
+    SDB_ASSERT(_cluster);
     _cc = ComputeDistance<VectorMetric::InnerProduct>(
       _cluster, _cluster, static_cast<uint16_t>(_lay.d));
     const TurboQuantCentroids& tc = _cb->Stats().Centroids();
@@ -1584,7 +1584,7 @@ class TurboQuantizerReader final : public QuantizerReader {
   }
 
   void RefreshClusterCorrection() noexcept {
-    if (_cluster == nullptr) {
+    if (!_cluster) {
       return;
     }
     const std::span<const float> query = _cur->Query();

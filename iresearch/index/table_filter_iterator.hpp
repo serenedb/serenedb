@@ -41,6 +41,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_extract.hpp"
 #include "iresearch/index/iterators.hpp"
+#include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -52,18 +53,10 @@ class ClientContext;
 
 }  // namespace duckdb
 namespace irs {
-namespace detail {
-
-class LazyBitset;
-
-}  // namespace detail
 
 class ColFilterLeaf {
  public:
   ColFilterLeaf(const Filter& filter, const SubReader& segment);
-  ColFilterLeaf(ColFilterLeaf&&) noexcept;
-  ColFilterLeaf& operator=(ColFilterLeaf&&) noexcept;
-  ~ColFilterLeaf();
 
   bool Contains(doc_id_t doc);
 

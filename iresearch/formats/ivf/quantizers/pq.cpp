@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/random/distributions.h>
 #include <faiss/impl/ProductQuantizer.h>
 #include <faiss/utils/fp16.h>
@@ -283,7 +284,7 @@ class ProductQuantizerReader final : public QuantizerReader {
   }
 
   void StartCluster(const float* centroid) final {
-    SDB_ASSERT(centroid != nullptr);
+    SDB_ASSERT(centroid);
     const std::span<const float> query = _cb->Query();
     // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
     // query-only and precomputed once per query in the codebook.
@@ -405,7 +406,7 @@ void InitLine(std::span<const float> sorted, uint32_t k, float* cent) {
 void TrainLine(const float* x, size_t n, uint32_t k, uint32_t niter,
                float* cent) {
   std::vector<float> sorted(x, x + n);
-  std::ranges::sort(sorted);
+  absl::c_sort(sorted);
   InitLine(sorted, k, cent);
   std::vector<double> prefix(n + 1);
   for (size_t i = 0; i < n; ++i) {
@@ -417,7 +418,7 @@ void TrainLine(const float* x, size_t n, uint32_t k, uint32_t niter,
   std::vector<size_t> count(k);
   for (uint32_t it = 0; it < niter; ++it) {
     std::iota(by_value.begin(), by_value.end(), 0U);
-    std::ranges::stable_sort(
+    absl::c_stable_sort(
       by_value, [&](uint32_t l, uint32_t r) { return cent[l] < cent[r]; });
     size_t moved = n;
     size_t begin = 0;
@@ -743,7 +744,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     for (size_t m = 0; m < _pq.M; ++m) {
       const float* cent = _pq.centroids.data() + m * kPq8Ksub;
       std::iota(by_value.begin(), by_value.end(), 0U);
-      std::ranges::stable_sort(
+      absl::c_stable_sort(
         by_value, [&](uint32_t l, uint32_t r) { return cent[l] < cent[r]; });
       float* mid = _mid.data() + m * kPq8Ksub;
       uint8_t* order = _order.data() + m * kPq8Ksub;

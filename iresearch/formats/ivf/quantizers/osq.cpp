@@ -556,7 +556,7 @@ class OsqQuantizerReader final : public QuantizerReader {
   }
 
   void StartCluster(const float* centroid) final {
-    SDB_ASSERT(centroid != nullptr);
+    SDB_ASSERT(centroid);
     _cluster = centroid;
     double cc = 0.0;
     for (uint32_t i = 0; i < _lay.d; ++i) {
@@ -583,7 +583,7 @@ class OsqQuantizerReader final : public QuantizerReader {
   }
 
   bool Decode(const byte_type* code, float* out) const final {
-    if (_cluster == nullptr) {
+    if (!_cluster) {
       return false;
     }
     const OsqTerms t = RowTerms(code);
@@ -615,13 +615,13 @@ class OsqQuantizerReader final : public QuantizerReader {
     } else {
       _own->Rekey(query);
     }
-    if (_cluster != nullptr) {
+    if (_cluster) {
       KeyQuery();
     }
     return true;
   }
 
-  bool SupportsPairScores() const noexcept final { return _cluster != nullptr; }
+  bool SupportsPairScores() const noexcept final { return _cluster; }
 
   bool PreparePairTerms(const byte_type* /*base*/, uint32_t /*record_size*/,
                         uint64_t rows, std::vector<float>& terms) final {

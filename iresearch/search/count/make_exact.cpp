@@ -38,7 +38,7 @@ class ExactCount : public Root {
       if (n == 0) {
         return count;
       }
-      if (_table != nullptr) {
+      if (_table) {
         n = _table->Narrow(_docs, nullptr, n);
       }
       count += n;

@@ -30,7 +30,11 @@
 
 namespace irs::detail {
 
-enum class PointRead : uint8_t { None, Row, Vector };
+enum class PointRead : uint8_t {
+  None,
+  Row,
+  Vector,
+};
 
 struct TableFilter {
   virtual ~TableFilter() = default;

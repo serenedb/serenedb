@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
 namespace duckdb {
@@ -30,8 +31,6 @@ class DatabaseInstance;
 }
 
 namespace irs {
-
-class HnswBases;
 
 // The scorer a score-bound-pruning iterator ranks by.
 using ScorerPtr = const Scorer*;

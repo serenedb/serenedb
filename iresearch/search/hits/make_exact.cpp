@@ -33,7 +33,7 @@ class ExactHits : public Root {
   ExactHits(const ExactVectorQuery& query, const Context& ctx,
             const irs::detail::ScoreArgs& args)
     : _scanner{query}, _fetcher{ctx.fetcher} {
-    SDB_ASSERT(args.scorer != nullptr);
+    SDB_ASSERT(args.scorer);
     _provider.attr.value = _block;
     _score = args.scorer->PrepareScorer({
       .segment = query.Segment(),
@@ -59,9 +59,8 @@ class ExactHits : public Root {
           return n;
         }
       }
-      const auto m =
-        static_cast<scores_size_t>(std::min<uint32_t>(_have - _pos,
-                                                      kScoreBlock));
+      const auto m = static_cast<scores_size_t>(
+        std::min<uint32_t>(_have - _pos, kScoreBlock));
       std::copy_n(_docs + _pos, m, docs + n);
       std::copy_n(_dists + _pos, m, _block);
       _pos += m;

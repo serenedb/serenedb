@@ -27,13 +27,13 @@
 #include <vector>
 
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_graph.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 
 namespace irs {
 
 class ColumnReader;
-class HnswBases;
 class ReadContext;
 
 class HnswWriter final : public AnnWriter {

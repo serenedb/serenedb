@@ -190,7 +190,7 @@ class RawVectorReader {
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
     const auto* q = _read_ctx.TryReadStable(off, span);
-    if (q == nullptr) {
+    if (!q) {
       return;
     }
     for (uint64_t o = 0; o < span; o += 64) {
@@ -208,7 +208,7 @@ class RawVectorReader {
   // to score. Stopping at the window edge keeps the pointer.
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
     const auto* child = _column->Child();
-    SDB_ASSERT(child != nullptr);
+    SDB_ASSERT(child);
     const uint64_t elem =
       (static_cast<uint64_t>(first) - doc_limits::min()) * _d;
     _win = child->Locate(elem, _win);

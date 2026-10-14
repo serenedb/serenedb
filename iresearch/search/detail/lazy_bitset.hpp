@@ -73,7 +73,7 @@ class LazyBitset {
       _has_removals{!_mask.Empty()},
       _filled{_set.End()} {
     Drop(0, _set.WordCount());
-    if (table != nullptr) {
+    if (table) {
       SDB_ASSERT(table->Foldable());
       _set.Trim();
       auto* const words = _set.Words();
@@ -94,7 +94,7 @@ class LazyBitset {
       _has_removals{!_mask.Empty()},
       _table{table} {
     SDB_ASSERT(_node);
-    SDB_ASSERT(_table == nullptr || _table->Foldable());
+    SDB_ASSERT(!_table || _table->Foldable());
   }
 
   // Every doc of the segment, narrowed by the removals and the table filter.
@@ -103,7 +103,7 @@ class LazyBitset {
       _mask{std::move(mask)},
       _has_removals{!_mask.Empty()},
       _table{table} {
-    SDB_ASSERT(_table == nullptr || _table->Foldable());
+    SDB_ASSERT(!_table || _table->Foldable());
   }
 
   const uint64_t* Words() const noexcept { return _set.Words(); }
@@ -138,7 +138,7 @@ class LazyBitset {
         next = min + kWindowDocs;
       }
       Drop(first, first + kWindowWords);
-      if (_table != nullptr) {
+      if (_table) {
         const auto last =
           std::min<size_t>(first + kWindowWords, _set.WordCount());
         if (last == _set.WordCount()) {

@@ -85,7 +85,7 @@ SereneDB has a [Secrets manager](../sql/statements/create_secret/index.md), whic
 
 Configuration options come with different default [scopes](../sql/statements/set/index.md#scopes): `GLOBAL` and `LOCAL`. Each scope is listed below, grouped by the part of the system the option affects.
 
-To search the reference rather than read it, query the catalog — every option on this page is a `setting` object:
+To search the reference rather than read it, query the catalog -- every option on this page is a `setting` object:
 
 ```sql
 SELECT name, summary FROM sdb_docs.objects

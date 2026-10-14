@@ -44,10 +44,9 @@ class ExactChain : public Root {
       _table{ctx.table},
       _boost{score.boost},
       _k{ctx.k},
-      _ranked{_codes.bound != nullptr && ctx.table == nullptr &&
-              score.boost > 0.f && ctx.k != 0 &&
+      _ranked{_codes.bound && !ctx.table && score.boost > 0.f && ctx.k != 0 &&
               ctx.k < query.Segment().live_docs_count()} {
-    SDB_ASSERT(score.scorer != nullptr);
+    SDB_ASSERT(score.scorer);
     _provider.attr.value = _block;
     _score = score.scorer->PrepareScorer({
       .segment = query.Segment(),
@@ -66,7 +65,7 @@ class ExactChain : public Root {
       if (n == 0) {
         return;
       }
-      if (_codes.bound != nullptr) {
+      if (_codes.bound) {
         n = Prune(n, collector);
         if (n == 0) {
           continue;
@@ -88,7 +87,7 @@ class ExactChain : public Root {
       n = kept;
       _fetcher.Fetch(std::span<const doc_id_t>{_docs, n});
       _score.Score(_scores, static_cast<scores_size_t>(n));
-      if (_table != nullptr) {
+      if (_table) {
         n = _table->Narrow(_docs, _scores, n);
       }
       collector.AddDocs(_docs, n, _scores);

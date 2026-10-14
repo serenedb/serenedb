@@ -166,7 +166,7 @@ duckdb::idx_t KeepInRange(const duckdb::Vector& values, duckdb::idx_t count,
         static_cast<U>(static_cast<U>(data[first + j]) - base);
       bits |= uint64_t{shifted <= span} << j;
     }
-    if (validity != nullptr) {
+    if (validity) {
       bits &= validity[w];
     }
     words[w] &= bits;
@@ -184,7 +184,7 @@ ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
   }
   auto node = _query->PlanFill({}, ScoreMergeType::Noop);
   SDB_ASSERT(node);
-  if (auto* folded = node->Folded(); folded != nullptr) {
+  if (auto* folded = node->Folded()) {
     _set = std::make_unique<detail::LazyBitset>(std::move(*folded),
                                                 fill::DocsMask{nullptr});
     return;
@@ -194,12 +194,8 @@ ColFilterLeaf::ColFilterLeaf(const Filter& filter, const SubReader& segment)
     fill::DocsMask{nullptr});
 }
 
-ColFilterLeaf::ColFilterLeaf(ColFilterLeaf&&) noexcept = default;
-ColFilterLeaf& ColFilterLeaf::operator=(ColFilterLeaf&&) noexcept = default;
-ColFilterLeaf::~ColFilterLeaf() = default;
-
 bool ColFilterLeaf::Contains(doc_id_t doc) {
-  return _set != nullptr && doc < _set->End() && _set->Contains(doc);
+  return _set && doc < _set->End() && _set->Contains(doc);
 }
 
 duckdb::TableFilterState& ColFilterStateCache::State(
@@ -278,8 +274,8 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       for (const auto field : spec.row_fields) {
         const auto* column = col_reader.Column(field);
         row.readers.push_back(column);
-        row.scans.push_back(column != nullptr ? column->InitScan(ctx)
-                                              : irs::ColumnReader::ScanState{});
+        row.scans.push_back(column ? column->InitScan(ctx)
+                                   : irs::ColumnReader::ScanState{});
       }
       row.points.resize(row.readers.size());
       row.leaves = spec.row_leaves;
@@ -584,7 +580,7 @@ duckdb::idx_t ColFilterChain::FilterRows(uint64_t anchor, duckdb::idx_t span,
     for (size_t j = 0; j < row.readers.size(); ++j) {
       auto& vector = chunk.data[j];
       const auto* reader = row.readers[j];
-      if (reader == nullptr) {
+      if (!reader) {
         duckdb::FlatVector::ValidityMutable(vector).SetAllInvalid(survivors);
       } else if (span <= STANDARD_VECTOR_SIZE) {
         reader->GatherDense(row.scans[j], anchor, sel, survivors, span, vector);
@@ -619,7 +615,7 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
       auto& vector = chunk.data[j];
       const auto* reader = r.readers[j];
-      if (reader == nullptr) {
+      if (!reader) {
         duckdb::FlatVector::SetNull(vector, 0, true);
         continue;
       }
@@ -700,8 +696,7 @@ detail::PointRead ColFilterChain::PointReads() const noexcept {
   }
   for (const auto& r : _rows) {
     for (const auto* reader : r.readers) {
-      if (reader != nullptr &&
-          absl::c_any_of(reader->DataBlocks(), [](const auto& block) {
+      if (reader && absl::c_any_of(reader->DataBlocks(), [](const auto& block) {
             return block.codec->type ==
                    duckdb::CompressionType::COMPRESSION_ZSTD;
           })) {
@@ -713,7 +708,7 @@ detail::PointRead ColFilterChain::PointReads() const noexcept {
 }
 
 bool ColFilterChain::AdmitRow(uint64_t row) {
-  SDB_ASSERT(_col_reader != nullptr);
+  SDB_ASSERT(_col_reader);
   for (auto& f : _cols) {
     if (!f.point) {
       f.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
@@ -909,7 +904,7 @@ void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   }
   for (auto& r : _rows) {
     for (size_t j = 0; j < r.readers.size(); ++j) {
-      if (r.readers[j] != nullptr) {
+      if (r.readers[j]) {
         r.scans[j] = r.readers[j]->InitScan(ctx);
       }
     }

@@ -28,16 +28,12 @@
 
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
+#include "search/inverted_index_storage.h"
 namespace duckdb {
 
 class ClientContext;
 
 }  // namespace duckdb
-namespace sdb::search {
-
-struct InvertedIndexSnapshot;
-
-}  // namespace sdb::search
 namespace sdb::connector {
 
 struct ScanBindData;

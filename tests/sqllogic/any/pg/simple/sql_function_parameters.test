@@ -65,4 +65,31 @@ SELECT fnp.next_day('2024-01-31'::varchar);
 
 
 statement ok
+CREATE FUNCTION fnp.doubled(integer) RETURNS integer RETURN $1 * 2;
+
+
+statement ok
+CREATE FUNCTION fnp.plus_one(integer) RETURNS integer BEGIN ATOMIC SELECT $1 + 1; END;
+
+
+statement ok
+CREATE FUNCTION fnp.as_name() RETURNS name LANGUAGE sql AS 'SELECT ''abc''::text';
+
+
+statement ok
+CREATE FUNCTION fnp.text_list() RETURNS text[] LANGUAGE sql AS 'SELECT ARRAY[1, 2]';
+
+
+statement ok
+CREATE FUNCTION fnp.as_interval() RETURNS interval LANGUAGE sql AS 'SELECT ''01:02:03''::time';
+
+
+query
+SELECT fnp.doubled(21) AS a, fnp.plus_one(41) AS b, fnp.as_name()::text AS c, array_to_string(fnp.text_list(), ',') AS d, fnp.as_interval()::text AS e;
+----
+a	b	c	d	e
+42	42	abc	1,2	01:02:03
+
+
+statement ok
 DROP SCHEMA fnp CASCADE;

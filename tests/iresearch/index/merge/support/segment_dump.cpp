@@ -38,8 +38,10 @@
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <map>
+#include <numeric>
 #include <set>
 
+#include "index/merge/support/segment_gen.hpp"
 #include "postings_cursor.hpp"
 
 namespace tests::merge {
@@ -186,6 +188,35 @@ void AppendPostings(const DumpTerm& term, IndexFeatures features,
   }
 }
 
+SegmentDump Permute(SegmentDump dump, std::span<const size_t> order) {
+  std::vector<irs::doc_id_t> renumbered(order.size());
+  for (size_t row = 0; row != order.size(); ++row) {
+    renumbered[order[row]] =
+      static_cast<irs::doc_id_t>(row + irs::doc_limits::min());
+  }
+  for (auto& field : dump.fields) {
+    for (auto& term : field.terms) {
+      for (auto& posting : term.postings) {
+        posting.doc = renumbered[posting.doc - irs::doc_limits::min()];
+      }
+      std::ranges::sort(term.postings, {}, &DumpPosting::doc);
+    }
+    if (!field.norms.empty()) {
+      const auto norms = field.norms;
+      for (size_t row = 0; row != order.size(); ++row) {
+        field.norms[row] = norms[order[row]];
+      }
+    }
+  }
+  for (auto& column : dump.columns) {
+    const auto values = column.values;
+    for (size_t row = 0; row != order.size(); ++row) {
+      column.values[row] = values[order[row]];
+    }
+  }
+  return dump;
+}
+
 std::string Escape(irs::bytes_view value) {
   return absl::CHexEscape(irs::ViewCast<char>(value));
 }
@@ -224,6 +255,38 @@ std::string FirstOf(std::string_view what, const std::vector<T>& expected,
 }
 
 }  // namespace
+
+std::vector<duckdb::Value> LiveValues(const irs::SubReader& segment,
+                                      irs::field_id id) {
+  const auto renumber = Renumber(segment);
+  std::vector<duckdb::Value> out;
+  const auto* cs = segment.GetColReader();
+  const auto* col = cs != nullptr ? cs->Column(id) : nullptr;
+  uint64_t rows = 0;
+  if (col != nullptr) {
+    irs::ReadContext ctx{*cs};
+    auto state = col->InitScan(ctx);
+    rows = col->RowCount();
+    for (uint64_t row = 0; row < rows;) {
+      const auto take = std::min<uint64_t>(rows - row, STANDARD_VECTOR_SIZE);
+      duckdb::Vector vec{col->Type(), STANDARD_VECTOR_SIZE};
+      col->Scan(state, vec, take);
+      for (uint64_t k = 0; k != take; ++k) {
+        const auto doc = row + k + irs::doc_limits::min();
+        if (doc < renumber.size() && irs::doc_limits::valid(renumber[doc])) {
+          out.push_back(vec.GetValue(k));
+        }
+      }
+      row += take;
+    }
+  }
+  for (auto doc = rows + irs::doc_limits::min(); doc < renumber.size(); ++doc) {
+    if (irs::doc_limits::valid(renumber[doc])) {
+      out.emplace_back();
+    }
+  }
+  return out;
+}
 
 SegmentDump Dump(const irs::SubReader& segment) {
   const auto renumber = Renumber(segment);
@@ -331,6 +394,32 @@ SegmentDump ExpectedMerge(std::span<const irs::SubReader* const> inputs) {
     dumps.push_back(Dump(*input));
   }
   return Concat(dumps);
+}
+
+SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
+                                const irs::SortSpec& spec) {
+  auto expected = ExpectedMerge(inputs);
+  std::vector<std::vector<duckdb::Value>> keys(spec.keys.size());
+  for (const auto* input : inputs) {
+    for (size_t k = 0; k != spec.keys.size(); ++k) {
+      auto values = LiveValues(*input, spec.keys[k].column);
+      keys[k].insert(keys[k].end(), std::make_move_iterator(values.begin()),
+                     std::make_move_iterator(values.end()));
+    }
+  }
+  std::vector<size_t> order(expected.docs);
+  std::iota(order.begin(), order.end(), size_t{0});
+  std::ranges::stable_sort(order, [&](size_t lhs, size_t rhs) {
+    for (size_t k = 0; k != spec.keys.size(); ++k) {
+      const auto cmp =
+        CompareKeyValues(keys[k][lhs], keys[k][rhs], spec.keys[k]);
+      if (cmp != 0) {
+        return cmp < 0;
+      }
+    }
+    return false;
+  });
+  return Permute(std::move(expected), order);
 }
 
 std::string Describe(const SegmentDump& dump) {

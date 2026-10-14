@@ -41,7 +41,8 @@ using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
 class PostingsMerger {
  public:
-  PostingsMerger(size_t inputs, const MergeProgress& progress);
+  PostingsMerger(size_t inputs, const MergeProgress& progress,
+                 bool sorted = false);
   ~PostingsMerger();
 
   PostingsMerger(const PostingsMerger&) = delete;

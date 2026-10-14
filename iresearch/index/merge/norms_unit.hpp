@@ -29,6 +29,7 @@
 namespace irs {
 
 class ColWriter;
+class MergeOrder;
 class NormColumnReader;
 
 const NormColumnReader* SourceNormColumn(const MergeSource& source,
@@ -44,6 +45,7 @@ LiveNormStats ComputeLiveNormStats(field_id id,
                                    std::span<const MergeSource> sources);
 
 void MergeNormColumn(ColWriter& col_writer, field_id id, field_id out_id,
-                     std::span<const MergeSource> sources);
+                     std::span<const MergeSource> sources,
+                     const MergeOrder* order = nullptr);
 
 }  // namespace irs

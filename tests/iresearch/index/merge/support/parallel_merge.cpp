@@ -80,6 +80,9 @@ bool RunUnits(irs::MergePlan& plan, size_t threads,
 }  // namespace
 
 bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
+  if (plan.OrderPending() && !plan.RunOrder()) {
+    return false;
+  }
   irs::MergeSchedule schedule{plan};
   RunUnits(
     plan, _threads, [&] { return schedule.Claim(); },
@@ -89,6 +92,9 @@ bool ThreadedMergeExecutor::Run(irs::MergePlan& plan) {
 }
 
 bool ShuffledMergeExecutor::Run(irs::MergePlan& plan) {
+  if (plan.OrderPending() && !plan.RunOrder()) {
+    return false;
+  }
   const auto units = plan.Units();
   std::vector<size_t> waiting(units.size());
   std::vector<std::vector<size_t>> dependents(units.size());

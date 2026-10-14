@@ -28,6 +28,8 @@
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -73,14 +75,37 @@ struct SegmentShape {
   bool has_norm_field = true;
 };
 
+struct GeneratedDoc {
+  std::string key;
+  std::string text;
+  std::optional<std::string> tag;
+  std::optional<std::string> normed;
+  std::string_view mixed;
+  std::vector<std::optional<duckdb::Value>> values;
+};
+
 void WriteValue(irs::IndexWriter::Document& doc, irs::field_id id,
                 const duckdb::LogicalType& type, const duckdb::Value& value);
 
 void RemoveTerms(irs::IndexWriter& writer, irs::field_id field,
                  std::span<const std::string> terms);
 
+int CompareKeyValues(const duckdb::Value& lhs, const duckdb::Value& rhs,
+                     const irs::SortKey& key);
+
+std::vector<GeneratedDoc> GenerateDocs(Generator& gen,
+                                       const SegmentShape& shape,
+                                       size_t& next_id);
+
+void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
+              const irs::SortSpec& spec);
+
+void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
+                std::span<const GeneratedDoc> docs);
+
 void WriteSegment(irs::IndexWriter& writer, Generator& gen,
-                  const SegmentShape& shape, size_t& next_id);
+                  const SegmentShape& shape, size_t& next_id,
+                  const irs::SortSpec* sort = nullptr);
 
 SegmentShape RandomShape(Generator& gen);
 

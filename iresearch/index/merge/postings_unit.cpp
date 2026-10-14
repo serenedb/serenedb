@@ -22,6 +22,9 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
@@ -171,6 +174,168 @@ uint32_t CompoundPostings::NextLive(TermPostings& it, const DocRemap& remap,
   }
 }
 
+class SortedPostings : public TermPostings {
+ public:
+  using PostingsT = CompoundPostings::PostingsT;
+  using IteratorsT = CompoundPostings::IteratorsT;
+
+  static constexpr auto kProgressStepDocs = CompoundPostings::kProgressStepDocs;
+
+  explicit SortedPostings(const MergeProgress& progress) noexcept
+    : _progress(progress, kProgressStepDocs) {}
+
+  template<typename Func>
+  void Reset(Func&& func, IndexFeatures features) {
+    func(_iterators);
+    _has_freq = IndexFeatures::None != (features & IndexFeatures::Freq);
+    _has_pos = IndexFeatures::None != (features & IndexFeatures::Pos);
+    _cursors.resize(_iterators.size());
+    for (size_t i = 0; i != _cursors.size(); ++i) {
+      auto& c = _cursors[i];
+      c.at = 0;
+      c.size = 0;
+      c.skip = 0;
+      Settle(i);
+    }
+    _recorded = 0;
+    _walked = 0;
+    _left = 0;
+  }
+
+  void Clear() noexcept {
+    _iterators.clear();
+    _cursors.clear();
+  }
+
+  bool Aborted() const noexcept { return !static_cast<bool>(_progress); }
+
+  uint32_t NextDocs(doc_id_t* docs, uint32_t* freqs) final;
+
+  void NextPositions(uint32_t* pos, uint32_t* offs_start, uint32_t* offs_len,
+                     uint32_t n) final;
+
+ private:
+  struct Cursor {
+    doc_id_t docs[doc_limits::kBlockSize];
+    uint32_t freqs[doc_limits::kBlockSize];
+    uint32_t at = 0;
+    uint32_t size = 0;
+    uint64_t skip = 0;
+    doc_id_t head = doc_limits::eof();
+  };
+
+  void Settle(size_t i);
+
+  std::vector<PostingsT> _iterators;
+  std::vector<Cursor> _cursors;
+  ProgressTracker _progress;
+  size_t _input[doc_limits::kBlockSize];
+  uint32_t _freq[doc_limits::kBlockSize];
+  uint64_t _skip[doc_limits::kBlockSize];
+  uint32_t _recorded = 0;
+  uint32_t _walked = 0;
+  uint64_t _left = 0;
+  size_t _current = 0;
+  bool _has_freq = false;
+  bool _has_pos = false;
+};
+
+void SortedPostings::Settle(size_t i) {
+  auto& c = _cursors[i];
+  auto& [it, remap, source] = _iterators[i];
+  while (true) {
+    if (c.at == c.size) {
+      c.size = it->NextDocs(c.docs, c.freqs);
+      c.at = 0;
+      if (c.size == 0) {
+        c.head = doc_limits::eof();
+        return;
+      }
+    }
+    const auto doc = c.docs[c.at];
+    if (!remap->IsMasked(doc)) {
+      c.head = remap->Remap(doc);
+      return;
+    }
+    if (_has_pos) {
+      c.skip += c.freqs[c.at];
+    }
+    ++c.at;
+  }
+}
+
+uint32_t SortedPostings::NextDocs(doc_id_t* docs, uint32_t* freqs) {
+  uint32_t n = 0;
+  while (n != doc_limits::kBlockSize) {
+    size_t best = 0;
+    doc_id_t best_head = doc_limits::eof();
+    doc_id_t rival_head = doc_limits::eof();
+    for (size_t i = 0; i != _cursors.size(); ++i) {
+      const auto head = _cursors[i].head;
+      if (head < best_head) {
+        rival_head = best_head;
+        best_head = head;
+        best = i;
+      } else if (head < rival_head) {
+        rival_head = head;
+      }
+    }
+    if (doc_limits::eof(best_head)) {
+      break;
+    }
+    auto& c = _cursors[best];
+    while (n != doc_limits::kBlockSize && c.head < rival_head) {
+      docs[n] = c.head;
+      if (_has_freq) {
+        freqs[n] = c.freqs[c.at];
+      }
+      _input[n] = best;
+      _freq[n] = _has_pos ? c.freqs[c.at] : 0;
+      _skip[n] = c.skip;
+      c.skip = 0;
+      ++n;
+      ++c.at;
+      Settle(best);
+    }
+  }
+  _recorded = n;
+  _walked = 0;
+  _left = 0;
+  if (n != 0 && !_progress(n)) {
+    Clear();
+    return 0;
+  }
+  return n;
+}
+
+void SortedPostings::NextPositions(uint32_t* pos, uint32_t* offs_start,
+                                   uint32_t* offs_len, uint32_t n) {
+  while (n != 0) {
+    if (_left == 0) {
+      SDB_ASSERT(_walked < _recorded);
+      _current = _input[_walked];
+      if (_skip[_walked] != 0) {
+        _iterators[_current].it->SkipPositions(_skip[_walked]);
+      }
+      _left = _freq[_walked++];
+      while (_walked != _recorded && _input[_walked] == _current &&
+             _skip[_walked] == 0) {
+        _left += _freq[_walked++];
+      }
+    }
+    const auto take = static_cast<uint32_t>(std::min<uint64_t>(n, _left));
+    _iterators[_current].it->NextPositions(pos, offs_start, offs_len, take);
+    pos += take;
+    if (offs_start != nullptr) {
+      offs_start += take;
+      offs_len += take;
+    }
+    n -= take;
+    _left -= take;
+  }
+}
+
+template<typename Postings>
 class CompoundTermIterator : public TermOnlyIterator {
  public:
   CompoundTermIterator(const CompoundTermIterator&) = delete;
@@ -235,20 +400,22 @@ class CompoundTermIterator : public TermOnlyIterator {
   std::vector<TermIteratorImpl> _term_iterators;
   mutable bstring _min_term;
   mutable bstring _max_term;
-  mutable CompoundPostings _doc_itr;
+  mutable Postings _doc_itr;
   mutable bool _has_min_term{false};
   ProgressTracker _progress;
 };
 
-void CompoundTermIterator::Add(const TermReader& reader,
-                               const DocRemap& remap) {
+template<typename Postings>
+void CompoundTermIterator<Postings>::Add(const TermReader& reader,
+                                         const DocRemap& remap) {
   auto it = reader.iterator();
   SDB_ASSERT(it);
   _term_iterator_mask.emplace_back(_term_iterators.size());
   _term_iterators.emplace_back(std::move(it), &remap);
 }
 
-bool CompoundTermIterator::next() {
+template<typename Postings>
+bool CompoundTermIterator<Postings>::next() {
   _progress();
 
   if (Aborted()) {
@@ -292,9 +459,10 @@ bool CompoundTermIterator::next() {
   return !IsNull(_current_term);
 }
 
-TermPostings::ptr CompoundTermIterator::postings(
+template<typename Postings>
+TermPostings::ptr CompoundTermIterator<Postings>::postings(
   IndexFeatures /*features*/) const {
-  auto add_iterators = [this](CompoundPostings::IteratorsT& itrs) {
+  auto add_iterators = [this](typename Postings::IteratorsT& itrs) {
     const auto* const empty = TermPostings::empty().get();
     for (auto& entry : itrs) {
       if (entry.it.get() != empty) {
@@ -317,6 +485,7 @@ TermPostings::ptr CompoundTermIterator::postings(
   return memory::to_managed<TermPostings>(_doc_itr);
 }
 
+template<typename Postings>
 class CompoundFieldIterator final : public BasicTermReader {
  public:
   static constexpr const size_t kProgressStepFields = size_t{1};
@@ -366,16 +535,18 @@ class CompoundFieldIterator final : public BasicTermReader {
   const FieldMeta* _current_meta{&FieldMeta::kEmpty};
   std::vector<TermIteratorImpl> _field_iterator_mask;
   std::vector<FieldIteratorImpl> _field_iterators;
-  mutable CompoundTermIterator _term_itr;
+  mutable CompoundTermIterator<Postings> _term_itr;
   ProgressTracker _progress;
 };
 
-void CompoundFieldIterator::Add(const SubReader& reader,
-                                const DocRemap& remap) {
+template<typename Postings>
+void CompoundFieldIterator<Postings>::Add(const SubReader& reader,
+                                          const DocRemap& remap) {
   _field_iterators.emplace_back(reader.field_ids(), size_t{0}, &reader, &remap);
 }
 
-bool CompoundFieldIterator::Next() {
+template<typename Postings>
+bool CompoundFieldIterator<Postings>::Next() {
   _progress();
 
   if (Aborted()) {
@@ -424,7 +595,8 @@ bool CompoundFieldIterator::Next() {
   return true;
 }
 
-TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
+template<typename Postings>
+TermOnlyIterator::ptr CompoundFieldIterator<Postings>::iterator() const {
   _term_itr.Reset(Meta());
   for (const auto& segment : _field_iterator_mask) {
     _term_itr.Add(*(segment.reader), *(_field_iterators[segment.itr_id].remap));
@@ -432,8 +604,9 @@ TermOnlyIterator::ptr CompoundFieldIterator::iterator() const {
   return memory::to_managed<TermOnlyIterator>(_term_itr);
 }
 
+template<typename Postings>
 bool WriteFields(const irs::FlushState& flush_state,
-                 CompoundFieldIterator& field_itr,
+                 CompoundFieldIterator<Postings>& field_itr,
                  const MergedNormIdMap& merged_norm_ids, IResourceManager& rm,
                  IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra) {
@@ -495,27 +668,35 @@ bool WriteFields(const irs::FlushState& flush_state,
 }  // namespace
 
 struct PostingsMerger::Impl {
-  Impl(size_t inputs, const MergeProgress& progress)
-    : fields{inputs, progress} {}
+  using Fields = std::variant<CompoundFieldIterator<CompoundPostings>,
+                              CompoundFieldIterator<SortedPostings>>;
 
-  CompoundFieldIterator fields;
+  Impl(size_t inputs, const MergeProgress& progress, bool sorted)
+    : fields{sorted ? Fields{std::in_place_index<1>, inputs, progress}
+                    : Fields{std::in_place_index<0>, inputs, progress}} {}
+
+  Fields fields;
 };
 
-PostingsMerger::PostingsMerger(size_t inputs, const MergeProgress& progress)
-  : _impl{std::make_unique<Impl>(inputs, progress)} {}
+PostingsMerger::PostingsMerger(size_t inputs, const MergeProgress& progress,
+                               bool sorted)
+  : _impl{std::make_unique<Impl>(inputs, progress, sorted)} {}
 
 PostingsMerger::~PostingsMerger() = default;
 
 void PostingsMerger::Add(const SubReader& reader, const DocRemap& remap) {
-  _impl->fields.Add(reader, remap);
+  std::visit([&](auto& fields) { fields.Add(reader, remap); }, _impl->fields);
 }
 
 bool PostingsMerger::Write(const FlushState& flush_state,
                            const MergedNormIdMap& merged_norm_ids,
                            IResourceManager& rm, IdxWriter& idx,
                            std::span<const BasicTermReader* const> extra) {
-  return WriteFields(flush_state, _impl->fields, merged_norm_ids, rm, idx,
-                     extra);
+  return std::visit(
+    [&](auto& fields) {
+      return WriteFields(flush_state, fields, merged_norm_ids, rm, idx, extra);
+    },
+    _impl->fields);
 }
 
 }  // namespace irs

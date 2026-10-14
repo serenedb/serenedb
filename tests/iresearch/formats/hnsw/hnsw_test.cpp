@@ -26,6 +26,9 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <exception>
 #include <iresearch/formats/ann_build_env.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
+#include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/hnsw/hnsw_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
@@ -365,6 +368,94 @@ TEST_P(HnswIndexTest, MergeReusesDonorGraph) {
   EXPECT_GE(recall_merged, RecallFloor())
     << "merged recall " << recall_merged << " metric "
     << static_cast<int>(metric) << " quant " << static_cast<int>(Quant());
+  EXPECT_GE(recall_merged, recall_fresh - 0.05)
+    << "merged " << recall_merged << " vs rebuilt " << recall_fresh;
+}
+
+TEST_P(HnswIndexTest, SortedMergeReusesDonorGraph) {
+  const auto metric = Metric();
+  constexpr irs::field_id kKey = 2;
+  constexpr size_t kRows = 2000;
+  constexpr size_t kK = 10;
+
+  auto vecs = MakeVectors(kRows, 53);
+
+  irs::MemoryDirectory dir;
+  auto options = WriterOptions();
+  options.sort.keys.push_back({.column = kKey});
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
+  ASSERT_NE(nullptr, writer);
+  for (const auto& residues :
+       std::vector<std::vector<size_t>>{{0, 1, 2}, {3}, {4}}) {
+    auto trx = writer->GetBatch();
+    for (size_t key = 0; key < kRows; ++key) {
+      if (std::ranges::find(residues, key % 5) == residues.end()) {
+        continue;
+      }
+      auto doc = trx.Insert();
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vecs[key]);
+      auto& cw =
+        doc.GetColWriter()->OpenColumn(kKey, duckdb::LogicalType::BIGINT);
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
+      duckdb::FlatVector::GetDataMutable<int64_t>(v)[0] =
+        static_cast<int64_t>(key);
+      duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
+      duckdb::FlatVector::SetSize(v, 1);
+      cw.Append(static_cast<uint64_t>(doc.DocId()) - irs::doc_limits::min(), v,
+                1);
+    }
+    trx.Commit();
+    writer->RefreshCommit();
+  }
+  ASSERT_EQ(3U, writer->GetSnapshot()->size());
+
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
+  auto merged = writer->GetSnapshot();
+  ASSERT_NE(nullptr, merged);
+  ASSERT_EQ(1U, merged->size());
+  ASSERT_EQ(kRows, merged->docs_count());
+
+  const auto& segment = (*merged)[0];
+  const auto* keys = segment.GetColReader()->Column(kKey);
+  ASSERT_NE(nullptr, keys);
+  irs::ReadContext ctx{*segment.GetColReader()};
+  auto state = keys->InitScan(ctx);
+  for (uint64_t row = 0; row < kRows;) {
+    const auto take = std::min<uint64_t>(kRows - row, STANDARD_VECTOR_SIZE);
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    keys->Scan(state, out, take);
+    for (uint64_t i = 0; i != take; ++i) {
+      ASSERT_EQ(static_cast<int64_t>(row + i),
+                out.GetValue(i).GetValue<int64_t>());
+    }
+    row += take;
+  }
+
+  irs::MemoryDirectory fresh_dir;
+  auto fresh = BuildIndex(fresh_dir, vecs, metric, Quant(), NbBits());
+  ASSERT_NE(nullptr, fresh);
+  size_t total = 0;
+  size_t hit_merged = 0;
+  size_t hit_fresh = 0;
+  for (const auto& q : MakeVectors(20, 79)) {
+    auto f1 = MakeKnnFilter(q, metric, Quant(), 128);
+    auto f2 = MakeKnnFilter(q, metric, Quant(), 128);
+    const auto got_merged = RunKnn(merged, f1);
+    const auto got_fresh = RunKnn(fresh, f2);
+    ASSERT_FALSE(got_merged.empty());
+    for (const auto doc : BruteForceTopK(vecs, q, metric, kK)) {
+      ++total;
+      hit_merged += std::ranges::find(got_merged, doc) != got_merged.end();
+      hit_fresh += std::ranges::find(got_fresh, doc) != got_fresh.end();
+    }
+  }
+  const double recall_merged =
+    static_cast<double>(hit_merged) / static_cast<double>(total);
+  const double recall_fresh =
+    static_cast<double>(hit_fresh) / static_cast<double>(total);
+  EXPECT_GE(recall_merged, RecallFloor());
   EXPECT_GE(recall_merged, recall_fresh - 0.05)
     << "merged " << recall_merged << " vs rebuilt " << recall_fresh;
 }

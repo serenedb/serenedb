@@ -18,12 +18,17 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/execution/physical_plan_generator.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <initializer_list>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/error/error.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -35,6 +40,7 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
@@ -43,7 +49,12 @@
 
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
+#include "connector/segment_rewrite/logical_merge_order.h"
+#include "connector/segment_rewrite/logical_merge_units.h"
+#include "connector/segment_rewrite/physical_merge_order.h"
+#include "connector/segment_rewrite/physical_merge_units.h"
 #include "gtest/gtest.h"
+#include "search/compaction/merge_unit_run.h"
 #include "search/compaction/pipeline_merge_executor.h"
 
 namespace {
@@ -135,6 +146,15 @@ class PipelineMergeExecutorTest : public ::testing::Test {
   }
 
   void TearDown() override { _writer.reset(); }
+
+  void Reopen(irs::SortSpec sort) {
+    _writer.reset();
+    irs::IndexWriterOptions options;
+    options.db = &TestDb();
+    options.reader_options.db = &TestDb();
+    options.sort = std::move(sort);
+    _writer = irs::IndexWriter::Make(_dir, irs::kOmCreate, std::move(options));
+  }
 
   void Insert(std::span<const int64_t> rowids) {
     auto trx = _writer->GetBatch(/*exclusive_segment=*/true);
@@ -277,6 +297,109 @@ TEST_F(PipelineMergeExecutorTest, StoppedMergeKeepsTheInputs) {
   _writer->RefreshCommit();
   EXPECT_EQ(4, _writer->GetSnapshot().size());
   EXPECT_EQ(before, Rows());
+}
+
+TEST_F(PipelineMergeExecutorTest, SortedMergesInterleaveTheirInputs) {
+  Reopen(irs::SortSpec{{{.column = kGeneratedPKId}}});
+  for (int64_t segment = 0; segment != 4; ++segment) {
+    std::vector<int64_t> rowids(3000);
+    for (size_t i = 0; i != rowids.size(); ++i) {
+      rowids[i] = static_cast<int64_t>(i) * 4 + segment;
+    }
+    Insert(rowids);
+  }
+  const auto before = Rows();
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  const auto result = irs::GetReady(
+    _writer->CompactAsync(FullMerge(), nullptr, {}, nullptr, &executor));
+  ASSERT_TRUE(result);
+  EXPECT_GT(result.stats.profile.Nanos(irs::MergeStep::Prepare), 0);
+  _writer->RefreshCommit();
+  const auto reader = _writer->GetSnapshot();
+  ASSERT_EQ(1, reader.size());
+  EXPECT_EQ(before, Read(*reader.begin(), kGeneratedPKId));
+}
+
+TEST_F(PipelineMergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
+  const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
+  Reopen(spec);
+  Insert(std::vector<int64_t>{1, 3, 5, 7});
+  Insert(std::vector<int64_t>{6, 4, 2, 0});
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
+                      nullptr, {},      nullptr, &spec};
+  ASSERT_TRUE(plan.Prepare(4));
+  ASSERT_TRUE(plan.OrderPending());
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  EXPECT_THROW(executor.Run(plan), duckdb::InvalidInputException);
+  EXPECT_TRUE(plan.Units().empty());
+}
+
+TEST_F(PipelineMergeExecutorTest, AnIncompleteOrderFailsTheSortedMerge) {
+  if (!irs::AddFailurePointDebugging("irs::KeyOrder::Finish")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  const absl::Cleanup remove = [] {
+    irs::RemoveFailurePointDebugging("irs::KeyOrder::Finish");
+  };
+  const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
+  Reopen(spec);
+  Insert(std::vector<int64_t>{0, 2, 4, 6});
+  Insert(std::vector<int64_t>{1, 3, 5, 7});
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
+                      nullptr, {},      nullptr, &spec};
+  ASSERT_TRUE(plan.Prepare(4));
+  search::PipelineMergeExecutor executor{TestDb(), nullptr, 4};
+  EXPECT_FALSE(executor.Run(plan));
+  EXPECT_TRUE(plan.Units().empty());
+}
+
+TEST_F(PipelineMergeExecutorTest, OperatorsNameThemselves) {
+  const irs::SortSpec spec{{{.column = kGeneratedPKId}}};
+  Reopen(spec);
+  Insert(std::vector<int64_t>{0, 2});
+  Insert(std::vector<int64_t>{1, 3});
+  const auto reader = _writer->GetSnapshot();
+  irs::MergeDocMap doc_map{{irs::IResourceManager::gNoop}};
+  for (const auto& segment : reader) {
+    doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
+  }
+  irs::MemoryDirectory out;
+  irs::SegmentMeta meta;
+  irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
+                      nullptr, {},      nullptr, &spec};
+  ASSERT_TRUE(plan.Prepare(1));
+  ASSERT_TRUE(plan.OrderPending());
+  const auto run = std::make_shared<search::MergeUnitRun>(
+    plan, std::chrono::steady_clock::now());
+  const connector::LogicalMergeOrder order{plan};
+  const connector::LogicalMergeUnits units{run, 1};
+  EXPECT_EQ("MERGE_ORDER", order.GetName());
+  EXPECT_EQ("MERGE_UNITS", units.GetName());
+  for (const auto* op :
+       std::initializer_list<const duckdb::LogicalExtensionOperator*>{&order,
+                                                                      &units}) {
+    EXPECT_FALSE(op->RequireOptimizer());
+    EXPECT_FALSE(op->SupportSerialization());
+  }
+  duckdb::PhysicalPlan physical{duckdb::Allocator::DefaultAllocator()};
+  EXPECT_EQ("MERGE_ORDER",
+            physical.Make<connector::PhysicalMergeOrder>(plan).GetName());
+  EXPECT_EQ("MERGE_UNITS",
+            physical.Make<connector::PhysicalMergeUnits>(run, 1).GetName());
 }
 
 TEST_F(PipelineMergeExecutorTest, UnitErrorReachesTheCaller) {

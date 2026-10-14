@@ -61,6 +61,7 @@ class DatabaseInstance;
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -160,6 +161,8 @@ struct IndexWriterOptions : public SegmentOptions {
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
 
   const AnnBuildEnv* ann_env = nullptr;
+
+  SortSpec sort;
 
   FlushedSegmentsCallback on_flushed;
 
@@ -835,6 +838,7 @@ class IndexWriter : private util::Noncopyable {
   ScorerPtr _topk_scorer;
   duckdb::DatabaseInstance* _db = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
+  SortSpec _sort;
   FlushedSegmentsCallback _on_flushed;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   absl::Mutex _commit_lock;

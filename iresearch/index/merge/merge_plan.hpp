@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/sorting/presorted_merge.hpp>
 #include <memory>
 #include <span>
 
@@ -43,6 +44,7 @@ class AnnBuildEnv;
 struct Directory;
 class IndexFieldOptions;
 struct SegmentMeta;
+struct SortSpec;
 
 enum class MergeUnitKind : uint8_t {
   Norms,
@@ -70,13 +72,25 @@ class MergePlan {
   MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
             ScorerPtr scorer, duckdb::DatabaseInstance& db,
             const IndexFieldOptions* field_options,
-            const MergeProgress& progress, const AnnBuildEnv* env);
+            const MergeProgress& progress, const AnnBuildEnv* env,
+            const SortSpec* sort = nullptr);
   ~MergePlan();
 
   MergePlan(const MergePlan&) = delete;
   MergePlan& operator=(const MergePlan&) = delete;
 
   bool Prepare(size_t threads = 1);
+
+  bool OrderPending() const noexcept;
+
+  duckdb::shared_ptr<duckdb::PresortedMerge> KeyMerge() const noexcept;
+
+  void ExpandOrder(size_t partition,
+                   std::span<const duckdb::PresortedRun> runs);
+
+  bool FinishOrder();
+
+  bool RunOrder();
 
   std::span<const MergeUnit> Units() const noexcept;
 

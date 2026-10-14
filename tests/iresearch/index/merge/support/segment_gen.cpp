@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
@@ -148,47 +149,126 @@ void RemoveTerms(irs::IndexWriter& writer, irs::field_id field,
   ASSERT_TRUE(writer.RefreshCommit());
 }
 
-void WriteSegment(irs::IndexWriter& writer, Generator& gen,
-                  const SegmentShape& shape, size_t& next_id) {
+int CompareKeyValues(const duckdb::Value& lhs, const duckdb::Value& rhs,
+                     const irs::SortKey& key) {
+  if (lhs.IsNull() || rhs.IsNull()) {
+    if (lhs.IsNull() == rhs.IsNull()) {
+      return 0;
+    }
+    return lhs.IsNull() == key.nulls_first ? -1 : 1;
+  }
+  const int cmp = lhs < rhs ? -1 : (rhs < lhs ? 1 : 0);
+  return key.descending ? -cmp : cmp;
+}
+
+std::vector<GeneratedDoc> GenerateDocs(Generator& gen,
+                                       const SegmentShape& shape,
+                                       size_t& next_id) {
   const auto types = ColumnTypes();
-  std::vector<std::string> keys;
+  std::vector<GeneratedDoc> docs;
+  docs.reserve(shape.docs);
+  for (size_t i = 0; i != shape.docs; ++i) {
+    auto& doc = docs.emplace_back();
+    doc.key = absl::StrCat("doc-", next_id++);
+    doc.text = gen.Text(12);
+    if (shape.has_tag && gen.Coin(0.7)) {
+      doc.tag = absl::StrCat("tag", gen.Uniform(0, 5));
+    }
+    if (shape.has_norm_field) {
+      doc.normed = gen.Text(30);
+    }
+    doc.mixed = kWords[gen.Uniform(0, 4)];
+    for (const auto c : shape.columns) {
+      if (gen.Coin(shape.null_ratio)) {
+        doc.values.emplace_back();
+        continue;
+      }
+      doc.values.emplace_back(gen.Value(types[c]));
+    }
+  }
+  return docs;
+}
+
+void SortDocs(std::vector<GeneratedDoc>& docs, const SegmentShape& shape,
+              const irs::SortSpec& spec) {
+  std::vector<std::optional<size_t>> slots;
+  for (const auto& key : spec.keys) {
+    const auto it = std::ranges::find_if(
+      shape.columns, [&](size_t c) { return kFirstColumn + c == key.column; });
+    slots.push_back(it == shape.columns.end()
+                      ? std::nullopt
+                      : std::optional<size_t>{it - shape.columns.begin()});
+  }
+  const auto value = [&](const GeneratedDoc& doc, size_t k) {
+    const auto& slot = slots[k];
+    return slot && doc.values[*slot] ? *doc.values[*slot] : duckdb::Value{};
+  };
+  std::ranges::stable_sort(docs, [&](const auto& lhs, const auto& rhs) {
+    for (size_t k = 0; k != spec.keys.size(); ++k) {
+      const auto cmp =
+        CompareKeyValues(value(lhs, k), value(rhs, k), spec.keys[k]);
+      if (cmp != 0) {
+        return cmp < 0;
+      }
+    }
+    return false;
+  });
+}
+
+void InsertDocs(irs::IndexWriter& writer, const SegmentShape& shape,
+                std::span<const GeneratedDoc> docs) {
+  const auto types = ColumnTypes();
   {
     auto trx = writer.GetBatch();
-    for (size_t i = 0; i != shape.docs; ++i) {
+    for (const auto& generated : docs) {
       auto doc = trx.Insert();
-      const auto& key = keys.emplace_back(absl::StrCat("doc-", next_id++));
-      tests::StringField id_field{"id", key};
+      tests::StringField id_field{"id", generated.key};
       id_field.id = kIdField;
       tests::InsertField(doc, id_field);
-      tests::TextField<std::string> text{"text", gen.Text(12)};
+      tests::TextField<std::string> text{"text", generated.text};
       text.id = kTextField;
       tests::InsertField(doc, text);
-      if (shape.has_tag && gen.Coin(0.7)) {
-        tests::StringField tag{"tag", absl::StrCat("tag", gen.Uniform(0, 5))};
+      if (generated.tag) {
+        tests::StringField tag{"tag", *generated.tag};
         tag.id = kTagField;
         tests::InsertField(doc, tag);
       }
-      if (shape.has_norm_field) {
-        tests::TextField<std::string> normed{"normed", gen.Text(30), false,
+      if (generated.normed) {
+        tests::TextField<std::string> normed{"normed", *generated.normed, false,
                                              IndexFeatures::Norm};
         normed.id = kNormField;
         tests::InsertField(doc, normed);
       }
-      tests::StringField mixed{"mixed", kWords[gen.Uniform(0, 4)]};
+      tests::StringField mixed{"mixed", generated.mixed};
       mixed.id = kMixedField;
       mixed.index_features = shape.mixed;
       tests::InsertField(doc, mixed);
-      for (const auto c : shape.columns) {
-        if (gen.Coin(shape.null_ratio)) {
-          continue;
+      for (size_t slot = 0; slot != shape.columns.size(); ++slot) {
+        if (const auto& value = generated.values[slot]) {
+          const auto c = shape.columns[slot];
+          WriteValue(doc, static_cast<irs::field_id>(kFirstColumn + c),
+                     types[c], *value);
         }
-        WriteValue(doc, static_cast<irs::field_id>(kFirstColumn + c), types[c],
-                   gen.Value(types[c]));
       }
     }
     trx.Commit();
   }
   ASSERT_TRUE(writer.RefreshCommit());
+}
+
+void WriteSegment(irs::IndexWriter& writer, Generator& gen,
+                  const SegmentShape& shape, size_t& next_id,
+                  const irs::SortSpec* sort) {
+  auto docs = GenerateDocs(gen, shape, next_id);
+  std::vector<std::string> keys;
+  keys.reserve(docs.size());
+  for (const auto& doc : docs) {
+    keys.push_back(doc.key);
+  }
+  if (sort != nullptr) {
+    SortDocs(docs, shape, *sort);
+  }
+  InsertDocs(writer, shape, docs);
   std::vector<std::string> removed;
   for (const auto& key : keys) {
     if (gen.Coin(shape.delete_ratio)) {

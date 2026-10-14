@@ -25,10 +25,14 @@
 #include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <duckdb/common/types/hyperloglog.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <limits>
 #include <memory>
@@ -48,6 +52,7 @@
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
 
 namespace irs {
 namespace {
@@ -348,8 +353,222 @@ struct ColumnMerger::State {
     return true;
   }
 
+  struct OrderedInput {
+    explicit OrderedInput(const duckdb::LogicalType& type) : scratch{type} {}
+
+    const ColumnReader* col = nullptr;
+    ColumnReader::ScanState state;
+    ColumnReader::VectorScratch scratch;
+    const duckdb::Vector* batch = nullptr;
+    const duckdb::sel_t* rows = nullptr;
+    duckdb::SelectionVector pending_sel{STANDARD_VECTOR_SIZE};
+    uint64_t valued = 0;
+    uint64_t live = 0;
+    uint64_t window = 0;
+    uint64_t scanned = 0;
+    uint64_t skip = 0;
+    uint32_t at = 0;
+    uint32_t size = 0;
+    uint32_t pending = 0;
+    uint32_t base = 0;
+    bool masked = false;
+  };
+
+  static uint32_t ValuedIn(const std::vector<duckdb::sel_t>& kept,
+                           uint64_t take) {
+    return static_cast<uint32_t>(
+      std::ranges::lower_bound(kept, static_cast<duckdb::sel_t>(take)) -
+      kept.begin());
+  }
+
+  void OpenOrdered(OrderedInput& in, size_t si, field_id column,
+                   uint64_t live) {
+    const auto& s = sources[si];
+    in.live = live;
+    in.col = s.col_reader ? s.col_reader->Column(column) : nullptr;
+    if (!in.col) {
+      return;
+    }
+    in.state = in.col->InitScan(std::make_shared<ReadContext>(*s.col_reader));
+    const uint64_t total = in.col->RowCount();
+    if (!HasRemovals(s.reader->Meta())) {
+      in.valued = total;
+      in.window = std::min(live, total);
+      in.col->Skip(in.state, in.window);
+      return;
+    }
+    in.masked = true;
+    for (uint64_t pos = 0; pos < total; pos += STANDARD_VECTOR_SIZE) {
+      const auto n =
+        ValuedIn(KeptFor(si, pos),
+                 std::min<uint64_t>(total - pos, STANDARD_VECTOR_SIZE));
+      if (in.valued <= live && live < in.valued + n) {
+        in.window = pos;
+        in.skip = live - in.valued;
+      }
+      in.valued += n;
+    }
+  }
+
+  void LoadOrdered(OrderedInput& in, size_t si) {
+    const uint64_t total = in.col->RowCount();
+    auto& batch = in.scratch.Reset();
+    if (!in.masked) {
+      const auto take =
+        std::min<uint64_t>(total - in.window, STANDARD_VECTOR_SIZE);
+      in.col->Scan(in.state, batch, take);
+      in.batch = &batch;
+      in.at = 0;
+      in.size = static_cast<uint32_t>(take);
+      in.window += take;
+      return;
+    }
+    while (true) {
+      const auto pos = in.window;
+      const auto take = std::min<uint64_t>(total - pos, STANDARD_VECTOR_SIZE);
+      const auto& kept = KeptFor(si, pos);
+      const auto n = ValuedIn(kept, take);
+      in.window = pos + STANDARD_VECTOR_SIZE;
+      if (n <= in.skip) {
+        in.skip -= n;
+        continue;
+      }
+      in.col->Skip(in.state, pos - in.scanned);
+      in.col->Scan(in.state, batch, take);
+      in.scanned = pos + take;
+      in.batch = &batch;
+      in.rows = kept.data();
+      in.at = static_cast<uint32_t>(in.skip);
+      in.size = n;
+      in.skip = 0;
+      return;
+    }
+  }
+
+  template<typename Visit>
+  bool VisitOrdered(field_id column, uint64_t begin, uint64_t end,
+                    absl::FunctionRef<bool()> progress, Visit&& visit) {
+    static constexpr uint16_t kNullSlot = std::numeric_limits<uint16_t>::max();
+    const auto& type = First(column).Type();
+    const auto inputs = order->Inputs();
+    std::vector<uint64_t> live(sources.size());
+    order->LiveRowsBefore(begin, live);
+    std::vector<std::unique_ptr<OrderedInput>> cursors(sources.size());
+    std::vector<uint32_t> active;
+    ColumnReader::VectorScratch staging{type};
+    const duckdb::Vector null_row{duckdb::Value{type}, duckdb::count_t{1}};
+    duckdb::SelectionVector out_sel{STANDARD_VECTOR_SIZE};
+    std::array<uint16_t, STANDARD_VECTOR_SIZE> slot_input;
+    std::array<uint16_t, STANDARD_VECTOR_SIZE> slot_index;
+    uint32_t n = 0;
+    bool nulls = false;
+    uint64_t chunk_at = begin;
+    const auto flush = [&] {
+      if (n == 0) {
+        return;
+      }
+      if (active.size() == 1 && !nulls) {
+        auto& in = *cursors[active.front()];
+        visit(chunk_at, duckdb::Vector{*in.batch, in.pending_sel, n}, n);
+      } else {
+        auto& out = staging.Reset();
+        uint32_t off = 0;
+        for (const auto a : active) {
+          auto& in = *cursors[a];
+          duckdb::ImmutableStrings::Copy(*in.batch, out, in.pending_sel,
+                                         in.pending, 0, off);
+          in.base = off;
+          off += in.pending;
+        }
+        if (nulls) {
+          duckdb::ImmutableStrings::Copy(null_row, out, 1, 0, off);
+        }
+        duckdb::FlatVector::SetSize(out, off + (nulls ? 1 : 0));
+        for (uint32_t k = 0; k != n; ++k) {
+          out_sel.set_index(k,
+                            slot_input[k] == kNullSlot
+                              ? off
+                              : cursors[slot_input[k]]->base + slot_index[k]);
+        }
+        visit(chunk_at, duckdb::Vector{out, out_sel, n}, n);
+      }
+      for (const auto a : active) {
+        cursors[a]->pending = 0;
+      }
+      active.clear();
+      n = 0;
+      nulls = false;
+    };
+    for (uint64_t row = begin; row < end;) {
+      const auto i = inputs[row];
+      auto run_end = row + 1;
+      while (run_end < end && inputs[run_end] == i) {
+        ++run_end;
+      }
+      auto& cursor = cursors[i];
+      if (!cursor) {
+        cursor = std::make_unique<OrderedInput>(type);
+        OpenOrdered(*cursor, i, column, live[i]);
+      }
+      auto& in = *cursor;
+      while (row < run_end) {
+        if (in.live >= in.valued) {
+          const auto take = n == 0 ? run_end - row
+                                   : std::min<uint64_t>(
+                                       run_end - row, STANDARD_VECTOR_SIZE - n);
+          if (n != 0) {
+            std::fill_n(slot_input.begin() + n, take, kNullSlot);
+            n += static_cast<uint32_t>(take);
+            nulls = true;
+          }
+          row += take;
+          in.live += take;
+          if (n == STANDARD_VECTOR_SIZE) {
+            flush();
+          }
+          continue;
+        }
+        if (in.at == in.size) {
+          if (in.pending != 0) {
+            flush();
+          }
+          if (!progress()) {
+            return false;
+          }
+          LoadOrdered(in, i);
+          continue;
+        }
+        const auto take = static_cast<uint32_t>(std::min<uint64_t>(
+          {run_end - row, in.size - in.at, STANDARD_VECTOR_SIZE - n}));
+        if (n == 0) {
+          chunk_at = row;
+        }
+        if (in.pending == 0) {
+          active.push_back(i);
+        }
+        for (uint32_t k = 0; k != take; ++k) {
+          const auto at = in.at + k;
+          in.pending_sel.set_index(in.pending + k, in.rows ? in.rows[at] : at);
+          slot_input[n + k] = i;
+          slot_index[n + k] = static_cast<uint16_t>(in.pending + k);
+        }
+        in.pending += take;
+        in.at += take;
+        in.live += take;
+        n += take;
+        row += take;
+        if (n == STANDARD_VECTOR_SIZE) {
+          flush();
+        }
+      }
+    }
+    flush();
+    return true;
+  }
+
   std::span<const MergeSource> sources;
   const IndexFieldOptions* field_options = nullptr;
+  const MergeOrder* order = nullptr;
   duckdb::DatabaseInstance* db = nullptr;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
   std::vector<field_id> ids;
@@ -362,11 +581,13 @@ struct ColumnMerger::State {
 };
 
 ColumnMerger::ColumnMerger(std::span<const MergeSource> sources,
-                           const IndexFieldOptions* field_options)
+                           const IndexFieldOptions* field_options,
+                           const MergeOrder* order)
   : _state{std::make_unique<State>()} {
   auto& state = *_state;
   state.sources = sources;
   state.field_options = field_options;
+  state.order = order;
   if (field_options) {
     state.row_group_size = field_options->row_group_size;
   }
@@ -498,12 +719,14 @@ bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
       dictionary ? output.AddColumnDictionary(column, dictionary->Bytes()) : 0;
     cw.ShareDictionary(std::move(dictionary), index);
   }
-  if (!shared.VisitRows(
-        column, begin, end, progress,
-        [&](uint64_t at, const duckdb::Vector& values, duckdb::idx_t count) {
-          cw.Append(at - begin, values, count);
-          return true;
-        })) {
+  const auto append = [&](uint64_t at, const duckdb::Vector& values,
+                          duckdb::idx_t count) {
+    cw.Append(at - begin, values, count);
+    return true;
+  };
+  if (!(shared.order
+          ? shared.VisitOrdered(column, begin, end, progress, append)
+          : shared.VisitRows(column, begin, end, progress, append))) {
     return false;
   }
   cw.PadNullsTo(end - begin);
@@ -566,6 +789,27 @@ bool ColumnMerger::Merge(field_id column, ColWriter& output,
     SampleDictionary(sources, column, ctxs, [&](std::string_view window) {
       cw.SampleDictionary({&window, 1});
     });
+  }
+
+  if (shared.order) {
+    const auto rows = shared.order->Rows();
+    if (!shared.VisitOrdered(
+          column, 0, rows, progress,
+          [&](uint64_t at, const duckdb::Vector& values, duckdb::idx_t count) {
+            cw.Append(at, values, count);
+            if (opts.hyperloglog) {
+              hyperloglog.MergeValues(values, count);
+            }
+            return true;
+          })) {
+      return false;
+    }
+    cw.PadNullsTo(rows);
+    if (opts.hyperloglog) {
+      cw.SetHyperLogLog(hyperloglog.Take());
+    }
+    cw.Finish();
+    return true;
   }
 
   ColumnReader::VectorScratch batch_scratch{first_col->Type()};

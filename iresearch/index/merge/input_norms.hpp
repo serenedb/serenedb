@@ -34,6 +34,8 @@
 
 namespace irs {
 
+class MergeOrder;
+
 class InputNormProvider final : public NormProvider {
  public:
   struct Input {
@@ -44,7 +46,8 @@ class InputNormProvider final : public NormProvider {
   };
 
   InputNormProvider(std::span<const MergeSource> sources,
-                    IResourceManager& memory);
+                    IResourceManager& memory,
+                    const MergeOrder* order = nullptr);
 
   void AddField(field_id column, field_id field, uint64_t sum,
                 uint64_t non_zero);
@@ -60,6 +63,8 @@ class InputNormProvider final : public NormProvider {
   void MapDocs() const;
 
   mutable std::vector<Input> _inputs;
+  const MergeOrder* _order;
+  mutable ManagedVector<doc_id_t> _sources;
   mutable absl::once_flag _mapped;
   absl::flat_hash_map<field_id, Field> _fields;
 };

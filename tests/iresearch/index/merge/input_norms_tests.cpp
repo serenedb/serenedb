@@ -23,13 +23,17 @@
 #include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/input_norms.hpp>
+#include <iresearch/index/merge/key_merge.hpp>
+#include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/norms_unit.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
+#include <optional>
 #include <random>
 #include <span>
 #include <string>
@@ -81,9 +85,10 @@ irs::field_id NormColumnOf(const irs::SubReader& segment) {
   return field == nullptr ? irs::field_limits::invalid() : field->meta().norm;
 }
 
-class InputNormsTest : public ::testing::Test {
+class InputNormsTest : public ::testing::TestWithParam<bool> {
  protected:
   void SetUp() final {
+    const auto* sort = GetParam() ? &_sort : nullptr;
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
     options.row_group_size = kRegionRows;
@@ -98,7 +103,7 @@ class InputNormsTest : public ::testing::Test {
       shape.delete_ratio = delete_ratio;
       shape.columns = {0};
       shape.has_norm_field = has_norm_field;
-      WriteSegment(*_writer, gen, shape, next_id);
+      WriteSegment(*_writer, gen, shape, next_id, sort);
     }
     WriteNormedDocs(*_writer,
                     std::vector<std::string>(300, "alpha beta gamma"));
@@ -138,9 +143,20 @@ class InputNormsTest : public ::testing::Test {
                         irs::DuckDBEngine::Instance().instance(),
                         &_field_options,
                         {},
-                        nullptr};
+                        nullptr,
+                        sort};
     ASSERT_TRUE(plan.Prepare());
     ASSERT_TRUE(irs::RunSerially(plan));
+    if (sort != nullptr) {
+      for (const auto& input : _doc_map) {
+        _order_map.emplace_back(input.reader, irs::IResourceManager::gNoop);
+      }
+      _order = std::make_unique<irs::KeyOrder>(_order_map, *sort);
+      ASSERT_TRUE(_order->Prepare(1));
+      ASSERT_TRUE(_order->Pending());
+      ASSERT_TRUE(_order->Merge([] { return true; }));
+      ASSERT_TRUE(_order->Finish());
+    }
     _merged = irs::SegmentReaderImpl::Open(_out, _meta,
                                            irs::tests::DefaultReaderOptions());
     ASSERT_NE(nullptr, _merged);
@@ -165,9 +181,15 @@ class InputNormsTest : public ::testing::Test {
     return *column;
   }
 
+  std::unique_ptr<irs::InputNormProvider> MakeBareProvider(
+    irs::IResourceManager& memory = irs::IResourceManager::gNoop) const {
+    return std::make_unique<irs::InputNormProvider>(
+      _sources, memory, _order ? &_order->Order() : nullptr);
+  }
+
   std::unique_ptr<irs::InputNormProvider> MakeProvider(
     irs::IResourceManager& memory = irs::IResourceManager::gNoop) const {
-    auto provider = std::make_unique<irs::InputNormProvider>(_sources, memory);
+    auto provider = MakeBareProvider(memory);
     const auto& column = MergedColumn();
     provider->AddField(_column, kNormField, column.Sum(),
                        column.NonZeroCount());
@@ -194,9 +216,12 @@ class InputNormsTest : public ::testing::Test {
   std::shared_ptr<const irs::SegmentReaderImpl> _merged;
   irs::field_id _column = irs::field_limits::invalid();
   std::vector<irs::MergeSource> _sources;
+  const irs::SortSpec _sort{{{.column = kFirstColumn}}};
+  irs::MergeDocMap _order_map{{irs::IResourceManager::gNoop}};
+  std::unique_ptr<irs::KeyOrder> _order;
 };
 
-TEST_F(InputNormsTest, LiveStatsMatchTheMergedColumn) {
+TEST_P(InputNormsTest, LiveStatsMatchTheMergedColumn) {
   const auto stats = irs::ComputeLiveNormStats(kNormField, _sources);
   EXPECT_TRUE(stats.present);
   EXPECT_EQ(MergedColumn().Sum(), stats.sum);
@@ -204,7 +229,7 @@ TEST_F(InputNormsTest, LiveStatsMatchTheMergedColumn) {
   EXPECT_FALSE(irs::ComputeLiveNormStats(kIdField, _sources).present);
 }
 
-TEST_F(InputNormsTest, EveryDocReadsTheMergedValue) {
+TEST_P(InputNormsTest, EveryDocReadsTheMergedValue) {
   const auto provider = MakeProvider();
   auto expected = _merged->norms(_column);
   auto actual = provider->norms(_column);
@@ -220,7 +245,7 @@ TEST_F(InputNormsTest, EveryDocReadsTheMergedValue) {
   EXPECT_NE(0, zeros);
 }
 
-TEST_F(InputNormsTest, BlocksReadTheMergedValues) {
+TEST_P(InputNormsTest, BlocksReadTheMergedValues) {
   const auto provider = MakeProvider();
   auto expected = _merged->norms(_column);
   auto actual = provider->norms(_column);
@@ -245,7 +270,7 @@ TEST_F(InputNormsTest, BlocksReadTheMergedValues) {
   }
 }
 
-TEST_F(InputNormsTest, SparseRunsReadTheMergedValues) {
+TEST_P(InputNormsTest, SparseRunsReadTheMergedValues) {
   const auto provider = MakeProvider();
   auto expected = _merged->norms(_column);
   auto actual = provider->norms(_column);
@@ -270,7 +295,7 @@ TEST_F(InputNormsTest, SparseRunsReadTheMergedValues) {
   actual->Get(std::span<const irs::doc_id_t>{}, std::span<uint32_t>{});
 }
 
-TEST_F(InputNormsTest, RunsJumpingOverInputsReadTheMergedValues) {
+TEST_P(InputNormsTest, RunsJumpingOverInputsReadTheMergedValues) {
   const auto provider = MakeProvider();
   auto expected = _merged->norms(_column);
   auto actual = provider->norms(_column);
@@ -285,7 +310,7 @@ TEST_F(InputNormsTest, RunsJumpingOverInputsReadTheMergedValues) {
             actual->Get(irs::doc_limits::min()));
 }
 
-TEST_F(InputNormsTest, InputsCoverEveryRegionShape) {
+TEST_P(InputNormsTest, InputsCoverEveryRegionShape) {
   size_t multi_region = 0;
   bool constant = false;
   bool escaped = false;
@@ -375,20 +400,20 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
   }
 }
 
-TEST_F(InputNormsTest, UnknownColumnHasNoNorms) {
+TEST_P(InputNormsTest, UnknownColumnHasNoNorms) {
   const auto provider = MakeProvider();
   EXPECT_EQ(nullptr, provider->norms(_column + 1000));
 }
 
-TEST_F(InputNormsTest, AverageOfOnlyZerosIsZero) {
-  irs::InputNormProvider provider{_sources, irs::IResourceManager::gNoop};
-  provider.AddField(_column, kNormField, 0, 0);
-  auto reader = provider.norms(_column);
+TEST_P(InputNormsTest, AverageOfOnlyZerosIsZero) {
+  auto provider = MakeBareProvider();
+  provider->AddField(_column, kNormField, 0, 0);
+  auto reader = provider->norms(_column);
   ASSERT_NE(nullptr, reader);
   EXPECT_EQ(irs::score_t{}, reader->GetAvg());
 }
 
-TEST_F(InputNormsTest, DocMapsAreChargedOnlyOnceNormsAreRead) {
+TEST_P(InputNormsTest, DocMapsAreChargedOnlyOnceNormsAreRead) {
   MaxMemoryCounter memory;
   {
     const auto provider = MakeProvider(memory);
@@ -404,5 +429,7 @@ TEST_F(InputNormsTest, DocMapsAreChargedOnlyOnceNormsAreRead) {
   }
   EXPECT_EQ(0, memory.current);
 }
+
+INSTANTIATE_TEST_SUITE_P(InputNorms, InputNormsTest, ::testing::Bool());
 
 }  // namespace

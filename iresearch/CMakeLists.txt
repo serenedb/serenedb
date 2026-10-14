@@ -103,6 +103,8 @@ set(IResearch_core_sources
     ./index/index_reader.cpp
     ./index/iterators.cpp
     ./index/merge/input_norms.cpp
+    ./index/merge/key_merge.cpp
+    ./index/merge/merge_order.cpp
     ./index/merge/merge_plan.cpp
     ./index/merge/merge_schedule.cpp
     ./index/merge/norms_unit.cpp

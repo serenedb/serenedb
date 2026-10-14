@@ -32,8 +32,9 @@
 namespace sdb::search {
 
 struct MergeUnitRun {
-  explicit MergeUnitRun(irs::MergePlan& plan)
-    : plan{plan}, schedule{plan}, begin{std::chrono::steady_clock::now()} {}
+  MergeUnitRun(irs::MergePlan& plan,
+               std::chrono::steady_clock::time_point begin)
+    : plan{plan}, schedule{plan}, begin{begin} {}
 
   void Run(size_t unit) {
     bool ok = false;

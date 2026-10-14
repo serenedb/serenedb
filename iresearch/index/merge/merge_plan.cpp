@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 
+#include <algorithm>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -39,7 +40,10 @@
 #include "iresearch/formats/ivf/ivf_writer.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/merge/input_norms.hpp"
+#include "iresearch/index/merge/key_merge.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/index/merge/norms_unit.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/debugging.hpp"
 #include "iresearch/utils/directory_utils.hpp"
@@ -52,6 +56,7 @@ namespace {
 using FieldMetaMapT = absl::flat_hash_map<field_id, IndexFeatures>;
 
 constexpr uint64_t kAnnCostPerByte = 32;
+constexpr uint64_t kRowsPerOrderPartition = uint64_t{1} << 18;
 constexpr size_t kEncode = std::numeric_limits<size_t>::max();
 
 struct ColumnRange {
@@ -104,7 +109,7 @@ struct MergePlan::State {
   State(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
         ScorerPtr scorer, duckdb::DatabaseInstance& db,
         const IndexFieldOptions* field_options, const MergeProgress& progress,
-        const AnnBuildEnv* env)
+        const AnnBuildEnv* env, const SortSpec* sort)
     : track_dir{dir},
       doc_map{doc_map},
       segment{segment},
@@ -113,13 +118,18 @@ struct MergePlan::State {
       field_options{field_options},
       progress{progress ? progress : MergeProgress{[] { return true; }}},
       env{env},
-      postings{doc_map.size(), this->progress} {}
+      sort{sort != nullptr && !sort->Empty() ? sort : nullptr},
+      postings{doc_map.size(), this->progress, this->sort != nullptr} {}
+
+  const MergeOrder* Order() const noexcept {
+    return key_order ? &key_order->Order() : nullptr;
+  }
 
   bool MergeNorms(field_id field) {
     MergeStepClock clock{profile};
     const auto it = merged_norm_ids.find(field);
     SDB_ASSERT(it != merged_norm_ids.end());
-    MergeNormColumn(*col_writer, field, it->second, sources);
+    MergeNormColumn(*col_writer, field, it->second, sources, Order());
     clock.Lap(MergeStep::Norms);
     return true;
   }
@@ -186,7 +196,50 @@ struct MergePlan::State {
     }
   }
 
+  std::vector<ColumnRange> OrderedRangesOf(field_id id, uint64_t target) const {
+    std::vector<ColumnRange> copies;
+    uint64_t encode_bytes = 0;
+    uint64_t encode_rows = 0;
+    for (size_t input = 0; input != sources.size(); ++input) {
+      const uint64_t rows = sources[input].alive_count;
+      const auto begin = key_order->IsolatedBegin(input);
+      if (!begin || !columns->Copyable(id, input)) {
+        encode_bytes += columns->StoredBytes(id, input);
+        encode_rows += rows;
+        continue;
+      }
+      copies.push_back({
+        .begin = *begin,
+        .end = *begin + rows,
+        .input = input,
+        .cost = columns->StoredBytes(id, input),
+      });
+    }
+    std::ranges::sort(copies, {}, &ColumnRange::begin);
+    std::vector<ColumnRange> out;
+    uint64_t row = 0;
+    const auto stretch = [&](uint64_t end) {
+      const auto bytes =
+        encode_rows == 0
+          ? 0
+          : static_cast<uint64_t>(static_cast<double>(encode_bytes) *
+                                  static_cast<double>(end - row) /
+                                  static_cast<double>(encode_rows));
+      AddEncodeRanges(id, row, end, bytes, target, out);
+    };
+    for (const auto& copy : copies) {
+      stretch(copy.begin);
+      out.push_back(copy);
+      row = copy.end;
+    }
+    stretch(segment.docs_count);
+    return out;
+  }
+
   std::vector<ColumnRange> RangesOf(field_id id, uint64_t target) const {
+    if (key_order) {
+      return OrderedRangesOf(id, target);
+    }
     std::vector<ColumnRange> out;
     uint64_t row = 0;
     uint64_t stretch = 0;
@@ -252,6 +305,55 @@ struct MergePlan::State {
       ranges.emplace(id, std::move(column_ranges));
     }
     return total;
+  }
+
+  void PlanUnits() {
+    for (const auto id : norm_fields) {
+      std::vector<size_t> after;
+      if (!units.empty()) {
+        after.push_back(units.size() - 1);
+      }
+      AddUnit(
+        {.kind = MergeUnitKind::Norms, .id = id, .cost = segment.docs_count},
+        std::move(after));
+    }
+    const auto column_bytes = AddColumns(threads);
+    const auto footer = AddUnit({.kind = MergeUnitKind::ColumnsFooter}, {});
+    for (size_t unit = 0; unit != footer; ++unit) {
+      deps[footer].push_back(unit);
+    }
+    std::vector<size_t> ivf_units;
+    if (field_options) {
+      for (const auto id : columns->Columns()) {
+        const auto& ann = field_options->GetColumnOptions(id).ann_info;
+        if (!ann) {
+          continue;
+        }
+        const auto unit = units.size();
+        units.push_back({.kind = MergeUnitKind::Ann,
+                         .id = id,
+                         .cost = columns->StoredBytes(id) * kAnnCostPerByte});
+        deps.push_back({unit - 1});
+        if (ann->kind == AnnKind::Ivf) {
+          ivf = true;
+          ivf_units.push_back(unit);
+        }
+      }
+    }
+    uint64_t input_bytes = 0;
+    for (const auto& input : doc_map) {
+      input_bytes += input.reader->Meta().byte_size;
+    }
+    units.push_back(
+      {.kind = MergeUnitKind::Postings,
+       .cost = input_bytes > column_bytes ? input_bytes - column_bytes : 0});
+    deps.push_back(std::move(ivf_units));
+    const auto index = units.size();
+    units.push_back({.kind = MergeUnitKind::Index});
+    deps.emplace_back();
+    for (size_t unit = footer; unit != index; ++unit) {
+      deps[index].push_back(unit);
+    }
   }
 
   bool WriteColumnsFooter() {
@@ -336,15 +438,20 @@ struct MergePlan::State {
   const IndexFieldOptions* field_options;
   MergeProgress progress;
   const AnnBuildEnv* env;
+  const SortSpec* sort;
+  size_t threads = 1;
   MergeProfile profile;
+  std::optional<MergeStepClock> order_clock;
   IndexFeatures index_features{IndexFeatures::None};
   FieldMetaMapT field_meta_map;
   PostingsMerger postings;
+  std::unique_ptr<KeyOrder> key_order;
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
   std::unique_ptr<ColumnMerger> columns;
   absl::flat_hash_map<field_id, std::vector<ColumnRange>> ranges;
   MergedNormIdMap merged_norm_ids;
+  std::vector<field_id> norm_fields;
   std::vector<MergeUnit> units;
   std::vector<std::vector<size_t>> deps;
   bool ivf = false;
@@ -360,14 +467,16 @@ struct MergePlan::State {
 MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
                      ScorerPtr scorer, duckdb::DatabaseInstance& db,
                      const IndexFieldOptions* field_options,
-                     const MergeProgress& progress, const AnnBuildEnv* env)
+                     const MergeProgress& progress, const AnnBuildEnv* env,
+                     const SortSpec* sort)
   : _state{std::make_unique<State>(dir, doc_map, segment, scorer, db,
-                                   field_options, progress, env)} {}
+                                   field_options, progress, env, sort)} {}
 
 MergePlan::~MergePlan() = default;
 
 bool MergePlan::Prepare(size_t threads) {
   auto& s = *_state;
+  s.threads = threads;
   MergeStepClock clock{s.profile};
   uint64_t live_docs = 0;
   for (const auto& input : s.doc_map) {
@@ -380,24 +489,44 @@ bool MergePlan::Prepare(size_t threads) {
               " live documents exceed the segment limit of ", kMergeDocsMax);
     return false;
   }
-  doc_id_t base_id = doc_limits::min();
-  for (auto& input : s.doc_map) {
-    const auto& reader = *input.reader;
-    const auto docs_count = reader.docs_count();
-    if (reader.live_docs_count() == docs_count) {
-      input.remap.base_id = base_id;
-      base_id += static_cast<doc_id_t>(docs_count);
-    } else {
-      input.remap.mask = reader.MaskedDocs();
-      base_id = ComputeDocIds(input.remap.id_map, reader, base_id);
-    }
-    if (!doc_limits::valid(base_id)) {
+  if (s.sort) {
+    if (s.doc_map.size() > kSortedMergeInputsMax) {
+      SDB_ERROR(IRESEARCH, "Refusing to merge ", s.doc_map.size(),
+                " segments in key order: a sorted merge takes at most ",
+                kSortedMergeInputsMax);
       return false;
     }
-    ComputeFieldMeta(s.field_meta_map, s.index_features, reader);
-    s.postings.Add(reader, input.remap);
+    s.key_order = std::make_unique<KeyOrder>(s.doc_map, *s.sort);
+    const auto partitions =
+      threads > 1
+        ? std::clamp<uint64_t>(live_docs / kRowsPerOrderPartition, 1, threads)
+        : 1;
+    if (!s.key_order->Prepare(partitions)) {
+      return false;
+    }
+    s.segment.docs_count = s.key_order->Order().Rows();
+  } else {
+    doc_id_t base_id = doc_limits::min();
+    for (auto& input : s.doc_map) {
+      const auto& reader = *input.reader;
+      const auto docs_count = reader.docs_count();
+      if (reader.live_docs_count() == docs_count) {
+        input.remap.base_id = base_id;
+        base_id += static_cast<doc_id_t>(docs_count);
+      } else {
+        input.remap.mask = reader.MaskedDocs();
+        base_id = ComputeDocIds(input.remap.id_map, reader, base_id);
+      }
+      if (!doc_limits::valid(base_id)) {
+        return false;
+      }
+    }
+    s.segment.docs_count = base_id - doc_limits::min();
   }
-  s.segment.docs_count = base_id - doc_limits::min();
+  for (const auto& input : s.doc_map) {
+    ComputeFieldMeta(s.field_meta_map, s.index_features, *input.reader);
+    s.postings.Add(*input.reader, input.remap);
+  }
   s.segment.live_docs_count = s.segment.docs_count;
 
   if (!s.progress()) {
@@ -416,8 +545,9 @@ bool MergePlan::Prepare(size_t threads) {
   s.col_writer = std::make_unique<ColWriter>(s.track_dir, s.segment.name, s.db,
                                              WriteTier::Merge);
   s.col_writer->SetFieldOptions(s.field_options);
-  s.columns = std::make_unique<ColumnMerger>(s.sources, s.field_options);
-  s.norms.emplace(s.sources, s.doc_map.get_allocator().Manager());
+  s.columns =
+    std::make_unique<ColumnMerger>(s.sources, s.field_options, s.Order());
+  s.norms.emplace(s.sources, s.doc_map.get_allocator().Manager(), s.Order());
   s.idx = std::make_unique<IdxWriter>(s.track_dir, s.segment.name);
 
   std::vector<field_id> norm_fields;
@@ -440,53 +570,47 @@ bool MergePlan::Prepare(size_t threads) {
                id);
     s.merged_norm_ids.emplace(id, out);
     s.norms->AddField(out, id, stats.sum, stats.non_zero);
-    std::vector<size_t> after;
-    if (!s.units.empty()) {
-      after.push_back(s.units.size() - 1);
-    }
-    s.AddUnit(
-      {.kind = MergeUnitKind::Norms, .id = id, .cost = s.segment.docs_count},
-      std::move(after));
+    s.norm_fields.push_back(id);
   }
-  const auto column_bytes = s.AddColumns(threads);
-  const auto footer = s.AddUnit({.kind = MergeUnitKind::ColumnsFooter}, {});
-  for (size_t unit = 0; unit != footer; ++unit) {
-    s.deps[footer].push_back(unit);
-  }
-  std::vector<size_t> ivf_units;
-  if (s.field_options) {
-    for (const auto id : s.columns->Columns()) {
-      const auto& ann = s.field_options->GetColumnOptions(id).ann_info;
-      if (!ann) {
-        continue;
-      }
-      const auto unit = s.units.size();
-      s.units.push_back({.kind = MergeUnitKind::Ann,
-                         .id = id,
-                         .cost = s.columns->StoredBytes(id) * kAnnCostPerByte});
-      s.deps.push_back({unit - 1});
-      if (ann->kind == AnnKind::Ivf) {
-        s.ivf = true;
-        ivf_units.push_back(unit);
-      }
-    }
-  }
-  uint64_t input_bytes = 0;
-  for (const auto& input : s.doc_map) {
-    input_bytes += input.reader->Meta().byte_size;
-  }
-  s.units.push_back(
-    {.kind = MergeUnitKind::Postings,
-     .cost = input_bytes > column_bytes ? input_bytes - column_bytes : 0});
-  s.deps.push_back(std::move(ivf_units));
-  const auto index = s.units.size();
-  s.units.push_back({.kind = MergeUnitKind::Index});
-  s.deps.emplace_back();
-  for (size_t unit = footer; unit != index; ++unit) {
-    s.deps[index].push_back(unit);
+  if (OrderPending()) {
+    s.order_clock.emplace(s.profile);
+  } else {
+    s.PlanUnits();
   }
   clock.Lap(MergeStep::Prepare);
   return true;
+}
+
+bool MergePlan::OrderPending() const noexcept {
+  return _state->key_order && _state->key_order->Pending();
+}
+
+duckdb::shared_ptr<duckdb::PresortedMerge> MergePlan::KeyMerge()
+  const noexcept {
+  return OrderPending() ? _state->key_order->KeyMerge() : nullptr;
+}
+
+void MergePlan::ExpandOrder(size_t partition,
+                            std::span<const duckdb::PresortedRun> runs) {
+  SDB_ASSERT(OrderPending());
+  _state->key_order->Expand(partition, runs);
+}
+
+bool MergePlan::FinishOrder() {
+  auto& s = *_state;
+  SDB_ASSERT(OrderPending());
+  if (!s.key_order->Finish()) {
+    return false;
+  }
+  s.PlanUnits();
+  s.order_clock->Lap(MergeStep::Prepare);
+  return true;
+}
+
+bool MergePlan::RunOrder() {
+  auto& s = *_state;
+  SDB_ASSERT(OrderPending());
+  return s.key_order->Merge(s.progress) && FinishOrder();
 }
 
 std::span<const MergeUnit> MergePlan::Units() const noexcept {
@@ -538,6 +662,9 @@ const MergeProfile& MergePlan::Profile() const noexcept {
 }
 
 bool RunSerially(MergePlan& plan) {
+  if (plan.OrderPending() && !plan.RunOrder()) {
+    return false;
+  }
   for (size_t unit = 0; unit < plan.Units().size(); ++unit) {
     if (!plan.RunUnit(unit)) {
       return false;

@@ -21,8 +21,10 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/types/value.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/utils/string.hpp>
 #include <span>
 #include <string>
@@ -76,9 +78,15 @@ struct SegmentDump {
 
 SegmentDump Dump(const irs::SubReader& segment);
 
+std::vector<duckdb::Value> LiveValues(const irs::SubReader& segment,
+                                      irs::field_id id);
+
 SegmentDump Concat(std::span<const SegmentDump> inputs);
 
 SegmentDump ExpectedMerge(std::span<const irs::SubReader* const> inputs);
+
+SegmentDump ExpectedSortedMerge(std::span<const irs::SubReader* const> inputs,
+                                const irs::SortSpec& spec);
 
 std::string Describe(const SegmentDump& dump);
 

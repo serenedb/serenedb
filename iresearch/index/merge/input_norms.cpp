@@ -26,6 +26,7 @@
 
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_order.hpp"
 #include "iresearch/index/merge/norms_unit.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
@@ -37,6 +38,72 @@ namespace {
 using Input = InputNormProvider::Input;
 
 constexpr uint64_t kNormAheadBytes = 16 * 1024;
+
+uint32_t ReadOne(const NormRegion& region, doc_id_t doc) {
+  const auto value = region.Slot(doc);
+  return region.exceptions && value >= region.first_code
+           ? region.Exception(doc, value)
+           : value;
+}
+
+class OrderedInputNormReader : public NormReader {
+ public:
+  OrderedInputNormReader(const MergeOrder& order,
+                         std::span<const doc_id_t> sources,
+                         std::vector<const NormColumnReader*> columns,
+                         score_t avg)
+    : _inputs{order.Inputs()},
+      _sources{sources},
+      _columns{std::move(columns)},
+      _regions(_columns.size(), nullptr),
+      _avg{avg} {}
+
+  void Get(std::span<const doc_id_t> docs, std::span<uint32_t> values) final {
+    Read(docs, values);
+  }
+
+  void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
+                     std::span<uint32_t, kScoreBlock> values) final {
+    Read(docs, values);
+  }
+
+  void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
+                       std::span<uint32_t, kPostingBlock> values) final {
+    Read(docs, values);
+  }
+
+  uint32_t Get(doc_id_t doc) final {
+    const auto row = doc - doc_limits::min();
+    const auto input = _inputs[row];
+    const auto* column = _columns[input];
+    if (column == nullptr) {
+      return 0;
+    }
+    const auto source = _sources[row];
+    const auto*& region = _regions[input];
+    if (region == nullptr || source < region->first_doc ||
+        source >= region->end_doc) {
+      region = &column->Locate(source);
+    }
+    return ReadOne(*region, source);
+  }
+
+  score_t GetAvg() const noexcept final { return _avg; }
+
+ private:
+  void Read(std::span<const doc_id_t> docs, std::span<uint32_t> values) {
+    SDB_ASSERT(docs.size() <= values.size());
+    for (size_t i = 0; i != docs.size(); ++i) {
+      values[i] = Get(docs[i]);
+    }
+  }
+
+  std::span<const uint8_t> _inputs;
+  std::span<const doc_id_t> _sources;
+  std::vector<const NormColumnReader*> _columns;
+  std::vector<const NormRegion*> _regions;
+  score_t _avg;
+};
 
 class InputNormReader : public NormReader {
  public:
@@ -164,13 +231,6 @@ class InputNormReader : public NormReader {
     }
   }
 
-  static uint32_t ReadOne(const NormRegion& region, doc_id_t doc) {
-    const auto value = region.Slot(doc);
-    return region.exceptions && value >= region.first_code
-             ? region.Exception(doc, value)
-             : value;
-  }
-
   static void PrefetchAfter(const NormRegion& region,
                             std::span<const doc_id_t> docs) noexcept {
     const uint64_t bytes = region.bits / 8;
@@ -241,7 +301,9 @@ class InputNormReader : public NormReader {
 }  // namespace
 
 InputNormProvider::InputNormProvider(std::span<const MergeSource> sources,
-                                     IResourceManager& memory) {
+                                     IResourceManager& memory,
+                                     const MergeOrder* order)
+  : _order{order}, _sources{{memory}} {
   _inputs.reserve(sources.size());
   doc_id_t next = doc_limits::min();
   for (const auto& source : sources) {
@@ -267,6 +329,18 @@ void InputNormProvider::AddField(field_id column, field_id field, uint64_t sum,
 }
 
 void InputNormProvider::MapDocs() const {
+  if (_order != nullptr) {
+    _sources.resize(_order->Rows());
+    for (const auto& input : _inputs) {
+      const auto& id_map = input.source->remap->id_map;
+      for (doc_id_t doc = doc_limits::min(); doc < id_map.size(); ++doc) {
+        if (const auto out = id_map[doc]; !doc_limits::eof(out)) {
+          _sources[out - doc_limits::min()] = doc;
+        }
+      }
+    }
+    return;
+  }
   for (auto& input : _inputs) {
     const auto& id_map = input.source->remap->id_map;
     if (id_map.empty()) {
@@ -291,6 +365,10 @@ NormReader::ptr InputNormProvider::norms(field_id column) const {
   columns.reserve(_inputs.size());
   for (const auto& input : _inputs) {
     columns.emplace_back(SourceNormColumn(*input.source, it->second.field));
+  }
+  if (_order != nullptr) {
+    return memory::make_managed<OrderedInputNormReader>(
+      *_order, _sources, std::move(columns), it->second.avg);
   }
   return memory::make_managed<InputNormReader>(_inputs, std::move(columns),
                                                it->second.avg);

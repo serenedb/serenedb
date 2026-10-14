@@ -21,31 +21,49 @@
 #include "search/compaction/pipeline_merge_executor.h"
 
 #include <algorithm>
+#include <chrono>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/connection.hpp>
+#include <duckdb/main/query_result.hpp>
 #include <duckdb/parser/statement/logical_plan_statement.hpp>
 #include <memory>
 
+#include "connector/segment_rewrite/logical_merge_order.h"
 #include "connector/segment_rewrite/logical_merge_units.h"
 #include "search/compaction/merge_unit_run.h"
 
 namespace sdb::search {
+namespace {
+
+void Execute(duckdb::Connection& connection,
+             duckdb::unique_ptr<duckdb::LogicalOperator> root) {
+  root->ResolveOperatorTypes();
+  const auto result = connection.Query(
+    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root)));
+  if (result->HasError()) {
+    result->ThrowError();
+  }
+}
+
+}  // namespace
 
 bool PipelineMergeExecutor::Run(irs::MergePlan& plan) {
-  const auto run = std::make_shared<MergeUnitRun>(plan);
+  const auto begin = std::chrono::steady_clock::now();
   const auto threads = std::max<size_t>(_threads, 1);
   duckdb::Connection connection{_db};
   auto& context = *connection.context;
   context.task_scheduler = _scheduler;
   context.config.threads = threads;
   connection.Query("SET max_execution_time = 0");
-  auto root = duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads);
-  root->ResolveOperatorTypes();
-  auto result = connection.Query(
-    duckdb::make_uniq<duckdb::LogicalPlanStatement>(std::move(root)));
-  if (result->HasError()) {
-    result->ThrowError();
+  if (plan.OrderPending()) {
+    Execute(connection, duckdb::make_uniq<connector::LogicalMergeOrder>(plan));
+    if (!plan.FinishOrder()) {
+      return false;
+    }
   }
+  const auto run = std::make_shared<MergeUnitRun>(plan, begin);
+  Execute(connection,
+          duckdb::make_uniq<connector::LogicalMergeUnits>(run, threads));
   return run->Finish();
 }
 

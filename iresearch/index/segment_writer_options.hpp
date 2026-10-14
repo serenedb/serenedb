@@ -34,6 +34,7 @@ namespace irs {
 
 class AnnBuildEnv;
 class IndexFieldOptions;
+struct SortSpec;
 
 struct SegmentWriterOptions {
   ScorerPtr scorer = nullptr;
@@ -47,6 +48,7 @@ struct SegmentWriterOptions {
   const IndexFieldOptions* field_options = nullptr;
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;
+  const SortSpec* sort = nullptr;
 };
 
 }  // namespace irs

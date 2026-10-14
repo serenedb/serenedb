@@ -30,6 +30,7 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parallel/thread_context.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,7 +84,9 @@ class SegmentRewriteExecutor final : public irs::MergeExecutor {
   size_t Threads() const noexcept final { return _state.threads; }
 
   bool Run(irs::MergePlan& plan) final {
-    const auto run = std::make_shared<search::MergeUnitRun>(plan);
+    SDB_ASSERT(!plan.OrderPending());
+    const auto run = std::make_shared<search::MergeUnitRun>(
+      plan, std::chrono::steady_clock::now());
     {
       Guard guard{_state.lock};
       _state.run = run;

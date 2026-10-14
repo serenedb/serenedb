@@ -36,6 +36,7 @@ struct DocRemap;
 
 class ColReader;
 class ColWriter;
+class MergeOrder;
 
 struct MergeSource {
   const SubReader* reader;
@@ -47,7 +48,8 @@ struct MergeSource {
 class ColumnMerger {
  public:
   ColumnMerger(std::span<const MergeSource> sources,
-               const IndexFieldOptions* field_options);
+               const IndexFieldOptions* field_options,
+               const MergeOrder* order = nullptr);
   ~ColumnMerger();
 
   ColumnMerger(const ColumnMerger&) = delete;

@@ -61,7 +61,8 @@ class MergeWriter : public util::Noncopyable {
         SDB_ASSERT(db);
         return *db;
       }()},
-      _field_options{options.field_options} {}
+      _field_options{options.field_options},
+      _sort{options.sort} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -91,6 +92,7 @@ class MergeWriter : public util::Noncopyable {
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
+  const SortSpec* _sort = nullptr;
   MergeProfile _profile;
 };
 

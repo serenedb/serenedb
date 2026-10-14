@@ -21,7 +21,7 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
+#include <duckdb/parallel/interrupt.hpp>
 #include <span>
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
@@ -33,31 +33,28 @@ namespace sdb::replication {
 
 class ReplStream {
  public:
-  ~ReplStream() { ReleaseWaiters(); }
-
   static bool IsIdle(const PgOutputMessage* message) noexcept {
     return std::holds_alternative<StreamStopMessage>(*message);
   }
 
   bool Publish(std::span<const PgOutputMessage> messages) noexcept {
-    if (_aborted.load(std::memory_order_acquire)) {
-      return false;
-    }
     _end = messages.data() + messages.size();
     _fresh = true;
     _msg.store(messages.data(), std::memory_order_seq_cst);
+    if (_aborted.load(std::memory_order_seq_cst)) {
+      return false;
+    }
     Wake();
     return true;
   }
   auto Drained(yaclib::IExecutor& io) noexcept { return _consumed.AwaitOn(io); }
-  bool IsDrained() noexcept { return _consumed.Ready(); }
-  void ResetDrained() noexcept {
-    _consumed.Reset();
-    std::atomic_thread_fence(std::memory_order_seq_cst);
+  bool IsDrained() const noexcept {
+    return _msg.load(std::memory_order_acquire) == nullptr;
   }
+  void ResetDrained() noexcept { _consumed.Reset(); }
   void Finish() noexcept {
-    if (_aborted.load(std::memory_order_acquire) ||
-        _eof.exchange(true, std::memory_order_seq_cst)) {
+    if (_eof.exchange(true, std::memory_order_seq_cst) ||
+        _aborted.load(std::memory_order_acquire)) {
       return;
     }
     Wake();
@@ -67,20 +64,9 @@ class ReplStream {
   }
 
   void SetTask(network::CpuResumer* task) noexcept { _task = task; }
-  void ScanActive(bool active) noexcept {
-    if (active) {
-      if (_ready.Ready()) {
-        _ready.Reset();
-      }
-      _armed = false;
-    }
-    _scan_active.store(active, std::memory_order_seq_cst);
-  }
 
-  bool Ready() const noexcept {
-    return _msg.load(std::memory_order_seq_cst) != nullptr ||
-           _eof.load(std::memory_order_seq_cst);
-  }
+  bool Ready() const noexcept { return Current() != nullptr || Ended(); }
+  bool Ended() const noexcept { return _eof.load(std::memory_order_acquire); }
   const PgOutputMessage* Current() const noexcept {
     return _msg.load(std::memory_order_acquire);
   }
@@ -96,15 +82,14 @@ class ReplStream {
     _end = messages.data() + messages.size();
     _msg.store(messages.data(), std::memory_order_relaxed);
   }
-  const PgOutputMessage* PeekFor(std::chrono::microseconds timeout) noexcept {
-    if (_armed) {
-      if (!_ready.WaitFor(timeout)) {
-        return nullptr;
-      }
-      _ready.Reset();
-      _armed = false;
+  bool Park(const duckdb::InterruptState& waiter) noexcept {
+    _scan_waiter = waiter;
+    _scan_waiting.store(true, std::memory_order_seq_cst);
+    if (_msg.load(std::memory_order_seq_cst) == nullptr &&
+        !_eof.load(std::memory_order_seq_cst)) {
+      return true;
     }
-    return _msg.load(std::memory_order_acquire);
+    return !_scan_waiting.exchange(false, std::memory_order_seq_cst);
   }
   void Advance() noexcept {
     const auto* next = _msg.load(std::memory_order_relaxed) + 1;
@@ -113,43 +98,32 @@ class ReplStream {
       return;
     }
     _msg.store(nullptr, std::memory_order_release);
-    _armed = true;
     _consumed.Set();
   }
   void Abort() noexcept {
-    _aborted.store(true, std::memory_order_release);
-    std::atomic_thread_fence(std::memory_order_seq_cst);
-    if (!_consumed.Ready()) {
+    _aborted.store(true, std::memory_order_seq_cst);
+    if (_msg.load(std::memory_order_seq_cst) != nullptr) {
+      _msg.store(nullptr, std::memory_order_release);
       _consumed.Set();
     }
   }
 
  private:
   void Wake() noexcept {
-    if (_scan_active.load(std::memory_order_seq_cst)) {
-      _ready.Set();
-      return;
+    if (_scan_waiting.exchange(false, std::memory_order_seq_cst)) {
+      _scan_waiter.Callback();
     }
-    ReleaseWaiters();
-    if (_task != nullptr) {
-      _task->RequestRun();
-    }
-  }
-  void ReleaseWaiters() noexcept {
-    if (!_ready.Ready()) {
-      _ready.Call();
-    }
+    _task->RequestRun();
   }
 
   std::atomic<const PgOutputMessage*> _msg{nullptr};
   const PgOutputMessage* _end = nullptr;
   bool _fresh = false;
   std::atomic<bool> _eof{false};
-  bool _armed = false;
   std::atomic<bool> _aborted{false};
-  std::atomic<bool> _scan_active{false};
+  std::atomic<bool> _scan_waiting{false};
+  duckdb::InterruptState _scan_waiter;
   network::CpuResumer* _task = nullptr;
-  yaclib::OneShotEvent _ready;
   yaclib::OneShotEvent _consumed;
 };
 

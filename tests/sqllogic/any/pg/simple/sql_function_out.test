@@ -194,5 +194,40 @@ m
 ok
 
 
+statement error function result type must be record because of OUT parameters
+CREATE FUNCTION fno.out_as_integer(OUT a integer, OUT b integer) RETURNS integer LANGUAGE sql AS 'SELECT 1, 2';
+
+
+statement error function result type must be record because of OUT parameters
+CREATE FUNCTION fno.out_as_setof(OUT a integer, OUT b integer) RETURNS SETOF integer LANGUAGE sql AS 'SELECT 1, 2';
+
+
+statement error function result type must be integer because of OUT parameters
+CREATE FUNCTION fno.out_as_text(OUT a integer) RETURNS text LANGUAGE sql AS 'SELECT 1';
+
+
+statement error function result type must be integer because of OUT parameters
+CREATE FUNCTION fno.out_as_record(OUT a integer) RETURNS record LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION fno.record_pair(OUT a integer, OUT b integer) RETURNS record LANGUAGE sql AS 'SELECT 1, 2';
+
+
+statement ok
+CREATE FUNCTION fno.same_integer(OUT a int4) RETURNS integer LANGUAGE sql AS 'SELECT 3';
+
+
+statement ok
+CREATE FUNCTION fno.any_scale(OUT a numeric(4,2)) RETURNS numeric LANGUAGE sql AS 'SELECT 1.5';
+
+
+query
+SELECT r.a, r.b, s.a AS s, n.a AS n FROM fno.record_pair() AS r, fno.same_integer() AS s, fno.any_scale() AS n;
+----
+a	b	s	n
+1	2	3	1.5
+
+
 statement ok
 DROP SCHEMA fno CASCADE;

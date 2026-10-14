@@ -40,6 +40,12 @@ When both operands are integers, `//` performs integer division (`5 // 2 = 2`) a
 
 <SqlLogicTest id="sql/functions/numeric/division_by_zero" />
 
+### Integer Overflow
+
+Integer `+`, `-`, `*` and unary minus fail with an overflow error when the result does not fit the type. After `SET integer_overflow = 'wrap'` they keep the low bits of the result instead, the two's complement wraparound of machine arithmetic and of ClickHouse; `RESET integer_overflow` restores the error. Casts and division are always checked:
+
+<SqlLogicTest id="sql/functions/numeric/integer_overflow" />
+
 ### Supported Types
 
 The modulo, bitwise, negation, and factorial operators work only on integral data types,

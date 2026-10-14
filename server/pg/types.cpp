@@ -60,6 +60,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kOidvector, &OIDVECTOR, true},
   {kJson, []() -> duckdb::LogicalType { return duckdb::LogicalType::JSON(); }, false},
   {kPgNodeTree, &PG_NODE_TREE, true},
+  {kCidr, &CIDR, true},
   {kFloat4, []() -> duckdb::LogicalType { return duckdb::LogicalType::FLOAT; }, false},
   {kFloat8, []() -> duckdb::LogicalType { return duckdb::LogicalType::DOUBLE; }, false},
   {kUnknown, []() -> duckdb::LogicalType { return duckdb::LogicalType::UNKNOWN; }, false},
@@ -76,6 +77,7 @@ constexpr PgTypeMapping kMappings[] = {
   {kBit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, false},
   {kVarbit, []() -> duckdb::LogicalType { return duckdb::LogicalType::BIT; }, true},
   {kNumeric, []() -> duckdb::LogicalType { return duckdb::LogicalType::DECIMAL(18, 3); }, false},
+  {kRefcursor, &REFCURSOR, true},
   {kRegprocedure, &REGPROCEDURE, true},
   {kRegoper, &REGOPER, true},
   {kRegoperator, &REGOPERATOR, true},
@@ -290,6 +292,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
       if (IsName(type)) {
         return make(kName);
       }
+      if (IsRefcursor(type)) {
+        return make(kRefcursor);
+      }
       if (IsChar(type)) {
         return make(kChar);
       }
@@ -331,6 +336,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array,
     case TUPLE:
       if (IsInet(type)) {
         return make(kInet);
+      }
+      if (IsCidr(type)) {
+        return make(kCidr);
       }
       if (connector::IsTSQueryStructType(type)) {
         return make(kText);

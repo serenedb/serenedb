@@ -37,6 +37,7 @@
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/utils/session.h"
 #include "pg/commands/create_subscription.h"
+#include "pg/inet.h"
 #include "pg/serialize.h"
 
 namespace sdb::connector {
@@ -260,6 +261,50 @@ bool PgLsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
+bool PgVarcharToCidrCast(duckdb::Vector& source, duckdb::Vector& result,
+                         duckdb::idx_t count, duckdb::CastParameters&) {
+  auto src = source.Values<duckdb::string_t>();
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto value = src[i];
+    if (!value.IsValid()) {
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
+    const auto& text = value.GetValue();
+    const auto inet = pg::ParseCidr({text.GetData(), text.GetSize()});
+    pg::StoreInet(result, i, inet.type, inet.address.upper, inet.address.lower,
+                  inet.mask);
+  }
+  return true;
+}
+
+template<bool kToText>
+bool PgInetCast(duckdb::Vector& source, duckdb::Vector& result,
+                duckdb::idx_t count, duckdb::CastParameters&) {
+  duckdb::RecursiveUnifiedVectorFormat vdata;
+  duckdb::Vector::RecursiveToUnifiedFormat(source, count, vdata);
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    const auto idx = vdata.unified.sel->get_index(i);
+    if (!vdata.unified.validity.RowIsValid(idx)) {
+      duckdb::FlatVector::SetNull(result, i, true);
+      continue;
+    }
+    INET_IPAddress inet;
+    pg::ReadInet(vdata, idx, inet);
+    if constexpr (kToText) {
+      char buffer[64];
+      const auto size = pg::CidrToString(inet, buffer, sizeof(buffer));
+      duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
+        duckdb::StringVector::AddString(result, buffer, size);
+    } else {
+      const auto network = ipaddress_network(&inet);
+      pg::StoreInet(result, i, network.type, network.address.upper,
+                    network.address.lower, network.mask);
+    }
+  }
+  return true;
+}
+
 template<pg::RegKind Kind>
 void RegisterRegCasts(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& reg) {
@@ -305,6 +350,18 @@ void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
     PgVarcharToLsnCast, 50);
   casts.RegisterCastFunction(pg::PG_LSN(), duckdb::LogicalType::VARCHAR,
                              PgLsnToVarcharCast, 50);
+
+  for (const auto text : {duckdb::LogicalTypeId::VARCHAR,
+                          duckdb::LogicalTypeId::STRING_LITERAL}) {
+    casts.RegisterCastFunction(duckdb::LogicalType{text}, pg::CIDR(),
+                               PgVarcharToCidrCast, 50);
+  }
+  casts.RegisterCastFunction(pg::CIDR(), duckdb::LogicalType::VARCHAR,
+                             PgInetCast<true>, 50);
+  casts.RegisterCastFunction(pg::INET(), pg::CIDR(), PgInetCast<false>);
+  casts.RegisterCastFunction(
+    pg::CIDR(), pg::INET(),
+    duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast), 1);
 
   // VARCHAR -> BLOB / BLOB -> VARCHAR (bytea)
   casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR,

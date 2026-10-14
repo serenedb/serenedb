@@ -64,6 +64,7 @@ DECLARE_PG_TYPE(CID,            Cid,            "cid",             BIGINT)
 DECLARE_PG_TYPE(XID,            Xid,            "xid",             BIGINT)
 DECLARE_PG_TYPE(XID8,           Xid8,           "xid8",            BIGINT)
 DECLARE_PG_TYPE(NAME,           Name,           "name",            VARCHAR)
+DECLARE_PG_TYPE(REFCURSOR,      Refcursor,      "refcursor",       VARCHAR)
 DECLARE_PG_TYPE(ACLITEM,        Aclitem,        "aclitem",         VARCHAR)
 DECLARE_PG_TYPE(CHAR,            Char,           "char",            VARCHAR)
 DECLARE_PG_TYPE(CARDINALNUMBER, CardinalNumber, "cardinal_number", INTEGER)
@@ -150,5 +151,16 @@ inline bool IsInet(const duckdb::LogicalType& type) {
 }
 
 inline duckdb::LogicalType INET() { return duckdb::make_inet_type(); }
+
+inline constexpr std::string_view kCidrAlias = "cidr";
+
+inline bool IsCidr(const duckdb::LogicalType& type) {
+  return type.id() == duckdb::LogicalTypeId::STRUCT &&
+         type.GetAlias() == kCidrAlias;
+}
+
+inline duckdb::LogicalType CIDR() {
+  return INET().WithAlias(std::string{kCidrAlias});
+}
 
 }  // namespace sdb::pg

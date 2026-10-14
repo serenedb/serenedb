@@ -36,6 +36,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+
+#include "pg/inet.h"
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
@@ -1491,29 +1493,7 @@ struct RecordBinCore {
   }
 };
 
-// PG `inet` (OID 869). STRUCT entries: [0]=ip_type (1=IPv4, 2=IPv6),
-// [1]=address (signed hugeint, IPv6 top bit flipped for sort order), [2]=mask.
-IRS_FORCE_INLINE void ReadInet(
-  const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row,
-  INET_IPAddress& inet) {
-  const auto& c0 = vdata.children[0].unified;
-  const auto& c1 = vdata.children[1].unified;
-  const auto& c2 = vdata.children[2].unified;
-  const auto ip_type =
-    duckdb::UnifiedVectorFormat::GetData<uint8_t>(c0)[c0.sel->get_index(row)];
-  const auto stored = duckdb::UnifiedVectorFormat::GetData<duckdb::hugeint_t>(
-    c1)[c1.sel->get_index(row)];
-  const auto mask =
-    duckdb::UnifiedVectorFormat::GetData<uint16_t>(c2)[c2.sel->get_index(row)];
-  inet.type = static_cast<INET_IPAddressType>(ip_type);
-  inet.address.lower = stored.lower;
-  inet.address.upper = static_cast<uint64_t>(stored.upper);
-  if (inet.type == INET_IP_ADDRESS_V6) {
-    inet.address.upper ^= (uint64_t{1} << 63);  // undo IPv6 sort-order flip
-  }
-  inet.mask = mask;
-}
-
+template<bool kCidr>
 struct InetTextCore {
   static constexpr uint32_t kMaxBytes = 64;
   IRS_FORCE_INLINE static size_t Render(
@@ -1521,8 +1501,9 @@ struct InetTextCore {
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t row) {
     INET_IPAddress inet;
     ReadInet(vdata, row, inet);
-    // Reuse the extension's formatter (IPv6 canonicalization + "/mask" rules)
-    // so output matches host()/::varchar.
+    if constexpr (kCidr) {
+      return CidrToString(inet, reinterpret_cast<char*>(dst), kMaxBytes);
+    }
     return ipaddress_to_string(&inet, reinterpret_cast<char*>(dst), kMaxBytes);
   }
 };
@@ -1577,6 +1558,7 @@ struct TsqueryBinCore {
   }
 };
 
+template<bool kCidr>
 struct InetBinCore {
   static constexpr uint32_t kMaxBytes = 4 + 16;
   IRS_FORCE_INLINE static size_t Render(
@@ -1590,7 +1572,7 @@ struct InetBinCore {
     const uint8_t nb = is_v6 ? 16 : 4;
     dst[0] = is_v6 ? 3 : 2;
     dst[1] = static_cast<uint8_t>(inet.mask);
-    dst[2] = 0;
+    dst[2] = kCidr;
     dst[3] = nb;
     if (is_v6) {
       absl::big_endian::Store64(dst + 4, inet.address.upper);
@@ -2383,8 +2365,12 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return MakeArraySerializer<InetTextCore, InetBinCore, kInet>(
-          format, context, kind);
+        return MakeArraySerializer<InetTextCore<false>, InetBinCore<false>,
+                                   kInet>(format, context, kind);
+      }
+      if (IsCidr(type)) {
+        return MakeArraySerializer<InetTextCore<true>, InetBinCore<true>,
+                                   kCidr>(format, context, kind);
       }
       if (connector::IsTSQueryStructType(type)) {
         return MakeArraySerializer<TsqueryTextCore<WrapContext::Array>,
@@ -2677,8 +2663,12 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
     case TUPLE:
     case STRUCT:
       if (IsInet(type)) {
-        return SelectFieldSerializer<InetTextCore, InetTextCore, InetBinCore>(
-          format, context);
+        return SelectFieldSerializer<InetTextCore<false>, InetTextCore<false>,
+                                     InetBinCore<false>>(format, context);
+      }
+      if (IsCidr(type)) {
+        return SelectFieldSerializer<InetTextCore<true>, InetTextCore<true>,
+                                     InetBinCore<true>>(format, context);
       }
       if (connector::IsTSQueryStructType(type)) {
         return SelectFieldSerializer<TsqueryTextCore<WrapContext::None>,

@@ -1,0 +1,102 @@
+query
+SELECT '10.0.0.0/8'::cidr AS v4, '10.1.2.3/32'::cidr AS host,
+       '2001:db8::/32'::cidr AS v6, '::1/128'::cidr AS v6_host
+----
+v4	host	v6	v6_host
+10.0.0.0/8	10.1.2.3/32	2001:db8::/32	::1/128
+
+
+query
+SELECT '10/8'::cidr AS a, '128.1'::cidr AS b, '192.168'::cidr AS c,
+       '10.1.2'::cidr AS d, '224'::cidr AS e, '10'::cidr AS f
+----
+a	b	c	d	e	f
+10.0.0.0/8	128.1.0.0/16	192.168.0.0/24	10.1.2.0/24	224.0.0.0/4	10.0.0.0/8
+
+
+statement error
+SELECT '10.1.2.3/8'::cidr
+----
+db error: ERROR: invalid cidr value: "10.1.2.3/8"
+DETAIL: Value has bits set to right of mask.
+
+
+statement error
+SELECT 'not a network'::cidr
+----
+db error: ERROR: invalid input syntax for type cidr: "not a network"
+
+
+query
+SELECT '10.1.2.3/8'::inet::cidr AS truncated, '10.1.2.3'::inet::cidr AS host
+----
+truncated	host
+10.0.0.0/8	10.1.2.3/32
+
+
+query
+SELECT '10.0.0.0/8'::cidr::inet AS i, '10.0.0.0/8'::cidr::text AS t,
+       host('10.0.0.0/8'::cidr) AS h, family('10.0.0.0/8'::cidr) AS f
+----
+i	t	h	f
+10.0.0.0/8	10.0.0.0/8	10.0.0.0	4
+
+
+query
+SELECT '10.0.0.0/8'::cidr = '10.0.0.0/8'::cidr AS same,
+       '10.0.0.0/8'::cidr >>= '10.1.2.3'::inet AS contains
+----
+same	contains
+t	t
+
+
+query
+SELECT '{10.0.0.0/8,192.168.0.0/16}'::cidr[] AS nets
+----
+nets
+{10.0.0.0/8,192.168.0.0/16}
+
+
+query
+SELECT pg_typeof('10.0.0.0/8'::cidr) AS cidr_type,
+       pg_typeof('portal_1'::refcursor) AS refcursor_type,
+       'portal_1'::refcursor AS portal, 'portal_1'::refcursor::text AS portal_text
+----
+cidr_type	refcursor_type	portal	portal_text
+cidr	refcursor	portal_1	portal_1
+
+
+statement ok
+DROP TABLE IF EXISTS cidr_refcursor
+
+
+statement ok
+CREATE TABLE cidr_refcursor (net cidr, cur refcursor)
+
+
+statement ok
+INSERT INTO cidr_refcursor VALUES ('10.0.0.0/8', 'c1'), ('2001:db8::/32', 'c2'), (NULL, NULL)
+
+
+query
+SELECT net, cur FROM cidr_refcursor ORDER BY net
+----
+net	cur
+10.0.0.0/8	c1
+2001:db8::/32	c2
+NULL	NULL
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type
+FROM pg_attribute
+WHERE attrelid = 'cidr_refcursor'::regclass AND attnum > 0
+ORDER BY attnum
+----
+attname	type
+net	cidr
+cur	refcursor
+
+
+statement ok
+DROP TABLE cidr_refcursor

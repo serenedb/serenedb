@@ -670,7 +670,15 @@ Definition FunctionArgDefault(const pg::Session& session, int64_t oid,
     return std::nullopt;
   }
   const auto& macro = *entry->macros.front();
-  const auto index = static_cast<duckdb::idx_t>(argument - 1);
+  auto index = static_cast<duckdb::idx_t>(argument - 1);
+  if (const auto& modes = macro.parameter_modes; !modes.empty()) {
+    if (index >= modes.size() || modes[index] == 'o') {
+      return std::nullopt;
+    }
+    index = static_cast<duckdb::idx_t>(
+      std::count_if(modes.begin(), modes.begin() + index,
+                    [](char mode) { return mode != 'o'; }));
+  }
   if (index >= macro.parameters.size()) {
     return std::nullopt;
   }

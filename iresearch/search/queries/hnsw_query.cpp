@@ -67,6 +67,7 @@ struct HnswCodeDist {
   const byte_type* codes;
   uint32_t record_size;
   QuantizerReader* qr;
+  QuantizerLevelBound bound;
 
   const byte_type* Row(uint32_t id) const noexcept {
     return codes + static_cast<size_t>(id) * record_size;
@@ -80,6 +81,15 @@ struct HnswCodeDist {
 
   void Batch(std::span<const uint32_t> ids, score_t* out,
              score_t threshold = kHnswNoThreshold) {
+    if (bound.rows != nullptr &&
+        qr->ComputeGatheredBounded(
+          codes, record_size, ids, bound,
+          threshold == kHnswNoThreshold
+            ? threshold
+            : threshold - kHnswPanoramaMargin * (1.f + std::abs(threshold)),
+          out)) {
+      return;
+    }
     qr->ComputeGathered(codes, record_size, ids, threshold, out);
   }
 
@@ -100,6 +110,13 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     HnswCodeDist dist{.codes = data.codes.data(),
                       .record_size = record_size,
                       .qr = reader.get()};
+    if (panorama != nullptr && !data.tails.empty()) {
+      dist.bound = {.width = kHnswCodeLevel,
+                    .query_step = kHnswPanoramaLevel,
+                    .query = panorama->tails,
+                    .rows = data.tails.data(),
+                    .row_stride = HnswCodeTails(d)};
+    }
     fn(dist);
     return;
   }

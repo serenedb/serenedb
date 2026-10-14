@@ -257,4 +257,95 @@ same
 t
 
 statement ok
+CREATE TABLE rot_sq8 (id INTEGER PRIMARY KEY, emb FLOAT[256])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rot_sq8_ip ON rot_sq8
+  USING inverted(id, emb hnsw (metric = 'ip', quant = 'sq8'));
+
+statement ok
+CREATE TABLE rot_sq8_cos (id INTEGER PRIMARY KEY, emb FLOAT[256])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rot_sq8_cos_idx ON rot_sq8_cos
+  USING inverted(id, emb hnsw (metric = 'cosine', quant = 'sq8'));
+
+statement ok
+INSERT INTO rot_sq8 SELECT i, rot_vec(i) FROM range(0, 2500) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_sq8;
+
+statement ok
+INSERT INTO rot_sq8 SELECT i, rot_vec(i) FROM range(2500, 5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_sq8;
+
+statement ok
+INSERT INTO rot_sq8_cos SELECT * FROM rot_sq8;
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_sq8_cos;
+
+statement ok
+SET sdb_hnsw_ef_search = 2000;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('rot_sq8') WHERE column_name = 'id';
+----
+segments
+2
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_sq8 ORDER BY emb <#> rot_vec(1234.5) LIMIT 25)
+  EXCEPT (SELECT i FROM range(5000) t(i) ORDER BY rot_vec(i) <#> rot_vec(1234.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_sq8_cos ORDER BY emb <=> rot_vec(42.5) LIMIT 25)
+  EXCEPT (SELECT i FROM range(5000) t(i) ORDER BY rot_vec(i) <=> rot_vec(42.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT (SELECT count(*) FROM rot_sq8 WHERE emb <#> rot_vec(900.5) < -12)
+     = (SELECT count(*) FROM range(5000) t(i) WHERE rot_vec(i) <#> rot_vec(900.5) < -12) AS same;
+----
+same
+t
+
+statement ok
+VACUUM (COMPACT_TABLE) rot_sq8;
+
+statement ok
+SET sdb_ann_oversample = 2;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('rot_sq8') WHERE column_name = 'id';
+----
+segments
+1
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_sq8 ORDER BY emb <#> rot_vec(3333.5) LIMIT 25)
+  EXCEPT (SELECT i FROM range(5000) t(i) ORDER BY rot_vec(i) <#> rot_vec(3333.5) LIMIT 25)) t;
+----
+count
+0
+
+statement ok
 RESET sdb_hnsw_ef_search;
+
+statement ok
+RESET sdb_ann_oversample;

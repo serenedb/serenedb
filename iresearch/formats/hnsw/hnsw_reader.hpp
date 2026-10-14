@@ -50,6 +50,7 @@ struct HnswData {
   std::vector<float> vectors;
   std::shared_ptr<const std::vector<float>> rotation;
   std::vector<float> norms;
+  std::vector<float> tails;
   bstring codes;
   std::vector<float> centroid;
   std::shared_ptr<const QuantizerStats> stats;

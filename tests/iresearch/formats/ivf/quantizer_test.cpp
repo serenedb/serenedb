@@ -2160,6 +2160,92 @@ TEST(sq8_quantizer_test, inner_product_tracks_decoded_rows) {
   }
 }
 
+TEST(sq8_quantizer_test, level_bound_prunes_only_rows_below_the_threshold) {
+  constexpr uint32_t d = 300;
+  constexpr uint32_t kWidth = 128;
+  constexpr uint32_t kStep = 64;
+  constexpr size_t n = 400;
+  std::mt19937 rng{59};
+  std::normal_distribution<float> nd{0.f, 1.f};
+  const auto draw = [&](size_t rows) {
+    std::vector<float> out(rows * d);
+    for (size_t i = 0; i < rows; ++i) {
+      for (uint32_t j = 0; j < d; ++j) {
+        out[i * d + j] = nd(rng) / (1.f + static_cast<float>(j) / 8.f);
+      }
+    }
+    return out;
+  };
+  const auto points = draw(n);
+  const auto f = BuildCodes(VectorQuantization::SQ8, d, 0,
+                            VectorMetric::InnerProduct, points, n, {});
+  constexpr uint32_t kTails = (d + kWidth - 1) / kWidth - 1;
+  std::vector<uint32_t> ids(n);
+  std::iota(ids.begin(), ids.end(), 0U);
+  for (uint32_t seed = 0; seed < 4; ++seed) {
+    const auto query = draw(1);
+    auto reader = MakeKeyedReader(f, query, nullptr);
+    std::vector<float> decoded(n * d);
+    std::vector<float> tails(n * kTails);
+    for (size_t i = 0; i < n; ++i) {
+      float* row = decoded.data() + i * d;
+      ASSERT_TRUE(reader->Decode(f.codes.data() + i * f.record_size, row));
+      for (uint32_t k = 1; k <= kTails; ++k) {
+        double sum = 0;
+        for (uint32_t j = k * kWidth; j < d; ++j) {
+          sum += double{row[j]} * row[j];
+        }
+        tails[i * kTails + k - 1] = static_cast<float>(std::sqrt(sum));
+      }
+    }
+    std::vector<float> q_tails(d / kStep + 2, 0.f);
+    for (uint32_t t = 0; t * kStep < d; ++t) {
+      double sum = 0;
+      for (uint32_t j = t * kStep; j < d; ++j) {
+        sum += double{query[j]} * query[j];
+      }
+      q_tails[t] = static_cast<float>(std::sqrt(sum));
+    }
+    const QuantizerLevelBound bound{.width = kWidth,
+                                    .query_step = kStep,
+                                    .query = q_tails,
+                                    .rows = tails.data(),
+                                    .row_stride = kTails};
+    std::vector<score_t> full(n);
+    if (!reader->ComputeGatheredBounded(f.codes.data(), f.record_size, ids,
+                                        bound, kNoPrune, full.data())) {
+      GTEST_SKIP() << "no level-bounded sq8 kernel on this target";
+    }
+    for (size_t i = 0; i < n; ++i) {
+      const auto want = ExactScore(VectorMetric::InnerProduct, query.data(),
+                                   decoded.data() + i * d, d);
+      ASSERT_NEAR(full[i], want, 1e-4f * (1.f + std::abs(want)))
+        << "query " << seed << " row " << i;
+    }
+    auto sorted = full;
+    std::ranges::sort(sorted);
+    for (const double share : {0.1, 0.5, 0.9}) {
+      const auto threshold =
+        sorted[static_cast<size_t>(share * static_cast<double>(n - 1))];
+      std::vector<score_t> got(n);
+      ASSERT_TRUE(reader->ComputeGatheredBounded(
+        f.codes.data(), f.record_size, ids, bound, threshold, got.data()));
+      size_t dropped = 0;
+      for (size_t i = 0; i < n; ++i) {
+        if (got[i] == kNoPrune) {
+          ++dropped;
+          EXPECT_LE(full[i], threshold) << "share " << share << " row " << i;
+        } else {
+          EXPECT_EQ(got[i], full[i]) << "share " << share << " row " << i;
+        }
+      }
+      if (share > 0.5) {
+        EXPECT_GT(dropped, 0U) << "query " << seed;
+      }
+    }
+  }
+}
+
 TEST(code_bound_test, only_byte_scalar_codes_are_bounded) {
   constexpr uint32_t kDim = 16;
   constexpr size_t kRows = 64;

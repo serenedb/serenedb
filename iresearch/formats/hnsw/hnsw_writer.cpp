@@ -559,6 +559,8 @@ struct HnswCodeDistFactory {
   const float* centroid;
   uint32_t d;
   std::span<const float> pair_terms;
+  const float* resident = nullptr;
+  uint32_t rows = 0;
 
   using Dist = HnswCodeBuildDist;
 
@@ -594,6 +596,7 @@ struct HnswCodeDistFactory {
       dist.pair_reader = MakeQuantizerReader(dist.pair_book);
       dist.pair_reader->StartCluster(centroid);
     }
+    dist.SetWindow(resident, 0, resident != nullptr ? rows : 0);
     return dist;
   }
 
@@ -676,7 +679,9 @@ struct HnswInsertJob {
     if (!slot) {
       slot = std::make_unique<WorkerSlot>(_factory.Make());
       slot->scratch.search.visited.Reset(_rows);
-      slot->dist.SetWindow(_window.base, _window.first, _window.count);
+      if (_window.base != nullptr) {
+        slot->dist.SetWindow(_window.base, _window.first, _window.count);
+      }
     }
     return *slot;
   }
@@ -1085,6 +1090,64 @@ void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
   }
 }
 
+bool RotatesCodes(const AnnInfo& info, uint32_t d) noexcept {
+  return info.quant.kind == VectorQuantization::SQ8 &&
+         EffectiveQuantMetric(info.metric) == VectorMetric::InnerProduct &&
+         d >= kHnswPanoramaMinDim && d <= kHnswPanoramaMaxDim &&
+         PanoramaApplies(info.metric, d);
+}
+
+HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
+                              const MergeDonor& donor,
+                              const std::vector<float>& vectors,
+                              std::span<const uint8_t> valid, uint32_t d,
+                              bool enough) {
+  HnswBases::Basis basis;
+  if (bases != nullptr) {
+    basis = bases->Find(field);
+  }
+  if (!basis && donor.index != nullptr) {
+    if (auto data = donor.index->Load(*donor.reader)) {
+      basis = data->rotation;
+    }
+  }
+  if (!basis && enough) {
+    basis = std::make_shared<const std::vector<float>>(
+      TrainPanoramaBasis(vectors, valid, d));
+  }
+  if (basis && bases != nullptr) {
+    basis = bases->Publish(field, std::move(basis));
+  }
+  SDB_ASSERT(!basis || basis->size() == size_t{d} * d);
+  return basis;
+}
+
+void ComputeCodeTails(const QuantizerStats& stats, const byte_type* codes,
+                      uint32_t record_size, size_t rows, uint32_t d,
+                      const AnnBuildEnv* env, std::vector<float>& tails) {
+  const uint32_t stride = HnswCodeTails(d);
+  tails.assign(rows * stride, 0.f);
+  FanOut(env, (rows + kPanoramaApplyRows - 1) / kPanoramaApplyRows,
+         [&](size_t part) {
+           const std::vector<float> zero(d, 0.f);
+           auto reader = MakeQuantizerReader(stats.MakeCodebook(zero));
+           std::vector<float> row(d);
+           const size_t first = part * kPanoramaApplyRows;
+           const size_t last = std::min(rows, first + kPanoramaApplyRows);
+           for (size_t r = first; r < last; ++r) {
+             reader->Decode(codes + r * record_size, row.data());
+             float* out = tails.data() + r * stride;
+             float sum = 0.f;
+             for (uint32_t k = stride; k > 0; --k) {
+               const uint32_t b = k * kHnswCodeLevel;
+               sum += faiss::fvec_norm_L2sqr(row.data() + b,
+                                             std::min(kHnswCodeLevel, d - b));
+               out[k - 1] = std::sqrt(sum);
+             }
+           }
+         });
+}
+
 }  // namespace
 
 HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
@@ -1111,6 +1174,78 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
       _info.quant.pq_m, 0, _info.quant.nb_bits,
       /*row_major=*/true, _info.quant.half_bit, _info.quant.query_bits);
   }
+
+  const auto m = _info.m;
+  const auto ef = _info.ef_construction;
+  SDB_ASSERT(m != 0 && ef != 0);
+  const auto donor =
+    PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
+
+  if (_qw && RotatesCodes(_info, _d)) {
+    _vectors.resize(static_cast<size_t>(_rows) * _d);
+    ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
+                [&](const float* rows, size_t n, uint64_t first,
+                    const duckdb::ValidityMask& mask) {
+                  std::memcpy(_vectors.data() + first * _d, rows,
+                              n * _d * sizeof(float));
+                  for (size_t i = 0; i < n; ++i) {
+                    if (!mask.RowIsValid(i)) {
+                      valid[first + i] = 0;
+                      std::fill_n(_vectors.data() + (first + i) * _d, _d, 0.f);
+                    }
+                  }
+                });
+    const bool enough = PanoramaEnough(valid, _d);
+    const auto basis = AcquireBasis(_bases, _info.centroids_id, donor, _vectors,
+                                    valid, _d, enough);
+    if (basis && enough) {
+      RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation,
+                        _norms);
+      _norms = {};
+      for (size_t first = 0; first < valid.size();) {
+        if (valid[first] == 0) {
+          ++first;
+          continue;
+        }
+        size_t last = first;
+        while (last < valid.size() && valid[last] != 0) {
+          ++last;
+        }
+        _qw->Train(_vectors.data() + first * _d, last - first);
+        first = last;
+      }
+      _record_size = _qw->BlockSetting().record_size;
+      _codes.resize(static_cast<size_t>(_rows) * _record_size);
+      SDB_ENSURE(_qw->EncodeInto(_codes.data(), _vectors.data(), _rows),
+                 "hnsw: sq8 encodes rows in place");
+      BytesOutput blob_out{_stats_blob};
+      _qw->Serialize(blob_out);
+      const auto stats = MakeQuantizerStats(
+        _info.quant.kind, _d,
+        std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
+        EffectiveQuantMetric(_info.metric), /*row_major=*/true);
+      SDB_ENSURE(stats != nullptr, "hnsw: sq8 statistics round-trip");
+      ComputeCodeTails(*stats, _codes.data(), _record_size, _rows, _d, env,
+                       _tails);
+      HnswCodeDistFactory factory{.codes = _codes.data(),
+                                  .record_size = _record_size,
+                                  .stats = stats.get(),
+                                  .centroid = nullptr,
+                                  .d = _d,
+                                  .resident = _vectors.data(),
+                                  .rows = static_cast<uint32_t>(_rows)};
+      std::vector<float> pair_terms;
+      if (factory.PreparePairTerms(_rows, pair_terms)) {
+        factory.pair_terms = pair_terms;
+      }
+      co_await BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
+                             donor, env, HnswOriginals{}, _d);
+      _vectors = {};
+      co_return {};
+    }
+    _vectors = {};
+  }
+
   const bool train =
     _qw && _qw->TrainSamples(_rows) == QuantizerWriter::kTrainStreaming;
   const size_t train_rows = _qw && !train ? _qw->TrainSamples(_rows) : 0;
@@ -1191,12 +1326,6 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     _vectors.resize(static_cast<size_t>(_rows) * _d);
   }
 
-  const auto m = _info.m;
-  const auto ef = _info.ef_construction;
-  SDB_ASSERT(m != 0 && ef != 0);
-  const auto donor =
-    PickMergeDonor(_merge_sources, _info.centroids_id, _d, _info.metric, m);
-
   if (encoding) {
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
                             _record_size, valid, env);
@@ -1216,24 +1345,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                 });
     if (!_qw && _d >= kHnswPanoramaMinDim && _d <= kHnswPanoramaMaxDim &&
         PanoramaApplies(_info.metric, _d)) {
-      HnswBases::Basis basis;
-      if (_bases != nullptr) {
-        basis = _bases->Find(_info.centroids_id);
-      }
-      if (!basis && donor.index != nullptr) {
-        if (auto data = donor.index->Load(*donor.reader)) {
-          basis = data->rotation;
-        }
-      }
       const bool enough = PanoramaEnough(valid, _d);
-      if (!basis && enough) {
-        basis = std::make_shared<const std::vector<float>>(
-          TrainPanoramaBasis(_vectors, valid, _d));
-      }
-      if (basis && _bases != nullptr) {
-        basis = _bases->Publish(_info.centroids_id, std::move(basis));
-      }
-      SDB_ASSERT(!basis || basis->size() == size_t{_d} * _d);
+      const auto basis = AcquireBasis(_bases, _info.centroids_id, donor,
+                                      _vectors, valid, _d, enough);
       if (basis && enough) {
         RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation,
                           _norms);
@@ -1317,6 +1431,12 @@ void HnswWriter::Flush() {
                     _centroid.size() * sizeof(float));
     }
     out.WriteData(_codes.data(), _codes.size());
+    if (!_rotation.empty()) {
+      out.WriteData(reinterpret_cast<const byte_type*>(_rotation.data()),
+                    _rotation.size() * sizeof(float));
+      out.WriteData(reinterpret_cast<const byte_type*>(_tails.data()),
+                    _tails.size() * sizeof(float));
+    }
   } else {
     out.WriteData(reinterpret_cast<const byte_type*>(_vectors.data()),
                   static_cast<size_t>(_rows) * _d * sizeof(float));
@@ -1338,6 +1458,8 @@ void HnswWriter::Flush() {
   _rotation.shrink_to_fit();
   _norms.clear();
   _norms.shrink_to_fit();
+  _tails.clear();
+  _tails.shrink_to_fit();
   _codes.clear();
   _codes.shrink_to_fit();
   _stats_blob.clear();

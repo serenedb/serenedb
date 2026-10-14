@@ -73,6 +73,19 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
     IRS_IGNORE(ReadHeader(*in));
     auto data = std::make_shared<HnswData>();
     data->graph = HnswGraph::Deserialize(*in);
+    const auto read_floats = [&](std::vector<float>& out, size_t count) {
+      out.resize(count);
+      in->ReadData(reinterpret_cast<byte_type*>(out.data()),
+                   out.size() * sizeof(float));
+    };
+    const auto read_rotation = [&] {
+      std::vector<float> rotation;
+      read_floats(rotation, size_t{_header.d} * _header.d);
+      data->rotation =
+        _bases
+          ? _bases->Share(_field, std::move(rotation))
+          : std::make_shared<const std::vector<float>>(std::move(rotation));
+    };
     if (_header.quant == VectorQuantization::None) {
       data->vectors.resize(static_cast<size_t>(_header.rows) * _header.d);
       if (!data->vectors.empty()) {
@@ -80,16 +93,8 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
                      data->vectors.size() * sizeof(float));
       }
       if (_header.rotated) {
-        std::vector<float> rotation(size_t{_header.d} * _header.d);
-        in->ReadData(reinterpret_cast<byte_type*>(rotation.data()),
-                     rotation.size() * sizeof(float));
-        data->rotation =
-          _bases
-            ? _bases->Share(_field, std::move(rotation))
-            : std::make_shared<const std::vector<float>>(std::move(rotation));
-        data->norms.resize(static_cast<size_t>(_header.rows));
-        in->ReadData(reinterpret_cast<byte_type*>(data->norms.data()),
-                     data->norms.size() * sizeof(float));
+        read_rotation();
+        read_floats(data->norms, static_cast<size_t>(_header.rows));
       }
     } else {
       const auto stats_size = static_cast<size_t>(in->ReadI64());
@@ -113,6 +118,11 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
                          _header.record_size);
       if (!data->codes.empty()) {
         in->ReadData(data->codes.data(), data->codes.size());
+      }
+      if (_header.rotated) {
+        read_rotation();
+        read_floats(data->tails, static_cast<size_t>(_header.rows) *
+                                   HnswCodeTails(_header.d));
       }
     }
     _data = std::move(data);
@@ -148,7 +158,10 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
   auto panorama = MakePanoramaQuery(*data, query, cache);
-  auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
+  auto codebook =
+    data->stats
+      ? data->stats->MakeCodebook(panorama ? panorama->rotated : query)
+      : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
   const auto ef = std::max(opts.ef_search, opts.min_ef);
@@ -182,7 +195,10 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
   auto panorama = MakePanoramaQuery(*data, query, cache);
-  auto codebook = data->stats ? data->stats->MakeRangeCodebook(query) : nullptr;
+  auto codebook =
+    data->stats
+      ? data->stats->MakeRangeCodebook(panorama ? panorama->rotated : query)
+      : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   const auto* exact = data->stats ? segment.Column(opts.centroids_id) : nullptr;
   const bool angular = opts.metric == VectorMetric::InnerProduct ||
@@ -213,8 +229,10 @@ AnnExactCodes HnswIndex::PrepareExact(const SubReader& segment,
   if (!data || !data->stats || data->codes.empty()) {
     return {};
   }
+  const auto normalized = NormalizedQuery(query, metric, _header.d);
+  const auto panorama = MakePanoramaQuery(*data, normalized, nullptr);
   auto bound = data->stats->MakeCodeBound(
-    NormalizedQuery(query, metric, _header.d), metric);
+    panorama ? panorama->rotated : normalized, metric);
   if (!bound) {
     return {};
   }

@@ -95,6 +95,14 @@ class QuantizerWriter {
   virtual VectorQuantization Kind() const noexcept = 0;
 };
 
+struct QuantizerLevelBound {
+  uint32_t width = 0;
+  uint32_t query_step = 0;
+  std::span<const float> query;
+  const float* rows = nullptr;
+  uint32_t row_stride = 0;
+};
+
 class QuantizerReader {
  public:
   virtual ~QuantizerReader() = default;
@@ -106,6 +114,14 @@ class QuantizerReader {
   virtual void ComputeGathered(const byte_type* base, uint32_t record_size,
                                std::span<const uint32_t> ids, score_t threshold,
                                score_t* out);
+
+  virtual bool ComputeGatheredBounded(const byte_type* /*base*/,
+                                      uint32_t /*record_size*/,
+                                      std::span<const uint32_t> /*ids*/,
+                                      const QuantizerLevelBound& /*bound*/,
+                                      score_t /*threshold*/, score_t* /*out*/) {
+    return false;
+  }
 
   virtual bool Decode(const byte_type* /*code*/, float* /*out*/) const {
     return false;

@@ -358,8 +358,14 @@ inline constexpr uint32_t kHnswPanoramaMaxDim = 64 * kHnswPanoramaLevel;
 inline constexpr float kHnswPanoramaSlack = 1e-4f;
 inline constexpr float kHnswPanoramaMargin = 1e-5f;
 
+inline constexpr uint32_t kHnswCodeLevel = 2 * kHnswPanoramaLevel;
+
 inline uint32_t HnswPanoramaLevels(uint32_t d) noexcept {
   return (d + kHnswPanoramaLevel - 1) / kHnswPanoramaLevel;
+}
+
+inline uint32_t HnswCodeTails(uint32_t d) noexcept {
+  return (d + kHnswCodeLevel - 1) / kHnswCodeLevel - 1;
 }
 
 void HnswPanoramaTails(const float* q, uint32_t d, float* tails) noexcept;

@@ -90,7 +90,7 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 | `quant` | Compression | Notes |
 |---|---|---|
 | `none` | none | Full-precision vectors; never reranks regardless of `sdb_ann_oversample`. The only choice for `l1`. With 256 to 4096 dimensions, an `hnsw` segment of at least eight rows per dimension stores its vectors in a basis fitted to the index's vectors, which every segment of the index shares so a query is turned into it once, and stops reading a candidate once its distance can no longer make the result; the answer is unchanged |
-| `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off |
+| `sq8` (default) | 8-bit scalar quantization per dimension | Good recall/size trade-off. With `ip` or `cosine` and 256 to 4096 dimensions, an `hnsw` segment quantizes its vectors in the same shared basis as `none`, keeps each row's remaining length every 128 dimensions, and stops reading a candidate once its score can no longer make the result |
 | `sq4` | 4-bit scalar quantization per dimension | Smaller than `sq8`, lower recall before reranking |
 | `usq8` / `usq4` | As `sq8` / `sq4`, but one min/max for the whole vector instead of one per dimension | Cheaper to decode |
 | `fp16` / `bf16` | Every component stored as a 16-bit float: IEEE half precision, or bfloat16 (the float exponent with a shorter mantissa) | Half the size of `none` with scores nearly as exact, so they are not re-scored by default; `bf16` keeps the full float range, `fp16` keeps more precision |

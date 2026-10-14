@@ -837,6 +837,50 @@ TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {
   }
 }
 
+TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
+  constexpr uint32_t kD = irs::kHnswPanoramaMinDim + 40;
+  constexpr size_t kBatch = 8 * kD;
+  constexpr size_t kK = 10;
+  constexpr auto kMetric = irs::VectorMetric::InnerProduct;
+  constexpr auto kQuant = irs::VectorQuantization::SQ8;
+  const auto vecs = MakeDecayingVectors(2 * kBatch, 47, kD);
+  const std::span all{vecs};
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(
+    dir, irs::kOmCreate, MakeWriterOptions(kMetric, kQuant, 0, kD));
+  ASSERT_NE(nullptr, writer);
+  AppendBatch(*writer, all.subspan(0, kBatch));
+  AppendBatch(*writer, all.subspan(kBatch, kBatch));
+  const auto flushed = SegmentBases(writer->GetSnapshot());
+  ASSERT_EQ(2U, flushed.size());
+  ASSERT_NE(nullptr, flushed[0]);
+  EXPECT_EQ(flushed[0], flushed[1]);
+  for (const auto& segment : writer->GetSnapshot()) {
+    const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
+    EXPECT_EQ(ann->Load(segment)->tails.size(),
+              size_t{kBatch} * irs::HnswCodeTails(kD));
+  }
+
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
+  const auto merged = writer->GetSnapshot();
+  ASSERT_EQ(1U, merged->size());
+  EXPECT_EQ(flushed[0], SegmentBases(merged)[0]);
+
+  size_t total = 0;
+  size_t hits = 0;
+  for (const auto& q : MakeDecayingVectors(20, 53, kD)) {
+    auto filter = MakeKnnFilter(q, kMetric, kQuant, 128);
+    const auto got = RunKnn(merged, filter);
+    for (const auto doc : BruteForceTopK(vecs, q, kMetric, kK)) {
+      ++total;
+      hits += std::ranges::find(got, doc) != got.end() ? 1 : 0;
+    }
+  }
+  EXPECT_GE(static_cast<double>(hits) / static_cast<double>(total), 0.95);
+}
+
 // The share of nodes carrying a row above level 0 is what the greedy descent
 // navigates on, and it follows directly from how the level sample is rounded:
 // truncating (hnswlib) admits at sample >= 1 -> 1/m, rounding (qdrant, and us)

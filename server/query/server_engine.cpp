@@ -40,6 +40,7 @@
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
+#include "connector/functions/backup.h"
 #include "connector/functions/catalog_introspect.h"
 #include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
@@ -155,6 +156,11 @@ extern "C" const duckdb::DefaultType* duckdb_external_types(
     {
       "xid8",
       sdb::pg::XID8(),
+      nullptr,
+    },
+    {
+      "pg_lsn",
+      sdb::pg::PG_LSN(),
       nullptr,
     },
     // PG name type
@@ -334,6 +340,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterOtelFunctions(db);
 
+  connector::RegisterBackupFunctions(db);
   connector::RegisterCatalogIntrospectFunctions(db);
 
   connector::RegisterMarkdownRenderFunctions(db);

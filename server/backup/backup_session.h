@@ -29,6 +29,7 @@
 #include <duckdb/common/unique_ptr.hpp>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -65,11 +66,24 @@ struct Cut {
   std::vector<StoreCut> stores;
 };
 
+struct BackupOwner {
+  const void* session = nullptr;
+  int32_t pid = 0;
+};
+
+struct FinishedBackup {
+  uint64_t lsn = 0;
+  std::string label_file;
+};
+
 class BackupSession final {
  public:
   static BackupSession& Instance();
 
-  void Begin(absl::FunctionRef<bool()> cancelled);
+  uint64_t Begin(BackupOwner owner, std::string_view label,
+                 absl::FunctionRef<bool()> cancelled);
+  FinishedBackup Finish(const void* session);
+  void AbortIfOwnedBy(const void* session) noexcept;
   void End() noexcept;
   bool IsActive();
 
@@ -85,7 +99,8 @@ class BackupSession final {
   std::vector<duckdb::SingleFileBlockManager*> _block_managers
     ABSL_GUARDED_BY(_mutex);
   std::filesystem::path _backup_dir ABSL_GUARDED_BY(_mutex);
-  Cut _cut ABSL_GUARDED_BY(_mutex);
+  BackupOwner _owner ABSL_GUARDED_BY(_mutex);
+  std::string _label_file ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace sdb::backup

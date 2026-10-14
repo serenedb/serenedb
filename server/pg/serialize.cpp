@@ -68,6 +68,7 @@
 
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
+#include "pg/pg_lsn.h"
 #include "pg/pg_types.h"
 #include "pg/sql_utils.h"
 #include "query/config.h"
@@ -718,6 +719,15 @@ struct IntTextCore {
     char* buf = reinterpret_cast<char*>(dst);
     char* end = absl::numbers_internal::FastIntToBuffer(v, buf);
     return static_cast<size_t>(end - buf);
+  }
+};
+
+struct LsnTextCore {
+  using Value = int64_t;
+  static constexpr uint32_t kMaxBytes = kLsnMaxTextLen;
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value value) {
+    return RenderLsn(reinterpret_cast<char*>(dst),
+                     static_cast<uint64_t>(value));
   }
 };
 
@@ -2174,6 +2184,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
         return MakeArraySerializer<IntTextCore<int64_t>, OidBinCore, kTid>(
           format, context, kind);
       }
+      if (IsPgLsn(type)) {
+        return MakeArraySerializer<LsnTextCore, IntBinCore<int64_t>, kPgLsn>(
+          format, context, kind);
+      }
       // XID8 or BIGINT
       return MakeArraySerializer<IntTextCore<int64_t>, IntBinCore<int64_t>,
                                  kInt8>(format, context, kind);
@@ -2420,6 +2434,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       if (IsOidLike(type)) {
         return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,
                                      OidBinCore>(format, context);
+      }
+      if (IsPgLsn(type)) {
+        return SelectFieldSerializer<LsnTextCore, LsnTextCore,
+                                     IntBinCore<int64_t>>(format, context);
       }
       return SelectFieldSerializer<IntTextCore<int64_t>, IntTextCore<int64_t>,
                                    IntBinCore<int64_t>>(format, context);

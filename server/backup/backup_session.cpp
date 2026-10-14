@@ -22,7 +22,10 @@
 
 #include <absl/base/no_destructor.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/time/clock.h>
 
+#include <algorithm>
+#include <atomic>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/valid_checker.hpp>
@@ -39,6 +42,7 @@
 #include <span>
 #include <utility>
 
+#include "backup/backup_label.h"
 #include "backup/commit_gate.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
@@ -89,6 +93,18 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
                index->Storage()->GetInvertedIndexSnapshot()->reader)});
         }
       });
+  }
+}
+
+uint64_t NextLsn() {
+  static std::atomic<uint64_t> gLast{0};
+  const auto now = static_cast<uint64_t>(absl::ToUnixMicros(absl::Now()));
+  auto last = gLast.load();
+  for (;;) {
+    const auto next = std::max(now, last + 1);
+    if (gLast.compare_exchange_weak(last, next)) {
+      return next;
+    }
   }
 }
 
@@ -168,11 +184,19 @@ BackupSession& BackupSession::Instance() {
   return *gSession;
 }
 
-void BackupSession::Begin(absl::FunctionRef<bool()> cancelled) {
+uint64_t BackupSession::Begin(BackupOwner owner, std::string_view label,
+                              absl::FunctionRef<bool()> cancelled) {
   absl::MutexLock lock{&_mutex};
-  if (_active) {
+  if (_active && _owner.session == owner.session) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-                    ERR_MSG("a backup is already in progress"));
+                    ERR_MSG("a backup is already in progress in this session"));
+  }
+  if (_active) {
+    const auto holder = _owner.pid;
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+      ERR_MSG("a backup is already in progress"),
+      ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> pins;
   auto& manager =
@@ -209,9 +233,9 @@ void BackupSession::Begin(absl::FunctionRef<bool()> cancelled) {
                  "\" has an unfinished checkpoint save");
     }
   }
-  auto& cluster = catalog::ClusterOf();
-  auto backup_dir =
-    catalog::ClusterLayout(cluster.GetAttached()).EngineDir() / kBackupDir;
+  const auto& layout =
+    catalog::ClusterLayout(catalog::ClusterOf().GetAttached());
+  auto backup_dir = layout.EngineDir() / kBackupDir;
   std::error_code ec;
   std::filesystem::remove_all(backup_dir, ec);
   if (ec) {
@@ -234,6 +258,9 @@ void BackupSession::Begin(absl::FunctionRef<bool()> cancelled) {
     ThrowCancelled();
   }
   auto cut = RecordCut(backup_dir, pins, block_managers, cancelled);
+  const auto start_lsn = NextLsn();
+  cut.catalog_link = cut.catalog_link.lexically_relative(layout.directory);
+  auto label_file = BuildBackupLabel(label, start_lsn, absl::Now(), cut);
   std::move(undo).Cancel();
 
   // Noexcept committing of backup start
@@ -241,8 +268,31 @@ void BackupSession::Begin(absl::FunctionRef<bool()> cancelled) {
   _checkpoint_keys = std::move(checkpoint_keys);
   _block_managers = std::move(block_managers);
   _backup_dir = std::move(backup_dir);
-  _cut = std::move(cut);
+  _owner = owner;
+  _label_file = std::move(label_file);
   _active = true;
+  return start_lsn;
+}
+
+FinishedBackup BackupSession::Finish(const void* session) {
+  absl::MutexLock lock{&_mutex};
+  if (!_active || _owner.session != session) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+                    ERR_MSG("backup is not in progress"),
+                    ERR_HINT("Did you call pg_backup_start()?"));
+  }
+  FinishedBackup finished{NextLsn(), std::move(_label_file)};
+  Stop();
+  return finished;
+}
+
+void BackupSession::AbortIfOwnedBy(const void* session) noexcept {
+  absl::MutexLock lock{&_mutex};
+  if (_active && _owner.session == session) {
+    SDB_WARN(GENERAL, "aborting the backup of the closed session with PID ",
+             _owner.pid);
+    Stop();
+  }
 }
 
 void BackupSession::End() noexcept {
@@ -259,7 +309,8 @@ void BackupSession::Stop() noexcept {
   _pins.clear();
   RemoveBackupDir(_backup_dir);
   _backup_dir.clear();
-  _cut = {};
+  _owner = {};
+  _label_file.clear();
   _active = false;
 }
 

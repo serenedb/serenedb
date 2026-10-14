@@ -142,6 +142,9 @@ PgTypeInfo Logical2Pg(const duckdb::LogicalType& type, bool in_array) {
       if (IsXid8(type)) {
         return make(kXid8, kXid8Array, sizeof(int64_t));
       }
+      if (IsPgLsn(type)) {
+        return make(kPgLsn, kPgLsnArray, sizeof(int64_t));
+      }
       if (IsRegproc(type)) {
         return make(kRegproc, kRegprocArray, sizeof(int32_t));
       }
@@ -315,6 +318,7 @@ duckdb::LogicalType Oid2Type(uint64_t oid, duckdb::ClientContext& context) {
     SDB_OID2TYPE(kCid, CID())
     SDB_OID2TYPE(kJson, LogicalType::JSON())
     SDB_OID2TYPE(kXid8, XID8())
+    SDB_OID2TYPE(kPgLsn, PG_LSN())
     SDB_OID2TYPE(kFloat4, LogicalType::FLOAT)
     SDB_OID2TYPE(kFloat8, LogicalType::DOUBLE)
     SDB_OID2TYPE(kDate, LogicalType::DATE)

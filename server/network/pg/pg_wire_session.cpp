@@ -38,6 +38,7 @@
 #include <iresearch/utils/system_compiler.hpp>
 
 #include "auth/role_closure.h"
+#include "backup/backup_session.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "network/pg/bind_decoder.h"
@@ -2887,6 +2888,7 @@ yaclib::Future<> PgWireSession<Kind>::SessionMain() {
   // ~ConnectionContext asserts an empty queue.
   _proto.Clear();
   if (_connection_ctx) {
+    backup::BackupSession::Instance().AbortIfOwnedBy(_connection_ctx.get());
     _connection_ctx->ConsumeNotices([](const irs::pg::SqlErrorData&) {});
   }
   // Last responses (e.g. up to the Terminate) may still be draining; closing

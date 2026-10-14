@@ -36,6 +36,7 @@
 #include "connector/duckdb_client_state.h"
 #include "connector/pg_logical_types.h"
 #include "pg/connection_context.h"
+#include "pg/pg_lsn.h"
 #include "pg/pg_types.h"
 #include "pg/serialize.h"
 
@@ -358,6 +359,36 @@ duckdb::BoundCastInfo PgRegnamespaceToVarcharBind(duckdb::BindCastInput& input,
     duckdb::make_uniq<RegCastData>(input.context.get()));
 }
 
+bool PgVarcharToLsnCast(duckdb::Vector& source, duckdb::Vector& result,
+                        duckdb::idx_t count, duckdb::CastParameters&) {
+  return PgVarcharToOidCast(source, result, count, [](std::string_view text) {
+    const auto lsn = pg::ParseLsn(text);
+    if (!lsn) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+        ERR_MSG("invalid input syntax for type pg_lsn: \"", text, "\""));
+    }
+    return static_cast<int64_t>(*lsn);
+  });
+}
+
+bool PgLsnToVarcharCast(duckdb::Vector& source, duckdb::Vector& result,
+                        duckdb::idx_t count, duckdb::CastParameters&) {
+  auto src = source.Values<int64_t>();
+  auto& dst_validity = duckdb::FlatVector::ValidityMutable(result);
+  for (duckdb::idx_t i = 0; i < count; i++) {
+    auto value = src[i];
+    if (!value.IsValid()) {
+      dst_validity.SetInvalid(i);
+      continue;
+    }
+    duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result)[i] =
+      duckdb::StringVector::AddString(
+        result, pg::FormatLsn(static_cast<uint64_t>(value.GetValue())));
+  }
+  return true;
+}
+
 }  // namespace
 
 void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
@@ -386,6 +417,14 @@ void RegisterPgInOutFunctions(duckdb::DatabaseInstance& db) {
   casts.RegisterCastFunction(
     duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), pg::REGTYPE(),
     PgVarcharToRegtypeBind, 50);
+
+  casts.RegisterCastFunction(duckdb::LogicalType::VARCHAR, pg::PG_LSN(),
+                             PgVarcharToLsnCast, 50);
+  casts.RegisterCastFunction(
+    duckdb::LogicalType(duckdb::LogicalTypeId::STRING_LITERAL), pg::PG_LSN(),
+    PgVarcharToLsnCast, 50);
+  casts.RegisterCastFunction(pg::PG_LSN(), duckdb::LogicalType::VARCHAR,
+                             PgLsnToVarcharCast, 50);
 
   // regtype -> VARCHAR
   casts.RegisterCastFunction(pg::REGTYPE(), duckdb::LogicalType::VARCHAR,

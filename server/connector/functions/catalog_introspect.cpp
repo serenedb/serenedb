@@ -249,11 +249,12 @@ void DeferredCatalogExecute(duckdb::ClientContext& context,
                             duckdb::DataChunk& output) {
   auto& state = data.global_state->Cast<OneRowState>();
   if (std::exchange(state.emitted, true)) {
-    output.SetCardinality(0);
+    output.SetCardinalityUnsafe(0);
     return;
   }
-  SetUnsigned(output.data[0], 0, GetSereneDBContext(context).CatalogEpoch());
-  output.SetCardinality(1);
+  duckdb::FlatVector::Writer<uint64_t>(output.data[0], 1)
+    .WriteValue(GetSereneDBContext(context).CatalogEpoch());
+  output.SetCardinalityUnsafe(1);
 }
 
 }  // namespace

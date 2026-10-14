@@ -1,0 +1,86 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE DATABASE sfd_shop;
+
+statement ok
+CREATE TABLE sfd_shop.public.docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX docs_idx ON sfd_shop.public.docs USING inverted(id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sfd_shop.public.docs
+SELECT i, CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(1, 101) t(i);
+
+statement ok
+VACUUM (REFRESH_INDEX) sfd_shop.public.docs_idx;
+
+statement ok
+CREATE TABLE sfd_shop.public.notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE INDEX notes_idx ON sfd_shop.public.notes USING inverted(body);
+
+statement ok
+INSERT INTO sfd_shop.public.notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sfd_shop.public.notes;
+
+statement ok
+CHECKPOINT sfd_shop;
+
+statement ok
+COPY (SELECT oid FROM pg_database WHERE datname = 'sfd_shop') TO '${__TEST_DIR__}/sfd_shop.oid' (FORMAT csv, HEADER false);
+
+system ok
+rm -rf $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_shop && mkdir $__TEST_DIR__/sfd_copy && cp -r ${SDB_DATADIR}/engine_v1/$(cat $__TEST_DIR__/sfd_shop.oid) $__TEST_DIR__/sfd_copy/ && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfd_copy/ && ln -s $__TEST_DIR__/sfd_copy/$(cat $__TEST_DIR__/sfd_shop.oid) $__TEST_DIR__/sfd_shop
+
+statement ok
+CREATE SERVER sfd_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfd_shop');
+
+query
+SELECT count(*) AS n, sum(id) AS s FROM sfd_snap.public.docs;
+----
+n	s
+100	5050
+
+query
+SELECT count(*) AS n FROM sfd_snap.public.docs_idx WHERE body @@ 'even';
+----
+n
+50
+
+query
+SELECT id FROM sfd_snap.public.docs_idx WHERE body @@ 'even' ORDER BY id LIMIT 3;
+----
+id
+2
+4
+6
+
+query
+SELECT count(*) AS n FROM sfd_snap.public.notes;
+----
+n
+40
+
+query
+SELECT id FROM sfd_snap.public.notes WHERE body @@ 'note1' ORDER BY id LIMIT 3;
+----
+id
+1
+5
+9
+
+statement ok
+DROP SERVER sfd_snap;
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'sfd_snap';
+----
+n
+0

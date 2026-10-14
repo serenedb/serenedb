@@ -172,19 +172,4 @@ absl::Status VerifyLockFile(const char* filename) {
     "file-locking"));
 }
 
-std::optional<pid_t> LockFileHolder(const char* filename) {
-  const int fd = SERENEDB_OPEN(filename, O_RDONLY | SERENEDB_O_CLOEXEC);
-  if (fd < 0) {
-    return std::nullopt;
-  }
-  absl::Cleanup close = [&]() noexcept { SERENEDB_CLOSE(fd); };
-  struct flock lock{};
-  lock.l_type = F_WRLCK;
-  lock.l_whence = SEEK_SET;
-  if (fcntl(fd, F_GETLK, &lock) == -1 || lock.l_type == F_UNLCK) {
-    return std::nullopt;
-  }
-  return lock.l_pid;
-}
-
 }  // namespace sdb

@@ -20,14 +20,8 @@
 #pragma once
 
 #include <absl/status/status.h>
-#include <sys/types.h>
-
-#include <optional>
-#include <string_view>
 
 namespace sdb {
-
-inline constexpr std::string_view kLockFile = "LOCK";
 
 // Pid-locking primitives backed by fcntl(2) F_WRLCK / F_UNLCK on a small file
 // whose body is the holder's pid. Used by DatabasePathFeature to gate "one
@@ -41,6 +35,5 @@ inline constexpr std::string_view kLockFile = "LOCK";
 // leftover.
 absl::Status CreateLockFile(const char* filename);
 absl::Status VerifyLockFile(const char* filename);
-std::optional<pid_t> LockFileHolder(const char* filename);
 
 }  // namespace sdb

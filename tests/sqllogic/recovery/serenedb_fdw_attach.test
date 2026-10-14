@@ -175,7 +175,7 @@ db error: ERROR: could not open database directory "<slt:ignore>": No such file 
 statement error
 CREATE SERVER sfa_own FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/5');
 ----
-db error: ERROR: cannot attach "<slt:ignore>" read-only: it is a database of this server
+db error: ERROR: Could not set lock on file "<slt:ignore>": <slt:ignore>
 
 
 system ok
@@ -184,7 +184,7 @@ rm -f $__TEST_DIR__/sfa_own_link && ln -s ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR
 statement error
 CREATE SERVER sfa_own_link FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_own_link');
 ----
-db error: ERROR: cannot attach "<slt:ignore>" read-only: it is a database of this server
+db error: ERROR: Could not set lock on file "<slt:ignore>": <slt:ignore>
 
 
 statement error

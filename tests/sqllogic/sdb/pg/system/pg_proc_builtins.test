@@ -22,8 +22,11 @@ CREATE MACRO ppb_macro(a) AS a + 1
 query
 SELECT
   (SELECT count(*) FROM pg_proc)
-    = (SELECT count(*) FROM duckdb_functions()
+    - (SELECT count(*) FROM duckdb_functions()
          WHERE database_name IN ('system', current_database()))
+    = (SELECT count(*) FROM pg_proc p
+         WHERE NOT EXISTS (SELECT 1 FROM duckdb_functions() f
+                           WHERE f.function_name = p.proname))
     AS counts_match,
   (SELECT count(*) FROM duckdb_functions() f
      WHERE f.database_name IN ('system', current_database())
@@ -31,7 +34,7 @@ SELECT
     AS missing
 ----
 counts_match	missing
-f	0
+t	0
 
 
 # oid is the primary key: one per overload, never reused.

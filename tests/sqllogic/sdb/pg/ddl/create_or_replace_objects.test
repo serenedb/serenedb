@@ -3854,10 +3854,10 @@ coro_sec	s3	{s3://coro-objects-bucket}	t	f
 
 
 query
-SELECT name AS s FROM which_secret('s3://coro-objects-bucket/f.parquet', 's3');
+SELECT which_secret('s3://coro-objects-bucket/f.parquet', 's3') AS s;
 ----
 s
-coro_sec
+(coro_sec,TEMPORARY,memory)
 
 
 # The replacement may be of another secret type.

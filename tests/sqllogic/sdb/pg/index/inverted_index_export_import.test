@@ -39,11 +39,15 @@ INSERT INTO ie_pts SELECT i, [i, 1, 0]::FLOAT[3] FROM range(1, 21) t(i);
 statement ok
 CREATE INDEX ie_pts_idx ON ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'));
 
+statement ok
+CREATE INDEX ie_inc_idx ON ie_docs USING inverted (id) INCLUDE (body);
+
 query
 SELECT replace(regexp_replace(sql, ' WITH \(.*$', ''), current_database() || '.', '') AS sql FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
 ----
 sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))
+CREATE INDEX ie_inc_idx ON public.ie_docs USING inverted (id, body included ())
 CREATE INDEX ie_pts_idx ON public.ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'))
 
 statement ok
@@ -121,6 +125,7 @@ SELECT replace(regexp_replace(sql, ' WITH \(.*$', ''), current_database() || '.'
 ----
 sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))
+CREATE INDEX ie_inc_idx ON public.ie_docs USING inverted (id, body included ())
 CREATE INDEX ie_pts_idx ON public.ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'))
 
 statement ok
@@ -153,6 +158,14 @@ SELECT count(*) FROM ie_pts;
 ----
 count
 20
+
+query
+SELECT id, body FROM ie_inc_idx ORDER BY id;
+----
+id	body
+1	The runners were running late
+2	A quiet walk
+3	Running late again
 
 statement ok
 USE $__DATABASE__;

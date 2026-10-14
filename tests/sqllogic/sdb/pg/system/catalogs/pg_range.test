@@ -36,32 +36,42 @@ query
 SELECT count(*) AS n FROM pg_range;
 ----
 n
-0
+6
 
 
 query
 SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range ORDER BY 1;
 ----
 rngtypid	rngsubtype	rngmultitypid
+3904	23	4451
+3906	1700	4532
+3908	1114	4533
+3910	1184	4534
+3912	1082	4535
+3926	20	4536
 
 
 query
 SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range WHERE rngtypid = 3904;
 ----
 rngtypid	rngsubtype	rngmultitypid
+3904	23	4451
 
 
 query
 SELECT rngtypid, rngsubtype, rngmultitypid FROM pg_range WHERE rngtypid IN (3904, 3906, 3926);
 ----
 rngtypid	rngsubtype	rngmultitypid
+3904	23	4451
+3906	1700	4532
+3926	20	4536
 
 
 query
 SELECT count(*) AS n FROM pg_catalog.pg_range x JOIN pg_type t ON t.oid = 23;
 ----
 n
-0
+6
 
 
 query
@@ -71,3 +81,15 @@ WHERE t.typtype IN ('r', 'm')
 ORDER BY t.oid;
 ----
 oid	typname	typtype	typcategory	typarray	typinput
+3904	int4range	r	R	3905	range_in
+3906	numrange	r	R	3907	range_in
+3908	tsrange	r	R	3909	range_in
+3910	tstzrange	r	R	3911	range_in
+3912	daterange	r	R	3913	range_in
+3926	int8range	r	R	3927	range_in
+4451	int4multirange	m	R	6150	multirange_in
+4532	nummultirange	m	R	6151	multirange_in
+4533	tsmultirange	m	R	6152	multirange_in
+4534	tstzmultirange	m	R	6153	multirange_in
+4535	datemultirange	m	R	6155	multirange_in
+4536	int8multirange	m	R	6157	multirange_in

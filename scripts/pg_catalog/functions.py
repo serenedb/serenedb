@@ -1,7 +1,7 @@
 import re
 
-from . import config
-from .common import array, oid
+from . import builtins, config
+from .common import array, camel, oid
 
 PG_CATALOG = '11'
 
@@ -30,6 +30,11 @@ def generate(gen, constants, all_types, bodies):
         names[type_oid] = (element[1] + '[]'
                            if element and element[11] == type_oid
                            else row[1])
+    mapped = builtins.mapped_types()
+    usable = {type_oid for type_oid, row in all_types.items()
+              if row[5] != 'p' and
+              camel((builtins.array_element(row, all_types) or row)[1])
+              in mapped}
     called = {name.lower() for body in bodies for name in CALL.findall(body)}
     rows = [stub(row) for row in sorted(
         (row for row in gen.rows['pg_proc']
@@ -49,9 +54,7 @@ def generate(gen, constants, all_types, bodies):
         columns = [i for i, mode in enumerate(modes) if mode in 'otb']
         signature = ([types[i] for i in inputs + columns] +
                      ([] if columns else [rettype]))
-        if (retset and not columns) or any(
-                t not in constants or all_types[t][5] == 'p'
-                for t in signature):
+        if (retset and not columns) or not usable.issuperset(signature):
             continue
         if not columns:
             arguments = ', '.join(constants[types[i]] for i in inputs)

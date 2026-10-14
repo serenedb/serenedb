@@ -11,7 +11,7 @@ WHERE oid < 16384 AND typrelid = 0 AND typtype IN ('b', 'd')
   AND typcategory <> 'A'
 ----
 types
-aclitem bit bool bpchar bytea cardinal_number char character_data cid date float4 float8 inet int2 int4 int8 interval json jsonb name numeric oid pg_dependencies pg_lsn pg_mcv_list pg_ndistinct pg_node_tree regclass regcollation regconfig regdictionary regnamespace regoper regoperator regproc regprocedure regrole regtype sql_identifier text tid time time_stamp timestamp timestamptz timetz uuid varbit varchar xid xid8 yes_or_no
+aclitem bit bool box bpchar bytea cardinal_number char character_data cid cidr circle date float4 float8 gtsvector inet int2 int4 int8 interval json jsonb jsonpath line lseg macaddr macaddr8 money name numeric oid path pg_brin_bloom_summary pg_brin_minmax_multi_summary pg_dependencies pg_lsn pg_mcv_list pg_ndistinct pg_node_tree pg_snapshot point polygon refcursor regclass regcollation regconfig regdictionary regnamespace regoper regoperator regproc regprocedure regrole regtype sql_identifier text tid time time_stamp timestamp timestamptz timetz tsvector txid_snapshot uuid varbit varchar xid xid8 xml yes_or_no
 
 
 statement ok
@@ -68,7 +68,7 @@ SELECT (SELECT count(*) FROM pg_type WHERE typtype IN ('r', 'm')) AS range_types
        (SELECT count(*) FROM pg_range) AS ranges
 ----
 range_types	ranges
-0	0
+12	6
 
 
 query
@@ -77,7 +77,7 @@ FROM pg_type
 WHERE oid < 16384 AND typtype = 'p'
 ----
 pseudo_types
-_record any anyarray anyelement anyenum cstring event_trigger fdw_handler index_am_handler internal language_handler pg_ddl_command record table_am_handler trigger tsm_handler unknown void
+_record any anyarray anycompatible anycompatiblearray anycompatiblemultirange anycompatiblenonarray anycompatiblerange anyelement anyenum anymultirange anynonarray anyrange cstring event_trigger fdw_handler index_am_handler internal language_handler pg_ddl_command record table_am_handler trigger tsm_handler unknown void
 
 
 query
@@ -136,6 +136,9 @@ WHERE p.oid < 16384
   AND NOT EXISTS (
     SELECT 1 FROM pg_language l
     WHERE p.oid IN (l.lanplcallfoid, l.laninline, l.lanvalidator))
+  AND NOT EXISTS (
+    SELECT 1 FROM pg_range r
+    WHERE p.oid IN (r.rngcanonical::oid, r.rngsubdiff::oid))
 ----
 unreferenced
 0

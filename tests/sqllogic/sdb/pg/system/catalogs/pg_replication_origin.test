@@ -24,10 +24,18 @@ roident	oid	t
 roname	text	t
 
 
+control substitution on
+
+statement ok
+SELECT pg_replication_origin_create('sven_repo_cleave_${__DATABASE__}');
+
+
 query
-SELECT * FROM pg_replication_origin;
+SELECT roident = pg_replication_origin_oid('sven_repo_cleave_${__DATABASE__}') AS same_ident
+FROM pg_replication_origin WHERE roname = 'sven_repo_cleave_${__DATABASE__}';
 ----
-roident	roname
+same_ident
+t
 
 
 query
@@ -52,9 +60,15 @@ t
 
 connection sven_conn user=sven_repo_cleave password=sven_repo_cleave_pw
 query
-SELECT roident, roname FROM pg_replication_origin;
+SELECT count(*) AS visible FROM pg_replication_origin WHERE roname = 'sven_repo_cleave_${__DATABASE__}';
 ----
-roident	roname
+visible
+1
+
+
+connection default
+statement ok
+SELECT pg_replication_origin_drop('sven_repo_cleave_${__DATABASE__}');
 
 
 connection default

@@ -117,10 +117,6 @@ static_assert(absl::c_all_of(kMappings,
                                return FindByOid(kBuiltinTypes, mapping.oid);
                              }));
 
-static_assert(absl::c_all_of(kPgTypes, [](const BuiltinType& type) {
-  return type.IsArray() || type.type == 'p' || FindMapping(type.oid);
-}));
-
 struct BuiltinRef {
   consteval BuiltinRef(int32_t oid)
     : BuiltinRef{*FindByOid(kBuiltinTypes, oid)} {

@@ -8,6 +8,9 @@ PG_CATALOG = '11'
 
 PROC_COLUMNS = (9, 12, 13, 14, 15, 16, 17, 18)
 REFERENCE_COLUMNS = (10, 11, 22)
+RANGE_COLUMNS = ('rngtypid', 'rngsubtype', 'rngmultitypid', 'rngcollation',
+                 'rngsubopc', 'rngcanonical', 'rngsubdiff')
+RANGE_PROCS = ('rngcanonical', 'rngsubdiff')
 
 TYPE_MAPPINGS = os.path.join(REPO_ROOT, 'server', 'pg', 'types.cpp')
 MAPPINGS_TABLE = re.compile(r'kMappings\[\] = \{\n(.*?)\n\};', re.S)
@@ -86,6 +89,8 @@ def procedures(gen, types):
     oids |= {oid(language[column]) for language in gen.rows['pg_language']
              if language['lanname'] in config.LANGUAGES
              for column in ('lanplcallfoid', 'laninline', 'lanvalidator')}
+    oids |= {oid(row[column]) for row in gen.rows['pg_range']
+             for column in RANGE_PROCS}
     return sorted(procedure(row) for row in gen.rows['pg_proc']
                   if int(row['oid']) in oids or
                   (row['pronamespace'] == PG_CATALOG and
@@ -98,22 +103,14 @@ def supported_types(gen):
              if row['typname'] not in excluded]
     types = sorted(types + domain_types(gen, {row[1]: row for row in types}))
     by_oid = {row[0]: row for row in types}
-    mapped = mapped_types()
-    keep = {row[0] for row in types
-            if row[1] in config.PSEUDO_TYPES or
-            (camel(row[1]) in mapped and not array_element(row, by_oid))}
-    while True:
-        procs = procedures(gen, [by_oid[oid] for oid in keep])
-        signatures = {oid for proc in procs for oid in (proc[3], *proc[4])}
-        if missing := signatures - by_oid.keys():
-            raise SystemExit(f'procedures refer to types SereneDB owns: '
-                             f'{sorted(missing)}')
-        wanted = (keep | signatures |
-                  {by_oid[oid][11] for oid in keep if by_oid[oid][11]})
-        if wanted == keep:
-            break
-        keep = wanted
-    kept = [row for row in types if row[0] in keep]
+    kept = [row for row in types
+            if (array_element(row, by_oid) or row)[5] != 'c']
+    keep = {row[0] for row in kept}
+    procs = procedures(gen, kept)
+    if missing := {oid for proc in procs
+                   for oid in (proc[3], *proc[4])} - keep:
+        raise SystemExit(f'procedures refer to types SereneDB owns: '
+                         f'{sorted(missing)}')
     for row in kept:
         for column in REFERENCE_COLUMNS:
             if row[column] and row[column] not in keep:
@@ -161,6 +158,10 @@ def generate(gen):
         f'{lang}, {cpp_str(src)}}},'
         for oid, name, nargs, rettype, argtypes, kind, retset, volatility,
         strict, lang, src in procs])
+    gen.write('builtin_ranges.gen.inc', [
+        f'{{{", ".join(str(oid(row[column])) for column in RANGE_COLUMNS)}}},'
+        for row in sorted(gen.rows['pg_range'],
+                          key=lambda row: int(row['rngtypid']))])
     gen.write('builtin_collations.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {cpp_char(provider)}, {cpp_str(locale)}}},'
         for oid, name, provider, locale in collations])

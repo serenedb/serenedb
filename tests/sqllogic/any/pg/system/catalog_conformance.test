@@ -3546,6 +3546,8 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 81	pg_proc	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_proc	-	-	pg_proc[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 83	pg_class	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_class	-	-	pg_class[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 114	json	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	json[]	json_in	json_out	json_recv	json_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+142	xml	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	xml[]	xml_in	xml_out	xml_recv	xml_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+143	_xml	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	xml	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 194	pg_node_tree	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_node_tree_in	pg_node_tree_out	pg_node_tree_recv	pg_node_tree_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
 199	_json	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	json	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 210	_pg_type	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_type	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
@@ -3555,9 +3557,25 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 272	_pg_proc	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_proc	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 273	_pg_class	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_class	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 325	index_am_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	index_am_handler_in	index_am_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+600	point	pg_catalog	postgres	16	f	b	G	f	t	,	-	raw_array_subscript_handler	double precision	point[]	point_in	point_out	point_recv	point_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+601	lseg	pg_catalog	postgres	32	f	b	G	f	t	,	-	raw_array_subscript_handler	point	lseg[]	lseg_in	lseg_out	lseg_recv	lseg_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+602	path	pg_catalog	postgres	-1	f	b	G	f	t	,	-	-	-	path[]	path_in	path_out	path_recv	path_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+603	box	pg_catalog	postgres	32	f	b	G	f	t	;	-	raw_array_subscript_handler	point	box[]	box_in	box_out	box_recv	box_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+604	polygon	pg_catalog	postgres	-1	f	b	G	f	t	,	-	-	-	polygon[]	poly_in	poly_out	poly_recv	poly_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+628	line	pg_catalog	postgres	24	f	b	G	f	t	,	-	raw_array_subscript_handler	double precision	line[]	line_in	line_out	line_recv	line_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+629	_line	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	line	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+650	cidr	pg_catalog	postgres	-1	f	b	I	f	t	,	-	-	-	cidr[]	cidr_in	cidr_out	cidr_recv	cidr_send	-	-	-	i	m	f	-	-1	0	0	NULL	NULL
+651	_cidr	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	cidr	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 700	float4	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	real[]	float4in	float4out	float4recv	float4send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 701	float8	pg_catalog	postgres	8	t	b	N	t	t	,	-	-	-	double precision[]	float8in	float8out	float8recv	float8send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 705	unknown	pg_catalog	postgres	-2	f	p	X	f	t	,	-	-	-	-	unknownin	unknownout	unknownrecv	unknownsend	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
+718	circle	pg_catalog	postgres	24	f	b	G	f	t	,	-	-	-	circle[]	circle_in	circle_out	circle_recv	circle_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+719	_circle	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	circle	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+774	macaddr8	pg_catalog	postgres	8	f	b	U	f	t	,	-	-	-	macaddr8[]	macaddr8_in	macaddr8_out	macaddr8_recv	macaddr8_send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+775	_macaddr8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	macaddr8	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+790	money	pg_catalog	postgres	8	t	b	N	f	t	,	-	-	-	money[]	cash_in	cash_out	cash_recv	cash_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+791	_money	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	money	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+829	macaddr	pg_catalog	postgres	6	f	b	U	f	t	,	-	-	-	macaddr[]	macaddr_in	macaddr_out	macaddr_recv	macaddr_send	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 869	inet	pg_catalog	postgres	-1	f	b	I	t	t	,	-	-	-	inet[]	inet_in	inet_out	inet_recv	inet_send	-	-	-	i	m	f	-	-1	0	0	NULL	NULL
 1000	_bool	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	boolean	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 1001	_bytea	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bytea	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
@@ -3575,11 +3593,17 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 1014	_bpchar	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	character	-	array_in	array_out	array_recv	array_send	bpchartypmodin	bpchartypmodout	array_typanalyze	i	x	f	-	-1	0	100	NULL	NULL
 1015	_varchar	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	character varying	-	array_in	array_out	array_recv	array_send	varchartypmodin	varchartypmodout	array_typanalyze	i	x	f	-	-1	0	100	NULL	NULL
 1016	_int8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bigint	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1017	_point	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	point	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1018	_lseg	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	lseg	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1019	_path	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	path	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1020	_box	pg_catalog	postgres	-1	f	b	A	f	t	;	-	array_subscript_handler	box	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 1021	_float4	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	real	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 1022	_float8	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	double precision	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1027	_polygon	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	polygon	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 1028	_oid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	oid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 1033	aclitem	pg_catalog	postgres	16	f	b	U	f	t	,	-	-	-	aclitem[]	aclitemin	aclitemout	-	-	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 1034	_aclitem	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	aclitem	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+1040	_macaddr	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	macaddr	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 1041	_inet	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	inet	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 1042	bpchar	pg_catalog	postgres	-1	f	b	S	f	t	,	-	-	-	character[]	bpcharin	bpcharout	bpcharrecv	bpcharsend	bpchartypmodin	bpchartypmodout	-	i	x	f	-	-1	0	100	NULL	NULL
 1043	varchar	pg_catalog	postgres	-1	f	b	S	f	t	,	-	-	-	character varying[]	varcharin	varcharout	varcharrecv	varcharsend	varchartypmodin	varchartypmodout	-	i	x	f	-	-1	0	100	NULL	NULL
@@ -3603,6 +3627,8 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 1562	varbit	pg_catalog	postgres	-1	f	b	V	t	t	,	-	-	-	bit varying[]	varbit_in	varbit_out	varbit_recv	varbit_send	varbittypmodin	varbittypmodout	-	i	x	f	-	-1	0	0	NULL	NULL
 1563	_varbit	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	bit varying	-	array_in	array_out	array_recv	array_send	varbittypmodin	varbittypmodout	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 1700	numeric	pg_catalog	postgres	-1	f	b	N	f	t	,	-	-	-	numeric[]	numeric_in	numeric_out	numeric_recv	numeric_send	numerictypmodin	numerictypmodout	-	i	m	f	-	-1	0	0	NULL	NULL
+1790	refcursor	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	refcursor[]	textin	textout	textrecv	textsend	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+2201	_refcursor	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	refcursor	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 2202	regprocedure	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regprocedure[]	regprocedurein	regprocedureout	regprocedurerecv	regproceduresend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2203	regoper	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regoper[]	regoperin	regoperout	regoperrecv	regopersend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2204	regoperator	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regoperator[]	regoperatorin	regoperatorout	regoperatorrecv	regoperatorsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
@@ -3623,10 +3649,13 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 2281	internal	pg_catalog	postgres	8	t	p	P	f	t	,	-	-	-	-	internal_in	internal_out	-	-	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 2283	anyelement	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anyelement_in	anyelement_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2287	_record	pg_catalog	postgres	-1	f	p	P	f	t	,	-	array_subscript_handler	record	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+2776	anynonarray	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anynonarray_in	anynonarray_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 2842	pg_authid	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_authid	-	-	pg_authid[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 2843	pg_auth_members	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_auth_members	-	-	pg_auth_members[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+2949	_txid_snapshot	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	txid_snapshot	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 2950	uuid	pg_catalog	postgres	16	f	b	U	f	t	,	-	-	-	uuid[]	uuid_in	uuid_out	uuid_recv	uuid_send	-	-	-	c	p	f	-	-1	0	0	NULL	NULL
 2951	_uuid	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	uuid	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+2970	txid_snapshot	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	txid_snapshot[]	txid_snapshot_in	txid_snapshot_out	txid_snapshot_recv	txid_snapshot_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 3115	fdw_handler	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	fdw_handler_in	fdw_handler_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 3220	pg_lsn	pg_catalog	postgres	8	t	b	U	f	t	,	-	-	-	pg_lsn[]	pg_lsn_in	pg_lsn_out	pg_lsn_recv	pg_lsn_send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
 3221	_pg_lsn	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_lsn	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
@@ -3634,23 +3663,64 @@ oid	typname	typnamespace	typowner	typlen	typbyval	typtype	typcategory	typisprefe
 3361	pg_ndistinct	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_ndistinct_in	pg_ndistinct_out	pg_ndistinct_recv	pg_ndistinct_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
 3402	pg_dependencies	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_dependencies_in	pg_dependencies_out	pg_dependencies_recv	pg_dependencies_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
 3500	anyenum	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anyenum_in	anyenum_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+3614	tsvector	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	tsvector[]	tsvectorin	tsvectorout	tsvectorrecv	tsvectorsend	-	-	ts_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3642	gtsvector	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	gtsvector[]	gtsvectorin	gtsvectorout	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+3643	_tsvector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tsvector	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3644	_gtsvector	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	gtsvector	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 3734	regconfig	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regconfig[]	regconfigin	regconfigout	regconfigrecv	regconfigsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 3735	_regconfig	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regconfig	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 3769	regdictionary	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regdictionary[]	regdictionaryin	regdictionaryout	regdictionaryrecv	regdictionarysend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 3770	_regdictionary	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regdictionary	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 3802	jsonb	pg_catalog	postgres	-1	f	b	U	f	t	,	-	jsonb_subscript_handler	-	jsonb[]	jsonb_in	jsonb_out	jsonb_recv	jsonb_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
 3807	_jsonb	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	jsonb	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3831	anyrange	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anyrange_in	anyrange_out	-	-	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 3838	event_trigger	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	event_trigger_in	event_trigger_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+3904	int4range	pg_catalog	postgres	-1	f	r	R	f	t	,	-	-	-	int4range[]	range_in	range_out	range_recv	range_send	-	-	range_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3905	_int4range	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	int4range	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3906	numrange	pg_catalog	postgres	-1	f	r	R	f	t	,	-	-	-	numrange[]	range_in	range_out	range_recv	range_send	-	-	range_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3907	_numrange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	numrange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3908	tsrange	pg_catalog	postgres	-1	f	r	R	f	t	,	-	-	-	tsrange[]	range_in	range_out	range_recv	range_send	-	-	range_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3909	_tsrange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tsrange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3910	tstzrange	pg_catalog	postgres	-1	f	r	R	f	t	,	-	-	-	tstzrange[]	range_in	range_out	range_recv	range_send	-	-	range_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3911	_tstzrange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tstzrange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3912	daterange	pg_catalog	postgres	-1	f	r	R	f	t	,	-	-	-	daterange[]	range_in	range_out	range_recv	range_send	-	-	range_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3913	_daterange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	daterange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+3926	int8range	pg_catalog	postgres	-1	f	r	R	f	t	,	-	-	-	int8range[]	range_in	range_out	range_recv	range_send	-	-	range_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+3927	_int8range	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	int8range	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 4066	pg_shseclabel	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_shseclabel	-	-	pg_shseclabel[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+4072	jsonpath	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	jsonpath[]	jsonpath_in	jsonpath_out	jsonpath_recv	jsonpath_send	-	-	-	i	x	f	-	-1	0	0	NULL	NULL
+4073	_jsonpath	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	jsonpath	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 4089	regnamespace	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regnamespace[]	regnamespacein	regnamespaceout	regnamespacerecv	regnamespacesend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 4090	_regnamespace	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regnamespace	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 4096	regrole	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regrole[]	regrolein	regroleout	regrolerecv	regrolesend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 4097	_regrole	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regrole	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
 4191	regcollation	pg_catalog	postgres	4	t	b	N	f	t	,	-	-	-	regcollation[]	regcollationin	regcollationout	regcollationrecv	regcollationsend	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
 4192	_regcollation	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	regcollation	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4451	int4multirange	pg_catalog	postgres	-1	f	m	R	f	t	,	-	-	-	int4multirange[]	multirange_in	multirange_out	multirange_recv	multirange_send	-	-	multirange_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4532	nummultirange	pg_catalog	postgres	-1	f	m	R	f	t	,	-	-	-	nummultirange[]	multirange_in	multirange_out	multirange_recv	multirange_send	-	-	multirange_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4533	tsmultirange	pg_catalog	postgres	-1	f	m	R	f	t	,	-	-	-	tsmultirange[]	multirange_in	multirange_out	multirange_recv	multirange_send	-	-	multirange_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+4534	tstzmultirange	pg_catalog	postgres	-1	f	m	R	f	t	,	-	-	-	tstzmultirange[]	multirange_in	multirange_out	multirange_recv	multirange_send	-	-	multirange_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+4535	datemultirange	pg_catalog	postgres	-1	f	m	R	f	t	,	-	-	-	datemultirange[]	multirange_in	multirange_out	multirange_recv	multirange_send	-	-	multirange_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+4536	int8multirange	pg_catalog	postgres	-1	f	m	R	f	t	,	-	-	-	int8multirange[]	multirange_in	multirange_out	multirange_recv	multirange_send	-	-	multirange_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+4537	anymultirange	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anymultirange_in	anymultirange_out	-	-	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+4538	anycompatiblemultirange	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anycompatiblemultirange_in	anycompatiblemultirange_out	-	-	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+4600	pg_brin_bloom_summary	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	brin_bloom_summary_in	brin_bloom_summary_out	brin_bloom_summary_recv	brin_bloom_summary_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+4601	pg_brin_minmax_multi_summary	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	brin_minmax_multi_summary_in	brin_minmax_multi_summary_out	brin_minmax_multi_summary_recv	brin_minmax_multi_summary_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
 5017	pg_mcv_list	pg_catalog	postgres	-1	f	b	Z	f	t	,	-	-	-	-	pg_mcv_list_in	pg_mcv_list_out	pg_mcv_list_recv	pg_mcv_list_send	-	-	-	i	x	f	-	-1	0	100	NULL	NULL
+5038	pg_snapshot	pg_catalog	postgres	-1	f	b	U	f	t	,	-	-	-	pg_snapshot[]	pg_snapshot_in	pg_snapshot_out	pg_snapshot_recv	pg_snapshot_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+5039	_pg_snapshot	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_snapshot	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 5069	xid8	pg_catalog	postgres	8	t	b	U	f	t	,	-	-	-	xid8[]	xid8in	xid8out	xid8recv	xid8send	-	-	-	d	p	f	-	-1	0	0	NULL	NULL
+5077	anycompatible	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anycompatible_in	anycompatible_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+5078	anycompatiblearray	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anycompatiblearray_in	anycompatiblearray_out	anycompatiblearray_recv	anycompatiblearray_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+5079	anycompatiblenonarray	pg_catalog	postgres	4	t	p	P	f	t	,	-	-	-	-	anycompatiblenonarray_in	anycompatiblenonarray_out	-	-	-	-	-	i	p	f	-	-1	0	0	NULL	NULL
+5080	anycompatiblerange	pg_catalog	postgres	-1	f	p	P	f	t	,	-	-	-	-	anycompatiblerange_in	anycompatiblerange_out	-	-	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 6101	pg_subscription	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_subscription	-	-	pg_subscription[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
+6150	_int4multirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	int4multirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+6151	_nummultirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	nummultirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+6152	_tsmultirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tsmultirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+6153	_tstzmultirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	tstzmultirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
+6155	_datemultirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	datemultirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	i	x	f	-	-1	0	0	NULL	NULL
+6157	_int8multirange	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	int8multirange	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 10000	_pg_attrdef	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_attrdef	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
 10001	pg_attrdef	pg_catalog	postgres	-1	f	c	C	f	t	,	pg_attrdef	-	-	pg_attrdef[]	record_in	record_out	record_recv	record_send	-	-	-	d	x	f	-	-1	0	0	NULL	NULL
 10002	_pg_constraint	pg_catalog	postgres	-1	f	b	A	f	t	,	-	array_subscript_handler	pg_constraint	-	array_in	array_out	array_recv	array_send	-	-	array_typanalyze	d	x	f	-	-1	0	0	NULL	NULL
@@ -4795,6 +4865,12 @@ WHERE true
 ORDER BY rngtypid::regtype::text COLLATE "C"
 ----
 rngtypid	rngsubtype	rngmultitypid	rngcollation	rngsubopc	rngcanonical	rngsubdiff
+daterange	date	datemultirange	0	3122	daterange_canonical	daterange_subdiff
+int4range	integer	int4multirange	0	1978	int4range_canonical	int4range_subdiff
+int8range	bigint	int8multirange	0	3124	int8range_canonical	int8range_subdiff
+numrange	numeric	nummultirange	0	3125	-	numrange_subdiff
+tsrange	timestamp without time zone	tsmultirange	0	3128	-	tsrange_subdiff
+tstzrange	timestamp with time zone	tstzmultirange	0	3127	-	tstzrange_subdiff
 
 
 query
@@ -8569,30 +8645,53 @@ pg_catalog	aclitem[]	_aclitem	a	f	aclitem
 app	app.address[]	_address	a	f	app.address
 pg_catalog	bit[]	_bit	a	f	bit
 pg_catalog	boolean[]	_bool	a	f	boolean
+pg_catalog	box[]	_box	a	f	box
 pg_catalog	character[]	_bpchar	a	f	character
 pg_catalog	bytea[]	_bytea	a	f	bytea
 information_schema	information_schema.cardinal_number[]	_cardinal_number	a	f	information_schema.cardinal_number
 pg_catalog	"char"[]	_char	a	f	"char"
 information_schema	information_schema.character_data[]	_character_data	a	f	information_schema.character_data
 pg_catalog	cid[]	_cid	a	f	cid
+pg_catalog	cidr[]	_cidr	a	f	cidr
+pg_catalog	circle[]	_circle	a	f	circle
 pg_catalog	date[]	_date	a	f	date
+pg_catalog	datemultirange[]	_datemultirange	a	f	datemultirange
+pg_catalog	daterange[]	_daterange	a	f	daterange
 pg_catalog	real[]	_float4	a	f	real
 pg_catalog	double precision[]	_float8	a	f	double precision
+pg_catalog	gtsvector[]	_gtsvector	a	f	gtsvector
 pg_catalog	inet[]	_inet	a	f	inet
 pg_catalog	smallint[]	_int2	a	f	smallint
 pg_catalog	int2vector[]	_int2vector	a	f	int2vector
 pg_catalog	integer[]	_int4	a	f	integer
+pg_catalog	int4multirange[]	_int4multirange	a	f	int4multirange
+pg_catalog	int4range[]	_int4range	a	f	int4range
 pg_catalog	bigint[]	_int8	a	f	bigint
+pg_catalog	int8multirange[]	_int8multirange	a	f	int8multirange
+pg_catalog	int8range[]	_int8range	a	f	int8range
 pg_catalog	interval[]	_interval	a	f	interval
 pg_catalog	json[]	_json	a	f	json
 pg_catalog	jsonb[]	_jsonb	a	f	jsonb
+pg_catalog	jsonpath[]	_jsonpath	a	f	jsonpath
+pg_catalog	line[]	_line	a	f	line
+pg_catalog	lseg[]	_lseg	a	f	lseg
+pg_catalog	macaddr[]	_macaddr	a	f	macaddr
+pg_catalog	macaddr8[]	_macaddr8	a	f	macaddr8
+pg_catalog	money[]	_money	a	f	money
 app	app.mood[]	_mood	a	f	app.mood
 pg_catalog	name[]	_name	a	f	name
 pg_catalog	numeric[]	_numeric	a	f	numeric
+pg_catalog	nummultirange[]	_nummultirange	a	f	nummultirange
+pg_catalog	numrange[]	_numrange	a	f	numrange
 pg_catalog	oid[]	_oid	a	f	oid
 pg_catalog	oidvector[]	_oidvector	a	f	oidvector
+pg_catalog	path[]	_path	a	f	path
 pg_catalog	pg_lsn[]	_pg_lsn	a	f	pg_lsn
+pg_catalog	pg_snapshot[]	_pg_snapshot	a	f	pg_snapshot
+pg_catalog	point[]	_point	a	f	point
+pg_catalog	polygon[]	_polygon	a	f	polygon
 pg_catalog	record[]	_record	a	f	record
+pg_catalog	refcursor[]	_refcursor	a	f	refcursor
 pg_catalog	regclass[]	_regclass	a	f	regclass
 pg_catalog	regcollation[]	_regcollation	a	f	regcollation
 pg_catalog	regconfig[]	_regconfig	a	f	regconfig
@@ -8612,26 +8711,37 @@ information_schema	information_schema.time_stamp[]	_time_stamp	a	f	information_s
 pg_catalog	timestamp without time zone[]	_timestamp	a	f	timestamp without time zone
 pg_catalog	timestamp with time zone[]	_timestamptz	a	f	timestamp with time zone
 pg_catalog	time with time zone[]	_timetz	a	f	time with time zone
+pg_catalog	tsmultirange[]	_tsmultirange	a	f	tsmultirange
 pg_catalog	tsquery[]	_tsquery	a	f	tsquery
+pg_catalog	tsrange[]	_tsrange	a	f	tsrange
+pg_catalog	tstzmultirange[]	_tstzmultirange	a	f	tstzmultirange
+pg_catalog	tstzrange[]	_tstzrange	a	f	tstzrange
+pg_catalog	tsvector[]	_tsvector	a	f	tsvector
+pg_catalog	txid_snapshot[]	_txid_snapshot	a	f	txid_snapshot
 pg_catalog	uuid[]	_uuid	a	f	uuid
 pg_catalog	bit varying[]	_varbit	a	f	bit varying
 pg_catalog	character varying[]	_varchar	a	f	character varying
 pg_catalog	xid[]	_xid	a	f	xid
 pg_catalog	xid8[]	_xid8	a	f	xid8
+pg_catalog	xml[]	_xml	a	f	xml
 information_schema	information_schema.yes_or_no[]	_yes_or_no	a	f	information_schema.yes_or_no
 pg_catalog	aclitem	aclitem	b	f	NULL
 app	app.address	address	c	f	NULL
 pg_catalog	bit	bit	b	f	NULL
 pg_catalog	boolean	bool	b	f	NULL
+pg_catalog	box	box	b	f	NULL
 pg_catalog	character	bpchar	b	f	NULL
 pg_catalog	bytea	bytea	b	f	NULL
 information_schema	information_schema.cardinal_number	cardinal_number	d	f	integer
 pg_catalog	"char"	char	b	f	NULL
 information_schema	information_schema.character_data	character_data	d	f	character varying
 pg_catalog	cid	cid	b	f	NULL
+pg_catalog	cidr	cidr	b	f	NULL
+pg_catalog	circle	circle	b	f	NULL
 pg_catalog	date	date	b	f	NULL
 pg_catalog	real	float4	b	f	NULL
 pg_catalog	double precision	float8	b	f	NULL
+pg_catalog	gtsvector	gtsvector	b	f	NULL
 pg_catalog	inet	inet	b	f	NULL
 pg_catalog	smallint	int2	b	f	NULL
 pg_catalog	int2vector	int2vector	b	f	NULL
@@ -8640,17 +8750,30 @@ pg_catalog	bigint	int8	b	f	NULL
 pg_catalog	interval	interval	b	f	NULL
 pg_catalog	json	json	b	f	NULL
 pg_catalog	jsonb	jsonb	b	f	NULL
+pg_catalog	jsonpath	jsonpath	b	f	NULL
+pg_catalog	line	line	b	f	NULL
+pg_catalog	lseg	lseg	b	f	NULL
+pg_catalog	macaddr	macaddr	b	f	NULL
+pg_catalog	macaddr8	macaddr8	b	f	NULL
+pg_catalog	money	money	b	f	NULL
 app	app.mood	mood	e	f	NULL
 pg_catalog	name	name	b	f	NULL
 pg_catalog	numeric	numeric	b	f	NULL
 pg_catalog	oid	oid	b	f	NULL
 pg_catalog	oidvector	oidvector	b	f	NULL
+pg_catalog	path	path	b	f	NULL
+pg_catalog	pg_brin_bloom_summary	pg_brin_bloom_summary	b	f	NULL
+pg_catalog	pg_brin_minmax_multi_summary	pg_brin_minmax_multi_summary	b	f	NULL
 pg_catalog	pg_dependencies	pg_dependencies	b	f	NULL
 pg_catalog	pg_lsn	pg_lsn	b	f	NULL
 pg_catalog	pg_mcv_list	pg_mcv_list	b	f	NULL
 pg_catalog	pg_ndistinct	pg_ndistinct	b	f	NULL
 pg_catalog	pg_node_tree	pg_node_tree	b	f	NULL
+pg_catalog	pg_snapshot	pg_snapshot	b	f	NULL
+pg_catalog	point	point	b	f	NULL
+pg_catalog	polygon	polygon	b	f	NULL
 pg_catalog	record	record	p	f	NULL
+pg_catalog	refcursor	refcursor	b	f	NULL
 pg_catalog	regclass	regclass	b	f	NULL
 pg_catalog	regcollation	regcollation	b	f	NULL
 pg_catalog	regconfig	regconfig	b	f	NULL
@@ -8671,6 +8794,8 @@ pg_catalog	timestamp without time zone	timestamp	b	f	NULL
 pg_catalog	timestamp with time zone	timestamptz	b	f	NULL
 pg_catalog	time with time zone	timetz	b	f	NULL
 pg_catalog	tsquery	tsquery	b	f	NULL
+pg_catalog	tsvector	tsvector	b	f	NULL
+pg_catalog	txid_snapshot	txid_snapshot	b	f	NULL
 pg_catalog	unknown	unknown	p	f	NULL
 pg_catalog	uuid	uuid	b	f	NULL
 pg_catalog	bit varying	varbit	b	f	NULL
@@ -8678,6 +8803,7 @@ pg_catalog	character varying	varchar	b	f	NULL
 pg_catalog	void	void	p	f	NULL
 pg_catalog	xid	xid	b	f	NULL
 pg_catalog	xid8	xid8	b	f	NULL
+pg_catalog	xml	xml	b	f	NULL
 information_schema	information_schema.yes_or_no	yes_or_no	d	f	character varying
 
 
@@ -8722,7 +8848,19 @@ nspname	oid	typname	typtype	typnotnull	elemtypoid
 pg_catalog	geometry[]	_geometry	a	f	geometry
 pg_catalog	union[]	_union	a	f	union
 pg_catalog	variant[]	_variant	a	f	variant
+pg_catalog	datemultirange	datemultirange	m	f	daterange
+pg_catalog	daterange	daterange	r	f	date
 pg_catalog	geometry	geometry	b	f	NULL
+pg_catalog	int4multirange	int4multirange	m	f	int4range
+pg_catalog	int4range	int4range	r	f	integer
+pg_catalog	int8multirange	int8multirange	m	f	int8range
+pg_catalog	int8range	int8range	r	f	bigint
+pg_catalog	nummultirange	nummultirange	m	f	numrange
+pg_catalog	numrange	numrange	r	f	numeric
+pg_catalog	tsmultirange	tsmultirange	m	f	tsrange
+pg_catalog	tsrange	tsrange	r	f	timestamp without time zone
+pg_catalog	tstzmultirange	tstzmultirange	m	f	tstzrange
+pg_catalog	tstzrange	tstzrange	r	f	timestamp with time zone
 pg_catalog	union	union	b	f	NULL
 pg_catalog	variant	variant	b	f	NULL
 
@@ -9614,14 +9752,20 @@ bigint	bigint[]
 bit	bit[]
 bit varying	bit varying[]
 boolean	boolean[]
+box	box[]
 bytea	bytea[]
 character	character[]
 character varying	character varying[]
 cid	cid[]
+cidr	cidr[]
+circle	circle[]
 cstring	cstring[]
 customers	customers[]
 date	date[]
+datemultirange	datemultirange[]
+daterange	daterange[]
 double precision	double precision[]
+gtsvector	gtsvector[]
 inet	inet[]
 information_schema._pg_foreign_data_wrappers	information_schema._pg_foreign_data_wrappers[]
 information_schema._pg_foreign_servers	information_schema._pg_foreign_servers[]
@@ -9697,16 +9841,29 @@ information_schema.view_table_usage	information_schema.view_table_usage[]
 information_schema.views	information_schema.views[]
 information_schema.yes_or_no	information_schema.yes_or_no[]
 int2vector	int2vector[]
+int4multirange	int4multirange[]
+int4range	int4range[]
+int8multirange	int8multirange[]
+int8range	int8range[]
 integer	integer[]
 interval	interval[]
 json	json[]
 jsonb	jsonb[]
+jsonpath	jsonpath[]
+line	line[]
+lseg	lseg[]
+macaddr	macaddr[]
+macaddr8	macaddr8[]
+money	money[]
 name	name[]
 numeric	numeric[]
+nummultirange	nummultirange[]
+numrange	numrange[]
 oid	oid[]
 oidvector	oidvector[]
 order_items	order_items[]
 orders	orders[]
+path	path[]
 pg_aggregate	pg_aggregate[]
 pg_aios	pg_aios[]
 pg_am	pg_am[]
@@ -9784,6 +9941,7 @@ pg_shdescription	pg_shdescription[]
 pg_shmem_allocations	pg_shmem_allocations[]
 pg_shmem_allocations_numa	pg_shmem_allocations_numa[]
 pg_shseclabel	pg_shseclabel[]
+pg_snapshot	pg_snapshot[]
 pg_stat_activity	pg_stat_activity[]
 pg_stat_all_indexes	pg_stat_all_indexes[]
 pg_stat_all_tables	pg_stat_all_tables[]
@@ -9852,7 +10010,10 @@ pg_user_mapping	pg_user_mapping[]
 pg_user_mappings	pg_user_mappings[]
 pg_views	pg_views[]
 pg_wait_events	pg_wait_events[]
+point	point[]
+polygon	polygon[]
 real	real[]
+refcursor	refcursor[]
 regclass	regclass[]
 regcollation	regcollation[]
 regconfig	regconfig[]
@@ -9871,10 +10032,17 @@ time with time zone	time with time zone[]
 time without time zone	time without time zone[]
 timestamp with time zone	timestamp with time zone[]
 timestamp without time zone	timestamp without time zone[]
+tsmultirange	tsmultirange[]
 tsquery	tsquery[]
+tsrange	tsrange[]
+tstzmultirange	tstzmultirange[]
+tstzrange	tstzrange[]
+tsvector	tsvector[]
+txid_snapshot	txid_snapshot[]
 uuid	uuid[]
 xid	xid[]
 xid8	xid8[]
+xml	xml[]
 
 
 skipif serenedb
@@ -10494,6 +10662,7 @@ information_schema.applicable_roles[]	_applicable_roles	information_schema.appli
 information_schema.attributes[]	_attributes	information_schema.attributes	,	array_in	NULL	b	0
 bit[]	_bit	bit	,	array_in	NULL	b	0
 boolean[]	_bool	boolean	,	array_in	NULL	b	0
+box[]	_box	box	;	array_in	NULL	b	0
 character[]	_bpchar	character	,	array_in	NULL	b	0
 bytea[]	_bytea	bytea	,	array_in	NULL	b	0
 information_schema.cardinal_number[]	_cardinal_number	information_schema.cardinal_number	,	array_in	NULL	b	0
@@ -10504,6 +10673,8 @@ information_schema.check_constraint_routine_usage[]	_check_constraint_routine_us
 information_schema.check_constraints[]	_check_constraints	information_schema.check_constraints	,	array_in	NULL	b	0
 app.child_tab[]	_child_tab	app.child_tab	,	array_in	NULL	b	0
 cid[]	_cid	cid	,	array_in	NULL	b	0
+cidr[]	_cidr	cidr	,	array_in	NULL	b	0
+circle[]	_circle	circle	,	array_in	NULL	b	0
 information_schema.collation_character_set_applicability[]	_collation_character_set_applicability	information_schema.collation_character_set_applicability	,	array_in	NULL	b	0
 information_schema.collations[]	_collations	information_schema.collations	,	array_in	NULL	b	0
 information_schema.column_column_usage[]	_column_column_usage	information_schema.column_column_usage	,	array_in	NULL	b	0
@@ -10517,6 +10688,8 @@ cstring[]	_cstring	cstring	,	array_in	NULL	b	0
 customers[]	_customers	customers	,	array_in	NULL	b	0
 information_schema.data_type_privileges[]	_data_type_privileges	information_schema.data_type_privileges	,	array_in	NULL	b	0
 date[]	_date	date	,	array_in	NULL	b	0
+datemultirange[]	_datemultirange	datemultirange	,	array_in	NULL	b	0
+daterange[]	_daterange	daterange	,	array_in	NULL	b	0
 information_schema.domain_constraints[]	_domain_constraints	information_schema.domain_constraints	,	array_in	NULL	b	0
 information_schema.domain_udt_usage[]	_domain_udt_usage	information_schema.domain_udt_usage	,	array_in	NULL	b	0
 information_schema.domains[]	_domains	information_schema.domains	,	array_in	NULL	b	0
@@ -10530,26 +10703,40 @@ information_schema.foreign_server_options[]	_foreign_server_options	information_
 information_schema.foreign_servers[]	_foreign_servers	information_schema.foreign_servers	,	array_in	NULL	b	0
 information_schema.foreign_table_options[]	_foreign_table_options	information_schema.foreign_table_options	,	array_in	NULL	b	0
 information_schema.foreign_tables[]	_foreign_tables	information_schema.foreign_tables	,	array_in	NULL	b	0
+gtsvector[]	_gtsvector	gtsvector	,	array_in	NULL	b	0
 inet[]	_inet	inet	,	array_in	NULL	b	0
 information_schema.information_schema_catalog_name[]	_information_schema_catalog_name	information_schema.information_schema_catalog_name	,	array_in	NULL	b	0
 smallint[]	_int2	smallint	,	array_in	NULL	b	0
 int2vector[]	_int2vector	int2vector	,	array_in	NULL	b	0
 integer[]	_int4	integer	,	array_in	NULL	b	0
+int4multirange[]	_int4multirange	int4multirange	,	array_in	NULL	b	0
+int4range[]	_int4range	int4range	,	array_in	NULL	b	0
 bigint[]	_int8	bigint	,	array_in	NULL	b	0
+int8multirange[]	_int8multirange	int8multirange	,	array_in	NULL	b	0
+int8range[]	_int8range	int8range	,	array_in	NULL	b	0
 interval[]	_interval	interval	,	array_in	NULL	b	0
 json[]	_json	json	,	array_in	NULL	b	0
 app.json_tab[]	_json_tab	app.json_tab	,	array_in	NULL	b	0
 jsonb[]	_jsonb	jsonb	,	array_in	NULL	b	0
+jsonpath[]	_jsonpath	jsonpath	,	array_in	NULL	b	0
 information_schema.key_column_usage[]	_key_column_usage	information_schema.key_column_usage	,	array_in	NULL	b	0
+line[]	_line	line	,	array_in	NULL	b	0
+lseg[]	_lseg	lseg	,	array_in	NULL	b	0
+macaddr[]	_macaddr	macaddr	,	array_in	NULL	b	0
+macaddr8[]	_macaddr8	macaddr8	,	array_in	NULL	b	0
+money[]	_money	money	,	array_in	NULL	b	0
 app.mood[]	_mood	app.mood	,	array_in	NULL	b	0
 name[]	_name	name	,	array_in	NULL	b	0
 numeric[]	_numeric	numeric	,	array_in	NULL	b	0
+nummultirange[]	_nummultirange	nummultirange	,	array_in	NULL	b	0
+numrange[]	_numrange	numrange	,	array_in	NULL	b	0
 oid[]	_oid	oid	,	array_in	NULL	b	0
 oidvector[]	_oidvector	oidvector	,	array_in	NULL	b	0
 order_items[]	_order_items	order_items	,	array_in	NULL	b	0
 app.order_totals[]	_order_totals	app.order_totals	,	array_in	NULL	b	0
 orders[]	_orders	orders	,	array_in	NULL	b	0
 information_schema.parameters[]	_parameters	information_schema.parameters	,	array_in	NULL	b	0
+path[]	_path	path	,	array_in	NULL	b	0
 pg_aggregate[]	_pg_aggregate	pg_aggregate	,	array_in	NULL	b	0
 pg_aios[]	_pg_aios	pg_aios	,	array_in	NULL	b	0
 pg_am[]	_pg_am	pg_am	,	array_in	NULL	b	0
@@ -10627,6 +10814,7 @@ pg_shdescription[]	_pg_shdescription	pg_shdescription	,	array_in	NULL	b	0
 pg_shmem_allocations[]	_pg_shmem_allocations	pg_shmem_allocations	,	array_in	NULL	b	0
 pg_shmem_allocations_numa[]	_pg_shmem_allocations_numa	pg_shmem_allocations_numa	,	array_in	NULL	b	0
 pg_shseclabel[]	_pg_shseclabel	pg_shseclabel	,	array_in	NULL	b	0
+pg_snapshot[]	_pg_snapshot	pg_snapshot	,	array_in	NULL	b	0
 pg_stat_activity[]	_pg_stat_activity	pg_stat_activity	,	array_in	NULL	b	0
 pg_stat_all_indexes[]	_pg_stat_all_indexes	pg_stat_all_indexes	,	array_in	NULL	b	0
 pg_stat_all_tables[]	_pg_stat_all_tables	pg_stat_all_tables	,	array_in	NULL	b	0
@@ -10695,7 +10883,10 @@ pg_user_mapping[]	_pg_user_mapping	pg_user_mapping	,	array_in	NULL	b	0
 pg_user_mappings[]	_pg_user_mappings	pg_user_mappings	,	array_in	NULL	b	0
 pg_views[]	_pg_views	pg_views	,	array_in	NULL	b	0
 pg_wait_events[]	_pg_wait_events	pg_wait_events	,	array_in	NULL	b	0
+point[]	_point	point	,	array_in	NULL	b	0
+polygon[]	_polygon	polygon	,	array_in	NULL	b	0
 record[]	_record	record	,	array_in	NULL	p	0
+refcursor[]	_refcursor	refcursor	,	array_in	NULL	b	0
 information_schema.referential_constraints[]	_referential_constraints	information_schema.referential_constraints	,	array_in	NULL	b	0
 regclass[]	_regclass	regclass	,	array_in	NULL	b	0
 regcollation[]	_regcollation	regcollation	,	array_in	NULL	b	0
@@ -10739,7 +10930,13 @@ time with time zone[]	_timetz	time with time zone	,	array_in	NULL	b	0
 information_schema.transforms[]	_transforms	information_schema.transforms	,	array_in	NULL	b	0
 information_schema.triggered_update_columns[]	_triggered_update_columns	information_schema.triggered_update_columns	,	array_in	NULL	b	0
 information_schema.triggers[]	_triggers	information_schema.triggers	,	array_in	NULL	b	0
+tsmultirange[]	_tsmultirange	tsmultirange	,	array_in	NULL	b	0
 tsquery[]	_tsquery	tsquery	,	array_in	NULL	b	0
+tsrange[]	_tsrange	tsrange	,	array_in	NULL	b	0
+tstzmultirange[]	_tstzmultirange	tstzmultirange	,	array_in	NULL	b	0
+tstzrange[]	_tstzrange	tstzrange	,	array_in	NULL	b	0
+tsvector[]	_tsvector	tsvector	,	array_in	NULL	b	0
+txid_snapshot[]	_txid_snapshot	txid_snapshot	,	array_in	NULL	b	0
 information_schema.udt_privileges[]	_udt_privileges	information_schema.udt_privileges	,	array_in	NULL	b	0
 app.unique_tab[]	_unique_tab	app.unique_tab	,	array_in	NULL	b	0
 information_schema.usage_privileges[]	_usage_privileges	information_schema.usage_privileges	,	array_in	NULL	b	0
@@ -10755,8 +10952,10 @@ information_schema.view_table_usage[]	_view_table_usage	information_schema.view_
 information_schema.views[]	_views	information_schema.views	,	array_in	NULL	b	0
 xid[]	_xid	xid	,	array_in	NULL	b	0
 xid8[]	_xid8	xid8	,	array_in	NULL	b	0
+xml[]	_xml	xml	,	array_in	NULL	b	0
 information_schema.yes_or_no[]	_yes_or_no	information_schema.yes_or_no	,	array_in	NULL	b	0
 boolean	bool	-	,	boolin	NULL	b	0
+box	box	point	;	box_in	NULL	b	0
 information_schema.cardinal_number	cardinal_number	-	,	domain_in	NULL	d	23
 information_schema.character_data	character_data	-	,	domain_in	NULL	d	1043
 real	float4	-	,	float4in	NULL	b	0
@@ -10765,11 +10964,14 @@ smallint	int2	-	,	int2in	NULL	b	0
 int2vector	int2vector	smallint	,	int2vectorin	NULL	b	0
 integer	int4	-	,	int4in	NULL	b	0
 bigint	int8	-	,	int8in	NULL	b	0
+line	line	double precision	,	line_in	NULL	b	0
+lseg	lseg	point	,	lseg_in	NULL	b	0
 app.mood	mood	-	,	enum_in	NULL	e	0
 name	name	"char"	,	namein	NULL	b	0
 numeric	numeric	-	,	numeric_in	NULL	b	0
 oid	oid	-	,	oidin	NULL	b	0
 oidvector	oidvector	oid	,	oidvectorin	NULL	b	0
+point	point	double precision	,	point_in	NULL	b	0
 information_schema.sql_identifier	sql_identifier	-	,	domain_in	NULL	d	19
 information_schema.time_stamp	time_stamp	-	,	domain_in	NULL	d	1184
 timestamp without time zone	timestamp	-	,	timestamp_in	NULL	b	0
@@ -10812,6 +11014,12 @@ information_schema."columns"[]	_columns	information_schema."columns"	,	array_in	
 geometry[]	_geometry	geometry	,	array_in	NULL	b	0
 union[]	_union	union	,	array_in	NULL	b	0
 variant[]	_variant	variant	,	array_in	NULL	b	0
+daterange	daterange	-	,	range_in	1082	r	0
+int4range	int4range	-	,	range_in	23	r	0
+int8range	int8range	-	,	range_in	20	r	0
+numrange	numrange	-	,	range_in	1700	r	0
+tsrange	tsrange	-	,	range_in	1114	r	0
+tstzrange	tstzrange	-	,	range_in	1184	r	0
 
 
 query

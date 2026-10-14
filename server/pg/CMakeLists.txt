@@ -50,6 +50,7 @@ target_sources(
         catalog/tables/pg_catalog/pg_namespace.cpp
         catalog/tables/pg_catalog/pg_opclass.cpp
         catalog/tables/pg_catalog/pg_proc.cpp
+        catalog/tables/pg_catalog/pg_range.cpp
         catalog/tables/pg_catalog/pg_replication_origin.cpp
         catalog/tables/pg_catalog/pg_rewrite.cpp
         catalog/tables/pg_catalog/pg_sequence.cpp

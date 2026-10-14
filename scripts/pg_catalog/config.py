@@ -26,11 +26,6 @@ PROCEDURES = {
     'enum_send': 'kEnumSend',
 }
 
-PSEUDO_TYPES = ('any', 'anyelement', 'event_trigger', 'fdw_handler',
-                'index_am_handler', 'internal', 'language_handler',
-                'pg_ddl_command', 'record', 'table_am_handler', 'trigger',
-                'tsm_handler')
-
 COLLATIONS = {
     'default': 'kDefaultCollation',
     'C': 'kCCollation',

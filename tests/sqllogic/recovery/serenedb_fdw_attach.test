@@ -19,11 +19,18 @@ statement ok
 CREATE TABLE sfa_files AS
 SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_dirty/**');
 
-statement error
+statement ok
 CREATE SERVER sfa_dirty FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_dirty/5');
-----
-db error: ERROR: database directory "<slt:ignore>" holds changes made after its last checkpoint: stop its server cleanly or run CHECKPOINT before attaching it
 
+query
+SELECT id, body FROM sfa_dirty.public.sfa_docs ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+statement ok
+DROP SERVER sfa_dirty;
 
 query
 SELECT count(*) AS changed FROM (
@@ -42,15 +49,6 @@ CHECKPOINT postgres;
 
 statement ok
 ALTER TABLE postgres.public.sfa_docs ADD COLUMN extra INTEGER DEFAULT 7;
-
-system ok
-rm -rf $__TEST_DIR__/sfa_altered && mkdir $__TEST_DIR__/sfa_altered && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_altered/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_altered/catalog.wal
-
-statement error
-CREATE SERVER sfa_altered FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_altered/5');
-----
-db error: ERROR: database directory "<slt:ignore>" holds changes made after its last checkpoint: stop its server cleanly or run CHECKPOINT before attaching it
-
 
 statement ok
 CHECKPOINT postgres;
@@ -128,11 +126,17 @@ n
 system ok
 rm -rf $__TEST_DIR__/sfa_search && mkdir $__TEST_DIR__/sfa_search && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_search/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_search/catalog.wal
 
-statement error
+statement ok
 CREATE SERVER sfa_search FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_search/5');
-----
-db error: ERROR: database directory "<slt:ignore>" holds search table rows that are not refreshed yet: run VACUUM (REFRESH_TABLE) on its search tables, then CHECKPOINT, before attaching it
 
+query
+SELECT count(*) AS n FROM sfa_search.public.sfa_notes;
+----
+n
+3
+
+statement ok
+DROP SERVER sfa_search;
 
 statement ok
 VACUUM (REFRESH_TABLE) postgres.public.sfa_notes;
@@ -198,15 +202,6 @@ CREATE SERVER sfa_named FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TES
 db error: ERROR: "<slt:ignore>" is not a SereneDB database directory: its name is not a database oid
 
 
-system ok
-rm -rf $__TEST_DIR__/sfa_nolog && mkdir $__TEST_DIR__/sfa_nolog && cp -r $__TEST_DIR__/sfa_new/5 $__TEST_DIR__/sfa_nolog/5
-
-statement error
-CREATE SERVER sfa_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nolog/5');
-----
-db error: ERROR: could not open the catalog log "<slt:ignore>" of database directory "<slt:ignore>"
-
-
 query
 SELECT count(*) AS n FROM duckdb_databases() WHERE database_name LIKE 'sfa_%';
 ----
@@ -229,11 +224,19 @@ db error: ERROR: Checkpoint failed for database "postgres". The database has bee
 system ok
 rm -rf $__TEST_DIR__/sfa_aborted && mkdir $__TEST_DIR__/sfa_aborted && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_aborted/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_aborted/catalog.wal
 
-statement error
+statement ok
 CREATE SERVER sfa_aborted FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_aborted/5');
-----
-db error: ERROR: database directory "<slt:ignore>" holds changes made after its last checkpoint: stop its server cleanly or run CHECKPOINT before attaching it
 
+query
+SELECT id, body, extra FROM sfa_aborted.public.sfa_docs ORDER BY id;
+----
+id	body	extra
+1	alpha	7
+2	beta	7
+3	gamma	8
+
+statement ok
+DROP SERVER sfa_aborted;
 
 connection restart
 statement ok

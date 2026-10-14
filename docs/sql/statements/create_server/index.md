@@ -156,7 +156,7 @@ SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 ### What a read-only database does
 
 - **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
-- **It serves the last checkpoint.** A directory is refused while it holds changes made after its last checkpoint, or search-table rows that were not refreshed before that checkpoint. Before copying the directory, run `VACUUM (REFRESH_TABLE)` on its search tables and then `CHECKPOINT <database>` while nothing writes to it, or stop the server cleanly after that refresh.
+- **Search finds refreshed rows.** Rows not yet refreshed into a search table or an inverted index when the directory was last written are not returned by it. Run `VACUUM (REFRESH_TABLE)` before stopping the server to include them.
 - **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, DDL, `CREATE INDEX` and `nextval` fail as on any read-only attachment, and `VACUUM` and `REINDEX` fail with `it is attached read-only`.
 - **`USAGE` on the server is the only privilege checked.** Owners and grants recorded in the directory belong to the other server's roles and are not used.
 - **`DROP SERVER` only detaches.** It never removes files from the directory.
@@ -174,9 +174,8 @@ The lock is the file system's: on a file system without POSIX locks nothing dete
 
 `CREATE SERVER` refuses a directory:
 
-- that holds changes made after its last checkpoint, or search-table rows that were not refreshed before it,
 - inside the data directory of a running server,
-- whose name is not a database oid, or that has no `catalog.wal` beside it, or
+- whose name is not a database oid, or
 - that belongs to the attaching server itself.
 
 ## Persistence and boot replay

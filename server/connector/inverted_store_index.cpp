@@ -504,6 +504,9 @@ void InvertedStoreIndex::Feed(DuckDBSinkIndexWriter& writer,
 }
 
 InvertedStoreIndex::ReplaySession* InvertedStoreIndex::ReplaySessionForEntry() {
+  if (_storage->ReadOnly()) {
+    return nullptr;
+  }
   SDB_ENSURE(_replay, "inverted index ", _index_id,
              ": append outside a commit and a replay");
   const auto offset =

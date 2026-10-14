@@ -495,6 +495,9 @@ void SearchTable::Publish() {
 
 SearchTable::ReplaySession* SearchTable::BeginReplay(
   duckdb::AttachedDatabase& db) {
+  if (!_writer) {
+    return nullptr;
+  }
   auto& manager = duckdb::DuckTransactionManager::Get(db);
   const irs::SourcePosition position{manager.GetReplayGeneration(),
                                      manager.GetReplayCommitOffset()};

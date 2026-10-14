@@ -106,16 +106,16 @@ n
 
 
 system ok
-rm -rf $__TEST_DIR__/sfl_nolog && mkdir $__TEST_DIR__/sfl_nolog && cp -r $__TEST_DIR__/sfl_copy/5 $__TEST_DIR__/sfl_nolog/5
+rm -rf $__TEST_DIR__/sfl_named && mkdir $__TEST_DIR__/sfl_named && cp -r $__TEST_DIR__/sfl_copy/5 $__TEST_DIR__/sfl_named/shop && cp $__TEST_DIR__/sfl_copy/catalog.wal $__TEST_DIR__/sfl_named/catalog.wal
 
 statement error
-CREATE SERVER sfl_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_nolog/5');
+CREATE SERVER sfl_named FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfl_named/shop');
 ----
-db error: ERROR: could not open the catalog log "<slt:ignore>" of database directory "<slt:ignore>"
+db error: ERROR: "<slt:ignore>" is not a SereneDB database directory: its name is not a database oid
 
 
 system ok
-python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_nolog/5/data.db
+python3 -c "import fcntl,struct,sys; f=open(sys.argv[1],'rb'); l=fcntl.fcntl(f,fcntl.F_GETLK,struct.pack('hhqqi',fcntl.F_WRLCK,0,0,0,0)); sys.exit(0 if struct.unpack('hhqqi',l)[0]==fcntl.F_UNLCK else 1)" $__TEST_DIR__/sfl_named/shop/data.db
 
 
 system ok

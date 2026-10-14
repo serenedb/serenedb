@@ -62,12 +62,16 @@ class DatabaseDirectory final : public duckdb::StorageExtensionInfo {
   }
 
   search::SearchDbWal& Wal();
+  search::SearchDbWal* TryWal() const noexcept {
+    return _wal_ready.load(std::memory_order_acquire);
+  }
 
  private:
   std::filesystem::path _path;
   std::atomic_bool _dropped{false};
   absl::once_flag _wal_once;
   std::unique_ptr<search::SearchDbWal> _wal;
+  std::atomic<search::SearchDbWal*> _wal_ready{nullptr};
 };
 
 }  // namespace sdb::catalog

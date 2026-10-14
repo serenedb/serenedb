@@ -128,7 +128,7 @@ class SearchEngine final {
   }
   bool TryBeginMaintenance();
   void EndMaintenance();
-  void BeginBackup() noexcept;
+  bool BeginBackup(absl::FunctionRef<bool()> cancelled) noexcept;
   void EndBackup();
   bool WaitForBackupEnd(absl::FunctionRef<bool()> cancelled);
 
@@ -136,7 +136,7 @@ class SearchEngine final {
   absl::Mutex _backup_mutex;
   absl::CondVar _backup_cv;
   std::atomic<bool> _backup_active{false};
-  std::atomic<int> _maintenance{0};
+  std::atomic<uint32_t> _maintenance{0};
   std::atomic<bool> _stopping{false};
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};

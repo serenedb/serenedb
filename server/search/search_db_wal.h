@@ -127,6 +127,8 @@ class SearchDbWal {
     return _tick.load(std::memory_order_relaxed);
   }
 
+  uint64_t SealAndCut();
+
   void RegisterShard(duckdb::idx_t table_id, uint64_t committed_tick);
   void OnShardCommit(duckdb::idx_t table_id, uint64_t committed_tick);
   void DeregisterShard(duckdb::idx_t table_id);

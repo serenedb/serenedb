@@ -428,6 +428,16 @@ void SearchDbWal::WriteFrameLocked(const uint8_t* frame, uint64_t size) {
   }
 }
 
+uint64_t SearchDbWal::SealAndCut() {
+  absl::MutexLock lock{&_append_mu};
+  if (_active) {
+    _active->Close();
+    _active.reset();
+    _active_first_tick = 0;
+  }
+  return _tick.load(std::memory_order_relaxed);
+}
+
 uint64_t SearchDbWal::AppendCommit(std::span<const ShardSection> sections,
                                    uint64_t tick_span) {
   return AppendCommit(sections, tick_span, [](uint64_t) noexcept {});

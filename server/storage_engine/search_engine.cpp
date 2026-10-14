@@ -101,19 +101,26 @@ bool SearchEngine::TryBeginMaintenance() {
 }
 
 void SearchEngine::EndMaintenance() {
-  _maintenance.fetch_sub(1);
+  [[maybe_unused]] const auto previous = _maintenance.fetch_sub(1);
+  SDB_ASSERT(previous != 0);
   if (_backup_active.load()) {
     absl::MutexLock lock{&_backup_mutex};
     _backup_cv.SignalAll();
   }
 }
 
-void SearchEngine::BeginBackup() noexcept {
+bool SearchEngine::BeginBackup(absl::FunctionRef<bool()> cancelled) noexcept {
+  constexpr auto kPoll = absl::Milliseconds(100);
   absl::MutexLock lock{&_backup_mutex};
   _backup_active.store(true);
   while (_maintenance.load() != 0) {
-    _backup_cv.Wait(&_backup_mutex);
+    if (_backup_cv.WaitWithTimeout(&_backup_mutex, kPoll) && cancelled()) {
+      _backup_active.store(false);
+      _backup_cv.SignalAll();
+      return false;
+    }
   }
+  return true;
 }
 
 void SearchEngine::EndBackup() {

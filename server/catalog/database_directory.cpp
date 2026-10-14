@@ -129,6 +129,7 @@ DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
   : _path{std::move(path)} {}
 
 DatabaseDirectory::~DatabaseDirectory() {
+  _wal_ready.store(nullptr, std::memory_order_relaxed);
   _wal.reset();
   if (_dropped.load(std::memory_order_acquire)) {
     RunRemoval([path = std::move(_path)] { RemoveTree(path); });
@@ -180,6 +181,7 @@ search::SearchDbWal& DatabaseDirectory::Wal() {
       duckdb::FileSystem::GetFileSystem(
         irs::DuckDBEngine::Instance().instance()),
       _path);
+    _wal_ready.store(_wal.get(), std::memory_order_release);
   });
   return *_wal;
 }

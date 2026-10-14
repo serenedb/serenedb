@@ -20,10 +20,16 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
 
+#include <cstdint>
 #include <duckdb/common/shared_ptr.hpp>
+#include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/unique_ptr.hpp>
+#include <filesystem>
+#include <optional>
+#include <string_view>
 #include <vector>
 
 namespace duckdb {
@@ -35,15 +41,41 @@ class StorageLockKey;
 }  // namespace duckdb
 namespace sdb::backup {
 
+inline constexpr std::string_view kBackupDir = "backup";
+inline constexpr std::string_view kCatalogLink = "catalog.wal";
+
+struct DatabaseCut {
+  duckdb::idx_t oid = 0;
+  uint64_t checkpoint_iteration = 0;
+  duckdb::idx_t wal_size = 0;
+  duckdb::idx_t used_size = 0;
+  std::optional<uint64_t> search_tick;
+};
+
+struct StoreCut {
+  duckdb::idx_t database_oid = 0;
+  duckdb::idx_t oid = 0;
+  uint64_t generation = 0;
+};
+
+struct Cut {
+  std::filesystem::path catalog_link;
+  duckdb::idx_t catalog_log_size = 0;
+  std::vector<DatabaseCut> databases;
+  std::vector<StoreCut> stores;
+};
+
 class BackupSession final {
  public:
   static BackupSession& Instance();
 
-  void Begin();
+  void Begin(absl::FunctionRef<bool()> cancelled);
   void End() noexcept;
   bool IsActive();
 
  private:
+  void Stop() noexcept ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+
   absl::Mutex _mutex;
   bool _active ABSL_GUARDED_BY(_mutex) = false;
   std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> _pins
@@ -52,6 +84,8 @@ class BackupSession final {
     ABSL_GUARDED_BY(_mutex);
   std::vector<duckdb::SingleFileBlockManager*> _block_managers
     ABSL_GUARDED_BY(_mutex);
+  std::filesystem::path _backup_dir ABSL_GUARDED_BY(_mutex);
+  Cut _cut ABSL_GUARDED_BY(_mutex);
 };
 
 }  // namespace sdb::backup

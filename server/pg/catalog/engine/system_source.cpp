@@ -35,8 +35,8 @@
 #include "catalog/cluster.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/lookup.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/lookup.h"
+#include "pg/catalog/utils/oids.h"
 
 namespace sdb::pg {
 namespace {

@@ -21,7 +21,6 @@ target_sources(
         catalog/functions/pg_catalog/regproc.cpp
         catalog/functions/pg_catalog/ruleutils.cpp
         catalog/functions/pg_catalog/subscription.cpp
-        catalog/lookup.cpp
         catalog/table_functions/pg_catalog/pg_hba_file_rules.cpp
         catalog/table_functions/pg_catalog/pg_show_all_settings.cpp
         catalog/tables/information_schema/columns.cpp
@@ -64,6 +63,10 @@ target_sources(
         catalog/tables/sdb/sdb_metrics.cpp
         catalog/tables/sdb/sdb_progress.cpp
         catalog/tables/sdb/sdb_settings.cpp
+        catalog/utils/acl.cpp
+        catalog/utils/columns.cpp
+        catalog/utils/lookup.cpp
+        catalog/utils/session.cpp
         catalog/views/information_schema/triggers.cpp
         catalog/views/pg_catalog/pg_stat_progress_create_index.cpp
         catalog/views/sdb/pg_stat_progress_create_table_as.cpp

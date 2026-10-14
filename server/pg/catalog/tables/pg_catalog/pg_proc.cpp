@@ -24,8 +24,8 @@
 
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
 #include "pg/types.h"
 

@@ -66,7 +66,8 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
 #include "pg/types.h"
 

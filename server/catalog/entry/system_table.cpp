@@ -39,7 +39,7 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 
 namespace sdb::catalog {
 namespace {

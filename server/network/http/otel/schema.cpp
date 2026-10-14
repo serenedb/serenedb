@@ -38,7 +38,7 @@
 #include "connector/functions/otel.h"
 #include "network/http/common.h"
 #include "otel/schema_sql.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 
 namespace sdb::otel {

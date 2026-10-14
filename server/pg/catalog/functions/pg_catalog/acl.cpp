@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "pg/catalog/utils/acl.h"
+
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 #include <absl/strings/ascii.h>
@@ -57,8 +59,9 @@
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 
 namespace sdb::pg {

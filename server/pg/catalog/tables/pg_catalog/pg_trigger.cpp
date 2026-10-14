@@ -22,8 +22,9 @@
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <ranges>
 
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 namespace {

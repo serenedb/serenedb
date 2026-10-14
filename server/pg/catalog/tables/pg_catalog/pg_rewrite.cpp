@@ -22,8 +22,8 @@
 #include <iresearch/utils/static_strings.hpp>
 
 #include "pg/catalog/engine/registry.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 namespace {

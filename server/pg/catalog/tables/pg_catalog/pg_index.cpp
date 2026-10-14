@@ -31,8 +31,9 @@
 #include <vector>
 
 #include "catalog/entry/inverted_index.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
 #include "pg/types.h"
 
 namespace sdb::pg {

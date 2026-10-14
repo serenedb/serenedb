@@ -18,8 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/acl.h"
 
 namespace sdb::pg {
 namespace {

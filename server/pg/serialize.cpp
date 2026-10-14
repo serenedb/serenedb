@@ -66,7 +66,7 @@
 #include "connector/functions/ts_query_codec.h"
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/session.h"
 #include "pg/types.h"
 #include "query/config.h"
 #include "server/utils/dtoa.h"

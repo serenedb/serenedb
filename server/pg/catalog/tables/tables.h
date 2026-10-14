@@ -27,7 +27,7 @@
 #include "catalog/entry/system_table.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/types.h"
 
 namespace sdb::pg {

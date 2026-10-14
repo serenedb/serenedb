@@ -42,7 +42,7 @@
 
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/types.h"
 
 namespace sdb::pg {

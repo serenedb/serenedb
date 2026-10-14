@@ -47,7 +47,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 #include "query/config.h"
 #include "search/inverted_index_storage.h"

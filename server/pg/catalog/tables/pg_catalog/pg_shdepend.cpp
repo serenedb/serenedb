@@ -27,8 +27,10 @@
 
 #include "catalog/cluster.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/acl.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 namespace {

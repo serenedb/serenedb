@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "pg/catalog/utils/columns.h"
+
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
@@ -29,8 +31,8 @@
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/lookup.h"
 #include "pg/types.h"
 
 namespace sdb::pg {

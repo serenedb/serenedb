@@ -29,7 +29,6 @@
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
 #include "pg/types.h"
 
 namespace sdb::pg {

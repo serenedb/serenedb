@@ -35,7 +35,7 @@
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/session.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/serialize.h"
 

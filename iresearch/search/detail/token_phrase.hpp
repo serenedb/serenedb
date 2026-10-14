@@ -110,11 +110,13 @@ class PhraseCheck final : public TokenConsumer {
     };
 
     const duckdb::string_t& TermAt(size_t at) const noexcept {
+      SDB_ASSERT(at >= _carry_base && at < _end);
       return at < _batch_base ? _carry[at - _carry_base].term
                               : _batch_terms[at - _batch_base];
     }
 
     uint32_t PosAt(size_t at) const noexcept {
+      SDB_ASSERT(at >= _carry_base && at < _end);
       return at < _batch_base ? _carry[at - _carry_base].pos
                               : _batch_pos[at - _batch_base];
     }

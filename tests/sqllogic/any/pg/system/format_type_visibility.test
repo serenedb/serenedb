@@ -73,3 +73,18 @@ ftv_s.mood(5)
 
 statement ok
 DROP SCHEMA ftv_s CASCADE;
+
+
+statement ok
+SET search_path = '';
+
+
+query
+SELECT pg_catalog.pg_table_is_visible(1259) AS pg_class_visible;
+----
+pg_class_visible
+t
+
+
+statement ok
+RESET search_path;

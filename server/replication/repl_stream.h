@@ -33,6 +33,8 @@ namespace sdb::replication {
 
 class ReplStream {
  public:
+  ~ReplStream() { ReleaseWaiters(); }
+
   static bool IsIdle(const PgOutputMessage* message) noexcept {
     return std::holds_alternative<StreamStopMessage>(*message);
   }
@@ -126,8 +128,16 @@ class ReplStream {
   void Wake() noexcept {
     if (_scan_active.load(std::memory_order_seq_cst)) {
       _ready.Set();
-    } else if (_task != nullptr) {
+      return;
+    }
+    ReleaseWaiters();
+    if (_task != nullptr) {
       _task->RequestRun();
+    }
+  }
+  void ReleaseWaiters() noexcept {
+    if (!_ready.Ready()) {
+      _ready.Call();
     }
   }
 

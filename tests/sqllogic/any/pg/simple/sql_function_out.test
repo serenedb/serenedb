@@ -142,5 +142,57 @@ a	b
 t	t
 
 
+query
+SELECT (fno.split(5)).*;
+----
+b	c
+6	5
+
+
+statement ok
+CREATE FUNCTION fno.shifted(result int, OUT a int, OUT b int) LANGUAGE sql AS 'SELECT result, result + 1';
+
+
+query
+SELECT * FROM fno.shifted(5);
+----
+a	b
+5	6
+
+
+statement ok
+CREATE FUNCTION fno.next_pair(x int, OUT a int, OUT b int) LANGUAGE sql RETURN (x, x + 1);
+
+
+query
+SELECT a, b FROM fno.next_pair(1);
+----
+a	b
+1	2
+
+
+statement error return type mismatch in function declared to return record
+CREATE FUNCTION fno.too_wide(OUT a int, OUT b int) LANGUAGE sql AS 'SELECT 1, 2, 3';
+
+
+statement error return type mismatch in function declared to return record
+CREATE FUNCTION fno.too_narrow(OUT a int, OUT b int) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE TYPE fno.mood AS ENUM ('sad', 'ok');
+
+
+statement ok
+CREATE FUNCTION fno.moods(m fno.mood) RETURNS SETOF fno.mood LANGUAGE sql AS 'SELECT m';
+
+
+query
+SELECT m::text AS m FROM fno.moods('ok') AS m;
+----
+m
+ok
+
+
 statement ok
 DROP SCHEMA fno CASCADE;

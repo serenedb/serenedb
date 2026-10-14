@@ -35,6 +35,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
 #include <random>
+#include <utility>
 
 namespace sdb::connector {
 namespace {
@@ -337,7 +338,6 @@ void DateBinFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 constexpr int32_t kDaysPerMonth = 30;
-constexpr int64_t kMicrosPerDay = 86400'000'000LL;
 
 int32_t AddIntervalField(int32_t field, int64_t delta) {
   const auto sum = static_cast<int64_t>(field) + delta;
@@ -356,17 +356,17 @@ void MonthsFromDays(duckdb::interval_t& span) {
 }
 
 void DaysFromMicros(duckdb::interval_t& span) {
-  const auto days = span.micros / kMicrosPerDay;
-  span.micros -= days * kMicrosPerDay;
+  const auto days = span.micros / duckdb::Interval::MICROS_PER_DAY;
+  span.micros -= days * duckdb::Interval::MICROS_PER_DAY;
   span.days = AddIntervalField(span.days, days);
 }
 
 void AlignDaysToMicros(duckdb::interval_t& span) {
   if (span.days > 0 && span.micros < 0) {
-    span.micros += kMicrosPerDay;
+    span.micros += duckdb::Interval::MICROS_PER_DAY;
     --span.days;
   } else if (span.days < 0 && span.micros > 0) {
-    span.micros -= kMicrosPerDay;
+    span.micros -= duckdb::Interval::MICROS_PER_DAY;
     ++span.days;
   }
 }
@@ -517,21 +517,16 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(func);
   }
 
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"justify_days",
-                           {duckdb::LogicalType::INTERVAL},
-                           duckdb::LogicalType::INTERVAL,
-                           JustifyFunction<JustifyDays>});
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"justify_hours",
-                           {duckdb::LogicalType::INTERVAL},
-                           duckdb::LogicalType::INTERVAL,
-                           JustifyFunction<JustifyHours>});
-  loader.RegisterFunction(
-    duckdb::ScalarFunction{"justify_interval",
-                           {duckdb::LogicalType::INTERVAL},
-                           duckdb::LogicalType::INTERVAL,
-                           JustifyFunction<JustifyInterval>});
+  for (const auto& [name, function] :
+       {std::pair{"justify_days", &JustifyFunction<JustifyDays>},
+        std::pair{"justify_hours", &JustifyFunction<JustifyHours>},
+        std::pair{"justify_interval", &JustifyFunction<JustifyInterval>}}) {
+    loader.RegisterFunction(
+      duckdb::ScalarFunction{name,
+                             {duckdb::LogicalType::INTERVAL},
+                             duckdb::LogicalType::INTERVAL,
+                             function});
+  }
 
   {
     duckdb::ScalarFunction func{

@@ -478,21 +478,14 @@ void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   auto writer =
     duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
       result, args.size());
-  std::vector<std::string> items;
+  std::string text;
   ForEachObject(args, [&](const std::optional<ObjectAddress>& object) {
     const auto acl = object ? ObjectAcl(session, *object) : std::nullopt;
     if (!acl || acl->empty()) {
       writer.WriteNull();
       return;
     }
-    items.clear();
-    for (const auto& item : *acl) {
-      AppendAcl(items.emplace_back(), item, *roles);
-    }
-    size_t i = 0;
-    for (auto& child : writer.WriteList(items.size())) {
-      child.WriteValue(duckdb::string_t{items[i++]});
-    }
+    WriteAclTexts(writer, *acl, *roles, text);
   });
 }
 

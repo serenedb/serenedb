@@ -45,6 +45,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #include "auth/role_closure.h"
@@ -724,18 +726,15 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
   const std::string_view main = DEFAULT_SCHEMA;
 
-  RegisterScalar(loader, pg_catalog, "pg_table_is_visible",
-                 CONSISTENT_WITHIN_QUERY, InitSession,
-                 {duckdb::ScalarFunction{
-                   {oid}, boolean, IsVisibleFunction<RelationIsVisible>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_type_is_visible", CONSISTENT_WITHIN_QUERY,
-    InitSession,
-    {duckdb::ScalarFunction{{oid}, boolean, IsVisibleFunction<TypeIsVisible>}});
-  RegisterScalar(loader, pg_catalog, "pg_function_is_visible",
-                 CONSISTENT_WITHIN_QUERY, InitSession,
-                 {duckdb::ScalarFunction{
-                   {oid}, boolean, IsVisibleFunction<FunctionIsVisible>}});
+  for (const auto& [name, function] :
+       {std::pair{"pg_table_is_visible", &IsVisibleFunction<RelationIsVisible>},
+        std::pair{"pg_type_is_visible", &IsVisibleFunction<TypeIsVisible>},
+        std::pair{"pg_function_is_visible",
+                  &IsVisibleFunction<FunctionIsVisible>}}) {
+    RegisterScalar(loader, pg_catalog, name, CONSISTENT_WITHIN_QUERY,
+                   InitSession,
+                   {duckdb::ScalarFunction{{oid}, boolean, function}});
+  }
   RegisterScalar(
     loader, pg_catalog, "pg_get_userbyid", CONSISTENT_WITHIN_QUERY,
     {duckdb::ScalarFunction{{oid}, NAME(), PgGetUserByIdFunction}});
@@ -777,36 +776,25 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "pg_stat_get_live_tuples",
                  CONSISTENT_WITHIN_QUERY, InitSession,
                  {duckdb::ScalarFunction{{oid}, int8, LiveTuplesFunction}});
-  RegisterScalar(loader, pg_catalog, "pg_stat_get_db_numbackends",
-                 CONSISTENT_WITHIN_QUERY,
-                 {duckdb::ScalarFunction{{oid}, int4, NumBackendsFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_stat_get_db_xact_commit", CONSISTENT_WITHIN_QUERY,
-    {duckdb::ScalarFunction{
-      {oid}, int8, DatabaseCounterFunction<&DatabaseStats::xact_commit>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_stat_get_db_xact_rollback", CONSISTENT_WITHIN_QUERY,
-    {duckdb::ScalarFunction{
-      {oid}, int8, DatabaseCounterFunction<&DatabaseStats::xact_rollback>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_stat_get_db_sessions", CONSISTENT_WITHIN_QUERY,
-    {duckdb::ScalarFunction{
-      {oid}, int8, DatabaseCounterFunction<&DatabaseStats::sessions>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_stat_get_db_session_time", CONSISTENT_WITHIN_QUERY,
-    {duckdb::ScalarFunction{
-      {oid}, float8, DatabaseMillisFunction<&DatabaseStats::session_time_us>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_stat_get_db_active_time", CONSISTENT_WITHIN_QUERY,
-    {duckdb::ScalarFunction{
-      {oid}, float8, DatabaseMillisFunction<&DatabaseStats::active_time_us>}});
-  RegisterScalar(
-    loader, pg_catalog, "pg_stat_get_db_idle_in_transaction_time",
-    CONSISTENT_WITHIN_QUERY,
-    {duckdb::ScalarFunction{
-      {oid},
-      float8,
-      DatabaseMillisFunction<&DatabaseStats::idle_in_transaction_time_us>}});
+  for (const auto& [name, type, function] : {
+         std::tuple{"pg_stat_get_db_numbackends", int4, &NumBackendsFunction},
+         std::tuple{"pg_stat_get_db_xact_commit", int8,
+                    &DatabaseCounterFunction<&DatabaseStats::xact_commit>},
+         std::tuple{"pg_stat_get_db_xact_rollback", int8,
+                    &DatabaseCounterFunction<&DatabaseStats::xact_rollback>},
+         std::tuple{"pg_stat_get_db_sessions", int8,
+                    &DatabaseCounterFunction<&DatabaseStats::sessions>},
+         std::tuple{"pg_stat_get_db_session_time", float8,
+                    &DatabaseMillisFunction<&DatabaseStats::session_time_us>},
+         std::tuple{"pg_stat_get_db_active_time", float8,
+                    &DatabaseMillisFunction<&DatabaseStats::active_time_us>},
+         std::tuple{"pg_stat_get_db_idle_in_transaction_time", float8,
+                    &DatabaseMillisFunction<
+                      &DatabaseStats::idle_in_transaction_time_us>},
+       }) {
+    RegisterScalar(loader, pg_catalog, name, CONSISTENT_WITHIN_QUERY,
+                   {duckdb::ScalarFunction{{oid}, type, function}});
+  }
 
   {
     duckdb::ScalarFunction function{{any}, pg::REGTYPE(), nullptr};

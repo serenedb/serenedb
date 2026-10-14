@@ -909,58 +909,28 @@ std::optional<ResolvedType> ResolveType(const Session& session,
 }  // namespace
 
 std::string_view SqlTypeName(int32_t oid) {
-  if (oid == kBool) {
-    return "boolean";
-  }
-  if (oid == kChar) {
-    return "\"char\"";
-  }
-  if (oid == kInt8) {
-    return "bigint";
-  }
-  if (oid == kInt2) {
-    return "smallint";
-  }
-  if (oid == kInt4) {
-    return "integer";
-  }
-  if (oid == kFloat4) {
-    return "real";
-  }
-  if (oid == kFloat8) {
-    return "double precision";
-  }
-  if (oid == kBpchar) {
-    return "character";
-  }
-  if (oid == kVarchar) {
-    return "character varying";
-  }
-  if (oid == kBit) {
-    return "bit";
-  }
-  if (oid == kVarbit) {
-    return "bit varying";
-  }
-  if (oid == kNumeric) {
-    return "numeric";
-  }
-  if (oid == kInterval) {
-    return "interval";
-  }
-  if (oid == kTime) {
-    return "time without time zone";
-  }
-  if (oid == kTimetz) {
-    return "time with time zone";
-  }
-  if (oid == kTimestamp) {
-    return "timestamp without time zone";
-  }
-  if (oid == kTimestamptz) {
-    return "timestamp with time zone";
-  }
-  return {};
+  static constexpr std::pair<int32_t, std::string_view> kNames[] = {
+    {kBool, "boolean"},
+    {kChar, "\"char\""},
+    {kInt8, "bigint"},
+    {kInt2, "smallint"},
+    {kInt4, "integer"},
+    {kFloat4, "real"},
+    {kFloat8, "double precision"},
+    {kBpchar, "character"},
+    {kVarchar, "character varying"},
+    {kBit, "bit"},
+    {kVarbit, "bit varying"},
+    {kNumeric, "numeric"},
+    {kInterval, "interval"},
+    {kTime, "time without time zone"},
+    {kTimetz, "time with time zone"},
+    {kTimestamp, "timestamp without time zone"},
+    {kTimestamptz, "timestamp with time zone"},
+  };
+  const auto* name = absl::c_find_if(
+    kNames, [&](const auto& entry) { return entry.first == oid; });
+  return name == std::end(kNames) ? std::string_view{} : name->second;
 }
 
 namespace {

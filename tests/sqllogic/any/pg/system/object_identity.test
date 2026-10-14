@@ -90,6 +90,20 @@ table	ident_s	t	ident_s.t
 
 
 query
+SELECT * FROM pg_identify_object('pg_class'::regclass, 'ident_s.t'::regclass, 0);
+----
+type	schema	name	identity
+table	ident_s	t	ident_s.t
+
+
+query
+SELECT o.identity FROM pg_identify_object('pg_class'::regclass, 'ident_s.t'::regclass, 0) AS o;
+----
+identity
+ident_s.t
+
+
+query
 SELECT (pg_identify_object('pg_class'::regclass, 'ident_s.t'::regclass, 2)).*;
 ----
 type	schema	name	identity

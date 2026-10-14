@@ -224,10 +224,10 @@ inline constexpr size_t kGatherAhead = 4;
 inline constexpr uintptr_t kCacheLine = 64;
 inline constexpr size_t kGatherLines = 36;
 
-template<typename Score>
+template<typename Score, typename Score4 = std::nullptr_t>
 void ScoreGatheredRows(const byte_type* base, uint32_t record_size,
                        std::span<const uint32_t> ids, score_t* out,
-                       Score&& score) {
+                       Score&& score, Score4&& score4 = nullptr) {
   const size_t n = ids.size();
   const size_t ahead = std::clamp<size_t>(
     kGatherLines * kCacheLine / std::max<size_t>(record_size, 1), 1,
@@ -249,7 +249,19 @@ void ScoreGatheredRows(const byte_type* base, uint32_t record_size,
   for (size_t i = 0; i < std::min(n, ahead); ++i) {
     rest(i);
   }
-  for (size_t i = 0; i < n; ++i) {
+  size_t i = 0;
+  if constexpr (!std::is_same_v<std::decay_t<Score4>, std::nullptr_t>) {
+    for (; i + 4 <= n; i += 4) {
+      for (size_t k = i; k < i + 4; ++k) {
+        if (k + ahead < n) {
+          rest(k + ahead);
+        }
+      }
+      const byte_type* rows[4] = {row(i), row(i + 1), row(i + 2), row(i + 3)};
+      score4(rows, out + i);
+    }
+  }
+  for (; i < n; ++i) {
     if (i + ahead < n) {
       rest(i + ahead);
     }

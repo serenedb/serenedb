@@ -397,6 +397,53 @@ TurboQuantDot8Vnni(const uint8_t* code, const TurboQuantInt8Seg& seg,
   }
   return sum;
 }
+
+template<uint32_t Bits>
+__attribute__((target("avx512f,avx512bw,avx512vnni"))) void TurboQuantDot8Vnni4(
+  const uint8_t* const* codes, const TurboQuantInt8Seg& seg, const int8_t* q,
+  int32_t* out) noexcept {
+  constexpr uint32_t kPlanes = 8 / Bits;
+  constexpr auto kMask = static_cast<uint8_t>((1U << Bits) - 1);
+  constexpr size_t kRows = 4;
+  const uint32_t bytes = seg.bytes;
+  const __m512i tc = _mm512_broadcast_i32x4(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(seg.c8.data())));
+  const __m512i ta = _mm512_broadcast_i32x4(
+    _mm_load_si128(reinterpret_cast<const __m128i*>(seg.a8.data())));
+  const __m512i mask = _mm512_set1_epi8(static_cast<char>(kMask));
+  const __m512i zero = _mm512_setzero_si512();
+  __m512i acc[kRows] = {zero, zero, zero, zero};
+  uint32_t p = 0;
+  for (; p + 64 <= bytes; p += 64) {
+    __m512i v[kRows];
+    for (size_t k = 0; k < kRows; ++k) {
+      v[k] = _mm512_loadu_si512(codes[k] + p);
+    }
+    for (uint32_t t = 0; t < kPlanes; ++t) {
+      const __m512i qv = _mm512_loadu_si512(q + size_t{t} * bytes + p);
+      for (size_t k = 0; k < kRows; ++k) {
+        const __m512i idx = _mm512_and_si512(
+          _mm512_srli_epi16(v[k], static_cast<unsigned>(t * Bits)), mask);
+        const __m512i a = _mm512_shuffle_epi8(ta, idx);
+        const __m512i c = _mm512_shuffle_epi8(tc, idx);
+        acc[k] = _mm512_dpbusd_epi32(
+          acc[k], a,
+          _mm512_mask_sub_epi8(qv, _mm512_movepi8_mask(c), zero, qv));
+      }
+    }
+  }
+  for (size_t k = 0; k < kRows; ++k) {
+    int32_t sum = _mm512_reduce_add_epi32(acc[k]);
+    for (uint32_t i = p; i < bytes; ++i) {
+      const uint8_t b = codes[k][i];
+      for (uint32_t t = 0; t < kPlanes; ++t) {
+        sum += int32_t{q[size_t{t} * bytes + i]} *
+               int32_t{seg.c8[(b >> (t * Bits)) & kMask]};
+      }
+    }
+    out[k] = sum;
+  }
+}
 #endif
 
 template<uint32_t Bits>
@@ -991,6 +1038,15 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
     if (!_lay.full) {
+#if defined(__x86_64__) && defined(__AVX2__)
+      if (Rows4()) {
+        ScoreGatheredRows(
+          base, record_size, ids, out,
+          [this](const byte_type* r) { return ScoreRow(r); },
+          [this](const byte_type* const* r, score_t* o) { ScoreRow4(r, o); });
+        return;
+      }
+#endif
       ScoreGatheredRows(base, record_size, ids, out,
                         [this](const byte_type* r) { return ScoreRow(r); });
       return;
@@ -1339,6 +1395,10 @@ class TurboQuantizerReader final : public QuantizerReader {
     }
     const float sum = (a0 + a1) + (a2 + a3);
 #endif
+    return FinishRow(r, sum);
+  }
+
+  score_t FinishRow(const byte_type* r, float sum) const noexcept {
     const float ip = LoadFloat(r + _lay.RowNormOffset()) * sum * _inv_sqrt_rd;
     const float bias = LoadFloat(r + _lay.RowBiasOffset());
     if constexpr (M == VectorMetric::L2Sqr) {
@@ -1347,6 +1407,44 @@ class TurboQuantizerReader final : public QuantizerReader {
       return _qc + bias + ip;
     }
   }
+
+#if defined(__x86_64__) && defined(__AVX2__)
+  bool Rows4() const noexcept {
+    if (!HasAvx512Vnni()) {
+      return false;
+    }
+    for (size_t i = 0; i < _cur->NumSegs(); ++i) {
+      if (_cur->Seg(i).bits < 2) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void ScoreRow4(const byte_type* const* r, score_t* out) const noexcept {
+    float sum[4] = {};
+    for (size_t i = 0; i < _cur->NumSegs(); ++i) {
+      const TurboQuantInt8Seg& seg = _cur->Seg(i);
+      const int8_t* q = _cur->Q8() + seg.q_off;
+      const uint8_t* codes[4];
+      for (size_t k = 0; k < 4; ++k) {
+        codes[k] = reinterpret_cast<const uint8_t*>(r[k]) + seg.byte0;
+      }
+      int32_t dot[4];
+      if (seg.bits == 2) {
+        TurboQuantDot8Vnni4<2>(codes, seg, q, dot);
+      } else {
+        TurboQuantDot8Vnni4<4>(codes, seg, q, dot);
+      }
+      for (size_t k = 0; k < 4; ++k) {
+        sum[k] += static_cast<float>(dot[k]) * seg.inv_scale;
+      }
+    }
+    for (size_t k = 0; k < 4; ++k) {
+      out[k] = FinishRow(r[k], sum[k]);
+    }
+  }
+#endif
 
   void ScoreLanes(const byte_type* c1, const byte_type* c2, const float* norms,
                   const float* gammas, const float* bias, size_t count,

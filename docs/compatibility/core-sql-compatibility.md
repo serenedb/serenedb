@@ -744,9 +744,9 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | bool_or                    | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | `count(*)`                 | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | `count("any")`             | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
-| json(b)_agg                | No            |                               |
+| json(b)_agg                | Partial       | `json_agg` and `json_agg_strict`, not `jsonb_agg`: [JSON aggregate functions](../data_import_and_export/json/json_functions.md#json-aggregate-functions) |
 | json(b)_objectagg          | No            |                               |
-| json(b)_object_agg         | No            |                               |
+| json(b)_object_agg         | Partial       | `json_object_agg` and its `_strict`, `_unique` and `_unique_strict` forms, not `jsonb_object_agg`: [JSON aggregate functions](../data_import_and_export/json/json_functions.md#json-aggregate-functions) |
 | json_arrayagg              | No            |                               |
 | max                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |
 | min                        | Yes           | [Aggregate functions](../sql/functions/aggregates/index.md) |

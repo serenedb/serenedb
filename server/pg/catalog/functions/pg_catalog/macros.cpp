@@ -421,6 +421,62 @@ constexpr SystemMacro kMacros[] = {
       to_days(weeks::BIGINT * 7 + days) +
       to_microseconds(hours::BIGINT * 3600000000 + mins::BIGINT * 60000000 +
                       round_even(secs * 1000000, 0)::BIGINT))"},
+  {"pg_catalog", "sdb_json_value",
+   R"((v) AS
+      CASE WHEN v IS NULL THEN 'null'
+           WHEN typeof(v) = 'JSON' OR typeof(v) LIKE 'DECIMAL%'
+             THEN CAST(v AS VARCHAR)
+           WHEN typeof(v) = 'TIMESTAMP'
+             THEN '"' || replace(CAST(v AS VARCHAR), ' ', 'T') || '"'
+           WHEN typeof(v) = 'TIMESTAMP WITH TIME ZONE'
+             THEN '"' || regexp_replace(replace(CAST(v AS VARCHAR), ' ', 'T'),
+                                        '([+-][0-9][0-9])$', '\1:00') || '"'
+           WHEN CAST(to_json(v) AS VARCHAR) IN ('NaN', 'Infinity', '-Infinity')
+             THEN '"' || CAST(to_json(v) AS VARCHAR) || '"'
+           ELSE CAST(to_json(v) AS VARCHAR) END)"},
+  {"pg_catalog", "sdb_json_array",
+   R"((elements) AS
+      CAST('[' || array_to_string(list_transform(elements, (e, i) ->
+        CASE WHEN i > 1 AND e IS NOT NULL AND
+                  (typeof(e) LIKE 'STRUCT%' OR typeof(e) LIKE '%]')
+             THEN chr(10) || ' ' ELSE '' END || sdb_json_value(e)), ', ') ||
+           ']' AS JSON))"},
+  {"pg_catalog", "sdb_json_member",
+   R"((key, value) AS
+      CASE WHEN key IS NULL THEN error('null value not allowed for object key')
+           ELSE CAST(to_json(CAST(key AS VARCHAR)) AS VARCHAR) END ||
+      ' : ' || sdb_json_value(value))"},
+  {"pg_catalog", "json_agg", "(x) AS sdb_json_array(list(x))"},
+  {"pg_catalog", "json_agg_strict",
+   "(x) AS sdb_json_array(list_filter(list(x), e -> e IS NOT NULL))"},
+  {"pg_catalog", "json_object_agg",
+   R"((key, value) AS
+      CAST('{ ' || string_agg(sdb_json_member(key, value), ', ') || ' }'
+           AS JSON))"},
+  {"pg_catalog", "json_object_agg_strict",
+   R"((key, value) AS
+      CASE WHEN count(*) = 0 THEN NULL
+           ELSE CAST('{ ' || coalesce(string_agg(
+                  CASE WHEN key IS NULL OR value IS NOT NULL
+                       THEN sdb_json_member(key, value) END, ', '), '') ||
+                ' }' AS JSON) END)"},
+  {"pg_catalog", "json_object_agg_unique",
+   R"((key, value) AS
+      CASE WHEN count(key) <> count(DISTINCT key)
+             THEN error('duplicate JSON object key value: ' ||
+                        CAST(to_json(CAST(mode(key) AS VARCHAR)) AS VARCHAR))
+           ELSE CAST('{ ' || string_agg(sdb_json_member(key, value), ', ') ||
+                     ' }' AS JSON) END)"},
+  {"pg_catalog", "json_object_agg_unique_strict",
+   R"((key, value) AS
+      CASE WHEN count(*) = 0 THEN NULL
+           WHEN count(key) <> count(DISTINCT key)
+             THEN error('duplicate JSON object key value: ' ||
+                        CAST(to_json(CAST(mode(key) AS VARCHAR)) AS VARCHAR))
+           ELSE CAST('{ ' || coalesce(string_agg(
+                  CASE WHEN key IS NULL OR value IS NOT NULL
+                       THEN sdb_json_member(key, value) END, ', '), '') ||
+                ' }' AS JSON) END)"},
   // pg_backend_pid() is a C++ scalar (PgBackendPidFunction) -- it reads the
   // per-connection backend PID from the ConnectionContext.
   // clang-format on

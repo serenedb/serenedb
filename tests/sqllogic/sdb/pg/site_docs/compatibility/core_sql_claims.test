@@ -2360,7 +2360,7 @@ statement ok
 SELECT count(c) FROM (VALUES (1),(2),(3)) t(c);
 
 # op_agg: json(b)_agg
-statement error
+statement ok
 SELECT json_agg(c) FROM (VALUES (1)) t(c);
 
 # op_agg: json(b)_objectagg
@@ -2368,7 +2368,7 @@ statement error
 SELECT jsonb_object_agg(k,v) FROM (VALUES ('a',1)) t(k,v);
 
 # op_agg: json(b)_object_agg
-statement error
+statement ok
 SELECT json_object_agg(k,v) FROM (VALUES ('a',1)) t(k,v);
 
 # op_agg: json_arrayagg

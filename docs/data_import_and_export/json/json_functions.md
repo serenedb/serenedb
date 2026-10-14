@@ -153,13 +153,21 @@ Examples using a solar-system dataset:
 
 ## JSON Aggregate Functions
 
-There are three JSON aggregate functions.
+There are nine JSON aggregate functions.
 
-| Function                        | Description                                                            |
-| :------------------------------ | :--------------------------------------------------------------------- |
-| `json_group_array(any)`         | Return a JSON array with all values of `any` in the aggregation.       |
-| `json_group_object(key, value)` | Return a JSON object with all `key`, `value` pairs in the aggregation. |
-| `json_group_structure(json)`    | Return the combined `json_structure` of all `json` in the aggregation. |
+| Function                                    | Description                                                            |
+| :------------------------------------------ | :--------------------------------------------------------------------- |
+| `json_group_array(any)`                     | Return a JSON array with all values of `any` in the aggregation.       |
+| `json_group_object(key, value)`             | Return a JSON object with all `key`, `value` pairs in the aggregation. |
+| `json_group_structure(json)`                | Return the combined `json_structure` of all `json` in the aggregation. |
+| `json_agg(any)`                             | Return a JSON array with all values of `any` in the aggregation, written as PostgreSQL writes it, or `NULL` when the aggregation has no rows. |
+| `json_agg_strict(any)`                      | Like `json_agg`, without the `NULL` values. |
+| `json_object_agg(key, value)`               | Return a JSON object with all `key`, `value` pairs in the aggregation, written as PostgreSQL writes it. A `NULL` key is an error. |
+| `json_object_agg_strict(key, value)`        | Like `json_object_agg`, without the pairs whose `value` is `NULL`. |
+| `json_object_agg_unique(key, value)`        | Like `json_object_agg`, but a repeated `key` is an error. |
+| `json_object_agg_unique_strict(key, value)` | Like `json_object_agg_unique`, without the pairs whose `value` is `NULL`. |
+
+`DISTINCT`, `FILTER` and `ORDER BY` work on the PostgreSQL ones as on any aggregate, as in `json_agg(x ORDER BY x DESC)`.
 
 Examples:
 

@@ -220,7 +220,7 @@ SELECT relname FROM pg_class WHERE relname = 't'
 relname
 t
 
-query
+query rowsort
 SELECT relname, reloptions FROM pg_class WHERE reloptions <> ARRAY[]::varchar[];
 ----
 relname	reloptions

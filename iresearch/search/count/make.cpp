@@ -23,15 +23,14 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/make_boolean.hpp"
 #include "iresearch/search/count/plan.hpp"
-#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
+#include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
-#include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
 
@@ -74,10 +73,7 @@ Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  if (ctx.table != nullptr) {
-    return detail::MakeApprox<FilteredWalk, Root::ptr>(query, 0, ctx.table);
-  }
-  return detail::MakeApprox<PlainWalk, Root::ptr>(query, 0, utils::Empty{});
+  return query.Approx().PlanCount(ctx);
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

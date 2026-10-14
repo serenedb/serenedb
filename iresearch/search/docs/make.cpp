@@ -23,14 +23,13 @@
 #include <span>
 
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/search/detail/approx_of.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/ngram_of.hpp"
 #include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/docs/empty.hpp"
 #include "iresearch/search/docs/make_boolean.hpp"
 #include "iresearch/search/docs/plan.hpp"
-#include "iresearch/search/docs/walk.hpp"
+#include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/ngram_similarity_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
@@ -69,8 +68,8 @@ Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
   return query.Every() ? MakeNGramAll(query, ctx) : MakeNGram(query, ctx);
 }
 
-Root::ptr Make(const ApproxQuery& query, const Context&) {
-  return detail::MakeApprox<Walk, Root::ptr>(query, 0);
+Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
+  return query.Approx().PlanDocs(ctx);
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

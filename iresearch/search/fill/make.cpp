@@ -158,8 +158,8 @@ Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  return MakeAllScored(query.Segment(), ctx, query.Stats(ctx), merge,
-                       query.Boost());
+  return MakeAllScored(query.Segment(), merge,
+                       detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const WildcardNGramQuery& query) {
@@ -177,14 +177,8 @@ Node::ptr Make(const ApproxQuery& query) {
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx,
                ScoreMergeType merge) {
-  const auto record = query.Stats(ctx);
-  const auto value = detail::AllDocsScore(
-    query.Segment(), detail::ScoreArgs{.scorer = record.scorer,
-                                       .stats = record.stats,
-                                       .fetcher = ctx.fetcher,
-                                       .boost = query.Boost()});
-  return detail::MakeApprox<WalkConstantScored, Node::ptr>(query, 0, merge,
-                                                           *ctx.fetcher, value);
+  return detail::MakeApprox<WalkConstantScored, Node::ptr>(
+    query, 0, merge, *ctx.fetcher, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::fill

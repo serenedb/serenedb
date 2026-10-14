@@ -26,6 +26,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -67,6 +68,15 @@ inline score_t AllDocsScore(const SubReader& segment, const ScoreArgs& args) {
     return 0;
   }
   return AllDocsScorer(segment, args).Score();
+}
+
+template<typename Query>
+score_t AllDocsScoreOf(const Query& query, const ScoredCtx& ctx) {
+  const auto record = query.Stats(ctx);
+  return AllDocsScore(query.Segment(), ScoreArgs{.scorer = record.scorer,
+                                                 .stats = record.stats,
+                                                 .fetcher = ctx.fetcher,
+                                                 .boost = query.Boost()});
 }
 
 inline score_t ConstantTermScore(const SubReader& segment,

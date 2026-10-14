@@ -48,6 +48,7 @@
 #include "iresearch/utils/geo/geo_params.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 namespace {
@@ -293,23 +294,12 @@ GeoPlan PlanInterval(const GeoDistanceFilterOptions& options) {
   auto terms =
     irs::geo_terms::QueryTerms(options.options, ring, options.prefix);
 
-  switch (size_t(min_incl) + 2 * size_t(max_incl)) {
-    case 0:
-      return Cells(std::move(terms), GeoDistanceRangeAcceptor<false, false>{
+  return ResolveBool(min_incl, [&]<bool MinIncl>() {
+    return ResolveBool(max_incl, [&]<bool MaxIncl>() {
+      return Cells(std::move(terms), GeoDistanceRangeAcceptor<MinIncl, MaxIncl>{
                                        min_bound, max_bound});
-    case 1:
-      return Cells(std::move(terms),
-                   GeoDistanceRangeAcceptor<true, false>{min_bound, max_bound});
-    case 2:
-      return Cells(std::move(terms),
-                   GeoDistanceRangeAcceptor<false, true>{min_bound, max_bound});
-    case 3:
-      return Cells(std::move(terms),
-                   GeoDistanceRangeAcceptor<true, true>{min_bound, max_bound});
-    default:
-      SDB_ASSERT(false);
-      return {};
-  }
+    });
+  });
 }
 
 GeoPlan PlanShape(const GeoFilterOptions& options) {

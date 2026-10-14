@@ -139,13 +139,8 @@ Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  const auto record = query.Stats(ScoredOf(ctx));
-  const auto value = irs::detail::AllDocsScore(
-    query.Segment(), irs::detail::ScoreArgs{.scorer = record.scorer,
-                                            .stats = record.stats,
-                                            .fetcher = &ctx.fetcher,
-                                            .boost = query.Boost()});
-  return irs::detail::MakeApprox<ConstantWalk, Root::ptr>(query, 0, value);
+  return irs::detail::MakeApprox<ConstantWalk, Root::ptr>(
+    query, 0, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
 }
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {

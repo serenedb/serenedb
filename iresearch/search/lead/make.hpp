@@ -82,8 +82,6 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
 
 Node::ptr MakeAllDocs(const SubReader& segment);
 Node::ptr MakeAllScored(const SubReader& segment, score_t score);
-Node::ptr MakeAllScored(const SubReader& segment,
-                        const detail::ScoreArgs& args);
 
 Node::ptr MakeSparseConjunctionScored(
   std::span<const detail::PostingClause> terms,

@@ -166,8 +166,8 @@ Root::ptr Make(const NGramSimilarityQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const AllQuery& query, const Context& ctx) {
-  return MakeAll(query.Segment(), ctx, query.Stats(ScoredOf(ctx)),
-                 query.Boost());
+  return MakeAll(query.Segment(), ctx,
+                 irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)));
 }
 
 Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
@@ -175,12 +175,7 @@ Root::ptr Make(const WildcardNGramQuery& query, const Context& ctx) {
 }
 
 Root::ptr Make(const ApproxQuery& query, const Context& ctx) {
-  const auto record = query.Stats(ScoredOf(ctx));
-  const auto value = irs::detail::AllDocsScore(
-    query.Segment(), irs::detail::ScoreArgs{.scorer = record.scorer,
-                                            .stats = record.stats,
-                                            .fetcher = &ctx.fetcher,
-                                            .boost = query.Boost()});
+  const auto value = irs::detail::AllDocsScoreOf(query, ScoredOf(ctx));
   if (ctx.table != nullptr) {
     return irs::detail::MakeApprox<FilteredConstantWalk, Root::ptr>(
       query, 0, ctx.table, value);

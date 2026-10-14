@@ -158,12 +158,7 @@ Node::ptr Make(const NGramSimilarityQuery& query,
 Node::ptr Make(const AllQuery& query) { return MakeAllDocs(query.Segment()); }
 
 Node::ptr Make(const AllQuery& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  return MakeAllScored(query.Segment(),
-                       detail::ScoreArgs{.scorer = record.scorer,
-                                         .stats = record.stats,
-                                         .fetcher = ctx.fetcher,
-                                         .boost = query.Boost()});
+  return MakeAllScored(query.Segment(), detail::AllDocsScoreOf(query, ctx));
 }
 
 Node::ptr Make(const WildcardNGramQuery& query) {
@@ -171,28 +166,14 @@ Node::ptr Make(const WildcardNGramQuery& query) {
 }
 
 Node::ptr Make(const WildcardNGramQuery& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  return MakeWildcardNGramScored(
-    query, detail::AllDocsScore(query.Segment(),
-                                detail::ScoreArgs{.scorer = record.scorer,
-                                                  .stats = record.stats,
-                                                  .fetcher = ctx.fetcher,
-                                                  .boost = query.Boost()}));
+  return MakeWildcardNGramScored(query, detail::AllDocsScoreOf(query, ctx));
 }
 
-Node::ptr Make(const ApproxQuery& query) {
-  return detail::MakeApprox<Impl, Node::ptr>(query, 0);
-}
+Node::ptr Make(const ApproxQuery& query) { return query.Approx().PlanLead({}); }
 
 Node::ptr Make(const ApproxQuery& query, const detail::ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
   return detail::MakeApprox<ConstantScoredImpl, Node::ptr>(
-    query, 0,
-    detail::AllDocsScore(query.Segment(),
-                         detail::ScoreArgs{.scorer = record.scorer,
-                                           .stats = record.stats,
-                                           .fetcher = ctx.fetcher,
-                                           .boost = query.Boost()}));
+    query, 0, detail::AllDocsScoreOf(query, ctx));
 }
 
 }  // namespace irs::lead

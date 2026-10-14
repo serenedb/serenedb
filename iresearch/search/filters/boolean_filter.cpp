@@ -20,8 +20,9 @@
 
 #include "boolean_filter.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
-#include <ranges>
 #include <utility>
 
 #include "iresearch/search/filters/term_filter.hpp"
@@ -192,15 +193,14 @@ void BooleanFilter::Add(TermClause clause, Occur occur) {
   if (occur == Occur::MustNot) {
     clause.scorer = nullptr;
     clause.boost = kNoBoost;
-    const auto it = std::ranges::lower_bound(terms, clause, kLess);
+    const auto it = absl::c_lower_bound(terms, clause, kLess);
     if (it != terms.end() && !kLess(clause, *it)) {
       return;
     }
     terms.insert(it, std::move(clause));
     return;
   }
-  terms.insert(std::ranges::upper_bound(terms, clause, kLess),
-               std::move(clause));
+  terms.insert(absl::c_upper_bound(terms, clause, kLess), std::move(clause));
 }
 
 void BooleanFilter::Add(Filter::ptr filter, Occur occur) {
@@ -343,11 +343,11 @@ bool BooleanFilter::equals(const Filter& rhs) const noexcept {
   const auto same = [](const Filter::ptr& lhs, const Filter::ptr& rhs) {
     return (lhs == nullptr) == (rhs == nullptr) && (!lhs || *lhs == *rhs);
   };
-  return std::ranges::all_of(kAllOccur, [&](Occur occur) {
+  return absl::c_all_of(kAllOccur, [&](Occur occur) {
     const auto& lhs = Bucket(occur);
     const auto& other = typed_rhs.Bucket(occur);
     return lhs.terms == other.terms &&
-           std::ranges::equal(lhs.filters, other.filters, same);
+           absl::c_equal(lhs.filters, other.filters, same);
   });
 }
 

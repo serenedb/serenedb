@@ -55,6 +55,7 @@ class CopyInBridge {
         _data_ready.Wait();
         _data_ready.Reset();
         _armed = false;
+        _pending.store(false, std::memory_order_relaxed);
       }
       if (_len == 0) {  // EOF (Finish left _len 0) or error
         if (_err) {
@@ -85,6 +86,7 @@ class CopyInBridge {
       _data_ready.Wait();
       _data_ready.Reset();
       _armed = false;
+      _pending.store(false, std::memory_order_relaxed);
       if (_len == 0 && _err) {
         std::rethrow_exception(_err);
       }
@@ -103,23 +105,23 @@ class CopyInBridge {
   // once Abort() has fired (the worker errored without consuming the last
   // signal), a further Set would be a double-Set with no intervening worker
   // Reset -> OneShotEvent corruption/SIGSEGV. So each is a no-op after Abort.
-  // This is reliable, not racy: the feeder only reaches Finish/Fail after a
-  // Drained() wake, and Abort() releases `_aborted` before Set()ing _want_more,
-  // so the wake carries the happens-before that makes Aborted() observe true.
 
-  void Publish(std::span<const std::string_view> pieces) noexcept {
+  [[nodiscard]] bool Publish(
+    std::span<const std::string_view> pieces) noexcept {
     if (Aborted()) {
-      return;
+      return false;
     }
     _pieces = pieces;
     _piece = 0;
     _ptr = pieces.front().data();
     _len = pieces.front().size();
+    _pending.store(true, std::memory_order_seq_cst);
     _data_ready.Set();
+    return !_aborted.load(std::memory_order_seq_cst);
   }
-  void Publish(const char* data, size_t len) noexcept {
+  [[nodiscard]] bool Publish(const char* data, size_t len) noexcept {
     _single = {data, len};
-    Publish({&_single, 1});
+    return Publish({&_single, 1});
   }
   // co_await until the worker has fully drained the published view.
   auto Drained(yaclib::IExecutor& io) noexcept {
@@ -146,8 +148,10 @@ class CopyInBridge {
   // -- e.g. a non-seekable format like parquet from STDIN): wake the feeder so
   // it stops feeding and switches to draining the client's remaining CopyData.
   void Abort() noexcept {
-    _aborted.store(true, std::memory_order_release);
-    _want_more.Set();
+    _aborted.store(true, std::memory_order_seq_cst);
+    if (!_armed || _pending.load(std::memory_order_seq_cst)) {
+      _want_more.Set();
+    }
   }
   bool Aborted() const noexcept {
     return _aborted.load(std::memory_order_acquire);
@@ -183,6 +187,7 @@ class CopyInBridge {
   // Set by the session (worker side) when the COPY worker errors; read by the
   // io feeder. Atomic so the feeder's Publish/Finish/Fail guards observe it.
   std::atomic<bool> _aborted = false;
+  std::atomic<bool> _pending = false;
   // Per-frame latch shared by both worker paths (Read and Window/Consume): true
   // means the next Read/Window must wait for and consume exactly one
   // `_data_ready` Set. Armed at start (first frame) and re-armed each time a

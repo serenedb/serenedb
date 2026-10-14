@@ -1,0 +1,118 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE rfs (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE rfi (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO rfs VALUES (1, 'a'), (2, 'b');
+
+statement ok
+INSERT INTO rfi VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) rfs;
+
+statement ok
+VACUUM (REFRESH_TABLE) rfi;
+
+statement ok
+INSERT INTO rfs VALUES (3, 'c');
+
+statement ok
+INSERT INTO rfi VALUES (3, 'c');
+
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) rfs;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+connection truncator
+statement async ok
+TRUNCATE rfs;
+
+sleep 1s
+
+connection default
+query
+SELECT count(*) AS n FROM pg_stat_activity WHERE state = 'active' AND query LIKE 'TRUNCATE%';
+----
+n
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+wait
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) rfs;
+
+connection default
+query
+SELECT count(*) AS n FROM rfs;
+----
+n
+0
+
+connection default
+statement ok
+INSERT INTO rfs VALUES (4, 'd');
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch';
+
+connection refresher
+statement async ok
+VACUUM (REFRESH_TABLE) rfi;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_irs_commit_after_flush_switch:parked';
+
+connection writer
+statement ok
+INSERT INTO rfi VALUES (4, 'd');
+
+connection writer
+statement ok
+DELETE FROM rfi WHERE id = 1;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_irs_commit_after_flush_switch:release';
+
+wait
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM rfs) AS rfs,
+  (SELECT string_agg(id::VARCHAR, ',' ORDER BY id) FROM rfi) AS rfi;
+----
+rfs	rfi
+4	2,3,4

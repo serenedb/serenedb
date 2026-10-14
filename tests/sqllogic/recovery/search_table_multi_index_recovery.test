@@ -43,7 +43,7 @@ VACUUM (REFRESH_TABLE) m;
 # refresh-published, so it exists ONLY in the WAL; recovery must rebuild it into
 # both indexes' fields.
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO m VALUES (3, 'running fast');

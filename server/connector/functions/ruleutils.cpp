@@ -20,11 +20,11 @@
 
 #include "connector/functions/ruleutils.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
-#include <algorithm>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
@@ -161,10 +161,10 @@ std::string Options(
   }
   const auto rank = [](std::string_view name) {
     return static_cast<size_t>(
-      std::ranges::find(catalog::kInvertedIndexSettings, name) -
+      absl::c_find(catalog::kInvertedIndexSettings, name) -
       catalog::kInvertedIndexSettings.begin());
   };
-  std::ranges::sort(names, [&](const std::string& lhs, const std::string& rhs) {
+  absl::c_sort(names, [&](const std::string& lhs, const std::string& rhs) {
     return std::pair{rank(lhs), std::string_view{lhs}} <
            std::pair{rank(rhs), std::string_view{rhs}};
   });
@@ -650,7 +650,7 @@ Definition FunctionDefinition(duckdb::ClientContext& context, uint64_t oid) {
   }
   const auto& macro = *entry->macros.front();
   const bool typed =
-    std::ranges::none_of(macro.types, [](const duckdb::LogicalType& type) {
+    absl::c_none_of(macro.types, [](const duckdb::LogicalType& type) {
       return type.id() == duckdb::LogicalTypeId::UNKNOWN;
     });
   if (!typed || (!macro.is_procedure && macro.return_types.empty())) {

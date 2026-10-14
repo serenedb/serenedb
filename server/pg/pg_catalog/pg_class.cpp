@@ -20,9 +20,9 @@
 
 #include "pg/pg_catalog/pg_class.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <deque>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_index_entry.hpp>
@@ -200,7 +200,7 @@ void RetrieveObjects(duckdb::Catalog& database, std::vector<PgClass>& values,
             static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
           // Postgres counts CHECK constraints here and nothing else: NOT NULL
           // is a pg_constraint row of its own but not one of these.
-          row.relchecks = static_cast<int16_t>(std::ranges::count_if(
+          row.relchecks = static_cast<int16_t>(absl::c_count_if(
             table->GetConstraints(), [](const auto& constraint) {
               return constraint->type == duckdb::ConstraintType::CHECK;
             }));

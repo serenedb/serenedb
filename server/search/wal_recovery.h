@@ -22,7 +22,7 @@
 
 namespace sdb::search {
 
-void InitInvertedIndexes();
-void StartInvertedIndexTasks();
+void RecoverSearchStorages();
+void StartSearchStorageTasks();
 
 }  // namespace sdb::search

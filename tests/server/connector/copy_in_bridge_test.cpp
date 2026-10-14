@@ -116,7 +116,7 @@ yaclib::Future<> FeederCoro(CopyInBridge& bridge, yaclib::IExecutor& io,
                             const std::vector<std::string>& frames) {
   co_await yaclib::On(io);
   for (const auto& f : frames) {
-    bridge.Publish(f.data(), f.size());
+    EXPECT_TRUE(bridge.Publish(f.data(), f.size()));
     co_await bridge.Drained(io);
     bridge.ResetDrained();
   }
@@ -137,7 +137,7 @@ yaclib::Future<> BatchedFeederCoro(CopyInBridge& bridge, yaclib::IExecutor& io,
         batch.emplace_back();
       }
     }
-    bridge.Publish(batch);
+    EXPECT_TRUE(bridge.Publish(batch));
     co_await bridge.Drained(io);
     bridge.ResetDrained();
   }
@@ -431,7 +431,7 @@ TEST(CopyInBridgeTeardown, FailMidStreamRethrows) {
             std::runtime_error("COPY from stdin failed")));
           co_return {};
         }
-        bridge.Publish(in.frames[i].data(), in.frames[i].size());
+        EXPECT_TRUE(bridge.Publish(in.frames[i].data(), in.frames[i].size()));
         co_await bridge.Drained(io);
         bridge.ResetDrained();
       }
@@ -470,13 +470,10 @@ TEST(CopyInBridgeTeardown, AbortMidStreamStopsFeeder) {
       bridge.Abort();
     });
 
-    // Feeder mirrors RunCopyInFeeder's Aborted() guard: once aborted, stop
-    // publishing (just drain frames without handing them out) and finish.
     const auto feeder = [&]() -> yaclib::Future<> {
       co_await yaclib::On(io);
       for (const auto& f : in.frames) {
-        if (!bridge.Aborted()) {
-          bridge.Publish(f.data(), f.size());
+        if (bridge.Publish(f.data(), f.size())) {
           co_await bridge.Drained(io);
           bridge.ResetDrained();
         }
@@ -501,13 +498,52 @@ TEST(CopyInBridgeTeardown, AbortMidStreamStopsFeeder) {
 TEST(CopyInBridgeTeardown, SignalsAfterAbortAreNoOps) {
   CopyInBridge bridge;
   const char frame[] = "unconsumed";
-  bridge.Publish(frame, sizeof(frame));  // Sets _data_ready; worker never reads
-  bridge.Abort();                        // worker errored before consuming
+  // Sets _data_ready; worker never reads
+  EXPECT_TRUE(bridge.Publish(frame, sizeof(frame)));
+  bridge.Abort();  // worker errored before consuming
   // Each of these previously double-Set the still-armed _data_ready and
   // crashed.
   bridge.Finish();
   bridge.Fail(std::make_exception_ptr(std::runtime_error("worker error")));
-  bridge.Publish(frame, sizeof(frame));
+  EXPECT_FALSE(bridge.Publish(frame, sizeof(frame)));
+  EXPECT_TRUE(bridge.Aborted());
+}
+
+TEST(CopyInBridgeTeardown, AbortAfterDrainedFrame) {
+  CopyInBridge bridge;
+  const char frame[] = "drained";
+  char buf[sizeof(frame)];
+  EXPECT_TRUE(bridge.Publish(frame, sizeof(frame)));
+  EXPECT_EQ(bridge.Read(buf, sizeof(frame)), sizeof(frame));
+  bridge.Abort();
+  EXPECT_FALSE(bridge.Publish(frame, sizeof(frame)));
+  EXPECT_TRUE(bridge.Aborted());
+}
+
+TEST(CopyInBridgeTeardown, AbortReleasesUnconsumedFrame) {
+  CopyInBridge bridge;
+  yaclib::FairThreadPool io{1};
+  const char frame[] = "frame";
+  char buf[sizeof(frame)];
+  yaclib::OneShotEvent published;
+  const auto feeder = [&]() -> yaclib::Future<> {
+    co_await yaclib::On(io);
+    EXPECT_TRUE(bridge.Publish(frame, sizeof(frame)));
+    co_await bridge.Drained(io);
+    bridge.ResetDrained();
+    EXPECT_TRUE(bridge.Publish(frame, sizeof(frame)));
+    published.Set();
+    co_await bridge.Drained(io);
+    bridge.ResetDrained();
+    co_return {};
+  };
+  auto fed = feeder();
+  EXPECT_EQ(bridge.Read(buf, sizeof(frame)), sizeof(frame));
+  published.Wait();
+  bridge.Abort();
+  std::ignore = std::move(fed).Get();
+  io.Stop();
+  io.Wait();
   EXPECT_TRUE(bridge.Aborted());
 }
 

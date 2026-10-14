@@ -11,7 +11,7 @@
         "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
         "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "AUTO_UPDATE_MODULES": "On",
+        "AUTO_UPDATE_MODULES": "Off",
         "USE_DEBUG_INFO": "LLDB",
         "SDB_SANITIZE": "",
         "SDB_FAULT_INJECTION": "On",
@@ -43,6 +43,51 @@
         "SDB_DEV": "On",
         "SDB_ALLOC": "JE",
         "USE_JEMALLOC_PROF": "On"
+      }
+    },
+    {
+      "name": "asan",
+      "binaryDir": "build_asan",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "Address",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS",
+        "SDB_IOURING": "Off"
+      }
+    },
+    {
+      "name": "tsan",
+      "binaryDir": "build_tsan",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "Thread",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS",
+        "SDB_IOURING": "Off"
+      }
+    },
+    {
+      "name": "msan",
+      "binaryDir": "build_msan",
+      "inherits": [
+        "common"
+      ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "STATIC_EXECUTABLES": "Off",
+        "SDB_SANITIZE": "MemoryWithOrigins",
+        "SDB_DEV": "On",
+        "SDB_ALLOC": "SYS",
+        "SDB_IOURING": "Off"
       }
     },
     {

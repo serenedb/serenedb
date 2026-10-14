@@ -48,6 +48,7 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/foreign_server.h"
+#include "catalog/entry/search_table.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/inverted_store_index.h"
 #include "connector/optimizer/iresearch_plan.h"
@@ -56,6 +57,7 @@
 #include "pg/pg_types.h"
 #include "pg/sql_utils.h"
 #include "search/inverted_index_storage.h"
+#include "search/search_table.h"
 #include "server/utils/app_server.h"
 
 namespace sdb::connector {
@@ -175,18 +177,33 @@ class SereneDBStorageExtension final : public duckdb::StorageExtension {
     std::vector<std::weak_ptr<search::InvertedIndexStorage>> saves;
     {
       duckdb::lock_guard<duckdb::mutex> lock{_saves_mutex};
-      const auto it = _saves.find(db.oid);
-      if (it == _saves.end()) {
-        return;
+      if (const auto it = _saves.find(db.oid); it != _saves.end()) {
+        saves = std::move(it->second);
+        _saves.erase(it);
       }
-      saves = std::move(it->second);
-      _saves.erase(it);
     }
     for (const auto& save : saves) {
       if (const auto storage = save.lock()) {
         storage->FinishCheckpoint();
       }
     }
+    for (auto& table : catalog::SearchTableStorages(
+           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+      table->FinishCheckpoint();
+    }
+  }
+
+  duckdb::optional_idx NeededWALGeneration(duckdb::AttachedDatabase& db) final {
+    duckdb::optional_idx needed;
+    for (auto& table : catalog::SearchTableStorages(
+           db.GetCatalog().Cast<duckdb::DuckCatalog>())) {
+      const auto generation = table->NeededWAL();
+      if (generation &&
+          (!needed.IsValid() || *generation < needed.GetIndex())) {
+        needed = *generation;
+      }
+    }
+    return needed;
   }
 
  private:

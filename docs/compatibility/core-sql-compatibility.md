@@ -846,7 +846,7 @@ Binary JSON (`jsonb`) is not supported, so every `jsonb_*` function and the `jso
 | pg_table_is_visible                | Yes           | Also `pg_type_is_visible` and `pg_function_is_visible`. Functions are compared by name, not by argument types |
 | obj_description                    | Yes           | Also `col_description`. Built-in types, functions and schemas have no description, so they return `NULL` |
 | shobj_description                  | Partial       | Always `NULL`: comments on databases and roles are not stored |
-| pg_describe_object                 | Partial       | Also `pg_identify_object`. Tables, views, indexes, sequences, composite types and their columns, functions, types, schemas, roles, constraints and column defaults; other object classes return `NULL` |
+| pg_describe_object                 | Partial       | Also `pg_identify_object`. Tables, views, indexes, sequences, composite types and their columns, functions, types, schemas, roles, constraints, column defaults, view rules, triggers, databases, collations, languages, access methods and tablespaces; other object classes return `NULL` |
 | pg_get_acl                         | Partial       | Tables, views, sequences and their columns, functions, types and schemas; other object classes return `NULL` |
 | pg_relation_is_updatable           | Yes           | Also `pg_column_is_updatable`. Tables are updatable, views are not |
 | pg_sequence_last_value             | Yes           |  |

@@ -18,11 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
@@ -36,6 +38,7 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "connector/pg_logical_types.h"
+#include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
@@ -342,6 +345,81 @@ ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
   return Missing("default value");
 }
 
+ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
+  const auto relation = RelationByOid(session, oid);
+  if (!relation || RelationKind(*relation) != "view") {
+    return Missing("rule");
+  }
+  const auto [schema, name] = NameOf(*session.transaction, *relation);
+  return ObjectIdentity{
+    .type = "rule",
+    .description = absl::StrCat("rule _RETURN on view ",
+                                RegOut<RegKind::Class>(session, oid)),
+    .identity = absl::StrCat(QuoteIdentifier("_RETURN"), " on ",
+                             QualifiedOutName(schema, name))};
+}
+
+ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
+  const auto entry = EntryByOid(session, oid);
+  if (!entry || entry->type != duckdb::CatalogType::TRIGGER_ENTRY) {
+    return Missing("trigger");
+  }
+  const auto& trigger = entry->Cast<duckdb::TriggerCatalogEntry>();
+  const auto table =
+    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
+  if (!table) {
+    return Missing("trigger");
+  }
+  const auto [schema, table_name] = NameOf(*session.transaction, *table);
+  const auto& name = trigger.name.GetIdentifierName();
+  return ObjectIdentity{
+    .type = "trigger",
+    .description = absl::StrCat("trigger ", name, " on table ",
+                                RegOut<RegKind::Class>(session, table->oid)),
+    .identity = absl::StrCat(QuoteIdentifier(name), " on ",
+                             QualifiedOutName(schema, table_name))};
+}
+
+ObjectIdentity IdentifyCollation(uint64_t oid) {
+  const auto collations = BuiltinCollations();
+  const auto it = absl::c_find_if(
+    collations, [&](const BuiltinCollation& c) { return c.oid == oid; });
+  if (it == collations.end()) {
+    return Missing("collation");
+  }
+  const auto quoted = QuoteIdentifier(it->name);
+  return ObjectIdentity{
+    .type = "collation",
+    .description = absl::StrCat("collation ", quoted),
+    .schema = std::string{irs::StaticStrings::kPgCatalogSchema},
+    .name = std::string{it->name},
+    .identity =
+      absl::StrCat(irs::StaticStrings::kPgCatalogSchema, ".", quoted)};
+}
+
+ObjectIdentity IdentifyNamed(std::string_view type, std::string_view name) {
+  return ObjectIdentity{.type = std::string{type},
+                        .description = absl::StrCat(type, " ", name),
+                        .name = std::string{name},
+                        .identity = QuoteIdentifier(name)};
+}
+
+template<typename R>
+ObjectIdentity IdentifyNamed(std::string_view type, const R& objects,
+                             uint64_t oid) {
+  const auto it = absl::c_find_if(
+    objects, [&](const auto& object) { return object.oid == oid; });
+  return it == objects.end() ? Missing(std::string{type})
+                             : IdentifyNamed(type, it->name);
+}
+
+ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
+  const auto database = FindDatabaseById(*session.context, oid);
+  return database
+           ? IdentifyNamed("database", database->name.GetIdentifierName())
+           : Missing("database");
+}
+
 std::optional<ObjectIdentity> IdentifyObject(const Session& session,
                                              const ObjectAddress& address) {
   const auto [classid, objid, objsubid] = address;
@@ -365,6 +443,27 @@ std::optional<ObjectIdentity> IdentifyObject(const Session& session,
   }
   if (classid == kPgAttrdefTable) {
     return IdentifyDefault(session, objid);
+  }
+  if (classid == kPgRewriteTable) {
+    return IdentifyRule(session, objid);
+  }
+  if (classid == kPgTriggerTable) {
+    return IdentifyTrigger(session, objid);
+  }
+  if (classid == kPgDatabaseTable) {
+    return IdentifyDatabase(session, objid);
+  }
+  if (classid == kPgCollationTable) {
+    return IdentifyCollation(objid);
+  }
+  if (classid == kPgLanguageTable) {
+    return IdentifyNamed("language", kSystemLanguages, objid);
+  }
+  if (classid == kPgAmTable) {
+    return IdentifyNamed("access method", kSystemAccessMethods, objid);
+  }
+  if (classid == kPgTablespaceTable) {
+    return IdentifyNamed("tablespace", kSystemTablespaces, objid);
   }
   return std::nullopt;
 }

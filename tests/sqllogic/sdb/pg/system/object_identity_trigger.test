@@ -1,0 +1,37 @@
+statement ok
+DROP SCHEMA IF EXISTS ident_trg CASCADE;
+
+
+statement ok
+CREATE SCHEMA ident_trg;
+
+
+statement ok
+CREATE TABLE ident_trg.t (a int);
+
+
+statement ok
+CREATE TABLE ident_trg.audit (a int);
+
+
+statement ok
+CREATE TRIGGER trg AFTER INSERT ON ident_trg.t FOR EACH ROW INSERT INTO ident_trg.audit VALUES (NEW.a);
+
+
+query
+SELECT (pg_identify_object('pg_trigger'::regclass, oid, 0)).*, pg_describe_object('pg_trigger'::regclass, oid, 0) AS description
+FROM pg_trigger WHERE tgname = 'trg' AND tgrelid = 'ident_trg.t'::regclass;
+----
+type	schema	name	identity	description
+trigger	NULL	NULL	trg on ident_trg.t	trigger trg on table ident_trg.t
+
+
+query
+SELECT (pg_identify_object('pg_trigger'::regclass, 999999999, 0)).type AS type, pg_describe_object('pg_trigger'::regclass, 999999999, 0) IS NULL AS missing;
+----
+type	missing
+trigger	t
+
+
+statement ok
+DROP SCHEMA ident_trg CASCADE;

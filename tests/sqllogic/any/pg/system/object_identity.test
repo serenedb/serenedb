@@ -125,10 +125,10 @@ schema	NULL	ident_s	ident_s
 
 
 query
-SELECT pg_get_acl('pg_class'::regclass, 'ident_s.t'::regclass, 0) AS t, pg_get_acl('pg_class'::regclass, 'ident_s.t'::regclass, 2) AS col, pg_get_acl('pg_class'::regclass, 'ident_s.seq'::regclass, 0) IS NULL AS seq_default, pg_get_acl('pg_class'::regclass, 999999999, 0) IS NULL AS missing;
+SELECT array_to_string(pg_get_acl('pg_class'::regclass, 'ident_s.t'::regclass, 0), ',') AS t, array_to_string(pg_get_acl('pg_class'::regclass, 'ident_s.t'::regclass, 2), ',') AS col, pg_get_acl('pg_class'::regclass, 'ident_s.seq'::regclass, 0) IS NULL AS seq_default, pg_get_acl('pg_class'::regclass, 999999999, 0) IS NULL AS missing;
 ----
 t	col	seq_default	missing
-{postgres=arwdDxtm/postgres,ident_reader=r/postgres}	{ident_reader=w/postgres}	t	t
+postgres=arwdDxtm/postgres,ident_reader=r/postgres	ident_reader=w/postgres	t	t
 
 
 query
@@ -241,6 +241,68 @@ SELECT pg_get_acl('pg_proc'::regclass, 'ident_s.t'::regclass, 0) IS NULL AS proc
 ----
 proc	type	namespace
 t	t	t
+
+
+query
+SELECT (pg_identify_object('pg_database'::regclass, oid, 0)).type AS type,
+       (pg_identify_object('pg_database'::regclass, oid, 0)).schema IS NULL AS no_schema,
+       (pg_identify_object('pg_database'::regclass, oid, 0)).identity = quote_ident(datname) AS identity,
+       pg_describe_object('pg_database'::regclass, oid, 0) = 'database ' || datname AS description
+FROM pg_database WHERE datname = current_database();
+----
+type	no_schema	identity	description
+database	t	t	t
+
+
+query
+SELECT (pg_identify_object('pg_collation'::regclass, oid, 0)).*, pg_describe_object('pg_collation'::regclass, oid, 0) AS description
+FROM pg_collation WHERE collname IN ('C', 'default') ORDER BY collname;
+----
+type	schema	name	identity	description
+collation	pg_catalog	"C"	pg_catalog."C"	collation "C"
+collation	pg_catalog	"default"	pg_catalog."default"	collation "default"
+
+
+query
+SELECT (pg_identify_object('pg_language'::regclass, oid, 0)).*, pg_describe_object('pg_language'::regclass, oid, 0) AS description
+FROM pg_language WHERE lanname = 'sql';
+----
+type	schema	name	identity	description
+language	NULL	sql	sql	language sql
+
+
+query
+SELECT (pg_identify_object('pg_am'::regclass, oid, 0)).*, pg_describe_object('pg_am'::regclass, oid, 0) AS description
+FROM pg_am WHERE amname = 'heap';
+----
+type	schema	name	identity	description
+access method	NULL	heap	heap	access method heap
+
+
+query
+SELECT (pg_identify_object('pg_tablespace'::regclass, oid, 0)).*, pg_describe_object('pg_tablespace'::regclass, oid, 0) AS description
+FROM pg_tablespace WHERE spcname = 'pg_default';
+----
+type	schema	name	identity	description
+tablespace	NULL	pg_default	pg_default	tablespace pg_default
+
+
+query
+SELECT (pg_identify_object('pg_rewrite'::regclass, oid, 0)).*, pg_describe_object('pg_rewrite'::regclass, oid, 0) AS description
+FROM pg_rewrite WHERE ev_class = 'ident_s.w'::regclass;
+----
+type	schema	name	identity	description
+rule	NULL	NULL	"_RETURN" on ident_s.w	rule _RETURN on view ident_s.w
+
+
+query
+SELECT (pg_identify_object('pg_database'::regclass, 999999999, 0)).type AS database,
+       (pg_identify_object('pg_rewrite'::regclass, 999999999, 0)).type AS rule,
+       (pg_identify_object('pg_collation'::regclass, 999999999, 0)).identity IS NULL AS no_collation,
+       pg_describe_object('pg_tablespace'::regclass, 999999999, 0) IS NULL AS no_tablespace;
+----
+database	rule	no_collation	no_tablespace
+database	rule	t	t
 
 
 statement ok

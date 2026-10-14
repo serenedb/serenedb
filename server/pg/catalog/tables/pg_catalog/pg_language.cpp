@@ -23,27 +23,15 @@
 namespace sdb::pg {
 namespace {
 
-struct Language {
-  duckdb::idx_t oid;
-  std::string_view name;
-  bool trusted;
-  duckdb::idx_t validator;
-};
-
-constexpr std::array kLanguages{
-  Language{kPgInternalLanguage, "internal", false,
-           kPgInternalLanguageValidator},
-  Language{kPgSqlLanguage, "sql", true, kPgSqlLanguageValidator},
-};
-
-constexpr auto kLanguage = Shape<kPgLanguageSql, const Language>(
-  Col<"oid">(&Language::oid), Col<"lanname">(&Language::name),
+constexpr auto kLanguage = Shape<kPgLanguageSql, const SystemLanguage>(
+  Col<"oid">(&SystemLanguage::oid), Col<"lanname">(&SystemLanguage::name),
   Col<"lanowner">([](const auto&) { return kRootUser; }),
-  Col<"lanpltrusted">(&Language::trusted),
-  Col<"lanvalidator">(&Language::validator));
+  Col<"lanpltrusted">(&SystemLanguage::trusted),
+  Col<"lanvalidator">(&SystemLanguage::validator));
 
 }  // namespace
 
-SystemTable gPgLanguage = SystemTableOf<StaticTable<kLanguage, kLanguages>>();
+SystemTable gPgLanguage =
+  SystemTableOf<StaticTable<kLanguage, kSystemLanguages>>();
 
 }  // namespace sdb::pg

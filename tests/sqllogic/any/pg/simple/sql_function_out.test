@@ -230,4 +230,15 @@ a	b	s	n
 
 
 statement ok
+CREATE FUNCTION fno.two_inouts(INOUT integer, INOUT integer) LANGUAGE sql AS 'SELECT $1 * 10, $2 * 10';
+
+
+query
+SELECT * FROM fno.two_inouts(1, 2);
+----
+column1	column2
+10	20
+
+
+statement ok
 DROP SCHEMA fno CASCADE;

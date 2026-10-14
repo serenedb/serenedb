@@ -63,7 +63,6 @@ namespace sdb::replication {
 namespace {
 
 constexpr uint64_t kBatchRows = 1 << 17;
-constexpr std::chrono::microseconds kNextSpanWait{1000};
 
 bool ReadTuple(std::string_view tuple, size_t columns,
                std::vector<PgColumn>& cells) {
@@ -439,10 +438,27 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                            type, sdb::pg::VarFormat::Binary)});
     }
   }
+  auto& stream = *g.batch->stream;
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
-    const PgOutputMessage* m = g.batch->stream->PeekFor(kNextSpanWait);
-    if (m == nullptr || ReplStream::IsIdle(m) || g.batch->rows >= kBatchRows) {
+    const PgOutputMessage* m = stream.Current();
+    if (m == nullptr) {
+      if (row != 0) {
+        break;
+      }
+      if (stream.Ended() || !input.interrupt_state ||
+          input.results_execution_mode !=
+            duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+        g.finished = true;
+        break;
+      }
+      if (stream.Park(*input.interrupt_state)) {
+        input.async_result = duckdb::AsyncResultType::BLOCKED;
+        break;
+      }
+      continue;
+    }
+    if (ReplStream::IsIdle(m) || g.batch->rows >= kBatchRows) {
       g.finished = true;
       break;
     }
@@ -451,13 +467,13 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       if (!g.batch->pass_through || !g.batch->pass_through(*m)) {
         break;
       }
-      g.batch->stream->Advance();
+      stream.Advance();
       continue;
     }
     if (!DecodeRow(*g.batch, *m, g.deser, g.dctx, output, row)) {
       break;
     }
-    g.batch->stream->Advance();
+    stream.Advance();
     ++g.batch->rows;
     ++row;
   }

@@ -71,7 +71,7 @@
 
 #include "connector/functions/markdown_render.h"
 #include "docs/docs_index_data.h"
-#include "search/search_table.h"
+#include "search/index_durability.h"
 
 namespace sdb::docs {
 namespace {
@@ -275,7 +275,7 @@ class EmbeddedIndex {
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
     : _dir{files, kResourceManager},
       _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
-                search::SearchTable::ReadCommittedTick(payload);
+                search::IndexStamp::Read(payload);
               }} {}
 
   const irs::DirectoryReader& Reader() const noexcept { return _reader; }

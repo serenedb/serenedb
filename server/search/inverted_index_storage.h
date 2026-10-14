@@ -45,6 +45,7 @@
 #include "catalog/database_directory.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/file_manifest.h"
+#include "search/index_durability.h"
 #include "search/maintenance.h"
 #include "search/store_stats.h"
 #include "storage_engine/search_engine.h"
@@ -87,7 +88,8 @@ StorageDirectory OpenStorageDirectory(
 // iresearch writer/reader and all mutable index state; lives in the
 // SearchEngine registry keyed by index_id, not in the catalog snapshot.
 class InvertedIndexStorage final
-  : public std::enable_shared_from_this<InvertedIndexStorage> {
+  : public std::enable_shared_from_this<InvertedIndexStorage>,
+    public MaintainedStore {
  public:
   InvertedIndexStorage(std::shared_ptr<catalog::DatabaseDirectory> directory,
                        bool in_memory, duckdb::idx_t db_id,
@@ -235,46 +237,16 @@ class InvertedIndexStorage final
     std::atomic_store(&_file_manifest, std::move(manifest));
   }
 
-  auto& GetTasksSettings() { return _tasks_settings; }
-
-  // Wake the compaction coordinator: a refresh that produced new segments bumps
-  // this generation so the coordinator re-evaluates without waiting for its
-  // timer. The coordinator polls CompactionGeneration() during its backoff
-  // wait.
-  void NudgeCompaction() noexcept {
-    _compaction_gen.fetch_add(1, std::memory_order_release);
-  }
-  uint64_t CompactionGeneration() const noexcept {
-    return _compaction_gen.load(std::memory_order_acquire);
-  }
-
-  // Demand-driven cleanup: a non-empty compaction leaves unreferenced files, so
-  // it raises stale pressure. The refresh loop runs cleanup once the pressure
-  // crosses a small threshold (or on its periodic step), clearing it.
-  void BumpStalePressure() noexcept {
-    _stale_pressure.fetch_add(1, std::memory_order_relaxed);
-  }
-  uint32_t StalePressure() const noexcept {
-    return _stale_pressure.load(std::memory_order_relaxed);
-  }
-  void ClearStalePressure() noexcept {
-    _stale_pressure.store(0, std::memory_order_relaxed);
-  }
-
   void StartTasks() { _search.StartTasks(shared_from_this()); }
 
   void ApplyOptions(const catalog::InvertedIndexSettings& options);
 
   const irs::SourcePosition& PersistedPosition() const noexcept {
-    return _position;
+    return _durability.Position();
   }
 
-  void MarkOutOfSync() noexcept {
-    _out_of_sync.store(true, std::memory_order_relaxed);
-  }
-  bool IsOutOfSync() const noexcept {
-    return _out_of_sync.load(std::memory_order_relaxed);
-  }
+  void MarkOutOfSync() noexcept { _durability.MarkOutOfSync(); }
+  bool IsOutOfSync() const noexcept { return _durability.IsOutOfSync(); }
 
  private:
   auto CompactUnsafeImpl(const irs::CompactionPolicy& policy,
@@ -283,24 +255,15 @@ class InvertedIndexStorage final
                          const irs::IndexFieldOptions* field_options,
                          const irs::AnnBuildEnv* env)
     -> yaclib::Future<absl::Status>;
-  absl::Status RefreshUnsafeImpl(bool wait,
-                                 const irs::ProgressReportCallback& progress,
-                                 RefreshResult& code);
-  bool CanPersist() const;
-  uint64_t RunningCheckpoint(uint64_t generation) const;
-  void WaitForCheckpoint() const;
-  void SyncDirectory();
   void PublishSnapshot();
-  absl::Status CleanupUnsafeImpl();
 
   duckdb::idx_t _index_id;
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
   bool _absent = false;
-  bool _on_disk = false;
-  std::atomic<bool> _directory_dirty{true};
   std::atomic<bool> _dropped{false};
   SearchEngine& _search;
+  IndexDurability _durability;
   // Accessed via std::atomic_load/std::atomic_store (libc++ lacks
   // std::atomic<std::shared_ptr>).
   InvertedIndexSnapshotPtr _snapshot;
@@ -312,22 +275,13 @@ class InvertedIndexStorage final
   absl::CondVar _reindex_cv;
   bool _reindex_in_flight ABSL_GUARDED_BY(_reindex_mutex) = false;
   uint32_t _reindex_waiters ABSL_GUARDED_BY(_reindex_mutex) = 0;
-  TasksSettings _tasks_settings;
-  absl::Mutex _refresh_mutex;
 
-  irs::SourcePosition _position;
-  uint64_t _checkpoint = 0;
-  uint64_t _pending_checkpoint = 0;
-  std::atomic<bool> _out_of_sync{false};
   duckdb::mutex _delete_log_mutex;
   std::atomic<bool> _delete_log_open{false};
   std::atomic<int64_t> _delete_log_rowid_end{
     std::numeric_limits<int64_t>::max()};
   std::atomic<int64_t> _delete_log_rowid_begin{0};
   std::vector<std::vector<int64_t>> _delete_log;
-  std::atomic<uint64_t> _compaction_gen{0};
-  std::atomic<uint32_t> _stale_pressure{0};
-  MaintenanceCounters _maintenance;
 
   irs::IResourceManager* _writers_memory{&irs::IResourceManager::gNoop};
   irs::IResourceManager* _readers_memory{&irs::IResourceManager::gNoop};

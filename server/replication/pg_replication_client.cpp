@@ -1533,8 +1533,6 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   if (shape.op != 'I' && !shape.full) {
     LimitKeyFilter(relation, shape);
   }
-  _stream.ScanActive(true);
-  absl::Cleanup scan = [this] { _stream.ScanActive(false); };
   std::optional<int64_t> affected;
   irs::pg::SqlErrorData error;
   try {
@@ -1542,7 +1540,6 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   } catch (const std::exception& ex) {
     error = network::pg::ToSqlError(ex);
   }
-  std::move(scan).Invoke();
   if (!affected) {
     if (error.errcode == ERRCODE_UNIQUE_VIOLATION && shape.op != 'D') {
       const bool insert = shape.op == 'I';

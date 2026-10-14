@@ -158,9 +158,6 @@ int RunServer(int argc, char** argv) {
     background.start();
     up_background = true;
     catalog::InitCatalog(db_path.directory());
-    // The io pool must be up before search.start(): the per-index refresh /
-    // compaction loops co_await BackgroundScheduler::Delay(), which hosts its
-    // timers on the io pool.
     network.StartIoPool();
     up_network = true;
     // Timers can be armed now. InitCatalog above already scheduled a drop per

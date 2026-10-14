@@ -1,0 +1,71 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE ck_search (id BIGINT, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+INSERT INTO ck_search VALUES (1, 'one'), (2, 'two');
+
+statement ok
+VACUUM (REFRESH_TABLE) ck_search;
+
+statement ok
+DELETE FROM ck_search WHERE id = 1;
+
+statement ok
+INSERT INTO ck_search VALUES (5, 'five');
+
+statement ok
+CHECKPOINT;
+
+statement ok
+INSERT INTO ck_search VALUES (3, 'three');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM ck_search ORDER BY id;
+----
+id	body
+2	two
+3	three
+5	five
+
+connection after_checkpoint
+statement ok
+INSERT INTO ck_search VALUES (4, 'four');
+
+connection after_checkpoint
+statement ok
+SET debug_checkpoint_abort = 'before_header';
+
+connection after_checkpoint
+statement error Checkpoint aborted before header write
+CHECKPOINT;
+
+connection after_checkpoint
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_checkpoint
+statement error connection closed
+SELECT 1;
+
+connection after_abort
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, body FROM ck_search ORDER BY id;
+----
+id	body
+2	two
+3	three
+4	four
+5	five

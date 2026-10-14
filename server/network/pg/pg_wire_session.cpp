@@ -1809,8 +1809,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   const auto flush = [&]() -> yaclib::Task<> {
-    if (!batch.empty() && !bridge.Aborted()) {
-      bridge.Publish(batch);
+    if (!batch.empty() && bridge.Publish(batch)) {
       co_await bridge.Drained(*this->_ioexec);
       bridge.ResetDrained();
     }
@@ -1895,7 +1894,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             if (span.empty()) {
               continue;
             }
-            bridge.Publish(span.data(), span.size());
+            if (!bridge.Publish(span.data(), span.size())) {
+              break;
+            }
             co_await bridge.Drained(*this->_ioexec);
             bridge.ResetDrained();
           }
@@ -1912,8 +1913,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
       co_await flush();
       if (!eod && !bridge.Aborted()) {
         if (is_text) {
-          if (const auto tail = scanner.Finish(); !tail.empty()) {
-            bridge.Publish(tail.data(), tail.size());
+          if (const auto tail = scanner.Finish();
+              !tail.empty() && bridge.Publish(tail.data(), tail.size())) {
             co_await bridge.Drained(*this->_ioexec);
             bridge.ResetDrained();
           }

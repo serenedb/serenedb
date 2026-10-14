@@ -231,8 +231,8 @@ void RequestSereneDBStorageVersion(duckdb::AttachOptions& options) {
   static_assert(
     duckdb::SERENEDB_VERSION_LOWER == duckdb::StorageVersion::SERENEDB_LATEST,
     "a file below SERENEDB_LATEST is raised on attach only in memory: "
-    "checkpoint it before anything writes its WAL or search WAL, so "
-    "neither log gets ahead of the file header");
+    "checkpoint it before anything writes its WAL, so the log does not get "
+    "ahead of the file header");
   options.options["storage_version"] =
     duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
       duckdb::StorageVersion::SERENEDB_LATEST)};
@@ -403,7 +403,7 @@ void InitCatalog(std::string_view directory) {
       db->GetStorageManager().FinishLoad(context);
     }
   }
-  search::InitInvertedIndexes();
+  search::RecoverSearchStorages();
   std::vector<duckdb::reference<ForeignServerCatalogEntry>> servers;
   for (const auto& db : manager.GetDatabases()) {
     auto& catalog = db->GetCatalog();

@@ -42,6 +42,9 @@ CREATE INDEX ie_pts_idx ON ie_pts USING inverted (id, emb hnsw (m = 16, metric =
 statement ok
 CREATE INDEX ie_inc_idx ON ie_docs USING inverted (id) INCLUDE (body);
 
+statement ok
+CREATE INDEX ie_sorted_idx ON ie_docs USING inverted (body ie_words) SORTED BY (id DESC);
+
 query
 SELECT replace(regexp_replace(sql, ' WITH \(.*$', ''), current_database() || '.', '') AS sql FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
 ----
@@ -49,6 +52,7 @@ sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))
 CREATE INDEX ie_inc_idx ON public.ie_docs USING inverted (id, body included ())
 CREATE INDEX ie_pts_idx ON public.ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'))
+CREATE INDEX ie_sorted_idx ON public.ie_docs USING inverted (body ie_words, id included ()) SORTED BY (id DESC NULLS FIRST)
 
 statement ok
 EXPORT DATABASE '${__TEST_DIR__}/inverted_index_export_import';
@@ -127,6 +131,7 @@ sql
 CREATE INDEX ie_docs_idx ON public.ie_docs USING inverted (id, body ie_words, emb ivf (metric = 'l2'))
 CREATE INDEX ie_inc_idx ON public.ie_docs USING inverted (id, body included ())
 CREATE INDEX ie_pts_idx ON public.ie_pts USING inverted (id, emb hnsw (m = 16, metric = 'cosine', quant = 'none'))
+CREATE INDEX ie_sorted_idx ON public.ie_docs USING inverted (body ie_words, id included ()) SORTED BY (id DESC NULLS FIRST)
 
 statement ok
 VACUUM (REFRESH_TABLE) ie_target.public.ie_docs;
@@ -166,6 +171,18 @@ id	body
 1	The runners were running late
 2	A quiet walk
 3	Running late again
+
+statement ok
+SET threads = 1;
+
+query
+SELECT list(id) AS ids FROM ie_sorted_idx;
+----
+ids
+{3,2,1}
+
+statement ok
+RESET threads;
 
 statement ok
 USE $__DATABASE__;

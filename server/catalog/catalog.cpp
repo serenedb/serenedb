@@ -74,6 +74,7 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
 #include "catalog/entry/tokenizer.h"
+#include "catalog/sort_keys.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_physical_search_delete.h"
@@ -153,7 +154,8 @@ duckdb::unique_ptr<duckdb::IndexCatalogEntry> SereneDBCatalog::MakeIndexEntry(
   } else {
     entry->AdoptStorage(search::InvertedIndexStorage::Create(
       _directory, InMemory(), GetOid(), entry->oid,
-      ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
+      ResolveSettings(entry->options), entry->Config()->top_k_scorer,
+      entry->Config()->sort, false));
   }
   return std::move(entry);
 }
@@ -172,6 +174,46 @@ duckdb::CatalogType SchemaSetOf(duckdb::CatalogType type) {
       return duckdb::CatalogType::MACRO_ENTRY;
     default:
       return type;
+  }
+}
+
+bool StoresColumn(const duckdb::CreateIndexInfo& info,
+                  const duckdb::ColumnList& columns,
+                  duckdb::LogicalIndex column) {
+  for (size_t slot = 0; slot != info.parsed_expressions.size(); ++slot) {
+    const auto& expr = *info.parsed_expressions[slot];
+    if (info.column_opclasses[slot] != kIncludedKind ||
+        expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF) {
+      continue;
+    }
+    const auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+    if (columns.ColumnExists(name) &&
+        columns.GetColumn(name).Logical() == column) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void BindIndexSortKeys(duckdb::CreateIndexInfo& info,
+                       const duckdb::TableCatalogEntry& table) {
+  const auto& columns = table.GetColumns();
+  const auto keys = ResolveSortKeys(columns, info.sort_orders);
+  info.sort_orders = SortOrdersOf(keys, columns);
+  for (const auto& key : keys) {
+    if (StoresColumn(info, columns, key.column)) {
+      continue;
+    }
+    const auto& name = columns.GetColumn(key.column).Name();
+    info.expressions.push_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
+    info.parsed_expressions.push_back(
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(name, info.table));
+    info.column_opclasses.emplace_back(kIncludedKind);
+    info.column_opclass_options.emplace_back(
+      duckdb::case_insensitive_map_t<duckdb::Value>{});
+    info.column_orders.push_back(duckdb::OrderType::ORDER_DEFAULT);
+    info.column_null_orders.push_back(duckdb::OrderByNullType::ORDER_DEFAULT);
   }
 }
 
@@ -318,6 +360,9 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("SORTED BY is not supported for indexes on ",
                             search_table ? "search tables" : "views"));
+  }
+  if (inverted && !info.sort_orders.empty()) {
+    BindIndexSortKeys(info, table.Cast<duckdb::TableCatalogEntry>());
   }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);

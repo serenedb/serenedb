@@ -150,7 +150,8 @@ InvertedIndexStorage::InvertedIndexStorage(
   std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
   duckdb::idx_t db_id, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
-  const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
+  const std::optional<irs::ScorerOptions>& top_k_scorer,
+  const irs::SortSpec& sort, bool is_new)
   : _index_id{index_id},
     _db_id{db_id},
     _directory{std::move(directory)},
@@ -199,6 +200,7 @@ InvertedIndexStorage::InvertedIndexStorage(
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
+  writer_options.sort = sort;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   // No column/norm options are configured on the writer: the per-column

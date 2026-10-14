@@ -1,29 +1,41 @@
 statement ok
-CREATE TABLE iis (id INTEGER, k INTEGER, body VARCHAR);
+CREATE TABLE iis (id INTEGER, k INTEGER, ts TIMESTAMP, body VARCHAR);
 
 
 statement error
-CREATE INDEX iis_idx ON iis USING inverted (body DESC);
+CREATE INDEX iis_bad ON iis USING inverted (body DESC);
 ----
 db error: ERROR: access method "inverted" does not support ASC/DESC options
 
 
 statement error
-CREATE INDEX iis_idx ON iis USING inverted (k, body ASC);
+CREATE INDEX iis_bad ON iis USING inverted (k, body ASC);
 ----
 db error: ERROR: access method "inverted" does not support ASC/DESC options
 
 
 statement error
-CREATE INDEX iis_idx ON iis USING inverted (body included() NULLS FIRST);
+CREATE INDEX iis_bad ON iis USING inverted (body included() NULLS FIRST);
 ----
 db error: ERROR: access method "inverted" does not support NULLS FIRST/LAST options
 
 
 statement error
-CREATE INDEX iis_idx ON iis USING inverted (body) SORTED BY (k);
+CREATE INDEX iis_bad ON iis USING inverted (body) SORTED BY (missing);
 ----
-db error: ERROR: SORTED BY is not supported for inverted indexes
+db error: ERROR: column "missing" does not exist
+
+
+statement error
+CREATE INDEX iis_bad ON iis USING inverted (body) SORTED BY (k + 1);
+----
+db error: ERROR: SORTED BY takes column names, not "(k + 1)"
+
+
+statement error
+CREATE INDEX iis_bad ON iis USING inverted (body) SORTED BY (k, k DESC);
+----
+db error: ERROR: column "k" appears more than once in SORTED BY
 
 
 statement ok
@@ -47,6 +59,10 @@ db error: ERROR: SORTED BY is not supported for indexes on views
 
 
 statement ok
+DROP VIEW iis_v;
+
+
+statement ok
 CREATE TABLE iis_s (k INTEGER, body VARCHAR) WITH (storage = 'search');
 
 
@@ -57,11 +73,135 @@ db error: ERROR: SORTED BY is not supported for indexes on search tables
 
 
 statement ok
-CREATE INDEX iis_idx ON iis USING inverted (k, body);
+CREATE INDEX iis_idx ON iis USING inverted (k, body) INCLUDE (id) SORTED BY (k DESC, ts)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+query
+SELECT split_part(pg_get_indexdef('iis_idx'::regclass), ' WITH', 1) AS def;
+----
+def
+CREATE INDEX iis_idx ON public.iis USING inverted (k, body) INCLUDE (id, k, ts) SORTED BY (k DESC, ts)
+
+
+query
+SELECT split_part(split_part(sql, ' WITH', 1), ' USING ', 2) AS def FROM duckdb_indexes() WHERE index_name = 'iis_idx';
+----
+def
+inverted (k, body, id included (), k included (), ts included ()) SORTED BY (k DESC NULLS FIRST, ts ASC NULLS LAST)
+
+
+query
+SELECT pg_get_indexdef('iis_art'::regclass) AS def;
+----
+def
+CREATE INDEX iis_art ON public.iis USING secondary (k)
+
+
+statement error Table "iis" does not have a column named "missing"
+CREATE INDEX iis_bad ON iis USING inverted (body) INCLUDE (missing) SORTED BY (k);
+
+statement ok
+CREATE INDEX iis_ts ON iis USING inverted (body, (k * 2) included()) INCLUDE (ts) SORTED BY (ts DESC NULLS LAST, id NULLS FIRST)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+
+query
+SELECT split_part(pg_get_indexdef('iis_ts'::regclass), ' WITH', 1) AS def;
+----
+def
+CREATE INDEX iis_ts ON public.iis USING inverted (body) INCLUDE (((k * 2)), ts, id) SORTED BY (ts DESC NULLS LAST, id NULLS FIRST)
 
 
 statement ok
-DROP VIEW iis_v;
+INSERT INTO iis SELECT i, (i * 7919) % 101, TIMESTAMP '2026-01-01' + to_seconds(i), 'row ' || i FROM range(3000) t(i);
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iis;
+
+
+statement ok
+SET threads = 1;
+
+
+query
+SELECT count(*) AS n, list({'k': k, 'ts': ts}) = list({'k': k, 'ts': ts} ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS sorted FROM iis_idx;
+----
+n	sorted
+3000	t
+
+
+query
+SELECT count(*) AS n, list({'ts': ts, 'id': id}) = list({'ts': ts, 'id': id} ORDER BY ts DESC NULLS LAST, id ASC NULLS FIRST) AS sorted FROM iis_ts;
+----
+n	sorted
+3000	t
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO iis VALUES (5000, 50, TIMESTAMP '2027-01-01', 'late'), (5001, 60, TIMESTAMP '2027-01-02', 'later');
+
+
+statement ok
+DELETE FROM iis WHERE id = 5000;
+
+
+statement ok
+UPDATE iis SET k = 99 WHERE id = 5001;
+
+
+statement ok
+DELETE FROM iis WHERE id % 100 = 7;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+VACUUM (REFRESH_TABLE) iis;
+
+
+query
+SELECT id, k FROM iis_idx WHERE id >= 5000;
+----
+id	k
+5001	99
+
+
+query
+SELECT count(*) AS n FROM iis_idx;
+----
+n
+2971
+
+
+statement ok
+VACUUM (COMPACT_INDEX) iis_idx;
+
+
+query
+SELECT count(*) AS n, list({'k': k, 'ts': ts}) = list({'k': k, 'ts': ts} ORDER BY k DESC NULLS FIRST, ts ASC NULLS LAST) AS sorted FROM iis_idx;
+----
+n	sorted
+2971	t
+
+
+statement ok
+ALTER TABLE iis RENAME COLUMN k TO kk;
+
+
+query
+SELECT split_part(pg_get_indexdef('iis_idx'::regclass), ' WITH', 1) AS def;
+----
+def
+CREATE INDEX iis_idx ON public.iis USING inverted (kk, body) INCLUDE (id, kk, ts) SORTED BY (kk DESC, ts)
+
 
 statement ok
 DROP TABLE iis_s;

@@ -96,7 +96,7 @@ class InvertedIndexStorage final
                        duckdb::idx_t index_id,
                        const catalog::InvertedIndexSettings& options,
                        const std::optional<irs::ScorerOptions>& top_k_scorer,
-                       bool is_new);
+                       const irs::SortSpec& sort, bool is_new);
   ~InvertedIndexStorage();
 
   // A drop commits while readers may still hold this storage; the destructor
@@ -121,10 +121,11 @@ class InvertedIndexStorage final
     std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
     duckdb::idx_t db_id, duckdb::idx_t index_id,
     const catalog::InvertedIndexSettings& options,
-    const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new) {
+    const std::optional<irs::ScorerOptions>& top_k_scorer,
+    const irs::SortSpec& sort, bool is_new) {
     return std::make_shared<InvertedIndexStorage>(
       std::move(directory), in_memory, db_id, index_id, options, top_k_scorer,
-      is_new);
+      sort, is_new);
   }
 
   auto GetTransaction() {

@@ -23,8 +23,10 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/parser/result_modifier.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <memory>
+#include <span>
 
 #include "catalog/entry/inverted_index.h"
 
@@ -43,6 +45,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
-  const duckdb::LogicalType& generated_pk_type);
+  const duckdb::LogicalType& generated_pk_type,
+  std::span<const duckdb::OrderByNode> sort_orders = {});
 
 }  // namespace sdb::connector

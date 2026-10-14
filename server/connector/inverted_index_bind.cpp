@@ -38,6 +38,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <iresearch/analysis/geo_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -1220,7 +1221,8 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   duckdb::CatalogEntry& relation,
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
-  const duckdb::LogicalType& generated_pk_type) {
+  const duckdb::LogicalType& generated_pk_type,
+  std::span<const duckdb::OrderByNode> sort_orders) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto config = std::make_shared<InvertedIndexConfig>();
   if (const auto* row_group_size =
@@ -1234,6 +1236,19 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
     generated_pk_type.id() != duckdb::LogicalTypeId::STRUCT,
     generated_pk_type == FileIndexRowNumberStructType());
   DeriveKeys(entry, context, relation, bound_expressions, *config);
+  for (const auto& order : sort_orders) {
+    const auto& column =
+      relation.Cast<duckdb::TableCatalogEntry>().GetColumns().GetColumn(
+        order.expression->Cast<duckdb::ColumnRefExpression>().GetColumnName());
+    const auto id = static_cast<irs::field_id>(TableColumnId(column));
+    SDB_ASSERT(config->FindEntry(id) != nullptr &&
+               config->FindEntry(id)->IsStored());
+    config->sort.keys.push_back(
+      {.column = id,
+       .descending = order.type == duckdb::OrderType::DESCENDING,
+       .nulls_first =
+         order.null_order == duckdb::OrderByNullType::NULLS_FIRST});
+  }
   return config;
 }
 

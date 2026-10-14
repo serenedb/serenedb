@@ -28,7 +28,9 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/parser/qualified_name.hpp>
+#include <duckdb/parser/result_modifier.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -168,6 +170,7 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   InvertedIndexFields fields;
   std::optional<ScorerOptions> top_k_scorer;
   CompressionByColumn declared_compression;
+  irs::SortSpec sort;
 };
 
 inline const duckdb::Value* FindOption(
@@ -217,9 +220,9 @@ class InvertedIndexEntry final : public duckdb::DuckIndexEntry {
   }
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
-  std::string ToSQL() const final {
-    return duckdb::IndexCatalogEntry::GetInfo()->ToString();
-  }
+  std::string ToSQL() const final;
+
+  duckdb::vector<duckdb::OrderByNode> SortOrders() const;
 
   duckdb::unique_ptr<duckdb::CatalogEntry> Copy(
     duckdb::ClientContext& context) const final;

@@ -30,6 +30,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
 #include <duckdb/parser/qualified_name.hpp>
@@ -100,6 +101,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   }
   config->pk = data.pk;
   config->top_k_scorer = std::move(data.top_k_scorer);
+  config->sort = std::move(data.sort);
   config->fields.reserve(data.fields.size());
   for (auto& [field_id, record] : data.fields) {
     config->fields.emplace(field_id, InvertedIndexField{std::move(record)});
@@ -411,7 +413,8 @@ std::optional<ScorerOptions> TopKScorer(
 
 persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
   persistence::InvertedIndexData data{.pk = _config->pk,
-                                      .top_k_scorer = _config->top_k_scorer};
+                                      .top_k_scorer = _config->top_k_scorer,
+                                      .sort = _config->sort};
   data.keys.reserve(_config->keys.size());
   for (const auto& key : _config->keys) {
     data.keys.emplace_back(key);
@@ -441,9 +444,37 @@ InvertedIndexEntry::InvertedIndexEntry(
 
 duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   auto info = duckdb::IndexCatalogEntry::GetInfo();
-  info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
-    kPayloadOption, Pack(ToPersisted()));
+  auto& index = info->Cast<duckdb::CreateIndexInfo>();
+  index.options.insert_or_assign(kPayloadOption, Pack(ToPersisted()));
+  index.sort_orders = SortOrders();
   return info;
+}
+
+std::string InvertedIndexEntry::ToSQL() const {
+  auto info = duckdb::IndexCatalogEntry::GetInfo();
+  info->Cast<duckdb::CreateIndexInfo>().sort_orders = SortOrders();
+  return info->ToString();
+}
+
+duckdb::vector<duckdb::OrderByNode> InvertedIndexEntry::SortOrders() const {
+  duckdb::vector<duckdb::OrderByNode> orders;
+  for (const auto& key : _config->sort.keys) {
+    const auto slot = absl::c_find_if(_config->keys, [&](const auto& entry) {
+      return entry.column_id == key.column;
+    });
+    SDB_ASSERT(slot != _config->keys.end());
+    const auto at = static_cast<size_t>(slot - _config->keys.begin());
+    SDB_ASSERT(at < parsed_expressions.size());
+    const auto& column =
+      parsed_expressions[at]->Cast<duckdb::ColumnRefExpression>();
+    orders.emplace_back(
+      key.descending ? duckdb::OrderType::DESCENDING
+                     : duckdb::OrderType::ASCENDING,
+      key.nulls_first ? duckdb::OrderByNullType::NULLS_FIRST
+                      : duckdb::OrderByNullType::NULLS_LAST,
+      duckdb::make_uniq<duckdb::ColumnRefExpression>(column.GetColumnName()));
+  }
+  return orders;
 }
 
 duckdb::Identifier InvertedIndexEntry::GetTableName() const {

@@ -22,6 +22,7 @@
 #include <duckdb/execution/expression_executor_state.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
+#include <iresearch/search/detail/geo_parsers.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <memory>

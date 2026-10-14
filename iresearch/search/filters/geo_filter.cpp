@@ -35,6 +35,7 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
+#include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/detail/geo_terms.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"

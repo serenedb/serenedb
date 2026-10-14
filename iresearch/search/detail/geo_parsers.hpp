@@ -26,6 +26,7 @@
 
 #include <string>
 #include <type_traits>
+#include <variant>
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
@@ -36,6 +37,8 @@
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
+
+struct GeoFilterOptionsBase;
 
 struct SourceJsonParser {
   SourceJsonParser() = default;
@@ -211,6 +214,11 @@ struct S2PointParser {
     return r;
   }
 };
+
+using GeoParser = std::variant<SourceJsonParser, SourceWkbParser,
+                               SourcePointParser, S2ShapeParser, S2PointParser>;
+
+GeoParser ParserOf(const GeoFilterOptionsBase& options);
 
 template<typename Parser>
 void SeedShape(const Parser&, irs::geo::ShapeContainer& shape) {

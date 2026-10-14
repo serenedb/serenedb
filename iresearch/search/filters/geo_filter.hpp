@@ -29,7 +29,6 @@
 #include <variant>
 #include <vector>
 
-#include "iresearch/search/detail/geo_parsers.hpp"
 #include "iresearch/search/detail/search_range.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -168,9 +167,6 @@ using GeoAcceptor = std::variant<
   GeoDistanceRangeAcceptor<false, false>, GeoDistanceRangeAcceptor<false, true>,
   GeoDistanceRangeAcceptor<true, false>, GeoDistanceRangeAcceptor<true, true>>;
 
-using GeoParser = std::variant<SourceJsonParser, SourceWkbParser,
-                               SourcePointParser, S2ShapeParser, S2PointParser>;
-
 struct GeoPlan {
   enum class Kind : uint8_t {
     Empty,
@@ -183,8 +179,6 @@ struct GeoPlan {
   std::vector<std::string> terms;
   GeoAcceptor acceptor;
 };
-
-GeoParser ParserOf(const GeoFilterOptionsBase& options);
 
 std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options);
 

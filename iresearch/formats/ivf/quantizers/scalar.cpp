@@ -146,8 +146,8 @@ class ScalarQuantizerCodeBound final : public QuantizerCodeBound {
   ScalarQuantizerCodeBound(const faiss::ScalarQuantizer& sq,
                            std::span<const float> query, VectorMetric metric)
     : _l2{metric == VectorMetric::L2Sqr} {
-    faiss::scalar_quantizer::sq8_batch_train(sq, query.data(), _l2, _weights);
-    _weights.uq.clear();
+    faiss::scalar_quantizer::sq8_batch_train(sq, query.data(), _l2,
+                                             /*integer=*/false, _weights);
     const size_t d = sq.d;
     const bool uniform =
       sq.qtype == faiss::ScalarQuantizer::QuantizerType::QT_8bit_uniform;
@@ -307,7 +307,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
                                : faiss::MetricType::METRIC_INNER_PRODUCT));
     _dc->code_size = _cb->Sq().code_size;
     _dc->set_query(_cb->Query().data());
-    PrepareFast(_cb->Query());
+    PrepareFast(_cb->Query(), /*integer=*/true);
   }
 
   PayloadBlockSetting BlockSetting() const noexcept final {
@@ -385,12 +385,12 @@ class ScalarQuantizerReader final : public QuantizerReader {
     SDB_ASSERT(_dc);
     SDB_ASSERT(query.size() == _cb->Sq().d);
     _dc->set_query(query.data());
-    PrepareFast(query);
+    PrepareFast(query, /*integer=*/false);
     return true;
   }
 
  private:
-  void PrepareFast(std::span<const float> query) {
+  void PrepareFast(std::span<const float> query, bool integer) {
     // faiss dispatches the kernel by runtime SIMD level, so there is no CPU
     // probe here any more: AVX-512 where the machine has it, AVX2 or NEON
     // otherwise, and a scalar loop on anything else. Nothing here is x86, and
@@ -401,7 +401,7 @@ class ScalarQuantizerReader final : public QuantizerReader {
             _cb->Sq().code_size == _cb->Sq().d;
     if (_fast) {
       faiss::scalar_quantizer::sq8_batch_train(
-        _cb->Sq(), query.data(), M == VectorMetric::L2Sqr, _weights);
+        _cb->Sq(), query.data(), M == VectorMetric::L2Sqr, integer, _weights);
     }
   }
 

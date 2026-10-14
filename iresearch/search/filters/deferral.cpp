@@ -21,7 +21,6 @@
 #include "iresearch/search/filters/deferral.hpp"
 
 #include <memory>
-#include <optional>
 #include <utility>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -40,8 +39,8 @@ namespace {
 
 using irs::utils::downCast;
 
-std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
-                                                    field_id column) {
+duckdb::LogicalType StoredColumnType(const IndexReader& reader,
+                                     field_id column) {
   for (const auto& segment : reader) {
     const auto* col_reader = segment.GetColReader();
     if (const auto* stored =
@@ -49,7 +48,7 @@ std::optional<duckdb::LogicalType> StoredColumnType(const IndexReader& reader,
       return stored->Type();
     }
   }
-  return std::nullopt;
+  return {};
 }
 
 Filter::ptr PartsConjunction(const ByPhrase& phrase,
@@ -83,7 +82,7 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   auto type = StoredColumnType(ctx.deferral->reader, column);
-  if (!type) {
+  if (!type.IsValid()) {
     return false;
   }
   if (!IsStandalone(options) ||
@@ -96,7 +95,7 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
-  ctx.deferral->filters.emplace_back(&phrase, column, *std::move(type),
+  ctx.deferral->filters.emplace_back(&phrase, column, std::move(type),
                                      std::exchange(slot, std::move(index)));
   return true;
 }
@@ -107,7 +106,7 @@ bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   auto& options = *geo.mutable_options();
   const auto column = options.store_field_id;
   auto type = StoredColumnType(ctx.deferral->reader, column);
-  if (!type || type->InternalType() != duckdb::PhysicalType::VARCHAR) {
+  if (type.InternalType() != duckdb::PhysicalType::VARCHAR) {
     return false;
   }
   auto plan = PlanGeo(options);
@@ -116,7 +115,7 @@ bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
   options.plan = std::move(plan);
   options.store_field_id = field_limits::invalid();
-  ctx.deferral->filters.emplace_back(&geo, column, *std::move(type));
+  ctx.deferral->filters.emplace_back(&geo, column, std::move(type));
   return true;
 }
 
@@ -128,11 +127,11 @@ bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
   }
   const auto column = options.store_field_id;
   auto type = StoredColumnType(ctx.deferral->reader, column);
-  if (!type) {
+  if (!type.IsValid()) {
     return false;
   }
   options.store_field_id = field_limits::invalid();
-  ctx.deferral->filters.emplace_back(&wildcard, column, *std::move(type));
+  ctx.deferral->filters.emplace_back(&wildcard, column, std::move(type));
   return true;
 }
 

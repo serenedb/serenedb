@@ -149,13 +149,19 @@ class PhysicalPgWireCollector final : public duckdb::PhysicalResultCollector {
         WriteDataChunk(out, chunk, lstate.serializers, lstate.sctx, 0,
                        chunk.size());
         break;
-      case RowEncoding::CopyBinary:
+      case RowEncoding::CopyBinary: {
+        const bool header = ctx.mode == WireSinkContext::Mode::Direct &&
+                            ctx.copy_binary_header && chunk.size() > 0;
         WriteCopyChunk<RowEncoding::CopyBinary>(out, chunk, lstate.serializers,
-                                                lstate.sctx);
+                                                lstate.sctx, header);
+        if (header) {
+          ctx.copy_binary_header = false;
+        }
         break;
+      }
       case RowEncoding::CopyText:
         WriteCopyChunk<RowEncoding::CopyText>(out, chunk, lstate.serializers,
-                                              lstate.sctx);
+                                              lstate.sctx, false);
         break;
     }
     ctx.rows.fetch_add(chunk.size(), std::memory_order_relaxed);

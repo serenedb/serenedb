@@ -33,8 +33,7 @@ SequenceView::ConstIterator& SequenceView::ConstIterator::operator++() {
     _it = _end;
   } else {
     auto* next = _it.chunk->Next();
-    SDB_ASSERT(next->GetBegin() == 0);
-    _it = {next, 0};
+    _it = {next, next->GetBegin()};
     SDB_ASSERT(_it);
   }
   return *this;

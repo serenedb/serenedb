@@ -685,6 +685,9 @@ bool PgWireSession<Kind>::DrainWire(WireSinkContext& wire) {
       if (!chain) {
         break;
       }
+      if (std::exchange(wire.copy_binary_header, false)) {
+        WriteCopyBinaryHeader(this->_send, *chain);
+      }
       this->_send.SpliceCommitted(std::move(*chain), false);
     }
     wire.UnblockSinks(wire.queued_bytes.load(std::memory_order_relaxed) <=
@@ -1640,11 +1643,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
 // COPY ... TO STDOUT (FORMAT binary|text): runs the COPY's inner query through
 // the SAME wire collector SELECT uses (parallel + zero-copy + SELECT ordering),
 // but with the collector framing rows as PGCOPY/PG-text CopyData instead of
-// DataRow. The session brackets the stream: CopyOutResponse (+ the PGCOPY
-// header for binary) before PendingQuery (arming hands the _send producer role
-// to the direct-mode sink, and workers may run it inside PendingQuery -- so the
-// header must already be committed), the trailer (binary only) + CopyDone + the
-// COPY-N tag after the drive.
+// DataRow. The session brackets the stream: CopyOutResponse before PendingQuery
+// (arming hands the _send producer role to the direct-mode sink, and workers
+// may run it inside PendingQuery -- so it must already be committed), the
+// trailer (binary only) + CopyDone + the COPY-N tag after the drive.
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
@@ -1661,13 +1663,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // staging in PendingQueryEnsured never sees this statement.
   StagePendingCopyProgress(*_client_state, *_connection_ctx, *statement);
 
-  // CopyOutResponse, plus (binary only) the PGCOPY 19-byte header as a CopyData
-  // frame, both before arming/PendingQuery (see comment above).
+  // CopyOutResponse before arming/PendingQuery (see comment above).
   WriteCopyOutResponse(this->_send, binary,
                        static_cast<int16_t>(prepared->ColumnCount()));
-  if (binary) {
-    WriteCopyBinaryHeader(this->_send);
-  }
 
   static constexpr std::array<sdb::pg::VarFormat, 1> kAllBinary{
     sdb::pg::VarFormat::Binary};
@@ -1677,6 +1675,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
     MakeWireContext(binary ? std::span<const sdb::pg::VarFormat>{kAllBinary}
                            : std::span<const sdb::pg::VarFormat>{kAllCopyText});
   wire->row_encoding = binary ? RowEncoding::CopyBinary : RowEncoding::CopyText;
+  wire->copy_binary_header = binary;
   if (!binary) {
     // COPY text fields escape inline through the reused Text serializers
     // (SerializationContext::copy_text); backslash_count = 2 is the COPY
@@ -1707,7 +1706,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // stream, then the COPY N tag (postgres reports COPY, not SELECT, for COPY TO
   // STDOUT).
   if (binary) {
-    WriteCopyBinaryFooter(this->_send);
+    WriteCopyBinaryFooter(this->_send, wire->copy_binary_header);
   }
   WriteCopyDone(this->_send);
   WriteCommandComplete(

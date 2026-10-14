@@ -1340,9 +1340,10 @@ bool ClaimSearchConjuncts(
     optimize.deferral = &deferral;
   }
   irs::Optimize(root, optimize);
-  scan.search.deferred = connector::MakeChecks(std::move(deferral));
-
   scan.search.filter = std::move(root);
+  scan.search.deferred =
+    connector::MakeChecks(std::move(deferral), scan.search.filter);
+
   scan.search.filter_scorers = std::move(filter_scorers);
   for (auto& req : scan.offsets.requests) {
     if (req.bind) {

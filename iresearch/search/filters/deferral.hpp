@@ -31,7 +31,7 @@ namespace irs {
 struct IndexReader;
 
 struct DeferredFilter {
-  Filter::ptr filter;
+  const Filter* filter;
   field_id column;
   duckdb::LogicalType type;
 };
@@ -39,6 +39,7 @@ struct DeferredFilter {
 struct Deferral {
   const IndexReader& reader;
   std::vector<DeferredFilter> filters;
+  std::vector<Filter::ptr> owned;
 };
 
 namespace optimizer {

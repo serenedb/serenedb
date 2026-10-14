@@ -140,8 +140,6 @@ struct ByWildcardNGramOptions {
   }
 
   ByWildcardNGramOptions() noexcept = default;
-  ByWildcardNGramOptions(const ByWildcardNGramOptions&) = default;
-  ByWildcardNGramOptions& operator=(const ByWildcardNGramOptions&) = default;
   ByWildcardNGramOptions(ByWildcardNGramOptions&&) noexcept = default;
   ByWildcardNGramOptions& operator=(ByWildcardNGramOptions&&) noexcept =
     default;

@@ -69,25 +69,28 @@ void CheckGeo(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 }
 
 template<typename GeoFilter>
-DeferredCheck MakeGeoCheckOf(irs::DeferredFilter deferred) {
-  std::shared_ptr<const irs::Filter> source = std::move(deferred.filter);
+DeferredCheck MakeGeoCheckOf(std::shared_ptr<const irs::Filter> source,
+                             irs::field_id column,
+                             const duckdb::LogicalType& type) {
   const auto& options = irs::utils::downCast<GeoFilter>(*source).options();
   SDB_ASSERT(options.plan);
   auto bind =
     duckdb::make_uniq<GeoCheckBind>(std::make_shared<const GeoCheckData>(
       GeoCheckData{source, irs::ParserOf(options), options.plan->acceptor}));
-  return Split(std::move(source), deferred.column, deferred.type,
-               "sdb_geo_check", CheckGeo, std::move(bind),
-               InitCheck<GeoCheckState, GeoCheckData>);
+  return Split(std::move(source), column, type, "sdb_geo_check", CheckGeo,
+               std::move(bind), InitCheck<GeoCheckState, GeoCheckData>);
 }
 
 }  // namespace
 
-DeferredCheck MakeGeoCheck(irs::DeferredFilter deferred) {
-  if (deferred.filter->type() == irs::Type<irs::GeoFilter>::id()) {
-    return MakeGeoCheckOf<irs::GeoFilter>(std::move(deferred));
+DeferredCheck MakeGeoCheck(std::shared_ptr<const irs::Filter> source,
+                           irs::field_id column,
+                           const duckdb::LogicalType& type) {
+  if (source->type() == irs::Type<irs::GeoFilter>::id()) {
+    return MakeGeoCheckOf<irs::GeoFilter>(std::move(source), column, type);
   }
-  return MakeGeoCheckOf<irs::GeoDistanceFilter>(std::move(deferred));
+  return MakeGeoCheckOf<irs::GeoDistanceFilter>(std::move(source), column,
+                                                type);
 }
 
 }  // namespace sdb::connector

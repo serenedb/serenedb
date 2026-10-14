@@ -68,9 +68,10 @@ void CheckPhrase(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 }  // namespace
 
-DeferredCheck MakePhraseCheck(irs::DeferredFilter deferred,
+DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
+                              irs::field_id column,
+                              const duckdb::LogicalType& type,
                               const irs::IndexReader& reader) {
-  std::shared_ptr<const irs::Filter> source = std::move(deferred.filter);
   const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*source);
   const auto& options = phrase.options();
   const auto& tokens = options.tokens();
@@ -79,9 +80,8 @@ DeferredCheck MakePhraseCheck(irs::DeferredFilter deferred,
     duckdb::make_uniq<PhraseCheckBind>(std::make_shared<const PhraseCheckData>(
       tokens, checked, options.word_separator(),
       irs::PhraseWordStats(checked, reader, phrase.field_id())));
-  return Split(std::move(source), deferred.column, deferred.type,
-               "sdb_phrase_check", CheckPhrase, std::move(bind),
-               InitCheck<PhraseCheckState, PhraseCheckData>);
+  return Split(std::move(source), column, type, "sdb_phrase_check", CheckPhrase,
+               std::move(bind), InitCheck<PhraseCheckState, PhraseCheckData>);
 }
 
 }  // namespace sdb::connector

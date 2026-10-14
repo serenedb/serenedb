@@ -65,7 +65,8 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitCheck(
     *bind_data->Cast<SharedCheckBind<Data>>().data);
 }
 
-std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral);
+std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral,
+                                      std::shared_ptr<const irs::Filter> tree);
 
 void AddDeferredChecks(ScanGlobalState& state,
                        std::span<const DeferredCheck> checks);
@@ -76,11 +77,17 @@ DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
                     duckdb::unique_ptr<duckdb::FunctionData> bind,
                     duckdb::init_local_state_t init = nullptr);
 
-DeferredCheck MakeWildcardCheck(irs::DeferredFilter deferred);
+DeferredCheck MakeWildcardCheck(std::shared_ptr<const irs::Filter> source,
+                                irs::field_id column,
+                                const duckdb::LogicalType& type);
 
-DeferredCheck MakePhraseCheck(irs::DeferredFilter deferred,
+DeferredCheck MakePhraseCheck(std::shared_ptr<const irs::Filter> source,
+                              irs::field_id column,
+                              const duckdb::LogicalType& type,
                               const irs::IndexReader& reader);
 
-DeferredCheck MakeGeoCheck(irs::DeferredFilter deferred);
+DeferredCheck MakeGeoCheck(std::shared_ptr<const irs::Filter> source,
+                           irs::field_id column,
+                           const duckdb::LogicalType& type);
 
 }  // namespace sdb::connector

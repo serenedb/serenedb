@@ -98,8 +98,9 @@ bool DeferPhrase(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   TraverseFilter(index, [&](Filter::ptr& node, bool) { RunRules(node, ctx); });
-  ctx.deferral->filters.emplace_back(std::exchange(slot, std::move(index)),
-                                     column, *std::move(type));
+  const auto& original =
+    ctx.deferral->owned.emplace_back(std::exchange(slot, std::move(index)));
+  ctx.deferral->filters.emplace_back(original.get(), column, *std::move(type));
   return true;
 }
 
@@ -117,27 +118,24 @@ bool DeferGeo(Filter::ptr& slot, const OptimizeContext& ctx) {
     return false;
   }
   options.plan = std::move(plan);
-  auto index = std::make_unique<GeoType>(geo);
-  index->mutable_options()->store_field_id = field_limits::invalid();
-  ctx.deferral->filters.emplace_back(std::exchange(slot, std::move(index)),
-                                     column, *std::move(type));
+  options.store_field_id = field_limits::invalid();
+  ctx.deferral->filters.emplace_back(&geo, column, *std::move(type));
   return true;
 }
 
 bool DeferWildcard(Filter::ptr& slot, const OptimizeContext& ctx) {
-  const auto& wildcard = downCast<ByWildcardNGram>(*slot);
-  if (!wildcard.options().matcher) {
+  auto& wildcard = downCast<ByWildcardNGram>(*slot);
+  auto& options = *wildcard.mutable_options();
+  if (!options.matcher) {
     return false;
   }
-  const auto column = wildcard.options().store_field_id;
+  const auto column = options.store_field_id;
   auto type = StoredColumnType(ctx.deferral->reader, column);
   if (!type) {
     return false;
   }
-  auto index = std::make_unique<ByWildcardNGram>(wildcard);
-  index->mutable_options()->matcher = nullptr;
-  ctx.deferral->filters.emplace_back(std::exchange(slot, std::move(index)),
-                                     column, *std::move(type));
+  options.store_field_id = field_limits::invalid();
+  ctx.deferral->filters.emplace_back(&wildcard, column, *std::move(type));
   return true;
 }
 

@@ -20,6 +20,7 @@
 
 #include "filter_optimizer.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -141,6 +142,21 @@ void AssertNoTermChild(Filter::ptr& root) {
   });
 }
 
+void AssertDeferredAlive(Filter::ptr& root, const OptimizeContext& ctx) {
+  if (ctx.deferral == nullptr) {
+    return;
+  }
+  for (const auto& deferred : ctx.deferral->filters) {
+    bool found = std::ranges::any_of(
+      ctx.deferral->owned,
+      [&](const Filter::ptr& owned) { return owned.get() == deferred.filter; });
+    TraverseFilter(root, [&](Filter::ptr& slot, bool) {
+      found |= slot.get() == deferred.filter;
+    });
+    SDB_ASSERT(found);
+  }
+}
+
 }  // namespace
 #endif
 
@@ -154,6 +170,7 @@ void Optimize(Filter::ptr& root, const OptimizeContext& ctx) {
   optimizer::FuseConjunctions(root, ctx);
 #ifdef SDB_DEV
   AssertNoTermChild(root);
+  AssertDeferredAlive(root, ctx);
 #endif
 }
 

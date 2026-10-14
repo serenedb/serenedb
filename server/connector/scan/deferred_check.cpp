@@ -53,18 +53,36 @@ DeferredCheck Split(std::shared_ptr<const irs::Filter> source,
     .check = std::make_shared<const duckdb::ExpressionFilter>(std::move(expr))};
 }
 
-std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral) {
+namespace {
+
+struct Sources {
+  std::shared_ptr<const irs::Filter> tree;
+  std::vector<irs::Filter::ptr> owned;
+};
+
+}  // namespace
+
+std::vector<DeferredCheck> MakeChecks(irs::Deferral deferral,
+                                      std::shared_ptr<const irs::Filter> tree) {
+  if (deferral.filters.empty()) {
+    return {};
+  }
+  const auto sources =
+    std::make_shared<Sources>(std::move(tree), std::move(deferral.owned));
   std::vector<DeferredCheck> checks;
   checks.reserve(deferral.filters.size());
-  for (auto& deferred : deferral.filters) {
+  for (const auto& deferred : deferral.filters) {
+    std::shared_ptr<const irs::Filter> source{sources, deferred.filter};
     const auto type = deferred.filter->type();
     if (type == irs::Type<irs::ByWildcardNGram>::id()) {
-      checks.emplace_back(MakeWildcardCheck(std::move(deferred)));
-    } else if (type == irs::Type<irs::ByPhrase>::id()) {
       checks.emplace_back(
-        MakePhraseCheck(std::move(deferred), deferral.reader));
+        MakeWildcardCheck(std::move(source), deferred.column, deferred.type));
+    } else if (type == irs::Type<irs::ByPhrase>::id()) {
+      checks.emplace_back(MakePhraseCheck(std::move(source), deferred.column,
+                                          deferred.type, deferral.reader));
     } else {
-      checks.emplace_back(MakeGeoCheck(std::move(deferred)));
+      checks.emplace_back(
+        MakeGeoCheck(std::move(source), deferred.column, deferred.type));
     }
   }
   return checks;

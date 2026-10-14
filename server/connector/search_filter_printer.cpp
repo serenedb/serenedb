@@ -522,7 +522,10 @@ struct FilterPrinter {
         options.syntax == RegexpSyntax::Perl ? "perl" : "posix";
       node.attributes["Has Pos"] = options.has_pos ? "true" : "false";
       node.attributes["Query"] = irs::ToString(options.query);
-      node.attributes["Verify"] = options.matcher ? "inline" : "false";
+      node.attributes["Verify"] =
+        options.matcher && field_limits::valid(options.store_field_id)
+          ? "inline"
+          : "false";
       return node;
     }
     if (type == Type<Empty>::id()) {

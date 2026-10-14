@@ -94,7 +94,7 @@ QueryBuilder::ptr Wrap(const SubReader& segment, const PrepareContext& ctx,
   if (!approx || QueryBuilder::IsEmpty(*approx)) {
     return QueryBuilder::Empty();
   }
-  if (!matcher) {
+  if (!matcher || !field_limits::valid(store_field_id)) {
     auto query = memory::make_tracked<ApproxQuery>(ctx.memory, segment,
                                                    std::move(approx), boost);
     query->SetStats(ctx.Record());

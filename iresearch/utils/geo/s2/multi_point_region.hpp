@@ -34,6 +34,8 @@ namespace irs::geo {
 
 class S2MultiPointRegion final : public S2Region {
  public:
+  ~S2MultiPointRegion() final = default;
+
   // The result is not unit length, so you may want to normalize it.
   S2Point GetCentroid() const noexcept;
 

@@ -27,6 +27,8 @@
 #include <s2/s2latlng_rect.h>
 #include <s2/s2latlng_rect_bounder.h>
 
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+
 namespace irs::geo {
 
 S2Point S2MultiPointRegion::GetCentroid() const noexcept {
@@ -39,7 +41,7 @@ S2Point S2MultiPointRegion::GetCentroid() const noexcept {
 }
 
 S2Region* S2MultiPointRegion::Clone() const {
-  return new S2MultiPointRegion{*this};
+  THROW_SQL_ERROR(ERR_MSG("not implemented"));
 }
 
 S2Cap S2MultiPointRegion::GetCapBound() const {

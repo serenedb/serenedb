@@ -223,23 +223,6 @@ TEST(WildcardNGramFilterOptionsTest, one_null_matcher) {
   EXPECT_FALSE(with_matcher == no_matcher);
 }
 
-TEST(WildcardNGramFilterOptionsTest, copy_keeps_the_check) {
-  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
-
-  irs::ByWildcardNGramOptions options{"foo%bar", analyzer, false};
-  options.store_field_id = 7;
-  ASSERT_NE(nullptr, options.matcher);
-  const auto copy = options;
-  EXPECT_TRUE(copy == options);
-  EXPECT_EQ(options.matcher, copy.matcher);
-  EXPECT_EQ(options.grams, copy.grams);
-
-  auto index = copy;
-  index.matcher = nullptr;
-  EXPECT_TRUE(index == options);
-  EXPECT_NE(nullptr, options.matcher);
-}
-
 TEST(WildcardNGramFilterOptionsTest, pattern_past_default_budget_is_verified) {
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
   constexpr size_t kUnits = 600'000;
@@ -474,6 +457,8 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   EXPECT_EQ(Docs{1}, execute(like));
   like.mutable_options()->store_field_id = kOtherId;
   EXPECT_EQ(Docs{}, execute(like));
+  like.mutable_options()->store_field_id = irs::field_limits::invalid();
+  EXPECT_EQ((Docs{0, 1}), execute(like));
   like.mutable_options()->matcher = nullptr;
   EXPECT_EQ((Docs{0, 1}), execute(like));
   like.mutable_options()->store_field_id = kStoreId;

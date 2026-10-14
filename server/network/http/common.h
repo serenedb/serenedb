@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -55,6 +56,14 @@ enum class HttpStatus : int {
 };
 
 inline constexpr std::string_view kJsonContentType = "application/json";
+
+// Elasticsearch's default http.max_content_length (100mb):
+// https://www.elastic.co/docs/reference/elasticsearch/configuration-reference/networking-settings
+inline constexpr uint64_t kEsMaxBodyBytes = uint64_t{100} << 20;
+inline constexpr uint64_t kOtelMaxBodyBytes = uint64_t{100} << 20;
+// MCP TypeScript SDK's MAXIMUM_MESSAGE_SIZE for Streamable HTTP (4mb):
+// https://github.com/modelcontextprotocol/typescript-sdk/blob/1.20.0/src/server/streamableHttp.ts
+inline constexpr uint64_t kMcpMaxBodyBytes = uint64_t{4} << 20;
 
 // Single-quoted SQL string literal with '' doubling; how the thin handlers
 // pass request strings into SQL (table function arguments cannot be

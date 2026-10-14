@@ -2,8 +2,7 @@
 # Raw pg-wire COPY FROM STDIN (FORMAT BINARY) ingest throughput probe. Streams a
 # generated PGCOPY blob to the server in CopyData frames of a chosen size and
 # times the load to CommandComplete. The CopyData frame size is the lever: large
-# frames stress the wire feeder (whole-frame assembly/linearization vs streaming
-# straight to the CopyInBridge).
+# frames stress the wire feeder.
 #
 # usage: wire_copy_ingest.py PORT ROWS FRAME_BYTES REPS LABEL
 # env: RUN_ONE_USER / RUN_ONE_DB (default postgres/postgres), trust only.

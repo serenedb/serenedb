@@ -18,21 +18,26 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/utils/zstd_context.hpp"
+#include "network/listen_spec.h"
 
-#include <zstd.h>
+#include <string>
+#include <vector>
 
-namespace irs::utils {
+#include "benchmark/benchmark.h"
 
-void ZstdCCtxDeleter::operator()(ZSTD_CCtx_s* cctx) const noexcept {
-  ZSTD_freeCCtx(cctx);  // no-op on nullptr
+namespace {
+
+void Parse(benchmark::State& state, std::string url) {
+  const std::vector<std::string> urls{std::move(url)};
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(sdb::network::ParseListenSpecs(urls));
+  }
 }
 
-void ZstdDCtxDeleter::operator()(ZSTD_DCtx_s* dctx) const noexcept {
-  ZSTD_freeDCtx(dctx);  // no-op on nullptr
-}
+BENCHMARK_CAPTURE(Parse, pg_unix,
+                  "postgres:///tmp/sdbsock?port=5499&mode=0660");
+BENCHMARK_CAPTURE(Parse, pg_tcp, "postgres://127.0.0.1:7890");
+BENCHMARK_CAPTURE(Parse, http_tcp,
+                  "http://127.0.0.1:9200?api=es&api=otel&db=telemetry");
 
-ZstdCCtxPtr MakeZstdCCtx() { return ZstdCCtxPtr{ZSTD_createCCtx()}; }
-ZstdDCtxPtr MakeZstdDCtx() { return ZstdDCtxPtr{ZSTD_createDCtx()}; }
-
-}  // namespace irs::utils
+}  // namespace

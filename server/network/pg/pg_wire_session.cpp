@@ -46,6 +46,7 @@
 #include "network/pg/hba.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
+#include "pg/copy_batch_builder.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/metrics.h"
 
@@ -457,8 +458,11 @@ bool PgWireSession<Kind>::SetupConnection() {
       const auto command = static_cast<sdb::pg::ProgressCommand>(
         metrics.command.load(std::memory_order_relaxed));
       SDB_IF_FAILURE("pause_copy_from_mid_stream") {
-        if (command == sdb::pg::ProgressCommand::CopyFrom) {
+        static constinit std::atomic_bool gPausing{false};
+        if (command == sdb::pg::ProgressCommand::CopyFrom &&
+            !gPausing.exchange(true)) {
           SDB_WAIT_ON_FAILURE("pause_copy_from_mid_stream");
+          gPausing.store(false);
         }
       }
       SDB_IF_FAILURE("pause_copy_to_mid_stream") {
@@ -1550,13 +1554,11 @@ PgWireSession<Kind>::DriveToResult(duckdb::PreparedStatement& prepared,
 }
 
 // COPY FROM STDIN binds (sniffs the CSV dialect by reading /dev/stdin) at
-// PendingQuery time, so the bridge + feeder must be live BEFORE binding, and
-// CopyInResponse must already be on its way out (the client streams CopyData
-// only after seeing it). While the COPY runs, the io-pinned feeder takes over
-// the recv-consumer role: it assembles CopyData frames from the channel and
-// publishes them to the bridge, whose worker-side Read blocks inside DuckDB's
-// synchronous FileSystem::Read; the SessionTask itself is parked in DriveQuery
-// for the duration, so the single-consumer invariant holds.
+// PendingQuery time, so the batch queue + feeder must be live BEFORE binding,
+// and CopyInResponse must already be on its way out (the client streams
+// CopyData only after seeing it). While the COPY runs, the io-pinned feeder
+// takes over the recv-consumer role; the SessionTask itself is parked in
+// DriveQuery for the duration, so the single-consumer invariant holds.
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::SQLStatement> statement) {
@@ -1579,10 +1581,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   }
   _client_state->copy_stdin_open_count = 0;
   _client_state->copy_stdin_done = false;
-  sdb::pg::CopyInBridge bridge;
-  _connection_ctx->SetSideChannel(&bridge);
-  _feeder_done.store(false, std::memory_order_relaxed);
-  _copy_route.store(true, std::memory_order_release);
   // CopyInResponse's column count: the explicit COPY column list, else the
   // target table's column count (PG sends natts + one per-column format code).
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
@@ -1597,9 +1595,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
   }
+  sdb::pg::CopyInBatches batches;
+  _connection_ctx->SetSideChannel(&batches);
+  _feeder_done.store(false, std::memory_order_relaxed);
+  _copy_route.store(true, std::memory_order_release);
   WriteCopyInResponse(this->_send, IsBinaryWireFormat(format), copy_columns);
   this->KickSend();
-  RunCopyInFeeder(bridge, format).Detach();
+  RunCopyInFeeder(batches, format).Detach();
 
   // The feeder join below is an async park (co_await), so the cleanup that must
   // run on every exit cannot live in a destructor (no RAII guard /
@@ -1620,17 +1622,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   } catch (...) {
     error = std::current_exception();
   }
-  // Always join the feeder before the bridge (a local) is destroyed; Abort
+  // Always join the feeder before the queue (a local) is destroyed; Abort
   // wakes it if the worker errored without draining the client's CopyData.
   // The join is a park (the feeder's last act is RequestRun), keeping the
   // SessionTask on its pool.
-  bridge.Abort();
+  batches.Abort();
   _copy_gate.Kick();
   while (!_feeder_done.load(std::memory_order_acquire)) {
     co_await this->_task->Park();
   }
   _copy_route.store(false, std::memory_order_release);
-  _connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
+  _connection_ctx->SetSideChannel<sdb::pg::CopyInBatches>(nullptr);
   if (error) {
     std::rethrow_exception(error);
   }
@@ -1767,7 +1769,7 @@ yaclib::Task<> PgWireSession<Kind>::WaitCopyInput() {
 
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
-  sdb::pg::CopyInBridge& bridge, CopyFormat format) {
+  sdb::pg::CopyInBatches& batches, CopyFormat format) {
   // Only the PG text format has the "\." end-of-data marker to scan for; binary
   // and csv stream straight through.
   const bool is_text = format == CopyFormat::Text;
@@ -1775,47 +1777,54 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     _feeder_done.store(true, std::memory_order_release);
     this->_task->RequestRun();
   };
+  bool closed = false;
   const auto fail = [&](int code, auto&&... msg) {
-    bridge.Fail(std::make_exception_ptr(irs::SqlException{
+    closed = true;
+    batches.Fail(std::make_exception_ptr(irs::SqlException{
       SQL_ERROR_DATA(ERR_CODE(code),
                      ERR_MSG(std::forward<decltype(msg)>(msg)...)),
       std::source_location::current()}));
   };
   absl::Cleanup close_guard = [&] {
-    if (!bridge.Closed()) {
+    if (!closed) {
       fail(ERRCODE_CONNECTION_EXCEPTION,
            "unexpected EOF during COPY from stdin");
       this->Stop();
     }
   };
-  // CopyData bodies stream straight to the bridge -- never assembled whole, so
-  // there is no per-message size cap (PG/pgwire-rs accept ~1GB; memory stays
-  // bounded by the recv buffer, not the frame length). The text "\."
-  // end-of-data marker is recognised by a stateful scanner that survives
-  // chunk/frame splits; binary/CSV pass through untouched.
-  CopyEodScanner scanner;
-  bool eod = false;  // text marker seen: stop feeding, just drain to CopyDone
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
-  constexpr size_t kBatchBytes = 64 * 1024;
-  std::vector<std::string_view> batch;
-  size_t batched = 0;
+  CopyEodScanner scanner;
+  sdb::pg::CopyBatchBuilder builder{is_text ? sdb::pg::CopyBatchFormat::Text
+                                    : format == CopyFormat::Binary
+                                      ? sdb::pg::CopyBatchFormat::Binary
+                                      : sdb::pg::CopyBatchFormat::Raw};
+  bool eod = false;
+  bool failed = false;
   message::Chain retained;
   this->_recv.RetainConsumed(&retained);
-  absl::Cleanup release_guard = [this] { this->_recv.RetainConsumed(nullptr); };
-  const auto stage = [&](std::string_view piece) {
-    if (!piece.empty()) {
-      batch.push_back(piece);
-      batched += piece.size();
+  absl::Cleanup release_guard = [&] {
+    this->_recv.RetainConsumed(nullptr);
+    batches.Release(std::move(retained));
+  };
+  const auto feeding = [&] { return !eod && !failed && !batches.Aborted(); };
+  const auto guarded = [&](auto&& step) {
+    try {
+      step();
+    } catch (...) {
+      failed = true;
+      closed = true;
+      batches.Fail(std::current_exception());
     }
   };
-  const auto flush = [&]() -> yaclib::Task<> {
-    if (!batch.empty() && bridge.Publish(batch)) {
-      co_await bridge.Drained(*this->_ioexec);
-      bridge.ResetDrained();
+  const auto publish = [&]() -> yaclib::Task<> {
+    if (!builder.HasRows() || !feeding()) {
+      co_return {};
     }
-    batch.clear();
-    batched = 0;
-    retained = {};
+    if (batches.NeedSpace()) {
+      co_await batches.SpaceReady(*this->_ioexec);
+      batches.ResetSpace();
+    }
+    batches.Push(builder.Take(), std::exchange(retained, {}));
     co_return {};
   };
   for (;;) {
@@ -1825,7 +1834,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
              "unexpected EOF during COPY from stdin");
         co_return {};
       }
-      co_await flush();
+      co_await publish();
       co_await WaitCopyInput();
     }
     std::array<uint8_t, kHeader> head;
@@ -1849,29 +1858,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
       SDB_IF_FAILURE("copy_feeder_throw") {
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
-      if (!eod && !bridge.Aborted() && body < kBatchBytes &&
-          this->_recv.Front().size() >= body) {
-        const std::string_view piece = this->_recv.Front().substr(0, body);
-        bool carried = false;
-        if (is_text) {
-          const auto scanned = scanner.Scan(piece);
-          carried = !scanned.carry.empty();
-          stage(scanned.carry);
-          stage(scanned.data);
-        } else {
-          stage(piece);
-        }
-        this->_recv.Consume(body);
-        if (is_text && scanner.Ended()) {
-          co_await flush();
-          eod = true;
-          bridge.Finish();
-        } else if (carried || batched >= kBatchBytes) {
-          co_await flush();
-        }
-        continue;
-      }
-      co_await flush();
       while (body > 0) {
         while (!this->_recv.Readable()) {
           if (this->SendBroken()) {
@@ -1879,54 +1865,56 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
                  "unexpected EOF during COPY from stdin");
             co_return {};
           }
+          co_await publish();
           co_await WaitCopyInput();
         }
         const std::string_view chunk = this->_recv.Front();
         const auto take = std::min<uint64_t>(body, chunk.size());
-        if (!eod && !bridge.Aborted()) {
-          const std::string_view piece = chunk.substr(0, take);
-          std::array<std::string_view, 2> spans{piece, std::string_view{}};
-          if (is_text) {
-            const auto scanned = scanner.Scan(piece);
-            spans = {scanned.carry, scanned.data};
-          }
-          for (const auto span : spans) {
-            if (span.empty()) {
-              continue;
+        if (feeding()) {
+          const auto piece = chunk.substr(0, take);
+          guarded([&] {
+            if (is_text) {
+              const auto scanned = scanner.Scan(piece);
+              builder.Feed(scanned.carry, false);
+              builder.Feed(scanned.data, true);
+            } else {
+              builder.Feed(piece, true);
             }
-            if (!bridge.Publish(span.data(), span.size())) {
-              break;
-            }
-            co_await bridge.Drained(*this->_ioexec);
-            bridge.ResetDrained();
-          }
-          if (is_text && scanner.Ended()) {
+          });
+          if (is_text && scanner.Ended() && feeding()) {
+            guarded([&] { builder.Finish(); });
+            co_await publish();
             eod = true;
-            // worker sees EOF; the rest of the stream is dropped
-            bridge.Finish();
+            if (!failed) {
+              closed = true;
+              batches.Finish();
+            }
           }
         }
         this->_recv.Consume(take);
         body -= take;
+        if (builder.Ready()) {
+          co_await publish();
+        }
       }
     } else if (type == PQ_MSG_COPY_DONE) {
-      co_await flush();
-      if (!eod && !bridge.Aborted()) {
-        if (is_text) {
-          if (const auto tail = scanner.Finish();
-              !tail.empty() && bridge.Publish(tail.data(), tail.size())) {
-            co_await bridge.Drained(*this->_ioexec);
-            bridge.ResetDrained();
+      if (feeding()) {
+        guarded([&] {
+          if (is_text) {
+            builder.Feed(scanner.Finish(), false);
           }
+          builder.Finish();
+        });
+        co_await publish();
+        if (!failed) {
+          batches.Finish();
         }
-        bridge.Finish();
       }
+      closed = true;
       co_return {};
     } else if (type == PQ_MSG_COPY_FAIL ||
                (_client && (type == PQ_MSG_ERROR_RESPONSE ||
                             type == PQ_MSG_NOTICE_RESPONSE))) {
-      // The client's CopyFail carries its own failure text; PG echoes it,
-      // reading it as a NUL-terminated string (truncate at the first NUL).
       std::string detail;
       detail.reserve(body);
       while (detail.size() < body) {
@@ -1948,7 +1936,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
         continue;
       }
       if (type == PQ_MSG_ERROR_RESPONSE) {
-        bridge.Fail(std::make_exception_ptr(irs::SqlException{
+        closed = true;
+        batches.Fail(std::make_exception_ptr(irs::SqlException{
           ParseErrorResponse(detail), std::source_location::current()}));
         co_return {};
       }
@@ -1973,7 +1962,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
            "unexpected message during COPY from stdin");
       co_return {};
     }
-    // Flush/Sync carry an empty body -- already fully consumed (header only).
   }
 }
 

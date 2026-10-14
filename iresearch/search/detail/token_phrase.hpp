@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -162,18 +163,15 @@ class RowValues {
   ~RowValues();
 
   void Bind(duckdb::Vector& values, duckdb::idx_t count);
-  std::span<const duckdb::string_t> At(duckdb::idx_t row);
+  void ForEach(duckdb::idx_t row,
+               absl::FunctionRef<bool(duckdb::string_t)> visit);
 
  private:
-  std::span<const duckdb::string_t> Values(duckdb::idx_t row);
-
   duckdb::UnifiedVectorFormat _format;
   duckdb::UnifiedVectorFormat _children;
   duckdb::LogicalTypeId _type = duckdb::LogicalTypeId::VARCHAR;
   uint64_t _array_size = 0;
-  std::vector<duckdb::string_t> _values;
   std::unique_ptr<JsonLeafReader> _json;
-  duckdb::string_t _text;
 };
 
 class PhraseCheck final : public TokenConsumer {
@@ -205,6 +203,9 @@ class PhraseCheck final : public TokenConsumer {
 
   class AnchorMatch {
    public:
+    explicit AnchorMatch(const TokenBatch& batch) noexcept
+      : _batch_terms{batch.terms}, _batch_pos{batch.pos} {}
+
     void Reset(uint32_t anchors);
     void Feed(const TokenBatch& batch, uint32_t from, State& state);
     void Consumed(const TokenBatch& batch, const State& state);
@@ -237,8 +238,8 @@ class PhraseCheck final : public TokenConsumer {
     uint64_t Ways(uint32_t slot, size_t at, State& state);
     bool Over(State& state) noexcept;
 
-    const duckdb::string_t* _batch_terms = nullptr;
-    const uint32_t* _batch_pos = nullptr;
+    std::span<const duckdb::string_t, TokenBatch::kCapacity> _batch_terms;
+    std::span<const uint32_t, TokenBatch::kCapacity> _batch_pos;
     size_t _batch_base = 0;
     size_t _end = 0;
     size_t _carry_base = 0;
@@ -285,15 +286,15 @@ class PhraseCheck final : public TokenConsumer {
     detail::slop::MatchScratch _scratch;
   };
 
-  template<typename Match>
-  Match& Use() {
+  template<typename Match, typename... Args>
+  Match& Use(Args&&... args) {
     if (auto* match = std::get_if<Match>(&_match)) {
       return *match;
     }
-    return _match.template emplace<Match>();
+    return _match.template emplace<Match>(std::forward<Args>(args)...);
   }
 
-  void Analyze(std::span<const duckdb::string_t> values);
+  void Analyze(duckdb::idx_t row);
   void Take(TokenBatch& batch);
   void Start(bool anchored, uint32_t anchors = 0);
 

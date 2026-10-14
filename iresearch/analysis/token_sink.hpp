@@ -224,6 +224,8 @@ class TokenSink : util::Noncopyable {
     duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
     : _arena{alloc} {}
 
+  const TokenBatch& Batch() const noexcept { return _batch; }
+
   void Bind(TokenConsumer& consumer, StoreSink* store) noexcept {
     SDB_ASSERT((_batch.count == 0 && _nruns == 0) ||
                (&consumer == _consumer && store == _store_consumer));

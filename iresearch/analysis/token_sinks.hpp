@@ -236,6 +236,8 @@ class ScanAnalyzer {
     duckdb::Allocator& alloc = duckdb::Allocator::DefaultAllocator())
     : _writer{alloc} {}
 
+  const TokenBatch& Batch() const noexcept { return _writer.Batch(); }
+
   template<typename Consumer>
   IRS_FORCE_INLINE bool Scan(analysis::Tokenizer& tokenizer,
                              duckdb::string_t value, Consumer& out) {

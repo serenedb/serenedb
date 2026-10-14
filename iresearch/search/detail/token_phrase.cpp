@@ -363,8 +363,6 @@ uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
 }
 
 void PhraseCheck::AnchorMatch::Reset(uint32_t anchors) {
-  _batch_terms = nullptr;
-  _batch_pos = nullptr;
   _batch_base = 0;
   _end = 0;
   _carry_base = 0;
@@ -424,6 +422,7 @@ PhraseCheck::PhraseCheck(const CompiledPhrase& phrase,
                          const ByPhraseOptions::TokenizerFactory& tokenizer,
                          bool count)
   : _tokenizer{tokenizer()},
+    _match{std::in_place_type<AnchorMatch>, _analyzer.Batch()},
     _state{.phrase = &phrase, .count = count},
     _dense{!_tokenizer->Traits().explicit_pos} {}
 
@@ -446,62 +445,50 @@ void RowValues::Bind(duckdb::Vector& values, duckdb::idx_t count) {
   }
 }
 
-std::span<const duckdb::string_t> RowValues::At(duckdb::idx_t row) {
-  const auto values = Values(row);
-  if (!_json || values.empty()) {
-    return values;
-  }
-  SDB_ASSERT(values.size() == 1);
-  const auto leaf =
-    _json->Read({values.front().GetData(), values.front().GetSize()});
-  if (leaf.kind != JsonLeafKind::String) {
-    return {};
-  }
-  _text = {leaf.string.data(), static_cast<uint32_t>(leaf.string.size())};
-  return {&_text, 1};
-}
-
-std::span<const duckdb::string_t> RowValues::Values(duckdb::idx_t row) {
+void RowValues::ForEach(duckdb::idx_t row,
+                        absl::FunctionRef<bool(duckdb::string_t)> visit) {
   const auto idx = _format.sel->get_index(row);
   if (!_format.validity.RowIsValid(idx)) {
-    return {};
+    return;
   }
-  uint64_t begin = 0;
-  uint64_t end = 0;
+  const auto children = [&](uint64_t begin, uint64_t size) {
+    const auto* data =
+      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
+    analysis::ForEachValidRow(
+      _children, begin, static_cast<uint32_t>(size),
+      [&](uint32_t, uint32_t child) { return visit(data[child]); });
+  };
   if (_type == duckdb::LogicalTypeId::LIST) {
     const auto entry =
       duckdb::UnifiedVectorFormat::GetData<duckdb::list_entry_t>(_format)[idx];
-    begin = entry.offset;
-    end = entry.offset + entry.length;
-  } else if (_type == duckdb::LogicalTypeId::ARRAY) {
-    begin = idx * _array_size;
-    end = begin + _array_size;
-  } else {
-    return {
-      duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format) + idx, 1};
+    children(entry.offset, entry.length);
+    return;
   }
-  _values.clear();
-  const auto* data =
-    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_children);
-  analysis::ForEachValidRow(_children, begin,
-                            static_cast<uint32_t>(end - begin),
-                            [&](uint32_t, uint32_t child) {
-                              _values.emplace_back(data[child]);
-                              return true;
-                            });
-  return _values;
+  if (_type == duckdb::LogicalTypeId::ARRAY) {
+    children(idx * _array_size, _array_size);
+    return;
+  }
+  const auto value =
+    duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(_format)[idx];
+  if (!_json) {
+    visit(value);
+    return;
+  }
+  const auto leaf = _json->Read({value.GetData(), value.GetSize()});
+  if (leaf.kind == JsonLeafKind::String) {
+    visit({leaf.string.data(), static_cast<uint32_t>(leaf.string.size())});
+  }
 }
 
 bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out,
                         uint32_t anchors) {
-  const auto values = _rows.At(row);
   Start(_state.phrase->anchor.has_value(), anchors);
-  Analyze(values);
+  Analyze(row);
   if (auto* anchor = std::get_if<AnchorMatch>(&_match)) {
     anchor->Drain(_state);
     if (anchor->Overran()) {
       Start(false);
-      Analyze(values);
+      Analyze(row);
     }
   }
   out = {};
@@ -509,13 +496,11 @@ bool PhraseCheck::Check(duckdb::idx_t row, PhraseVerdict& out,
                     _match);
 }
 
-void PhraseCheck::Analyze(std::span<const duckdb::string_t> values) {
-  for (const auto& value : values) {
-    if (_state.done) {
-      return;
-    }
+void PhraseCheck::Analyze(duckdb::idx_t row) {
+  _rows.ForEach(row, [&](duckdb::string_t value) {
     _analyzer.Scan(*_tokenizer, value, *this);
-  }
+    return !_state.done;
+  });
 }
 
 void PhraseCheck::Start(bool anchored, uint32_t anchors) {
@@ -525,7 +510,7 @@ void PhraseCheck::Start(bool anchored, uint32_t anchors) {
   _value_base = 0;
   const auto& phrase = *_state.phrase;
   if (anchored) {
-    Use<AnchorMatch>().Reset(anchors);
+    Use<AnchorMatch>(_analyzer.Batch()).Reset(anchors);
   } else if (phrase.automaton && !_state.count) {
     Use<AutomatonMatch>().Reset();
   } else {
@@ -568,8 +553,6 @@ void PhraseCheck::AnchorMatch::Drain(State& state) {
   if (state.done) {
     return;
   }
-  _batch_terms = nullptr;
-  _batch_pos = nullptr;
   _batch_base = _carry_base + _carry.size();
   _end = _batch_base;
   for (const auto at : _pending) {
@@ -591,9 +574,8 @@ bool PhraseCheck::State::Counted(PhraseVerdict& out) const noexcept {
 
 void PhraseCheck::AnchorMatch::Feed(const TokenBatch& batch, uint32_t from,
                                     State& state) {
+  SDB_ASSERT(batch.terms == _batch_terms.data());
   const auto& layout = *state.phrase->anchor;
-  _batch_terms = batch.terms;
-  _batch_pos = batch.pos;
   _batch_base = _carry_base + _carry.size();
   _end = _batch_base + batch.count;
   const uint64_t last = batch.pos[batch.count - 1];

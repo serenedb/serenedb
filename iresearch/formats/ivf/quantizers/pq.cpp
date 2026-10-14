@@ -1169,6 +1169,56 @@ class ProductQuantizer8Reader final : public QuantizerReader {
     }
   }
 
+#ifdef __AVX2__
+  float GatherPairs(const uint8_t* code) const noexcept {
+    const auto* table = reinterpret_cast<const int*>(_cur->HalfCentroids());
+    const float* q = _cur->Query();
+    const __m256i step = _mm256_set1_epi32(static_cast<int>(8 * kPq8Ksub));
+    __m256i base =
+      _mm256_mullo_epi32(_mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7),
+                         _mm256_set1_epi32(static_cast<int>(kPq8Ksub)));
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    size_t j = 0;
+    for (; j + 8 <= _m; j += 8) {
+      const __m256i idx = _mm256_add_epi32(
+        base, _mm256_cvtepu8_epi32(
+                _mm_loadl_epi64(reinterpret_cast<const __m128i*>(code + j))));
+      const __m256i g = _mm256_i32gather_epi32(table, idx, 4);
+      const __m256 lo = _mm256_cvtph_ps(_mm256_castsi256_si128(g));
+      const __m256 hi = _mm256_cvtph_ps(_mm256_extracti128_si256(g, 1));
+      const __m256 q0 = _mm256_loadu_ps(q + 2 * j);
+      const __m256 q1 = _mm256_loadu_ps(q + 2 * j + 8);
+      if constexpr (M == VectorMetric::L2Sqr) {
+        const __m256 d0 = _mm256_sub_ps(q0, lo);
+        const __m256 d1 = _mm256_sub_ps(q1, hi);
+        acc0 = _mm256_fmadd_ps(d0, d0, acc0);
+        acc1 = _mm256_fmadd_ps(d1, d1, acc1);
+      } else {
+        acc0 = _mm256_fmadd_ps(q0, lo, acc0);
+        acc1 = _mm256_fmadd_ps(q1, hi, acc1);
+      }
+      base = _mm256_add_epi32(base, step);
+    }
+    const __m256 v = _mm256_add_ps(acc0, acc1);
+    __m128 h =
+      _mm_add_ps(_mm256_castps256_ps128(v), _mm256_extractf128_ps(v, 1));
+    h = _mm_add_ps(h, _mm_movehl_ps(h, h));
+    h = _mm_add_ss(h, _mm_movehdup_ps(h));
+    float s = _mm_cvtss_f32(h);
+    const uint16_t* half = _cur->HalfCentroids();
+    for (; j < _m; ++j) {
+      s += SubspaceScore<2>(q + 2 * j,
+                            half + (j * kPq8Ksub + size_t{code[j]}) * 2);
+    }
+    if constexpr (M == VectorMetric::L2Sqr) {
+      return -s;
+    } else {
+      return s;
+    }
+  }
+#endif
+
   template<size_t Dsub>
   void ScoreGrouped(const byte_type* base, uint32_t record_size,
                     std::span<const uint32_t> ids, score_t* out) const {
@@ -1181,6 +1231,14 @@ class ProductQuantizer8Reader final : public QuantizerReader {
       acc[k] = 0.f;
       __builtin_prefetch(rows[k], 0, 3);
     }
+#ifdef __AVX2__
+    if constexpr (Dsub == 2) {
+      for (size_t k = 0; k < n; ++k) {
+        out[k] = GatherPairs(rows[k]);
+      }
+      return;
+    }
+#endif
     const float* lut = _cur->Lut();
     const uint16_t* half = _cur->HalfCentroids();
     const float* q = _cur->Query();
@@ -1212,6 +1270,11 @@ class ProductQuantizer8Reader final : public QuantizerReader {
 
   template<size_t Dsub>
   float ScoreDirect(const uint8_t* code) const noexcept {
+#ifdef __AVX2__
+    if constexpr (Dsub == 2) {
+      return GatherPairs(code);
+    }
+#endif
     const uint16_t* half = _cur->HalfCentroids();
     const float* q = _cur->Query();
     float a[4] = {};

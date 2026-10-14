@@ -20,7 +20,6 @@
 
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
-#include <iresearch/utils/system_compiler.hpp>
 #include <ranges>
 
 #include "pg/catalog/lookup.h"
@@ -84,7 +83,6 @@ char Tgenabled(duckdb::TriggerFiring firing) {
     case duckdb::TriggerFiring::ALWAYS:
       return 'A';
   }
-  SDB_UNREACHABLE();
 }
 
 struct Trigger {

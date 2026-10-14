@@ -18,32 +18,21 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
 
-class PgForeignDataWrapper final
-  : public SystemTableScan<kPgForeignDataWrapperSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<SystemObject>{&LoadStatic<kForeignDataWrappers>, {}, {}}};
-
-  static constexpr auto kWrapper = Shape<kSql, const SystemObject>(
-    Col<"oid">(&SystemObject::oid), Col<"fdwname">(&SystemObject::name),
-    Col<"fdwowner">([](const auto&) { return kRootUser; }),
-    Col<"fdwacl">(
-      [](const auto&) -> const auto& { return kForeignDataWrapperAcl; }));
-
-  void Row(const SystemObject& wrapper) { Emit<kWrapper>(wrapper); }
-};
+constexpr auto kWrapper = Shape<kPgForeignDataWrapperSql, const SystemObject>(
+  Col<"oid">(&SystemObject::oid), Col<"fdwname">(&SystemObject::name),
+  Col<"fdwowner">([](const auto&) { return kRootUser; }),
+  Col<"fdwacl">(
+    [](const auto&) -> const auto& { return kForeignDataWrapperAcl; }));
 
 }  // namespace
 
-SystemTable gPgForeignDataWrapper = SystemTableOf<PgForeignDataWrapper>();
+SystemTable gPgForeignDataWrapper =
+  SystemTableOf<StaticTable<kWrapper, kForeignDataWrappers>>();
 
 }  // namespace sdb::pg

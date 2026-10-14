@@ -28,7 +28,6 @@
 #include <limits>
 #include <optional>
 
-#include "catalog/entry/system_table.h"
 #include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/types.h"

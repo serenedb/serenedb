@@ -43,11 +43,8 @@ class PgSubscriptionRel final : public SystemTableScan<kPgSubscriptionRelSql> {
     Col<"srsubid">(&SubscribedRelation::subscription),
     Col<"srrelid">(&SubscribedRelation::relation),
     Col<"srsubstate">(&SubscribedRelation::state),
-    Col<"srsublsn">([](const auto& row) -> std::optional<uint64_t> {
-      if (row.lsn == 0) {
-        return std::nullopt;
-      }
-      return row.lsn;
+    Col<"srsublsn">([](const auto& row) {
+      return row.lsn == 0 ? std::nullopt : std::optional<uint64_t>{row.lsn};
     }));
 
   void Row(const catalog::SubscriptionCatalogEntry& subscription) {

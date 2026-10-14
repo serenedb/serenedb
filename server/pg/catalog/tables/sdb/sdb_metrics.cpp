@@ -48,12 +48,8 @@ constexpr SystemSqlColumn kSdbMetricsColumns[] = {
 constexpr SystemSql kSdbMetricsSql{.oid = kSdbMetricsTable,
                                    .schema = "pg_catalog",
                                    .name = "sdb_metrics",
-                                   .row_type = 0,
-                                   .row_array_type = 0,
                                    .relkind = 'r',
                                    .replident = 'n',
-                                   .superuser_only = false,
-                                   .shared = false,
                                    .columns = kSdbMetricsColumns};
 
 using search::StoreStats;

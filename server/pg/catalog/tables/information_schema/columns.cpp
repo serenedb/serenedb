@@ -85,12 +85,8 @@ struct InfoColumn {
       if (array) {
         entry = scan.FindById(TypeElementOid(described.oid));
       }
-      return info.emplace(ColumnTypeInfo{.described = described,
-                                         .builtin = nullptr,
-                                         .base = nullptr,
-                                         .collation = nullptr,
-                                         .entry = entry,
-                                         .array = array});
+      return info.emplace(
+        ColumnTypeInfo{.described = described, .entry = entry, .array = array});
     }
     const auto* base =
       builtin->type == 'd' ? FindBuiltinType(builtin->basetype) : builtin;
@@ -100,9 +96,7 @@ struct InfoColumn {
       .builtin = builtin,
       .base = base,
       .collation =
-        collation && collation->provider != 'd' ? collation : nullptr,
-      .entry = nullptr,
-      .array = false});
+        collation && collation->provider != 'd' ? collation : nullptr});
   }
 };
 
@@ -176,25 +170,22 @@ constexpr std::tuple kTypeColumns{
     }
     return row.arrays.Of(*info.entry);
   }),
-  Col<"domain_catalog">([](const auto& row) -> std::optional<std::string_view> {
-    if (!IsDomain(row.Info())) {
-      return std::nullopt;
-    }
-    return row.database;
+  Col<"domain_catalog">([](const auto& row) {
+    return IsDomain(row.Info()) ? std::optional<std::string_view>{row.database}
+                                : std::nullopt;
   }),
-  Col<"domain_schema">([](const auto& row) -> std::optional<std::string_view> {
+  Col<"domain_schema">([](const auto& row) {
     const auto& info = row.Info();
-    if (!IsDomain(info)) {
-      return std::nullopt;
-    }
-    return FindSystemObject(kSystemNamespaces, info.builtin->nsp)->name;
+    return IsDomain(info) ? std::optional<std::string_view>{FindSystemObject(
+                                                              kSystemNamespaces,
+                                                              info.builtin->nsp)
+                                                              ->name}
+                          : std::nullopt;
   }),
-  Col<"domain_name">([](const auto& row) -> std::optional<std::string_view> {
+  Col<"domain_name">([](const auto& row) {
     const auto& info = row.Info();
-    if (!IsDomain(info)) {
-      return std::nullopt;
-    }
-    return info.builtin->name;
+    return IsDomain(info) ? std::optional<std::string_view>{info.builtin->name}
+                          : std::nullopt;
   }),
   Col<"character_maximum_length">(kBuiltinMeasure<&CharMaxLength>),
   Col<"character_octet_length">(kBuiltinMeasure<&CharOctetLength>),
@@ -203,26 +194,19 @@ constexpr std::tuple kTypeColumns{
   Col<"numeric_scale">(kBuiltinMeasure<&NumericScale>),
   Col<"datetime_precision">(kBuiltinMeasure<&DatetimePrecision>),
   Col<"interval_type">(kBuiltinMeasure<&IntervalType>),
-  Col<"collation_catalog">(
-    [](const auto& row) -> std::optional<std::string_view> {
-      if (!row.Info().collation) {
-        return std::nullopt;
-      }
-      return row.database;
-    }),
-  Col<"collation_schema">(
-    [](const auto& row) -> std::optional<std::string_view> {
-      if (!row.Info().collation) {
-        return std::nullopt;
-      }
-      return irs::StaticStrings::kPgCatalogSchema;
-    }),
-  Col<"collation_name">([](const auto& row) -> std::optional<std::string_view> {
+  Col<"collation_catalog">([](const auto& row) {
+    return row.Info().collation ? std::optional<std::string_view>{row.database}
+                                : std::nullopt;
+  }),
+  Col<"collation_schema">([](const auto& row) {
+    return row.Info().collation
+             ? std::optional{irs::StaticStrings::kPgCatalogSchema}
+             : std::nullopt;
+  }),
+  Col<"collation_name">([](const auto& row) {
     const auto* collation = row.Info().collation;
-    if (!collation) {
-      return std::nullopt;
-    }
-    return collation->name;
+    return collation ? std::optional<std::string_view>{collation->name}
+                     : std::nullopt;
   })};
 
 class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
@@ -249,18 +233,15 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     Col<"is_generated">([](const auto& row) {
       return std::string_view{row.column->Generated() ? "ALWAYS" : "NEVER"};
     }),
-    Col<"generation_expression">(
-      [](const auto& row) -> std::optional<std::string> {
-        if (!row.column->Generated()) {
-          return std::nullopt;
-        }
-        return row.column->GeneratedExpression().ToString();
-      }),
-    Col<"column_default">([](const auto& row) -> std::optional<std::string> {
-      if (row.column->Generated() || !HasDefault(*row.column)) {
-        return std::nullopt;
-      }
-      return row.column->DefaultValue().ToString();
+    Col<"generation_expression">([](const auto& row) {
+      return row.column->Generated()
+               ? std::optional{row.column->GeneratedExpression().ToString()}
+               : std::nullopt;
+    }),
+    Col<"column_default">([](const auto& row) {
+      return row.column->Generated() || !HasDefault(*row.column)
+               ? std::nullopt
+               : std::optional{row.column->DefaultValue().ToString()};
     }));
 
   static constexpr auto kViewColumn = Shape<kSql, const InfoColumn>(
@@ -294,8 +275,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .column = &column,
          .system = system,
          .not_null = !not_null.empty() && not_null[column.Logical().index],
-         .internal = table.internal,
-         .info = {}});
+         .internal = table.internal});
     }
   }
 
@@ -317,12 +297,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
          .relation = relation,
          .name = view.ColumnName(*columns, i).GetIdentifierName(),
          .position = i + 1,
-         .type = columns->types[i],
-         .column = nullptr,
-         .system = {},
-         .not_null = false,
-         .internal = false,
-         .info = {}});
+         .type = columns->types[i]});
     }
   }
 

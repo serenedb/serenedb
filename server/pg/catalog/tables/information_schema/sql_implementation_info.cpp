@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "server/utils/build.h"
 
@@ -56,27 +55,17 @@ constexpr std::array kInfos{
                      "all non-ASCII characters allowed"},
 };
 
-class InfoSqlImplementationInfo final
-  : public SystemTableScan<kInfoSqlImplementationInfoSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<ImplementationInfo>{&LoadStatic<kInfos>, {}, {}}};
-
-  static constexpr auto kInfo = Shape<kSql, const ImplementationInfo>(
+constexpr auto kInfo =
+  Shape<kInfoSqlImplementationInfoSql, const ImplementationInfo>(
     Col<"implementation_info_id">(&ImplementationInfo::id),
     Col<"implementation_info_name">(&ImplementationInfo::name),
     Col<"integer_value">(&ImplementationInfo::number),
     Col<"character_value">(&ImplementationInfo::text),
     Col<"comments">(&ImplementationInfo::comments));
 
-  void Row(const ImplementationInfo& info) { Emit<kInfo>(info); }
-};
-
 }  // namespace
 
 SystemTable gInfoSqlImplementationInfo =
-  SystemTableOf<InfoSqlImplementationInfo>();
+  SystemTableOf<StaticTable<kInfo, kInfos>>();
 
 }  // namespace sdb::pg

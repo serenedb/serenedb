@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
@@ -37,26 +36,14 @@ constexpr std::array kLanguages{
   Language{kPgSqlLanguage, "sql", true, kPgSqlLanguageValidator},
 };
 
-class PgLanguage final : public SystemTableScan<kPgLanguageSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr duckdb::idx_t kRows = 10;
-
-  static constexpr std::tuple kSources{
-    ArraySource<Language>{&LoadStatic<kLanguages>, {}, {}}};
-
-  static constexpr auto kLanguage = Shape<kSql, const Language>(
-    Col<"oid">(&Language::oid), Col<"lanname">(&Language::name),
-    Col<"lanowner">([](const auto&) { return kRootUser; }),
-    Col<"lanpltrusted">(&Language::trusted),
-    Col<"lanvalidator">(&Language::validator));
-
-  void Row(const Language& language) { Emit<kLanguage>(language); }
-};
+constexpr auto kLanguage = Shape<kPgLanguageSql, const Language>(
+  Col<"oid">(&Language::oid), Col<"lanname">(&Language::name),
+  Col<"lanowner">([](const auto&) { return kRootUser; }),
+  Col<"lanpltrusted">(&Language::trusted),
+  Col<"lanvalidator">(&Language::validator));
 
 }  // namespace
 
-SystemTable gPgLanguage = SystemTableOf<PgLanguage>();
+SystemTable gPgLanguage = SystemTableOf<StaticTable<kLanguage, kLanguages>>();
 
 }  // namespace sdb::pg

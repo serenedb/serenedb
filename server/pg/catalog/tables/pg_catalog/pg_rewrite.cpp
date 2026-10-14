@@ -40,7 +40,7 @@ SystemRows<SystemObject> LoadNativeViews(SystemScan&) {
                               irs::StaticStrings::kInformationSchema}) {
       VisitSystemTables(schema, [&](const SystemTable& table) {
         if (table.Sql().relkind == 'v') {
-          views.push_back({table.Sql().oid, table.Sql().name});
+          views.emplace_back(table.Sql().oid, table.Sql().name);
         }
       });
     }

@@ -143,12 +143,7 @@ struct Macro {
 
 class PgProc final : public SystemTableScan<kPgProcSql> {
  public:
-  PgProc(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
-    : SystemTableScan{context, input} {
-    if (VisibleOnly()) {
-      _session.emplace(MakeSession(&context));
-    }
-  }
+  using SystemTableScan::SystemTableScan;
 
   static constexpr duckdb::idx_t kRows = 10000;
 
@@ -248,7 +243,8 @@ class PgProc final : public SystemTableScan<kPgProcSql> {
     return FunctionIsVisible(*_session, oid).value_or(false);
   }
 
-  std::optional<Session> _session;
+  std::optional<Session> _session =
+    VisibleOnly() ? std::optional{MakeSession(&Context())} : std::nullopt;
 };
 
 }  // namespace

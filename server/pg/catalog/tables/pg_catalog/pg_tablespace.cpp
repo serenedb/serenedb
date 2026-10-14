@@ -18,30 +18,18 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
 
-class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr duckdb::idx_t kRows = 10;
-
-  static constexpr std::tuple kSources{
-    ArraySource<SystemObject>{&LoadStatic<kSystemTablespaces>, {}, {}}};
-
-  static constexpr auto kTablespace = Shape<kSql, const SystemObject>(
-    Col<"oid">(&SystemObject::oid), Col<"spcname">(&SystemObject::name),
-    Col<"spcowner">([](const auto&) { return kRootUser; }));
-
-  void Row(const SystemObject& tablespace) { Emit<kTablespace>(tablespace); }
-};
+constexpr auto kTablespace = Shape<kPgTablespaceSql, const SystemObject>(
+  Col<"oid">(&SystemObject::oid), Col<"spcname">(&SystemObject::name),
+  Col<"spcowner">([](const auto&) { return kRootUser; }));
 
 }  // namespace
 
-SystemTable gPgTablespace = SystemTableOf<PgTablespace>();
+SystemTable gPgTablespace =
+  SystemTableOf<StaticTable<kTablespace, kSystemTablespaces>>();
 
 }  // namespace sdb::pg

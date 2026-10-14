@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
@@ -61,23 +60,13 @@ constexpr std::array kSizings{
   SqlSizing{25005, "MAXIMUM SYSTEM USER LENGTH", 63, kFullNames},
 };
 
-class InfoSqlSizing final : public SystemTableScan<kInfoSqlSizingSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<SqlSizing>{&LoadStatic<kSizings>, {}, {}}};
-
-  static constexpr auto kSizing = Shape<kSql, const SqlSizing>(
-    Col<"sizing_id">(&SqlSizing::id), Col<"sizing_name">(&SqlSizing::name),
-    Col<"supported_value">(&SqlSizing::value),
-    Col<"comments">(&SqlSizing::comments));
-
-  void Row(const SqlSizing& sizing) { Emit<kSizing>(sizing); }
-};
+constexpr auto kSizing = Shape<kInfoSqlSizingSql, const SqlSizing>(
+  Col<"sizing_id">(&SqlSizing::id), Col<"sizing_name">(&SqlSizing::name),
+  Col<"supported_value">(&SqlSizing::value),
+  Col<"comments">(&SqlSizing::comments));
 
 }  // namespace
 
-SystemTable gInfoSqlSizing = SystemTableOf<InfoSqlSizing>();
+SystemTable gInfoSqlSizing = SystemTableOf<StaticTable<kSizing, kSizings>>();
 
 }  // namespace sdb::pg

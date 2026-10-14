@@ -89,6 +89,19 @@ n
 statement ok
 DROP SERVER sfa_twice;
 
+statement ok
+ATTACH '${__TEST_DIR__}/sfa_new/5' AS sfa_session (TYPE serenedb, READ_ONLY);
+
+connection sfa_other
+query
+SELECT count(*) AS n FROM sfa_session.public.sfa_docs;
+----
+n
+2
+
+statement ok
+DETACH sfa_session;
+
 
 statement ok
 CREATE TABLE postgres.public.sfa_notes(id BIGINT PRIMARY KEY, body TEXT)

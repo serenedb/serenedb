@@ -15,7 +15,7 @@ Each kind of database has its own dedicated page:
 - [PostgreSQL](./postgres.md) — attach an external PostgreSQL database over a connection string.
 - [DuckDB](./duckdb.md) — attach a DuckDB database file, including remote files over HTTP and S3.
 
-Attachment definitions are not persisted between sessions: when a new session is launched, you have to re-attach to all databases. For a **persistent** attachment of a PostgreSQL or ClickHouse instance, a DuckDB file or a SereneDB database directory — one that survives restart, has an owner and is guarded by `USAGE` privileges — use [`CREATE SERVER`](../create_server/index.md) instead.
+An attachment belongs to the server, not to the session that made it: every session, in every database, sees it until `DETACH` or a restart of the server. For a **persistent** attachment of a PostgreSQL or ClickHouse instance, a DuckDB file or a SereneDB database directory — one that survives restart, has an owner and is guarded by `USAGE` privileges — use [`CREATE SERVER`](../create_server/index.md) instead.
 
 ## `ATTACH`
 

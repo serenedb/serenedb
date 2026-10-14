@@ -151,7 +151,7 @@ CREATE SERVER archive FOREIGN DATA WRAPPER serenedb_fdw
 SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
 ```
 
-`path` is required and names the database's directory inside the other server's data directory, `engine_v1/<database oid>`; on that server, `SELECT oid FROM pg_database WHERE datname = 'shop'` gives the oid. The database's definitions are read from that server's catalog log, `engine_v1/catalog.wal`, so a copy must keep it beside the database directory, both copied at the same moment. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY)` attaches the same directory for the current session only.
+`path` is required and names the database's directory inside the other server's data directory, `engine_v1/<database oid>`; on that server, `SELECT oid FROM pg_database WHERE datname = 'shop'` gives the oid. The database's definitions are read from that server's catalog log, `engine_v1/catalog.wal`, so a copy must keep it beside the database directory, both copied at the same moment. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY)` attaches the same directory until `DETACH` or a restart of the server.
 
 ### What a read-only database does
 

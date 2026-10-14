@@ -1,0 +1,300 @@
+# Where each deferred phrase shape is checked. Their answers are compared
+# with a positional index in phrase_deferred_matrix.test, which
+# tests/sqllogic/generators/sdb/pg/index/phrase_deferred_matrix.py
+# generates from the same rows.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdm_words AS split_text(case := 'lower') WITH (frequency)
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY pdm_syn AS
+    split_text(case := 'lower') | expand_solr_synonyms('car, automobile, auto')
+    WITH (frequency)
+
+statement ok
+CREATE TABLE pdm (id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+INSERT INTO pdm SELECT i, (SELECT string_agg(['quick', 'quack', 'quiet', 'brown', 'brawn', 'brow', 'fox', 'box', 'fix', 'the', 'a', 'dog', 'dot', 'red', 'car', 'auto', 'automobile', 'big'][1 + (hash(i, j) % 18)::INTEGER], ' ') FROM range(1 + (hash(i) % 12)::INTEGER) r(j)) FROM range(600) t(i)
+
+statement ok
+CREATE INDEX pdm_text ON pdm USING inverted (id, body pdm_words) INCLUDE (body)
+
+statement ok
+CREATE INDEX pdm_syn_text ON pdm USING inverted (id, body pdm_syn) INCLUDE (body)
+
+statement ok
+VACUUM (REFRESH_TABLE) pdm
+
+statement ok
+CREATE TABLE pdm_s (id INTEGER, body VARCHAR) WITH (storage = 'search')
+
+statement ok
+INSERT INTO pdm_s SELECT id, body FROM pdm
+
+statement ok
+VACUUM (REFRESH_TABLE) pdm_s
+
+statement ok
+CREATE INDEX pdm_s_text ON pdm_s USING inverted (id, body pdm_words)
+
+statement ok
+VACUUM (REFRESH_TABLE) pdm_s
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"qu* fox"~2')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: pdm_text                                  │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'fox'       │  │ Prefix: qu          │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                    │
+│ ╭─ Phrase ─────────────────────────────────╮     │
+│ │ Field: body(string)                      │     │
+│ │ Parts: Prefix:qu(0, 0); Term:fox(1, 1);  │     │
+│ │ Slop: 2                                  │     │
+│ │ Verify: table filter                     │     │
+│ ╰──────────────────────────────────────────╯     │
+│ Projections: id                                  │
+│ ~120 rows                                        │
+╰──────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"q?ick b*n fo*"~2')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────╮
+│ Index: pdm_text                                                           │
+│ Lookup: table                                                             │
+│ Index Filter:                                                             │
+│ ╭─ And ───────────────╮                                                   │
+│ ╰──────────┬──────────╯                                                   │
+│            ├────────────────────────┬────────────────────────╮            │
+│ ╭─ Automaton ─────────╮  ╭─ Automaton ─────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Pattern: q_ick      │  │ Pattern: b%n        │  │ Prefix: fo          │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                                             │
+│ ╭─ Phrase ──────────────────────────────────────────────────────╮         │
+│ │ Field: body(string)                                           │         │
+│ │ Parts:                                                        │         │
+│ │ Automaton:q_ick(0, 0); Automaton:b%n(1, 1); Prefix:fo(1, 1);  │         │
+│ │ Slop: 2                                                       │         │
+│ │ Verify: table filter                                          │         │
+│ ╰───────────────────────────────────────────────────────────────╯         │
+│ Projections: id                                                           │
+│ ~120 rows                                                                 │
+╰───────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"qu* fox"~2') AND body @@ 'the'
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: pdm_text                                   │
+│ Lookup: table                                     │
+│ Index Filter:                                     │
+│ ╭─ And ────────────────╮                          │
+│ ╰───────────┬──────────╯                          │
+│             ├────────────────────────╮            │
+│ ╭─ Terms ───┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string)  │  │ Field: body(string) │ │
+│ │ Values: 'fox', 'the' │  │ Prefix: qu          │ │
+│ ╰──────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                     │
+│ ╭─ Phrase ─────────────────────────────────╮      │
+│ │ Field: body(string)                      │      │
+│ │ Parts: Prefix:qu(0, 0); Term:fox(1, 1);  │      │
+│ │ Slop: 2                                  │      │
+│ │ Verify: table filter                     │      │
+│ ╰──────────────────────────────────────────╯      │
+│ Projections: id                                   │
+│ ~120 rows                                         │
+╰───────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ (to_tsquery('"qu* fox"~2'))::score('constant(1)')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
+│ Index: pdm_text                                       │
+│ Lookup: table                                         │
+│ Index Filter:                                         │
+│ ╭─ And ────────────────────╮                          │
+│ │ Merge: max               │                          │
+│ │ Score: constant(value=1) │                          │
+│ ╰─────────────┬────────────╯                          │
+│               ├──────────────────────────╮            │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string)      │  │ Field: body(string) │ │
+│ │ Values: 'fox'            │  │ Prefix: qu          │ │
+│ ╰──────────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                         │
+│ ╭─ Phrase ─────────────────────────────────╮          │
+│ │ Field: body(string)                      │          │
+│ │ Parts: Prefix:qu(0, 0); Term:fox(1, 1);  │          │
+│ │ Slop: 2                                  │          │
+│ │ Verify: table filter                     │          │
+│ │ Score: constant(value=1)                 │          │
+│ ╰──────────────────────────────────────────╯          │
+│ Projections: id                                       │
+│ ~120 rows                                             │
+╰───────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ (to_tsquery('"qu* fox"~2') || 'dog')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────╮
+│ Index: pdm_text                                                       │
+│ Lookup: table                                                         │
+│ Index Filter:                                                         │
+│ ╭─ Or ────────────────╮                                               │
+│ ╰──────────┬──────────╯                                               │
+│            ├───────────────────────────────────╮                      │
+│ ╭─ Terms ──┴──────────╮  ╭─ Phrase ────────────┴────────────────────╮ │
+│ │ Field: body(string) │  │ Field: body(string)                      │ │
+│ │ Values: 'dog'       │  │ Parts: Prefix:qu(0, 0); Term:fox(1, 1);  │ │
+│ ╰─────────────────────╯  │ Slop: 2                                  │ │
+│                          │ Verify: inline                           │ │
+│                          ╰──────────────────────────────────────────╯ │
+│ Projections: id                                                       │
+│ ~120 rows                                                             │
+╰───────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ (ts_phrase('quick') ## ts_between('b', 'c', true, false))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: pdm_text                                  │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Range ──┴──────────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'quick'     │  │ Range: >=b, <c      │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                    │
+│ ╭─ Phrase ────────────────────────────────╮      │
+│ │ Field: body(string)                     │      │
+│ │ Parts:                                  │      │
+│ │ Term:quick(0, 0); Range: [b..c)(1, 1);  │      │
+│ │ Verify: table filter                    │      │
+│ ╰─────────────────────────────────────────╯      │
+│ Projections: id                                  │
+│ ~120 rows                                        │
+╰──────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_syn_text WHERE body @@ to_tsquery('"red au*"~2')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: pdm_syn_text                          │
+│ Lookup: table                                │
+│ Index Filter:                                │
+│ ╭─ Phrase ─────────────────────────────────╮ │
+│ │ Field: body(string)                      │ │
+│ │ Parts: Term:red(0, 0); Prefix:au(1, 1);  │ │
+│ │ Slop: 2                                  │ │
+│ │ Verify: inline                           │ │
+│ ╰──────────────────────────────────────────╯ │
+│ Projections: id                              │
+│ ~120 rows                                    │
+╰──────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_syn_text WHERE body @@ (ts_phrase('red') ## ts_starts_with('au'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: pdm_syn_text                              │
+│ Lookup: table                                    │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'red'       │  │ Prefix: au          │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                    │
+│ ╭─ Phrase ─────────────────────────────────╮     │
+│ │ Field: body(string)                      │     │
+│ │ Parts: Term:red(0, 0); Prefix:au(1, 1);  │     │
+│ │ Verify: table filter                     │     │
+│ ╰──────────────────────────────────────────╯     │
+│ Projections: id                                  │
+│ ~120 rows                                        │
+╰──────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM pdm_s_text WHERE body @@ to_tsquery('"qu* fox"~2')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────────╮
+│ Index: pdm_s_text                                │
+│ Lookup: search                                   │
+│ Index Filter:                                    │
+│ ╭─ And ───────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'fox'       │  │ Prefix: qu          │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Table Filter:                                    │
+│ ╭─ Phrase ─────────────────────────────────╮     │
+│ │ Field: body(string)                      │     │
+│ │ Parts: Prefix:qu(0, 0); Term:fox(1, 1);  │     │
+│ │ Slop: 2                                  │     │
+│ │ Verify: table filter                     │     │
+│ ╰──────────────────────────────────────────╯     │
+│ Projections: id                                  │
+│ ~120 rows                                        │
+╰──────────────────────────────────────────────────╯
+
+statement ok
+SET sdb_levenshtein_max_terms = 0
+
+query
+EXPLAIN SELECT id FROM pdm_text WHERE body @@ to_tsquery('"quik~1 fox"~2')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
+│ Index: pdm_text                                       │
+│ Lookup: table                                         │
+│ Index Filter:                                         │
+│ ╭─ And ───────────────╮                               │
+│ ╰──────────┬──────────╯                               │
+│            ├────────────────────────╮                 │
+│ ╭─ Terms ──┴──────────╮  ╭─ Levenshtein ───────╮      │
+│ │ Field: body(string) │  │ Field: body(string) │      │
+│ │ Values: 'fox'       │  │ Target: quik        │      │
+│ ╰─────────────────────╯  │ Max Terms: 0        │      │
+│                          ╰─────────────────────╯      │
+│ Table Filter:                                         │
+│ ╭─ Phrase ──────────────────────────────────────────╮ │
+│ │ Field: body(string)                               │ │
+│ │ Parts:                                            │ │
+│ │ LevenshteinAutomaton:quik(0, 0); Term:fox(1, 1);  │ │
+│ │ Slop: 2                                           │ │
+│ │ Verify: table filter                              │ │
+│ ╰───────────────────────────────────────────────────╯ │
+│ Projections: id                                       │
+│ ~120 rows                                             │
+╰───────────────────────────────────────────────────────╯
+
+statement ok
+RESET sdb_levenshtein_max_terms

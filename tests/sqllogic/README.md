@@ -43,6 +43,20 @@ Example:
 ./tests/sqllogic/run.sh --single-port 7777 --test 'tests/sqllogic/sdb/pg/simple_any/setop.test' --debug true
 ```
 
+## Generated Tests
+
+A test of thousands of similar cases isn't committed: `run.sh` writes it before
+every run. Each `generators/<path>.py` prints the test that `run.sh` saves as
+`<path>.test`, so `generators/sdb/pg/index/phrase_deferred_matrix.py` produces
+`sdb/pg/index/phrase_deferred_matrix.test`. Generated tests are listed in
+`.gitignore`; edit the generator, not its output.
+
+A generator can't ask the server for expected results, so each case states its
+own: it compares two ways of answering the same query and expects no mismatches,
+or it expects an error the generator can predict. Answers only the server knows,
+such as query plans, go into a committed test next to the generated one, like
+`sdb/pg/index/phrase_deferred_plans.test`.
+
 ## Recovery Tests
 
 Recovery tests intentionally crash serened (via `SET sdb_faults = '...'`) and

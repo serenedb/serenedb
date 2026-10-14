@@ -1,0 +1,316 @@
+# Where each deferred geo shape is checked. Their answers are compared with
+# the same predicates checked inline in geo_deferred_matrix.test, which
+# tests/sqllogic/generators/sdb/pg/index/geo_deferred_matrix.py generates.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gdm_shape AS encode_geojson()
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gdm_s2point AS encode_geojson(coding := 's2point')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gdm_u32 AS encode_geojson(coding := 's2latlngu32')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY gdm_geopoint AS encode_geopoint('lat', 'lng')
+
+statement ok
+CREATE TABLE gdm (id INTEGER PRIMARY KEY, geo JSON)
+
+statement ok
+INSERT INTO gdm VALUES
+    (0, '{"type":"Point","coordinates":[37.603,55.718]}'),
+    (1, '{"type":"Polygon","coordinates":[[[37.604,55.719],[37.61,55.719],[37.61,55.724],[37.604,55.724],[37.604,55.719]]]}'),
+    (2, '{"type":"LineString","coordinates":[[37.59,55.71],[37.62,55.73]]}'),
+    (3, '{"type":"Point","coordinates":[1.5,2.5]}')
+
+statement ok
+CREATE INDEX gdm_shape_idx ON gdm USING inverted (id, geo gdm_shape)
+
+statement ok
+CREATE INDEX gdm_u32_idx ON gdm USING inverted (id, geo gdm_u32)
+
+statement ok
+VACUUM (REFRESH_TABLE) gdm
+
+statement ok
+CREATE TABLE gdm_g (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'))
+
+statement ok
+INSERT INTO gdm_g VALUES
+    (0, 'POINT(37.603 55.718)'::GEOMETRY('OGC:CRS84')),
+    (1, 'POLYGON((37.604 55.719, 37.61 55.719, 37.61 55.724, 37.604 55.724, 37.604 55.719))'::GEOMETRY('OGC:CRS84'))
+
+statement ok
+CREATE INDEX gdm_g_s2point_idx ON gdm_g USING inverted (id, geo gdm_s2point)
+
+statement ok
+VACUUM (REFRESH_TABLE) gdm_g
+
+statement ok
+CREATE TABLE gdm_p (id INTEGER PRIMARY KEY, geo JSON)
+
+statement ok
+INSERT INTO gdm_p VALUES (0, '{"lat":55.718,"lng":37.603}'), (1, '{"lat":2.5,"lng":1.5}')
+
+statement ok
+CREATE INDEX gdm_p_idx ON gdm_p USING inverted (id, geo gdm_geopoint)
+
+statement ok
+VACUUM (REFRESH_TABLE) gdm_p
+
+statement ok
+CREATE TABLE gdm_s (id INTEGER, geo JSON) WITH (storage = 'search')
+
+statement ok
+CREATE INDEX gdm_s_idx ON gdm_s USING inverted (id, geo gdm_shape)
+
+statement ok
+INSERT INTO gdm_s SELECT id, geo FROM gdm
+
+statement ok
+VACUUM (REFRESH_TABLE) gdm_s
+
+query
+EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_shape_idx     │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Contains('{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}', geo)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_shape_idx     │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Contains       │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Contains         │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Contains(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_shape_idx     │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: IsContained    │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: IsContained      │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Distance_Between(geo, '{"type":"Point","coordinates":[37.61,55.722]}', 100, 2500, true, false)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_shape_idx     │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo Distance ──────╮  │
+│ │ Field: geo(string)  │  │
+│ │ Range: >=100, <2500 │  │
+│ │ Verify: false       │  │
+│ ╰─────────────────────╯  │
+│ Table Filter:            │
+│ ╭─ Geo Distance ───────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Range: >=100, <2500  │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.61,55.722]}') < 2500
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_shape_idx     │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo Distance ─────╮   │
+│ │ Field: geo(string) │   │
+│ │ Range: *, <2500    │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo Distance ───────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Range: *, <2500      │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_u32_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}') AND id % 3 = 0
+----
+QUERY PLAN
+╭─ FILTER ─────────────────╮
+│ Expression: (id % 3) = 0 │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_u32_idx       │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_shape_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}') OR id < 0
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────╮
+│ Index: gdm_shape_idx                           │
+│ Lookup: table                                  │
+│ Index Filter:                                  │
+│ ╭─ Or ───────────────╮                         │
+│ ╰──────────┬─────────╯                         │
+│            ├───────────────────────╮           │
+│ ╭─ Geo ────┴─────────╮  ╭─ Granular Range ───╮ │
+│ │ Field: geo(string) │  │ Field: id(numeric) │ │
+│ │ Op: Intersects     │  │ Range: <0          │ │
+│ │ Shape: S2Polygon   │  ╰────────────────────╯ │
+│ │ Verify: inline     │                         │
+│ ╰────────────────────╯                         │
+│ Projections: id                                │
+│ ~1 row                                         │
+╰────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_g_s2point_idx WHERE ST_Intersects(geo, 'POLYGON((37.6 55.715, 37.606 55.715, 37.606 55.721, 37.6 55.721, 37.6 55.715))'::GEOMETRY('OGC:CRS84'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_g_s2point_idx │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_p_idx WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.61,55.722]}') <= 2500
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_p_idx         │
+│ Lookup: table            │
+│ Index Filter:            │
+│ ╭─ Geo Distance ─────╮   │
+│ │ Field: geo(string) │   │
+│ │ Range: *, <=2500   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo Distance ───────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Range: *, <=2500     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM gdm_s_idx WHERE ST_Intersects(geo, '{"type":"Polygon","coordinates":[[[37.6,55.715],[37.606,55.715],[37.606,55.721],[37.6,55.721],[37.6,55.715]]]}')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: gdm_s_idx         │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Geo ──────────────╮   │
+│ │ Field: geo(string) │   │
+│ │ Op: Intersects     │   │
+│ │ Shape: S2Polygon   │   │
+│ │ Verify: false      │   │
+│ ╰────────────────────╯   │
+│ Table Filter:            │
+│ ╭─ Geo ────────────────╮ │
+│ │ Field: geo(string)   │ │
+│ │ Op: Intersects       │ │
+│ │ Shape: S2Polygon     │ │
+│ │ Verify: table filter │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯

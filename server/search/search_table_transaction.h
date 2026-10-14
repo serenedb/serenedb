@@ -131,13 +131,14 @@ class SearchTableTransaction {
 
   template<typename Factory>
   std::shared_ptr<irs::DirectoryReader> EnsureSearchTableReader(
-    duckdb::idx_t shard_id, Factory&& make_reader) {
-    auto it = _readers.find(shard_id);
+    duckdb::idx_t database_id, duckdb::idx_t shard_id, Factory&& make_reader) {
+    const std::pair key{database_id, shard_id};
+    auto it = _readers.find(key);
     if (it == _readers.end()) {
-      it = _readers
-             .emplace(shard_id,
-                      std::make_shared<irs::DirectoryReader>(make_reader()))
-             .first;
+      it =
+        _readers
+          .emplace(key, std::make_shared<irs::DirectoryReader>(make_reader()))
+          .first;
     }
     return it->second;
   }
@@ -153,8 +154,8 @@ class SearchTableTransaction {
 
   void ResetReaders() noexcept { _readers.clear(); }
 
-  void ResetReader(duckdb::idx_t shard_id) noexcept {
-    _readers.erase(shard_id);
+  void ResetReader(duckdb::idx_t database_id, duckdb::idx_t shard_id) noexcept {
+    _readers.erase(std::pair{database_id, shard_id});
   }
 
  private:
@@ -174,7 +175,7 @@ class SearchTableTransaction {
     const std::shared_ptr<SearchTable>& shard);
 
   irs::containers::NodeHashMap<duckdb::idx_t, SearchShardWrites> _writes;
-  irs::containers::FlatHashMap<duckdb::idx_t,
+  irs::containers::FlatHashMap<std::pair<duckdb::idx_t, duckdb::idx_t>,
                                std::shared_ptr<irs::DirectoryReader>>
     _readers;
   LocalTableChanges _changes;

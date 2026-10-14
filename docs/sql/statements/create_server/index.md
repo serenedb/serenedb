@@ -8,7 +8,7 @@ import RailroadSource from './diagram.js';
 
 import DocCallout from "@site/src/components/DocCallout";
 
-A **foreign server** names a remote database — ClickHouse or PostgreSQL — together with the connection details needed to reach it, and stores that definition in the catalog. Once created, the server is a catalog you query like any other: `server_name.schema.table`.
+A **foreign server** names a remote database — ClickHouse or PostgreSQL — or a database on disk — a DuckDB file or the directory of a SereneDB database — together with what is needed to reach it, and stores that definition in the catalog. Once created, the server is a catalog you query like any other: `server_name.schema.table`.
 
 The difference from [`ATTACH`](../attach/index.md) is persistence and access control. An attachment is session-level state that disappears when the server process restarts, and it carries no privileges of its own. A foreign server is **catalog DDL**: it survives restart, re-connects automatically on boot, has an owner, and is protected by `USAGE` privileges.
 
@@ -42,13 +42,15 @@ CREATE SERVER orders FOREIGN DATA WRAPPER postgres_fdw
 
 ### Foreign-data wrappers
 
-The wrapper name selects the connector. Three are implemented:
+The wrapper name selects the connector. Five are implemented:
 
 | `FOREIGN DATA WRAPPER` | Connects to |
 |---|---|
 | `clickhouse_fdw` | ClickHouse, over its native protocol |
+| `duckdb_fdw` | A DuckDB database file; see [DuckDB files](#duckdb-files) |
 | `iceberg_fdw` | An Iceberg REST catalog; its options and authentication are on [Iceberg Catalog Authentication](../../../configuration/iceberg_authentication.md) |
 | `postgres_fdw` | PostgreSQL, over the wire protocol |
+| `serenedb_fdw` | The directory of a database written by another SereneDB server, read-only; see [Read-only SereneDB databases](#read-only-serenedb-databases) |
 
 Any other wrapper name is rejected at `CREATE SERVER` time.
 
@@ -124,6 +126,52 @@ CALL enable_logging('ClickHouseQueryLog');
 SELECT id, val FROM analytics.events.pageviews ORDER BY id;
 SELECT query, duration_ms FROM sdb_logs_parsed('ClickHouseQueryLog');
 ```
+
+## DuckDB files
+
+`duckdb_fdw` attaches a DuckDB database file — the file [`ATTACH`](../attach/duckdb.md) opens — as a server, so it is re-attached on boot and guarded by `USAGE`. `path` names the file and is required; `read_only 'true'` opens it for reading only:
+
+```sql
+CREATE SERVER sales FOREIGN DATA WRAPPER duckdb_fdw
+  OPTIONS (path '/data/sales.duckdb', read_only 'true');
+
+SELECT count(*) FROM sales.main.orders;
+```
+
+Without `read_only` a local file is opened for reading and writing, and a remote one (`https://`, `s3://`, …) for reading only.
+
+## Read-only SereneDB databases
+
+`serenedb_fdw` attaches the directory of a database written by another SereneDB server — a copy of its data directory, a disk snapshot, or a volume of a server that is stopped — and serves it read-only. Its tables, views, inverted indexes and search tables are queried as usual:
+
+```sql
+CREATE SERVER archive FOREIGN DATA WRAPPER serenedb_fdw
+  OPTIONS (path '/mnt/snapshots/shop/engine_v1/16390');
+
+SELECT id FROM archive.public.docs WHERE body @@ 'invoice';
+```
+
+`path` is required and names the database's directory inside the other server's data directory, `engine_v1/<database oid>`; on that server, `SELECT oid FROM pg_database WHERE datname = 'shop'` gives the oid. The database's definitions are read from that server's catalog log, `engine_v1/catalog.wal`, so a copy must keep it beside the database directory. `ATTACH '<path>' AS archive (TYPE serenedb, READ_ONLY)` attaches the same directory for the current session only.
+
+### What a read-only database does
+
+- **Nothing on disk changes.** The database file and the catalog log are opened read-only, and inverted indexes and search tables without a writer. No refresh, compaction or cleanup runs on them, and nothing is written when the server stops.
+- **It serves the last checkpoint.** The write-ahead log is not replayed, so rows written after the database's last checkpoint are not visible, and neither are search-table rows that had not been refreshed. Stop the server cleanly, or run `CHECKPOINT <database>` while nothing writes to it, before copying the directory.
+- **Writes are refused.** `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`, DDL, `CREATE INDEX` and `nextval` fail as on any read-only attachment, and `VACUUM` and `REINDEX` fail with `it is attached read-only`.
+- **`USAGE` on the server is the only privilege checked.** Owners and grants recorded in the directory belong to the other server's roles and are not used.
+- **`DROP SERVER` only detaches.** It never removes files from the directory.
+
+### Nothing may write the directory
+
+A read-only database relies on nothing writing its directory while it is attached: it runs no recovery and checks nothing for consistency. Attach a copy, a disk snapshot or the directory of a stopped server.
+
+`CREATE SERVER` refuses a directory:
+
+- that a running server holds open — its database file is locked,
+- whose name is not a database oid, or that has no `catalog.wal` beside it, or
+- that belongs to the attaching server itself, or is already attached by it.
+
+Several SereneDB servers can attach the same directory at once.
 
 ## Persistence and boot replay
 
@@ -231,7 +279,7 @@ The `USAGE` check is enforced wherever the server is referenced, including from 
 - **No `USER MAPPING`.** Credentials live in the server's `OPTIONS` and one shared connection serves every authorized role, the way a ClickHouse connection is normally shared. `CREATE USER MAPPING` and `DROP USER MAPPING` are syntax errors; per-role remote identities are not available.
 - **No `CREATE FOREIGN TABLE`.** Remote tables are reached through the server's catalog (`server.schema.table`), discovered live, rather than declared one by one.
 - **No `ALTER SERVER`, no `CREATE OR REPLACE SERVER`.** Drop and recreate to change options.
-- **No `CREATE FOREIGN DATA WRAPPER`.** The two wrappers are built in.
+- **No `CREATE FOREIGN DATA WRAPPER`.** The wrappers are built in.
 - **`pg_foreign_server` is superuser-only**, and its option values are unredacted (see above).
 - **`CREATE SERVER` connects eagerly**, so it fails on an unreachable remote instead of deferring the error to first use.
 

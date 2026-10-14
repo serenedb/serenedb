@@ -83,7 +83,7 @@ struct SearchTable::ReplaySession {
 };
 
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
-                         bool in_memory, duckdb::idx_t db_id,
+                         bool in_memory, bool read_only, duckdb::idx_t db_id,
                          duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
                          catalog::CompressionByColumn compression)
@@ -100,13 +100,18 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _topk_scorer = MakeScorer(*_topk_options);
   }
   RebuildConfig(std::vector<IndexConfig>{}, std::nullopt);
-  OpenWriter(in_memory);
+  if (read_only) {
+    OpenReader();
+  } else {
+    OpenWriter(in_memory);
+  }
   ApplyOptions(options);
 }
 
 SearchTable::~SearchTable() {
   _replay.reset();
   _writer.reset();
+  _reader = {};
   _dir.reset();
   if (!_dropped.load(std::memory_order_acquire)) {
     return;
@@ -155,7 +160,24 @@ void SearchTable::OpenWriter(bool in_memory) {
   }
 }
 
+void SearchTable::OpenReader() {
+  irs::ResourceManagementOptions resource_manager;
+  auto opened = OpenStorageDirectory(*_directory, GetTableId(), false, false,
+                                     resource_manager);
+  _dir = std::move(opened.directory);
+  _absent = opened.absent;
+  irs::IndexReaderOptions reader_options;
+  reader_options.db = &irs::DuckDBEngine::Instance().instance();
+  reader_options.scorer = _topk_scorer.get();
+  _reader = irs::DirectoryReader{
+    *_dir, reader_options,
+    [](duckdb::BinaryDeserializer& in) { IndexStamp::Read(in); }};
+}
+
 void SearchTable::StartTasks() {
+  if (!_writer) {
+    return;
+  }
 #ifdef SDB_DEV
   const bool already = _tasks_started.exchange(true);
   SDB_ASSERT(!already, "SearchTable::StartTasks called twice for table ",
@@ -181,8 +203,8 @@ ResultWithTime SearchTable::RefreshUnsafe(
 }
 
 StoreStats SearchTable::GetStats() const {
-  auto stats = StoreStats::FromReader(_writer->GetSnapshot());
-  stats.numBufferedDocs = _writer->BufferedDocs();
+  auto stats = StoreStats::FromReader(GetDirectoryReader());
+  stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
   _maintenance.Fill(stats);
   return stats;
 }

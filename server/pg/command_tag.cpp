@@ -195,10 +195,9 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
       return make("ANALYZE");
     case StatementType::ATTACH_STATEMENT:
       if (unbound) {
-        const auto& options =
-          unbound->Cast<duckdb::AttachStatement>().info->options;
-        const auto type = options.find("type");
-        if (type != options.end() &&
+        const auto& info = *unbound->Cast<duckdb::AttachStatement>().info;
+        const auto type = info.options.find("type");
+        if (info.path.empty() && type != info.options.end() &&
             absl::EqualsIgnoreCase(type->second.ToString(),
                                    catalog::SereneDBCatalog::kStorageType)) {
           return make("CREATE DATABASE");

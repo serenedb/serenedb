@@ -59,7 +59,7 @@ namespace sdb::search {
 
 InvertedIndexStorage::InvertedIndexStorage(
   std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-  duckdb::idx_t db_id, duckdb::idx_t index_id,
+  bool read_only, duckdb::idx_t db_id, duckdb::idx_t index_id,
   const catalog::InvertedIndexSettings& options,
   const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new)
   : _index_id{index_id},
@@ -81,6 +81,23 @@ InvertedIndexStorage::InvertedIndexStorage(
                                      resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
+
+  if (read_only) {
+    irs::IndexReaderOptions reader_options;
+    reader_options.db = &irs::DuckDBEngine::Instance().instance();
+    if (const auto& scorer_options = top_k_scorer) {
+      _topk_scorer = MakeScorer(*scorer_options);
+      reader_options.scorer = _topk_scorer.get();
+    }
+    IndexStamp stamp;
+    irs::DirectoryReader reader{
+      *_dir, reader_options,
+      [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
+    SetFileManifest(stamp.manifest);
+    StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
+      std::move(reader), std::move(stamp.manifest)));
+    return;
+  }
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
@@ -208,7 +225,7 @@ absl::Status InvertedIndexStorage::Refresh(
 StoreStats InvertedIndexStorage::UpdateStatsUnsafe(
   InvertedIndexSnapshotPtr inverted_index_snapshot) const {
   auto stats = StoreStats::FromReader(inverted_index_snapshot->reader);
-  stats.numBufferedDocs = _writer->BufferedDocs();
+  stats.numBufferedDocs = _writer ? _writer->BufferedDocs() : 0;
   _maintenance.Fill(stats);
   return stats;
 }

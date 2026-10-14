@@ -30,6 +30,8 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <iresearch/utils/debugging.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -53,6 +55,7 @@ void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
   const std::string_view type = absl::StripSuffix(_fdw_name, "_fdw");
   duckdb::AttachInfo info;
   info.name = name;
+  auto access_mode = duckdb::AccessMode::READ_WRITE;
   if (type == "clickhouse") {
     info.path = ConnectionString(_options);
   } else {
@@ -62,9 +65,19 @@ void ForeignServerCatalogEntry::Attach(duckdb::ClientContext& context) const {
     if (type == "iceberg") {
       auto warehouse = info.options.extract("warehouse");
       info.path = warehouse ? warehouse.mapped().ToString() : "";
+    } else if (type == "duckdb" || type == "serenedb") {
+      auto path = info.options.extract("path");
+      if (!path) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_FDW_OPTION_NAME_NOT_FOUND),
+                        ERR_MSG("option \"path\" is required for ", _fdw_name));
+      }
+      info.path = path.mapped().ToString();
+      access_mode = type == "serenedb" ? duckdb::AccessMode::READ_ONLY
+                                       : duckdb::AccessMode::AUTOMATIC;
     }
   }
-  catalog::Attach(context, info, type, duckdb::AttachVisibility::SHOWN);
+  catalog::Attach(context, info, type, access_mode,
+                  duckdb::AttachVisibility::SHOWN);
 }
 
 void ForeignServerCatalogEntry::OnDrop() {

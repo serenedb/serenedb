@@ -1,0 +1,103 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.sfa_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+INSERT INTO postgres.public.sfa_docs VALUES (1, 'alpha');
+
+statement ok
+CHECKPOINT postgres;
+
+statement ok
+INSERT INTO postgres.public.sfa_docs VALUES (2, 'beta');
+
+system ok
+rm -rf $__TEST_DIR__/sfa_wal && mkdir $__TEST_DIR__/sfa_wal && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_wal/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_wal/catalog.wal
+
+query
+SELECT size > 0 AS has_entries FROM read_blob('${__TEST_DIR__}/sfa_wal/5/data.db.wal');
+----
+has_entries
+t
+
+statement ok
+CREATE TABLE sfa_files AS
+SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_wal/**');
+
+statement ok
+CREATE SERVER sfa_wal FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_wal/5');
+
+query
+SELECT id, body FROM sfa_wal.public.sfa_docs ORDER BY id;
+----
+id	body
+1	alpha
+
+statement ok
+DROP SERVER sfa_wal;
+
+query
+SELECT count(*) AS changed FROM (
+  (SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_wal/**')
+   EXCEPT SELECT * FROM sfa_files)
+  UNION ALL
+  (SELECT * FROM sfa_files
+   EXCEPT SELECT filename, size, last_modified FROM read_blob('${__TEST_DIR__}/sfa_wal/**')));
+----
+changed
+0
+
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfa_new && mkdir $__TEST_DIR__/sfa_new && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_new/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_new/catalog.wal
+
+statement ok
+CREATE SERVER sfa_new FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new/5');
+
+query
+SELECT id, body FROM sfa_new.public.sfa_docs ORDER BY id;
+----
+id	body
+1	alpha
+2	beta
+
+statement error is already attached as "sfa_new"
+CREATE SERVER sfa_twice FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new/5');
+
+statement ok
+DROP SERVER sfa_new;
+
+
+statement error option "path" is required for serenedb_fdw
+CREATE SERVER sfa_nopath FOREIGN DATA WRAPPER serenedb_fdw;
+
+statement error could not open database directory
+CREATE SERVER sfa_missing FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nowhere');
+
+statement error it is a database of this server
+CREATE SERVER sfa_own FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${SDB_DATADIR}/engine_v1/5');
+
+statement error a SereneDB database is created with CREATE DATABASE
+CREATE SERVER sfa_rw FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_new/5', read_only 'false');
+
+system ok
+rm -rf $__TEST_DIR__/sfa_named && mkdir $__TEST_DIR__/sfa_named && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_named/shop && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfa_named/catalog.wal
+
+statement error its name is not a database oid
+CREATE SERVER sfa_named FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_named/shop');
+
+system ok
+rm -rf $__TEST_DIR__/sfa_nolog && mkdir $__TEST_DIR__/sfa_nolog && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfa_nolog/5
+
+statement error could not open the catalog log
+CREATE SERVER sfa_nolog FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfa_nolog/5');
+
+query
+SELECT count(*) AS n FROM duckdb_databases() WHERE database_name LIKE 'sfa_%';
+----
+n
+0

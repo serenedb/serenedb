@@ -1,0 +1,114 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE postgres.public.sfx_docs(id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX sfx_docs_idx ON postgres.public.sfx_docs USING inverted(id, body)
+  WITH (refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO postgres.public.sfx_docs VALUES (1, 'alpha'), (2, 'beta');
+
+statement ok
+CREATE TABLE postgres.public.sfx_notes(id BIGINT PRIMARY KEY, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO postgres.public.sfx_notes VALUES (1, 'gamma');
+
+statement ok
+VACUUM (REFRESH_TABLE) postgres.public.sfx_notes;
+
+statement ok
+CREATE SEQUENCE postgres.public.sfx_seq;
+
+statement count 2
+COPY (SELECT 1 AS id, 'alpha' AS body UNION ALL SELECT 2, 'beta')
+TO '${__TEST_DIR__}/sfx_src.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW postgres.public.sfx_view AS SELECT * FROM read_parquet('${__TEST_DIR__}/sfx_src.parquet');
+
+statement ok
+CREATE INDEX sfx_view_idx ON postgres.public.sfx_view USING inverted(id, body);
+
+statement ok
+CHECKPOINT postgres;
+
+system ok
+rm -rf $__TEST_DIR__/sfx_snap && mkdir $__TEST_DIR__/sfx_snap && cp -r ${SDB_DATADIR}/engine_v1/5 $__TEST_DIR__/sfx_snap/5 && cp ${SDB_DATADIR}/engine_v1/catalog.wal $__TEST_DIR__/sfx_snap/catalog.wal
+
+statement ok
+CREATE SERVER sfx_snap FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfx_snap/5');
+
+
+statement error attached in read-only mode
+INSERT INTO sfx_snap.public.sfx_docs VALUES (3, 'delta');
+
+statement error attached in read-only mode
+UPDATE sfx_snap.public.sfx_docs SET body = 'changed' WHERE id = 1;
+
+statement error attached in read-only mode
+DELETE FROM sfx_snap.public.sfx_docs WHERE id = 1;
+
+statement error attached in read-only mode
+INSERT INTO sfx_snap.public.sfx_notes VALUES (2, 'delta');
+
+statement error attached in read-only mode
+DELETE FROM sfx_snap.public.sfx_notes;
+
+statement error attached in read-only mode
+TRUNCATE sfx_snap.public.sfx_notes;
+
+statement error attached in read-only mode
+CREATE TABLE sfx_snap.public.sfx_more(a INTEGER);
+
+statement error cannot CREATE INDEX on sfx_snap
+CREATE INDEX sfx_more_idx ON sfx_snap.public.sfx_docs USING inverted(body);
+
+statement error attached in read-only mode
+DROP TABLE sfx_snap.public.sfx_docs;
+
+statement error attached in read-only mode
+ALTER TABLE sfx_snap.public.sfx_docs ADD COLUMN extra INTEGER;
+
+statement error attached in read-only mode
+SELECT nextval('sfx_snap.public.sfx_seq');
+
+statement error cannot run VACUUM .* on database "sfx_snap": it is attached read-only
+VACUUM (REFRESH_TABLE) sfx_snap.public.sfx_notes;
+
+statement error cannot run VACUUM .* on database "sfx_snap": it is attached read-only
+VACUUM (COMPACT_TABLE) sfx_snap.public.sfx_docs;
+
+statement error cannot run VACUUM .* on database "sfx_snap": it is attached read-only
+VACUUM (REFRESH_DATABASE) sfx_snap;
+
+statement error its database is attached read-only
+REINDEX INDEX sfx_snap.public.sfx_view_idx;
+
+query
+SELECT id FROM sfx_snap.public.sfx_view_idx WHERE body @@ 'beta';
+----
+id
+2
+
+statement ok
+VACUUM (REFRESH_ALL);
+
+
+query
+SELECT (SELECT count(*) FROM sfx_snap.public.sfx_docs) AS docs, (SELECT count(*) FROM sfx_snap.public.sfx_notes) AS notes;
+----
+docs	notes
+2	1
+
+query
+SELECT id FROM sfx_snap.public.sfx_docs_idx WHERE body @@ 'alpha';
+----
+id
+1
+
+statement ok
+DROP SERVER sfx_snap;

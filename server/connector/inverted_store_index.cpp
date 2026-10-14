@@ -934,7 +934,9 @@ duckdb::unique_ptr<duckdb::BoundIndex> InvertedStoreIndex::Create(
     input, index_id, index_entry.table_oid, index_entry.Storage(),
     index_entry.Config(), index_entry.ResolveTokenizers(input.context),
     static_cast<bool>(index_entry.where_clause));
-  index->_replay = std::make_unique<ReplaySession>(*index, input.context);
+  if (!index_entry.Storage()->ReadOnly()) {
+    index->_replay = std::make_unique<ReplaySession>(*index, input.context);
+  }
   return std::move(index);
 }
 
@@ -967,7 +969,7 @@ PublishedInvertedIndex PublishInvertedIndex(
   const auto options = catalog::ResolveSettings(entry.options);
   auto storage = search::InvertedIndexStorage::Create(
     entry.catalog.Cast<catalog::SereneDBCatalog>().Directory(),
-    entry.catalog.InMemory(), entry.catalog.GetOid(), entry.oid, options,
+    entry.catalog.InMemory(), false, entry.catalog.GetOid(), entry.oid, options,
     entry.Config()->top_k_scorer, /*is_new=*/true);
   storage->ApplyOptions(options);
   entry.AdoptStorage(storage);

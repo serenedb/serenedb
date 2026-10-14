@@ -35,6 +35,7 @@
 #include <duckdb/storage/table/data_table_info.hpp>
 #include <duckdb/storage/table/index_entry.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
+#include <filesystem>
 #include <iresearch/utils/debugging.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -42,6 +43,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
+#include <system_error>
 #include <vector>
 
 #include "catalog/boot.h"
@@ -63,11 +65,55 @@
 namespace sdb::connector {
 namespace {
 
+duckdb::unique_ptr<duckdb::Catalog> AttachReadOnly(
+  duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
+  duckdb::AttachInfo& info, duckdb::AttachOptions& options) {
+  std::error_code ec;
+  const auto path = std::filesystem::canonical(info.path, ec);
+  if (ec) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                    ERR_MSG("could not open database directory \"", info.path,
+                            "\": ", ec.message()));
+  }
+  const auto engine_dir = std::filesystem::canonical(
+    catalog::ClusterLayout(catalog::ClusterOf(context).GetAttached())
+      .EngineDir(),
+    ec);
+  if (!ec && path.parent_path() == engine_dir) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                    ERR_MSG("cannot attach \"", info.path,
+                            "\" read-only: it is a database of this server"));
+  }
+  for (const auto& attached :
+       duckdb::DatabaseManager::Get(context).GetDatabases()) {
+    auto& other = attached->GetCatalog();
+    if (other.GetCatalogType() ==
+          catalog::SereneDBCatalog::kReadOnlyStorageType &&
+        other.Cast<catalog::SereneDBCatalog>().Directory()->Path() == path) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
+                      ERR_MSG("database directory \"", info.path,
+                              "\" is already attached as \"",
+                              attached->GetName().GetIdentifierName(), "\""));
+    }
+  }
+  auto directory = std::make_shared<catalog::DatabaseDirectory>(path);
+  info.path = directory->DataFile();
+  options.defer_storage_load = true;
+  options.recovery_mode = duckdb::RecoveryMode::NO_WAL_REPLAY;
+  db.HoldUntilClosed(duckdb::shared_ptr<duckdb::StorageExtensionInfo>{
+    std::shared_ptr<duckdb::StorageExtensionInfo>{directory}});
+  catalog::RequestSereneDBStorageVersion(options);
+  return duckdb::make_uniq<catalog::SereneDBCatalog>(db, std::move(directory));
+}
+
 duckdb::unique_ptr<duckdb::Catalog> AttachSereneDB(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo> storage_info,
   duckdb::ClientContext& context, duckdb::AttachedDatabase& db,
   const duckdb::string& name, duckdb::AttachInfo& info,
   duckdb::AttachOptions& options) {
+  if (options.access_mode == duckdb::AccessMode::READ_ONLY) {
+    return AttachReadOnly(context, db, info, options);
+  }
   if (!info.path.empty() &&
       (info.path != IN_MEMORY_PATH || options.original_path)) {
     THROW_SQL_ERROR(

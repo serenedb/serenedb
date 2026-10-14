@@ -358,7 +358,8 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // and none of the ones this rewrites could be reclaimed while it runs. The
   // plan here produces no rows (LogicalEmptyResult), so nothing reads it. A
   // frozen view keeps its pin and pays the disk instead.
-  GetSereneDBContext(context).TryDropSearchReader(target.table_id);
+  GetSereneDBContext(context).TryDropSearchReader(target.catalog->GetOid(),
+                                                  target.table_id);
 
   shard.OpenDeleteLog();
   absl::Cleanup close_log = [&shard] { shard.CloseDeleteLog(); };

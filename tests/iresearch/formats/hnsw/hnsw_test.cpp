@@ -1257,3 +1257,58 @@ INSTANTIATE_TEST_SUITE_P(
   ::testing::Values(
     irs::AnnInfo::Quantizer{.kind = irs::VectorQuantization::None},
     irs::AnnInfo::Quantizer{.kind = irs::VectorQuantization::PQ, .pq_m = 4}));
+
+TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
+  constexpr uint32_t kD = 64;
+  constexpr size_t kRows = 3000;
+  const auto vecs = MakeVectors(kRows, 17, kD);
+  const auto link_quality = [&](irs::AnnInfo::Quantizer quant) {
+    auto opts = irs::tests::DefaultWriterOptions();
+    opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
+      irs::ColumnOptions col;
+      if (id == kVec) {
+        col.ann_info = irs::AnnInfo{
+          .kind = irs::AnnKind::Hnsw,
+          .centroids_id = kVec,
+          .postings_id = kVec,
+          .d = static_cast<int>(kD),
+          .metric = irs::VectorMetric::L2Sqr,
+          .quant = quant,
+          .m = 8,
+          .ef_construction = 64,
+        };
+      }
+      return col;
+    };
+    irs::MemoryDirectory dir;
+    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+    EXPECT_NE(nullptr, writer);
+    AppendBatch(*writer, vecs);
+    const auto reader = writer->GetSnapshot();
+    EXPECT_EQ(1U, reader->size());
+    const auto& segment = (*reader)[0];
+    const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
+    const auto data = ann->Load(segment);
+    const auto& graph = data->graph;
+    size_t links = 0;
+    size_t near = 0;
+    for (uint32_t node = 0; node < kRows; ++node) {
+      const auto want = BruteForceTopK(
+        vecs, vecs[node], irs::VectorMetric::L2Sqr, size_t{2} * graph.M0() + 1);
+      for (const auto peer : graph.Neighbors(node, 0)) {
+        if (peer == irs::kHnswInvalidNode) {
+          continue;
+        }
+        ++links;
+        const auto doc =
+          static_cast<irs::doc_id_t>(peer) + irs::doc_limits::min();
+        near += std::ranges::find(want, doc) != want.end() ? 1 : 0;
+      }
+    }
+    return static_cast<double>(near) / static_cast<double>(links);
+  };
+  const double exact = link_quality({.kind = irs::VectorQuantization::None});
+  const double coarse =
+    link_quality({.kind = irs::VectorQuantization::PQ, .pq_m = 4});
+  EXPECT_GE(coarse, exact - 0.02) << "unquantized " << exact;
+}

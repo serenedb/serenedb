@@ -25,6 +25,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <iresearch/formats/hnsw/hnsw_bases.hpp>
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
 #include <iresearch/formats/ivf/quantizers/common.hpp>
@@ -2317,6 +2318,37 @@ TEST(tq_quantizer_test, codes_span_the_dimension_rounded_to_sixteen) {
       EXPECT_GE(both.size(), c.min_top10) << "d=" << d << " bits=" << c.bits;
     }
   }
+}
+
+TEST(tq_quantizer_test, segments_of_an_index_share_one_codebook_per_query) {
+  constexpr uint32_t d = 200;
+  constexpr size_t n = 300;
+  const auto points = MakeSpread(d, n, 41);
+  const auto query = MakeSpread(d, 1, 43);
+  const std::vector<float> centroid(d, 0.f);
+  const auto build = [&](VectorQuantization quant, uint32_t bits) {
+    return BuildCodes(quant, d, bits, VectorMetric::InnerProduct, points, n,
+                      centroid);
+  };
+  const auto first = build(VectorQuantization::TQ, 4);
+  const auto second = build(VectorQuantization::TQ, 4);
+  const auto narrower = build(VectorQuantization::TQ, 2);
+  const auto sq8 = build(VectorQuantization::SQ8, 8);
+  AnnQueryCache cache;
+  const auto shared = cache.Codebook(*first.stats, query);
+  EXPECT_EQ(shared, cache.Codebook(*second.stats, query));
+  EXPECT_NE(shared, cache.Codebook(*narrower.stats, query));
+  EXPECT_NE(cache.Codebook(*sq8.stats, query),
+            cache.Codebook(*sq8.stats, query));
+
+  auto own = MakeKeyedReader(second, query, centroid.data());
+  auto via_cache = MakeQuantizerReader(shared);
+  via_cache->StartCluster(centroid.data());
+  std::vector<score_t> want(n);
+  std::vector<score_t> got(n);
+  own->ComputeBlock(second.codes, kNoPrune, want.data());
+  via_cache->ComputeBlock(second.codes, kNoPrune, got.data());
+  EXPECT_EQ(want, got);
 }
 
 namespace {

@@ -160,10 +160,10 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
   auto panorama = MakePanoramaQuery(*data, query, cache);
-  auto codebook =
-    data->stats
-      ? data->stats->MakeCodebook(panorama ? panorama->rotated : query)
-      : nullptr;
+  const std::span<const float> keyed = panorama ? panorama->rotated : query;
+  auto codebook = !data->stats ? nullptr
+                  : cache      ? cache->Codebook(*data->stats, keyed)
+                               : data->stats->MakeCodebook(keyed);
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
   const auto ef = std::max(opts.ef_search, opts.min_ef);

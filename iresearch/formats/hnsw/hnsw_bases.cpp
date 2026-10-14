@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 
+#include <absl/algorithm/container.h>
 #include <faiss/utils/distances.h>
 #include <faiss/utils/fp16.h>
 
@@ -182,6 +183,23 @@ std::shared_ptr<const PanoramaQuery> AnnQueryCache::Get(
   }
   entry->ready.wait(false, std::memory_order_acquire);
   return entry->query;
+}
+
+std::shared_ptr<const QuantizerCodebook> AnnQueryCache::Codebook(
+  const QuantizerStats& stats, std::span<const float> query) {
+  const auto key = stats.CodebookKey();
+  if (key.empty()) {
+    return stats.MakeCodebook(query);
+  }
+  absl::MutexLock lock{&_mutex};
+  for (const auto& shared : _codebooks) {
+    if (absl::c_equal(shared.key, key)) {
+      return shared.codebook;
+    }
+  }
+  auto codebook = stats.MakeCodebook(query);
+  _codebooks.push_back({.key = {key.begin(), key.end()}, .codebook = codebook});
+  return codebook;
 }
 
 }  // namespace irs

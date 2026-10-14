@@ -190,6 +190,8 @@ class QuantizerStats : public std::enable_shared_from_this<QuantizerStats> {
     std::span<const float> /*query*/, VectorMetric /*metric*/) const {
     return nullptr;
   }
+
+  virtual std::span<const byte_type> CodebookKey() const noexcept { return {}; }
 };
 
 constexpr bool QuantizerNeedsCentroid(VectorQuantization quant) noexcept {

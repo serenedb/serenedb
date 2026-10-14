@@ -28,6 +28,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -77,6 +78,9 @@ class AnnQueryCache {
                                            const HalfBasis& half,
                                            std::span<const float> query);
 
+  std::shared_ptr<const QuantizerCodebook> Codebook(
+    const QuantizerStats& stats, std::span<const float> query);
+
  private:
   struct Entry {
     Basis basis;
@@ -86,8 +90,14 @@ class AnnQueryCache {
     std::atomic_bool ready{false};
   };
 
+  struct SharedCodebook {
+    std::vector<byte_type> key;
+    std::shared_ptr<const QuantizerCodebook> codebook;
+  };
+
   absl::Mutex _mutex;
   std::vector<std::unique_ptr<Entry>> _entries;
+  std::vector<SharedCodebook> _codebooks;
 };
 
 }  // namespace irs

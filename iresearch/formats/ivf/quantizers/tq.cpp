@@ -857,6 +857,9 @@ class TurboQuantizerStats final : public QuantizerStats {
     if (bits.full) {
       _projection.emplace(_lay.rd, seed);
     }
+    std::memcpy(_key.data(), stats.data(), sizeof(TurboQuantStatsHeader));
+    _key[sizeof(TurboQuantStatsHeader)] = static_cast<byte_type>(M);
+    _key[sizeof(TurboQuantStatsHeader) + 1] = row_major ? 1 : 0;
     _valid = true;
   }
 
@@ -866,6 +869,13 @@ class TurboQuantizerStats final : public QuantizerStats {
 
   std::shared_ptr<const QuantizerCodebook> MakeCodebook(
     std::span<const float> query) const final;
+
+  std::span<const byte_type> CodebookKey() const noexcept final {
+    if (!_valid) {
+      return {};
+    }
+    return _key;
+  }
 
   bool Valid() const noexcept { return _valid; }
   const TurboQuantLayout& Layout() const noexcept { return _lay; }
@@ -878,6 +888,7 @@ class TurboQuantizerStats final : public QuantizerStats {
  private:
   TurboQuantLayout _lay;
   bool _valid = false;
+  std::array<byte_type, sizeof(TurboQuantStatsHeader) + 2> _key{};
   std::unique_ptr<TurboQuantTables> _tables;
   std::optional<TurboQuantRotation> _rotation;
   std::optional<TurboQuantRotation> _projection;

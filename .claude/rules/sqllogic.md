@@ -6,43 +6,26 @@ paths:
 
 # Writing sqllogic tests
 
-- Write bare `query`, without type letters, even where siblings have them. Expected results start with the column-name header line.
-- A multiline `statement error` or `query error` block ends only at two empty lines: with one, it swallows the next record. Query results end at the first empty line.
-- New error records use the block form, matched as exact text, even where siblings use the one-line `statement error <regex>`, which accepts any message containing the regex:
-
-  ```
-  statement error
-  DROP TABLE missing_t;
-  ----
-  db error: ERROR: <exact message>
-  ```
-
-  `<slt:ignore>` wildcards a volatile part (a "Did you mean" list, oids, generated names); use it sparingly. The one exception to exact text is `any/pg/` when PostgreSQL and SereneDB word an error differently: a one-line `statement error <regex>` that matches both, or a `skipif`/`onlyif` pair.
-- Fill expectations with `run.sh --override` only with `--test` naming the file you are writing, then check every result against PostgreSQL or the spec, not against what the build happens to return. A record you didn't write that changes is a failure to investigate.
-- `connection <name>` runs the next record on that named session, and only that record: repeat it before every record that needs it.
-- Results must not depend on execution order: `ORDER BY` every multi-row result and round floating-point aggregates.
-- Each file runs in its own database, created per run under a unique name (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global: other files run against the same server at the same time, and the other wire engine reruns the file afterwards. Suffix their names with the database, `<name>_${__DATABASE__}`; for an ATTACH that is the alias (`AS <name>_${__DATABASE__}`), or the file name when there's no `AS`.
-- Server-wide listings (`duckdb_tables()`, `duckdb_databases()`, `pg_database`, ...) also show other files' objects: filter them, e.g. `WHERE database_name = current_database()`.
-- Files go under `${__TEST_DIR__}`, never a literal `/tmp` (pre-commit `check-no-tmp-in-sqllogic`). Any `${...}` needs `control substitution on` before its first use (pre-commit `check-substitution-directive`).
-- Outside `recovery/`, never `SET GLOBAL`: the value reaches other files' sessions before any reset. A test that needs it goes under `recovery/`.
-- A test that needs a service carries the service's suffix and `.test_slow`: `_s3`, `_azure`, `_iceberg`, `_ollama`, `_kev`, `_pgscan`, `_pgscan_tls`, `_chscan` (`<name>_pgscan.test_slow`). `run.sh` starts the service from the name, and `--fast` skips the file.
+- Bare `query`, no type letters; expected results start with the column-name header line.
+- A multiline `statement error`/`query error` block ends only at two empty lines (with one, it swallows the next record); query results end at the first empty line.
+- New errors use the block form, matched as exact text (`db error: ERROR: <message>` after `----`), even where siblings use the one-line regex form. `<slt:ignore>` wildcards a volatile part, sparingly. In `any/pg/`, where PostgreSQL and SereneDB word an error differently, a one-line regex matching both or a `skipif`/`onlyif` pair.
+- Fill expectations with `run.sh --override` only for the file you are writing, then check every result against PostgreSQL or the spec, never against what the build returns. A changed record you didn't write is a failure to investigate.
+- `connection <name>` applies to the next record only: repeat it before each.
+- Results never depend on execution order: `ORDER BY` every multi-row result, round floating-point aggregates.
+- Outside `recovery/`, files share one server with other files running at the same time, and the second wire engine reruns each file. Anything server-wide (`SET GLOBAL`, fault points, a restart) therefore goes under `recovery/`, where each file gets its own server.
+- Each file runs in its own database (`${__DATABASE__}`), but secrets, ATTACH aliases, roles, servers and databases are server-global: name them `<name>_${__DATABASE__}`, and filter server-wide listings (`WHERE database_name = current_database()`).
+- Files go under `${__TEST_DIR__}`, never `/tmp` (`check-no-tmp-in-sqllogic`); `${...}` needs `control substitution on` first (`check-substitution-directive`).
+- A test that needs a service is `.test_slow` with the service's suffix (`_s3`, `_azure`, `_iceberg`, `_ollama`, `_kev`, `_pgscan`, `_pgscan_tls`, `_chscan`): `run.sh` starts the service from the name.
 
 ## Races
 
-Races are testable in sqllogic, so a concurrency bug still gets a test:
+A concurrency bug still gets a test:
 
-- `statement async ok`, `statement async error`, `query async` and `system async ok` run the record in the background. On a named connection, async records keep that connection's order and overlap other connections. Without a connection, each async record gets a fresh one.
-- `wait` blocks until every background record has finished; a later synchronous record on a busy named connection waits for that connection only.
-- Records are dispatched in file order, and dispatching a record on a busy named connection first waits for that connection. To keep a step in flight while others run, put the steps that should overlap on different connections right after it, then `wait`.
-- `control max-async-connections N` caps parallel background records (default 10); `control always-async on` makes every record async.
-- There are no loops, and repeating records only widens a window: a race test parks a statement on a fault point.
-- `tests/sqllogic/pg/simple/async.test` is a minimal example.
+- `statement async ok`/`error`, `query async` and `system async ok` run in the background, in order per named connection; `wait` waits for all of them. A synchronous record on a busy connection waits for that connection.
+- To keep a step in flight, put the overlapping steps on other connections right after it, then `wait`. No loops: a race test parks a statement on a fault point rather than repeating records. Example: `tests/sqllogic/pg/simple/async.test`.
 
 ## Fault points
 
-Fault points force what a plain test can't reach: a rare interleaving, an error or a crash at an exact spot, a corner case. Use them for such tests, and add one to the code where none sits at the spot you need.
-
-- In C++ (`iresearch/utils/debugging.hpp`): `SDB_IF_FAILURE("<name>") { ... }` runs its block when the point is armed, usually `THROW_SQL_ERROR(ERR_MSG("intentional debug error"))` or `SDB_IMMEDIATE_ABORT()`; `SDB_WAIT_ON_FAILURE("<name>")` holds every thread that reaches it until the point is disarmed; `SDB_PARK_ONCE_ON_FAILURE("<name>")` parks the first thread that reaches it until the test releases it.
-- A test arms a point with `SET sdb_faults = '<name>'` and disarms it with `SET sdb_faults = '-<name>'`; `RESET sdb_faults` clears all. Arming an armed point or disarming an unarmed one is an error. Only a superuser can set them, and an armed point fires in every session.
-- Only under `recovery/`, and only in builds with fault injection (the `lldb`, `clangd` and sanitizer presets, not `bench` or `perf`). Pre-commit `check-fault-points` also requires every point a test arms to exist in the code, and every point in the code to be used by some test.
-- A race, step by step: arm a park point; start the statement on its own connection with `statement async ok`; wait until it is parked with `statement ok retry 40 backoff 250ms` on `SET sdb_faults = '-<name>:parked'`, which fails until the thread parks; run the competing statements on other connections; release the parked thread with `SET sdb_faults = '<name>:release'` (a wait point: disarm it) and `wait`. Release it from another connection than the parked one, or the runner deadlocks. `tests/sqllogic/recovery/inverted_index_checkpoint_during_refresh.test` does exactly this.
+- In C++: `SDB_IF_FAILURE("<name>") { ... }` runs its block when armed; `SDB_WAIT_ON_FAILURE("<name>")` holds threads until disarmed; `SDB_PARK_ONCE_ON_FAILURE("<name>")` parks the first thread until released. Add one where none sits at the spot a test needs.
+- Armed with `SET sdb_faults = '<name>'`, disarmed with `'-<name>'`, cleared with `RESET sdb_faults`; superuser only, only in builds with fault injection (not `bench`/`perf`); `check-fault-points` requires every armed point to exist and every point to be used.
+- A race step by step: arm a park point, start the statement with `statement async ok` on its own connection, wait for the park with `statement ok retry 40 backoff 250ms` on `SET sdb_faults = '-<name>:parked'`, run the competing statements on other connections, release with `SET sdb_faults = '<name>:release'` from another connection, then `wait` (`recovery/inverted_index_checkpoint_during_refresh.test`).

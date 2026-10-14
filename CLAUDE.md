@@ -1,74 +1,42 @@
 # Notes for AI agents
 
-## Rules
+Build and launch: `CONTRIBUTING.md`. Topic rules: `.claude/rules/`, each page loads with the files it covers; `pull-requests.md` loads always.
 
-- Don't write comments unless explicitly asked to; the license block and
-`# DOCS_TEST:` markers are required, not comments in this sense. When a comment
-is outdated, or your change makes it outdated, remove it unless asked to keep
-it.
+## Working with the user
 
-- Don't use python/sed for normal code editing or reading, only for real
-scripting changes.
+- Be straightforward and laconic, in replies and in everything you write: short, but complete.
+- A requested plan or design ends the turn with the plan and a question; implement it only after an explicit yes.
+- An explicit ask is never parked as a follow-up.
+- A clear improvement found on the way (a bug, a speedup, duplicated code, a cleaner structure) is just done. What goes to the user is a decision: a trade-off, new scope (a dependency, a subsystem, compatibility code), a workaround instead of the real fix.
+- Merges, CI runs and pushes to base branches happen only when the user asks for them ([pull-requests.md](.claude/rules/pull-requests.md)).
 
-- Read `CONTRIBUTING.md`.
+## Evidence
 
-- A user-visible change is not finished until `docs/` describes it. Write the
-page in the same change, following `.claude/rules/docs.md`, and say in your
-summary which page you added or updated.
+- Code is the evidence: PR descriptions, comments, docs and memory are claims. Read the implementation and its callers before relying on them.
+- An estimate is said to be one; only a measurement is presented as a result.
+- A bug gets a reproducer first, preferably end to end (sqllogic, recovery, driver): a unit test can drive an API in ways no caller does. It fails for the reason the fix claims, then passes.
+- Understand the mechanism before fixing it, and fix the root cause in the design: a quick fix that silences the symptom (catch-all error skipping, a guard, a new lock around a race) only hides the bug.
+- A bug is a pattern: look for the same mistake in the other callers, siblings and files, and fix every instance or file the ones outside the change.
+- A failure found while working gets fixed, whoever caused it, never set aside as pre-existing. Ask instead when an issue or PR already covers it, or when the fix needs a decision.
+- Before filing an issue or writing a fix, search issues and PRs, closed ones too (`gh issue list --state all --search ...`, `gh pr list --state all --search ...`): add to an existing issue, link an existing fix.
 
-- Code is the evidence: PR descriptions, comments, docstrings, review notes and
-memory are claims. Read the implementation and its callers before relying on
-them.
+## Running things
 
-- Before filing an issue or writing a fix, check that it isn't already there:
-search open and recently closed issues and PRs
-(`gh issue list --state all --search <words>`,
-`gh pr list --state all --search <words>`). The same problem already filed: add
-your findings to that issue instead of opening another. A PR already fixes it:
-link the PR instead of fixing it again (a stale one: ask whether to wait, build
-on it or fix it here). Only related: go ahead, mention the related issue in
-yours and leave a cross-reference on it.
+- Build and run only what the task needs: the touched targets and the tests that cover the change. Full suites, sanitizer builds and benchmarks only when asked.
+- Run the smallest thing that answers the question, once, with the full output in a log, and answer from the log. A noisy or flaky result is a question to answer, not a reason to rerun or run longer.
+- Wrap a test run in a timeout of 2-3 times its usual duration, so a hang ends itself.
+- `pre-commit run --files <changed files>` before saying done, as `SKIP=check-submodule-pointers pre-commit run --files ...` while a fork PR is unmerged (the gitlink check fails by design until then). Not as a git hook: it stashes unstaged changes, which breaks a checkout someone else is editing.
 
-- When you find a bug, look for the same mistake elsewhere -- the other callers,
-the sibling functions and types, the same pattern in other files -- and fix the
-whole family in one change, with a test for each, or file the ones that don't
-belong in it.
+## Text
 
-- Never present an estimated or remembered number as measured: measure it or
-say it is unknown.
-
-- Build and run only what the task needs: the touched targets and the tests that
-cover the change. Full sqllogic/recovery suites, the DuckDB suites, stress,
-benchmarks and sanitizer builds only when the user asks. CI only once the
-change passes locally, and only when the user asks (`.claude/rules/ci.md`).
-
-- Repo-wide knowledge goes into the repo, not into personal memory. What every
-contributor needs goes into its topic page in `.claude/rules/` (a new topic gets
-a page with `paths:` for the files it covers, and a link from
-`CONTRIBUTING.md`); instructions only for Claude go into this file or a skill in
-`.claude/skills/`. Never copy a rule into a second place: point to it. Propose
-the change in the same PR; when the user rejects a rule, save that to memory and
-never propose that kind of rule again.
-
-## Formatting
-
-Code is never formatted by hand: serenedb's own code goes through pre-commit
-(`.clang-format`), the submodules as `.claude/rules/third-party.md` says.
-
-Before saying done, run `pre-commit run --files <changed files>`. As a git hook
-it stashes unstaged changes, so in a checkout another session also edits, use
-`--files`.
-
-## Before writing tests
-
-Read a sibling test in the same `tests/<area>/` directory first and mirror its
-style.
+- No code comments unless asked; the license block and `# DOCS_TEST:` markers are not comments. Remove a comment your change makes outdated.
+- No text describes the implementation: comments, rules, docs and memory hold motivation, rules, desired behaviour and processes. How the code works is read from the code.
+- Use the tools you have for what they are for: read and edit files with the read and edit tools, never through python, sed or cat; scripts for real scripting.
+- Knowledge every contributor needs goes into the repo, into the page under `.claude/rules/` it belongs to; instructions only for Claude go here. One rule lives in one place: point to it, never copy it.
 
 ## Local smoke server
 
-Start serened on a free port (`ss -ltnH "sport = :<port>"` prints nothing) with
-a fresh data dir (`mktemp -d`). When you're done, stop it by its pid and remove
-the data dir.
+Start serened on a free port (`ss -ltnH "sport = :<port>"` prints nothing) with a fresh data dir (`mktemp -d`); stop it by its pid and remove the data dir when done.
 
 ```bash
 ./build/bin/serened <datadir> --listen='postgres://127.0.0.1:<port>' \
@@ -78,6 +46,4 @@ kill <pid>
 rm -rf <datadir>
 ```
 
-psql is refused until the server is up: retry while `kill -0 <pid>` succeeds.
-Once it fails, serened has exited, and the log file says why. The server logs
-to that file; `--log_level=debug` adds detail.
+psql is refused until the server is up: retry while `kill -0 <pid>` succeeds; once it fails, the log says why serened exited.

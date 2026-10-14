@@ -65,7 +65,7 @@ Tools and benchmarks share binaries instead of each linking their own: `serenedb
 
 ### The embedded documentation index
 
-`docs/` and a search index of it are built into `serened` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them. Every link rebuilds the index: the build runs the new binary with `--build_docs_index` and writes the result into it (`scripts/embed_docs_index.py`), so a `docs/` change needs only a rebuild and nothing is kept in sync by hand.
+`docs/` and a search index of it are built into `serened` and `serenedb-tests`, where the `sdb_docs` functions and the shell's `.docs` read them; a `docs/` change needs only a rebuild.
 
 - To skip it, configure with `-DSDB_EMBEDDED_DOCS=OFF`; that build has no documentation to read.
 - On macOS the index gets a fixed 4 MiB region. When the build fails because the index outgrew it, raise `kCapacity` in `server/docs/docs_index_image.cpp`.
@@ -80,16 +80,14 @@ Connect via psql: `psql -h localhost -p 7890 -U postgres`
 
 ## Guides
 
-Everything else has a page of its own under `.claude/rules/`. Claude Code loads a page when it opens a file the page covers, and "Branching, commits, PRs" at the start of every session. The pages for C++, tests and third-party code end with "When you change ...": the follow-up step each kind of change needs.
+Everything else has a page of its own under `.claude/rules/`. Claude Code loads a page when it opens a file the page covers, and "Branching, commits, PRs" in every session.
 
-- [Tests](.claude/rules/testing.md): where a test goes, when a change needs one, and how to run every suite.
-- [Writing sqllogic tests](.claude/rules/sqllogic.md), races included.
-- [CI](.claude/rules/ci.md): what CI runs and how to read a red run, running a workflow locally, and adding a dependency to the CI images.
-- [C++ Code Style](.claude/rules/cpp.md), for our code and the DuckDB family, performance included.
-- [Documentation](.claude/rules/docs.md): what a change documents in `docs/`, what stays out, and SQL examples that run as tests.
+- [Branching, commits, PRs](.claude/rules/pull-requests.md), forks included.
+- [C++](.claude/rules/cpp.md): what all our C++ shares, performance included, and the pages for [our code](.claude/rules/cpp-serenedb.md), [the DuckDB family](.claude/rules/cpp-duckdb.md) and [the other submodules](.claude/rules/cpp-third-party.md).
+- [Tests](.claude/rules/testing.md) and [writing sqllogic tests](.claude/rules/sqllogic.md).
+- [CI](.claude/rules/ci.md).
+- [Documentation](.claude/rules/docs.md).
 - [Storage compatibility](.claude/rules/storage.md): changing anything SereneDB writes to disk.
-- [Third-party dependencies](.claude/rules/third-party.md): how they are built, the DuckDB family's formatting and generators, forks, and working inside a submodule.
-- [Branching, commits, PRs](.claude/rules/pull-requests.md)
 
 ---
 

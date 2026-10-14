@@ -166,6 +166,7 @@ struct InvertedIndexConfig final : irs::IndexFieldOptions {
   const InvertedIndexKey* FindKey(irs::field_id field_id) const noexcept;
   bool StoresExpression(irs::field_id field_id) const noexcept;
   bool StoresExpressions() const noexcept;
+  bool HasExpressionKeys() const noexcept;
 
   void BuildLookups();
 

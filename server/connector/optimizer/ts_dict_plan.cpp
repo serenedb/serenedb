@@ -1104,7 +1104,8 @@ bool TsDictFacetPushdown::AdoptScan(std::optional<FoundScan> here) {
 bool TsDictFacetPushdown::ResolveExpressionKey(const duckdb::Expression& expr,
                                                TsDictFacetKey& key) {
   const auto expr_ti = SingleReferencedTableIndex(expr);
-  if (!expr_ti || !AdoptScan(FindIResearchScan(_root, *expr_ti))) {
+  if (!expr_ti || !AdoptScan(FindIResearchScan(_root, *expr_ti)) ||
+      !ColumnIndex()->HasExpressionKeys()) {
     return false;
   }
   if (!_projected_ids) {

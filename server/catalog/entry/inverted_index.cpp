@@ -432,6 +432,11 @@ bool InvertedIndexConfig::StoresExpressions() const noexcept {
   return _stores_expressions;
 }
 
+bool InvertedIndexConfig::HasExpressionKeys() const noexcept {
+  SDB_ASSERT(_indexed || keys.empty());
+  return !_expressions.empty();
+}
+
 const InvertedIndexField* InvertedIndexConfig::FindEntry(
   irs::field_id field_id) const noexcept {
   const auto it = fields.find(field_id);

@@ -437,7 +437,8 @@ bool WithSearchGetters(duckdb::LogicalGet& get,
 
   connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)
     -> std::optional<connector::SearchColumnInfo> {
-    if (SingleReferencedTableIndex(expr) != table_index) {
+    if (!config.HasExpressionKeys() ||
+        SingleReferencedTableIndex(expr) != table_index) {
       return std::nullopt;
     }
     const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
@@ -503,7 +504,8 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
       }
     }
   }
-  if (SingleReferencedTableIndex(col_arg) != get.table_index) {
+  if (!bind_data.relation.inverted_config->HasExpressionKeys() ||
+      SingleReferencedTableIndex(col_arg) != get.table_index) {
     return irs::field_limits::invalid();
   }
   return bind_data.relation.inverted_config->FindFieldIdByExpression(

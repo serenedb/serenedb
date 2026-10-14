@@ -32,11 +32,43 @@
 
 namespace sdb::pg {
 
+enum PgTypeOID : int32_t {
+#include "pg/catalog/generated/builtin_type_oids.gen.inc"
+  kVariant = kMinSystem + 100,
+  kVariantArray = kMinSystem + 101,
+  kTsquery = kMinSystem + 102,
+  kTsqueryArray = kMinSystem + 103,
+  kUnion = kMinSystem + 104,
+  kUnionArray = kMinSystem + 105,
+  kGeometry = kMinSystem + 106,
+  kGeometryArray = kMinSystem + 107,
+};
+
+inline constexpr int32_t kBuiltinTypeOidLimit = kGeometryArray + 1;
+
 template<typename Rows, typename Key>
-const auto* FindByOid(const Rows& rows, Key oid) {
+constexpr const auto* FindByOid(const Rows& rows, Key oid) {
   const auto it = absl::c_lower_bound(
     rows, oid, [](const auto& row, Key key) { return row.oid < key; });
   return it != std::end(rows) && it->oid == oid ? &*it : nullptr;
+}
+
+template<typename Index, typename Rows>
+constexpr auto OidIndex(const Rows& rows) {
+  std::array<Index, kBuiltinTypeOidLimit> index{};
+  for (size_t i = 0; i < std::size(rows); ++i) {
+    index[rows[i].oid] = static_cast<Index>(i + 1);
+  }
+  return index;
+}
+
+template<typename Rows, typename Index>
+constexpr auto FindByOid(const Rows& rows, const Index& index, int64_t oid)
+  -> decltype(&rows[0]) {
+  if (oid < 0 || oid >= kBuiltinTypeOidLimit || index[oid] == 0) {
+    return nullptr;
+  }
+  return &rows[index[oid] - 1];
 }
 
 struct BuiltinType {
@@ -72,6 +104,53 @@ struct BuiltinType {
     return elem != 0 && subscript == kArraySubscriptHandler && storage != 'p';
   }
 };
+
+inline constexpr BuiltinType kPgTypes[] = {
+#include "pg/catalog/generated/builtin_types.gen.inc"
+};
+
+constexpr BuiltinType SdbType(int32_t oid, std::string_view name,
+                              int32_t array) {
+  return {.oid = oid,
+          .name = name,
+          .nsp = kPgCatalogSchema,
+          .len = -1,
+          .byval = false,
+          .type = 'b',
+          .category = 'U',
+          .preferred = false,
+          .delim = ',',
+          .array = array,
+          .align = 'i',
+          .storage = 'x',
+          .typmod = -1};
+}
+
+constexpr BuiltinType SdbArray(int32_t oid, std::string_view name,
+                               int32_t elem) {
+  auto row = *FindByOid(kPgTypes, kInt4Array);
+  row.oid = oid;
+  row.name = name;
+  row.elem = elem;
+  return row;
+}
+
+inline constexpr BuiltinType kSdbTypes[] = {
+  SdbType(kVariant, "variant", kVariantArray),
+  SdbArray(kVariantArray, "_variant", kVariant),
+  SdbType(kTsquery, "tsquery", kTsqueryArray),
+  SdbArray(kTsqueryArray, "_tsquery", kTsquery),
+  SdbType(kUnion, "union", kUnionArray),
+  SdbArray(kUnionArray, "_union", kUnion),
+  SdbType(kGeometry, "geometry", kGeometryArray),
+  SdbArray(kGeometryArray, "_geometry", kGeometry),
+};
+
+inline constexpr auto kBuiltinTypes = [] {
+  std::array<BuiltinType, std::size(kPgTypes) + std::size(kSdbTypes)> types{};
+  absl::c_copy(kSdbTypes, absl::c_copy(kPgTypes, types.begin()));
+  return types;
+}();
 
 struct BuiltinProc {
   int32_t oid;

@@ -45,18 +45,6 @@ inline constexpr int64_t kGapSec = kGapDays * 24 * 60 * 60;
 inline constexpr int64_t kGapMs = kGapSec * 1000;
 inline constexpr int64_t kGapUs = kGapMs * 1000;
 
-enum PgTypeOID : int32_t {
-#include "pg/catalog/generated/builtin_type_oids.gen.inc"
-  kVariant = kMinSystem + 100,
-  kVariantArray = kMinSystem + 101,
-  kTsquery = kMinSystem + 102,
-  kTsqueryArray = kMinSystem + 103,
-  kUnion = kMinSystem + 104,
-  kUnionArray = kMinSystem + 105,
-  kGeometry = kMinSystem + 106,
-  kGeometryArray = kMinSystem + 107,
-};
-
 struct TypeStorage {
   duckdb::PhysicalType physical;
   bool zero;

@@ -34,7 +34,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 namespace {

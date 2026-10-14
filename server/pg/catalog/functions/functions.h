@@ -31,7 +31,8 @@
 #include <string>
 #include <string_view>
 
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/acl.h"
+#include "pg/catalog/utils/session.h"
 
 namespace sdb::pg {
 

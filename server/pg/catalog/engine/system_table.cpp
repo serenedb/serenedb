@@ -34,7 +34,7 @@
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/acl.h"
 #include "pg/connection_context.h"
 #include "pg/types.h"
 

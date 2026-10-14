@@ -32,7 +32,7 @@
 #include "auth/role_closure.h"
 #include "connector/duckdb_client_state.h"
 #include "network/credentials.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 
 namespace sdb::catalog {

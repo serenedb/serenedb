@@ -30,7 +30,7 @@
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/functions/functions.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/lookup.h"
 #include "pg/commands/create_subscription.h"
 #include "replication/subscription_engine.h"
 

@@ -22,8 +22,8 @@
 
 #include "catalog/entry/database.h"
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/lookup.h"
 #include "pg/catalog/tables/tables.h"
+#include "pg/catalog/utils/acl.h"
 
 namespace sdb::pg {
 namespace {

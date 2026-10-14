@@ -85,7 +85,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "connector/scan/scan_bind.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 

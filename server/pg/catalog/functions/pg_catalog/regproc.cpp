@@ -56,7 +56,7 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/format_type.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
 
 namespace sdb::pg {

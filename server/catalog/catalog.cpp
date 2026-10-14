@@ -85,7 +85,7 @@
 #include "connector/primary_key.h"
 #include "connector/view_index_bind.h"
 #include "pg/catalog/engine/registry.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 #include "pg/tsdictionary.h"
 #include "scheduler/job_scheduler.h"

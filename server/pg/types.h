@@ -29,7 +29,7 @@
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 
 namespace duckdb {
 

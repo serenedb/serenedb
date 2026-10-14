@@ -28,7 +28,7 @@
 #include <span>
 #include <string_view>
 
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 
 namespace sdb::pg {
 

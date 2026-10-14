@@ -18,10 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/lookup.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
@@ -31,38 +30,23 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
-#include <duckdb/parser/constraint.hpp>
-#include <duckdb/parser/constraints/not_null_constraint.hpp>
-#include <duckdb/parser/expression/cast_expression.hpp>
-#include <duckdb/parser/expression/columnref_expression.hpp>
-#include <duckdb/parser/expression/constant_expression.hpp>
-#include <duckdb/parser/expression/function_expression.hpp>
-#include <duckdb/parser/keyword_helper.hpp>
-#include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <ranges>
-#include <tuple>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/inverted_index.h"
 #include "catalog/entry/role.h"
-#include "catalog/entry/search_table.h"
 #include "catalog/entry/subscription.h"
-#include "connector/duckdb_client_state.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/system_table.h"
+#include "pg/catalog/utils/columns.h"
 
 namespace sdb::pg {
 
@@ -112,312 +96,6 @@ duckdb::idx_t CatalogClassOid(duckdb::CatalogType type) {
     case DEPENDENCY_ENTRY:
       return kInvalidOid;
   }
-}
-
-duckdb::shared_ptr<duckdb::ViewColumnInfo> ViewColumns(
-  duckdb::ClientContext& context, duckdb::ViewCatalogEntry& view) {
-  if (auto columns = view.GetColumnInfo()) {
-    return columns;
-  }
-  try {
-    view.BindView(context);
-  } catch (const std::exception&) {
-  }
-  return view.GetColumnInfo();
-}
-
-bool HasDefault(const duckdb::ColumnDefinition& column) {
-  if (!column.HasDefaultValue()) {
-    return false;
-  }
-  const auto* expression = &column.DefaultValue();
-  while (expression->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
-    expression = &expression->Cast<duckdb::CastExpression>().Child();
-  }
-  return expression->GetExpressionClass() !=
-           duckdb::ExpressionClass::CONSTANT ||
-         !expression->Cast<duckdb::ConstantExpression>().GetLiteral().IsNull();
-}
-
-int16_t ViewAttnum(duckdb::ClientContext& context,
-                   duckdb::ViewCatalogEntry& view,
-                   const duckdb::Identifier& name) {
-  const auto columns = ViewColumns(context, view);
-  for (duckdb::idx_t i = 0; columns && i < columns->types.size(); ++i) {
-    if (view.ColumnName(*columns, i) == name) {
-      return static_cast<int16_t>(i + 1);
-    }
-  }
-  return 0;
-}
-
-std::vector<bool> NotNullColumns(const duckdb::TableCatalogEntry& table) {
-  std::vector<bool> not_null(table.GetColumns().LogicalColumnCount());
-  for (const auto& constraint :
-       table.GetConstraints() | std::views::filter([](const auto& constraint) {
-         return constraint->type == duckdb::ConstraintType::NOT_NULL;
-       })) {
-    not_null[constraint->Cast<duckdb::NotNullConstraint>().index.index] = true;
-  }
-  return not_null;
-}
-
-namespace {
-
-template<typename T, typename F>
-std::vector<T> MapIndexExpressions(const duckdb::IndexCatalogEntry& index,
-                                   F&& map) {
-  std::vector<T> result;
-  result.reserve(index.parsed_expressions.size());
-  for (const bool included : {false, true}) {
-    for (size_t i = 0; i < index.parsed_expressions.size(); ++i) {
-      if ((i < index.column_opclasses.size() &&
-           index.column_opclasses[i] == catalog::kIncludedKind) == included) {
-        result.emplace_back(map(*index.parsed_expressions[i]));
-      }
-    }
-  }
-  return result;
-}
-
-}  // namespace
-
-std::vector<const duckdb::ParsedExpression*> IndexExpressions(
-  const duckdb::IndexCatalogEntry& index) {
-  return MapIndexExpressions<const duckdb::ParsedExpression*>(
-    index,
-    [](const duckdb::ParsedExpression& expression) { return &expression; });
-}
-
-std::vector<int16_t> IndexAttnums(duckdb::ClientContext& context,
-                                  const duckdb::IndexCatalogEntry& index,
-                                  duckdb::CatalogEntry& relation) {
-  auto* view = relation.type == duckdb::CatalogType::VIEW_ENTRY
-                 ? &relation.Cast<duckdb::ViewCatalogEntry>()
-                 : nullptr;
-  const auto columns = view ? ViewColumns(context, *view) : nullptr;
-  const auto attnum = [&](const duckdb::Identifier& name) -> int16_t {
-    if (!view) {
-      const auto& table = relation.Cast<duckdb::TableCatalogEntry>();
-      return table.ColumnExists(name) ? Attnum(table.GetColumn(name)) : 0;
-    }
-    if (!columns) {
-      return 0;
-    }
-    const auto it = absl::c_find(columns->names, name);
-    return it == columns->names.end()
-             ? 0
-             : static_cast<int16_t>(it - columns->names.begin() + 1);
-  };
-  return MapIndexExpressions<int16_t>(
-    index, [&](const duckdb::ParsedExpression& expression) -> int16_t {
-      return expression.GetExpressionClass() ==
-                 duckdb::ExpressionClass::COLUMN_REF
-               ? attnum(expression.Cast<duckdb::ColumnRefExpression>()
-                          .GetColumnName())
-               : 0;
-    });
-}
-
-std::vector<int16_t> ExpressionAttnums(
-  const duckdb::TableCatalogEntry& table,
-  const duckdb::ParsedExpression& expression) {
-  std::vector<int16_t> attnums;
-  duckdb::ParsedExpressionIterator::VisitExpression<
-    duckdb::ColumnRefExpression>(
-    expression, [&](const duckdb::ColumnRefExpression& column) {
-      const auto& name = column.GetColumnName();
-      if (!table.ColumnExists(name)) {
-        return;
-      }
-      const auto attnum = Attnum(table.GetColumn(name));
-      if (!absl::c_linear_search(attnums, attnum)) {
-        attnums.emplace_back(attnum);
-      }
-    });
-  return attnums;
-}
-
-std::string ExpressionText(const duckdb::ParsedExpression& expression) {
-  auto copy = expression.Copy();
-  duckdb::ParsedExpressionIterator::VisitExpressionMutable<
-    duckdb::ColumnRefExpression>(*copy, [](duckdb::ColumnRefExpression& ref) {
-    auto& names = ref.ColumnNamesMutable();
-    if (names.size() > 1) {
-      names.erase(names.begin(), names.end() - 1);
-    }
-  });
-  return copy->ToString();
-}
-
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> SiblingTable(
-  duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
-  const duckdb::Identifier& name) {
-  auto entry = FindMember(transaction, member.ParentSchema(transaction),
-                          duckdb::CatalogType::TABLE_ENTRY, name);
-  if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
-    return nullptr;
-  }
-  return &entry->Cast<duckdb::TableCatalogEntry>();
-}
-
-duckdb::optional_ptr<const duckdb::TableCatalogEntry> ReferencedTable(
-  duckdb::CatalogTransaction transaction,
-  const duckdb::TableCatalogEntry& table,
-  const duckdb::ForeignKeyConstraint& fk) {
-  if (fk.info.type == duckdb::ForeignKeyType::FK_TYPE_SELF_REFERENCE_TABLE) {
-    return &table;
-  }
-  return SiblingTable(transaction, table, fk.info.table);
-}
-
-SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
-                                const duckdb::Constraint& constraint) {
-  if (!constraint.constraint_name.empty() ||
-      constraint.type != duckdb::ConstraintType::NOT_NULL) {
-    return {{constraint.constraint_name}};
-  }
-  return {{table.name.GetIdentifierName(), "_",
-           table.GetColumn(constraint.Cast<duckdb::NotNullConstraint>().index)
-             .Name()
-             .GetIdentifierName(),
-           "_not_null"}};
-}
-
-bool NumbersRows(const duckdb::CatalogEntry& sequence) {
-  return sequence.tags.contains(catalog::kGeneratedPkSequenceTag);
-}
-
-namespace {
-
-void PutId(std::string& out, std::string_view name) {
-  const bool safe = absl::c_all_of(
-    name, [](unsigned char c) { return absl::ascii_isalnum(c) || c == '_'; });
-  if (safe) {
-    out.append(name);
-    return;
-  }
-  out.append(duckdb::KeywordHelper::WriteQuotedAndEscaped(name, '"'));
-}
-
-void PutRole(std::string& out, duckdb::idx_t role,
-             const auth::RoleGraph& roles) {
-  if (const auto name = roles.NameOf(role); !name.empty()) {
-    PutId(out, name);
-    return;
-  }
-  absl::StrAppend(&out, role);
-}
-
-}  // namespace
-
-void AppendAcl(std::string& out, const duckdb::AclItem& item,
-               const auth::RoleGraph& roles) {
-  if (item.grantee != kPublicGrantee) {
-    PutRole(out, item.grantee, roles);
-  }
-  out.push_back('=');
-  for (const auto& p : kAclPrivileges) {
-    if ((item.privs & p.mode) != duckdb::AclMode::NoRights) {
-      out.push_back(p.chr);
-      if ((item.grant_option & p.mode) != duckdb::AclMode::NoRights) {
-        out.push_back('*');
-      }
-    }
-  }
-  out.push_back('/');
-  PutRole(out, item.grantor, roles);
-}
-
-void VisitDefaultAcls(
-  duckdb::ClientContext& context, const duckdb::CatalogEntry& database,
-  absl::FunctionRef<void(duckdb::idx_t oid, const duckdb::DefaultAcl& row)>
-    visitor) {
-  auto attached =
-    duckdb::DatabaseManager::Get(context).GetDatabase(context, database.name);
-  if (!attached || attached->oid != database.oid) {
-    return;
-  }
-  auto& catalog = attached->GetCatalog().Cast<duckdb::DuckCatalog>();
-  const auto view = catalog.GetCatalogTransaction(context).view;
-  for (const auto& [oid, row] :
-       std::views::zip(std::views::iota(duckdb::idx_t{1}),
-                       database.permissions.defaults) |
-         std::views::filter([&](const auto& item) {
-           const auto scope = std::get<1>(item).scope;
-           return scope == kInvalidOid ||
-                  catalog.GetOidIndex().GetVisible(scope, view);
-         })) {
-    visitor(oid, row);
-  }
-}
-
-duckdb::optional_ptr<catalog::SereneDBCatalog> SessionCatalog(
-  duckdb::ClientContext& context) {
-  if (!connector::GetSereneDBContextPtr(context)) {
-    return nullptr;
-  }
-  auto& catalog = duckdb::Catalog::GetCatalog(
-    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-  if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
-    return nullptr;
-  }
-  return catalog.Cast<catalog::SereneDBCatalog>();
-}
-
-Session MakeSession(duckdb::ClientContext* context) {
-  Session session{
-    .context = context,
-    .database = context ? SessionCatalog(*context).get() : nullptr,
-    .transaction = std::nullopt,
-    .retriever = std::nullopt,
-    .search_path = {},
-    .reg_out = {},
-    .reg_out_texts = {},
-    .reg_out_recent = {}};
-  if (!context) {
-    return session;
-  }
-  session.retriever.emplace(*context);
-  if (session.database) {
-    session.transaction.emplace(
-      session.database->GetCatalogTransaction(*context));
-  }
-  const auto add = [&](std::string_view name) {
-    if (absl::c_any_of(session.search_path, [&](const SessionSchema& schema) {
-          return schema.name == name;
-        })) {
-      return;
-    }
-    session.search_path.emplace_back(SessionSchema{
-      .name = std::string{name},
-      .entry = session.database
-                 ? session.database->GetSchema(
-                     *session.transaction, duckdb::Identifier{name},
-                     duckdb::OnEntryNotFound::RETURN_NULL)
-                 : nullptr,
-      .system = FindSystemObject(kSystemNamespaces, name) != nullptr});
-  };
-  const auto& search_path =
-    *duckdb::ClientData::Get(*context).catalog_search_path;
-  const auto database =
-    duckdb::DatabaseManager::TryGetDefaultDatabase(*context);
-  if (absl::c_none_of(search_path.GetResolvedSetPaths(),
-                      [](const duckdb::CatalogSearchEntry& entry) {
-                        return entry.GetSchema() ==
-                               irs::StaticStrings::kPgCatalogSchema;
-                      })) {
-    add(irs::StaticStrings::kPgCatalogSchema);
-    session.retriever->SetSearchPath({duckdb::CatalogSearchEntry{
-      database, duckdb::Identifier{irs::StaticStrings::kPgCatalogSchema}}});
-  }
-  for (const auto& entry : search_path.Get()) {
-    const auto& catalog = entry.GetCatalog();
-    if (catalog.empty() || catalog == database.GetIdentifierName()) {
-      add(entry.GetSchema().GetIdentifierName());
-    }
-  }
-  return session;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
@@ -772,32 +450,6 @@ SubObject FindKeyIndex(duckdb::ClientContext& context,
     found = {.table = it->second.first, .key_index = it->second.second};
   }
   return found;
-}
-
-std::optional<std::string_view> NextvalArgument(
-  const duckdb::ParsedExpression& expression) {
-  if (expression.GetExpressionClass() != duckdb::ExpressionClass::FUNCTION) {
-    return std::nullopt;
-  }
-  const auto& function = expression.Cast<duckdb::FunctionExpression>();
-  const auto& arguments = function.GetArguments();
-  if (function.FunctionName() != std::string_view{"nextval"} ||
-      arguments.size() != 1) {
-    return std::nullopt;
-  }
-  const auto* argument = &arguments[0].GetExpression();
-  if (argument->GetExpressionClass() == duckdb::ExpressionClass::CAST) {
-    argument = &argument->Cast<duckdb::CastExpression>().Child();
-  }
-  if (argument->GetExpressionClass() != duckdb::ExpressionClass::CONSTANT) {
-    return std::nullopt;
-  }
-  const auto& literal =
-    argument->Cast<duckdb::ConstantExpression>().GetLiteral();
-  if (literal.kind != duckdb::LiteralKind::STRING) {
-    return std::nullopt;
-  }
-  return std::string_view{literal.text};
 }
 
 }  // namespace sdb::pg

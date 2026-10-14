@@ -43,7 +43,7 @@
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
-#include "pg/catalog/lookup.h"
+#include "pg/catalog/utils/lookup.h"
 #include "search/inverted_index_storage.h"
 #include "search/search_table.h"
 

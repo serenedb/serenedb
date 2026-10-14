@@ -33,7 +33,7 @@
 
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "pg/catalog/oids.h"
+#include "pg/catalog/utils/oids.h"
 
 namespace sdb::auth {
 namespace {

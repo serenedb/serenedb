@@ -35,8 +35,10 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/persistence/search_table.h"
+#include "catalog/sort_keys.h"
 #include "query/config_variable_names.h"
 
 namespace duckdb {
@@ -196,6 +198,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   duckdb::ColumnList _columns;
   std::shared_ptr<search::SearchTable> _storage;
   SearchTableOptions _options;
+  std::vector<SortKey> _sort_keys;
   duckdb::Identifier _pk_sequence;
 };
 

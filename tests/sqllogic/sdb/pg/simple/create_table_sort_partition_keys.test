@@ -1,19 +1,13 @@
 statement error
 CREATE TABLE skp (x INT) SORTED BY (x);
 ----
-db error: ERROR: SORTED BY is not supported
+db error: ERROR: SORTED BY is supported only for search tables
 
 
 statement error
 CREATE TABLE skp (x INT) PARTITIONED BY (x);
 ----
 db error: ERROR: PARTITIONED BY is not supported
-
-
-statement error
-CREATE TABLE skp (x INT) SORTED BY (x) WITH (storage = 'search');
-----
-db error: ERROR: SORTED BY is not supported
 
 
 statement error
@@ -25,7 +19,7 @@ db error: ERROR: PARTITIONED BY is not supported
 statement error
 CREATE TABLE skp SORTED BY (x) AS SELECT 1 AS x;
 ----
-db error: ERROR: SORTED BY is not supported
+db error: ERROR: SORTED BY is supported only for search tables
 
 
 statement error
@@ -39,6 +33,12 @@ SELECT count(*) AS tables FROM pg_class WHERE relname = 'skp';
 ----
 tables
 0
+
+statement ok
+CREATE TABLE skp (x INT) SORTED BY (x DESC NULLS LAST) WITH (storage = 'search');
+
+statement ok
+DROP TABLE skp;
 
 statement ok
 CREATE TABLE skp (x INT) WITH (storage = 'search');

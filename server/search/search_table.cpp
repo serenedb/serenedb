@@ -84,14 +84,16 @@ uint64_t SearchTable::ReadCommittedTick(duckdb::BinaryDeserializer& payload) {
 SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
                          bool in_memory, duckdb::idx_t table_id, bool is_new,
                          const catalog::SearchTableOptions& options,
-                         catalog::CompressionByColumn compression)
+                         catalog::CompressionByColumn compression,
+                         irs::SortSpec sort)
   : _table_id{table_id},
     _directory{std::move(directory)},
     _is_new{is_new},
     _segment_memory_max{options.segment_memory_max},
     _row_group_size{options.row_group_size},
     _compression{std::move(compression)},
-    _codec_params{options.codec} {
+    _codec_params{options.codec},
+    _sort{std::move(sort)} {
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -162,6 +164,7 @@ void SearchTable::OpenWriter(bool in_memory) {
   // replay is done. A new shard's directory is empty, so it keeps the default.
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
+  writer_options.sort = _sort;
   writer_options.db = &irs::DuckDBEngine::Instance().instance();
   writer_options.reader_options.db = writer_options.db;
   if (_topk_scorer) {

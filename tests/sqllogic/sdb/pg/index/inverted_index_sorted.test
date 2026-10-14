@@ -1,0 +1,70 @@
+statement ok
+CREATE TABLE iis (id INTEGER, k INTEGER, body VARCHAR);
+
+
+statement error
+CREATE INDEX iis_idx ON iis USING inverted (body DESC);
+----
+db error: ERROR: access method "inverted" does not support ASC/DESC options
+
+
+statement error
+CREATE INDEX iis_idx ON iis USING inverted (k, body ASC);
+----
+db error: ERROR: access method "inverted" does not support ASC/DESC options
+
+
+statement error
+CREATE INDEX iis_idx ON iis USING inverted (body included() NULLS FIRST);
+----
+db error: ERROR: access method "inverted" does not support NULLS FIRST/LAST options
+
+
+statement error
+CREATE INDEX iis_idx ON iis USING inverted (body) SORTED BY (k);
+----
+db error: ERROR: SORTED BY is not supported for inverted indexes
+
+
+statement ok
+CREATE INDEX iis_art ON iis (k DESC NULLS FIRST);
+
+
+statement error
+CREATE INDEX iis_art_sorted ON iis (k) SORTED BY (k);
+----
+db error: ERROR: SORTED BY is not supported for ART indexes
+
+
+statement ok
+CREATE VIEW iis_v AS SELECT * FROM iis;
+
+
+statement error
+CREATE INDEX iis_v_idx ON iis_v USING inverted (body) SORTED BY (k);
+----
+db error: ERROR: SORTED BY is not supported for indexes on views
+
+
+statement ok
+CREATE TABLE iis_s (k INTEGER, body VARCHAR) WITH (storage = 'search');
+
+
+statement error
+CREATE INDEX iis_s_idx ON iis_s USING inverted (body) SORTED BY (k);
+----
+db error: ERROR: SORTED BY is not supported for indexes on search tables
+
+
+statement ok
+CREATE INDEX iis_idx ON iis USING inverted (k, body);
+
+
+statement ok
+DROP VIEW iis_v;
+
+statement ok
+DROP TABLE iis_s;
+
+statement ok
+DROP TABLE iis;

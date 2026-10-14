@@ -76,7 +76,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
               bool in_memory, duckdb::idx_t table_id, bool is_new,
               const catalog::SearchTableOptions& options,
-              catalog::CompressionByColumn compression);
+              catalog::CompressionByColumn compression, irs::SortSpec sort);
   ~SearchTable();
 
   SearchTable(const SearchTable&) = delete;
@@ -85,10 +85,10 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
     duckdb::idx_t table_id, bool is_new,
     const catalog::SearchTableOptions& options,
-    catalog::CompressionByColumn compression) {
-    return std::make_shared<SearchTable>(std::move(directory), in_memory,
-                                         table_id, is_new, options,
-                                         std::move(compression));
+    catalog::CompressionByColumn compression, irs::SortSpec sort = {}) {
+    return std::make_shared<SearchTable>(
+      std::move(directory), in_memory, table_id, is_new, options,
+      std::move(compression), std::move(sort));
   }
 
   static catalog::CompressionByColumn DeclaredCompression(
@@ -333,6 +333,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
   uint32_t _row_group_size;
   catalog::CompressionByColumn _compression;
   irs::ColCodecParams _codec_params;
+  irs::SortSpec _sort;
   std::atomic<bool> _dropped{false};
   mutable std::shared_mutex _table_lock;
   std::vector<IndexConfig> _configs;

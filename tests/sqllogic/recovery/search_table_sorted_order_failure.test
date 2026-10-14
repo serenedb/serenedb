@@ -1,0 +1,56 @@
+statement ok
+CREATE TABLE sof (k INTEGER, v VARCHAR) SORTED BY (k) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO sof SELECT (i * 7) % 13, 'a' || i FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sof;
+
+statement ok
+INSERT INTO sof SELECT (i * 5) % 11, 'b' || i FROM range(100) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) sof;
+
+statement ok
+SET sdb_faults = 'irs::KeyOrder::Finish';
+
+query
+SELECT outcome FROM sdb_compact('sof', mode := 'compact');
+----
+outcome
+failed
+
+statement ok
+SET sdb_faults = '-irs::KeyOrder::Finish';
+
+query
+SELECT count(*) AS n, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM sof;
+----
+n	segments
+200	2
+
+query
+SELECT outcome FROM sdb_compact('sof', mode := 'compact');
+----
+outcome
+merged
+
+query
+SELECT count(*) AS n, count(DISTINCT sdb_row_position$ >> 32) AS segments FROM sof;
+----
+n	segments
+200	1
+
+query
+SELECT count(*) AS misplaced FROM (
+  SELECT row_number() OVER (ORDER BY sdb_row_position$) AS physical,
+         row_number() OVER (ORDER BY k, sdb_row_position$) AS logical
+  FROM sof) WHERE physical <> logical;
+----
+misplaced
+0
+
+statement ok
+DROP TABLE sof;

@@ -16,6 +16,8 @@ A list or map column stores each distinct value of a row group once: a row keeps
 
 Unlike a transactional table, whose segments must fit a fixed 256 KiB block, a columnstore segment can be as long as its codec needs. The `.col` codecs use that freedom: they seal a segment after the vector whose estimated encoded size crosses 256 KiB, never rewinding to fit, so a long string only makes its segment longer.
 
+A search table created with a sort key ([`SORTED BY`](../../statements/create_table/index.md#sort-keys)) writes the rows of every index segment in key order. Its columns are encoded once that order is known, when the segment is flushed, so the key columns' zonemaps cover narrow ranges and a filter on the key skips more segments.
+
 ## Codecs
 
 A column's codec is either picked automatically (`auto`, the default: the candidates are measured on the column's own rows and the smallest result wins, segment by segment) or named explicitly. Numeric columns use the transactional codecs and, under `auto`, the columnstore's numeric codec (described below); text columns use the columnstore's own string codecs, which share one layout and differ in their *shape* (a dictionary of distinct values with row codes, or one entry per row) and their *leaf* (how the entry bytes are encoded):

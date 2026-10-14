@@ -35,11 +35,13 @@
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/constraints/unique_constraint.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
 #include <duckdb/parser/parsed_data/create_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/result_modifier.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/operator/logical_update.hpp>
 #include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
@@ -49,15 +51,18 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/sort_keys.h"
 #include "connector/column_id.h"
 #include "connector/duckdb_client_state.h"
 #include "connector/primary_key.h"
@@ -320,6 +325,7 @@ SearchTableEntry::SearchTableEntry(
     BindOptions(*transaction.context, base.options);
   }
   _options = ResolveOptions(base.options);
+  _sort_keys = ResolveSortKeys(_columns, base.sort_orders);
   if (const auto tag = tags.find(kGeneratedPkSequenceTag); tag != tags.end()) {
     _pk_sequence = duckdb::Identifier{tag->second};
   } else if (base.oid == 0) {
@@ -331,7 +337,8 @@ SearchTableEntry::SearchTableEntry(
     _storage = search::SearchTable::Create(
       catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(), oid,
       base.oid == 0, _options,
-      search::SearchTable::DeclaredCompression(GetColumns()));
+      search::SearchTable::DeclaredCompression(GetColumns()),
+      SortSpecOf(_sort_keys, GetColumns()));
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
 }
@@ -604,6 +611,8 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   if (!_options.optimize_top_k.empty()) {
     set(kOptimizeTopKSetting, duckdb::Value{_options.optimize_top_k});
   }
+  info->Cast<duckdb::CreateTableInfo>().sort_orders =
+    SortOrdersOf(_sort_keys, GetColumns());
   return info;
 }
 
@@ -679,6 +688,13 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(
       auto& table = create->Cast<duckdb::CreateTableInfo>();
       duckdb::TableCatalogEntry::RenameColumn(table.columns, table.constraints,
                                               rename);
+      for (auto& order : table.sort_orders) {
+        auto& column = order.expression->Cast<duckdb::ColumnRefExpression>();
+        if (column.GetColumnName() == rename.old_name) {
+          order.expression =
+            duckdb::make_uniq<duckdb::ColumnRefExpression>(rename.new_name);
+        }
+      }
       auto result = Rebuilt(context, info, std::move(create));
       RenameTriggerColumns(context, rename);
       return result;

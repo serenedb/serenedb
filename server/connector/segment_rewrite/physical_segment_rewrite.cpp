@@ -84,7 +84,9 @@ class SegmentRewriteExecutor final : public irs::MergeExecutor {
   size_t Threads() const noexcept final { return _state.threads; }
 
   bool Run(irs::MergePlan& plan) final {
-    SDB_ASSERT(!plan.OrderPending());
+    if (plan.OrderPending() && !plan.RunOrder()) {
+      return false;
+    }
     const auto run = std::make_shared<search::MergeUnitRun>(
       plan, std::chrono::steady_clock::now());
     {

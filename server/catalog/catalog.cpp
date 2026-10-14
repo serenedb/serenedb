@@ -297,6 +297,28 @@ void SereneDBCatalog::BindIndexDefinition(duckdb::Binder& binder,
       RequireSearchTableIndexOption(name);
     }
   }
+  if (inverted &&
+      absl::c_any_of(info.column_orders, [](duckdb::OrderType order) {
+        return order != duckdb::OrderType::ORDER_DEFAULT;
+      })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("access method \"", info.index_type,
+                            "\" does not support ASC/DESC options"));
+  }
+  if (inverted && absl::c_any_of(
+                    info.column_null_orders, [](duckdb::OrderByNullType order) {
+                      return order != duckdb::OrderByNullType::ORDER_DEFAULT;
+                    })) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("access method \"", info.index_type,
+                            "\" does not support NULLS FIRST/LAST options"));
+  }
+  if (!info.sort_orders.empty() &&
+      (search_table || table.type == duckdb::CatalogType::VIEW_ENTRY)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("SORTED BY is not supported for indexes on ",
+                            search_table ? "search tables" : "views"));
+  }
   if (info.where_clause) {
     auto where_binder_owner = duckdb::Binder::CreateBinder(binder.context);
     duckdb::vector<duckdb::ColumnIndex> column_ids;
@@ -424,12 +446,12 @@ duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
     return duckdb::ErrorData{
       duckdb::NotImplementedException("PARTITIONED BY is not supported")};
   }
-  if (!info.Base().sort_keys.empty()) {
-    return duckdb::ErrorData{
-      duckdb::NotImplementedException("SORTED BY is not supported")};
-  }
   const auto& options = info.Base().options;
   const bool search = ReadStorageEngine(options) == TableEngine::Search;
+  if (!search && !info.Base().sort_orders.empty()) {
+    return duckdb::ErrorData{duckdb::NotImplementedException(
+      "SORTED BY is supported only for search tables")};
+  }
   auto unknown = absl::c_find_if(options, [search](const auto& option) {
     return option.first != kStorageOption &&
            !(search && absl::c_contains(kSearchTableOptions, option.first));

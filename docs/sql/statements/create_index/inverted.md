@@ -21,7 +21,7 @@ Each entry in the `USING inverted (...)` list is an **indexed column**.
 - **Generated columns** — index a [generated column](./index.md) the same as any other column (index the column itself, not its defining expression).
 - **Array columns** — a `TEXT[]` / `VARCHAR[]` column is indexed element-by-element; a row matches if any element matches.
 
-`HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
+`HUGEINT`, `DECIMAL`, `UUID` and `INTERVAL` columns cannot be indexed. Composite `ROW(...)` columns are not supported. An inverted index has no column order, so `ASC`, `DESC`, `NULLS FIRST` and `NULLS LAST` after an indexed column are rejected, as PostgreSQL's GIN indexes reject them. `SORTED BY` is not supported for inverted indexes yet; a search table sorts its rows through its own [`SORTED BY`](../create_table/index.md#sort-keys). For a guided treatment of these choices, see [What to Index](../../indexes/inverted/modeling.md).
 
 ### Operator-class options (feature flags)
 

@@ -100,3 +100,102 @@ RESET search_path
 
 statement ok
 DROP TABLE public.pg_class
+
+
+statement ok
+DROP SCHEMA IF EXISTS regclass_first CASCADE
+
+
+statement ok
+DROP SCHEMA IF EXISTS regclass_second CASCADE
+
+
+statement ok
+CREATE SCHEMA regclass_first
+
+
+statement ok
+CREATE SCHEMA regclass_second
+
+
+statement ok
+CREATE TABLE regclass_first.pair (a int)
+
+
+statement ok
+CREATE TYPE regclass_second.pair AS (a int, b int)
+
+
+statement ok
+CREATE TABLE regclass_first.parent (id int PRIMARY KEY)
+
+
+statement ok
+CREATE TABLE regclass_second.parent (id int PRIMARY KEY)
+
+
+statement ok
+CREATE SEQUENCE regclass_first.shared_name
+
+
+statement ok
+CREATE TABLE regclass_second.indexed (x int)
+
+
+statement ok
+CREATE INDEX shared_name ON regclass_second.indexed (x)
+
+
+statement ok
+CREATE TEMP TABLE regclass_temp (a int)
+
+
+statement ok
+SET search_path = regclass_second, regclass_first
+
+
+# Postgres resolves a name schema by schema, and every kind of relation --
+# composite types and key indexes included -- shares one namespace per schema.
+query
+SELECT 'pair'::regclass = 'regclass_second.pair'::regclass AS type_first,
+       pg_table_is_visible('regclass_first.pair'::regclass) AS table_visible
+----
+type_first	table_visible
+t	f
+
+
+query
+SELECT 'parent_pkey'::regclass = 'regclass_second.parent_pkey'::regclass AS second_key,
+       'regclass_first.parent_pkey'::regclass::text AS first_key,
+       pg_table_is_visible('regclass_first.parent_pkey'::regclass) AS first_visible
+----
+second_key	first_key	first_visible
+t	regclass_first.parent_pkey	f
+
+
+query
+SELECT 'shared_name'::regclass = 'regclass_second.shared_name'::regclass AS index_first,
+       pg_table_is_visible('regclass_first.shared_name'::regclass) AS sequence_visible
+----
+index_first	sequence_visible
+t	f
+
+
+query
+SELECT to_regclass('regclass_temp') IS NOT NULL AS temp_found,
+       to_regclass('duckdb_tables') IS NULL AS duckdb_view_hidden
+----
+temp_found	duckdb_view_hidden
+t	t
+
+
+statement ok
+RESET search_path
+
+
+statement ok
+DROP SCHEMA regclass_first CASCADE
+
+
+statement ok
+DROP SCHEMA regclass_second CASCADE

@@ -74,7 +74,7 @@ const SystemTable* FindSystemTable(duckdb::idx_t oid);
 std::span<SystemTable* const> SystemTableFunctions();
 const StaticView* GetSystemView(std::string_view schema, std::string_view name);
 const StaticView* FindSystemView(duckdb::idx_t oid);
-bool IsSystemRelation(std::string_view schema, std::string_view name);
+duckdb::idx_t SystemRelationOid(std::string_view schema, std::string_view name);
 StaticFunction GetSystemFunction(std::string_view schema, std::string_view name,
                                  duckdb::MacroType kind);
 

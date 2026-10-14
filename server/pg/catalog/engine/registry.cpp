@@ -32,7 +32,6 @@
 #include <duckdb/parser/statement/select_statement.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
-#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 
 #include "connector/pg_logical_types.h"
@@ -74,7 +73,7 @@ irs::containers::NodeHashMap<FunctionKey, StaticFunction> gFunctions;
 std::vector<StaticView> gViews;
 irs::containers::FlatHashMap<Key, const StaticView*> gViewsByName;
 irs::containers::FlatHashMap<duckdb::idx_t, const StaticView*> gViewsByOid;
-irs::containers::FlatHashSet<Key> gRelationNames;
+irs::containers::FlatHashMap<Key, duckdb::idx_t> gRelationOids;
 
 std::string_view ViewSql(const SystemView& view) {
   const auto* written =
@@ -104,7 +103,7 @@ void AddSystemView(duckdb::Parser& parser, const SystemView& view) {
   });
   gViewsByName.emplace(Key{view.schema, view.name}, &stored);
   gViewsByOid.emplace(view.oid, &stored);
-  gRelationNames.emplace(view.schema, view.name);
+  gRelationOids.emplace(Key{view.schema, view.name}, view.oid);
 }
 
 duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
@@ -182,7 +181,8 @@ void InitSystemTables() {
   for (auto* table : gTables) {
     table->Init();
     gTablesByName.emplace(Key{table->Sql().schema, table->Sql().name}, table);
-    gRelationNames.emplace(table->Sql().schema, table->Sql().name);
+    gRelationOids.emplace(Key{table->Sql().schema, table->Sql().name},
+                          table->Sql().oid);
   }
   for (auto* table : kSystemTableFunctions) {
     table->Init();
@@ -251,8 +251,10 @@ const StaticView* FindSystemView(duckdb::idx_t oid) {
   return it == gViewsByOid.end() ? nullptr : it->second;
 }
 
-bool IsSystemRelation(std::string_view schema, std::string_view name) {
-  return gRelationNames.contains(Key{schema, name});
+duckdb::idx_t SystemRelationOid(std::string_view schema,
+                                std::string_view name) {
+  const auto it = gRelationOids.find(Key{schema, name});
+  return it == gRelationOids.end() ? kInvalidOid : it->second;
 }
 
 StaticFunction GetSystemFunction(std::string_view schema, std::string_view name,

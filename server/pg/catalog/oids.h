@@ -81,6 +81,33 @@ inline constexpr std::array kSystemTablespaces{
   SystemObject{kPgGlobalTablespace, "pg_global"},
 };
 
+struct SystemLanguage {
+  duckdb::idx_t oid;
+  std::string_view name;
+  bool trusted;
+  duckdb::idx_t validator;
+};
+
+inline constexpr std::array kSystemLanguages{
+  SystemLanguage{kPgInternalLanguage, "internal", false,
+                 kPgInternalLanguageValidator},
+  SystemLanguage{kPgSqlLanguage, "sql", true, kPgSqlLanguageValidator},
+};
+
+struct SystemAccessMethod {
+  duckdb::idx_t oid;
+  std::string_view name;
+  char type;
+  duckdb::idx_t handler;
+};
+
+inline constexpr std::array kSystemAccessMethods{
+  SystemAccessMethod{kPgAmHeap, "heap", 't', kPgAmHeapHandler},
+  SystemAccessMethod{kPgAmInverted, "inverted", 'i', kInvalidOid},
+  SystemAccessMethod{kPgAmIResearch, "iresearch", 't', kInvalidOid},
+  SystemAccessMethod{kPgAmSecondary, "secondary", 'i', kInvalidOid},
+};
+
 inline constexpr const SystemObject* FindSystemObject(
   std::span<const SystemObject> objects, duckdb::idx_t oid) {
   for (const auto& object : objects) {

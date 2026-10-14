@@ -23,26 +23,14 @@
 namespace sdb::pg {
 namespace {
 
-struct Am {
-  duckdb::idx_t oid;
-  std::string_view name;
-  char type;
-  duckdb::idx_t handler;
-};
-
-constexpr std::array kAms{
-  Am{kPgAmHeap, "heap", 't', kPgAmHeapHandler},
-  Am{kPgAmInverted, "inverted", 'i', kInvalidOid},
-  Am{kPgAmIResearch, "iresearch", 't', kInvalidOid},
-  Am{kPgAmSecondary, "secondary", 'i', kInvalidOid},
-};
-
-constexpr auto kAm = Shape<kPgAmSql, const Am>(
-  Col<"oid">(&Am::oid), Col<"amname">(&Am::name),
-  Col<"amhandler">(&Am::handler), Col<"amtype">(&Am::type));
+constexpr auto kAm = Shape<kPgAmSql, const SystemAccessMethod>(
+  Col<"oid">(&SystemAccessMethod::oid),
+  Col<"amname">(&SystemAccessMethod::name),
+  Col<"amhandler">(&SystemAccessMethod::handler),
+  Col<"amtype">(&SystemAccessMethod::type));
 
 }  // namespace
 
-SystemTable gPgAm = SystemTableOf<StaticTable<kAm, kAms>>();
+SystemTable gPgAm = SystemTableOf<StaticTable<kAm, kSystemAccessMethods>>();
 
 }  // namespace sdb::pg

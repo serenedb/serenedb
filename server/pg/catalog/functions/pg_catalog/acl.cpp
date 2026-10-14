@@ -614,7 +614,7 @@ struct SchemaPrivileges : ObjectPrivileges<SchemaPrivileges> {
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    return *RegIn<RegKind::Namespace>(session, name, false);
+    return *SchemaOid(session, name, false);
   }
 
   static std::optional<ObjectTarget> Find(const Session& session,

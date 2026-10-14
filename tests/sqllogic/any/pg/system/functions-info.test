@@ -1299,3 +1299,13 @@ SELECT DISTINCT parameters FROM duckdb_functions() WHERE function_name = 'arg_ma
 ----
 parameters
 {arg,val,N}
+
+
+query
+SELECT format_type('varchar'::regtype, 4) AS varchar4, format_type('varchar'::regtype, 3) AS varchar3,
+       format_type('varchar'::regtype, 0) AS varchar0, format_type('numeric'::regtype, 3) AS numeric3,
+       format_type('bpchar'::regtype, 5) AS bpchar5, format_type('numeric'::regtype, 4) AS numeric4;
+----
+varchar4	varchar3	varchar0	numeric3	bpchar5	numeric4
+character varying	character varying	character varying	numeric	character(1)	numeric(0,0)
+

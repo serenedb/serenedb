@@ -50,6 +50,25 @@ owner_usage	owner_create
 t	t
 
 
+statement ok
+CREATE SCHEMA "Osh_Mixed";
+
+
+query
+SELECT has_schema_privilege('Osh_Mixed', 'USAGE') AS exact_name;
+----
+exact_name
+t
+
+
+statement error schema "OSH_MIXED" does not exist
+SELECT has_schema_privilege('OSH_MIXED', 'USAGE');
+
+
+statement ok
+DROP SCHEMA "Osh_Mixed";
+
+
 # ---- cleanup ----
 
 statement ok

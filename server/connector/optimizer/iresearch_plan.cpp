@@ -580,13 +580,28 @@ bool TryFoldQueryVector(duckdb::ClientContext& context,
   if (!TryFoldExpression(context, expr, folded)) {
     return false;
   }
-  const auto casted = folded.DefaultTryCastAs(
-    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim));
-  if (!casted || casted->IsNull()) {
+  const auto& type = folded.type();
+  const bool array = type.id() == duckdb::LogicalTypeId::ARRAY;
+  const bool floats = (array || type.id() == duckdb::LogicalTypeId::LIST) &&
+                      (array ? duckdb::ArrayType::GetChildType(type)
+                             : duckdb::ListType::GetChildType(type))
+                          .id() == duckdb::LogicalTypeId::FLOAT;
+  duckdb::optional<duckdb::Value> casted;
+  if (!floats) {
+    casted = folded.DefaultTryCastAs(
+      duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, dim));
+    if (!casted || casted->IsNull()) {
+      return false;
+    }
+  }
+  const auto& children = casted  ? duckdb::ArrayValue::GetChildren(*casted)
+                         : array ? duckdb::ArrayValue::GetChildren(folded)
+                                 : duckdb::ListValue::GetChildren(folded);
+  if (children.size() != dim) {
     return false;
   }
   out.reserve(dim);
-  for (const auto& child : duckdb::ArrayValue::GetChildren(*casted)) {
+  for (const auto& child : children) {
     if (child.IsNull()) {
       return false;
     }

@@ -112,6 +112,10 @@ class ColumnWriter final {
   void ShareDictionary(
     std::shared_ptr<const codecs::TrainedDictionary> dictionary,
     uint16_t index);
+  void ShareLeafDictionary(
+    std::span<const uint32_t> path,
+    std::shared_ptr<const codecs::TrainedDictionary> dictionary,
+    uint16_t index);
 
  private:
   friend class ColWriter;

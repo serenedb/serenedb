@@ -42,6 +42,46 @@
 namespace irs {
 namespace {
 
+uint64_t BlockRows(const std::vector<ColumnBlockMeta>& blocks) {
+  uint64_t rows = 0;
+  for (const auto& block : blocks) {
+    rows += block.tuple_count;
+  }
+  return rows;
+}
+
+uint64_t MetaRows(const ColumnMeta& meta) {
+  return BlockRows(meta.data.empty() ? meta.validity : meta.data);
+}
+
+void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
+  SDB_ASSERT(part.list_parts.empty() && part.variant_rgs.empty() &&
+             !part.hyperloglog);
+  SDB_ENSURE(part.dictionaries.empty(), "column ", part.id,
+             ": a merged part trained its own dictionary");
+  if (meta.type.id() == duckdb::LogicalTypeId::INVALID) {
+    meta.id = part.id;
+    meta.type = part.type;
+  }
+  if (meta.children.empty()) {
+    meta.children.resize(part.children.size());
+  }
+  SDB_ASSERT(meta.children.size() == part.children.size());
+  if (meta.type.InternalType() == duckdb::PhysicalType::LIST &&
+      !meta.data.empty()) {
+    meta.list_parts.push_back(ListPart{
+      .row = BlockRows(meta.data),
+      .code = MetaRows(meta.children[1]),
+      .elem = MetaRows(meta.children[0]),
+    });
+  }
+  std::ranges::move(part.data, std::back_inserter(meta.data));
+  std::ranges::move(part.validity, std::back_inserter(meta.validity));
+  for (size_t i = 0; i != part.children.size(); ++i) {
+    AppendPart(meta.children[i], part.children[i]);
+  }
+}
+
 void SerializeNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
   s.WriteProperty(0, "rows", r.stats.rows);
   s.WriteProperty(1, "sum", r.stats.sum);
@@ -261,6 +301,20 @@ uint16_t ColWriter::AddColumnDictionary(field_id id, std::string_view bytes) {
   return parts.own_dictionary;
 }
 
+uint16_t ColWriter::AddLeafDictionary(field_id id,
+                                      std::span<const uint32_t> path,
+                                      std::string_view bytes) {
+  std::lock_guard lock{_mutex};
+  auto [it, inserted] = _parts[id].leaf_dictionaries.try_emplace(
+    std::vector<uint32_t>{path.begin(), path.end()});
+  if (inserted) {
+    EnsureOut();
+    it->second = {.file_offset = _blocks->Append(bytes),
+                  .byte_size = bytes.size()};
+  }
+  return 1;
+}
+
 bool ColWriter::AddCopiedDictionaries(field_id id,
                                       std::span<const std::string> dictionaries,
                                       std::vector<uint16_t>& indexes) {
@@ -280,7 +334,6 @@ bool ColWriter::AddCopiedDictionaries(field_id id,
 ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
   ColumnMeta meta;
   meta.id = id;
-  meta.dictionaries = std::move(parts.dictionaries);
   for (auto& slot : parts.parts) {
     if (slot.writer) {
       slot.writer->Finish();
@@ -289,11 +342,16 @@ ColumnMeta ColWriter::AssembleParts(field_id id, ColumnParts& parts) {
     auto& part = slot.copy;
     SDB_ASSERT(part.type.id() != duckdb::LogicalTypeId::INVALID,
                "ColWriter::Commit: column ", id, " misses a part");
-    SDB_ASSERT(part.children.empty() && part.variant_rgs.empty() &&
-               part.dictionaries.empty() && !part.hyperloglog);
-    meta.type = part.type;
-    std::ranges::move(part.data, std::back_inserter(meta.data));
-    std::ranges::move(part.validity, std::back_inserter(meta.validity));
+    AppendPart(meta, part);
+  }
+  meta.dictionaries = std::move(parts.dictionaries);
+  for (auto& [path, dictionary] : parts.leaf_dictionaries) {
+    auto* leaf = &meta;
+    for (const auto child : path) {
+      SDB_ASSERT(child < leaf->children.size());
+      leaf = &leaf->children[child];
+    }
+    leaf->dictionaries = {dictionary};
   }
   return meta;
 }

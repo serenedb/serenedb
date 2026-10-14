@@ -37,9 +37,12 @@ class ListColumnReader final : public ColumnReader {
   ListColumnReader(field_id id, duckdb::LogicalType type,
                    std::vector<ColumnBlockMeta> segments,
                    std::unique_ptr<ColumnReader> validity,
-                   std::vector<std::unique_ptr<ColumnReader>> children)
+                   std::vector<std::unique_ptr<ColumnReader>> children,
+                   std::vector<ListPart> parts)
     : ColumnReader{id, std::move(type), std::move(segments),
-                   std::move(validity), std::move(children)} {
+                   std::move(validity), std::move(children)},
+      _parts{std::move(parts)} {
+    SDB_ASSERT(_parts.empty() || Deduplicated());
     auto stats = duckdb::ListStats::CreateEmpty(_type);
     duckdb::ListStats::SetChildStats(
       stats, _children.front()->MergedStatistics().ToUnique());
@@ -131,6 +134,26 @@ class ListColumnReader final : public ColumnReader {
 
   bool Deduplicated() const noexcept { return _children.size() == 2; }
 
+  void AddBases(uint64_t ListPart::* at, uint64_t ListPart::* base,
+                uint64_t first, uint64_t* values,
+                uint64_t count) const noexcept {
+    auto next = std::ranges::upper_bound(_parts, first, {}, at);
+    uint64_t add = next == _parts.begin() ? 0 : (*std::prev(next)).*base;
+    const uint64_t end = first + count;
+    for (uint64_t pos = first; pos < end;) {
+      const uint64_t stop =
+        next == _parts.end() ? end : std::min(end, (*next).*at);
+      for (uint64_t k = pos; k < stop; ++k) {
+        values[k - first] += add;
+      }
+      pos = stop;
+      if (next != _parts.end()) {
+        add = (*next).*base;
+        ++next;
+      }
+    }
+  }
+
   duckdb::Vector& Scratch(ScanState& s, duckdb::idx_t count,
                           std::optional<duckdb::Vector>& big) const {
     if (count > STANDARD_VECTOR_SIZE) {
@@ -190,6 +213,11 @@ class ListColumnReader final : public ColumnReader {
     _children[1]->ScanCount(s.child_states[2], ends_vec,
                             static_cast<duckdb::idx_t>(end_count), 0);
     d.ends_pos = first + count;
+    if (!_parts.empty()) {
+      AddBases(&ListPart::code, &ListPart::elem, first_end,
+               duckdb::FlatVector::GetDataMutable<uint64_t>(ends_vec),
+               end_count);
+    }
     const auto* ends = duckdb::FlatVector::GetData<uint64_t>(ends_vec);
     const uint64_t first_elem = first == 0 ? 0 : ends[0];
     const uint64_t last_elem = ends[end_count - 1];
@@ -325,9 +353,15 @@ class ListColumnReader final : public ColumnReader {
                           duckdb::idx_t result_offset) const {
     std::optional<duckdb::Vector> big;
     auto& codes_vec = Scratch(s, count, big);
+    const uint64_t row = GatherCursor(s);
     const auto scan_count =
       ScanVector(s, codes_vec, count, duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
     SDB_ASSERT(scan_count > 0);
+    if (!_parts.empty()) {
+      AddBases(&ListPart::row, &ListPart::code, row,
+               duckdb::FlatVector::GetDataMutable<uint64_t>(codes_vec),
+               scan_count);
+    }
     if (_validity) {
       _validity->ColumnReader::ScanCount(s.child_states[0], result, count,
                                          result_offset);
@@ -398,6 +432,8 @@ class ListColumnReader final : public ColumnReader {
       result, static_cast<duckdb::idx_t>(child_base + total));
     return scan_count;
   }
+
+  std::vector<ListPart> _parts;
 };
 
 }  // namespace irs

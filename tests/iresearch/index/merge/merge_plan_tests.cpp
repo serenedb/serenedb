@@ -26,6 +26,7 @@
 #include <iresearch/formats/column/col_block_copy.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
+#include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
@@ -284,7 +285,7 @@ TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
                                   &irs::MergeUnit::kind));
 }
 
-TEST_F(MergePlanTest, BigFlatColumnsSplitIntoRowRanges) {
+TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
   irs::MemoryDirectory out;
   auto plan = MakePlan(out, &_small_row_groups);
   ASSERT_TRUE(plan.Prepare(64));
@@ -307,10 +308,15 @@ TEST_F(MergePlanTest, BigFlatColumnsSplitIntoRowRanges) {
                                    plan.Dependencies(unit)));
   }
   for (const auto id : {kListColumn, kStructColumn}) {
-    const auto whole = UnitsOf(units, MergeUnitKind::Column, id);
-    ASSERT_EQ(1, whole.size());
-    EXPECT_EQ(0, units[whole[0]].part);
+    const auto parts = UnitsOf(units, MergeUnitKind::Column, id);
+    ASSERT_LT(1, parts.size());
+    for (uint32_t part = 0; part != parts.size(); ++part) {
+      EXPECT_EQ(part, units[parts[part]].part);
+    }
   }
+  EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnTrain, kListColumn).empty());
+  EXPECT_EQ(1,
+            UnitsOf(units, MergeUnitKind::ColumnTrain, kStructColumn).size());
   const auto footer =
     static_cast<size_t>(std::ranges::find(units, MergeUnitKind::ColumnsFooter,
                                           &irs::MergeUnit::kind) -
@@ -390,22 +396,27 @@ std::string LogLine(size_t row) {
                       " user=", rng() % 100000, " took ", rng() % 997, "ms");
 }
 
-std::vector<std::string> DictionariesByBlock(const irs::SubReader& segment,
-                                             irs::field_id id) {
+std::vector<std::string> DictionariesByBlock(const irs::ColReader& cs,
+                                             const irs::ColumnReader& col) {
   std::vector<std::string> out;
-  const auto* cs = segment.GetColReader();
-  const auto* col = cs != nullptr ? cs->Column(id) : nullptr;
-  if (col == nullptr) {
-    return out;
-  }
-  irs::ReadContext ctx{*cs};
-  for (size_t block = 0; block != col->DataBlocks().size(); ++block) {
-    auto seg = col->OpenSegment(block, ctx);
+  irs::ReadContext ctx{cs};
+  for (size_t block = 0; block != col.DataBlocks().size(); ++block) {
+    auto seg = col.OpenSegment(block, ctx);
     auto info = seg->GetCompressionFunction().get_segment_info(
       duckdb::QueryContext{}, *seg);
     out.push_back(info["dictionary"]);
   }
   return out;
+}
+
+std::vector<std::string> DictionariesByBlock(const irs::SubReader& segment,
+                                             irs::field_id id) {
+  const auto* cs = segment.GetColReader();
+  const auto* col = cs != nullptr ? cs->Column(id) : nullptr;
+  if (col == nullptr) {
+    return {};
+  }
+  return DictionariesByBlock(*cs, *col);
 }
 
 class ColumnSplitTest : public ::testing::Test {
@@ -450,9 +461,9 @@ class ColumnSplitTest : public ::testing::Test {
     return MergeInputs(out, row_group, threads, units);
   }
 
-  std::shared_ptr<const irs::SegmentReaderImpl> MergeInputs(
-    irs::Directory& out, uint32_t row_group, size_t threads,
-    std::span<const irs::MergeUnit>* units) {
+  std::span<const irs::MergeUnit> PrepareInputs(irs::Directory& out,
+                                                uint32_t row_group,
+                                                size_t threads) {
     _meta = {};
     _doc_map.clear();
     for (const auto* input : _inputs) {
@@ -464,8 +475,15 @@ class ColumnSplitTest : public ::testing::Test {
       out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
       _with_options ? _options.get() : nullptr, irs::MergeProgress{}, nullptr);
     EXPECT_TRUE(_plan->Prepare(threads));
+    return _plan->Units();
+  }
+
+  std::shared_ptr<const irs::SegmentReaderImpl> MergeInputs(
+    irs::Directory& out, uint32_t row_group, size_t threads,
+    std::span<const irs::MergeUnit>* units) {
+    const auto planned = PrepareInputs(out, row_group, threads);
     if (units != nullptr) {
-      *units = _plan->Units();
+      *units = planned;
     }
     if (_serial) {
       EXPECT_TRUE(irs::RunSerially(*_plan));
@@ -577,30 +595,236 @@ TEST_F(ColumnSplitTest, RangesPadInputsWithoutTheColumn) {
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
 
-TEST_F(ColumnSplitTest, ArrayColumnsStayWhole) {
-  constexpr irs::field_id kVector = kFirstColumn;
-  constexpr irs::field_id kNumber = kFirstColumn + 1;
-  const auto vector_type =
-    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, 4);
+constexpr irs::field_id kVector = kFirstColumn;
+constexpr irs::field_id kVectorNumber = kFirstColumn + 1;
+
+void FillVectorRow(irs::IndexWriter::Document& doc, size_t row) {
+  const auto x = static_cast<float>(row);
+  WriteValue(doc, kVector,
+             duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, 4),
+             duckdb::Value::ARRAY(
+               duckdb::LogicalType::FLOAT,
+               {duckdb::Value::FLOAT(x), duckdb::Value::FLOAT(x + 1),
+                duckdb::Value::FLOAT(x * 2), duckdb::Value::FLOAT(-x)}));
+  WriteValue(doc, kVectorNumber, duckdb::LogicalType::BIGINT,
+             duckdb::Value::BIGINT(static_cast<int64_t>(row * row)));
+}
+
+TEST_F(ColumnSplitTest, ArrayColumnsSplitIntoRowRanges) {
   for (size_t s = 0; s != 2; ++s) {
-    AddSegment(300, [&](auto& doc, size_t row) {
-      const auto x = static_cast<float>(row);
-      WriteValue(doc, kVector, vector_type,
-                 duckdb::Value::ARRAY(
-                   duckdb::LogicalType::FLOAT,
-                   {duckdb::Value::FLOAT(x), duckdb::Value::FLOAT(x + 1),
-                    duckdb::Value::FLOAT(x * 2), duckdb::Value::FLOAT(-x)}));
-      WriteValue(doc, kNumber, duckdb::LogicalType::BIGINT,
-                 duckdb::Value::BIGINT(static_cast<int64_t>(row * row)));
-    });
+    AddSegment(300, FillVectorRow);
   }
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, kInputRowGroup, 16, &units);
   ASSERT_NE(nullptr, merged);
-  EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::Column, kVector).size());
-  EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kNumber).size());
+  EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kVector).size());
+  EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kVectorNumber).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+}
+
+TEST_F(ColumnSplitTest, VectorIndexColumnsStayWhole) {
+  for (size_t s = 0; s != 2; ++s) {
+    AddSegment(300, FillVectorRow);
+  }
+  _merge_columns = [](irs::field_id id) {
+    irs::ColumnOptions options;
+    if (id == kVector) {
+      options.ann_info = irs::AnnInfo{.kind = irs::AnnKind::Ivf};
+    }
+    return options;
+  };
+  TakeSnapshot();
+  irs::MemoryDirectory out;
+  const auto units = PrepareInputs(out, kInputRowGroup, 16);
+  EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::Column, kVector).size());
+  EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kVectorNumber).size());
+}
+
+std::string ValueText(const duckdb::Value& value) {
+  return value.IsNull() ? std::string{"NULL"} : value.ToString();
+}
+
+std::vector<std::string> ScannedValues(const irs::ColReader& cs,
+                                       const irs::ColumnReader& col) {
+  std::vector<std::string> out;
+  irs::ReadContext ctx{cs};
+  auto state = col.InitScan(ctx);
+  for (uint64_t row = 0; row < col.RowCount();) {
+    const auto take =
+      std::min<uint64_t>(col.RowCount() - row, STANDARD_VECTOR_SIZE);
+    duckdb::Vector vec{col.Type(), STANDARD_VECTOR_SIZE};
+    col.Scan(state, vec, take);
+    for (uint64_t k = 0; k != take; ++k) {
+      out.push_back(ValueText(vec.GetValue(k)));
+    }
+    row += take;
+  }
+  return out;
+}
+
+void ExpectGathersMatchScans(const irs::SubReader& segment, irs::field_id id) {
+  const auto* cs = segment.GetColReader();
+  ASSERT_NE(nullptr, cs);
+  const auto* col = cs->Column(id);
+  ASSERT_NE(nullptr, col);
+  const auto scanned = ScannedValues(*cs, *col);
+  for (const uint64_t stride : {3, 37}) {
+    SCOPED_TRACE(stride);
+    std::vector<uint64_t> picked;
+    for (uint64_t row = 1; row < col->RowCount(); row += stride) {
+      picked.push_back(row);
+    }
+    irs::ReadContext ctx{*cs};
+    auto state = col->InitScan(ctx);
+    for (size_t i = 0; i < picked.size();) {
+      const auto take =
+        std::min<size_t>(picked.size() - i, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{col->Type(), STANDARD_VECTOR_SIZE};
+      irs::column_internal::GatherRows(
+        *col, state, std::span<const uint64_t>{&picked[i], take}, out, 0,
+        /*whole_output=*/true);
+      for (size_t k = 0; k != take; ++k) {
+        ASSERT_EQ(scanned[picked[i + k]], ValueText(out.GetValue(k)))
+          << "row " << picked[i + k];
+      }
+      i += take;
+    }
+  }
+}
+
+class NestedTextSplitTest : public ColumnSplitTest {
+ protected:
+  static constexpr irs::field_id kMap = kFirstColumn;
+
+  void ExpectOneSharedLeafDictionary(size_t docs_per_segment, bool deletes,
+                                     uint32_t row_group) {
+    const auto text = duckdb::LogicalType::VARCHAR;
+    const auto map_type = duckdb::LogicalType::MAP(text, text);
+    for (size_t s = 0; s != 2; ++s) {
+      AddSegment(docs_per_segment, [&](auto& doc, size_t row) {
+        WriteValue(doc, kMap, map_type,
+                   duckdb::Value::MAP(text, text, {duckdb::Value{"message"}},
+                                      {duckdb::Value{LogLine(row)}}));
+      });
+    }
+    std::vector<std::string> removed;
+    for (size_t row = 0; deletes && row < 2 * docs_per_segment; row += 10) {
+      removed.emplace_back(absl::StrCat("doc-", row));
+    }
+    RemoveTerms(*_writer, kIdField, removed);
+    irs::MemoryDirectory out;
+    std::span<const irs::MergeUnit> units;
+    const auto merged = Merge(out, row_group, 4, &units);
+    ASSERT_NE(nullptr, merged);
+    ASSERT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnTrain, kMap).size());
+    ASSERT_LT(1, UnitsOf(units, MergeUnitKind::Column, kMap).size());
+    EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+    const auto* col = merged->GetColReader()->Column(kMap);
+    ASSERT_NE(nullptr, col);
+    ASSERT_NE(nullptr, col->Child());
+    const auto& entries = *col->Child();
+    EXPECT_FALSE(entries.StructField(0).HasDictionaries());
+    const auto& values = entries.StructField(1);
+    EXPECT_EQ(1, values.DictionaryMetas().size());
+    const auto blocks = DictionariesByBlock(*merged->GetColReader(), values);
+    ASSERT_LT(3, blocks.size());
+    const auto quarter = blocks.size() / 4;
+    EXPECT_TRUE(std::any_of(blocks.begin(), blocks.begin() + quarter,
+                            [](const auto& d) { return d == "trained:1"; }));
+    EXPECT_TRUE(std::any_of(blocks.end() - quarter, blocks.end(),
+                            [](const auto& d) { return d == "trained:1"; }));
+    ExpectGathersMatchScans(*merged, kMap);
+  }
+};
+
+TEST_F(NestedTextSplitTest, LeavesShareOneTrainedDictionary) {
+  ExpectOneSharedLeafDictionary(30000, true, 8192);
+}
+
+TEST_F(NestedTextSplitTest, LeavesSampleRowGroupsWhenWindowsFallShort) {
+  ExpectOneSharedLeafDictionary(17000, false, 32768);
+}
+
+TEST_F(NestedTextSplitTest, LeavesSampleRowGroupsPastDeletedRows) {
+  ExpectOneSharedLeafDictionary(17000, true, 8192);
+}
+
+TEST_F(ColumnSplitTest, NestedColumnsSplitIntoRowRanges) {
+  constexpr irs::field_id kMap = kFirstColumn;
+  constexpr irs::field_id kNested = kFirstColumn + 1;
+  constexpr irs::field_id kRecord = kFirstColumn + 2;
+  constexpr irs::field_id kDistinct = kFirstColumn + 3;
+  const auto text = duckdb::LogicalType::VARCHAR;
+  const auto ints = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+  const auto map_type = duckdb::LogicalType::MAP(text, text);
+  const auto nested_type = duckdb::LogicalType::LIST(ints);
+  const auto record_type =
+    duckdb::LogicalType::STRUCT({{"a", duckdb::LogicalType::INTEGER},
+                                 {"tags", duckdb::LogicalType::LIST(text)}});
+  const auto distinct_type =
+    duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  const auto fill = [&](auto& doc, size_t row) {
+    if (row % 11 != 4) {
+      duckdb::vector<duckdb::Value> keys;
+      duckdb::vector<duckdb::Value> values;
+      for (size_t k = 0; k != row % 4; ++k) {
+        keys.emplace_back(absl::StrCat("key", k));
+        values.emplace_back(absl::StrCat("service-", row % 7, "-", k));
+      }
+      WriteValue(
+        doc, kMap, map_type,
+        duckdb::Value::MAP(text, text, std::move(keys), std::move(values)));
+    }
+    duckdb::vector<duckdb::Value> outer;
+    for (size_t i = 0; i != row % 3; ++i) {
+      duckdb::vector<duckdb::Value> inner;
+      for (size_t j = 0; j != (row + i) % 4; ++j) {
+        inner.push_back(duckdb::Value::INTEGER(
+          static_cast<int32_t>((row * 31 + i * 7 + j) % 1000)));
+      }
+      outer.push_back(row % 13 == i
+                        ? duckdb::Value{ints}
+                        : duckdb::Value::LIST(duckdb::LogicalType::INTEGER,
+                                              std::move(inner)));
+    }
+    WriteValue(doc, kNested, nested_type,
+               duckdb::Value::LIST(ints, std::move(outer)));
+    duckdb::vector<duckdb::Value> tags;
+    for (size_t t = 0; t != row % 3; ++t) {
+      tags.emplace_back(absl::StrCat("tag", (row + t) % 5));
+    }
+    WriteValue(doc, kRecord, record_type,
+               duckdb::Value::STRUCT(
+                 {{"a", duckdb::Value::INTEGER(static_cast<int32_t>(row % 9))},
+                  {"tags", duckdb::Value::LIST(text, std::move(tags))}}));
+    WriteValue(doc, kDistinct, distinct_type,
+               duckdb::Value::LIST(
+                 duckdb::LogicalType::BIGINT,
+                 {duckdb::Value::BIGINT(static_cast<int64_t>(row)),
+                  duckdb::Value::BIGINT(static_cast<int64_t>(row * 3))}));
+  };
+  for (size_t s = 0; s != 3; ++s) {
+    AddSegment(3000, fill);
+  }
+  std::vector<std::string> removed;
+  for (size_t row = 0; row < 9000; row += 13) {
+    removed.emplace_back(absl::StrCat("doc-", row));
+  }
+  RemoveTerms(*_writer, kIdField, removed);
+  irs::MemoryDirectory out;
+  std::span<const irs::MergeUnit> units;
+  const auto merged = Merge(out, 256, 16, &units);
+  ASSERT_NE(nullptr, merged);
+  for (const auto id : {kMap, kNested, kRecord, kDistinct}) {
+    SCOPED_TRACE(id);
+    EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, id).size());
+  }
+  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+  for (const auto id : {kMap, kNested, kRecord, kDistinct}) {
+    SCOPED_TRACE(id);
+    ExpectGathersMatchScans(*merged, id);
+  }
 }
 
 using Block = std::tuple<uint64_t, uint64_t, duckdb::CompressionType>;

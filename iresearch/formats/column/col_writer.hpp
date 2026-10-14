@@ -88,6 +88,9 @@ class ColWriter final {
 
   uint16_t AddColumnDictionary(field_id id, std::string_view bytes);
 
+  uint16_t AddLeafDictionary(field_id id, std::span<const uint32_t> path,
+                             std::string_view bytes);
+
   bool AddCopiedDictionaries(field_id id,
                              std::span<const std::string> dictionaries,
                              std::vector<uint16_t>& indexes);
@@ -131,6 +134,7 @@ class ColWriter final {
     std::vector<ColumnPart> parts;
     std::vector<ColumnDictionaryMeta> dictionaries;
     uint16_t own_dictionary = 0;
+    std::map<std::vector<uint32_t>, ColumnDictionaryMeta> leaf_dictionaries;
   };
 
   uint16_t AppendDictionary(ColumnParts& parts, std::string_view bytes);

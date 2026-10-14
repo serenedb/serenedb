@@ -287,7 +287,7 @@ struct MergePlan::State {
         continue;
       }
       auto part_deps = after_norms;
-      if (columns->IsText(id)) {
+      if (columns->HoldsText(id)) {
         part_deps = {AddUnit({.kind = MergeUnitKind::ColumnTrain,
                               .id = id,
                               .cost = codecs::kTrainSampleBytes},

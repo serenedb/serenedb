@@ -65,7 +65,7 @@ class ColumnMerger {
 
   bool Splittable(field_id column) const;
 
-  bool IsText(field_id column) const;
+  bool HoldsText(field_id column) const;
 
   bool Copyable(field_id column, size_t input) const;
 

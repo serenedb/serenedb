@@ -1820,4 +1820,21 @@ void ColumnWriter::ShareDictionary(
   _meta.write_string_tuning = std::move(tuning);
 }
 
+void ColumnWriter::ShareLeafDictionary(
+  std::span<const uint32_t> path,
+  std::shared_ptr<const codecs::TrainedDictionary> dictionary, uint16_t index) {
+  auto* meta = &_meta;
+  for (const auto child : path) {
+    if (meta->children.size() <= child) {
+      meta->children.resize(child + 1);
+    }
+    meta = &meta->children[child];
+  }
+  auto tuning = std::make_shared<codecs::StringTuning>();
+  tuning->sampling_done = true;
+  tuning->dictionary_id = dictionary ? index : 0;
+  tuning->dictionary = std::move(dictionary);
+  meta->write_string_tuning = std::move(tuning);
+}
+
 }  // namespace irs

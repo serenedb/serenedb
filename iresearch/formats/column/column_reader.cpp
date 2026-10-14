@@ -160,6 +160,17 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
                   });
                 });
   }
+  if (!meta.list_parts.empty()) {
+    s.WriteList(8, "list_parts", meta.list_parts.size(),
+                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+                  const auto& part = meta.list_parts[i];
+                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
+                    obj.WriteProperty(0, "row", part.row);
+                    obj.WriteProperty(1, "code", part.code);
+                    obj.WriteProperty(2, "elem", part.elem);
+                  });
+                });
+  }
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -219,6 +230,16 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
         auto& m = meta.dictionaries.emplace_back();
         obj.ReadProperty(0, "file_offset", m.file_offset);
         obj.ReadProperty(1, "byte_size", m.byte_size);
+      });
+    });
+  d.ReadOptionalList(
+    8, "list_parts",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
+        auto& part = meta.list_parts.emplace_back();
+        obj.ReadProperty(0, "row", part.row);
+        obj.ReadProperty(1, "code", part.code);
+        obj.ReadProperty(2, "elem", part.elem);
       });
     });
   return meta;
@@ -836,7 +857,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
     case duckdb::LogicalTypeId::MAP:
       col = std::make_unique<ListColumnReader>(
         meta.id, std::move(meta.type), std::move(meta.data),
-        std::move(validity), std::move(children));
+        std::move(validity), std::move(children), std::move(meta.list_parts));
       break;
     default:
       col.reset(new ColumnReader{

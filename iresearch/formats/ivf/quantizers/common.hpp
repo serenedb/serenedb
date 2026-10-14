@@ -269,9 +269,88 @@ void ScoreGatheredRows(const byte_type* base, uint32_t record_size,
   }
 }
 
+#if defined(__x86_64__) && defined(__AVX2__)
+inline bool HasAvx512Vnni() noexcept {
+  static const bool kHas = __builtin_cpu_supports("avx512f") &&
+                           __builtin_cpu_supports("avx512bw") &&
+                           __builtin_cpu_supports("avx512vnni");
+  return kHas;
+}
+
+inline bool HasAvx512Popcount() noexcept {
+  static const bool kHas = __builtin_cpu_supports("avx512f") &&
+                           __builtin_cpu_supports("avx512bw") &&
+                           __builtin_cpu_supports("avx512vpopcntdq");
+  return kHas;
+}
+
+__attribute__((target("avx512f,avx512bw,avx512vpopcntdq"))) inline uint32_t
+BqXorPopcount512(const uint8_t* a, const uint8_t* b, uint32_t bytes) noexcept {
+  __m512i acc = _mm512_setzero_si512();
+  for (uint32_t p = 0; p < bytes; p += 64) {
+    const __mmask64 live =
+      bytes - p >= 64 ? ~__mmask64{0} : (__mmask64{1} << (bytes - p)) - 1;
+    const __m512i x = _mm512_maskz_loadu_epi8(live, a + p);
+    const __m512i y = _mm512_maskz_loadu_epi8(live, b + p);
+    acc = _mm512_add_epi64(acc, _mm512_popcnt_epi64(_mm512_xor_si512(x, y)));
+  }
+  return static_cast<uint32_t>(_mm512_reduce_add_epi64(acc));
+}
+
+__attribute__((target("avx512f,avx512bw,avx512vnni"))) inline int32_t
+BitPlaneSum512(const uint8_t* bits, uint32_t bytes, const int8_t* q) noexcept {
+  const __m512i ones = _mm512_set1_epi8(1);
+  std::array<__m512i, 4> acc{};
+  uint32_t p = 0;
+  size_t k = 0;
+  for (; p + 8 <= bytes; p += 8, ++k) {
+    uint64_t word = 0;
+    std::memcpy(&word, bits + p, sizeof(word));
+    acc[k & 3] = _mm512_dpbusd_epi32(
+      acc[k & 3], ones, _mm512_maskz_loadu_epi8(word, q + size_t{p} * 8));
+  }
+  if (p < bytes) {
+    uint64_t word = 0;
+    std::memcpy(&word, bits + p, bytes - p);
+    acc[k & 3] = _mm512_dpbusd_epi32(
+      acc[k & 3], ones, _mm512_maskz_loadu_epi8(word, q + size_t{p} * 8));
+  }
+  return _mm512_reduce_add_epi32(_mm512_add_epi32(
+    _mm512_add_epi32(acc[0], acc[1]), _mm512_add_epi32(acc[2], acc[3])));
+}
+#endif
+
+inline uint32_t BqXorPopcount(const uint8_t* a, const uint8_t* b,
+                              uint32_t bytes) noexcept {
+#if defined(__x86_64__) && defined(__AVX2__)
+  if (HasAvx512Popcount()) {
+    return BqXorPopcount512(a, b, bytes);
+  }
+#endif
+  uint32_t count = 0;
+  uint32_t p = 0;
+  for (; p + 8 <= bytes; p += 8) {
+    uint64_t x = 0;
+    uint64_t y = 0;
+    std::memcpy(&x, a + p, sizeof(x));
+    std::memcpy(&y, b + p, sizeof(y));
+    count += static_cast<uint32_t>(std::popcount(x ^ y));
+  }
+  for (; p < bytes; ++p) {
+    count +=
+      static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(a[p] ^ b[p])));
+  }
+  return count;
+}
+
 #ifdef __AVX2__
 inline int32_t BitPlaneSum(const uint8_t* bits, uint32_t bytes,
                            const int8_t* q) noexcept {
+#if defined(__x86_64__)
+  if (HasAvx512Vnni()) {
+    return BitPlaneSum512(bits, bytes, q);
+  }
+#endif
   const __m256i replicate =
     _mm256_setr_epi8(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2,
                      2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3);

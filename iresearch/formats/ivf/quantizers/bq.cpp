@@ -271,24 +271,6 @@ void BqFitLevels(const BqLayout& lay, const double* count, const double* sum,
   }
 }
 
-uint32_t BqXorPopcount(const uint8_t* a, const uint8_t* b,
-                       uint32_t bytes) noexcept {
-  uint32_t count = 0;
-  uint32_t p = 0;
-  for (; p + 8 <= bytes; p += 8) {
-    uint64_t x = 0;
-    uint64_t y = 0;
-    std::memcpy(&x, a + p, sizeof(x));
-    std::memcpy(&y, b + p, sizeof(y));
-    count += static_cast<uint32_t>(std::popcount(x ^ y));
-  }
-  for (; p < bytes; ++p) {
-    count +=
-      static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(a[p] ^ b[p])));
-  }
-  return count;
-}
-
 template<VectorMetric M>
 class BinaryQuantizerWriter final : public QuantizerWriter {
  public:

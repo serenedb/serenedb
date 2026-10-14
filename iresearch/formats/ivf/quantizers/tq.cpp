@@ -447,13 +447,6 @@ int32_t TurboQuantDot8(const uint8_t* code, const TurboQuantInt8Seg& seg,
 }
 
 #if defined(__x86_64__)
-bool HasAvx512Vnni() noexcept {
-  static const bool kHas = __builtin_cpu_supports("avx512f") &&
-                           __builtin_cpu_supports("avx512bw") &&
-                           __builtin_cpu_supports("avx512vnni");
-  return kHas;
-}
-
 template<uint32_t Bits>
 __attribute__((target("avx512f,avx512bw,avx512vnni"))) int32_t
 TurboQuantDot8Vnni(const uint8_t* code, const TurboQuantInt8Seg& seg,

@@ -27,6 +27,7 @@
 #include <iostream>
 #include <iresearch/formats/ivf/clustering.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
+#include <iresearch/formats/ivf/quantizers/common.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/store/data_input.hpp>
 #include <iresearch/store/data_output.hpp>
@@ -3188,5 +3189,37 @@ TEST(half_quantizer_test, scores_track_exact) {
       EXPECT_GE(recall / nq, min_recall)
         << static_cast<int>(quant) << " metric " << static_cast<int>(metric);
     }
+  }
+}
+
+TEST(quantizer_kernel_test, bit_kernels_match_a_bit_by_bit_sum) {
+  std::mt19937 rng{101};
+  std::uniform_int_distribution<int> byte{0, 255};
+  std::uniform_int_distribution<int> weight{-127, 127};
+  for (uint32_t bytes = 1; bytes <= 200; ++bytes) {
+    std::vector<uint8_t> a(bytes);
+    std::vector<uint8_t> b(bytes);
+    std::vector<int8_t> q(size_t{bytes} * 8);
+    for (auto& v : a) {
+      v = static_cast<uint8_t>(byte(rng));
+    }
+    for (auto& v : b) {
+      v = static_cast<uint8_t>(byte(rng));
+    }
+    for (auto& v : q) {
+      v = static_cast<int8_t>(weight(rng));
+    }
+    uint32_t differ = 0;
+    int32_t plane = 0;
+    for (uint32_t i = 0; i < bytes * 8; ++i) {
+      const bool x = ((a[i / 8] >> (i % 8)) & 1U) != 0;
+      const bool y = ((b[i / 8] >> (i % 8)) & 1U) != 0;
+      differ += x != y ? 1 : 0;
+      plane += x ? q[i] : 0;
+    }
+    EXPECT_EQ(quantizers::BqXorPopcount(a.data(), b.data(), bytes), differ)
+      << bytes;
+    EXPECT_EQ(quantizers::BitPlaneSum(a.data(), bytes, q.data()), plane)
+      << bytes;
   }
 }

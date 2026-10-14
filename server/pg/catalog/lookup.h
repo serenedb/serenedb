@@ -274,6 +274,7 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
 struct SessionSchema {
   std::string name;
   duckdb::optional_ptr<duckdb::SchemaCatalogEntry> entry;
+  bool system;
 };
 
 struct RegOutRecent {

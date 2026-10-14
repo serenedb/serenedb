@@ -393,7 +393,8 @@ Session MakeSession(duckdb::ClientContext* context) {
                  ? session.database->GetSchema(
                      *session.transaction, duckdb::Identifier{name},
                      duckdb::OnEntryNotFound::RETURN_NULL)
-                 : nullptr});
+                 : nullptr,
+      .system = FindSystemObject(kSystemNamespaces, name) != nullptr});
   };
   const auto& search_path =
     *duckdb::ClientData::Get(*context).catalog_search_path;

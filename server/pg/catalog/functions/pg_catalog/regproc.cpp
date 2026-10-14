@@ -79,49 +79,6 @@ std::string QualifiedOutName(std::string_view schema, std::string_view name) {
   return absl::StrCat(AsView(OutName(schema)), ".", AsView(OutName(name)));
 }
 
-uint64_t ResolveRelation(const Session& session,
-                         const duckdb::QualifiedName& name) {
-  auto& context = *session.context;
-  auto& retriever = *session.retriever;
-  // Every half of the relation namespace, in the order postgres resolves them
-  // -- a table and a view share duckdb's set, so the first lookup covers both.
-  for (const auto type : kRelationSets) {
-    if (auto entry = retriever.GetEntry(duckdb::EntryLookupInfo{type, name},
-                                        duckdb::OnEntryNotFound::RETURN_NULL)) {
-      return entry->oid;
-    }
-  }
-  if (auto entry = retriever.GetEntry(
-        duckdb::EntryLookupInfo{duckdb::CatalogType::TYPE_ENTRY, name},
-        duckdb::OnEntryNotFound::RETURN_NULL);
-      entry && duckdb::StructType::IsStruct(
-                 entry->Cast<duckdb::TypeCatalogEntry>().user_type)) {
-    return entry->oid;
-  }
-  if (!session.database) {
-    return kInvalidOid;
-  }
-  const auto key_index = [&](duckdb::SchemaCatalogEntry& schema) {
-    const auto key =
-      FindKeyIndex(context, schema, name.Name().GetIdentifierName());
-    return key.key_index ? key.key_index->index_oid : kInvalidOid;
-  };
-  if (!name.Schema().empty()) {
-    auto schema =
-      session.database->GetSchema(*session.transaction, name.Schema(),
-                                  duckdb::OnEntryNotFound::RETURN_NULL);
-    return schema ? key_index(*schema) : kInvalidOid;
-  }
-  for (const auto& schema : session.search_path) {
-    if (auto entry = schema.entry) {
-      if (const auto oid = key_index(*entry); oid != kInvalidOid) {
-        return oid;
-      }
-    }
-  }
-  return kInvalidOid;
-}
-
 namespace {
 
 constexpr size_t kMaxIdentifierLength = 63;
@@ -185,22 +142,73 @@ std::optional<uint64_t> SchemaOid(const Session& session,
                             ERR_MSG("schema \"", schema, "\" does not exist")));
 }
 
-bool RelationIn(const Session& session, const SessionSchema& schema,
-                std::string_view name) {
-  if (FindSystemObject(kSystemNamespaces, schema.name)) {
-    return IsSystemRelation(schema.name, name);
+IRS_NO_INLINE uint64_t UserRelationOid(const Session& session,
+                                       duckdb::SchemaCatalogEntry& schema,
+                                       std::string_view name) {
+  const duckdb::Identifier identifier{name};
+  for (const auto type : kRelationSets) {
+    if (const auto member =
+          FindMember(*session.transaction, schema, type, identifier);
+        member && !member->internal) {
+      return member->oid;
+    }
+  }
+  if (const auto member =
+        FindMember(*session.transaction, schema,
+                   duckdb::CatalogType::TYPE_ENTRY, identifier);
+      member && !member->internal &&
+      duckdb::StructType::IsStruct(
+        member->Cast<duckdb::TypeCatalogEntry>().user_type)) {
+    return member->oid;
+  }
+  const auto key = FindKeyIndex(*session.context, schema, name);
+  return key.key_index ? key.key_index->index_oid : kInvalidOid;
+}
+
+uint64_t RelationOid(const Session& session, const SessionSchema& schema,
+                     std::string_view name) {
+  if (schema.system) {
+    return SystemRelationOid(schema.name, name);
   }
   auto entry = schema.entry;
-  if (!entry) {
-    return false;
-  }
-  const duckdb::Identifier identifier{name};
-  return absl::c_any_of(kRelationSets, [&](duckdb::CatalogType type) {
-    const auto member =
-      FindMember(*session.transaction, *entry, type, identifier);
-    return member && !member->internal;
-  });
+  return entry ? UserRelationOid(session, *entry, name) : kInvalidOid;
 }
+
+}  // namespace
+
+uint64_t ResolveRelation(const Session& session,
+                         const duckdb::QualifiedName& name) {
+  const auto& relation = name.Name().GetIdentifierName();
+  if (!name.Schema().empty()) {
+    const auto& schema = name.Schema().GetIdentifierName();
+    return RelationOid(
+      session,
+      SessionSchema{
+        .name = schema,
+        .entry = FindSchema(session, schema),
+        .system = FindSystemObject(kSystemNamespaces, schema) != nullptr},
+      relation);
+  }
+  for (const auto type : kRelationSets) {
+    if (auto entry = session.retriever->GetEntry(
+          duckdb::EntryLookupInfo{
+            type, duckdb::QualifiedName{duckdb::Identifier::TempCatalog(),
+                                        duckdb::Identifier::DefaultSchema(),
+                                        name.Name()}},
+          duckdb::OnEntryNotFound::RETURN_NULL)) {
+      return entry->oid;
+    }
+  }
+  for (const auto& schema : session.search_path) {
+    if (const auto oid = RelationOid(session, schema, relation);
+        oid != kInvalidOid) {
+      return oid;
+    }
+  }
+  return kInvalidOid;
+}
+
+namespace {
 
 bool IsWordStart(char c) {
   return absl::ascii_isalpha(c) || c == '_' ||
@@ -1724,7 +1732,7 @@ bool RelationVisible(const Session& session, std::string_view schema,
   return at != session.search_path.end() &&
          std::none_of(session.search_path.begin(), at,
                       [&](const SessionSchema& path) {
-                        return RelationIn(session, path, name);
+                        return RelationOid(session, path, name) != kInvalidOid;
                       });
 }
 

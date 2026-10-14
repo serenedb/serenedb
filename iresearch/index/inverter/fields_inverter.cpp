@@ -23,6 +23,7 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/burst_trie.hpp"
 #include "iresearch/index/inverter/columnar_readers.hpp"
+#include "iresearch/index/inverter/curve_term_reader.hpp"
 
 namespace irs {
 
@@ -61,6 +62,7 @@ void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
   ScatterScratch scratch{_mem.rm};
   ScatteredField scattered{_mem, scratch};
   ColumnarTermReader terms;
+  CurveTermReader curve_terms{_mem.rm};
 
   fw.prepare(state);
   size_t fi = 0;
@@ -72,11 +74,17 @@ void FieldsInverter::Flush(burst_trie::FieldWriter& fw, FlushState& state,
       ei >= en ||
       (fi < fn && sorted_fields[fi]->Meta().id < sorted_extra[ei]->id());
     if (take_field) {
-      scattered.Reset(*sorted_fields[fi]);
+      const auto& field = *sorted_fields[fi];
+      scattered.Reset(field);
       ++fi;
       SDB_ASSERT(scattered.TermCount() != 0);
-      terms.Reset(scattered);
-      fw.write(terms);
+      if (field.TrimsCurveTerms()) {
+        curve_terms.Reset(scattered);
+        fw.write(curve_terms);
+      } else {
+        terms.Reset(scattered);
+        fw.write(terms);
+      }
     } else {
       fw.write(*sorted_extra[ei]);
       ++ei;

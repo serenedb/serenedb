@@ -94,9 +94,6 @@ struct InvertedIndexFieldLookup {
 // name the index type is registered under.
 inline constexpr const char* kInvertedIndexTypeName = "inverted";
 
-// The two built-in opclasses. An opclass written bare resolves against the
-// schema's text search dictionaries first, so a dictionary of either name
-// shadows the built-in; the parenthesised form always selects the built-in.
 inline constexpr std::string_view kIncludedKind = "included";
 inline constexpr std::string_view kIVFKind = "ivf";
 inline constexpr std::string_view kHNSWKind = "hnsw";
@@ -140,6 +137,7 @@ using CompressionByColumn =
 struct InvertedIndexConfig final : irs::IndexFieldOptions {
   irs::ColumnOptions GetColumnOptions(irs::field_id id) const final;
   irs::field_id GetNormColumnId(irs::field_id id) const final;
+  bool TrimsCurveTerms(irs::field_id id) const final;
 
   const InvertedIndexField* FindEntry(irs::field_id field_id) const noexcept;
   irs::field_id TermField(irs::field_id column_id) const noexcept;
@@ -193,6 +191,7 @@ class IndexTokenizers {
     TokenizerRef tokenizer;
     irs::IndexFeatures features = irs::IndexFeatures::None;
     irs::field_id tokenizer_column = irs::field_limits::invalid();
+    std::optional<irs::curve::Options> curve;
   };
 
   irs::containers::FlatHashMap<irs::field_id, Field> _fields;

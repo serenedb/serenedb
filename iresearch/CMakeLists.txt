@@ -94,6 +94,7 @@ set(IResearch_core_sources
     ./index/segment_reader.cpp
     ./index/segment_reader_impl.cpp
     ./index/inverter/columnar_flush.cpp
+    ./index/inverter/curve_term_reader.cpp
     ./index/inverter/fields_inverter.cpp
     ./index/segment_writer.cpp
     ./search/filters/all_filter.cpp

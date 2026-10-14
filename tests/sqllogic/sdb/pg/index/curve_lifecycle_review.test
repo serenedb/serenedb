@@ -1,0 +1,257 @@
+statement ok
+DROP TABLE IF EXISTS curve_lifecycle_review;
+
+statement ok
+CREATE TABLE curve_lifecycle_review(id INTEGER PRIMARY KEY,x INTEGER,y DOUBLE,u UBIGINT,d DATE,t TIMESTAMP,ip INET,z TIMESTAMPTZ,f FLOAT);
+
+statement ok
+INSERT INTO curve_lifecycle_review SELECT i,
+CASE WHEN i%31=0 THEN NULL ELSE (i*7919)%201-100 END,
+CASE WHEN i%37=0 THEN NULL ELSE ((i*104729)%201-100)::DOUBLE/10 END,
+CASE WHEN i%41=0 THEN NULL ELSE ((i*31)%201)::UBIGINT END,
+CASE WHEN i%43=0 THEN NULL ELSE DATE '2020-01-01'+((i*53)%400)::INTEGER END,
+CASE WHEN i%47=0 THEN NULL ELSE TIMESTAMP '2020-01-01'+((i*53)%400)*INTERVAL '1 day' END,
+CASE WHEN i%53=0 THEN NULL ELSE ('10.0.0.'||(i%256)::VARCHAR||'/'||(24+i%9)::VARCHAR)::INET END,
+CASE WHEN i%59=0 THEN NULL ELSE TIMESTAMPTZ '2020-01-01 00:00:00+00'+((i*53)%400)*INTERVAL '1 day' END,
+CASE WHEN i%61=0 THEN NULL ELSE (((i*104729)%201-100)::DOUBLE/10)::FLOAT END
+FROM range(4000) t(i);
+
+statement ok
+CREATE INDEX curve_lifecycle_review_idx ON curve_lifecycle_review USING inverted(id,(curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096)),(curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)))) INCLUDE (x,y,u,d,t,ip,z,f);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_lifecycle_review;
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-40,NULL,NULL,NULL,NULL,NULL,NULL,NULL),ROW(NULL,-3.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-40,NULL,NULL,NULL,NULL,NULL,NULL,NULL),ROW(NULL,-3.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x >= -40 AND y <= -3.9::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-74,0.7::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(35,11.1::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-74,0.7::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(35,11.1::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-97,-8.4::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(114,8.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-97,-8.4::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(114,8.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(10,-8.6::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(47,-7.2::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(10,-8.6::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(47,-7.2::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE) AS same;
+----
+same
+t
+
+statement ok
+UPDATE curve_lifecycle_review SET x=-x,y=-y,u=200-u,ip='::ffff:10.0.0.1'::INET WHERE id%7=0;
+
+statement ok
+DELETE FROM curve_lifecycle_review WHERE id%11=0;
+
+statement ok
+INSERT INTO curve_lifecycle_review SELECT id+4000,x,y,u,d,t,ip,z,f FROM curve_lifecycle_review WHERE id<400;
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_lifecycle_review;
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-40,NULL,NULL,NULL,NULL,NULL,NULL,NULL),ROW(NULL,-3.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-40,NULL,NULL,NULL,NULL,NULL,NULL,NULL),ROW(NULL,-3.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x >= -40 AND y <= -3.9::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-74,0.7::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(35,11.1::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-74,0.7::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(35,11.1::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-97,-8.4::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(114,8.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-97,-8.4::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(114,8.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(10,-8.6::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(47,-7.2::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(10,-8.6::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(47,-7.2::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE) AS same;
+----
+same
+t
+
+statement ok
+VACUUM (COMPACT_TABLE) curve_lifecycle_review;
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-40,NULL,NULL,NULL,NULL,NULL,NULL,NULL),ROW(NULL,-3.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-40,NULL,NULL,NULL,NULL,NULL,NULL,NULL),ROW(NULL,-3.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x >= -40 AND y <= -3.9::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -40 AND y <= -3.9::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-74,0.7::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(35,11.1::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-74,0.7::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(35,11.1::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),true,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x >= -74 AND y >= 0.7::DOUBLE AND x < 35 AND y < 11.1::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(-97,-8.4::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(114,8.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(-97,-8.4::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(114,8.9::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,true)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > -97 AND y > -8.4::DOUBLE AND x <= 114 AND y <= 8.9::DOUBLE) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='morton',level_step:=2,max_cells:=4096) @@ ts_between(ROW(10,-8.6::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(47,-7.2::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE curve(x,y,u,d,t,ip,z,f,kind:='hilbert',max_level:=7,level_step:=2,max_cells:=1,lower:=ROW(-40,-4.0::DOUBLE,0::UBIGINT,DATE '2020-01-01',TIMESTAMP '2020-01-01','10.0.0.0'::INET,TIMESTAMPTZ '2020-01-01 00:00:00+00',-4.0::FLOAT),upper:=ROW(40,4.0::DOUBLE,100::UBIGINT,DATE '2021-01-01',TIMESTAMP '2021-01-01','10.0.0.255'::INET,TIMESTAMPTZ '2021-01-01 00:00:00+00',4.0::FLOAT)) @@ ts_between(ROW(10,-8.6::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),ROW(47,-7.2::DOUBLE,NULL,NULL,NULL,NULL,NULL,NULL),false,false)) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE AND x IS NOT NULL AND y IS NOT NULL AND u IS NOT NULL AND d IS NOT NULL AND t IS NOT NULL AND ip IS NOT NULL AND z IS NOT NULL AND f IS NOT NULL) AS same;
+----
+same
+t
+
+query
+SELECT (SELECT list(id ORDER BY id) FROM curve_lifecycle_review_idx WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE) IS NOT DISTINCT FROM (SELECT list(id ORDER BY id) FROM curve_lifecycle_review WHERE x > 10 AND y > -8.6::DOUBLE AND x < 47 AND y < -7.2::DOUBLE) AS same;
+----
+same
+t
+
+statement ok
+DROP TABLE curve_lifecycle_review;

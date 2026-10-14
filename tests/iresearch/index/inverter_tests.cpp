@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/strings/ascii.h>
 
 #include <cctype>
@@ -31,7 +32,10 @@
 #include <iresearch/index/inverter/columnar_readers.hpp>
 #include <iresearch/index/typed_terms.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/space_filling_curve.hpp>
 #include <limits>
+#include <random>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -1376,6 +1380,126 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
     ASSERT_FALSE(pos->next());
     ASSERT_TRUE(irs::doc_limits::eof(docs->Next()));
   }
+}
+
+class CurveFieldOptions final : public IndexFieldOptions {
+ public:
+  explicit CurveFieldOptions(field_id curve) noexcept : _curve{curve} {}
+
+  ColumnOptions GetColumnOptions(field_id) const final { return {}; }
+  field_id GetNormColumnId(field_id) const final {
+    return field_limits::invalid();
+  }
+  bool TrimsCurveTerms(field_id id) const final { return id == _curve; }
+
+ private:
+  field_id _curve;
+};
+
+absl::flat_hash_map<doc_id_t, std::set<std::string>> TermsByDoc(
+  const SubReader& segment, field_id id) {
+  absl::flat_hash_map<doc_id_t, std::set<std::string>> result;
+  const auto* field = segment.field(id);
+  if (!field) {
+    return result;
+  }
+  auto terms = field->iterator();
+  while (terms->next()) {
+    const auto value = terms->value();
+    const std::string term{reinterpret_cast<const char*>(value.data()),
+                           value.size()};
+    auto docs = ::tests::Docs(terms->postings(IndexFeatures::None));
+    for (auto doc = docs->Next(); !doc_limits::eof(doc); doc = docs->Next()) {
+      result[doc].insert(term);
+    }
+  }
+  return result;
+}
+
+TEST(InverterEndToEndTest, CurveTermsStopWhereThePointIsAlone) {
+  constexpr field_id kCurve = 1;
+  constexpr field_id kPlain = 2;
+  const curve::Options options{
+    .dimensions = 2, .max_level = 32, .level_step = 2};
+  std::mt19937_64 random{1317};
+  std::vector<std::vector<std::string>> points;
+  for (uint32_t i = 0; i < 400; ++i) {
+    if (i % 13 == 1) {
+      points.push_back(points.back());
+      continue;
+    }
+    curve::Point point;
+    point.fill(0);
+    for (uint32_t axis = 0; axis < options.dimensions; ++axis) {
+      point[axis] = i % 3 == 0
+                      ? random()
+                      : (uint64_t{1} << 63) + (random() >> (30 + i % 20));
+    }
+    auto& terms = points.emplace_back();
+    curve::PointTerms(point, options, [&](std::span<const uint8_t> term) {
+      terms.emplace_back(term.begin(), term.end());
+    });
+  }
+
+  MemoryDirectory dir;
+  auto writer =
+    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  ASSERT_NE(nullptr, writer);
+  std::vector<doc_id_t> ids;
+  {
+    auto trx = writer->GetBatch();
+    trx.SetFieldOptions(std::make_shared<CurveFieldOptions>(kCurve));
+    for (const auto& terms : points) {
+      auto doc = trx.Insert();
+      const auto d = doc.DocId();
+      ids.push_back(d);
+      for (const auto field : {kCurve, kPlain}) {
+        ASSERT_TRUE(
+          doc.WithField(field, IndexFeatures::None, [&](FieldInverter& fld) {
+            return fld.InvertKeywords([&](auto&& emit) {
+              for (const auto& term : terms) {
+                emit(duckdb::string_t{term.data(),
+                                      static_cast<uint32_t>(term.size())},
+                     d);
+              }
+            });
+          }));
+      }
+    }
+    ASSERT_TRUE(trx.Commit());
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_TRUE(reader);
+  ASSERT_EQ(1, reader->size());
+  const auto& segment = (*reader)[0];
+
+  absl::flat_hash_map<std::string, size_t> docs;
+  for (const auto& terms : points) {
+    for (const auto& term : terms) {
+      ++docs[term];
+    }
+  }
+  const auto curve = TermsByDoc(segment, kCurve);
+  const auto plain = TermsByDoc(segment, kPlain);
+  size_t trimmed = 0;
+  for (size_t i = 0; i < points.size(); ++i) {
+    auto expected = points[i];
+    for (size_t level = 0; level < expected.size(); ++level) {
+      if (expected[level][0] == curve::kAncestorTerm &&
+          docs[expected[level]] == 1) {
+        expected[level][0] = curve::kLeafTerm;
+        expected.resize(level + 1);
+        ++trimmed;
+        break;
+      }
+    }
+    EXPECT_EQ(std::set<std::string>(expected.begin(), expected.end()),
+              curve.at(ids[i]));
+    EXPECT_EQ(std::set<std::string>(points[i].begin(), points[i].end()),
+              plain.at(ids[i]));
+  }
+  EXPECT_GT(trimmed, points.size() / 4);
 }
 
 TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {

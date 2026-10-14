@@ -1,0 +1,136 @@
+statement ok
+CREATE TABLE curve_scaled(id INTEGER PRIMARY KEY, x BIGINT, d DOUBLE, day DATE, ts TIMESTAMPTZ);
+
+statement ok
+INSERT INTO curve_scaled SELECT i,
+ (i * 7919) % 300 - 100,
+ CASE WHEN i % 97 = 0 THEN 'nan'::DOUBLE WHEN i % 89 = 0 THEN 'inf'::DOUBLE
+      ELSE 1000 + ((i * 104729) % 30011) / 10000.0 - 1 END,
+ DATE '2026-01-01' + (i % 400)::INTEGER,
+ TIMESTAMPTZ '2026-01-01 00:00:00+00' + INTERVAL (i * 37) SECOND
+FROM range(5000) t(i);
+
+statement ok
+INSERT INTO curve_scaled VALUES (5000, NULL, 1000.5, '2026-02-01', '2026-01-01 01:00:00+00'), (5001, 5, NULL, NULL, NULL);
+
+statement ok
+CREATE INDEX curve_scaled_xd ON curve_scaled USING inverted(id,
+ (curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002)))) INCLUDE (x, d);
+
+statement ok
+CREATE INDEX curve_scaled_time ON curve_scaled USING inverted(id,
+ (curve(day, ts, kind := 'hilbert', lower := ROW(DATE '2026-01-01', NULL), upper := ROW(DATE '2026-12-31', NULL)))) INCLUDE (day, ts);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_scaled;
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(10, 1000.5), ROW(40, 1001), true, true)) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_scaled WHERE x BETWEEN 10 AND 40 AND d BETWEEN 1000.5 AND 1001) AS inside,
+ (SELECT list(id ORDER BY id) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(-100, 999), ROW(5, 1000.25), true, false)) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_scaled WHERE x >= -100 AND x < 5 AND d >= 999 AND d < 1000.25) AS below,
+ (SELECT list(id ORDER BY id) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(90, 1001.5), ROW(NULL, NULL), false, true)) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_scaled WHERE x > 90 AND d > 1001.5) AS above,
+ (SELECT list(id ORDER BY id) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(150, 'inf'::DOUBLE), ROW(NULL, 'nan'::DOUBLE), true, true)) IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_scaled WHERE x >= 150 AND d >= 'inf'::DOUBLE) AS outside;
+----
+inside	below	above	outside
+t	t	t	t
+
+query
+SELECT
+ (SELECT count(*) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(10, 1000.5), ROW(40, 1001), true, true)) > 0 AS inside,
+ (SELECT count(*) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(-100, 999), ROW(5, 1000.25), true, false)) > 0 AS below,
+ (SELECT count(*) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(90, 1001.5), ROW(NULL, NULL), false, true)) > 0 AS above,
+ (SELECT count(*) FROM curve_scaled_xd WHERE curve(x, d, lower := ROW(0, 1000), upper := ROW(100, 1002))
+   @@ ts_between(ROW(150, 'inf'::DOUBLE), ROW(NULL, 'nan'::DOUBLE), true, true)) > 0 AS outside;
+----
+inside	below	above	outside
+t	t	t	t
+
+query
+SELECT
+ (SELECT list(id ORDER BY id) FROM curve_scaled_time
+   WHERE curve(day, ts, kind := 'hilbert', lower := ROW(DATE '2026-01-01', NULL), upper := ROW(DATE '2026-12-31', NULL))
+   @@ ts_between(ROW(DATE '2026-03-01', TIMESTAMPTZ '2026-01-01 10:00:00+00'), ROW(DATE '2027-01-15', TIMESTAMPTZ '2026-01-02 00:00:00+00'), true, false))
+ IS NOT DISTINCT FROM
+ (SELECT list(id ORDER BY id) FROM curve_scaled WHERE day >= DATE '2026-03-01' AND day < DATE '2027-01-15'
+   AND ts >= TIMESTAMPTZ '2026-01-01 10:00:00+00' AND ts < TIMESTAMPTZ '2026-01-02 00:00:00+00') AS equal;
+----
+equal
+t
+
+query
+SELECT hex(curve(5, 1001, lower := ROW(0, 1000), upper := ROW(10, 1002), max_level := 4)) AS middle,
+ hex(curve(-5, 999, lower := ROW(0, 1000), upper := ROW(10, 1002), max_level := 4)) AS clamped_low,
+ hex(curve(50, 1100, lower := ROW(0, 1000), upper := ROW(10, 1002), max_level := 4)) AS clamped_high;
+----
+middle	clamped_low	clamped_high
+32	00	C8
+
+statement error
+SELECT curve(1, 2, lower := ROW(0, NULL), upper := ROW(10, 10));
+----
+db error: ERROR: curve(): "lower" and "upper" must both bound coordinate 2 or both leave it NULL
+
+
+statement error
+SELECT curve(1, 2, lower := ROW(10, 0), upper := ROW(0, 10));
+----
+db error: ERROR: curve(): coordinate 1 needs bounds with lower < upper, got 10 and 0
+
+
+statement error
+SELECT curve(1, 2.5::DOUBLE, lower := ROW(0, '-inf'::DOUBLE), upper := ROW(10, 10));
+----
+db error: ERROR: curve(): coordinate 2 needs finite bounds with lower < upper, got -inf and 10
+
+
+statement error
+SELECT curve(1, 2, lower := ROW(0, 0, 0), upper := ROW(10, 10, 10));
+----
+db error: ERROR: curve(): option "lower" must be a ROW of 2 values, got TUPLE(INTEGER, INTEGER, INTEGER)
+
+
+statement error
+SELECT curve(1, DATE '2026-01-01', lower := ROW(0, 0), upper := ROW(10, 10));
+----
+db error: ERROR: curve(): lower bound INTEGER does not match coordinate 2 of type DATE; cast the bound explicitly
+
+
+statement error
+SELECT curve(x, d, lower := ROW(x, 0), upper := ROW(10, 10)) FROM curve_scaled;
+----
+db error: ERROR: curve(): option "lower" must be a constant
+
+
+query
+SELECT curve(0::DOUBLE, 0, lower := ROW(-8e307, NULL), upper := ROW(8e307, NULL)) IS NOT NULL AS finite_span,
+ curve(DATE '2000-01-01', 0, lower := ROW(DATE '-infinity', NULL), upper := ROW(DATE 'infinity', NULL)) IS NOT NULL AS dates,
+ curve(TIMESTAMP '2000-01-01', 0, lower := ROW(TIMESTAMP '-infinity', NULL), upper := ROW(TIMESTAMP 'infinity', NULL)) IS NOT NULL AS timestamps;
+----
+finite_span	dates	timestamps
+t	t	t
+
+statement error
+SELECT curve(0::DOUBLE, 0, lower := ROW(-1e308, NULL), upper := ROW(1e308, NULL));
+----
+db error: ERROR: curve(): coordinate 1 needs bounds with a finite difference, got -1e+308 and 1e+308
+
+
+statement error
+SELECT curve('10.0.0.1/24'::INET, 0, lower := ROW('10.0.0.1/24'::INET, NULL), upper := ROW('10.0.0.1/32'::INET, NULL));
+----
+db error: ERROR: curve(): coordinate 1 needs INET bounds with lower < upper on the curve; masks do not change the position, got 10.0.0.1/24 and 10.0.0.1
+
+
+statement ok
+DROP TABLE curve_scaled;

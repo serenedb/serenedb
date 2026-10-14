@@ -1,0 +1,420 @@
+query
+SELECT hex(curve(1, 2)) AS morton, hex(curve(1, 2, kind := 'hilbert', max_level := 8)) AS hilbert,
+ octet_length(curve(1, 2, 3)) AS bytes, octet_length(curve(1, 2, 3, max_level := 3)) AS short;
+----
+morton	hilbert	bytes	short
+C000000000000006	8000	12	2
+
+query
+SELECT octet_length(curve(1::TINYINT, 2::SMALLINT)) AS small,
+ octet_length(curve(DATE '2026-01-01', 1::UTINYINT)) AS date,
+ octet_length(curve(1, 2.5::DOUBLE)) AS double,
+ octet_length(curve(5::BIGINT, 7::BIGINT, lower := ROW(0, 0), upper := ROW(100, 1000))) AS scaled,
+ octet_length(curve(TIMESTAMP '2026-01-01 12:00', 0::TINYINT,
+   lower := ROW(TIMESTAMP '2026-01-01', NULL), upper := ROW(TIMESTAMP '2026-01-02', NULL))) AS day,
+ octet_length(curve('10.0.1.2'::INET, 0::TINYINT,
+   lower := ROW('10.0.0.0'::INET, NULL), upper := ROW('10.0.255.255'::INET, NULL))) AS ipv4,
+ octet_length(curve('2001:db8::1:2'::INET, 0::TINYINT,
+   lower := ROW('2001:db8::'::INET, NULL), upper := ROW('2001:db8::ffff:ffff'::INET, NULL))) AS ipv6;
+----
+small	date	double	scaled	day	ipv4	ipv6
+4	8	16	3	10	4	8
+
+query
+SELECT hex(curve(1::TINYINT, 2::TINYINT)) = hex(curve(1::TINYINT, 2::TINYINT, max_level := 8)) AS same,
+ hex(curve(1, 2, max_level := NULL)) = hex(curve(1, 2)) AS null_default,
+ hex(curve((-128)::TINYINT, 127::TINYINT)) AS corners;
+----
+same	null_default	corners
+t	t	5555
+
+query
+SELECT curve(NULL, 1) IS NULL AS n, curve(1, NULL::DOUBLE) IS NULL AS component;
+----
+n	component
+t	t
+
+query
+SELECT x, y FROM (VALUES (3, 3), (0, 0), (1, 0), (0, 1), (2, 2)) t(x, y) ORDER BY curve(x, y);
+----
+x	y
+0	0
+0	1
+1	0
+2	2
+3	3
+
+statement ok
+CREATE TABLE curve_points(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, t TIMESTAMP);
+
+statement ok
+INSERT INTO curve_points VALUES
+ (1, -5, -0.0, '2026-01-01'),
+ (2, 0, 0, '2026-01-02'),
+ (3, 5, 5, '2026-01-03'),
+ (4, 10, 10, '2026-01-04'),
+ (5, NULL, 5, '2026-01-03'),
+ (6, 5, NULL, '2026-01-03'),
+ (7, 9007199254740993, 5, '2026-01-03');
+
+statement ok
+CREATE INDEX curve_morton ON curve_points USING inverted(
+ id, (curve(x, y, t, max_cells := 16))) INCLUDE (x, y, t);
+
+statement ok
+CREATE INDEX curve_hilbert ON curve_points USING inverted(
+ id, (curve(x, y, t, kind := 'hilbert', max_cells := 1))) INCLUDE (x, y, t);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_points;
+
+query
+SELECT id FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(0, 0, TIMESTAMP '2026-01-01'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM curve_hilbert WHERE curve(x, y, t, kind := 'hilbert', max_cells := 1) @@ ts_between(
+ ROW(0, 0, TIMESTAMP '2026-01-01'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true) ORDER BY id;
+----
+id
+2
+3
+
+query
+SELECT id FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(9007199254740993::BIGINT, NULL, NULL), ROW(9007199254740993::BIGINT, NULL, NULL), true, true);
+----
+id
+7
+
+query
+SELECT id FROM curve_hilbert WHERE curve(x, y, t, kind := 'hilbert', max_cells := 1) @@ ts_between(
+ ROW(NULL, 5, NULL), ROW(NULL, 5, NULL), true, true) ORDER BY id;
+----
+id
+3
+7
+
+query
+SELECT count(*) AS n FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(5, NULL, NULL), ROW(0, NULL, NULL), true, true);
+----
+n
+0
+
+query
+SELECT count(*) AS n FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ NULL, NULL, true, true);
+----
+n
+5
+
+query
+SELECT count(*) AS n FROM (
+ SELECT id FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+   ROW(-5, 0, TIMESTAMP '2026-01-01'), ROW(5, 5, TIMESTAMP '2026-01-03'), true, true)
+ EXCEPT
+ SELECT id FROM curve_points WHERE x BETWEEN -5 AND 5 AND y BETWEEN 0 AND 5
+   AND t BETWEEN TIMESTAMP '2026-01-01' AND TIMESTAMP '2026-01-03') differences;
+----
+n
+0
+
+query
+EXPLAIN SELECT id FROM curve_hilbert WHERE curve(x, y, t, kind := 'hilbert', max_cells := 1) @@ ts_between(
+ ROW(0, NULL, NULL), ROW(5, NULL, NULL), true, false);
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────╮
+│ Index: curve_hilbert                                          │
+│ Lookup: table                                                 │
+│ Index Filter:                                                 │
+│ ╭─ Or ──────────────────────────────────────────────────────╮ │
+│ ╰─────────────────────────────┬─────────────────────────────╯ │
+│ ╭─ Terms ─────────────────────┴─────────────────────────────╮ │
+│ │ Field:                                                    │ │
+│ │ curve(x, y, t, kind := 'hilbert', max_cells := 1)(string) │ │
+│ │ Values: 'A\\x3\\x0', 'L\\x3\\x0'                              │ │
+│ ╰───────────────────────────────────────────────────────────╯ │
+│ Column Filter: (x >= 0) AND (x < 5), y IS NOT NULL            │
+│ Projections: id                                               │
+│ ~1 row                                                        │
+╰───────────────────────────────────────────────────────────────╯
+
+statement ok
+PREPARE curve_query AS SELECT id FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW($1::BIGINT, NULL, NULL), ROW($2::BIGINT, NULL, NULL), true, true) ORDER BY id;
+
+query
+EXECUTE curve_query(5, 10);
+----
+id
+3
+4
+
+statement ok
+UPDATE curve_points SET x=4 WHERE id=4;
+
+statement ok
+DELETE FROM curve_points WHERE id=2;
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_points;
+
+query
+EXECUTE curve_query(0, 5);
+----
+id
+3
+4
+
+query
+SELECT id FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(0, NULL, NULL), ROW(5, NULL, NULL), false, false);
+----
+id
+4
+
+statement ok
+DEALLOCATE curve_query;
+
+statement error
+SELECT count(*) FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(0, 0, NULL), ROW(5, 5, NULL), true, true) OR id = 1;
+----
+db error: ERROR: curve() @@ is supported only as a top-level AND condition
+HINT: Move it out of OR / NOT, or compare the coordinates directly.
+
+
+statement error
+SELECT count(*) FROM curve_morton WHERE NOT curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(0, 0, NULL), ROW(5, 5, NULL), true, true);
+----
+db error: ERROR: curve() @@ is supported only as a top-level AND condition
+HINT: Move it out of OR / NOT, or compare the coordinates directly.
+
+
+statement error
+SELECT count(*) FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ 'foo';
+----
+db error: ERROR: curve() @@ supports only ts_between(ROW(...), ROW(...), lower_inclusive, upper_inclusive) with constant arguments
+
+
+statement error
+SELECT count(*) FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(0, 0, 0), ROW(5, 5, 5), true, true);
+----
+db error: ERROR: ts_between: bound INTEGER does not match coordinate 3 of type TIMESTAMP; cast the bound explicitly
+
+
+statement error
+SELECT count(*) FROM curve_morton WHERE curve(x, y, t, max_cells := 16) @@ ts_between(
+ ROW(0, 0), ROW(5, 5), true, true);
+----
+db error: ERROR: ts_between bounds of a curve() must be ROWs of 3 values, got TUPLE(INTEGER, INTEGER)
+
+
+statement error
+SELECT count(*) FROM curve_morton WHERE curve(x, y, t) @@ ts_between(
+ ROW(0, 0, NULL), ROW(5, 5, NULL), true, true);
+----
+db error: ERROR: curve() @@ needs an index on the same curve() call
+HINT: Query the index relation and repeat the indexed call with the same coordinates and options.
+
+
+statement error
+SELECT curve(1);
+----
+db error: ERROR: curve(): takes 2 to 8 coordinates, got 1
+
+
+statement error
+SELECT curve(1, 2, 3, 4, 5, 6, 7, 8, 9);
+----
+db error: ERROR: curve(): takes 2 to 8 coordinates, got 9
+
+
+statement error
+SELECT curve(1, 'a');
+----
+db error: ERROR: curve(): coordinate 2 must be an integer, FLOAT, DOUBLE, DATE, TIMESTAMP, TIMESTAMPTZ or INET, got VARCHAR
+
+
+statement error
+SELECT curve(1, 2, kind := 'peano');
+----
+db error: ERROR: curve(): option "kind" must be 'morton' or 'hilbert', got 'peano'
+
+
+statement error
+SELECT curve(1, 2, max_level := 65);
+----
+db error: ERROR: curve(): option "max_level" must be between 0 and 64, got 65
+
+
+statement error
+SELECT curve(1, 2, max_cells := 0);
+----
+db error: ERROR: curve(): option "max_cells" must be between 1 and 4096, got 0
+
+
+statement error
+SELECT curve(1, 2, 3, level_step := 0);
+----
+db error: ERROR: curve(): option "level_step" must be between 1 and 5, got 0
+
+
+statement error
+SELECT curve(1, 2, 3, level_step := 6);
+----
+db error: ERROR: curve(): option "level_step" must be between 1 and 5, got 6
+
+
+statement error
+SELECT curve(x, y, max_cells := id) FROM curve_points;
+----
+db error: ERROR: curve(): option "max_cells" must be a constant
+
+
+statement error curve\(\*coordinates ANY, kind VARCHAR := morton, max_level INTEGER := NULL, level_step INTEGER := NULL, max_cells INTEGER := NULL, lower ANY := NULL, upper ANY := NULL\) -> BLOB
+SELECT curve(1, 2, level := 3);
+
+statement error
+CREATE INDEX bad_curve ON curve_points USING inverted((curve(x, y)) included());
+----
+db error: ERROR: Expression 'curve(x, y)' is a curve() key and takes no opclass
+
+
+statement ok
+DROP TABLE curve_points;
+
+statement ok
+CREATE TABLE curve_nullable(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE);
+
+statement ok
+INSERT INTO curve_nullable VALUES (1, NULL, NULL), (2, NULL, 1), (3, 1, 1);
+
+statement ok
+CREATE INDEX curve_nullable_idx ON curve_nullable USING inverted(id, (curve(x, y))) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_nullable;
+
+query
+SELECT id FROM curve_nullable_idx WHERE curve(x, y) IS NULL ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM curve_nullable_idx WHERE curve(x, y) IS NOT NULL;
+----
+id
+3
+
+query
+SELECT id FROM curve_nullable_idx WHERE curve(x, y) @@ ts_between(ROW(0, 0), ROW(2, 2), true, true);
+----
+id
+3
+
+query
+SELECT id FROM curve_nullable_idx WHERE curve(x, y) @@ ts_between(ROW(NULL, 1), ROW(NULL, 1), true, true);
+----
+id
+3
+
+statement ok
+DROP TABLE curve_nullable;
+
+statement ok
+CREATE TABLE curve_nan(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE);
+
+statement ok
+INSERT INTO curve_nan VALUES (1, 1, 'NaN'), (2, 1, 'Infinity'), (3, 1, '-Infinity'), (4, 1, 0), (5, 1, -0.0);
+
+statement ok
+CREATE INDEX curve_nan_idx ON curve_nan USING inverted(id, (curve(x, y))) INCLUDE (x, y);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_nan;
+
+query
+SELECT id FROM curve_nan_idx WHERE curve(x, y) @@ ts_between(ROW(0, '-Infinity'::DOUBLE), ROW(2, 'Infinity'::DOUBLE), true, true) ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+query
+SELECT id FROM curve_nan WHERE x BETWEEN 0 AND 2 AND y BETWEEN '-Infinity'::DOUBLE AND 'Infinity'::DOUBLE ORDER BY id;
+----
+id
+2
+3
+4
+5
+
+query
+SELECT id FROM curve_nan_idx WHERE curve(x, y) @@ ts_between(ROW(0, 'NaN'::DOUBLE), ROW(2, 'NaN'::DOUBLE), true, true) ORDER BY id;
+----
+id
+1
+
+query
+SELECT id FROM curve_nan_idx WHERE curve(x, y) @@ ts_between(ROW(0, 0), ROW(2, 0), true, true) ORDER BY id;
+----
+id
+4
+5
+
+query
+SELECT id FROM curve_nan_idx WHERE curve(x, y) @@ ts_between(ROW(0, -0.0::DOUBLE), ROW(NULL, NULL), false, true) ORDER BY id;
+----
+id
+1
+2
+
+query
+SELECT id FROM curve_nan WHERE x > 0 AND y > -0.0::DOUBLE ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+DROP TABLE curve_nan;
+
+statement ok
+CREATE TABLE curve_steps(id INTEGER PRIMARY KEY, x BIGINT, y DOUBLE, z INTEGER);
+
+statement ok
+INSERT INTO curve_steps SELECT i, (i * 7919) % 1000, ((i * 104729) % 1000)::DOUBLE / 10, (i * 31) % 100 FROM range(2000) t(i);
+
+statement ok
+CREATE INDEX curve_steps_1 ON curve_steps USING inverted(id, (curve(x, y, z, level_step := 1))) INCLUDE (x, y, z);
+
+statement ok
+CREATE INDEX curve_steps_5 ON curve_steps USING inverted(id, (curve(x, y, z, level_step := 5, max_cells := 8))) INCLUDE (x, y, z);
+
+statement ok
+VACUUM (REFRESH_TABLE) curve_steps;
+
+query
+SELECT
+ (SELECT count(*) FROM curve_steps_1 WHERE curve(x, y, z, level_step := 1) @@ ts_between(ROW(100, 10, 20), ROW(400, 60, 70), true, true)) AS step1,
+ (SELECT count(*) FROM curve_steps_5 WHERE curve(x, y, z, level_step := 5, max_cells := 8) @@ ts_between(ROW(100, 10, 20), ROW(400, 60, 70), true, true)) AS step5,
+ (SELECT count(*) FROM curve_steps WHERE x BETWEEN 100 AND 400 AND y BETWEEN 10 AND 60 AND z BETWEEN 20 AND 70) AS exact;
+----
+step1	step5	exact
+138	138	138
+
+statement ok
+DROP TABLE curve_steps;

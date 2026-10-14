@@ -147,6 +147,7 @@ set(iresearch-tests_sources
     ./utils/file_utils_tests.cpp
     ./utils/object_pool_tests.cpp
     ./utils/numeric_utils_test.cpp
+    ./utils/space_filling_curve_test.cpp
     ./utils/simd_utils_test.cpp
     ./utils/directory_utils_tests.cpp
     ./utils/bit_packing_tests.cpp

@@ -1318,16 +1318,26 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
 
   bool encoding = _qw && _qw->BlockSetting().group_size == 1;
+  const bool raw_build = encoding && _info.quant.kind == VectorQuantization::PQ;
   if (encoding) {
     _record_size = _qw->BlockSetting().record_size;
     _codes.resize(static_cast<size_t>(_rows) * _record_size);
-  } else if (!_qw) {
+  }
+  if (!_qw || raw_build) {
     _vectors.resize(static_cast<size_t>(_rows) * _d);
   }
 
   if (encoding) {
     encoding = EncodeColumn(col, ctx, _rows, _d, normalize, *_qw, _codes.data(),
                             _record_size, valid, env);
+    if (encoding && raw_build) {
+      ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
+                  [&](const float* rows, size_t n, uint64_t first,
+                      const duckdb::ValidityMask& /*mask*/) {
+                    std::memcpy(_vectors.data() + first * _d, rows,
+                                n * _d * sizeof(float));
+                  });
+    }
   } else {
     ScanVectors(col, ctx, _rows, _d, normalize, batch_buf,
                 [&](const float* rows, size_t n, uint64_t first,
@@ -1364,7 +1374,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
       EffectiveQuantMetric(_info.metric), /*row_major=*/true);
   }
 
-  if (stats) {
+  if (stats && !raw_build) {
     HnswCodeDistFactory factory{
       .codes = _codes.data(),
       .record_size = _record_size,
@@ -1387,7 +1397,8 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
 
   SDB_ENSURE(
-    !_qw, "hnsw: quantizer kind ", static_cast<uint32_t>(_info.quant.kind),
+    !_qw || (stats && raw_build), "hnsw: quantizer kind ",
+    static_cast<uint32_t>(_info.quant.kind),
     " produced no per-row codes (group_size=", _qw->BlockSetting().group_size,
     ", record_size=", _qw->BlockSetting().record_size,
     "); refusing to fall back to a "
@@ -1403,6 +1414,9 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
     });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);
+  if (raw_build) {
+    _vectors = {};
+  }
   co_return {};
 }
 

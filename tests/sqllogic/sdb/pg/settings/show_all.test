@@ -170,6 +170,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
+integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
@@ -511,6 +512,7 @@ index_scan_percentage	0.001	The index scan percentage sets a threshold for index
 initial_column_segment_size	2048	The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Internally, we subtract the block header size (typically 8 bytes) for segments with or exceeding 1024 bytes. Subsequent segments double in size until reaching the block size.
 integer_datetimes	on	Shows whether datetimes are integer based.
 integer_division	on	Whether or not the / operator defaults to integer division, or to floating point division.
+integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 is_superuser	on	Shows whether the current session's user is a superuser.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.

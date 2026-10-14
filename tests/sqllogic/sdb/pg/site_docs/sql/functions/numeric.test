@@ -134,6 +134,28 @@ SELECT divide(5, 2) AS divide;
 divide
 2
 
+# DOCS_TEST: integer_overflow
+# DOCS_TEST_BODY
+statement error
+SELECT 9223372036854775807::BIGINT + 1 AS total;
+----
+db error: ERROR: Overflow in addition of INT64 (9223372036854775807 + 1)!
+
+
+statement ok
+SET integer_overflow = 'wrap';
+
+query
+SELECT 9223372036854775807::BIGINT + 1 AS total, 127::TINYINT * 2::TINYINT AS doubled;
+----
+total	doubled
+-9223372036854775808	-2
+
+# DOCS_TEST_END
+
+statement ok
+RESET integer_overflow;
+
 # DOCS_TEST: division_by_zero
 # DOCS_TEST_BODY
 statement error

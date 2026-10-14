@@ -91,14 +91,21 @@ SyncSession::SyncSession(network::IoExecutor& exec, ReplicationTarget target,
                      target.require_password},
     _target{std::move(target)} {}
 
-yaclib::Task<bool> SyncSession::RunJob(Job job) {
+bool SyncSession::PostJob(Job job) {
   _job_done.Reset();
-  std::atomic_thread_fence(std::memory_order_seq_cst);
-  if (_jobs_closed.load(std::memory_order_relaxed)) {
+  _job.store(job, std::memory_order_seq_cst);
+  if (_jobs_closed.load(std::memory_order_seq_cst) &&
+      _job.exchange(Job::None, std::memory_order_acq_rel) == job) {
+    return false;
+  }
+  this->_task->RequestRun();
+  return true;
+}
+
+yaclib::Task<bool> SyncSession::RunJob(Job job) {
+  if (!PostJob(job)) {
     co_return false;
   }
-  _job.store(job, std::memory_order_release);
-  this->_task->RequestRun();
   if (job == Job::Stream) {
     co_return true;
   }
@@ -144,10 +151,13 @@ void SyncSession::FinishJobs() {
     this->_txn_state->Rollback();
     _in_txn = false;
   }
-  _job_ok = false;
-  _jobs_closed.store(true, std::memory_order_relaxed);
-  std::atomic_thread_fence(std::memory_order_seq_cst);
-  if (!_job_done.Ready()) {
+  _jobs_closed.store(true, std::memory_order_seq_cst);
+  if (const auto job = _job.exchange(Job::None, std::memory_order_seq_cst);
+      job != Job::None) {
+    if (job == Job::Copy) {
+      this->_connection_ctx->GetSideChannel<sdb::pg::CopyInBridge>()->Abort();
+    }
+    _job_ok = false;
     _job_done.Set();
   }
   this->_task->Finish();
@@ -198,9 +208,10 @@ yaclib::Task<bool> SyncSession::CopyTable(const SyncTable& table, bool binary) {
   this->_connection_ctx->SetSideChannel(&bridge);
   _copy_stmt =
     BuildCopyFromStdin(table.schema, table.table, table.columns, binary);
-  _job_done.Reset();
-  _job.store(Job::Copy, std::memory_order_release);
-  this->_task->RequestRun();
+  if (!PostJob(Job::Copy)) {
+    this->_connection_ctx->SetSideChannel<sdb::pg::CopyInBridge>(nullptr);
+    co_return false;
+  }
   co_await this->RunCopyInFeeder(bridge, binary
                                            ? network::pg::CopyFormat::Binary
                                            : network::pg::CopyFormat::Text);

@@ -1,0 +1,153 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tcm (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO tcm VALUES (1, 'a');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+statement ok
+INSERT INTO tcm VALUES (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+statement ok
+INSERT INTO tcm VALUES (3, 'c');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+statement ok
+INSERT INTO tcm VALUES (4, 'd');
+
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+statement ok
+INSERT INTO tcm VALUES (5, 'e');
+
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async ok
+TRUNCATE tcm;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) tcm;
+
+connection compactor
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcm;
+----
+ids
+1,2,3,4,5
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs:release';
+
+wait
+
+connection default
+query
+SELECT count(*) AS n FROM tcm;
+----
+n
+0
+
+connection default
+statement ok
+VACUUM (COMPACT_TABLE) tcm;
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+connection default
+query
+SELECT count(*) AS n FROM tcm;
+----
+n
+0
+
+connection default
+statement ok
+INSERT INTO tcm VALUES (6, 'f');
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+connection default
+statement ok
+INSERT INTO tcm VALUES (7, 'g');
+
+connection default
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+connection default
+statement ok
+VACUUM (COMPACT_TABLE) tcm;
+
+connection default
+statement ok
+SET sdb_faults = 'pause_search_commit_before_irs';
+
+connection truncator
+statement async error connection closed
+TRUNCATE tcm;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_commit_before_irs:parked';
+
+connection compactor
+statement ok
+VACUUM (COMPACT_TABLE) tcm;
+
+connection default
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection default
+statement error connection closed
+SELECT 1;
+
+wait
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n FROM tcm;
+----
+n
+0
+
+connection after_crash
+statement ok
+INSERT INTO tcm VALUES (8, 'h');
+
+connection after_crash
+statement ok
+VACUUM (REFRESH_TABLE) tcm;
+
+connection after_crash
+query
+SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM tcm;
+----
+ids
+8

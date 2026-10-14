@@ -62,8 +62,8 @@ class ColFilterVerify : public irs::detail::TableFilter {
 
   uint32_t Narrow(irs::doc_id_t* docs, irs::score_t* scores, uint32_t n) final;
 
-  uint32_t Narrow(irs::doc_id_t base, uint64_t* mask, irs::score_t* scores,
-                  uint32_t words) final;
+  uint32_t Narrow(irs::doc_id_t base, const uint64_t* in, uint64_t* out,
+                  irs::score_t* scores, uint32_t words) final;
 
   uint64_t CountAndClear(irs::doc_id_t base, uint64_t* mask,
                          uint32_t words) final;

@@ -33,6 +33,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -43,6 +44,7 @@
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/empty.hpp"
 
 namespace duckdb {
 
@@ -262,12 +264,11 @@ class ColFilterChain {
 
   bool AdmitRow(uint64_t row);
 
-  // The same over a set whose bit zero stands for document `base`: clears the
-  // bits that do not pass, block by block, and returns how many survived. The
-  // selection is built from the set bits instead of from a run of documents,
-  // which is the only difference -- `FilterWindow` wants offsets either way.
-  duckdb::idx_t FilterMask(irs::doc_id_t base, uint64_t* mask,
-                           duckdb::idx_t words);
+  // The same over a set whose bit zero stands for document `base`; returns how
+  // many survived. The selection is built from the set bits instead of from a
+  // run of documents -- `FilterWindow` wants offsets either way.
+  duckdb::idx_t FilterMask(irs::doc_id_t base, const uint64_t* in,
+                           uint64_t* out, duckdb::idx_t words);
 
   // The same when only the answer is wanted: the survivors are not written
   // back and every word walked is left zeroed, so a whole segment's set is
@@ -275,12 +276,12 @@ class ColFilterChain {
   duckdb::idx_t CountMask(irs::doc_id_t base, uint64_t* mask,
                           duckdb::idx_t words);
 
-  // The computed-score filter over a window: clears the bits whose score fails
-  // it. Unlike the run form it compacts nothing -- a window's scores are
-  // indexed by offset, so the bit is the only thing that moves.
+  // The computed-score filter over a window. Unlike the run form it compacts
+  // nothing -- a window's scores are indexed by offset, so the bit is the only
+  // thing that moves.
   static duckdb::idx_t FilterMaskScores(const duckdb::TableFilter& filter,
                                         duckdb::TableFilterState& state,
-                                        uint64_t* mask,
+                                        const uint64_t* in, uint64_t* out,
                                         const irs::score_t* scores,
                                         duckdb::idx_t words);
 
@@ -307,10 +308,12 @@ class ColFilterChain {
   ColFilterStateCache* _states = nullptr;
   const irs::ColReader* _col_reader = nullptr;
   // The one walk behind `FilterMask` and `CountMask`: `Keep` writes the
-  // survivors back, otherwise the words are left zeroed.
+  // survivors to `out`, otherwise the words are left zeroed.
   template<bool Keep>
-  duckdb::idx_t WalkMask(irs::doc_id_t base, uint64_t* mask,
-                         duckdb::idx_t words);
+  duckdb::idx_t WalkMask(
+    irs::doc_id_t base,
+    std::conditional_t<Keep, const uint64_t*, uint64_t*> mask,
+    duckdb::idx_t words, utils::Need<Keep, uint64_t*> out);
 
   struct DenseRange {
     duckdb::PhysicalType type = duckdb::PhysicalType::INVALID;
@@ -319,8 +322,10 @@ class ColFilterChain {
   };
 
   template<bool Keep>
-  duckdb::idx_t DenseMask(irs::doc_id_t base, uint64_t* mask,
-                          duckdb::idx_t words);
+  duckdb::idx_t DenseMask(
+    irs::doc_id_t base,
+    std::conditional_t<Keep, const uint64_t*, uint64_t*> mask,
+    duckdb::idx_t words, utils::Need<Keep, uint64_t*> out);
 
   struct Row {
     duckdb::TableFilterState* state = nullptr;

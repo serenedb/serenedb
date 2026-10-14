@@ -43,7 +43,8 @@
 
 namespace irs::top {
 
-template<template<typename...> class Shape, typename... Parts, typename... Args>
+template<template<typename...> typename Shape, typename... Parts,
+         typename... Args>
 Root::ptr MakeShape(const Context& ctx, Args&&... args) {
   if (ctx.table != nullptr) {
     return memory::make_managed<Shape<Parts..., irs::detail::TableFilter*>>(

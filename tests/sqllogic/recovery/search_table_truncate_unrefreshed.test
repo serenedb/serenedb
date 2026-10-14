@@ -1,0 +1,106 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+statement ok
+CREATE TABLE tu1 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE tu2 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE tu3 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+CREATE TABLE tu4 (id BIGINT, body TEXT)
+  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+INSERT INTO tu1 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+TRUNCATE tu1;
+
+statement ok
+VACUUM (REFRESH_TABLE) tu1;
+
+query
+SELECT count(*) AS n FROM tu1;
+----
+n
+0
+
+statement ok
+INSERT INTO tu1 VALUES (3, 'c');
+
+statement ok
+INSERT INTO tu2 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+TRUNCATE tu2;
+
+statement ok
+INSERT INTO tu2 VALUES (3, 'c');
+
+statement ok
+INSERT INTO tu3 VALUES (1, 'a'), (2, 'b');
+
+statement ok
+VACUUM (REFRESH_TABLE) tu3;
+
+statement ok
+INSERT INTO tu3 VALUES (3, 'c');
+
+statement ok
+TRUNCATE tu3;
+
+query
+SELECT count(*) AS n FROM tu3;
+----
+n
+0
+
+statement ok
+VACUUM (REFRESH_TABLE) tu3;
+
+query
+SELECT count(*) AS n FROM tu3;
+----
+n
+0
+
+statement ok
+TRUNCATE tu4;
+
+statement ok
+TRUNCATE tu4;
+
+statement ok
+INSERT INTO tu4 VALUES (1, 'a');
+
+statement ok
+TRUNCATE tu4;
+
+statement ok
+INSERT INTO tu4 VALUES (2, 'b');
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  (SELECT coalesce(string_agg(id::VARCHAR, ',' ORDER BY id), '-') FROM tu1) AS tu1,
+  (SELECT coalesce(string_agg(id::VARCHAR, ',' ORDER BY id), '-') FROM tu2) AS tu2,
+  (SELECT coalesce(string_agg(id::VARCHAR, ',' ORDER BY id), '-') FROM tu3) AS tu3,
+  (SELECT coalesce(string_agg(id::VARCHAR, ',' ORDER BY id), '-') FROM tu4) AS tu4;
+----
+tu1	tu2	tu3	tu4
+3	3	-	2

@@ -80,7 +80,7 @@ class LazyBitset {
       for (uint32_t first = 0, n = _set.WordCount(); first < n;
            first += kWindowWords) {
         table->Narrow(kMin + static_cast<doc_id_t>(first) * kBits,
-                      words + first, nullptr,
+                      words + first, words + first, nullptr,
                       std::min<uint32_t>(kWindowWords, n - first));
       }
     }
@@ -146,7 +146,7 @@ class LazyBitset {
           // segment's end.
           _set.Trim();
         }
-        _table->Narrow(min, words + first, nullptr,
+        _table->Narrow(min, words + first, words + first, nullptr,
                        static_cast<uint32_t>(last - first));
       }
       if (next >= end) {

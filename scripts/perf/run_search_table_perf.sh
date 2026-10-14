@@ -300,15 +300,6 @@ du_search_committed() {
 	find "$1" -mindepth 3 -type f -printf '%s\n' 2>/dev/null | sum_sizes
 }
 
-du_search_wal() {
-	find "$1" -mindepth 2 -maxdepth 2 -type f -name 'search.wal.*' \
-		-printf '%s\n' 2>/dev/null | sum_sizes
-}
-
-du_search_all() {
-	echo $(($(du_search_committed "$1") + $(du_search_wal "$1")))
-}
-
 du_duckdb_files() {
 	find "$1" -mindepth 2 -maxdepth 2 -type f -name 'data.db*' \
 		-printf '%s\n' 2>/dev/null | sum_sizes
@@ -397,7 +388,7 @@ SELECT * FROM hits_view;
 run_setup "search_commit" "${BUILD_THREADS}" "
 VACUUM (REFRESH_TABLE) hits_search;
 "
-SEARCH_BYTES=$(du_search_all "${ENGINE_DIR}")
+SEARCH_BYTES=$(du_search_committed "${ENGINE_DIR}")
 
 # --- 4. ATTACH + CTAS: native DuckDB table (insert, then commit) --------------
 # A genuine DuckDB-native columnar table is reachable ONLY via ATTACH (TYPE
@@ -475,8 +466,6 @@ total=$(du_bytes "${SERENED_DATA_DIR}")
 		s=$(sum_ext "${ENGINE_DIR}" "${ext}")
 		printf "    .%-5s %14d bytes (%s)\n" "${ext}" "${s}" "$(human "${s}")"
 	done
-	s=$(du_search_wal "${ENGINE_DIR}")
-	printf "    %-6s %14d bytes (%s)\n" "wal" "${s}" "$(human "${s}")"
 } | tee -a "${RUN_LOG}"
 
 # --- 7. Headline summary ------------------------------------------------------

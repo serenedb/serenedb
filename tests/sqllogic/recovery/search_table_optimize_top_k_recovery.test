@@ -23,7 +23,7 @@ statement ok
 VACUUM (REFRESH_TABLE) rk;
 
 statement ok
-SET sdb_faults = 'crash_after_search_wal_commit';
+SET sdb_faults = 'crash_after_commit';
 
 statement error connection closed
 INSERT INTO rk

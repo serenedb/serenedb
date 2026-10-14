@@ -20,6 +20,7 @@
 
 #include "network/pg/pg_wire_session.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/strings/escaping.h>
 
@@ -917,7 +918,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
     // membership set and does not implicitly include a superuser's non-members.
     const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return std::ranges::binary_search(closure->closure, group_oid);
+    return absl::c_binary_search(closure->closure, group_oid);
   };
 
   hba::ClientInfo client;
@@ -1808,8 +1809,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
     }
   };
   const auto flush = [&]() -> yaclib::Task<> {
-    if (!batch.empty() && !bridge.Aborted()) {
-      bridge.Publish(batch);
+    if (!batch.empty() && bridge.Publish(batch)) {
       co_await bridge.Drained(*this->_ioexec);
       bridge.ResetDrained();
     }
@@ -1894,7 +1894,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
             if (span.empty()) {
               continue;
             }
-            bridge.Publish(span.data(), span.size());
+            if (!bridge.Publish(span.data(), span.size())) {
+              break;
+            }
             co_await bridge.Drained(*this->_ioexec);
             bridge.ResetDrained();
           }
@@ -1911,8 +1913,8 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
       co_await flush();
       if (!eod && !bridge.Aborted()) {
         if (is_text) {
-          if (const auto tail = scanner.Finish(); !tail.empty()) {
-            bridge.Publish(tail.data(), tail.size());
+          if (const auto tail = scanner.Finish();
+              !tail.empty() && bridge.Publish(tail.data(), tail.size())) {
             co_await bridge.Drained(*this->_ioexec);
             bridge.ResetDrained();
           }

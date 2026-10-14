@@ -394,8 +394,18 @@ void ColFilterChain::FinishBind() {
 }
 
 template<bool Keep>
-duckdb::idx_t ColFilterChain::DenseMask(irs::doc_id_t base, uint64_t* mask,
-                                        duckdb::idx_t words) {
+duckdb::idx_t ColFilterChain::DenseMask(
+  irs::doc_id_t base, std::conditional_t<Keep, const uint64_t*, uint64_t*> in,
+  duckdb::idx_t words, utils::Need<Keep, uint64_t*> out) {
+  uint64_t* mask = nullptr;
+  if constexpr (Keep) {
+    if (in != out) {
+      std::copy_n(in, words, out);
+    }
+    mask = out;
+  } else {
+    mask = in;
+  }
   auto& f = _cols.front();
   const auto first = static_cast<uint64_t>(base) - irs::doc_limits::min();
   const auto end =
@@ -742,8 +752,9 @@ bool ColFilterChain::AdmitRow(uint64_t row) {
 }
 
 template<bool Keep>
-duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
-                                       duckdb::idx_t words) {
+duckdb::idx_t ColFilterChain::WalkMask(
+  irs::doc_id_t base, std::conditional_t<Keep, const uint64_t*, uint64_t*> mask,
+  duckdb::idx_t words, utils::Need<Keep, uint64_t*> out) {
   SDB_ASSERT(!Empty());
   duckdb::idx_t total = 0;
   if (!_sel_data) {
@@ -759,7 +770,11 @@ duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
   const auto load = [&] {
     while (w != words) {
       word = mask[w];
-      mask[w] = 0;
+      if constexpr (Keep) {
+        out[w] = 0;
+      } else {
+        mask[w] = 0;
+      }
       ++w;
       if (word != 0) {
         return true;
@@ -845,7 +860,7 @@ duckdb::idx_t ColFilterChain::WalkMask(irs::doc_id_t base, uint64_t* mask,
     if constexpr (Keep) {
       for (duckdb::idx_t k = 0; k != survivors; ++k) {
         const auto b = off + _sel.get_index(k);
-        mask[b / 64] |= uint64_t{1} << (b % 64);
+        out[b / 64] |= uint64_t{1} << (b % 64);
       }
     }
     total += survivors;
@@ -861,26 +876,27 @@ duckdb::idx_t ColFilterChain::CountMask(irs::doc_id_t base, uint64_t* mask,
   // a document out, so an empty chain would not have been passed at all.
   SDB_ASSERT(!Empty());
   if (_dense && AllWordsSet(mask, words)) {
-    return DenseMask<false>(base, mask, words);
+    return DenseMask<false>(base, mask, words, {});
   }
-  return WalkMask<false>(base, mask, words);
+  return WalkMask<false>(base, mask, words, {});
 }
 
-duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, uint64_t* mask,
-                                         duckdb::idx_t words) {
+duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
+                                         uint64_t* out, duckdb::idx_t words) {
   if (Empty()) {
     // Only the computed-score filter is bound, and it has already cleared its
     // own bits; what is left is the answer.
+    SDB_ASSERT(in == out);
     duckdb::idx_t total = 0;
     for (duckdb::idx_t w = 0; w != words; ++w) {
-      total += static_cast<duckdb::idx_t>(std::popcount(mask[w]));
+      total += static_cast<duckdb::idx_t>(std::popcount(in[w]));
     }
     return total;
   }
-  if (_dense && AllWordsSet(mask, words)) {
-    return DenseMask<true>(base, mask, words);
+  if (_dense && AllWordsSet(in, words)) {
+    return DenseMask<true>(base, in, words, out);
   }
-  return WalkMask<true>(base, mask, words);
+  return WalkMask<true>(base, in, words, out);
 }
 
 void ColFilterChain::Rewind(irs::ReadContext& ctx) {
@@ -953,13 +969,15 @@ void ColFilterChain::FinishOutputs(uint64_t anchor, duckdb::idx_t span,
 
 duckdb::idx_t ColFilterChain::FilterMaskScores(
   const duckdb::TableFilter& /*filter*/, duckdb::TableFilterState& state,
-  uint64_t* mask, const irs::score_t* scores, duckdb::idx_t words) {
+  const uint64_t* in, uint64_t* out, const irs::score_t* scores,
+  duckdb::idx_t words) {
   duckdb::idx_t total = 0;
   std::array<irs::score_t, 64> vals;
   std::array<uint8_t, 64> offs;
   for (duckdb::idx_t w = 0; w != words; ++w) {
-    auto word = mask[w];
+    auto word = in[w];
     if (word == 0) {
+      out[w] = 0;
       continue;
     }
     const auto base = static_cast<uint64_t>(w) * 64;
@@ -975,11 +993,11 @@ duckdb::idx_t ColFilterChain::FilterMaskScores(
     duckdb::SelectionVector sel;
     duckdb::idx_t kept = run;
     duckdb::ColumnSegment::FilterSelection(sel, svec, state, run, kept);
-    uint64_t out = 0;
+    uint64_t passed = 0;
     for (duckdb::idx_t k = 0; k != kept; ++k) {
-      out |= uint64_t{1} << offs[sel.get_index(k)];
+      passed |= uint64_t{1} << offs[sel.get_index(k)];
     }
-    mask[w] = out;
+    out[w] = passed;
     total += kept;
   }
   return total;

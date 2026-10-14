@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <faiss/utils/distances.h>
 
 #include <algorithm>
@@ -854,7 +855,7 @@ void HnswLinkReverse(HnswGraphWriter& graph, Dist& dist, uint32_t peer,
   // Stable: the links the last heuristic kept are already in its order, and a
   // score tie between two of them must not reshuffle them, or the pairs it
   // cleared below stop lining up.
-  std::ranges::stable_sort(
+  absl::c_stable_sort(
     items, [](const HnswReverseItem& l, const HnswReverseItem& r) {
       return l.score > r.score;
     });
@@ -921,10 +922,9 @@ void HnswInsert(HnswGraphWriter& graph, uint32_t node, Dist& dist,
     HnswSearchLevel(graph.Graph(), dist, level, ef_construction, s.search);
 
     auto& found = s.search.nearest;
-    std::ranges::sort(found,
-                      [](const HnswCandidate& l, const HnswCandidate& r) {
-                        return l.score > r.score;
-                      });
+    absl::c_sort(found, [](const HnswCandidate& l, const HnswCandidate& r) {
+      return l.score > r.score;
+    });
 
     const uint32_t width = level == 0 ? graph.M0() : graph.M();
     HnswSelectNeighbors(dist, found, width, s);

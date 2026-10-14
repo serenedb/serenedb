@@ -1,0 +1,69 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE ld (id BIGINT, body TEXT)
+WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+
+statement ok
+RESET sdb_faults;
+
+statement ok
+INSERT INTO ld SELECT i, 'v' || i FROM range(0, 5000) t(i);
+
+statement ok
+VACUUM (REFRESH_TABLE) ld;
+
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+statement error connection closed
+DELETE FROM ld WHERE id < 3000;
+
+connection after_delete
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM ld;
+----
+n	lo	hi
+2000	3000	4999
+
+connection after_delete
+statement ok
+SET sdb_faults = 'crash_after_commit';
+
+connection after_delete
+statement ok
+BEGIN;
+
+connection after_delete
+statement ok
+DELETE FROM ld WHERE id >= 3000 AND id < 3500;
+
+connection after_delete
+statement ok
+INSERT INTO ld SELECT i, 'w' || i FROM range(10000, 13000) t(i);
+
+connection after_delete
+statement ok
+DELETE FROM ld WHERE id >= 4000 AND id < 4100;
+
+connection after_delete
+statement error connection closed
+COMMIT;
+
+connection after_transaction
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, min(id) AS lo, max(id) AS hi FROM ld;
+----
+n	lo	hi
+4400	3500	12999
+
+connection after_transaction
+query
+SELECT count(*) AS n FROM ld WHERE id >= 4000 AND id < 4100;
+----
+n
+0
+
+connection after_transaction
+statement ok
+DROP TABLE ld;

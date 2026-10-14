@@ -106,7 +106,7 @@ Memory held while writing to a search table is bounded by `segment_memory_max`, 
 
 | Write | Peak memory |
 | :--- | :--- |
-| Serial `INSERT` / `UPDATE` | ≈ 1.5 × `segment_memory_max` |
+| Serial `INSERT` / `UPDATE` | ≈ `segment_memory_max` + [`checkpoint_threshold`](../../../configuration/overview.md) |
 | Parallel `INSERT` | ≈ `segment_memory_max` × threads |
 
 Lower it to cap what a write can hold, raise it for larger segments and less compaction work.
@@ -121,6 +121,12 @@ CREATE TABLE docs (id BIGINT, body TEXT)
 `DELETE` sits outside this bound, but costs little: only a rowid per removed row is held until the transaction commits, so even a million-row `DELETE` is a handful of megabytes.
 
 </DocCallout>
+
+## Durability {#durability}
+
+A commit to a search table is durable once it is in the write-ahead log of the table's database; a refresh then writes the changes into the table's own index files. A checkpoint leaves search tables alone: it keeps the write-ahead log it retires, as `data.db.wal.retained.<n>` beside the database file, while a search table still has changes in it that no refresh has saved, and a later checkpoint deletes the kept logs no table needs anymore. After a crash, the server replays the kept logs and the current one into the tables that need them.
+
+With automatic refresh disabled (`refresh_interval = 0`), kept logs pile up until `VACUUM (REFRESH_TABLE)` saves the table or the server restarts.
 
 ## Session settings {#session-settings}
 

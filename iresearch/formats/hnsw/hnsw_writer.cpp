@@ -214,7 +214,7 @@ void HealNode(HnswGraphWriter& graph, const HnswGraph& src_graph,
   if (pool.empty()) {
     return;
   }
-  std::ranges::sort(pool, [](const HnswCandidate& l, const HnswCandidate& r) {
+  absl::c_sort(pool, [](const HnswCandidate& l, const HnswCandidate& r) {
     return l.score > r.score;
   });
   HnswSelectNeighbors(dist, pool, static_cast<uint32_t>(links.size()), scratch);

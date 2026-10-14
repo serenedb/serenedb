@@ -20,12 +20,12 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_replace.h>
 
-#include <algorithm>
 #include <array>
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -77,7 +77,7 @@ inline constexpr std::array kPrivChars{
 };
 
 inline void PutId(std::string& out, std::string_view name) {
-  const bool safe = std::ranges::all_of(name, [](unsigned char c) {
+  const bool safe = absl::c_all_of(name, [](unsigned char c) {
     return !(c & 0x80) && (absl::ascii_isalnum(c) || c == '_');
   });
   if (safe) {

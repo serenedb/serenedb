@@ -41,9 +41,9 @@
 namespace sdb::pg {
 namespace {
 
-constexpr auto kMemberTypes = std::views::filter([](duckdb::CatalogType type) {
+constexpr auto kMemberType = [](duckdb::CatalogType type) {
   return type != duckdb::CatalogType::SCHEMA_ENTRY;
-});
+};
 
 std::string_view ScanPrefix(const SystemCondition<std::string>& condition) {
   if (!condition.lower || !condition.upper) {
@@ -185,15 +185,14 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
       });
     }
   }
-  auto member_types = source.types | kMemberTypes |
-                      std::views::filter([&](duckdb::CatalogType type) {
-                        return wanted.test(std::to_underlying(type));
-                      });
+  const auto wanted_member = [&](duckdb::CatalogType type) {
+    return kMemberType(type) && wanted.test(std::to_underlying(type));
+  };
   const auto* index =
     Choose(source.indexes,
            std::max<size_t>(
-             names ? schemas.size() *
-                       static_cast<size_t>(std::ranges::distance(member_types))
+             names ? schemas.size() * static_cast<size_t>(absl::c_count_if(
+                                        source.types, wanted_member))
                    : 0,
              1));
   if (!index) {
@@ -204,7 +203,7 @@ SystemEntries SystemScan::Resolve(const CatalogSource& source) const {
     if (!schemas.empty()) {
       auto& first = schemas.front()->Cast<duckdb::DuckSchemaEntry>();
       absl::InlinedVector<const duckdb::CatalogSet*, 8> walked;
-      for (const auto type : member_types) {
+      for (const auto type : source.types | std::views::filter(wanted_member)) {
         if (const auto* set = &first.GetCatalogSet(type);
             !absl::c_linear_search(walked, set)) {
           walked.emplace_back(set);
@@ -254,11 +253,17 @@ SystemSet SystemScan::MemberSet(duckdb::SchemaCatalogEntry& schema,
   if (prefix) {
     const duckdb::IdentifierCompare compare{
       schema.ParentCatalog().IsCaseSensitive()};
-    const auto first = std::ranges::lower_bound(
-      result.entries, prefix->lower, compare, &duckdb::CatalogEntry::name);
-    result.entries = {first, std::ranges::upper_bound(
-                               first, result.entries.end(), prefix->upper,
-                               compare, &duckdb::CatalogEntry::name)};
+    const auto first = absl::c_lower_bound(
+      result.entries, prefix->lower,
+      [&](const duckdb::CatalogEntry* entry, const auto& name) {
+        return compare(entry->name, name);
+      });
+    const auto last = absl::c_upper_bound(
+      result.entries, prefix->upper,
+      [&](const auto& name, const duckdb::CatalogEntry* entry) {
+        return compare(name, entry->name);
+      });
+    result.entries = {first, last};
   }
   return result;
 }
@@ -466,7 +471,8 @@ void SystemScan::VisitNamed(
   const duckdb::Identifier identifier{name};
   for (auto* schema : entries.schemas) {
     const duckdb::CatalogEntry* table = nullptr;
-    for (const auto type : entries.keys.source->types | kMemberTypes) {
+    for (const auto type :
+         entries.keys.source->types | std::views::filter(kMemberType)) {
       if (!wanted.test(std::to_underlying(type))) {
         continue;
       }

@@ -536,10 +536,19 @@ void SortedBy(const SystemRows<Row, Holder>& rows, const SystemFilter& filter,
               std::vector<const Row*>& picked) {
   using V =
     std::remove_cvref_t<std::invoke_result_t<decltype(Project), const Row&>>;
+  const auto key = [](const auto& side) -> decltype(auto) {
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(side)>, Row>) {
+      return std::invoke(Project, side);
+    } else {
+      return (side);
+    }
+  };
+  const auto all = rows.Rows();
   const auto pick = [&](const V& probe) {
-    for (const auto& row : std::ranges::equal_range(
-           rows.Rows(), probe,
-           [](const V& lhs, const V& rhs) { return lhs < rhs; }, Project)) {
+    const auto [first, last] = absl::c_equal_range(
+      all, probe,
+      [&](const auto& lhs, const auto& rhs) { return key(lhs) < key(rhs); });
+    for (const auto& row : std::span{first, last}) {
       picked.emplace_back(&row);
     }
   };

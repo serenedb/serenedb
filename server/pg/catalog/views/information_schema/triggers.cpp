@@ -22,7 +22,8 @@
 
 namespace sdb::pg {
 
-std::string_view gInfoTriggers = R"sql(SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
+std::string_view gInfoTriggers =
+  R"sql(SELECT CAST(current_database() AS sql_identifier) AS trigger_catalog,
        CAST(n.nspname AS sql_identifier) AS trigger_schema,
        CAST(t.tgname AS sql_identifier) AS trigger_name,
        CAST(em.text AS character_data) AS event_manipulation,

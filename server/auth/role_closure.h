@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry.hpp>

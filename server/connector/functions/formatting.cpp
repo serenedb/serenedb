@@ -23,14 +23,14 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
+#include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/operator/add.hpp>
@@ -53,6 +53,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <type_traits>
 #include <vector>
 
@@ -1423,12 +1424,15 @@ int32_t FromCharParseIntLength(int32_t* dest, const char*& src, int32_t length,
   const auto remaining = std::strlen(src);
   const std::string copy{src, std::min<size_t>(length, remaining)};
   auto used = static_cast<int32_t>(remaining);
-  long result = 0;
+  constexpr fast_float::parse_options kSigned{
+    fast_float::chars_format::allow_leading_plus};
+  int64_t result = 0;
+  std::errc ec{};
   if ((node.suffix & kSuffixFillMode) || IsNextSeparator(nodes, index)) {
-    char* end = nullptr;
-    errno = 0;
-    result = std::strtol(init, &end, 10);
-    src = end;
+    const auto parsed =
+      fast_float::from_chars_advanced(src, src + remaining, result, kSigned);
+    ec = parsed.ec;
+    src = ec == std::errc::invalid_argument ? init : parsed.ptr;
   } else {
     if (used < length) {
       THROW_SQL_ERROR(
@@ -1440,10 +1444,12 @@ int32_t FromCharParseIntLength(int32_t* dest, const char*& src, int32_t length,
         ERR_HINT("If your source string is not fixed-width, try using the "
                  "\"FM\" modifier."));
     }
-    char* last = nullptr;
-    errno = 0;
-    result = std::strtol(copy.c_str(), &last, 10);
-    used = static_cast<int32_t>(last - copy.c_str());
+    const auto parsed = fast_float::from_chars_advanced(
+      copy.data(), copy.data() + copy.size(), result, kSigned);
+    ec = parsed.ec;
+    used = ec == std::errc::invalid_argument
+             ? 0
+             : static_cast<int32_t>(parsed.ptr - copy.data());
     if (used > 0 && used < length) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_DATETIME_FORMAT),
@@ -1461,7 +1467,8 @@ int32_t FromCharParseIntLength(int32_t* dest, const char*& src, int32_t length,
       ERR_MSG("invalid value \"", copy, "\" for \"", node.key->name, "\""),
       ERR_DETAIL("Value must be an integer."));
   }
-  if (errno == ERANGE || result < std::numeric_limits<int32_t>::min() ||
+  if (ec == std::errc::result_out_of_range ||
+      result < std::numeric_limits<int32_t>::min() ||
       result > std::numeric_limits<int32_t>::max()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
                     ERR_MSG("value for \"", node.key->name,
@@ -2862,21 +2869,16 @@ std::string FormatFloat(double value, int32_t precision, FloatStyle style) {
   }
   constexpr int32_t kMaxPrecision = 350;
   const auto digits = std::min(std::max(precision, 0), kMaxPrecision);
-  const auto start = out.size();
   switch (style) {
     case FloatStyle::kFixed: {
-      const auto size = std::snprintf(nullptr, 0, "%.*f", digits, value);
-      out.resize(start + size);
-      std::snprintf(out.data() + start, size + 1, "%.*f", digits, value);
+      absl::StrAppendFormat(&out, "%.*f", digits, value);
       if (precision > digits) {
         out.append(precision - digits, '0');
       }
       break;
     }
     case FloatStyle::kExponent: {
-      const auto size = std::snprintf(nullptr, 0, "%.*e", digits, value);
-      out.resize(start + size);
-      std::snprintf(out.data() + start, size + 1, "%.*e", digits, value);
+      absl::StrAppendFormat(&out, "%.*e", digits, value);
       if (precision > digits) {
         out.insert(out.rfind('e'), precision - digits, '0');
       }

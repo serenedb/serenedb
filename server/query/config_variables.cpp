@@ -31,7 +31,6 @@
 #include <absl/strings/str_split.h>
 #include <fast_float/fast_float.h>
 
-#include <algorithm>
 #include <cmath>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>

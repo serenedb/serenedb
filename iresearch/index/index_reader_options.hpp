@@ -31,12 +31,15 @@ class DatabaseInstance;
 
 namespace irs {
 
+class HnswBases;
+
 // The scorer a score-bound-pruning iterator ranks by.
 using ScorerPtr = const Scorer*;
 
 struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;
   duckdb::DatabaseInstance* db = nullptr;
+  HnswBases* hnsw_bases = nullptr;
   bool index = true;  // Open inverted index
 };
 

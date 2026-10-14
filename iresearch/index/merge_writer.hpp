@@ -85,7 +85,8 @@ class MergeWriter : public util::Noncopyable {
         SDB_ASSERT(db);
         return *db;
       }()},
-      _field_options{options.field_options} {}
+      _field_options{options.field_options},
+      _hnsw_bases{options.hnsw_bases} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -113,6 +114,7 @@ class MergeWriter : public util::Noncopyable {
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
+  HnswBases* _hnsw_bases = nullptr;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

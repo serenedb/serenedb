@@ -26,6 +26,7 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
+#include <iresearch/formats/hnsw/hnsw_reader.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
@@ -50,17 +51,18 @@ inline constexpr uint32_t kDim = 8;
 
 irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
                                           irs::VectorQuantization quant,
-                                          uint32_t nb_bits = 0) {
+                                          uint32_t nb_bits = 0,
+                                          uint32_t d = kDim) {
   auto opts = irs::tests::DefaultWriterOptions();
-  opts.column_options = [metric, quant,
-                         nb_bits](irs::field_id id) -> irs::ColumnOptions {
+  opts.column_options = [metric, quant, nb_bits,
+                         d](irs::field_id id) -> irs::ColumnOptions {
     irs::ColumnOptions col;
     if (id == kVec) {
       col.ann_info = irs::AnnInfo{
         .kind = irs::AnnKind::Hnsw,
         .centroids_id = kVec,
         .postings_id = kVec,
-        .d = kDim,
+        .d = static_cast<int>(d),
         .metric = metric,
         .quant = {.kind = quant, .nb_bits = nb_bits},
         .m = 8,
@@ -72,13 +74,14 @@ irs::IndexWriterOptions MakeWriterOptions(irs::VectorMetric metric,
   return opts;
 }
 
-std::vector<std::vector<float>> MakeVectors(size_t n, uint32_t seed) {
+std::vector<std::vector<float>> MakeVectors(size_t n, uint32_t seed,
+                                            uint32_t d = kDim) {
   std::mt19937 rng{seed};
   std::uniform_real_distribution<float> dist{-1.f, 1.f};
   std::vector<std::vector<float>> out;
   out.reserve(n);
   for (size_t i = 0; i < n; ++i) {
-    std::vector<float> v(kDim);
+    std::vector<float> v(d);
     for (auto& x : v) {
       x = dist(rng);
     }
@@ -90,14 +93,14 @@ std::vector<std::vector<float>> MakeVectors(size_t n, uint32_t seed) {
 void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc,
                    const std::vector<float>& vec) {
   const auto vtype =
-    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDim);
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, vec.size());
   auto& cw = cs.OpenColumn(kVec, vtype);
   duckdb::Vector v{vtype, 1};
   auto& child = duckdb::ArrayVector::GetChildMutable(v);
   auto* data = duckdb::FlatVector::GetDataMutable<float>(child);
   std::ranges::copy(vec, data);
   duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
-  duckdb::FlatVector::ValidityMutable(child).SetAllValid(kDim);
+  duckdb::FlatVector::ValidityMutable(child).SetAllValid(vec.size());
   duckdb::FlatVector::SetSize(v, 1);
   cw.Append(static_cast<uint64_t>(doc) - irs::doc_limits::min(), v,
             /*count=*/1);
@@ -165,7 +168,7 @@ std::vector<irs::doc_id_t> BruteForceTopK(
     float s = 0;
     irs::ResolveEnum<irs::VectorMetric>(metric, [&]<irs::VectorMetric M>() {
       s = irs::ComputeDistance<M>(query.data(), vecs[i].data(),
-                                  static_cast<uint16_t>(kDim));
+                                  static_cast<uint16_t>(query.size()));
     });
     scored.emplace_back(s,
                         static_cast<irs::doc_id_t>(i) + irs::doc_limits::min());
@@ -609,13 +612,6 @@ std::vector<uint32_t> SelectReference(const SelectRefDist& dist,
 
 }  // namespace
 
-// The share of nodes carrying a row above level 0 is what the greedy descent
-// navigates on, and it follows directly from how the level sample is rounded:
-// truncating (hnswlib) admits at sample >= 1 -> 1/m, rounding (qdrant, and us)
-// admits at sample >= 0.5 -> 1/sqrt(m). At m=16 that is 25% against 6.25%.
-// Pinned because the two differ by a single cast and the search-side cost of
-// getting it wrong -- 2x the ef_search for the same recall -- shows up nowhere
-// near this code.
 template<irs::VectorMetric M>
 void CheckPanoramaDist(const std::vector<float>& base,
                        const std::vector<float>& norms,
@@ -687,6 +683,108 @@ TEST(HnswPanoramaDistTest, PrunesOnlyRowsThatCannotBeatTheThreshold) {
   }
 }
 
+namespace {
+
+std::vector<std::vector<float>> MakeDecayingVectors(size_t n, uint32_t seed,
+                                                    uint32_t d) {
+  auto out = MakeVectors(n, seed, d);
+  for (auto& v : out) {
+    for (uint32_t j = 0; j < d; ++j) {
+      v[j] /= 1.f + static_cast<float>(j) / 8.f;
+    }
+  }
+  return out;
+}
+
+std::vector<std::shared_ptr<const std::vector<float>>> SegmentBases(
+  const irs::DirectoryReader& reader) {
+  std::vector<std::shared_ptr<const std::vector<float>>> out;
+  for (const auto& segment : reader) {
+    const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
+    out.push_back(ann->Load(segment)->rotation);
+  }
+  return out;
+}
+
+void AppendBatch(irs::IndexWriter& writer,
+                 std::span<const std::vector<float>> vecs) {
+  auto trx = writer.GetBatch();
+  for (const auto& vec : vecs) {
+    auto doc = trx.Insert();
+    WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vec);
+  }
+  trx.Commit();
+  writer.RefreshCommit();
+}
+
+}  // namespace
+
+TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {
+  constexpr uint32_t kD = irs::kHnswPanoramaMinDim;
+  constexpr size_t kBatch = 8 * kD;
+  constexpr size_t kK = 10;
+  for (const auto metric :
+       {irs::VectorMetric::L2Sqr, irs::VectorMetric::InnerProduct}) {
+    const auto vecs = MakeDecayingVectors(3 * kBatch, 41, kD);
+    const std::span all{vecs};
+    const std::vector indexed(vecs.begin(), vecs.begin() + 2 * kBatch);
+    irs::MemoryDirectory dir;
+    {
+      auto writer = irs::IndexWriter::Make(
+        dir, irs::kOmCreate,
+        MakeWriterOptions(metric, irs::VectorQuantization::None, 0, kD));
+      ASSERT_NE(nullptr, writer);
+      AppendBatch(*writer, all.subspan(0, kBatch));
+      AppendBatch(*writer, all.subspan(kBatch, kBatch));
+      const auto flushed = SegmentBases(writer->GetSnapshot());
+      ASSERT_EQ(2U, flushed.size());
+      ASSERT_NE(nullptr, flushed[0]);
+      ASSERT_EQ(size_t{kD} * kD, flushed[0]->size());
+      EXPECT_EQ(flushed[0], flushed[1]);
+
+      ASSERT_TRUE(writer->Compact(
+        irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+      writer->RefreshCommit();
+      const auto merged = writer->GetSnapshot();
+      ASSERT_EQ(1U, merged->size());
+      EXPECT_EQ(flushed[0], SegmentBases(merged)[0]);
+
+      size_t total = 0;
+      size_t hits = 0;
+      for (const auto& q : MakeDecayingVectors(20, 43, kD)) {
+        auto filter =
+          MakeKnnFilter(q, metric, irs::VectorQuantization::None, 128);
+        const auto got = RunKnn(merged, filter);
+        for (const auto doc : BruteForceTopK(indexed, q, metric, kK)) {
+          ++total;
+          hits += std::ranges::find(got, doc) != got.end() ? 1 : 0;
+        }
+      }
+      EXPECT_GE(static_cast<double>(hits) / static_cast<double>(total), 0.95)
+        << "metric " << static_cast<int>(metric);
+    }
+    auto writer = irs::IndexWriter::Make(
+      dir, irs::kOmAppend,
+      MakeWriterOptions(metric, irs::VectorQuantization::None, 0, kD));
+    ASSERT_NE(nullptr, writer);
+    const auto loaded = SegmentBases(writer->GetSnapshot());
+    ASSERT_EQ(1U, loaded.size());
+    ASSERT_NE(nullptr, loaded[0]);
+    AppendBatch(*writer, all.subspan(2 * kBatch, kBatch));
+    const auto appended = SegmentBases(writer->GetSnapshot());
+    ASSERT_EQ(2U, appended.size());
+    EXPECT_EQ(loaded[0], appended[0]);
+    EXPECT_EQ(loaded[0], appended[1]);
+  }
+}
+
+// The share of nodes carrying a row above level 0 is what the greedy descent
+// navigates on, and it follows directly from how the level sample is rounded:
+// truncating (hnswlib) admits at sample >= 1 -> 1/m, rounding (qdrant, and us)
+// admits at sample >= 0.5 -> 1/sqrt(m). At m=16 that is 25% against 6.25%.
+// Pinned because the two differ by a single cast and the search-side cost of
+// getting it wrong -- 2x the ef_search for the same recall -- shows up nowhere
+// near this code.
 TEST(HnswRandomLevelTest, UpperLevelShareMatchesRoundedDraw) {
   for (const uint32_t m : {8U, 16U, 32U}) {
     constexpr size_t kDraws = 200000;

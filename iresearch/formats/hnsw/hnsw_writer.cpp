@@ -39,6 +39,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/hnsw/hnsw_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -1032,41 +1033,43 @@ inline constexpr size_t kPanoramaMinRows = 1024;
 inline constexpr size_t kPanoramaTrainRows = 4096;
 inline constexpr size_t kPanoramaApplyRows = 4096;
 
-bool RotateForPanorama(std::vector<float>& vectors,
-                       std::span<const uint8_t> valid, uint32_t d,
+bool PanoramaEnough(std::span<const uint8_t> valid, uint32_t d) {
+  const size_t floor = std::max(kPanoramaMinRows, size_t{8} * d);
+  return static_cast<size_t>(absl::c_count(valid, uint8_t{1})) >= floor;
+}
+
+std::vector<float> TrainPanoramaBasis(const std::vector<float>& vectors,
+                                      std::span<const uint8_t> valid,
+                                      uint32_t d) {
+  const size_t rows = valid.size();
+  const size_t want = std::max(kPanoramaTrainRows, size_t{8} * d);
+  const size_t live = static_cast<size_t>(absl::c_count(valid, uint8_t{1}));
+  const size_t step = std::max<size_t>(1, live / want);
+  std::vector<float> sample;
+  sample.reserve(std::min(live, want) * d);
+  for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
+       ++row) {
+    if (valid[row] == 0) {
+      continue;
+    }
+    if (seen++ % step == 0) {
+      sample.insert(sample.end(), vectors.begin() + row * d,
+                    vectors.begin() + (row + 1) * d);
+    }
+  }
+  return std::move(TrainPcaRotation(sample.data(), sample.size() / d, d).A);
+}
+
+void RotateForPanorama(std::vector<float>& vectors, size_t rows, uint32_t d,
                        std::span<const float> basis, const AnnBuildEnv* env,
                        std::vector<float>& rotation,
                        std::vector<float>& norms) {
-  const size_t rows = valid.size();
-  const size_t floor = std::max(kPanoramaMinRows, size_t{8} * d);
-  const size_t want = std::max(kPanoramaTrainRows, size_t{8} * d);
-  const size_t live = static_cast<size_t>(absl::c_count(valid, uint8_t{1}));
-  if (live < floor) {
-    return false;
-  }
+  SDB_ASSERT(basis.size() == size_t{d} * d);
   faiss::LinearTransform transform{static_cast<int>(d), static_cast<int>(d),
                                    /*have_bias=*/false};
-  if (basis.size() == size_t{d} * d) {
-    transform.A.assign(basis.begin(), basis.end());
-  } else {
-    const size_t step = std::max<size_t>(1, live / want);
-    std::vector<float> sample;
-    sample.reserve(std::min(live, want) * d);
-    for (size_t row = 0, seen = 0; row < rows && sample.size() < want * d;
-         ++row) {
-      if (valid[row] == 0) {
-        continue;
-      }
-      if (seen++ % step == 0) {
-        sample.insert(sample.end(), vectors.begin() + row * d,
-                      vectors.begin() + (row + 1) * d);
-      }
-    }
-    transform.A =
-      std::move(TrainPcaRotation(sample.data(), sample.size() / d, d).A);
-  }
+  transform.A.assign(basis.begin(), basis.end());
   transform.is_trained = true;
-  rotation.assign(transform.A.begin(), transform.A.end());
+  rotation.assign(basis.begin(), basis.end());
   FanOut(env, (rows + kPanoramaApplyRows - 1) / kPanoramaApplyRows,
          [&](size_t part) {
            const size_t first = part * kPanoramaApplyRows;
@@ -1080,12 +1083,12 @@ bool RotateForPanorama(std::vector<float>& vectors,
   for (size_t row = 0; row < rows; ++row) {
     norms[row] = faiss::fvec_norm_L2sqr(vectors.data() + row * d, d);
   }
-  return true;
 }
 
 }  // namespace
 
-HnswWriter::HnswWriter(AnnInfo info) : _info{std::move(info)} {}
+HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
+  : _info{std::move(info)}, _bases{bases} {}
 
 HnswWriter::~HnswWriter() = default;
 
@@ -1213,17 +1216,27 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
                 });
     if (!_qw && _d >= kHnswPanoramaMinDim && _d <= kHnswPanoramaMaxDim &&
         PanoramaApplies(_info.metric, _d)) {
-      std::shared_ptr<const HnswData> donor_data;
-      if (donor.index != nullptr) {
-        donor_data = donor.index->Load(*donor.reader);
+      HnswBases::Basis basis;
+      if (_bases != nullptr) {
+        basis = _bases->Find(_info.centroids_id);
       }
-      const std::span<const float> basis =
-        donor_data ? std::span<const float>{donor_data->rotation}
-                   : std::span<const float>{};
-      if (!RotateForPanorama(_vectors, valid, _d, basis, env, _rotation,
-                             _norms)) {
-        _rotation.clear();
-        _norms.clear();
+      if (!basis && donor.index != nullptr) {
+        if (auto data = donor.index->Load(*donor.reader)) {
+          basis = data->rotation;
+        }
+      }
+      const bool enough = PanoramaEnough(valid, _d);
+      if (!basis && enough) {
+        basis = std::make_shared<const std::vector<float>>(
+          TrainPanoramaBasis(_vectors, valid, _d));
+      }
+      if (basis && _bases != nullptr) {
+        basis = _bases->Publish(_info.centroids_id, std::move(basis));
+      }
+      SDB_ASSERT(!basis || basis->size() == size_t{_d} * _d);
+      if (basis && enough) {
+        RotateForPanorama(_vectors, valid.size(), _d, *basis, env, _rotation,
+                          _norms);
       }
     }
   }

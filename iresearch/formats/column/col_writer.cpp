@@ -202,7 +202,7 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
       entry->writer = std::make_unique<IvfWriter>(info);
       break;
     case AnnKind::Hnsw:
-      entry->writer = std::make_unique<HnswWriter>(info);
+      entry->writer = std::make_unique<HnswWriter>(info, _hnsw_bases);
       break;
     default:
       SDB_UNREACHABLE();

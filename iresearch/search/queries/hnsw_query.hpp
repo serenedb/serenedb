@@ -47,10 +47,12 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             QueryBuilder::ptr&& inner = nullptr,
             HnswFilterMode filter_mode = HnswFilterMode::Auto,
             HnswColumnFilter column_filter = HnswColumnFilter::Auto,
-            const ColumnReader* exact = nullptr)
+            const ColumnReader* exact = nullptr,
+            std::shared_ptr<const PanoramaQuery> panorama = nullptr)
     : QueryBuilderImpl{segment},
       _data{std::move(data)},
       _codebook{std::move(codebook)},
+      _panorama{std::move(panorama)},
       _inner{std::move(inner)},
       _exact{exact},
       _query{query.size(),
@@ -87,6 +89,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   std::shared_ptr<const HnswData> _data;
   std::shared_ptr<const QuantizerCodebook> _codebook;
+  std::shared_ptr<const PanoramaQuery> _panorama;
   QueryBuilder::ptr _inner;
   const ColumnReader* _exact;
   containers::Fixed<float> _query;

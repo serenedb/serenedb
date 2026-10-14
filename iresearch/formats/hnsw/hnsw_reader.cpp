@@ -26,6 +26,8 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -79,9 +81,13 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
                      data->vectors.size() * sizeof(float));
       }
       if (_header.rotated) {
-        data->rotation.resize(size_t{_header.d} * _header.d);
-        in->ReadData(reinterpret_cast<byte_type*>(data->rotation.data()),
-                     data->rotation.size() * sizeof(float));
+        std::vector<float> rotation(size_t{_header.d} * _header.d);
+        in->ReadData(reinterpret_cast<byte_type*>(rotation.data()),
+                     rotation.size() * sizeof(float));
+        data->rotation =
+          _bases
+            ? _bases->Share(_field, std::move(rotation))
+            : std::make_shared<const std::vector<float>>(std::move(rotation));
         data->norms.resize(static_cast<size_t>(_header.rows));
         in->ReadData(reinterpret_cast<byte_type*>(data->norms.data()),
                      data->norms.size() * sizeof(float));
@@ -115,10 +121,32 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
   return _data;
 }
 
+namespace {
+
+std::shared_ptr<const PanoramaQuery> MakePanoramaQuery(
+  const HnswData& data, std::span<const float> query, uint32_t d,
+  AnnQueryCache* cache) {
+  if (!data.rotation) {
+    return nullptr;
+  }
+  const auto make = [&] {
+    auto out = std::make_shared<PanoramaQuery>();
+    out->rotated.resize(d);
+    RotateVector(data.rotation->data(), query.data(), out->rotated.data(), d);
+    out->tails.resize(HnswPanoramaLevels(d) + 1);
+    HnswPanoramaTails(out->rotated.data(), d, out->tails.data());
+    return std::shared_ptr<const PanoramaQuery>{std::move(out)};
+  };
+  return cache ? cache->Get(data.rotation, make) : make();
+}
+
+}  // namespace
+
 QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
                                         const PrepareContext& ctx,
                                         const VectorFilterOptions& opts,
-                                        uint32_t /*effort*/) const {
+                                        uint32_t /*effort*/,
+                                        AnnQueryCache* cache) const {
   SDB_ASSERT(opts.query.size() == _header.d);
   if (Empty()) {
     return QueryBuilder::Empty();
@@ -128,6 +156,7 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
     return QueryBuilder::Empty();
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
+  auto panorama = MakePanoramaQuery(*data, query, _header.d, cache);
   auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
@@ -140,7 +169,8 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, ef, kHnswNoThreshold,
     /*max_results=*/size_t{0}, /*inclusive=*/false, ctx.boost, std::move(inner),
-    opts.hnsw_filter_mode, opts.hnsw_column_filter);
+    opts.hnsw_filter_mode, opts.hnsw_column_filter, /*exact=*/nullptr,
+    std::move(panorama));
   built->SetStats(ctx.Record());
   return built;
 }
@@ -149,7 +179,8 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const VectorFilterOptions& opts,
                                           float radius, bool inclusive,
-                                          uint32_t /*effort*/) const {
+                                          uint32_t /*effort*/,
+                                          AnnQueryCache* cache) const {
   SDB_ASSERT(opts.query.size() == _header.d);
   if (Empty()) {
     return QueryBuilder::Empty();
@@ -159,6 +190,7 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
     return QueryBuilder::Empty();
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
+  auto panorama = MakePanoramaQuery(*data, query, _header.d, cache);
   auto codebook = data->stats ? data->stats->MakeRangeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   const auto* exact = data->stats ? segment.Column(opts.centroids_id) : nullptr;
@@ -173,7 +205,7 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
     ctx.memory, segment, std::move(data), std::move(codebook), std::move(query),
     opts.metric, _header.d, _header.record_size, /*ef=*/uint32_t{0}, threshold,
     static_cast<size_t>(_header.rows), inclusive, ctx.boost, std::move(inner),
-    opts.hnsw_filter_mode, opts.hnsw_column_filter, exact);
+    opts.hnsw_filter_mode, opts.hnsw_column_filter, exact, std::move(panorama));
   built->SetStats(ctx.Record());
   return built;
 }

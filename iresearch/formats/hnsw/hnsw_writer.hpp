@@ -33,11 +33,12 @@
 namespace irs {
 
 class ColumnReader;
+class HnswBases;
 class ReadContext;
 
 class HnswWriter final : public AnnWriter {
  public:
-  explicit HnswWriter(AnnInfo info);
+  HnswWriter(AnnInfo info, HnswBases* bases);
   ~HnswWriter() final;
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
@@ -57,6 +58,7 @@ class HnswWriter final : public AnnWriter {
 
  private:
   AnnInfo _info;
+  HnswBases* _bases;
   std::span<const MergeSource> _merge_sources;
   HnswGraphWriter _graph;
   std::vector<float> _vectors;

@@ -37,7 +37,7 @@ QueryBuilder::ptr ByRadius::PrepareSegment(const SubReader& segment,
   auto sub_ctx = ctx;
   sub_ctx.Boost(GetBoost());
   return ann->PrepareRange(segment, sub_ctx, opts, opts.radius, opts.inclusive,
-                           0);
+                           0, &_cache);
 }
 
 PrepareCollector::ptr ByRadius::MakeCollectorImpl(const Scorer* scorer,

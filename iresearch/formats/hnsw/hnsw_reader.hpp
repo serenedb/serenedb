@@ -33,6 +33,8 @@
 
 namespace irs {
 
+class HnswBases;
+
 struct HnswHeader {
   uint32_t d = 0;
   VectorMetric metric = VectorMetric::L2Sqr;
@@ -46,7 +48,7 @@ struct HnswHeader {
 struct HnswData {
   HnswGraph graph;
   std::vector<float> vectors;
-  std::vector<float> rotation;
+  std::shared_ptr<const std::vector<float>> rotation;
   std::vector<float> norms;
   bstring codes;
   std::vector<float> centroid;
@@ -55,8 +57,9 @@ struct HnswData {
 
 class HnswIndex final : public AnnIndex {
  public:
-  HnswIndex(HnswHeader header, HnswMeta meta) noexcept
-    : _header{header}, _meta{meta} {}
+  HnswIndex(HnswHeader header, HnswMeta meta, field_id field,
+            HnswBases* bases) noexcept
+    : _header{header}, _meta{meta}, _field{field}, _bases{bases} {}
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
@@ -74,13 +77,14 @@ class HnswIndex final : public AnnIndex {
 
   QueryBuilder::ptr PrepareKnn(const SubReader& segment,
                                const PrepareContext& ctx,
-                               const VectorFilterOptions& opts,
-                               uint32_t effort) const final;
+                               const VectorFilterOptions& opts, uint32_t effort,
+                               AnnQueryCache* cache) const final;
 
   QueryBuilder::ptr PrepareRange(const SubReader& segment,
                                  const PrepareContext& ctx,
                                  const VectorFilterOptions& opts, float radius,
-                                 bool inclusive, uint32_t effort) const final;
+                                 bool inclusive, uint32_t effort,
+                                 AnnQueryCache* cache) const final;
 
   AnnExactCodes PrepareExact(const SubReader& segment,
                              std::span<const float> query,
@@ -95,6 +99,8 @@ class HnswIndex final : public AnnIndex {
  private:
   HnswHeader _header;
   HnswMeta _meta;
+  field_id _field;
+  HnswBases* _bases;
   mutable absl::once_flag _once;
   mutable std::shared_ptr<const HnswData> _data;
 };

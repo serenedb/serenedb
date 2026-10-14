@@ -27,7 +27,6 @@
 #include <span>
 #include <utility>
 
-#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
@@ -91,8 +90,8 @@ struct HnswCodeDist {
 template<typename Fn>
 void WithHnswDist(const HnswData& data, std::span<const float> query,
                   const std::shared_ptr<const QuantizerCodebook>& codebook,
-                  VectorMetric metric, uint32_t d, uint32_t record_size,
-                  Fn&& fn) {
+                  const PanoramaQuery* panorama, VectorMetric metric,
+                  uint32_t d, uint32_t record_size, Fn&& fn) {
   if (codebook) {
     auto reader = MakeQuantizerReader(codebook);
     reader->StartCluster(data.centroid.empty() ? nullptr
@@ -107,15 +106,11 @@ void WithHnswDist(const HnswData& data, std::span<const float> query,
     EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
       if constexpr (M == VectorMetric::L2Sqr ||
                     M == VectorMetric::InnerProduct) {
-        if (!data.rotation.empty()) {
-          std::vector<float> rotated(d);
-          RotateVector(data.rotation.data(), query.data(), rotated.data(), d);
-          std::vector<float> tails(HnswPanoramaLevels(d) + 1);
-          HnswPanoramaTails(rotated.data(), d, tails.data());
+        if (panorama != nullptr) {
           HnswPanoramaDist<M> dist{.base = data.vectors.data(),
                                    .d = d,
-                                   .q = rotated.data(),
-                                   .tails = tails.data(),
+                                   .q = panorama->rotated.data(),
+                                   .tails = panorama->tails.data(),
                                    .norms = data.norms.data()};
           fn(dist);
           return;
@@ -636,8 +631,8 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(detail::TableFilter* table) const {
   if (table != nullptr && !table->Foldable()) {
     table = nullptr;
   }
-  WithHnswDist(*_data, _query, _codebook, _metric, _d, _record_size,
-               [&](auto& dist) {
+  WithHnswDist(*_data, _query, _codebook, _panorama.get(), _metric, _d,
+               _record_size, [&](auto& dist) {
                  if (_inner != nullptr || table != nullptr) {
                    RunFiltered(dist, table, scratch);
                    return;

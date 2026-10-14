@@ -20,9 +20,12 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "iresearch/index/column_info.hpp"
@@ -62,6 +65,35 @@ struct VectorFilterOptions {
   bool operator==(const VectorFilterOptions& rhs) const noexcept = default;
 };
 
+struct PanoramaQuery {
+  std::vector<float> rotated;
+  std::vector<float> tails;
+};
+
+class AnnQueryCache {
+ public:
+  using Basis = std::shared_ptr<const std::vector<float>>;
+
+  AnnQueryCache() = default;
+  AnnQueryCache(const AnnQueryCache&) noexcept {}
+  AnnQueryCache& operator=(const AnnQueryCache&) noexcept { return *this; }
+
+  template<typename Make>
+  std::shared_ptr<const PanoramaQuery> Get(const Basis& basis, Make&& make) {
+    absl::MutexLock lock{&_mutex};
+    for (const auto& [key, query] : _entries) {
+      if (key == basis) {
+        return query;
+      }
+    }
+    return _entries.emplace_back(basis, make()).second;
+  }
+
+ private:
+  absl::Mutex _mutex;
+  std::vector<std::pair<Basis, std::shared_ptr<const PanoramaQuery>>> _entries;
+};
+
 struct AnnIndex {
   virtual ~AnnIndex() = default;
 
@@ -80,13 +112,15 @@ struct AnnIndex {
   virtual QueryBuilder::ptr PrepareKnn(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        const VectorFilterOptions& opts,
-                                       uint32_t effort) const = 0;
+                                       uint32_t effort,
+                                       AnnQueryCache* cache) const = 0;
 
   virtual QueryBuilder::ptr PrepareRange(const SubReader& segment,
                                          const PrepareContext& ctx,
                                          const VectorFilterOptions& opts,
                                          float radius, bool inclusive,
-                                         uint32_t effort) const = 0;
+                                         uint32_t effort,
+                                         AnnQueryCache* cache) const = 0;
 
   virtual AnnExactCodes PrepareExact(const SubReader& /*segment*/,
                                      std::span<const float> /*query*/,

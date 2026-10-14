@@ -149,6 +149,24 @@ statement ok
 VACUUM (REFRESH_TABLE) rot_st;
 
 statement ok
+SET sdb_hnsw_ef_search = 2000;
+
+query
+SELECT count(DISTINCT row_group_id) AS segments
+FROM pragma_storage_info('rot_st') WHERE column_name = 'id';
+----
+segments
+3
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_st ORDER BY emb <-> rot_vec(4321.5) LIMIT 25)
+  EXCEPT (SELECT i FROM range(7500) t(i) ORDER BY rot_vec(i) <-> rot_vec(4321.5) LIMIT 25)) t;
+----
+count
+0
+
+statement ok
 INSERT INTO rot_st_ip SELECT * FROM rot_st WHERE id < 2500;
 
 statement ok
@@ -198,6 +216,45 @@ FROM rot_st ORDER BY emb <-> rot_vec(5555) LIMIT 1;
 ----
 id	d
 5555	0
+
+statement ok
+CREATE MACRO rot_wide(i) AS
+  list_transform(range(1280), j -> (sin(i * 0.0113 * (j % 12 + 1) + j * 0.37) / (1 + j / 16))::FLOAT)::FLOAT[1280];
+
+statement ok
+CREATE TABLE rot_wide_src (id INTEGER PRIMARY KEY, emb FLOAT[1280]);
+
+statement ok
+INSERT INTO rot_wide_src SELECT i, rot_wide(i) FROM range(10240) t(i);
+
+statement ok
+CREATE TABLE rot_wide (id INTEGER PRIMARY KEY, emb FLOAT[1280])
+  WITH (storage = 'search', compaction_interval = 0);
+
+statement ok
+CREATE INDEX rot_wide_ip ON rot_wide
+  USING inverted(id, emb hnsw (metric = 'ip', quant = 'none'));
+
+statement ok
+INSERT INTO rot_wide SELECT * FROM rot_wide_src;
+
+statement ok
+VACUUM (REFRESH_TABLE) rot_wide;
+
+query
+SELECT count(*) FROM (
+  (SELECT id FROM rot_wide ORDER BY emb <#> rot_wide(4321.5) LIMIT 25)
+  EXCEPT (SELECT id FROM rot_wide_src ORDER BY emb <#> rot_wide(4321.5) LIMIT 25)) t;
+----
+count
+0
+
+query
+SELECT (SELECT id FROM rot_wide ORDER BY emb <#> rot_wide(777) LIMIT 1)
+     = (SELECT id FROM rot_wide_src ORDER BY emb <#> rot_wide(777) LIMIT 1) AS same;
+----
+same
+t
 
 statement ok
 RESET sdb_hnsw_ef_search;

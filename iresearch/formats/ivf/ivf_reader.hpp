@@ -103,13 +103,14 @@ class IvfIndex final : public AnnIndex {
 
   QueryBuilder::ptr PrepareKnn(const SubReader& segment,
                                const PrepareContext& ctx,
-                               const VectorFilterOptions& opts,
-                               uint32_t effort) const final;
+                               const VectorFilterOptions& opts, uint32_t effort,
+                               AnnQueryCache* cache) const final;
 
   QueryBuilder::ptr PrepareRange(const SubReader& segment,
                                  const PrepareContext& ctx,
                                  const VectorFilterOptions& opts, float radius,
-                                 bool inclusive, uint32_t effort) const final;
+                                 bool inclusive, uint32_t effort,
+                                 AnnQueryCache* cache) const final;
 
  private:
   CentroidsTree _tree;

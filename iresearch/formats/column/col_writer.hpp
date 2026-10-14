@@ -44,6 +44,7 @@
 namespace irs {
 
 class AnnWriter;
+class HnswBases;
 class IdxWriter;
 struct AnnBuildEnv;
 
@@ -57,6 +58,8 @@ class ColWriter final {
   ColWriter& operator=(const ColWriter&) = delete;
 
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept;
+
+  void SetHnswBases(HnswBases* bases) noexcept { _hnsw_bases = bases; }
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
@@ -108,6 +111,7 @@ class ColWriter final {
   std::string _filename;
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
+  HnswBases* _hnsw_bases = nullptr;
   IndexOutput::ptr _out;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;

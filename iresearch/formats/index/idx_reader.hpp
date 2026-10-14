@@ -40,6 +40,7 @@ namespace irs {
 struct Directory;
 struct AnnIndex;
 struct IResourceManager;
+class HnswBases;
 
 struct TermDictMeta {
   IndexFeatures features{IndexFeatures::None};
@@ -72,7 +73,8 @@ inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name);
+  IdxReader(const Directory& dir, std::string_view segment_name,
+            HnswBases* hnsw_bases);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;

@@ -34,7 +34,7 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   }
   auto sub_ctx = ctx;
   sub_ctx.Boost(GetBoost());
-  return ann->PrepareKnn(segment, sub_ctx, opts, opts.nprobe);
+  return ann->PrepareKnn(segment, sub_ctx, opts, opts.nprobe, &_cache);
 }
 
 PrepareCollector::ptr ByVectorSimilarity::MakeCollectorImpl(

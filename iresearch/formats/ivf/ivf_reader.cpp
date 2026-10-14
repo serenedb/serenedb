@@ -106,7 +106,8 @@ const float* IvfVectorReader::ReadDocBatch(doc_id_t first, size_t count) {
 QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
                                        const PrepareContext& ctx,
                                        const VectorFilterOptions& opts,
-                                       uint32_t effort) const {
+                                       uint32_t effort,
+                                       AnnQueryCache* /*cache*/) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
   const auto nprobe =
@@ -132,7 +133,8 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
                                          const PrepareContext& ctx,
                                          const VectorFilterOptions& opts,
                                          float radius, bool inclusive,
-                                         uint32_t /*effort*/) const {
+                                         uint32_t /*effort*/,
+                                         AnnQueryCache* /*cache*/) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
   if (!PrepareVectorState(_tree, segment, ctx, opts,

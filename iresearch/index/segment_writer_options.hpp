@@ -32,6 +32,7 @@ class DatabaseInstance;
 }  // namespace duckdb
 namespace irs {
 
+class HnswBases;
 class IndexFieldOptions;
 struct AnnBuildEnv;
 
@@ -47,6 +48,7 @@ struct SegmentWriterOptions {
   const IndexFieldOptions* field_options = nullptr;
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;
+  HnswBases* hnsw_bases = nullptr;
 };
 
 }  // namespace irs

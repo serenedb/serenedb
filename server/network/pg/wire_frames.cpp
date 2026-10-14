@@ -26,7 +26,6 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
-#include <array>
 #include <cstdint>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -54,6 +53,14 @@ constexpr size_t kFrameTag = 1;  // leading message-type byte
 constexpr size_t kInt16 = 2;     // a big-endian int16 wire field
 constexpr size_t kInt32 = 4;     // a big-endian int32 wire field
 constexpr size_t kFrameHeader = kFrameTag + kInt32;  // type byte + length
+
+// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
+// length (0).
+constexpr std::string_view kPgCopyHeader{
+  "PGCOPY\n\xFF\r\n\0"
+  "\0\0\0\0"
+  "\0\0\0\0",
+  19};
 
 int DuckExceptionToErrcode(duckdb::ExceptionType type) {
   switch (type) {
@@ -224,6 +231,7 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     for (uint16_t column = 0; column < columns; ++column) {
       serializers[column](context, decoded[column], row);
     }
+    sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
     prefix[0] = PQ_MSG_DATA_ROW;
     absl::big_endian::Store32(
       prefix + kFrameTag, static_cast<int32_t>(writer.Written() - kFrameTag));
@@ -235,7 +243,8 @@ void WriteDataChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
 template<RowEncoding Encoding>
 void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
                     std::span<const sdb::pg::SerializationFunction> serializers,
-                    sdb::pg::SerializationContext& context) {
+                    sdb::pg::SerializationContext& context,
+                    bool binary_header) {
   const auto rows = chunk.size();
   if (rows == 0) {
     return;
@@ -248,14 +257,14 @@ void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
     duckdb::Vector::RecursiveToUnifiedFormat(chunk.data[column], rows,
                                              decoded[column]);
   }
-  // The whole chunk's rows go in one CopyData ('d') frame whose length is
-  // backpatched after the rows. The frame is atomic: if a row throws partway,
-  // the Writer rewinds the entire partial frame.
-  message::Writer writer{out};
-  context.writer = &writer;
-  auto* prefix = writer.Alloc(kFrameHeader);
   for (duckdb::idx_t row = 0; row < rows; ++row) {
+    message::Writer writer{out};
+    context.writer = &writer;
+    auto* prefix = writer.Alloc(kFrameHeader);
     if constexpr (Encoding == RowEncoding::CopyBinary) {
+      if (binary_header && row == 0) {
+        writer.Write(kPgCopyHeader);
+      }
       // PGCOPY row: int16 field count, then the binary fields.
       absl::big_endian::Store16(writer.Alloc(kInt16), columns);
       for (uint16_t column = 0; column < columns; ++column) {
@@ -273,31 +282,22 @@ void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
       }
       writer.Write("\n");
     }
+    sdb::pg::CheckMessageSize(writer.Written() - kFrameTag);
+    prefix[0] = PQ_MSG_COPY_DATA;
+    absl::big_endian::Store32(
+      prefix + kFrameTag, static_cast<int32_t>(writer.Written() - kFrameTag));
+    writer.Commit(false);
   }
-  prefix[0] = PQ_MSG_COPY_DATA;
-  absl::big_endian::Store32(prefix + kFrameTag,
-                            static_cast<int32_t>(writer.Written() - kFrameTag));
-  writer.Commit(false);
 }
 
 template void WriteCopyChunk<RowEncoding::CopyBinary>(
   message::Buffer&, const duckdb::DataChunk&,
   std::span<const sdb::pg::SerializationFunction>,
-  sdb::pg::SerializationContext&);
+  sdb::pg::SerializationContext&, bool);
 template void WriteCopyChunk<RowEncoding::CopyText>(
   message::Buffer&, const duckdb::DataChunk&,
   std::span<const sdb::pg::SerializationFunction>,
-  sdb::pg::SerializationContext&);
-
-namespace {
-
-// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
-// length (0).
-constexpr std::array<uint8_t, 19> kPgCopyHeader{
-  'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
-  0x00, 0,   0,   0,   0,   0,   0,    0,    0};
-
-}  // namespace
+  sdb::pg::SerializationContext&, bool);
 
 void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns) {
   message::Writer w{out};
@@ -318,16 +318,20 @@ void WriteCopyOutResponse(message::Buffer& out, bool binary, int16_t columns) {
   w.Commit(false);
 }
 
-void WriteCopyBinaryHeader(message::Buffer& out) {
+void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first) {
+  auto& head = *first.head;
+  const auto* frame = head.WritableData() + head.GetBegin();
+  SDB_ASSERT(head.Size() >= kFrameHeader && frame[0] == PQ_MSG_COPY_DATA);
   message::Writer w{out};
-  const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
-  w.Write({reinterpret_cast<const char*>(kPgCopyHeader.data()),
-           kPgCopyHeader.size()});
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
-    prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));
+    prefix + kFrameTag,
+    absl::big_endian::Load32(frame + kFrameTag) + kPgCopyHeader.size());
+  w.Write(kPgCopyHeader);
   w.Commit(false);
+  head.SetBegin(head.GetBegin() + kFrameHeader);
+  first.bytes -= kFrameHeader;
 }
 
 void WriteCopyTextHeader(message::Buffer& out,
@@ -371,10 +375,13 @@ void WriteCopyTextHeader(message::Buffer& out,
   w.Commit(false);
 }
 
-void WriteCopyBinaryFooter(message::Buffer& out) {
+void WriteCopyBinaryFooter(message::Buffer& out, bool binary_header) {
   message::Writer w{out};
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
+  if (binary_header) {
+    w.Write(kPgCopyHeader);
+  }
   absl::big_endian::Store16(w.Alloc(kInt16), static_cast<int16_t>(-1));
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(

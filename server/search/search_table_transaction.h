@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/any_invocable.h>
-
 #include <cstdint>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/storage/storage_lock.hpp>
@@ -102,10 +100,6 @@ class SearchTableTransaction {
   void AddSegments(const std::shared_ptr<SearchTable>& shard,
                    std::vector<std::string>&& segments);
 
-  irs::IndexWriter::Transaction& EnsureSerialSearchTransaction(
-    const std::shared_ptr<SearchTable>& shard,
-    absl::AnyInvocable<irs::IndexWriter::Transaction()> make_trx);
-
   void AddInlineInsertChunk(const std::shared_ptr<SearchTable>& shard,
                             duckdb::BufferManager& buffer_manager,
                             const duckdb::vector<duckdb::LogicalType>& types,
@@ -154,8 +148,6 @@ class SearchTableTransaction {
   void Stage(const irs::SourcePosition& position,
              duckdb::idx_t database) noexcept;
   void Publish(duckdb::idx_t database) noexcept;
-
-  void FlushPending(duckdb::ClientContext& context);
 
   void Abort() noexcept;
 

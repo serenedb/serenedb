@@ -584,8 +584,8 @@ bool SearchTable::FinishReplay(duckdb::AttachedDatabase& db) {
   const auto tick = NextTick(queries);
   for (const auto& pending : session.adopts) {
     try {
-      AdoptSegment(pending.meta_file, tick - queries + pending.queries_before,
-                   end);
+      _writer->AdoptSegment(pending.meta_file,
+                            tick - queries + pending.queries_before, end);
     } catch (const std::exception& e) {
       SDB_FATAL(SEARCH, "search-table WAL recovery: failed to adopt segment '",
                 pending.meta_file, "' for table ", _table_id, ": ",

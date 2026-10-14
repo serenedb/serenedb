@@ -241,18 +241,6 @@ void SearchTableTransaction::FlushBuffer(
   it->second.ClearBufferedRows();
 }
 
-irs::IndexWriter::Transaction&
-SearchTableTransaction::EnsureSerialSearchTransaction(
-  const std::shared_ptr<SearchTable>& shard,
-  absl::AnyInvocable<irs::IndexWriter::Transaction()> make_trx) {
-  auto& w = EnsureShardWrites(shard);
-  if (w.transactions.empty()) {
-    w.transactions.push_back(
-      std::make_unique<irs::IndexWriter::Transaction>(make_trx()));
-  }
-  return *w.transactions.back();
-}
-
 void SearchTableTransaction::AddSearchDeletes(
   const std::shared_ptr<SearchTable>& shard, std::span<const int64_t> rows) {
   EnsureShardWrites(shard);
@@ -298,64 +286,38 @@ void SearchTableTransaction::Abort() noexcept {
   _readers.clear();
 }
 
-void SearchTableTransaction::FlushPending(duckdb::ClientContext& context) {
+void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
   for (auto& [table_id, w] : _writes) {
-    auto it = _changes.find(table_id);
+    const auto it = _changes.find(table_id);
     if (it == _changes.end()) {
       continue;
     }
     auto& entry = it->second;
-    if (!entry.HasBufferedRows() && entry.ops.empty()) {
-      continue;
+    if (entry.HasBufferedRows() || entry.applied_ops != entry.ops.size()) {
+      SDB_IF_FAILURE("search_feed_pending_fails") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      if (w.buffer_trx != nullptr ||
+          entry.BufferedBytes() > kWalInlineMaxBytes) {
+        FlushBuffer(w.shard, context);
+      } else {
+        // Never overran: a pooled transaction keeps the freelist coalescing
+        // that makes small writes cheap, and the record carries the rows
+        // inline.
+        if (w.transactions.empty()) {
+          w.transactions.push_back(
+            std::make_unique<irs::IndexWriter::Transaction>(
+              w.shard->GetTransaction()));
+        }
+        ReplayBuffer(*w.shard, entry, *w.transactions.back(), context);
+      }
     }
-
-    SDB_IF_FAILURE("search_feed_pending_fails") {
-      THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-    }
+    // The one and the only flush a transaction gets
     if (w.buffer_trx != nullptr) {
-      // Already overran once: the remainder joins the same transaction, whose
-      // segments the record names, so nothing is left to carry inline.
-      ReplayBuffer(*w.shard, entry, *w.buffer_trx, context);
-      entry.ClearBufferedRows();
-      continue;
+      for (const auto& segment : w.buffer_trx->FlushAndFsync()) {
+        entry.segments.push_back(segment.filename);
+      }
     }
-    if (entry.BufferedBytes() > kWalInlineMaxBytes) {
-      FlushBuffer(w.shard, context);
-      continue;
-    }
-    // Never overran: a pooled transaction keeps the freelist coalescing that
-    // makes small writes cheap, and the record carries the rows inline.
-    auto& trx = EnsureSerialSearchTransaction(
-      w.shard, [&] { return w.shard->GetTransaction(); });
-    ReplayBuffer(*w.shard, entry, trx, context);
-  }
-}
-
-void SearchTableTransaction::PrepareCommit(duckdb::ClientContext& context) {
-  FlushPending(context);
-  // The one and the only flush a transaction gets
-  for (auto& [table_id, w] : _writes) {
-    if (w.buffer_trx == nullptr) {
-      continue;
-    }
-    const auto flushed = w.buffer_trx->FlushAndFsync();
-    if (flushed.empty()) {
-      continue;
-    }
-    std::vector<std::string> refs;
-    refs.reserve(flushed.size());
-    for (const auto& segment : flushed) {
-      refs.push_back(segment.filename);
-    }
-    _changes[table_id].AppendSegments(std::move(refs));
-  }
-
-  for (auto& [table_id, w] : _writes) {
-    auto changes = _changes.find(table_id);
-    if (changes == _changes.end()) {
-      continue;
-    }
-    auto& entry = changes->second;
     duckdb::DuckTransaction::Get(context, w.table->catalog)
       .log_writers.push_back(
         duckdb::make_shared_ptr<SearchTableLogWriter>(*w.table, entry));

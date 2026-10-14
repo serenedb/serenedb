@@ -124,14 +124,6 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable> {
     return _writer->GetBatch(exclusive_segment);
   }
 
-  // Re-attach a segment this shard already flushed + fsynced, named by its meta
-  // file. `tick` must be in the adopting transaction's space -- it orders the
-  // segment against that transaction's removals.
-  void AdoptSegment(std::string_view meta_file, uint64_t tick,
-                    const irs::SourcePosition& position) {
-    _writer->AdoptSegment(meta_file, tick, position);
-  }
-
   void ReplayInsert(duckdb::ClientContext& context, duckdb::Catalog& catalog,
                     std::span<const connector::ColumnId> column_ids,
                     duckdb::DataChunk& chunk, uint64_t row_start);

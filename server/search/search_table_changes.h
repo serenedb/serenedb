@@ -66,7 +66,6 @@ struct LocalTableChangesEntry {
     bool truncate = false;
     bool clears_shard = false;
 
-    bool IsDelete() const noexcept { return !delete_rows.empty(); }
     bool IsTruncate() const noexcept { return truncate; }
   };
 

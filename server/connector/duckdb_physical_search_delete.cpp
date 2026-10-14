@@ -48,11 +48,6 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   std::shared_lock<std::shared_mutex> table_lock;
   // RETURNING only: the rows this statement removed.
   std::optional<duckdb::ColumnDataCollection> returned;
-
-  irs::IndexWriter::Transaction& Trx() {
-    return sdb_txn->SearchTxn().EnsureSerialSearchTransaction(
-      search_table, [&] { return search_table->GetTransaction(); });
-  }
 };
 
 struct SearchDeleteSourceState final : duckdb::GlobalSourceState {

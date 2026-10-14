@@ -3516,14 +3516,13 @@ void RegisterPgFormattingFunctions(duckdb::DatabaseInstance& db) {
     const duckdb::Identifier identifier{name};
     duckdb::ScalarFunctionSet set{identifier};
     for (const auto& overload : overloads) {
-      set.AddFunction(
-        duckdb::ScalarFunction{identifier,
-                               {overload.input, LogicalType::VARCHAR},
-                               overload.result,
-                               overload.function,
-                               overload.bind,
-                               nullptr,
-                               overload.init});
+      duckdb::ScalarFunction function{
+        identifier,      {overload.input, LogicalType::VARCHAR},
+        overload.result, overload.function,
+        overload.bind,   nullptr,
+        overload.init};
+      function.SetStability(duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY);
+      set.AddFunction(std::move(function));
     }
     set.SetFallible();
     loader.RegisterFunction(std::move(set));

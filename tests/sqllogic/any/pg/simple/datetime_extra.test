@@ -247,3 +247,14 @@ SELECT count(DISTINCT clock_timestamp()) > 1 AS per_row FROM generate_series(1, 
 ----
 per_row
 t
+
+query
+SELECT proname, string_agg(DISTINCT provolatile::text, ',' ORDER BY provolatile::text) AS volatility
+FROM pg_proc WHERE proname IN ('to_char', 'to_number', 'to_date', 'to_timestamp')
+GROUP BY proname ORDER BY proname;
+----
+proname	volatility
+to_char	s
+to_date	s
+to_number	s
+to_timestamp	i,s

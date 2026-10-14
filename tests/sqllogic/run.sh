@@ -980,19 +980,16 @@ PY
 	echo
 }
 
-generate_tests() {
-	local generator target temp
+generated_tests() {
+	local generator target
 	shopt -s globstar nullglob
 	for generator in "$SCRIPT_DIR"/generators/**/*.py; do
 		target="$SCRIPT_DIR/${generator#"$SCRIPT_DIR/generators/"}"
 		target="${target%.py}.test"
-		temp="$(dirname -- "$target")/.generating.$$"
-		if ! python3 "$generator" >"$temp"; then
-			rm -f -- "$temp"
-			echo "ERROR: $generator failed, $target was not generated" >&2
+		if ! python3 "$SCRIPT_DIR/generated.py" "$1" "$generator" "$target"; then
+			echo "ERROR: $generator failed to $1 $target" >&2
 			exit 1
 		fi
-		mv -f -- "$temp" "$target"
 	done
 	shopt -u globstar nullglob
 }
@@ -1252,7 +1249,7 @@ if [[ "$fast" == "true" ]]; then
 	done
 fi
 
-generate_tests
+generated_tests write
 launch_external
 
 # Run tests based on parameters
@@ -1430,6 +1427,10 @@ for iter in $(seq 1 "$iterations"); do
 		[[ $test_exit_code != 0 ]] && final_exit_code=$test_exit_code
 	done
 done
+
+if [[ "$override" == "true" || "$force_override" == "true" ]]; then
+	generated_tests record
+fi
 
 if [[ "$cancellation" == "true" ]]; then
 	# Stop the SIGINT sender before the health check so pg_isready isn't killed

@@ -51,11 +51,13 @@ every run. Each `generators/<path>.py` prints the test that `run.sh` saves as
 `sdb/pg/index/phrase_deferred_matrix.test`. Generated tests are listed in
 `.gitignore`; edit the generator, not its output.
 
-A generator can't ask the server for expected results, so each case states its
-own: it compares two ways of answering the same query and expects no mismatches,
-or it expects an error the generator can predict. Answers only the server knows,
-such as query plans, go into a committed test next to the generated one, like
-`sdb/pg/index/phrase_deferred_plans.test`.
+Where only the server knows the answer, such as a row count, a generator prints
+`<recorded>`. `run.sh` fills those cells from `generators/<path>.recorded`, and
+`run.sh --override` records them there, as values or, for a query that fails,
+as its error. The `.recorded` file belongs to one version of its generator: after
+a change to the generator its placeholders stay unfilled, and the test fails
+until it's recorded again with `--override`. Query plans go into a committed test
+next to the generated one, like `sdb/pg/index/phrase_deferred_plans.test`.
 
 ## Recovery Tests
 

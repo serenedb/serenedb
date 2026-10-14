@@ -40,8 +40,8 @@ constexpr size_t kPq8TrainRows = 32768;
 constexpr size_t kPq8LutBytes = size_t{256} << 10;
 
 constexpr bool Pq8Direct(size_t dsub, size_t m) noexcept {
-  return dsub == 2 || ((dsub == 1 || dsub == 4 || dsub == 8 || dsub == 16) &&
-                       m * kPq8Ksub * sizeof(float) > kPq8LutBytes);
+  return dsub == 2 ||
+         (dsub == 1 && m * kPq8Ksub * sizeof(float) > kPq8LutBytes);
 }
 
 constexpr size_t kPqTrainResiduals = kFastScanKsub * 256;
@@ -1162,12 +1162,6 @@ class ProductQuantizer8Reader final : public QuantizerReader {
         return ScoreGrouped<1>(base, record_size, ids, out);
       case 2:
         return ScoreGrouped<2>(base, record_size, ids, out);
-      case 4:
-        return ScoreGrouped<4>(base, record_size, ids, out);
-      case 8:
-        return ScoreGrouped<8>(base, record_size, ids, out);
-      case 16:
-        return ScoreGrouped<16>(base, record_size, ids, out);
       default:
         return ScoreGrouped<0>(base, record_size, ids, out);
     }
@@ -1300,12 +1294,6 @@ class ProductQuantizer8Reader final : public QuantizerReader {
         return ScoreDirect<1>(code);
       case 2:
         return ScoreDirect<2>(code);
-      case 4:
-        return ScoreDirect<4>(code);
-      case 8:
-        return ScoreDirect<8>(code);
-      case 16:
-        return ScoreDirect<16>(code);
       default:
         break;
     }

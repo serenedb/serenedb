@@ -35,6 +35,7 @@
 #include <iresearch/utils/misc.hpp>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <random>
 #include <span>
 #include <utility>
@@ -2172,6 +2173,63 @@ TEST(code_bound_test, only_byte_scalar_codes_are_bounded) {
                             VectorMetric::L2Sqr, points, kRows, {});
   EXPECT_EQ(f.stats->MakeCodeBound(query, VectorMetric::L1), nullptr);
   EXPECT_NE(f.stats->MakeCodeBound(query, VectorMetric::L2Sqr), nullptr);
+}
+
+TEST(tq_quantizer_test, codes_span_the_dimension_rounded_to_sixteen) {
+  struct Case {
+    uint32_t bits;
+    double min_cosine;
+    size_t min_top10;
+  };
+  constexpr size_t n = 200;
+  constexpr size_t kK = 10;
+  for (const uint32_t d : {200U, 768U, 3072U}) {
+    const uint32_t rd = (d + 15) / 16 * 16;
+    const auto points = MakeSpread(d, n, 31);
+    const auto query = MakeSpread(d, 1, 37);
+    const std::vector<float> centroid(d, 0.f);
+    std::vector<float> want(n);
+    for (size_t i = 0; i < n; ++i) {
+      want[i] = ExactScore(VectorMetric::InnerProduct, query.data(),
+                           points.data() + i * d, d);
+    }
+    std::vector<uint32_t> ids(n);
+    std::iota(ids.begin(), ids.end(), uint32_t{0});
+    const auto top = [&ids](const auto& s) {
+      auto order = ids;
+      std::partial_sort(order.begin(), order.begin() + kK, order.end(),
+                        [&s](uint32_t a, uint32_t b) { return s[a] > s[b]; });
+      order.resize(kK);
+      std::sort(order.begin(), order.end());
+      return order;
+    };
+    const auto best = top(want);
+    for (const Case c : {Case{4, 0.95, 8}, Case{2, 0.85, 6}, Case{1, 0.7, 4}}) {
+      const auto f =
+        BuildCodes(VectorQuantization::TQ, d, c.bits,
+                   VectorMetric::InnerProduct, points, n, centroid);
+      EXPECT_EQ(f.record_size, rd * c.bits / 8 + 2 * sizeof(float))
+        << "d=" << d << " bits=" << c.bits;
+      auto reader = MakeKeyedReader(f, query, centroid.data());
+      std::vector<float> decoded(d);
+      double cosine = 0.0;
+      for (size_t i = 0; i < n; ++i) {
+        ASSERT_TRUE(
+          reader->Decode(f.codes.data() + i * f.record_size, decoded.data()));
+        cosine += Cosine({points.data() + i * d, d}, decoded);
+      }
+      EXPECT_GE(cosine / static_cast<double>(n), c.min_cosine)
+        << "d=" << d << " bits=" << c.bits;
+      std::vector<score_t> got(n);
+      reader->ComputeGathered(f.codes.data(), f.record_size, ids, kNoPrune,
+                              got.data());
+      const auto found = top(got);
+      std::vector<uint32_t> both;
+      std::set_intersection(best.begin(), best.end(), found.begin(),
+                            found.end(), std::back_inserter(both));
+      EXPECT_GE(both.size(), c.min_top10) << "d=" << d << " bits=" << c.bits;
+    }
+  }
 }
 
 namespace {

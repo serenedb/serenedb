@@ -18,13 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/random/distributions.h>
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/utils/random.h>
 
 #include <core_functions/array_kernels.hpp>
 #include <limits>
 #include <numbers>
+#include <numeric>
 #include <optional>
+#include <pcg_random.hpp>
 
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 
@@ -35,7 +38,9 @@ constexpr uint32_t kByteLutSize = 256;
 constexpr size_t kPairLutSize = size_t{kByteLutSize} * kByteLutSize;
 
 constexpr uint8_t kTurboQuantQjlFwht = 0;
-constexpr uint8_t kTurboQuantLayout = 2;
+constexpr uint8_t kTurboQuantLayout = 3;
+constexpr uint32_t kTurboQuantDimStep = 16;
+constexpr size_t kTurboQuantMixRounds = 2;
 
 struct TurboQuantStatsHeader {
   uint8_t layout;
@@ -124,6 +129,95 @@ float TurboQuantNorm(const float* v, uint32_t d) {
                   std::numeric_limits<float>::epsilon());
 }
 
+uint32_t TurboQuantDim(uint32_t d) noexcept {
+  return std::max(
+    kTurboQuantDimStep,
+    (d + kTurboQuantDimStep - 1) / kTurboQuantDimStep * kTurboQuantDimStep);
+}
+
+class TurboQuantRotation {
+ public:
+  TurboQuantRotation(uint32_t rd, int64_t seed) : _rd{rd}, _signs(rd) {
+    faiss::rand_signs(_signs.data(), rd, seed);
+    if (std::has_single_bit(rd)) {
+      return;
+    }
+    pcg32 rng{static_cast<uint64_t>(seed)};
+    for (auto& round : _rounds) {
+      round.perm.resize(rd);
+      std::iota(round.perm.begin(), round.perm.end(), uint32_t{0});
+      for (uint32_t i = rd; i > 1; --i) {
+        std::swap(round.perm[i - 1],
+                  round.perm[absl::Uniform<uint32_t>(rng, 0, i)]);
+      }
+      round.signs.resize(rd);
+      for (auto& s : round.signs) {
+        s = (rng() & 1U) != 0 ? 1.f : -1.f;
+      }
+    }
+  }
+
+  void Rotate(const float* in, uint32_t d, float* out,
+              std::vector<float>& scratch) const {
+    for (uint32_t i = 0; i < d; ++i) {
+      out[i] = in[i] * _signs[i];
+    }
+    std::fill(out + d, out + _rd, 0.f);
+    WhtChunks(out);
+    if (_rounds[0].perm.empty()) {
+      return;
+    }
+    scratch.resize(_rd);
+    for (const auto& round : _rounds) {
+      for (uint32_t k = 0; k < _rd; ++k) {
+        scratch[k] = out[round.perm[k]] * round.signs[k];
+      }
+      WhtChunks(scratch.data());
+      std::copy_n(scratch.data(), _rd, out);
+    }
+  }
+
+  void RotateBack(float* v, float* out, uint32_t d,
+                  std::vector<float>& scratch) const {
+    if (!_rounds[0].perm.empty()) {
+      scratch.resize(_rd);
+      for (auto round = _rounds.rbegin(); round != _rounds.rend(); ++round) {
+        WhtChunks(v);
+        for (uint32_t k = 0; k < _rd; ++k) {
+          scratch[round->perm[k]] = v[k] * round->signs[k];
+        }
+        std::copy_n(scratch.data(), _rd, v);
+      }
+    }
+    WhtChunks(v);
+    for (uint32_t i = 0; i < d; ++i) {
+      out[i] = v[i] * _signs[i];
+    }
+  }
+
+ private:
+  struct Round {
+    std::vector<uint32_t> perm;
+    std::vector<float> signs;
+  };
+
+  void WhtChunks(float* v) const noexcept {
+    for (uint32_t off = 0; off < _rd;) {
+      const uint32_t n = std::bit_floor(_rd - off);
+      Fwht(v + off, n);
+      const float scale = 1.f / std::sqrt(static_cast<float>(n));
+      for (uint32_t i = off; i < off + n; ++i) {
+        v[i] *= scale;
+      }
+      off += n;
+    }
+  }
+
+  uint32_t _rd;
+  std::vector<float> _signs;
+  std::array<Round, kTurboQuantMixRounds> _rounds;
+};
+
 struct TurboQuantLayout {
   uint32_t d = 0;
   uint32_t rd = 0;
@@ -180,7 +274,7 @@ TurboQuantLayout MakeTurboQuantLayout(uint32_t d, TurboQuantBits bits, bool l2,
                                       bool row_major) noexcept {
   TurboQuantLayout l;
   l.d = d;
-  l.rd = RotatedDim(d);
+  l.rd = TurboQuantDim(d);
   l.full = bits.full;
   l.l2 = l2;
   l.row_major = row_major;
@@ -483,27 +577,6 @@ int32_t TurboQuantPairDot8(const uint8_t* a, const uint8_t* b,
 }
 #endif
 
-// faiss keeps TurboQuantRefine a small config struct -- there is a
-// static_assert forbidding projection buffers in it -- so the FWHT sign vector
-// lives in the quantizer and is derived from the seed.
-std::vector<float> MakeTurboQuantFwhtSigns(uint64_t seed, uint32_t d) {
-  size_t padded_d = 1;
-  while (padded_d < d) {
-    padded_d <<= 1;
-  }
-  std::vector<float> signs(padded_d);
-  faiss::rand_signs(signs.data(), padded_d, static_cast<int64_t>(seed));
-  return signs;
-}
-
-void TurboQuantProject(const std::vector<float>& fwht_signs, const float* in,
-                       float* out, uint32_t rd) noexcept {
-  for (uint32_t j = 0; j < rd; ++j) {
-    out[j] = in[j] * fwht_signs[j];
-  }
-  Fwht(out, rd);
-}
-
 template<VectorMetric M>
 class TurboQuantizerWriter final : public QuantizerWriter {
  public:
@@ -511,15 +584,15 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     : _lay{MakeTurboQuantLayout(d, bits, M == VectorMetric::L2Sqr, row_major)},
       _bits{bits},
       _tables{_lay.rd, bits, kIvfRotationSeed},
-      _sqrt_rd{std::sqrt(static_cast<float>(_lay.rd))} {
+      _sqrt_rd{std::sqrt(static_cast<float>(_lay.rd))},
+      _rotation{_lay.rd, ~kIvfRotationSeed} {
     static_assert(M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct);
-    _fwht_signs = MakeTurboQuantFwhtSigns(kIvfRotationSeed, _lay.rd);
-    GenerateSigns(_lay.rd, kIvfRotationSeed, _signs);
     _rot.resize(_lay.rd);
     _res.resize(_lay.rd);
     _code1.assign(kFastScanBbs * size_t{_lay.code1_bytes}, 0);
     _packed1.resize(_lay.group1_bytes);
     if (_lay.full) {
+      _projection.emplace(_lay.rd, kIvfRotationSeed);
       _proj.resize(_lay.rd);
       _code2.assign(kFastScanBbs * size_t{_lay.code2_bytes}, 0);
       _packed2.resize(_lay.group2_bytes);
@@ -532,14 +605,10 @@ class TurboQuantizerWriter final : public QuantizerWriter {
 
   void SetClusterCentroid(const float* centroid) final {
     _centroid.resize(_lay.rd);
-    RotateInto(_signs.data(), centroid, _centroid.data(), _lay.d, _lay.rd);
+    _rotation.Rotate(centroid, _lay.d, _centroid.data(), _mix);
     if (_lay.full) {
       _cproj.resize(_lay.rd);
-      TurboQuantProject(_fwht_signs, _centroid.data(), _cproj.data(), _lay.rd);
-      const float inv_sqrt_rd = 1.f / _sqrt_rd;
-      for (auto& v : _cproj) {
-        v *= inv_sqrt_rd;
-      }
+      _projection->Rotate(_centroid.data(), _lay.rd, _cproj.data(), _mix);
     }
   }
 
@@ -611,7 +680,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
 
  private:
   void EncodeOne(const float* vec, size_t lane) {
-    RotateInto(_signs.data(), vec, _rot.data(), _lay.d, _lay.rd);
+    _rotation.Rotate(vec, _lay.d, _rot.data(), _mix);
     float c_dot_r = 0.f;
     for (uint32_t j = 0; j < _lay.rd; ++j) {
       _res[j] = _rot[j] - _centroid[j];
@@ -667,7 +736,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     }
 
     _gammas[lane] = duckdb::L2NormOp::Operation(_res.data(), _lay.rd);
-    TurboQuantProject(_fwht_signs, _res.data(), _proj.data(), _lay.rd);
+    _projection->Rotate(_res.data(), _lay.rd, _proj.data(), _mix);
     uint8_t* qjl = _code2.data() + lane * size_t{_lay.code2_bytes};
     float c_qjl = 0.f;
     for (uint32_t mi = 0; mi < _lay.m2; ++mi) {
@@ -754,9 +823,9 @@ class TurboQuantizerWriter final : public QuantizerWriter {
   TurboQuantTables _tables;
   float _sqrt_rd;
   size_t _lane = 0;
-  std::vector<float> _signs;
-  // Derived from turboq_refine.seed; faiss no longer stores it.
-  std::vector<float> _fwht_signs;
+  TurboQuantRotation _rotation;
+  std::optional<TurboQuantRotation> _projection;
+  std::vector<float> _mix;
   std::vector<float> _centroid;
   std::vector<float> _cproj;
   std::vector<float> _rot;
@@ -790,8 +859,11 @@ class TurboQuantizerStats final : public QuantizerStats {
     }
     _lay = MakeTurboQuantLayout(d, bits, M == VectorMetric::L2Sqr, row_major);
     _tables = std::make_unique<TurboQuantTables>(_lay.rd, bits, hdr.seed);
-    _fwht_signs = MakeTurboQuantFwhtSigns(hdr.seed, _lay.rd);
-    GenerateSigns(_lay.rd, static_cast<int64_t>(hdr.seed), _signs);
+    const auto seed = static_cast<int64_t>(hdr.seed);
+    _rotation.emplace(_lay.rd, ~seed);
+    if (bits.full) {
+      _projection.emplace(_lay.rd, seed);
+    }
     _valid = true;
   }
 
@@ -807,15 +879,15 @@ class TurboQuantizerStats final : public QuantizerStats {
   const TurboQuantCentroids& Centroids() const noexcept {
     return _tables->Centroids();
   }
-  const std::vector<float>& Signs() const noexcept { return _signs; }
-  const std::vector<float>& FwhtSigns() const noexcept { return _fwht_signs; }
+  const TurboQuantRotation& Rotation() const noexcept { return *_rotation; }
+  const TurboQuantRotation& Projection() const noexcept { return *_projection; }
 
  private:
   TurboQuantLayout _lay;
   bool _valid = false;
   std::unique_ptr<TurboQuantTables> _tables;
-  std::vector<float> _signs;
-  std::vector<float> _fwht_signs;
+  std::optional<TurboQuantRotation> _rotation;
+  std::optional<TurboQuantRotation> _projection;
 };
 
 template<VectorMetric M>
@@ -833,8 +905,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     SDB_ASSERT(query.size() == lay.d);
     _query.assign(query.begin(), query.end());
     _rot_query.resize(lay.rd);
-    RotateInto(_stats->Signs().data(), _query.data(), _rot_query.data(), lay.d,
-               lay.rd);
+    _stats->Rotation().Rotate(_query.data(), lay.d, _rot_query.data(), _mix);
     BuildMseLut();
     if (lay.full) {
       BuildQjlLut();
@@ -951,13 +1022,10 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   void BuildQjlLut() {
     const TurboQuantLayout& lay = _stats->Layout();
     std::vector<float> qproj(lay.rd);
-    TurboQuantProject(_stats->FwhtSigns(), _rot_query.data(), qproj.data(),
-                      lay.rd);
-    const float inv_sqrt_rd = 1.f / std::sqrt(static_cast<float>(lay.rd));
+    _stats->Projection().Rotate(_rot_query.data(), lay.rd, qproj.data(), _mix);
     float l1 = 0.f;
     _qjl_sum = 0.f;
     for (uint32_t j = 0; j < lay.rd; ++j) {
-      qproj[j] *= inv_sqrt_rd;
       _qjl_sum += qproj[j];
       l1 += std::fabs(qproj[j]);
     }
@@ -983,6 +1051,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
   std::shared_ptr<const TurboQuantizerStats<M>> _stats;
   std::vector<float> _query;
   std::vector<float> _rot_query;
+  std::vector<float> _mix;
   std::vector<FastScanChunk> _chunks1;
   std::vector<FastScanChunk> _chunks2;
   FastScanLut _lut1;
@@ -1111,8 +1180,8 @@ class TurboQuantizerReader final : public QuantizerReader {
     for (uint32_t j = 0; j < _lay.rd; ++j) {
       _scale_scratch[j] = _scale_scratch[j] * scale + _cluster_rot[j];
     }
-    RotateBack(stats.Signs().data(), _scale_scratch.data(), out, _lay.d,
-               _lay.rd, _fwht_scratch);
+    stats.Rotation().RotateBack(_scale_scratch.data(), out, _lay.d,
+                                _fwht_scratch);
     return true;
   }
 
@@ -1307,8 +1376,8 @@ class TurboQuantizerReader final : public QuantizerReader {
       return;
     }
     _cluster_rot.resize(_lay.rd);
-    RotateInto(_cb->Stats().Signs().data(), _cluster, _cluster_rot.data(),
-               _lay.d, _lay.rd);
+    _cb->Stats().Rotation().Rotate(_cluster, _lay.d, _cluster_rot.data(),
+                                   _fwht_scratch);
   }
 
   void Accumulate(const byte_type* codes, const FastScanLut& lut,

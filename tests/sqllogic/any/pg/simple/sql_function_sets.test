@@ -88,13 +88,35 @@ n	s
 3	6
 
 
+statement ok
+CREATE FUNCTION fns.doubled(x integer) RETURNS SETOF integer RETURN x * 2;
+
+
+statement ok
+CREATE FUNCTION fns.five() RETURNS TABLE(a integer) RETURN 5;
+
+
+statement ok
+CREATE FUNCTION fns.pair_row(OUT a integer, OUT b text) RETURNS SETOF record RETURN (1, 'x'::text);
+
+
+query
+SELECT d, f.a, p.a AS pa, p.b AS pb, fns.doubled(4) AS e FROM fns.doubled(21) AS d, fns.five() AS f, fns.pair_row() AS p;
+----
+d	a	pa	pb	e
+42	5	1	x	8
+
+
 query
 SELECT proname, proretset, prorettype::regtype::text AS prorettype, pg_get_function_result(oid) FROM pg_proc WHERE pronamespace = 'fns'::regnamespace ORDER BY 1;
 ----
 proname	proretset	prorettype	pg_get_function_result
 col	t	integer	TABLE(c integer)
+doubled	t	integer	SETOF integer
+five	t	integer	TABLE(a integer)
 one	f	bigint	bigint
 pair	t	record	TABLE(a bigint, b text)
+pair_row	t	record	SETOF record
 three	t	integer	SETOF integer
 wide	t	bigint	SETOF bigint
 

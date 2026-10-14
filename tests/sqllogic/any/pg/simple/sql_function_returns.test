@@ -84,4 +84,29 @@ CREATE FUNCTION fnr.to_bool() RETURNS boolean LANGUAGE sql RETURN 1;
 
 
 statement ok
+CREATE FUNCTION fnr.wide_numeric() RETURNS numeric(4,2) LANGUAGE sql AS 'SELECT 12345';
+
+
+statement ok
+CREATE FUNCTION fnr.wide_rows() RETURNS SETOF numeric(3,1) LANGUAGE sql AS 'SELECT 12345';
+
+
+statement ok
+CREATE FUNCTION fnr.wide_list() RETURNS numeric(4,2)[] LANGUAGE sql AS 'SELECT ARRAY[123.456]';
+
+
+statement ok
+CREATE FUNCTION fnr.wide_out(OUT a numeric(4,2), OUT b integer) LANGUAGE sql AS 'SELECT 123.456, 1';
+
+
+query
+SELECT fnr.wide_numeric() = 12345 AS a, (SELECT w = 12345 FROM fnr.wide_rows() AS w) AS b,
+       array_to_string(fnr.wide_list(), ',') AS c, (fnr.wide_out()).a AS d,
+       pg_get_function_result('fnr.wide_numeric'::regproc) AS e;
+----
+a	b	c	d	e
+t	t	123.456	123.456	numeric
+
+
+statement ok
 DROP SCHEMA fnr CASCADE;

@@ -115,4 +115,59 @@ a	b
 
 
 statement ok
+CREATE FUNCTION fnp.narrow(smallint) RETURNS text LANGUAGE sql AS 'SELECT ''smallint''';
+
+
+statement ok
+CREATE FUNCTION fnp.narrow(numeric) RETURNS text LANGUAGE sql AS 'SELECT ''numeric''';
+
+
+statement ok
+CREATE FUNCTION fnp.small_only(smallint) RETURNS text LANGUAGE sql AS 'SELECT ''smallint''';
+
+
+query
+SELECT fnp.narrow(5) AS a, fnp.narrow(5::smallint) AS b, fnp.small_only(5::smallint) AS c;
+----
+a	b	c
+numeric	smallint	smallint
+
+
+statement error (does not support the supplied arguments|function fnp\.small_only\(integer\) does not exist)
+SELECT fnp.small_only(5);
+
+
+statement ok
+DROP TYPE IF EXISTS fnp_feeling CASCADE;
+
+
+statement ok
+CREATE TYPE fnp_feeling AS ENUM ('sad', 'ok');
+
+
+statement ok
+CREATE FUNCTION fnp.feeling_text(fnp_feeling) RETURNS text LANGUAGE sql AS 'SELECT $1::text';
+
+
+statement ok
+CREATE FUNCTION fnp.numeric_text(numeric) RETURNS text LANGUAGE sql AS 'SELECT ($1 * 2)::integer::text';
+
+
+query
+SELECT fnp.feeling_text('ok') AS a, pg_get_function_arguments('fnp.feeling_text'::regproc) AS b,
+       fnp.numeric_text(1.5) AS c, pg_get_function_arguments('fnp.numeric_text'::regproc) AS d;
+----
+a	b	c	d
+ok	fnp_feeling	3	numeric
+
+
+statement error (?i)type (with name )?"?no_such_type"? does not exist
+CREATE FUNCTION fnp.missing(no_such_type) RETURNS text LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
 DROP SCHEMA fnp CASCADE;
+
+
+statement ok
+DROP TYPE fnp_feeling;

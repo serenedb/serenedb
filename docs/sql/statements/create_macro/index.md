@@ -86,7 +86,7 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 ### SQL Functions
 
-`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type:
+`CREATE FUNCTION` also takes PostgreSQL's form of an SQL function: typed parameters, a `RETURNS` clause, `LANGUAGE sql` and the body as a string. The function returns its `RETURNS` type, reached from the body's type the way PostgreSQL assigns a value to a column of that type. As in PostgreSQL, a type modifier of the result, such as the precision and scale of `numeric(4,2)`, is not applied:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_036" />
 
@@ -98,7 +98,7 @@ To define macros on arbitrary tables, use the [`query_table` function](../../../
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_038" />
 
-An `OUT` parameter is a column of the result and an `INOUT` parameter is both an argument and a column. A function with one output returns that type, one with several returns a record of them, and `RETURNS SETOF` with outputs returns every row. Called in `FROM`, a record function returns its outputs as columns:
+An `OUT` parameter is a column of the result and an `INOUT` parameter is both an argument and a column. A function with one output returns that type, one with several returns a record of them, and `RETURNS SETOF` with outputs returns every row. A `RETURNS` clause next to outputs must name that type: the output's type for one output, `record` for several. Called in `FROM`, a record function returns its outputs as columns:
 
 <SqlLogicTest id="sql/statements/create_macro/index/example_039" />
 

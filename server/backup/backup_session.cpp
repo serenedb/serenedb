@@ -24,8 +24,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 
-#include <algorithm>
-#include <atomic>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/valid_checker.hpp>
@@ -44,6 +42,7 @@
 
 #include "backup/backup_label.h"
 #include "backup/commit_gate.h"
+#include "backup/pg_control.h"
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -93,18 +92,6 @@ void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
                index->Storage()->GetInvertedIndexSnapshot()->reader)});
         }
       });
-  }
-}
-
-uint64_t NextLsn() {
-  static std::atomic<uint64_t> gLast{0};
-  const auto now = static_cast<uint64_t>(absl::ToUnixMicros(absl::Now()));
-  auto last = gLast.load();
-  for (;;) {
-    const auto next = std::max(now, last + 1);
-    if (gLast.compare_exchange_weak(last, next)) {
-      return next;
-    }
   }
 }
 
@@ -258,9 +245,11 @@ uint64_t BackupSession::Begin(BackupOwner owner, std::string_view label,
     ThrowCancelled();
   }
   auto cut = RecordCut(backup_dir, pins, block_managers, cancelled);
-  const auto start_lsn = NextLsn();
+  auto& positions = PositionSource::Instance();
+  const auto start_lsn = positions.Issue();
   cut.catalog_link = cut.catalog_link.lexically_relative(layout.directory);
-  auto label_file = BuildBackupLabel(label, start_lsn, absl::Now(), cut);
+  auto label_file = BuildBackupLabel(
+    label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
   std::move(undo).Cancel();
 
   // Noexcept committing of backup start
@@ -281,7 +270,8 @@ FinishedBackup BackupSession::Finish(const void* session) {
                     ERR_MSG("backup is not in progress"),
                     ERR_HINT("Did you call pg_backup_start()?"));
   }
-  FinishedBackup finished{NextLsn(), std::move(_label_file)};
+  FinishedBackup finished{PositionSource::Instance().Issue(),
+                          std::move(_label_file)};
   Stop();
   return finished;
 }

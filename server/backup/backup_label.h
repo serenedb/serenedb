@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <absl/status/statusor.h>
 #include <absl/time/time.h>
 
 #include <cstdint>
@@ -31,10 +32,20 @@
 namespace sdb::backup {
 
 inline constexpr uint32_t kBackupLabelFormat = 1;
+inline constexpr std::string_view kBackupLabelFile = "backup_label";
+
+struct BackupLabel {
+  uint64_t system_identifier = 0;
+  uint64_t start_lsn = 0;
+  Cut cut;
+};
 
 std::string WalFileName(uint64_t lsn);
 
 std::string BuildBackupLabel(std::string_view label, uint64_t start_lsn,
-                             absl::Time start_time, const Cut& cut);
+                             uint64_t system_identifier, absl::Time start_time,
+                             const Cut& cut);
+
+absl::StatusOr<BackupLabel> ParseBackupLabel(std::string_view text);
 
 }  // namespace sdb::backup

@@ -52,6 +52,7 @@
 #include <utility>
 #include <vector>
 
+#include "backup/restore.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
@@ -318,6 +319,7 @@ void InitCatalog(std::string_view directory) {
   if (std::filesystem::create_directories(layout.EngineDir())) {
     SyncDirectory(layout.EngineDir().parent_path());
   }
+  backup::PrepareDataDirectory(layout);
   auto conn = irs::DuckDBEngine::Instance().CreateConnection();
   auto& context = *conn->context;
   const auto log_path = layout.CatalogLogFile();

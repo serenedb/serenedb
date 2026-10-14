@@ -257,6 +257,10 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   connector::RegisterSereneDBStorage(config, layout);
   catalog::RegisterClusterStorage(config, std::move(layout));
   connector::RegisterConfigVariables(config);
+  config.AddExtensionOption(
+    duckdb::Identifier{"data_directory"}, "Shows the data directory.",
+    duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
+    duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
   config.SetOptionByName(
     "temp_directory",

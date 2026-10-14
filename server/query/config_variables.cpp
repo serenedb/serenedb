@@ -1151,6 +1151,41 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      "archive_mode",
+      {
+        LogicalTypeId::VARCHAR,
+        "Shows whether WAL archiving is enabled; SereneDB has no WAL archive.",
+        [] { return duckdb::Value{"off"}; },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "archive_command",
+      {
+        LogicalTypeId::VARCHAR,
+        "Shows the WAL archive command; SereneDB has no WAL archive.",
+        [] { return duckdb::Value{""}; },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "checkpoint_timeout",
+      {
+        LogicalTypeId::INTEGER,
+        "Shows the maximum time between automatic WAL checkpoints, in seconds.",
+        [] { return duckdb::Value::INTEGER(300); },
+        nullptr,  // refused via kUnchangeableSettings
+      },
+    },
+    {
+      "max_parallel_workers_per_gather",
+      {
+        LogicalTypeId::INTEGER,
+        "Accepted for PostgreSQL compatibility; has no effect.",
+        [] { return duckdb::Value::INTEGER(2); },
+      },
+    },
+    {
       "standard_conforming_strings",
       {
         LogicalTypeId::BOOLEAN,
@@ -1264,6 +1299,10 @@ const duckdb::case_insensitive_set_view_t kUnchangeableSettings = {
   "external_threads",
   // Read-only in PostgreSQL, where reporting the value is the whole point of
   // the GUC.
+  "archive_command",
+  "archive_mode",
+  "checkpoint_timeout",
+  "data_directory",
   "in_hot_standby",
   "is_superuser",
   "server_encoding",

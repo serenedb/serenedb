@@ -36,7 +36,8 @@ namespace {
 struct PhraseCheckData {
   PhraseCheckData(irs::Filter::ptr source, const irs::IndexReader& reader)
     : source{std::move(source)},
-      compiled{Options(), Options().word_separator(),
+      compiled{Options(),
+               {},
                irs::PhraseWordStats(Options(), reader, Phrase().field_id())} {}
 
   const irs::ByPhrase& Phrase() const noexcept {

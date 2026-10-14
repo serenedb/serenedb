@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/container/inlined_vector.h>
+
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
@@ -33,7 +35,6 @@
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer.hpp"
 #include "iresearch/search/detail/phrase_slop_matcher.hpp"
-#include "iresearch/search/detail/term_acceptor.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/filters/phrase_filter.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -70,14 +71,12 @@ struct CompiledPhrase {
     PosAttr::value_t offs_min = 0;
     PosAttr::value_t offs_max = 0;
     std::optional<duckdb::string_t> word;
-    TermAcceptorSource::ptr source;
     TermPredicate::ptr pattern;
     uint64_t bit = 0;
   };
 
   struct Accept {
-    uint32_t begin = 0;
-    uint32_t size = 0;
+    absl::InlinedVector<uint32_t, 4> slots;
     uint64_t mask = 0;
   };
 
@@ -108,9 +107,6 @@ struct CompiledPhrase {
                  std::span<const std::vector<bstring>> expanded,
                  std::span<const PhraseWordStat> words);
 
-  CompiledPhrase(const ByPhraseOptions& phrase, bytes_view word_separator,
-                 std::span<const PhraseWordStat> words);
-
   CompiledPhrase(CompiledPhrase&&) = delete;
   CompiledPhrase& operator=(CompiledPhrase&&) = delete;
 
@@ -121,24 +117,13 @@ struct CompiledPhrase {
   void ForEachSlot(const duckdb::string_t& term, Visitor&& visit) const {
     const auto view = AsBytesView(term);
     if (const auto* found = Find(view)) {
-      for (uint32_t i = 0; i != found->size; ++i) {
-        visit(slot_ids[found->begin + i]);
+      for (const auto slot : found->slots) {
+        visit(slot);
       }
     }
     ForEachPattern(view, visit);
   }
 
-  std::vector<Slot> slots;
-  std::vector<bstring> terms;
-  Slop slop;
-  bstring separator;
-  containers::FlatHashMap<bytes_view, Accept> accept;
-  std::vector<uint32_t> slot_ids;
-  std::vector<uint32_t> pattern_slots;
-  std::optional<Anchor> anchor;
-  std::optional<Automaton> automaton;
-
- private:
   const Accept* Find(bytes_view term) const noexcept {
     const auto it = accept.find(term);
     return it == accept.end() ? nullptr : &it->second;
@@ -160,14 +145,14 @@ struct CompiledPhrase {
     }
   }
 
-  void Init(const ByPhraseOptions& phrase,
-            std::span<const std::vector<bstring>> expanded, bool predicates,
-            std::span<const PhraseWordStat> words);
-  void AddPattern(uint32_t slot, const ByPhraseOptions::PhrasePart& part);
-  void Index(std::span<const uint32_t> term_slots);
-  void LayoutSlop();
-  void LayoutAutomaton();
-  void PickAnchor(std::span<const PhraseWordStat> words);
+  std::vector<Slot> slots;
+  std::vector<bstring> terms;
+  Slop slop;
+  bstring separator;
+  containers::FlatHashMap<bytes_view, Accept> accept;
+  std::vector<uint32_t> pattern_slots;
+  std::optional<Anchor> anchor;
+  std::optional<Automaton> automaton;
 };
 
 class JsonLeafReader;

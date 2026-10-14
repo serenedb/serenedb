@@ -68,6 +68,132 @@ void AddWordStats(const ByPhraseOptions& phrase, const TermReader& reader,
   }
 }
 
+TermPredicate::ptr PatternOf(const ByPhraseOptions::PhrasePart& part) {
+  return std::visit(
+    []<typename Part>(const Part& options) -> TermPredicate::ptr {
+      if constexpr (std::is_same_v<Part, ByPrefixOptions>) {
+        return MakeTermPredicate(
+          [prefix = bstring{options.term}](bytes_view term) {
+            return term.starts_with(prefix);
+          });
+      } else if constexpr (std::is_same_v<Part, ByRangeOptions>) {
+        return MakeTermPredicate([range = options.range](bytes_view term) {
+          return RangeAcceptor{{&range}, {&range}}(term);
+        });
+      } else if constexpr (std::is_same_v<Part, AutomatonOptions> ||
+                           std::is_same_v<Part, LevenshteinAutomatonOptions>) {
+        return options.source ? options.source->Predicate() : nullptr;
+      } else {
+        return nullptr;
+      }
+    },
+    part);
+}
+
+void LayoutSlop(CompiledPhrase& phrase) {
+  const auto& slots = phrase.slots;
+  auto& slop = phrase.slop;
+  const auto n = static_cast<uint32_t>(slots.size());
+  slop.offsets.assign(n, 0);
+  for (uint32_t i = 1; i != n; ++i) {
+    slop.offsets[i] = slop.offsets[i - 1] + slots[i].offs_max;
+  }
+
+  std::vector<uint32_t> groups(n);
+  std::iota(groups.begin(), groups.end(), 0);
+  const auto find = [&](uint32_t x) {
+    while (groups[x] != x) {
+      groups[x] = groups[groups[x]];
+      x = groups[x];
+    }
+    return x;
+  };
+  for (const auto& [term, entry] : phrase.accept) {
+    const auto root = find(entry.slots.front());
+    for (size_t i = 1; i < entry.slots.size(); ++i) {
+      groups[find(entry.slots[i])] = root;
+    }
+  }
+  for (const auto p : phrase.pattern_slots) {
+    groups[find(p)] = find(phrase.pattern_slots.front());
+    for (const auto& [term, entry] : phrase.accept) {
+      if (phrase.Plain(term) && slots[p].pattern->Accepts(term)) {
+        groups[find(entry.slots.front())] = find(p);
+      }
+    }
+  }
+  for (uint32_t i = 0; i != n; ++i) {
+    groups[i] = find(i);
+  }
+  detail::slop::BuildGroupPairs(groups, n, slop.pairs);
+}
+
+void LayoutAutomaton(CompiledPhrase& phrase) {
+  CompiledPhrase::Automaton layout;
+  uint64_t bit = 0;
+  for (size_t k = 0; k != phrase.slots.size(); ++k) {
+    auto& slot = phrase.slots[k];
+    if (k != 0) {
+      const auto prev = bit;
+      bit = prev + slot.offs_max;
+      if (bit >= CompiledPhrase::kMaxBits) {
+        return;
+      }
+      for (auto g = prev + 1; g < bit; ++g) {
+        layout.wild |= uint64_t{1} << g;
+      }
+      if (slot.offs_min < slot.offs_max) {
+        uint64_t range = 0;
+        for (auto j = prev + slot.offs_min - 1; j + 2 <= bit; ++j) {
+          range |= uint64_t{1} << j;
+        }
+        layout.extras.emplace_back(range, uint64_t{1} << bit);
+      }
+    }
+    slot.bit = uint64_t{1} << bit;
+  }
+  layout.last = uint64_t{1} << bit;
+  for (auto& [term, entry] : phrase.accept) {
+    for (const auto slot : entry.slots) {
+      entry.mask |= phrase.slots[slot].bit;
+    }
+  }
+  phrase.automaton = std::move(layout);
+}
+
+std::optional<CompiledPhrase::Anchor> AnchorOf(
+  std::span<const CompiledPhrase::Slot> slots,
+  std::span<const PhraseWordStat> words) {
+  constexpr auto kUnknown = std::numeric_limits<double>::max();
+  std::optional<CompiledPhrase::Anchor> anchor;
+  double best = kUnknown;
+  for (uint32_t k = 0; k != slots.size(); ++k) {
+    if (!slots[k].word) {
+      continue;
+    }
+    const auto& word = *slots[k].word;
+    const auto [docs, freq] = k < words.size() ? words[k] : PhraseWordStat{};
+    double cost = kUnknown;
+    if (docs != 0) {
+      cost = freq != 0 ? static_cast<double>(freq) / static_cast<double>(docs)
+                       : static_cast<double>(docs);
+    }
+    if (!anchor || cost < best ||
+        (cost == best &&
+         word.GetSize() > slots[anchor->slot].word->GetSize())) {
+      anchor = CompiledPhrase::Anchor{.slot = k};
+      best = cost;
+    }
+  }
+  if (!anchor) {
+    return anchor;
+  }
+  for (uint32_t k = 1; k != slots.size(); ++k) {
+    (k <= anchor->slot ? anchor->left : anchor->right) += slots[k].offs_max;
+  }
+  return anchor;
+}
+
 }  // namespace
 
 bool IsAnchored(const ByPhraseOptions& phrase) noexcept {
@@ -136,22 +262,8 @@ bool HasPatternParts(const ByPhraseOptions& phrase) noexcept {
 CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
                                std::span<const std::vector<bstring>> expanded,
                                std::span<const PhraseWordStat> words)
-  : slop{.max = phrase.slop()} {
-  Init(phrase, expanded, false, words);
-}
-
-CompiledPhrase::CompiledPhrase(const ByPhraseOptions& phrase,
-                               bytes_view word_separator,
-                               std::span<const PhraseWordStat> words)
-  : slop{.max = phrase.slop()}, separator{word_separator} {
-  SDB_ASSERT(IsStandalone(phrase));
-  Init(phrase, {}, true, words);
-}
-
-void CompiledPhrase::Init(const ByPhraseOptions& phrase,
-                          std::span<const std::vector<bstring>> expanded,
-                          bool predicates,
-                          std::span<const PhraseWordStat> words) {
+  : slop{.max = phrase.slop()}, separator{phrase.word_separator()} {
+  SDB_ASSERT(!expanded.empty() || IsStandalone(phrase));
   const auto n = static_cast<uint32_t>(WordCount(phrase));
   slots.resize(n);
   std::vector<uint32_t> term_slots;
@@ -189,17 +301,25 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
         }
         break;
       case SlotKind::Expansion:
-        if (predicates) {
-          AddPattern(slot, info.part);
-        } else if (part < expanded.size()) {
+        if (part < expanded.size()) {
           for (const auto& term : expanded[part]) {
             add(term);
           }
+        } else if (auto pattern = PatternOf(info.part)) {
+          slots[slot].pattern = std::move(pattern);
+          pattern_slots.emplace_back(slot);
         }
         break;
     }
     ++slot;
     ++part;
+  }
+  accept.reserve(terms.size());
+  for (size_t i = 0; i != terms.size(); ++i) {
+    auto& listed = accept[terms[i]].slots;
+    if (listed.empty() || listed.back() != term_slots[i]) {
+      listed.emplace_back(term_slots[i]);
+    }
   }
   for (uint32_t i = 0; i != n; ++i) {
     if (word_of[i]) {
@@ -207,45 +327,15 @@ void CompiledPhrase::Init(const ByPhraseOptions& phrase,
         MakeTermView(ViewCast<char>(bytes_view{terms[*word_of[i]]}));
     }
   }
-  Index(term_slots);
 
   if (!IsAnchored(phrase)) {
     if (slop.max != 0 && n > 1) {
-      LayoutSlop();
+      LayoutSlop(*this);
     }
     return;
   }
-  LayoutAutomaton();
-  PickAnchor(words);
-}
-
-void CompiledPhrase::AddPattern(uint32_t slot,
-                                const ByPhraseOptions::PhrasePart& part) {
-  auto& target = slots[slot];
-  std::visit(
-    [&]<typename Part>(const Part& options) {
-      if constexpr (std::is_same_v<Part, ByPrefixOptions>) {
-        target.pattern =
-          MakeTermPredicate([prefix = bstring{options.term}](bytes_view term) {
-            return term.starts_with(prefix);
-          });
-      } else if constexpr (std::is_same_v<Part, ByRangeOptions>) {
-        target.pattern =
-          MakeTermPredicate([range = options.range](bytes_view term) {
-            return RangeAcceptor{{&range}, {&range}}(term);
-          });
-      } else if constexpr (std::is_same_v<Part, AutomatonOptions> ||
-                           std::is_same_v<Part, LevenshteinAutomatonOptions>) {
-        if (options.source) {
-          target.source = options.source;
-          target.pattern = options.source->Predicate();
-        }
-      }
-    },
-    part);
-  if (target.pattern) {
-    pattern_slots.emplace_back(slot);
-  }
+  LayoutAutomaton(*this);
+  anchor = AnchorOf(slots, words);
 }
 
 bool CompiledPhrase::Accepts(uint32_t slot,
@@ -259,9 +349,7 @@ bool CompiledPhrase::Accepts(uint32_t slot,
     return Plain(view) && target.pattern->Accepts(view);
   }
   const auto* found = Find(view);
-  return found &&
-         absl::c_linear_search(
-           std::span{slot_ids}.subspan(found->begin, found->size), slot);
+  return found && absl::c_linear_search(found->slots, slot);
 }
 
 uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
@@ -272,127 +360,6 @@ uint64_t CompiledPhrase::MaskOf(const duckdb::string_t& term) const {
   }
   ForEachPattern(view, [&](uint32_t slot) { mask |= slots[slot].bit; });
   return mask;
-}
-
-void CompiledPhrase::Index(std::span<const uint32_t> term_slots) {
-  std::vector<std::pair<bytes_view, uint32_t>> pending;
-  pending.reserve(terms.size());
-  for (size_t i = 0; i != terms.size(); ++i) {
-    pending.emplace_back(terms[i], term_slots[i]);
-  }
-  absl::c_sort(pending);
-
-  accept.reserve(pending.size());
-  for (size_t i = 0; i != pending.size();) {
-    const auto term = pending[i].first;
-    Accept entry{.begin = static_cast<uint32_t>(slot_ids.size())};
-    for (; i != pending.size() && pending[i].first == term; ++i) {
-      const auto slot = pending[i].second;
-      if (entry.size == 0 || slot_ids.back() != slot) {
-        slot_ids.emplace_back(slot);
-        ++entry.size;
-      }
-    }
-    accept.emplace(term, entry);
-  }
-}
-
-void CompiledPhrase::LayoutSlop() {
-  const auto n = static_cast<uint32_t>(slots.size());
-  slop.offsets.assign(n, 0);
-  for (uint32_t i = 1; i != n; ++i) {
-    slop.offsets[i] = slop.offsets[i - 1] + slots[i].offs_max;
-  }
-
-  std::vector<uint32_t> groups(n);
-  std::iota(groups.begin(), groups.end(), 0);
-  const auto find = [&](uint32_t x) {
-    while (groups[x] != x) {
-      groups[x] = groups[groups[x]];
-      x = groups[x];
-    }
-    return x;
-  };
-  for (const auto& [term, entry] : accept) {
-    const auto root = find(slot_ids[entry.begin]);
-    for (uint32_t i = 1; i < entry.size; ++i) {
-      groups[find(slot_ids[entry.begin + i])] = root;
-    }
-  }
-  for (const auto p : pattern_slots) {
-    groups[find(p)] = find(pattern_slots.front());
-    for (const auto& [term, entry] : accept) {
-      if (Plain(term) && slots[p].pattern->Accepts(term)) {
-        groups[find(slot_ids[entry.begin])] = find(p);
-      }
-    }
-  }
-  for (uint32_t i = 0; i != n; ++i) {
-    groups[i] = find(i);
-  }
-  detail::slop::BuildGroupPairs(groups, n, slop.pairs);
-}
-
-void CompiledPhrase::LayoutAutomaton() {
-  Automaton layout;
-  uint64_t bit = 0;
-  for (size_t k = 0; k != slots.size(); ++k) {
-    auto& slot = slots[k];
-    if (k != 0) {
-      const auto prev = bit;
-      bit = prev + slot.offs_max;
-      if (bit >= kMaxBits) {
-        return;
-      }
-      for (auto g = prev + 1; g < bit; ++g) {
-        layout.wild |= uint64_t{1} << g;
-      }
-      if (slot.offs_min < slot.offs_max) {
-        uint64_t range = 0;
-        for (auto j = prev + slot.offs_min - 1; j + 2 <= bit; ++j) {
-          range |= uint64_t{1} << j;
-        }
-        layout.extras.emplace_back(range, uint64_t{1} << bit);
-      }
-    }
-    slot.bit = uint64_t{1} << bit;
-  }
-  layout.last = uint64_t{1} << bit;
-  for (auto& [term, entry] : accept) {
-    for (uint32_t i = 0; i != entry.size; ++i) {
-      entry.mask |= slots[slot_ids[entry.begin + i]].bit;
-    }
-  }
-  automaton = std::move(layout);
-}
-
-void CompiledPhrase::PickAnchor(std::span<const PhraseWordStat> words) {
-  constexpr auto kUnknown = std::numeric_limits<double>::max();
-  double best = kUnknown;
-  for (uint32_t k = 0; k != slots.size(); ++k) {
-    if (!slots[k].word) {
-      continue;
-    }
-    const auto& word = *slots[k].word;
-    const auto [docs, freq] = k < words.size() ? words[k] : PhraseWordStat{};
-    double cost = kUnknown;
-    if (docs != 0) {
-      cost = freq != 0 ? static_cast<double>(freq) / static_cast<double>(docs)
-                       : static_cast<double>(docs);
-    }
-    if (!anchor || cost < best ||
-        (cost == best &&
-         word.GetSize() > slots[anchor->slot].word->GetSize())) {
-      anchor = Anchor{.slot = k};
-      best = cost;
-    }
-  }
-  if (!anchor) {
-    return;
-  }
-  for (uint32_t k = 1; k != slots.size(); ++k) {
-    (k <= anchor->slot ? anchor->left : anchor->right) += slots[k].offs_max;
-  }
 }
 
 void PhraseCheck::AnchorMatch::Reset(uint32_t anchors) {

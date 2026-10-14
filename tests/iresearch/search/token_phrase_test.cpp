@@ -685,7 +685,15 @@ TEST(PhraseCheckTest, standalone_fuzzy_part_needs_a_source) {
 TEST(PhraseCheckTest, expansion_slot_without_expanded_terms_matches_nothing) {
   auto phrase = Phrase("quick");
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
-  EXPECT_FALSE(Verify(phrase, "the quick brown fox").matched);
+  const std::vector<std::vector<irs::bstring>> expanded{{}, {}};
+  EXPECT_FALSE(Verify(phrase, "the quick brown fox", expanded).matched);
+}
+
+TEST(PhraseCheckTest, pattern_without_expansion_checks_its_predicate) {
+  auto phrase = Phrase("quick");
+  phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
+  EXPECT_TRUE(Verify(phrase, "the quick brown fox").matched);
+  EXPECT_FALSE(Verify(phrase, "the quick dread").matched);
 }
 
 TEST(PhraseCheckTest, duplicate_expanded_terms_list_their_slot_once) {
@@ -694,7 +702,10 @@ TEST(PhraseCheckTest, duplicate_expanded_terms_list_their_slot_once) {
   const std::vector<std::vector<irs::bstring>> expanded{
     {}, {irs::bstring{Bytes("brown")}, irs::bstring{Bytes("brown")}}};
   const irs::CompiledPhrase compiled{phrase, expanded, {}};
-  EXPECT_EQ(2U, compiled.slot_ids.size());
+  ASSERT_EQ(2U, compiled.accept.size());
+  for (const auto& [term, entry] : compiled.accept) {
+    EXPECT_EQ(1U, entry.slots.size());
+  }
   EXPECT_EQ(2U, Verify(phrase, "quick brown x quick brown", expanded).freq);
 }
 
@@ -702,7 +713,8 @@ TEST(PhraseCheckTest, sloppy_patterns_skip_separated_words) {
   auto phrase = Phrase("quick brown_fox");
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
   phrase.set_slop(1);
-  const irs::CompiledPhrase compiled{phrase, Bytes("_"), {}};
+  phrase.set_word_separator(Bytes("_"));
+  const irs::CompiledPhrase compiled{phrase, {}, {}};
   EXPECT_EQ(PhraseMatch::Positions, RouteOf(compiled));
   irs::PhraseCheck phrase_check{compiled, TextOf<DenseWords>(), true};
   const auto check = [&](std::string_view text) {
@@ -1207,7 +1219,7 @@ void ExpectDeferredLikeInline(const Index& index,
   const auto stats = irs::PhraseWordStats(options, index.Reader(), kPlainId);
   for (const auto match : kMatches) {
     SCOPED_TRACE(MatchName(match));
-    irs::CompiledPhrase compiled{options, options.word_separator(), stats};
+    irs::CompiledPhrase compiled{options, {}, stats};
     Force(compiled, match);
     irs::PhraseCheck check{compiled, options.tokenizer(), false};
     duckdb::DataChunk chunk;
@@ -1649,8 +1661,9 @@ TEST(TokenPhraseIndexTest, standalone_patterns_skip_shingles) {
   const Index index{docs, std::type_identity<DenseWords>{}};
   auto phrase = Phrase("quick");
   phrase.push_back<irs::ByPrefixOptions>().term = Bytes("br");
+  phrase.set_word_separator(Bytes("_"));
   const irs::CompiledPhrase compiled{
-    phrase, Bytes("_"), irs::PhraseWordStats(phrase, index.Reader(), kPlainId)};
+    phrase, {}, irs::PhraseWordStats(phrase, index.Reader(), kPlainId)};
   irs::PhraseCheck phrase_check{compiled, TextOf<DenseWords>(), true};
   const auto check = [&](std::string_view text) {
     irs::PhraseVerdict verdict;

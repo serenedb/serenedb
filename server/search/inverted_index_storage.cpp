@@ -82,17 +82,15 @@ InvertedIndexStorage::InvertedIndexStorage(
   _dir = std::move(opened.directory);
   _absent = opened.absent;
 
+  irs::IndexReaderOptions reader_options;
+  reader_options.db = &irs::DuckDBEngine::Instance().instance();
+  if (const auto& scorer_options = top_k_scorer) {
+    _topk_scorer = MakeScorer(*scorer_options);
+    reader_options.scorer = _topk_scorer.get();
+  }
+
   if (read_only) {
-    irs::IndexReaderOptions reader_options;
-    reader_options.db = &irs::DuckDBEngine::Instance().instance();
-    if (const auto& scorer_options = top_k_scorer) {
-      _topk_scorer = MakeScorer(*scorer_options);
-      reader_options.scorer = _topk_scorer.get();
-    }
-    IndexStamp stamp;
-    irs::DirectoryReader reader{
-      *_dir, reader_options,
-      [&](duckdb::BinaryDeserializer& in) { stamp = IndexStamp::Read(in); }};
+    auto [reader, stamp] = IndexDurability::OpenReader(*_dir, reader_options);
     SetFileManifest(stamp.manifest);
     StoreInvertedIndexSnapshot(std::make_shared<InvertedIndexSnapshot>(
       std::move(reader), std::move(stamp.manifest)));
@@ -111,19 +109,14 @@ InvertedIndexStorage::InvertedIndexStorage(
 #else
   writer_options.lock_repository = false;  // single-process server owns the dir
 #endif
-  writer_options.db = &irs::DuckDBEngine::Instance().instance();
-  writer_options.reader_options.db = writer_options.db;
+  writer_options.db = reader_options.db;
+  writer_options.reader_options = reader_options;
   // No column/norm options are configured on the writer: the per-column
   // encoding config travels with each operation instead. A write hands its own
   // DDL snapshot's InvertedIndex (SegmentWriter::SetFieldOptions, via the
   // serenedb transaction) and a merge hands the compaction task's snapshot
   // index (CompactUnsafe). The long-lived writer therefore never reaches into
   // the live catalog, so a concurrent DROP can no longer dangle it.
-
-  if (const auto& options = top_k_scorer) {
-    _topk_scorer = MakeScorer(*options);
-    writer_options.reader_options.scorer = _topk_scorer.get();
-  }
 
   SDB_IF_FAILURE("segment_1000_docs_max") {
     writer_options.segment_docs_max = 1000;

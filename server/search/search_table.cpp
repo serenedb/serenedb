@@ -130,11 +130,8 @@ void SearchTable::OpenWriter(bool in_memory) {
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.cleanup_on_open = _is_new;
   writer_options.lock_repository = false;
-  writer_options.db = &irs::DuckDBEngine::Instance().instance();
-  writer_options.reader_options.db = writer_options.db;
-  if (_topk_scorer) {
-    writer_options.reader_options.scorer = _topk_scorer.get();
-  }
+  writer_options.reader_options = ReaderOptions();
+  writer_options.db = writer_options.reader_options.db;
 
   _writer = _durability
               .OpenWriter(*_dir, Path(), opened.on_disk, _is_new,
@@ -166,12 +163,14 @@ void SearchTable::OpenReader() {
                                      resource_manager);
   _dir = std::move(opened.directory);
   _absent = opened.absent;
-  irs::IndexReaderOptions reader_options;
-  reader_options.db = &irs::DuckDBEngine::Instance().instance();
-  reader_options.scorer = _topk_scorer.get();
-  _reader = irs::DirectoryReader{
-    *_dir, reader_options,
-    [](duckdb::BinaryDeserializer& in) { IndexStamp::Read(in); }};
+  _reader = IndexDurability::OpenReader(*_dir, ReaderOptions()).first;
+}
+
+irs::IndexReaderOptions SearchTable::ReaderOptions() const {
+  irs::IndexReaderOptions options;
+  options.db = &irs::DuckDBEngine::Instance().instance();
+  options.scorer = _topk_scorer.get();
+  return options;
 }
 
 void SearchTable::StartTasks() {

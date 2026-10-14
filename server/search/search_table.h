@@ -279,6 +279,7 @@ class SearchTable final : public std::enable_shared_from_this<SearchTable>,
 
   void OpenWriter(bool in_memory);
   void OpenReader();
+  irs::IndexReaderOptions ReaderOptions() const;
   std::shared_ptr<const catalog::InvertedIndexConfig> MergeConfigs(
     std::span<const IndexConfig> configs,
     std::optional<duckdb::idx_t> skip) const;

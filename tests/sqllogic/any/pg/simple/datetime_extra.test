@@ -235,3 +235,15 @@ SELECT age('2020-01-01'::timestamp, '2020-01-01'::timestamp);
 ----
 age
 00:00:00
+
+query
+SELECT make_interval(secs => 0.5e-6) AS half, make_interval(secs => 1.5e-6) AS one_half, make_interval(secs => 2.5e-6) AS two_half;
+----
+half	one_half	two_half
+00:00:00	00:00:00.000002	00:00:00.000002
+
+query
+SELECT count(DISTINCT clock_timestamp()) > 1 AS per_row FROM generate_series(1, 1000);
+----
+per_row
+t

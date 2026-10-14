@@ -234,3 +234,7 @@ DROP SEQUENCE size_test_seq
 
 statement ok
 DROP TABLE size_test
+
+
+statement error database "memory" does not exist
+SELECT pg_database_size('memory')

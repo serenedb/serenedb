@@ -160,8 +160,12 @@ void ColDescriptionFunction(duckdb::DataChunk& args,
     args, result,
     [&](int64_t oid, int32_t column) -> duckdb::optional<duckdb::string_t> {
       auto entry = EntryByOid(session, oid);
-      if (!entry || column <= 0) {
+      if (!entry || column < 0 ||
+          (column == 0 && CatalogClassOid(entry->type) != kPgClassTable)) {
         return duckdb::nullopt;
+      }
+      if (column == 0) {
+        return Comment(result, entry->comment);
       }
       const auto index = static_cast<duckdb::idx_t>(column - 1);
       if (entry->type == CatalogType::TABLE_ENTRY) {
@@ -189,25 +193,16 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
                                  duckdb::ExpressionState& state,
                                  duckdb::Vector& result) {
   auto& context = state.GetContext();
-  duckdb::CatalogEntryRetriever retriever{context};
-  auto database = SessionCatalog(context);
-  std::optional<duckdb::CatalogTransaction> transaction;
-  if (database) {
-    transaction.emplace(database->GetCatalogTransaction(context));
-  }
+  const auto& session = SessionOf(state);
   duckdb::VariadicExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                     duckdb::string_t>(
     args, result,
     [&](duckdb::string_t table_name,
         duckdb::string_t column_name) -> duckdb::optional<duckdb::string_t> {
-      const auto name = duckdb::QualifiedName::Parse(AsView(table_name));
-      auto relation = retriever.GetEntry(
-        duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, name},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+      auto relation = EntryByOid(
+        session, *RegIn<RegKind::Class>(session, AsView(table_name), false));
       if (!relation) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_UNDEFINED_TABLE),
-          ERR_MSG("relation \"", AsView(table_name), "\" does not exist"));
+        return duckdb::nullopt;
       }
       const Identifier column_key{AsView(column_name)};
       if (relation->type == duckdb::CatalogType::VIEW_ENTRY) {
@@ -236,21 +231,23 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
         return duckdb::nullopt;
       }
       const auto argument = NextvalArgument(column.DefaultValue());
-      if (!argument || !database) {
+      if (!argument) {
         return duckdb::nullopt;
       }
       const auto sequence_name = duckdb::QualifiedName::Parse(*argument);
       const auto& schema_name = sequence_name.Schema().empty()
                                   ? table.ParentSchema(context).name
                                   : sequence_name.Schema();
-      auto schema = database->GetSchema(*transaction, schema_name,
-                                        duckdb::OnEntryNotFound::RETURN_NULL);
+      auto schema =
+        session.database->GetSchema(*session.transaction, schema_name,
+                                    duckdb::OnEntryNotFound::RETURN_NULL);
       if (!schema) {
         return duckdb::nullopt;
       }
-      auto sequence = schema->LookupEntry(
-        *transaction, duckdb::EntryLookupInfo{CatalogType::SEQUENCE_ENTRY,
-                                              sequence_name.Name()});
+      auto sequence =
+        schema->LookupEntry(*session.transaction,
+                            duckdb::EntryLookupInfo{CatalogType::SEQUENCE_ENTRY,
+                                                    sequence_name.Name()});
       if (!sequence) {
         return duckdb::nullopt;
       }
@@ -348,9 +345,12 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 
 void ClockTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
-  const duckdb::timestamp_tz_t now{duckdb::Timestamp::GetCurrentTimestamp()};
-  result.Reference(duckdb::Value::TIMESTAMPTZ(now),
-                   duckdb::count_t(args.size()));
+  auto writer =
+    duckdb::FlatVector::Writer<duckdb::timestamp_tz_t>(result, args.size());
+  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    writer.WriteValue(
+      duckdb::timestamp_tz_t{duckdb::Timestamp::GetCurrentTimestamp()});
+  }
 }
 
 constexpr std::string_view kEncodings[] = {
@@ -747,6 +747,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     {duckdb::ScalarFunction{{oid, int4}, text, ColDescriptionFunction}});
   RegisterScalar(
     loader, pg_catalog, "pg_get_serial_sequence", CONSISTENT_WITHIN_QUERY,
+    InitSession,
     {duckdb::ScalarFunction{{text, text}, text, PgGetSerialSequenceFunction}});
   RegisterScalar(loader, pg_catalog, "pg_relation_is_updatable",
                  CONSISTENT_WITHIN_QUERY, InitSession,

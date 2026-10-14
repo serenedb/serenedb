@@ -738,7 +738,10 @@ size_t Utf8NextCharPos(const char* begin, size_t byte_len, size_t pos) {
 size_t Utf8Advance(const char* begin, size_t byte_len, size_t n) {
   auto* it = reinterpret_cast<const irs::byte_type*>(begin);
   auto* end = it + byte_len;
-  for (size_t i = 0; i < n && it < end; ++i) {
+  for (size_t i = 0; i < n; ++i) {
+    if (it == end) {
+      return byte_len + 1;
+    }
     it = irs::utf8_utils::Next(it, end);
   }
   return static_cast<size_t>(it -

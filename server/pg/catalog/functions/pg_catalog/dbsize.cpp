@@ -325,8 +325,10 @@ void PgDatabaseSizeNameFunction(duckdb::DataChunk& args,
   duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
     args.data[0], result, args.size(), [&](duckdb::string_t input) -> int64_t {
       const auto db_name = connector::AsView(input);
-      auto database =
-        duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{db_name});
+      const auto entry = FindDatabase(context, db_name);
+      duckdb::optional_ptr<duckdb::Catalog> database =
+        entry ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
+              : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database \"", db_name, "\" does not exist"));

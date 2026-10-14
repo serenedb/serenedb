@@ -1309,3 +1309,23 @@ SELECT format_type('varchar'::regtype, 4) AS varchar4, format_type('varchar'::re
 varchar4	varchar3	varchar0	numeric3	bpchar5	numeric4
 character varying	character varying	character varying	numeric	character(1)	numeric(0,0)
 
+
+statement ok
+CREATE TABLE fi_serial_owner (id serial, v text);
+
+
+statement ok
+COMMENT ON TABLE fi_serial_owner IS 'owner comment';
+
+
+query
+SELECT pg_get_serial_sequence('FI_SERIAL_OWNER', 'id') AS folded,
+       pg_get_serial_sequence('public.Fi_Serial_Owner', 'id') AS qualified,
+       col_description('fi_serial_owner'::regclass, 0) AS table_comment;
+----
+folded	qualified	table_comment
+public.fi_serial_owner_id_seq	public.fi_serial_owner_id_seq	owner comment
+
+
+statement ok
+DROP TABLE fi_serial_owner;

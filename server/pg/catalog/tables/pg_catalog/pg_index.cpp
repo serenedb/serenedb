@@ -151,11 +151,10 @@ class PgIndex final : public SystemTableScan<kPgIndexSql> {
       }
       return texts;
     }),
-    Col<"indpred">([](const auto& row) -> std::optional<std::string> {
-      if (!row.index.where_clause) {
-        return std::nullopt;
-      }
-      return ExpressionText(*row.index.where_clause);
+    Col<"indpred">([](const auto& row) {
+      return row.index.where_clause
+               ? std::optional{ExpressionText(*row.index.where_clause)}
+               : std::nullopt;
     }));
 
   void Row(const duckdb::TableCatalogEntry& table) {

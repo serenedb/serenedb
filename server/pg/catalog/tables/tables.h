@@ -36,16 +36,30 @@ namespace sdb::pg {
 
 template<typename T>
 std::optional<T> NonEmpty(T value) {
-  if (std::ranges::empty(value)) {
-    return std::nullopt;
-  }
-  return value;
+  return std::ranges::empty(value) ? std::nullopt
+                                   : std::optional<T>{std::move(value)};
 }
 
 template<const auto& Rows>
 SystemRows<std::ranges::range_value_t<decltype(Rows)>> LoadStatic(SystemScan&) {
   return {Rows};
 }
+
+template<const auto& RowShape, const auto& Rows>
+class StaticTable final
+  : public SystemTableScan<SystemShapeOf<RowShape>::kSql> {
+  using Item = std::ranges::range_value_t<decltype(Rows)>;
+
+ public:
+  using SystemTableScan<SystemShapeOf<RowShape>::kSql>::SystemTableScan;
+
+  static constexpr duckdb::idx_t kRows = std::size(Rows);
+
+  static constexpr std::tuple kSources{
+    ArraySource<Item>{&LoadStatic<Rows>, {}, {}}};
+
+  void Row(const Item& row) { this->template Emit<RowShape>(row); }
+};
 
 inline std::span<const SystemSqlColumn> SystemColumns(
   const duckdb::TableCatalogEntry& table) {

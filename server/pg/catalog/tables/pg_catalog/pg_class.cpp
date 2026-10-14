@@ -124,12 +124,7 @@ struct Index {
 
 class PgClass final : public SystemTableScan<kPgClassSql> {
  public:
-  PgClass(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
-    : SystemTableScan{context, input} {
-    if (VisibleOnly()) {
-      _session.emplace(MakeSession(&context));
-    }
-  }
+  using SystemTableScan::SystemTableScan;
 
   static constexpr duckdb::idx_t kRows = 10000;
 
@@ -169,9 +164,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       [](const auto& row) { return row.table.ParentSchemaOid(); }),
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
-    Col<"relkind">([](const auto&) { return 'r'; }),
-    Col<"relpersistence">([](const auto&) { return 'p'; }),
-    Col<"relispopulated">([](const auto&) { return true; }),
+    Col<"relkind">([](const auto&) { return 'r'; }), kRelationState,
     Col<"relam">(
       [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
     Col<"relnatts">([](const auto& row) {
@@ -179,13 +172,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     }),
     Col<"relreplident">([](const auto&) { return 'd'; }),
     Col<"reltype">([](const auto& row) { return RelationRowType(row.table); }),
-    Col<"reloptions">(
-      [](const auto& row) -> std::optional<std::vector<std::string>> {
-        if (!row.search) {
-          return std::nullopt;
-        }
-        return Reloptions(*row.search);
-      }),
+    Col<"reloptions">([](const auto& row) {
+      return row.search ? Reloptions(*row.search) : std::nullopt;
+    }),
     Col<"relchecks">([](const auto& row) {
       return absl::c_count_if(
         row.table.GetConstraints(), [](const auto& constraint) {
@@ -243,13 +232,11 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"reltuples">([](const auto&) { return 0.0F; }),
     Col<"relnatts">(
       [](const auto& row) { return row.index.parsed_expressions.size(); }),
-    Col<"reloptions">(
-      [](const auto& row) -> std::optional<std::vector<std::string>> {
-        if (row.index.index_type != catalog::kInvertedIndexTypeName) {
-          return std::nullopt;
-        }
-        return Reloptions(row.index);
-      }),
+    Col<"reloptions">([](const auto& row) {
+      return row.index.index_type == catalog::kInvertedIndexTypeName
+               ? std::optional{Reloptions(row.index)}
+               : std::nullopt;
+    }),
     Col<"relowner">([](const auto& row, SystemScan& scan) {
       if (const auto it = row.owners.find(row.index.table_oid);
           it != row.owners.end()) {
@@ -272,7 +259,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return !view.internal && scan.Indexed(view);
     }),
     Col<"reloptions">(
-      [](const auto& view) -> std::optional<std::vector<std::string>> {
+      [](const auto& view) -> std::optional<std::vector<std::string_view>> {
         const auto* system = view.internal ? FindSystemView(view.oid) : nullptr;
         if (!system || system->options.empty()) {
           return std::nullopt;
@@ -371,7 +358,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   }
 
   irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners;
-  std::optional<Session> _session;
+  std::optional<Session> _session =
+    VisibleOnly() ? std::optional{MakeSession(&Context())} : std::nullopt;
 };
 
 }  // namespace

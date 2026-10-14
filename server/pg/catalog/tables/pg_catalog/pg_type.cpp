@@ -109,9 +109,10 @@ class UserType {
     return *_base;
   }
 
-  const BuiltinType* Builtin() const {
+  const BuiltinType& Builtin() const {
     if (!_builtin) {
-      _builtin = FindBuiltinType(Base().oid);
+      const auto* builtin = FindBuiltinType(Base().oid);
+      _builtin = builtin ? builtin : &kNoBuiltin;
     }
     return *_builtin;
   }
@@ -119,8 +120,10 @@ class UserType {
   const duckdb::TypeCatalogEntry& entry;
 
  private:
+  static constexpr BuiltinType kNoBuiltin{.category = 'U'};
+
   mutable std::optional<ColumnType> _base;
-  mutable std::optional<const BuiltinType*> _builtin;
+  mutable const BuiltinType* _builtin = nullptr;
 };
 
 struct ArrayType {
@@ -149,12 +152,7 @@ constexpr std::tuple kTypeTraits{
 
 class PgType final : public SystemTableScan<kPgTypeSql> {
  public:
-  PgType(duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input)
-    : SystemTableScan{context, input} {
-    if (VisibleOnly()) {
-      _session.emplace(MakeSession(&context));
-    }
-  }
+  using SystemTableScan::SystemTableScan;
 
   static constexpr duckdb::idx_t kRows = 10000;
 
@@ -209,24 +207,12 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typlen">([](const auto& row) { return row.Base().len; }),
     Col<"typbyval">([](const auto& row) { return row.Base().byval; }),
     Col<"typtype">([](const auto&) { return kDomain.type; }),
-    Col<"typcategory">([](const auto& row) {
-      const auto* builtin = row.Builtin();
-      return builtin ? builtin->category : 'U';
-    }),
+    Col<"typcategory">([](const auto& row) { return row.Builtin().category; }),
     Col<"typinput">([](const auto&) { return kDomain.input; }),
-    Col<"typoutput">([](const auto& row) {
-      const auto* builtin = row.Builtin();
-      return builtin ? builtin->output : 0;
-    }),
+    Col<"typoutput">([](const auto& row) { return row.Builtin().output; }),
     Col<"typreceive">([](const auto&) { return kDomain.receive; }),
-    Col<"typsend">([](const auto& row) {
-      const auto* builtin = row.Builtin();
-      return builtin ? builtin->send : 0;
-    }),
-    Col<"typanalyze">([](const auto& row) {
-      const auto* builtin = row.Builtin();
-      return builtin ? builtin->analyze : 0;
-    }),
+    Col<"typsend">([](const auto& row) { return row.Builtin().send; }),
+    Col<"typanalyze">([](const auto& row) { return row.Builtin().analyze; }),
     Col<"typalign">([](const auto& row) { return row.Base().align; }),
     Col<"typstorage">([](const auto& row) { return row.Base().storage; }),
     Col<"typbasetype">([](const auto& row) { return row.Base().oid; }),
@@ -309,7 +295,8 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
   }
 
   ArrayTypeNames _arrays{*this};
-  std::optional<Session> _session;
+  std::optional<Session> _session =
+    VisibleOnly() ? std::optional{MakeSession(&Context())} : std::nullopt;
 };
 
 }  // namespace

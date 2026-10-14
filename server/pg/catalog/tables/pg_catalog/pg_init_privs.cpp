@@ -37,15 +37,15 @@ SystemRows<InitPrivilege> LoadInitPrivileges(SystemScan&) {
     std::vector<InitPrivilege> privileges;
     VisitSystemTables(
       irs::StaticStrings::kPgCatalogSchema, [&](const SystemTable& table) {
-        privileges.push_back({table.Sql().oid, kPgClassTable,
-                              SystemPermissions(table.SuperuserOnly())});
+        privileges.emplace_back(table.Sql().oid, kPgClassTable,
+                                SystemPermissions(table.SuperuserOnly()));
       });
     VisitSystemViews(
       irs::StaticStrings::kPgCatalogSchema, [&](const StaticView& view) {
-        privileges.push_back({view.oid, kPgClassTable, view.permissions});
+        privileges.emplace_back(view.oid, kPgClassTable, view.permissions);
       });
     for (const auto oid : {kPgCatalogSchema, kPgPublicSchema}) {
-      privileges.push_back({oid, kPgNamespaceTable, SchemaPermissions()});
+      privileges.emplace_back(oid, kPgNamespaceTable, SchemaPermissions());
     }
     return privileges;
   }();

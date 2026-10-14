@@ -51,12 +51,8 @@ constexpr SystemSqlColumn kSdbSettingsColumns[] = {
 constexpr SystemSql kSdbSettingsSql{.oid = kSdbSettingsTable,
                                     .schema = "pg_catalog",
                                     .name = "sdb_settings",
-                                    .row_type = 0,
-                                    .row_array_type = 0,
                                     .relkind = 'r',
                                     .replident = 'n',
-                                    .superuser_only = false,
-                                    .shared = false,
                                     .columns = kSdbSettingsColumns};
 
 std::string_view VarType(const absl::CommandLineFlag& flag) {

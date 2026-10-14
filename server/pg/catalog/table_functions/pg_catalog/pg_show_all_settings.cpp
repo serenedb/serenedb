@@ -61,15 +61,16 @@ std::optional<std::string> Display(duckdb::ClientContext& context,
   return duckdb::Settings::FormatDisplayValue(context, value).ToString();
 }
 
-std::optional<std::string> InBaseUnit(std::optional<std::string> text,
-                                      std::string_view unit) {
-  if (!text || unit.empty()) {
-    return text;
+std::optional<SystemText> InBaseUnit(const std::optional<std::string>& text,
+                                     std::string_view unit) {
+  if (!text) {
+    return std::nullopt;
   }
-  if (const auto value = PgBaseValue(unit, *text)) {
-    return absl::StrCat(std::llround(*value));
+  if (const auto value =
+        unit.empty() ? std::nullopt : PgBaseValue(unit, *text)) {
+    return SystemText{absl::StrCat(std::llround(*value))};
   }
-  return text;
+  return SystemText{std::string_view{*text}};
 }
 
 struct SettingNames {
@@ -234,16 +235,13 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
       return;
     }
     const auto* variable = FindVariable(name.GetIdentifierName());
-    const Setting setting{
-      context,
-      name,
-      option,
-      extension,
-      variable && !variable->pg.vartype.empty() ? variable : nullptr,
-      {},
-      {},
-      {},
-      false};
+    const Setting setting{.context = context,
+                          .name = name,
+                          .option = option,
+                          .extension = extension,
+                          .variable = variable && !variable->pg.vartype.empty()
+                                        ? variable
+                                        : nullptr};
     if (setting.variable) {
       Emit<kPg>(setting);
     } else {

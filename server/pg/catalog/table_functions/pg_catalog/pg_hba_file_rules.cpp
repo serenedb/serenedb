@@ -46,11 +46,9 @@ class PgHbaFileRules final : public SystemTableScan<kPgHbaFileRulesSql> {
     Col<"file_name">([](const auto& rule) {
       return NonEmpty<std::string_view>(rule.file_name);
     }),
-    Col<"line_number">([](const auto& rule) -> std::optional<uint32_t> {
-      if (rule.line_number == 0) {
-        return std::nullopt;
-      }
-      return rule.line_number;
+    Col<"line_number">([](const auto& rule) {
+      return rule.line_number == 0 ? std::nullopt
+                                   : std::optional<uint32_t>{rule.line_number};
     }),
     Col<"type">(&HbaRule::type), Col<"database">(&HbaRule::databases),
     Col<"user_name">(&HbaRule::roles), Col<"address">([](const auto& rule) {

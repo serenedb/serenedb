@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
@@ -38,24 +37,12 @@ constexpr std::array kAms{
   Am{kPgAmSecondary, "secondary", 'i', kInvalidOid},
 };
 
-class PgAm final : public SystemTableScan<kPgAmSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr duckdb::idx_t kRows = 10;
-
-  static constexpr std::tuple kSources{
-    ArraySource<Am>{&LoadStatic<kAms>, {}, {}}};
-
-  static constexpr auto kAm = Shape<kSql, const Am>(
-    Col<"oid">(&Am::oid), Col<"amname">(&Am::name),
-    Col<"amhandler">(&Am::handler), Col<"amtype">(&Am::type));
-
-  void Row(const Am& am) { Emit<kAm>(am); }
-};
+constexpr auto kAm = Shape<kPgAmSql, const Am>(
+  Col<"oid">(&Am::oid), Col<"amname">(&Am::name),
+  Col<"amhandler">(&Am::handler), Col<"amtype">(&Am::type));
 
 }  // namespace
 
-SystemTable gPgAm = SystemTableOf<PgAm>();
+SystemTable gPgAm = SystemTableOf<StaticTable<kAm, kAms>>();
 
 }  // namespace sdb::pg

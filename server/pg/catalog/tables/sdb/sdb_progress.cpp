@@ -61,12 +61,8 @@ constexpr SystemSqlColumn kSdbProgressColumns[] = {
 constexpr SystemSql kSdbProgressSql{.oid = kSdbProgressTable,
                                     .schema = "pg_catalog",
                                     .name = "sdb_progress",
-                                    .row_type = 0,
-                                    .row_array_type = 0,
                                     .relkind = 'r',
                                     .replident = 'n',
-                                    .superuser_only = false,
-                                    .shared = false,
                                     .columns = kSdbProgressColumns};
 
 SystemRows<ProgressSnapshot> LoadSnapshots(SystemScan&) {
@@ -91,11 +87,8 @@ constexpr std::tuple kProgressActive{
   Col<"rows_total">(&ProgressSnapshot::rows_total),
   Col<"tuples_processed">(&ProgressSnapshot::tuples_processed),
   Col<"bytes_processed">(&ProgressSnapshot::bytes_processed),
-  Col<"percent">([](const auto& s) -> std::optional<double> {
-    if (s.percent < 0) {
-      return std::nullopt;
-    }
-    return s.percent;
+  Col<"percent">([](const auto& s) {
+    return s.percent < 0 ? std::nullopt : std::optional<double>{s.percent};
   })};
 
 constexpr std::tuple kProgressCommand{

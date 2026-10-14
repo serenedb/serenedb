@@ -58,13 +58,11 @@ class PgAuthid final : public SystemTableScan<kPgAuthidSql> {
     Col<"rolpassword">([](const auto& role) {
       return NonEmpty<std::string_view>(role.Password());
     }),
-    Col<"rolvaliduntil">(
-      [](const auto& role) -> std::optional<duckdb::timestamp_tz_t> {
-        if (!role.HasValidUntil()) {
-          return std::nullopt;
-        }
-        return duckdb::timestamp_tz_t{role.ValidUntil()};
-      }));
+    Col<"rolvaliduntil">([](const auto& role) {
+      return role.HasValidUntil()
+               ? std::optional{duckdb::timestamp_tz_t{role.ValidUntil()}}
+               : std::nullopt;
+    }));
 
   void Row(const catalog::RoleCatalogEntry& role) { Emit<kRole>(role); }
 };

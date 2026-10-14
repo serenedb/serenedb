@@ -18,7 +18,6 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
@@ -44,23 +43,13 @@ constexpr std::array kParts{
   SqlPart{"9", "Management of External Data (SQL/MED)"},
 };
 
-class InfoSqlParts final : public SystemTableScan<kInfoSqlPartsSql> {
- public:
-  using SystemTableScan::SystemTableScan;
-
-  static constexpr std::tuple kSources{
-    ArraySource<SqlPart>{&LoadStatic<kParts>, {}, {}}};
-
-  static constexpr auto kPart = Shape<kSql, const SqlPart>(
-    Col<"feature_id">(&SqlPart::id), Col<"feature_name">(&SqlPart::name),
-    Col<"is_supported">([](const auto&) { return std::string_view{"NO"}; }),
-    Col<"comments">([](const auto&) { return std::string_view{}; }));
-
-  void Row(const SqlPart& part) { Emit<kPart>(part); }
-};
+constexpr auto kPart = Shape<kInfoSqlPartsSql, const SqlPart>(
+  Col<"feature_id">(&SqlPart::id), Col<"feature_name">(&SqlPart::name),
+  Col<"is_supported">([](const auto&) { return std::string_view{"NO"}; }),
+  Col<"comments">([](const auto&) { return std::string_view{}; }));
 
 }  // namespace
 
-SystemTable gInfoSqlParts = SystemTableOf<InfoSqlParts>();
+SystemTable gInfoSqlParts = SystemTableOf<StaticTable<kPart, kParts>>();
 
 }  // namespace sdb::pg

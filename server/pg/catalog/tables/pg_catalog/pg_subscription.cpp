@@ -38,6 +38,14 @@ char Substream(std::string_view streaming) {
   return streaming == "on" ? 't' : 'f';
 }
 
+using Config = duckdb::CreateSubscriptionInfo;
+
+template<auto Field>
+constexpr auto kConfig =
+  [](const catalog::SubscriptionCatalogEntry& subscription) -> const auto& {
+  return subscription.Config().*Field;
+};
+
 class PgSubscription final : public SystemTableScan<kPgSubscriptionSql> {
  public:
   using SystemTableScan::SystemTableScan;
@@ -57,42 +65,23 @@ class PgSubscription final : public SystemTableScan<kPgSubscriptionSql> {
         return skip > subscription.RemoteLsn() ? skip : uint64_t{0};
       }),
       Col<"subname">(&duckdb::CatalogEntry::name), Col<"subowner">(kOwner),
-      Col<"subenabled">(
-        [](const auto& subscription) { return subscription.Config().enabled; }),
-      Col<"subbinary">(
-        [](const auto& subscription) { return subscription.Config().binary; }),
+      Col<"subenabled">(kConfig<&Config::enabled>),
+      Col<"subbinary">(kConfig<&Config::binary>),
       Col<"substream">([](const auto& subscription) {
         return Substream(subscription.Config().streaming);
       }),
       Col<"subtwophasestate">([](const auto&) { return 'd'; }),
-      Col<"subdisableonerr">([](const auto& subscription) {
-        return subscription.Config().disable_on_error;
+      Col<"subdisableonerr">(kConfig<&Config::disable_on_error>),
+      Col<"subpasswordrequired">(kConfig<&Config::password_required>),
+      Col<"subrunasowner">(kConfig<&Config::run_as_owner>),
+      Col<"subfailover">(kConfig<&Config::failover>),
+      Col<"subconninfo">(kConfig<&Config::conninfo>),
+      Col<"subslotname">([](const auto& subscription) {
+        return NonEmpty(std::string_view{subscription.Config().slot_name});
       }),
-      Col<"subpasswordrequired">([](const auto& subscription) {
-        return subscription.Config().password_required;
-      }),
-      Col<"subrunasowner">([](const auto& subscription) {
-        return subscription.Config().run_as_owner;
-      }),
-      Col<"subfailover">([](const auto& subscription) {
-        return subscription.Config().failover;
-      }),
-      Col<"subconninfo">([](const auto& subscription) -> std::string_view {
-        return subscription.Config().conninfo;
-      }),
-      Col<"subslotname">(
-        [](const auto& subscription) -> std::optional<std::string_view> {
-          return NonEmpty(std::string_view{subscription.Config().slot_name});
-        }),
-      Col<"subsynccommit">([](const auto& subscription) -> std::string_view {
-        return subscription.Config().synchronous_commit;
-      }),
-      Col<"subpublications">([](const auto& subscription) -> const auto& {
-        return subscription.Config().publications;
-      }),
-      Col<"suborigin">([](const auto& subscription) -> std::string_view {
-        return subscription.Config().origin;
-      }));
+      Col<"subsynccommit">(kConfig<&Config::synchronous_commit>),
+      Col<"subpublications">(kConfig<&Config::publications>),
+      Col<"suborigin">(kConfig<&Config::origin>));
 
   void Row(const catalog::SubscriptionCatalogEntry& subscription) {
     Emit<kSubscription>(subscription);

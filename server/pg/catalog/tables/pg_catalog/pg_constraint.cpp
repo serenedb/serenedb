@@ -136,11 +136,8 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
       return target ? target->oid : duckdb::idx_t{0};
     }),
     Col<"confkey">([](const ForeignKeyRow& row, SystemScan& scan) {
-      using Referenced = decltype(row.Referenced(scan));
-      if (!row.Target(scan)) {
-        return std::optional<Referenced>{};
-      }
-      return std::optional<Referenced>{row.Referenced(scan)};
+      return row.Target(scan) ? std::optional{row.Referenced(scan)}
+                              : std::nullopt;
     }),
     Col<"conindid">([](const ForeignKeyRow& row, SystemScan& scan) {
       const auto target = row.Target(scan);

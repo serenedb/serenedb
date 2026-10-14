@@ -49,9 +49,7 @@
 #include <duckdb/parser/parsed_expression_iterator.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/static_strings.hpp>
-#include <limits>
 #include <ranges>
-#include <span>
 #include <tuple>
 #include <vector>
 
@@ -288,8 +286,7 @@ SystemConcatText ConstraintName(const duckdb::TableCatalogEntry& table,
 }
 
 bool NumbersRows(const duckdb::CatalogEntry& sequence) {
-  static const std::string kTag{catalog::kGeneratedPkSequenceTag};
-  return sequence.tags.contains(kTag);
+  return sequence.tags.contains(catalog::kGeneratedPkSequenceTag);
 }
 
 namespace {

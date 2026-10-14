@@ -479,3 +479,91 @@ SELECT a FROM sloppy_idx WHERE b @@ ts_phrase('quick brown fox jumps', slop := 2
 ----
 a
 11
+
+statement ok
+CREATE TABLE sloppy_overlap (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO sloppy_overlap VALUES (1, 'quick quiet fox'), (2, 'box a fox brawn'), (3, 'brawn brown fox'), (4, 'quick fox');
+
+statement ok
+CREATE INDEX sloppy_overlap_idx ON sloppy_overlap USING inverted(a, b sloppy_english);
+
+statement ok
+VACUUM (REFRESH_TABLE) sloppy_overlap;
+
+query
+SELECT a FROM sloppy_overlap_idx WHERE b @@ to_tsquery('"qu* quick"~2') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM sloppy_overlap_idx WHERE b @@ to_tsquery('"?ox box"~3') ORDER BY a;
+----
+a
+2
+
+query
+SELECT a FROM sloppy_overlap_idx WHERE b @@ to_tsquery('"b*n brawn f?x"~3') ORDER BY a;
+----
+a
+3
+
+query
+SELECT a FROM sloppy_overlap_idx WHERE b @@ to_tsquery('"qu* quick"~1') ORDER BY a;
+----
+a
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sloppy_ranked AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, offset, norm);
+
+statement ok
+CREATE TABLE sloppy_ranked (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+INSERT INTO sloppy_ranked VALUES (1, 'quick quiet red fox'), (2, 'quiet big red quick'), (3, 'quick quack red fox'), (4, 'quack big red quick'), (5, 'quick big red quick');
+
+statement ok
+CREATE INDEX sloppy_ranked_idx ON sloppy_ranked USING inverted(a, b sloppy_ranked) WITH (compaction_interval = 0);
+
+statement ok
+VACUUM (REFRESH_TABLE) sloppy_ranked;
+
+query
+SELECT a, ts_highlight(b, ts_offsets(b)) FROM sloppy_ranked_idx WHERE b @@ to_tsquery('"qu* quick"~2') ORDER BY a;
+----
+a	ts_highlight
+1	<b>quick quiet</b> red fox
+2	<b>quiet big red quick</b>
+3	<b>quick quack</b> red fox
+4	<b>quack big red quick</b>
+5	<b>quick big red quick</b>
+
+query
+SELECT a, dense_rank() OVER (ORDER BY score DESC) FROM (SELECT a, round(BM25(sloppy_ranked_idx.tableoid)::DOUBLE, 6) AS score FROM sloppy_ranked_idx WHERE b @@ to_tsquery('"qu* quick"~2')) ORDER BY a;
+----
+a	dense_rank
+1	1
+2	1
+3	1
+4	1
+5	1
+
+query
+SELECT a, ts_highlight(b, ts_offsets(b)) FROM sloppy_ranked_idx WHERE b @@ to_tsquery('"quick~1 quick"~2') ORDER BY a;
+----
+a	ts_highlight
+3	<b>quick quack</b> red fox
+4	<b>quack big red quick</b>
+5	<b>quick big red quick</b>
+
+query
+SELECT a, dense_rank() OVER (ORDER BY score DESC) FROM (SELECT a, round(BM25(sloppy_ranked_idx.tableoid)::DOUBLE, 6) AS score FROM sloppy_ranked_idx WHERE b @@ to_tsquery('"quick~1 quick"~2')) ORDER BY a;
+----
+a	dense_rank
+3	2
+4	2
+5	1

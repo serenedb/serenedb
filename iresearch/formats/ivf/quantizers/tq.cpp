@@ -375,27 +375,22 @@ TurboQuantDot8Vnni(const uint8_t* code, const TurboQuantInt8Seg& seg,
   const __m512i zero = _mm512_setzero_si512();
   __m512i acc = zero;
   uint32_t p = 0;
-  for (; p + 64 <= bytes; p += 64) {
-    const __m512i v = _mm512_loadu_si512(code + p);
+  for (; p < bytes; p += 64) {
+    const __mmask64 live =
+      bytes - p >= 64 ? ~__mmask64{0} : (__mmask64{1} << (bytes - p)) - 1;
+    const __m512i v = _mm512_maskz_loadu_epi8(live, code + p);
     for (uint32_t t = 0; t < kPlanes; ++t) {
       const __m512i idx = _mm512_and_si512(
         _mm512_srli_epi16(v, static_cast<unsigned>(t * Bits)), mask);
       const __m512i a = _mm512_shuffle_epi8(ta, idx);
       const __m512i c = _mm512_shuffle_epi8(tc, idx);
-      const __m512i qv = _mm512_loadu_si512(q + size_t{t} * bytes + p);
+      const __m512i qv =
+        _mm512_maskz_loadu_epi8(live, q + size_t{t} * bytes + p);
       acc = _mm512_dpbusd_epi32(
         acc, a, _mm512_mask_sub_epi8(qv, _mm512_movepi8_mask(c), zero, qv));
     }
   }
-  int32_t sum = _mm512_reduce_add_epi32(acc);
-  for (; p < bytes; ++p) {
-    const uint8_t b = code[p];
-    for (uint32_t t = 0; t < kPlanes; ++t) {
-      sum += int32_t{q[size_t{t} * bytes + p]} *
-             int32_t{seg.c8[(b >> (t * Bits)) & kMask]};
-    }
-  }
-  return sum;
+  return _mm512_reduce_add_epi32(acc);
 }
 
 template<uint32_t Bits>
@@ -414,13 +409,16 @@ __attribute__((target("avx512f,avx512bw,avx512vnni"))) void TurboQuantDot8Vnni4(
   const __m512i zero = _mm512_setzero_si512();
   __m512i acc[kRows] = {zero, zero, zero, zero};
   uint32_t p = 0;
-  for (; p + 64 <= bytes; p += 64) {
+  for (; p < bytes; p += 64) {
+    const __mmask64 live =
+      bytes - p >= 64 ? ~__mmask64{0} : (__mmask64{1} << (bytes - p)) - 1;
     __m512i v[kRows];
     for (size_t k = 0; k < kRows; ++k) {
-      v[k] = _mm512_loadu_si512(codes[k] + p);
+      v[k] = _mm512_maskz_loadu_epi8(live, codes[k] + p);
     }
     for (uint32_t t = 0; t < kPlanes; ++t) {
-      const __m512i qv = _mm512_loadu_si512(q + size_t{t} * bytes + p);
+      const __m512i qv =
+        _mm512_maskz_loadu_epi8(live, q + size_t{t} * bytes + p);
       for (size_t k = 0; k < kRows; ++k) {
         const __m512i idx = _mm512_and_si512(
           _mm512_srli_epi16(v[k], static_cast<unsigned>(t * Bits)), mask);
@@ -433,15 +431,7 @@ __attribute__((target("avx512f,avx512bw,avx512vnni"))) void TurboQuantDot8Vnni4(
     }
   }
   for (size_t k = 0; k < kRows; ++k) {
-    int32_t sum = _mm512_reduce_add_epi32(acc[k]);
-    for (uint32_t i = p; i < bytes; ++i) {
-      const uint8_t b = codes[k][i];
-      for (uint32_t t = 0; t < kPlanes; ++t) {
-        sum += int32_t{q[size_t{t} * bytes + i]} *
-               int32_t{seg.c8[(b >> (t * Bits)) & kMask]};
-      }
-    }
-    out[k] = sum;
+    out[k] = _mm512_reduce_add_epi32(acc[k]);
   }
 }
 #endif

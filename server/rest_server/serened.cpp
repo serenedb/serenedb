@@ -43,6 +43,7 @@
 #include "duckdb_shell.hpp"
 #include "network/pg/hba.h"
 #include "network/server.h"
+#include "pg/catalog/engine/builtin_functions.h"
 #include "query/server_engine.h"
 #include "replication/subscription_engine.h"
 #include "rest_server/database_path_feature.h"
@@ -169,6 +170,9 @@ int RunServer(int argc, char** argv) {
     jobs.Start();
     if (const auto bootstrapped = docs::RunDocsBootstrap()) {
       return *bootstrapped;
+    }
+    if (const auto dumped = pg::RunBuiltinOidsDump()) {
+      return *dumped;
     }
     subscriptions.emplace(*network.IoPool());
     subscriptions->start();

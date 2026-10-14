@@ -28,6 +28,7 @@
 #include <duckdb/catalog/catalog_entry/collate_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <vector>
 
@@ -45,6 +46,18 @@ constexpr BuiltinProc kProcs[] = {
 constexpr BuiltinCollation kCollations[] = {
 #include "pg/catalog/generated/builtin_collations.gen.inc"
 };
+
+constexpr FrozenOid kFrozenCollations[] = {
+#include "pg/catalog/generated/builtin_collation_oids.gen.inc"
+};
+
+static_assert(absl::c_is_sorted(kFrozenCollations,
+                                [](const auto& lhs, const auto& rhs) {
+                                  return lhs.key < rhs.key;
+                                }));
+static_assert(absl::c_all_of(kFrozenCollations, [](const FrozenOid& row) {
+  return row.oid >= kFirstCollation && row.oid < kFirstUnfrozenCollation;
+}));
 
 constexpr auto kByOid = [](const auto& lhs, const auto& rhs) {
   return lhs.oid < rhs.oid;
@@ -153,18 +166,21 @@ const std::vector<BuiltinCollation>& Collations() {
     });
     std::vector<BuiltinCollation> collations{std::begin(kCollations),
                                              std::end(kCollations)};
+    auto unfrozen = static_cast<int32_t>(kFirstUnfrozenCollation);
     for (const auto* entry : entries) {
       const std::string_view name = entry->name.GetIdentifierName();
       const bool icu =
         absl::StartsWith(entry->function.name.GetIdentifierName(), "collate_");
-      collations.emplace_back(BuiltinCollation{
-        .oid = static_cast<int32_t>(kFirstCollation + collations.size() -
-                                    std::size(kCollations)),
-        .name = name,
-        .provider = icu ? 'i' : 'b',
-        .locale = icu ? name : std::string_view{},
-        .deterministic = entry->not_required_for_equality});
+      const auto frozen = FindFrozenOid(kFrozenCollations, name);
+      collations.emplace_back(
+        BuiltinCollation{.oid = frozen != kInvalidOid ? frozen : unfrozen++,
+                         .name = name,
+                         .provider = icu ? 'i' : 'b',
+                         .locale = icu ? name : std::string_view{},
+                         .deterministic = entry->not_required_for_equality});
     }
+    SDB_ASSERT(unfrozen <= kFirstBuiltinFunction);
+    absl::c_sort(collations, kByOid);
     return collations;
   }();
   return kAll;

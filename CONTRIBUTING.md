@@ -81,7 +81,17 @@ git submodule update --init third_party/postgres
 python3 scripts/generate_pg_catalog.py
 ```
 
-initdb numbers the objects it creates from those SQL files while it runs, so the source holds no OIDs for them. The generator numbers them itself, in initdb's order from `FirstUnpinnedObjectId` (`scripts/pg_catalog/initdb.py`): the system views, `information_schema` and its domains and tables have SereneDB's OIDs, and every other object has PostgreSQL's.
+A system object has one OID in every database and every release. Below 16384 the OIDs are PostgreSQL's; SereneDB's own system objects use 16384 to 49151 (`server/pg/catalog/utils/oids.h`), DuckDB's builtins in its system catalog 49152 to 65535, and the objects users create 65536 and up.
+
+initdb numbers the objects it creates from those SQL files while it runs, so the source holds no OIDs for them. `server/pg/catalog/system_oids.lock` keeps their OIDs, and the OIDs of SereneDB's builtin functions and collations. The system views, `information_schema` and its domains and tables have the OIDs PostgreSQL 18.6's initdb gave them. A builtin function whose kind, name and argument types are exactly a PostgreSQL function's has PostgreSQL's OID, and every other builtin function and collation has one from SereneDB's range. The generator keeps the file and nothing else edits it: a new object gets the next free OID, a removed one stays as a `retired` line, and no line is ever renumbered or reused.
+
+The builtin functions and collations come from the DuckDB catalog, which only a running server has, so after adding, removing or changing the signature of one, rerun the generator with a serened built from the change:
+
+```bash
+python3 scripts/generate_pg_catalog.py --serened build/bin/serened
+```
+
+Until then the new function or collation has an OID from the unfrozen range (`kFirstUnfrozenFunction`, `kFirstUnfrozenCollation`), and `tests/sqllogic/sdb/pg/system/system_oids.test` fails.
 
 What SereneDB decides on its own is kept apart from the generated output:
 

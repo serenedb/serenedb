@@ -108,12 +108,12 @@ class Domain:
                                            else 0)
         self.collation = collation
         self.default = default
-        self.array = oid
-        self.oid = oid + 1
+        self.array = oid - 1
+        self.oid = oid
 
 
 class Initdb:
-    def __init__(self):
+    def __init__(self, lock):
         system_views = source.read('src', 'backend', 'catalog',
                                    'system_views.sql')
         information_schema = source.read('src', 'backend', 'catalog',
@@ -121,8 +121,9 @@ class Initdb:
         system_functions = source.read('src', 'backend', 'catalog',
                                        'system_functions.sql')
         initdb = source.read('src', 'bin', 'initdb', 'initdb.c')
-        self.next_oid = source.define('access/transam.h',
-                                      'FirstUnpinnedObjectId')
+        self.lock = lock
+        self.first_oid = source.define('access/transam.h',
+                                       'FirstUnpinnedObjectId')
         self.views = []
         self.tables = {}
         self.domains = []
@@ -131,6 +132,12 @@ class Initdb:
             self.add(statement, 'pg_catalog')
         for statement in statements(information_schema):
             self.add(statement, 'information_schema')
+        lock.retire('relation', {f'{view.schema}.{view.name}'
+                                 for view in self.views} |
+                    {f'information_schema.{name}' for name in self.tables})
+        lock.retire('domain', {f'information_schema.{domain.name}'
+                               for domain in self.domains})
+        lock.retire('namespace', {'information_schema'})
         self.revoked = set(REVOKE_ALL.findall(system_views + initdb))
         self.granted = set(GRANT_SELECT.findall(information_schema))
         self.public_columns = {
@@ -139,30 +146,34 @@ class Initdb:
         self.revoked_functions = set(
             REVOKE_EXECUTE.findall(system_views + system_functions))
 
-    def allocate(self, count):
-        oid = self.next_oid
-        self.next_oid += count
-        return oid
+    def allocate(self, kind, identity, offset):
+        return self.lock.assign(
+            kind, identity,
+            lambda: self.lock.next_initdb(self.first_oid) + offset)
 
     def add(self, statement, schema):
         if match := CREATE_VIEW.search(statement):
-            self.views.append(View(schema, match.group(1), match.group(2),
-                                   statement[match.end():].strip('\n'),
-                                   self.allocate(3)))
+            name = match.group(1)
+            self.views.append(View(
+                schema, name, match.group(2),
+                statement[match.end():].strip('\n'),
+                self.allocate('relation', f'{schema}.{name}', 0)))
         elif match := CREATE_TABLE.search(statement):
-            self.tables[match.group(1)] = Table(
-                match.group(1),
+            name = match.group(1)
+            self.tables[name] = Table(
+                name,
                 [tuple(column.split()) for column
                  in split_list(match.group(2))],
-                self.allocate(3))
+                self.allocate('relation', f'{schema}.{name}', 0))
         elif match := CREATE_DOMAIN.search(statement):
             name, spec, collation, function, argument = match.groups()
             default = (f'{function.upper()}({argument})' if function
                        else '')
-            self.domains.append(Domain(name, spec, collation, default,
-                                       self.allocate(2)))
-        elif CREATE_SCHEMA.search(statement):
-            self.namespace = self.allocate(1)
+            self.domains.append(Domain(
+                name, spec, collation, default,
+                self.allocate('domain', f'{schema}.{name}', 1)))
+        elif match := CREATE_SCHEMA.search(statement):
+            self.namespace = self.allocate('namespace', match.group(1), 0)
 
     def view(self, schema, name):
         return next(view for view in self.views

@@ -33,22 +33,43 @@ the third_party/postgres submodule it checks those two only.
 
 import argparse
 import os
+import subprocess
 import sys
+import tempfile
 
 from pg_catalog import builtins, claims, functions, relations, source, views
 from pg_catalog.common import REPO_ROOT, Generator, write
+from pg_catalog.lock import Lock
 
 
-def outputs():
+def dump_builtins(serened, directory):
+    path = os.path.join(directory, 'builtins.tsv')
+    run = subprocess.run([serened, os.path.join(directory, 'data'),
+                          f'--dump_builtin_oids={path}'],
+                         capture_output=True, text=True)
+    if run.returncode != 0:
+        raise SystemExit(f'{serened} --dump_builtin_oids failed:\n'
+                         f'{run.stdout}{run.stderr}')
+    return path
+
+
+def outputs(serened):
+    lock = Lock()
     out = {relations.REGISTRY: relations.registry(),
            str(claims.TEST): claims.output()}
     if source.available():
-        gen = Generator()
-        constants, types = builtins.generate(gen)
+        gen = Generator(lock)
+        constants, types, procs = builtins.generate(gen)
+        if serened:
+            with tempfile.TemporaryDirectory() as directory:
+                lock.merge_builtins(dump_builtins(serened, directory),
+                                    gen.rows['pg_proc'], procs)
+        lock.check_taken(procs)
         relations.generate(gen, constants, types)
         views.generate(gen)
         functions.generate(gen, constants, types)
         out.update(gen.outputs)
+    out.update(lock.outputs())
     return out
 
 
@@ -56,11 +77,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--check', action='store_true',
                         help='fail if an output is stale')
+    parser.add_argument('--serened', metavar='BINARY',
+                        help='freeze the OIDs of the builtin functions and '
+                             'collations this serened has')
     args = parser.parse_args()
     if not args.check and not source.available():
         parser.error('third_party/postgres has no catalog sources; run '
                      'git submodule update --init third_party/postgres')
-    texts = outputs()
+    if args.check and args.serened:
+        parser.error('--check reads no serened')
+    texts = outputs(args.serened)
     if args.check:
         stale = [path for path, text in texts.items()
                  if not os.path.exists(path) or open(path).read() != text]

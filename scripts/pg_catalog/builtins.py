@@ -164,4 +164,4 @@ def generate(gen):
     gen.write('builtin_collations.gen.inc', [
         f'{{{oid}, {cpp_str(name)}, {cpp_char(provider)}, {cpp_str(locale)}}},'
         for oid, name, provider, locale in collations])
-    return constants, by_oid
+    return constants, by_oid, [proc[0] for proc in procs]

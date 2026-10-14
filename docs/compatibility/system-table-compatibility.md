@@ -12,7 +12,7 @@ Besides compatibility with the PostgreSQL SQL dialect and protocol, SereneDB als
 This page provides an overview of the currently supported system tables and views.
 
 - 🟢 Supported
-- 🟡 Stubbed for compatibility: These do not contain actual content and exist solely for compatibility purposes, as SereneDB does not share PostgreSQL’s codebase or internal architecture
+- 🟡 Stubbed for compatibility: These do not contain actual content and exist solely for compatibility purposes, as SereneDB does not share PostgreSQL's codebase or internal architecture
 - 🔴 Not yet supported
 
 ## System Tables
@@ -21,7 +21,7 @@ System tables provide a raw view into the state of the database system. In contr
 
 System tables often contain many low-level details. For more accessible and friendly access to the same information, consider using the built-in system views, or the SQL-standard information schema.
 
-Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` is `1259`, `'int4'::regtype` is `23`, and `pg_type.typinput` names the same `pg_proc` rows as in PostgreSQL. Queries that look objects up by `oid`, by name, by name within a schema or by the relation they belong to, such as `pg_class WHERE oid = ...`, `pg_class WHERE relname = ... AND relnamespace = ...` or `pg_attribute WHERE attrelid = ...`, read only the matching objects, so their cost does not grow with the number of tables. The same holds when the key comes from a join, as in `pg_attribute JOIN pg_class ON attrelid = pg_class.oid WHERE relname = ...`. Filters on the schema and on the object kind, such as `relnamespace = ...`, `relkind IN ('r', 'v')` or `prokind = 'a'`, combine with each other and with these lookups: `pg_class WHERE relnamespace = ... AND relkind = 'r'` reads only that schema's tables. Rows are produced as the query consumes them, so a `LIMIT` stops the scan early.
+Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` is `1259`, `'int4'::regtype` is `23`, and `pg_type.typinput` names the same `pg_proc` rows as in PostgreSQL. The system views and `information_schema` have the OIDs PostgreSQL 18.6 gives them (`'pg_roles'::regclass` is `12000`, `'information_schema'::regnamespace` is `13293`), and a built-in function PostgreSQL also has, with the same argument types, has PostgreSQL's OID. Every built-in object has the same OID in every database and in every SereneDB release, built-in objects only have OIDs below `65536`, and objects you create get OIDs from `65536` up. Queries that look objects up by `oid`, by name, by name within a schema or by the relation they belong to, such as `pg_class WHERE oid = ...`, `pg_class WHERE relname = ... AND relnamespace = ...` or `pg_attribute WHERE attrelid = ...`, read only the matching objects, so their cost does not grow with the number of tables. The same holds when the key comes from a join, as in `pg_attribute JOIN pg_class ON attrelid = pg_class.oid WHERE relname = ...`. Filters on the schema and on the object kind, such as `relnamespace = ...`, `relkind IN ('r', 'v')` or `prokind = 'a'`, combine with each other and with these lookups: `pg_class WHERE relnamespace = ... AND relkind = 'r'` reads only that schema's tables. Rows are produced as the query consumes them, so a `LIMIT` stops the scan early.
 
 | Feature                     | Support State | Details |
 |-----------------------------|---------------|---------|
@@ -47,7 +47,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_event_trigger            | 🟡            | Stores information about event triggers. |
 | pg_extension                | 🟡            | Contains information about installed extensions. |
 | pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`. Every role may use them, so each grants `USAGE` to `PUBLIC`. |
-| pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** — its `srvoptions` carry credentials and are shown unredacted. `srvfdw` names the server's wrapper in `pg_foreign_data_wrapper`. |
+| pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** -- its `srvoptions` carry credentials and are shown unredacted. `srvfdw` names the server's wrapper in `pg_foreign_data_wrapper`. |
 | pg_foreign_table            | 🟡            | Stores information about foreign tables. |
 | pg_index                    | 🟢            | Contains information about indexes. |
 | pg_inherits                 | 🟡            | Tracks table inheritance hierarchies. |

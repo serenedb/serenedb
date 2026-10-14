@@ -226,8 +226,7 @@ bool ClusterCatalog::HoldsPreparedBatch(duckdb::idx_t oid,
         db->GetStorageManager().InMemory()) {
       continue;
     }
-    return db->GetStorageManager().GetBlockManager().GetCheckpointIteration() <=
-           generation;
+    return db->GetStorageManager().GetOldestWALGeneration() <= generation;
   }
   return true;
 }

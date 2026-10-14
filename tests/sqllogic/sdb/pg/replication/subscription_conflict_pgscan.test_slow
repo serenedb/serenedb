@@ -1,5 +1,7 @@
 control substitution on
 
+# exclusive
+
 statement ok
 ATTACH 'host=${PGHOST} port=${PGPORT} dbname=postgres user=${PGUSER}' AS rcon_${__DATABASE__} (TYPE postgres);
 

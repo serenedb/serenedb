@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -63,7 +65,7 @@ Result BuildScoredConjunction(std::span<const Term> terms,
   };
 
   const bool concrete = rest_size != 0 && rest_filters.empty() &&
-                        std::ranges::all_of(rest, [&](const Term& term) {
+                        absl::c_all_of(rest, [&](const Term& term) {
                           const auto one = clause(term);
                           return one.stats.stats != nullptr &&
                                  FreqOf(*one.state.reader) &&

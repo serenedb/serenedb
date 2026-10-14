@@ -20,9 +20,9 @@
 
 #include "replication/repl_source.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
-#include <algorithm>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/function/table_function.hpp>
@@ -63,7 +63,6 @@ namespace sdb::replication {
 namespace {
 
 constexpr uint64_t kBatchRows = 1 << 17;
-constexpr std::chrono::microseconds kNextSpanWait{1000};
 
 bool ReadTuple(std::string_view tuple, size_t columns,
                std::vector<PgColumn>& cells) {
@@ -439,10 +438,27 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
                            type, sdb::pg::VarFormat::Binary)});
     }
   }
+  auto& stream = *g.batch->stream;
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
-    const PgOutputMessage* m = g.batch->stream->PeekFor(kNextSpanWait);
-    if (m == nullptr || ReplStream::IsIdle(m) || g.batch->rows >= kBatchRows) {
+    const PgOutputMessage* m = stream.Current();
+    if (m == nullptr) {
+      if (row != 0) {
+        break;
+      }
+      if (stream.Ended() || !input.interrupt_state ||
+          input.results_execution_mode !=
+            duckdb::AsyncResultsExecutionMode::TASK_EXECUTOR) {
+        g.finished = true;
+        break;
+      }
+      if (stream.Park(*input.interrupt_state)) {
+        input.async_result = duckdb::AsyncResultType::BLOCKED;
+        break;
+      }
+      continue;
+    }
+    if (ReplStream::IsIdle(m) || g.batch->rows >= kBatchRows) {
       g.finished = true;
       break;
     }
@@ -451,13 +467,13 @@ void ScanReplSource(duckdb::ClientContext&, duckdb::TableFunctionInput& input,
       if (!g.batch->pass_through || !g.batch->pass_through(*m)) {
         break;
       }
-      g.batch->stream->Advance();
+      stream.Advance();
       continue;
     }
     if (!DecodeRow(*g.batch, *m, g.deser, g.dctx, output, row)) {
       break;
     }
-    g.batch->stream->Advance();
+    stream.Advance();
     ++g.batch->rows;
     ++row;
   }
@@ -545,7 +561,7 @@ bool ShapeRow(const PgOutputMessage& msg, const RelInfo& rel, RowShape& shape) {
       PresentColumns(shape.old_cells, shape.keys);
     } else {
       KeyColumns(rel, shape.keys);
-      if (!m->has_old && std::ranges::any_of(shape.cols, [&](size_t i) {
+      if (!m->has_old && absl::c_any_of(shape.cols, [&](size_t i) {
             return !rel.columns[i].is_key;
           })) {
         std::erase_if(shape.cols,
@@ -576,7 +592,7 @@ duckdb::unique_ptr<duckdb::SQLStatement> BuildUniqueConflictProbe(
   const auto& shape = batch.shape;
   const size_t nkeys = shape.keys.size();
   const auto source = [&](size_t column) -> std::optional<std::string> {
-    const auto it = std::ranges::find(shape.cols, column);
+    const auto it = absl::c_find(shape.cols, column);
     if (it == shape.cols.end()) {
       return std::nullopt;
     }

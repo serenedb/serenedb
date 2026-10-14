@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -104,7 +106,7 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
       });
   } else {
     static_assert(std::is_enum_v<T>);
-    SDB_ASSERT(std::ranges::contains(DispatchValues<T>::kValues, value),
+    SDB_ASSERT(absl::c_contains(DispatchValues<T>::kValues, value),
                "fill dispatch: option enum out of range");
     return ResolveEnum<T, 0>(value, with);
   }

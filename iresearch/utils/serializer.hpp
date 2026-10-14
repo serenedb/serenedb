@@ -399,9 +399,9 @@ bool IsDefault(const T& value, const T& expected) {
   } else if constexpr (IsMap<T> || IsSet<T>) {
     return std::ranges::empty(value) && std::ranges::empty(expected);
   } else if constexpr (IsRange<T>) {
-    return std::ranges::equal(
-      value, expected,
-      [](const auto& lhs, const auto& rhs) { return IsDefault(lhs, rhs); });
+    return absl::c_equal(value, expected, [](const auto& lhs, const auto& rhs) {
+      return IsDefault(lhs, rhs);
+    });
   } else if constexpr (kIsFieldObject<T>) {
     const auto fields = FieldsOf(value);
     const auto expected_fields = FieldsOf(expected);

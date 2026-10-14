@@ -142,7 +142,7 @@ CompactionOptions PinCompactionOptions(SearchTable& table) {
   return {.alive = true, .keepalive = std::move(options), .field_options = raw};
 }
 
-template<class Storage>
+template<typename Storage>
 void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   SDB_IF_FAILURE("SearchRefreshTask::lockInvertedIndexStorage") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
@@ -181,7 +181,7 @@ void DoRefresh(Storage& idx, bool run_cleanup, RefreshResult& code) {
   }
 }
 
-template<class Storage>
+template<typename Storage>
 auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
                   SearchEngine& engine) -> yaclib::Future<bool> {
   absl::Cleanup release_slot = [&engine] { engine.ReleaseCompaction(); };
@@ -222,7 +222,7 @@ auto DoCompaction(std::shared_ptr<Storage> idx, irs::CompactionPolicy policy,
 // when the gate is full keeps the pool draining. noexcept on purpose: a slot is
 // acquired here and released only by its child, so if Run/push_back threw (OOM)
 // the slot would leak into the gate count -- fail fast instead.
-template<class Storage>
+template<typename Storage>
 std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
   BackgroundScheduler& s, SearchEngine& engine,
   const std::weak_ptr<Storage>& weak) noexcept {
@@ -257,7 +257,7 @@ std::vector<yaclib::FutureOn<bool>> LaunchCompactionFanout(
 // fit (one-shot, non-thread-safe Reset, lost-wakeup across iterations with many
 // producers), so we poll the per-index generation in bounded slices -- the
 // fallback the design explicitly allows. Returns early on a nudge or on stop.
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> WaitForCompactionTrigger(BackgroundScheduler& s,
                                           std::weak_ptr<Storage> weak,
                                           uint64_t base_gen,
@@ -293,7 +293,7 @@ enum class LoopTick {
   kNeutral,   // keep the stretch
 };
 
-template<class Storage, class GetIntervalMs, class Tick>
+template<typename Storage, typename GetIntervalMs, typename Tick>
 yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
                               std::string_view name,
                               GetIntervalMs get_interval_ms, Tick tick) {
@@ -365,7 +365,7 @@ yaclib::Future<> IntervalLoop(std::weak_ptr<Storage> weak,
 
 }  // namespace
 
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
   return IntervalLoop(
     std::move(weak), "refresh",
@@ -399,7 +399,7 @@ yaclib::Future<> RefreshLoop(std::weak_ptr<Storage> weak) {
     });
 }
 
-template<class Storage>
+template<typename Storage>
 yaclib::Future<> CompactionCoordinator(std::weak_ptr<Storage> weak) {
   auto& s = BackgroundScheduler::instance();
   auto& engine = GetSearchEngine();

@@ -22,7 +22,8 @@
 
 #pragma once
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
+
 #include <span>
 
 #include "iresearch/utils/assert.hpp"
@@ -50,7 +51,8 @@ class ArcMatcher {
       }
       return false;
     }
-    const auto it = std::ranges::lower_bound(_arcs, label, {}, &Arc::ilabel);
+    const auto it = absl::c_lower_bound(
+      _arcs, label, [](const Arc& arc, Label l) { return arc.ilabel < l; });
     if (it == _arcs.end()) {
       return false;
     }

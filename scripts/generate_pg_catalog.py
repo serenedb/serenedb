@@ -17,10 +17,10 @@ holds no OIDs for them; scripts/pg_catalog/initdb.py numbers them in the
 same order.
 
 SereneDB's own choices live in scripts/pg_catalog/config.py (which PostgreSQL
-objects SereneDB names, which functions are stubs), in server/pg/types.cpp
-(which PostgreSQL types SereneDB supports), in
-server/pg/catalog/tables/<schema>/<table>.cpp (which views are tables) and in
-server/pg/catalog/views/<schema>/<view>.cpp (view bodies SereneDB writes).
+objects SereneDB names), in server/pg/types.cpp (which PostgreSQL types
+SereneDB supports), in server/pg/catalog/tables/<schema>/<table>.cpp (which
+views are tables) and in server/pg/catalog/views/<schema>/<view>.cpp (view
+bodies SereneDB writes).
 Those outputs are server/pg/catalog/generated/*.gen.inc.
 
 Two outputs come from this repository alone: generated/registry.gen.inc,
@@ -66,8 +66,7 @@ def outputs(serened):
                                     gen.rows['pg_proc'], procs)
         lock.check_taken(procs)
         relations.generate(gen, constants, types)
-        views.generate(gen)
-        functions.generate(gen, constants, types)
+        functions.generate(gen, constants, types, views.generate(gen))
         out.update(gen.outputs)
     out.update(lock.outputs())
     return out

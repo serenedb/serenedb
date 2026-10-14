@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
@@ -66,7 +67,7 @@ std::span<const duckdb::DefaultType> ExternalTypes();
 
 void InitSystemTables();
 void InitSystemViews(duckdb::Parser& parser);
-void InitSystemFunctions(duckdb::Parser& parser);
+void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser);
 
 const SystemTable* GetSystemTable(std::string_view schema,
                                   std::string_view name);

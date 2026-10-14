@@ -452,6 +452,16 @@ t
 
 
 query
+SELECT pg_stat_get_function_calls(0) AS calls,
+       pg_stat_get_function_total_time(0) AS total_time,
+       pg_stat_get_xact_function_self_time(0) AS xact_self_time,
+       pg_stat_get_function_calls(NULL) IS NULL AS null_in
+----
+calls	total_time	xact_self_time	null_in
+0	0	0	t
+
+
+query
 SELECT COUNT(*) >= 0 FROM pg_catalog.pg_stat_archiver
 ----
 ?column?

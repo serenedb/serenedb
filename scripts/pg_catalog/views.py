@@ -37,7 +37,7 @@ def generate(gen):
                   not view.name.startswith('_pg_')}
     native = set(relations.table_files())
     files = set(relations.view_files())
-    out, defined = [], set()
+    out, defined, bodies = [], set(), []
     for view in gen.initdb.views:
         if (view.schema, view.name) in native:
             continue
@@ -47,6 +47,8 @@ def generate(gen):
             body = None
         elif view.schema == 'information_schema':
             body = qualify(body, info_names)
+        if body is not None:
+            bodies.append(body)
         out.append(entry(view.schema, view.name, view.oid, view.row_type,
                          view.row_array_type,
                          gen.initdb.superuser_only(view.schema, view.name),
@@ -54,3 +56,4 @@ def generate(gen):
     if stale := sorted(files - defined):
         raise SystemExit(f'view files for views PostgreSQL does not have: {stale}')
     gen.write('system_views.gen.inc', out)
+    return bodies

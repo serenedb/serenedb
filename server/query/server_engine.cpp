@@ -225,7 +225,7 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   // catalog.
   auto parser = duckdb::Parser::GetBuiltinParser();
   pg::InitSystemTables();
-  pg::InitSystemFunctions(parser);
+  pg::InitSystemFunctions(db, parser);
   pg::InitSystemViews(parser);
 }
 

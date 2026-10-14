@@ -24,7 +24,6 @@ namespace sdb::pg {
 namespace {
 
 constexpr SystemMacro kMacros[] = {
-#include "pg/catalog/generated/function_stubs.gen.inc"
   // clang-format off
   {"pg_catalog", "pg_get_keywords",
    R"(() AS TABLE

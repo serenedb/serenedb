@@ -21,6 +21,7 @@
 #include "pg/catalog/functions/functions.h"
 
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 
 namespace sdb::pg {
 
@@ -50,6 +51,12 @@ void RegisterScalar(duckdb::ExtensionLoader& loader, std::string_view schema,
     set.AddFunction(std::move(function));
   }
   Register(loader, schema, stability, std::move(set));
+}
+
+duckdb::unique_ptr<duckdb::Expression> BindNull(
+  duckdb::FunctionBindExpressionInput& input) {
+  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value{input.bound_function.GetReturnType()});
 }
 
 void RegisterFunctions(duckdb::DatabaseInstance& db) {

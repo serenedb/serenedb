@@ -23,16 +23,26 @@
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
+#include <array>
 #include <deque>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/default/default_functions.hpp>
+#include <duckdb/catalog/default/default_table_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
+#include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/optimizer/expression_rewriter.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/select_statement.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
+#include <iresearch/utils/static_strings.hpp>
+#include <ranges>
 
 #include "connector/pg_logical_types.h"
 #include "pg/catalog/builtin/builtin.h"
@@ -136,6 +146,37 @@ duckdb::unique_ptr<duckdb::CreateMacroInfo> ParseMacro(
   return info;
 }
 
+struct ScalarStub {
+  std::string_view name;
+  std::array<int32_t, 4> arguments;
+  int32_t result;
+  duckdb::FunctionStability stability;
+};
+
+constexpr ScalarStub kScalarStubs[] = {
+#include "pg/catalog/generated/scalar_stubs.gen.inc"
+};
+
+constexpr SystemMacro kTableStubs[] = {
+#include "pg/catalog/generated/function_stubs.gen.inc"
+};
+
+static_assert(absl::c_is_sorted(kScalarStubs,
+                                [](const auto& lhs, const auto& rhs) {
+                                  return lhs.name < rhs.name;
+                                }));
+
+duckdb::unique_ptr<duckdb::Expression> BindZero(
+  duckdb::FunctionBindExpressionInput& input) {
+  auto zero = duckdb::Value::INTEGER(0).DefaultCastAs(
+    input.bound_function.GetReturnType());
+  if (input.children.empty()) {
+    return duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(zero));
+  }
+  return duckdb::ExpressionRewriter::ConstantOrNull(
+    input.context, std::move(input.children), std::move(zero));
+}
+
 std::vector<duckdb::DefaultType>& ExternalTypeList() {
   static std::vector<duckdb::DefaultType> gTypes = [] {
     std::vector<duckdb::DefaultType> result;
@@ -204,22 +245,79 @@ void InitSystemViews(duckdb::Parser& parser) {
   }
 }
 
-void InitSystemFunctions(duckdb::Parser& parser) {
+void InitSystemFunctions(duckdb::DatabaseInstance& db, duckdb::Parser& parser) {
   irs::containers::NodeHashMap<FunctionKey,
                                duckdb::unique_ptr<duckdb::CreateMacroInfo>>
     built;
-  for (const auto macros : {kPgCatalogMacros, kInformationSchemaMacros}) {
-    for (const auto& macro : macros) {
-      auto info = ParseMacro(parser, macro);
-      const FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
-      if (const auto [it, inserted] = built.try_emplace(key, std::move(info));
-          !inserted) {
-        for (auto& m : info->macros) {
-          it->second->macros.emplace_back(std::move(m));
-        }
+  const auto add = [&](const SystemMacro& macro) {
+    auto info = ParseMacro(parser, macro);
+    const FunctionKey key{macro.schema, macro.name, info->macros[0]->type};
+    if (const auto [it, inserted] = built.try_emplace(key, std::move(info));
+        !inserted) {
+      for (auto& m : info->macros) {
+        it->second->macros.emplace_back(std::move(m));
       }
     }
+  };
+  for (const auto macros : {kPgCatalogMacros, kInformationSchemaMacros}) {
+    absl::c_for_each(macros, add);
   }
+
+  irs::containers::FlatHashSet<std::string> defined;
+  for (const auto& [key, info] : built) {
+    defined.emplace(std::get<1>(key));
+  }
+  auto& catalog =
+    duckdb::Catalog::GetSystemCatalog(db).Cast<duckdb::DuckCatalog>();
+  catalog.ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+    const auto collect = [&](duckdb::CatalogEntry& entry) {
+      defined.emplace(entry.name.GetIdentifierName());
+    };
+    schema.Scan(duckdb::CatalogType::SCALAR_FUNCTION_ENTRY, collect);
+    schema.Scan(duckdb::CatalogType::TABLE_FUNCTION_ENTRY, collect);
+    for (const auto& names :
+         {duckdb::DefaultFunctionGenerator{catalog, schema}.GetDefaultEntries(),
+          duckdb::DefaultTableFunctionGenerator{catalog, schema}
+            .GetDefaultEntries()}) {
+      for (const auto& name : names) {
+        defined.emplace(name.GetIdentifierName());
+      }
+    }
+  });
+  for (const auto& stub : kTableStubs) {
+    if (!defined.contains(stub.name)) {
+      add(stub);
+    }
+  }
+  duckdb::ExtensionLoader loader{db, "serenedb"};
+  for (const auto stubs :
+       kScalarStubs |
+         std::views::chunk_by([](const auto& lhs, const auto& rhs) {
+           return lhs.name == rhs.name;
+         })) {
+    if (defined.contains(stubs.front().name)) {
+      continue;
+    }
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{stubs.front().name}};
+    for (const auto& stub : stubs) {
+      duckdb::vector<duckdb::LogicalType> arguments;
+      for (const auto argument : stub.arguments) {
+        if (argument == 0) {
+          break;
+        }
+        arguments.emplace_back(SystemColumnType(argument));
+      }
+      auto result = SystemColumnType(stub.result);
+      const bool zero = result.IsNumeric();
+      duckdb::ScalarFunction function{std::move(arguments), std::move(result),
+                                      nullptr};
+      function.SetBindExpressionCallback(zero ? BindZero : BindNull);
+      set.AddFunction(std::move(function));
+    }
+    Register(loader, irs::StaticStrings::kPgCatalogSchema,
+             stubs.front().stability, std::move(set));
+  }
+
   for (auto& [key, info] : built) {
     gFunctions.emplace(key, StaticFunction{info.release()});
   }

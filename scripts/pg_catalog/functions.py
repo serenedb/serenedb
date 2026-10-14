@@ -1,5 +1,7 @@
+import re
+
 from . import config
-from .common import array, cpp_bool, oid
+from .common import array, oid
 
 PG_CATALOG = '11'
 
@@ -9,67 +11,66 @@ STABILITIES = {
     'v': 'VOLATILE',
 }
 
+CALL = re.compile(r'(?<![\w.$"])(?:pg_catalog\.)?([A-Za-z_]\w*)\s*\(')
+
 
 def stub(row):
     types = (array(row['proallargtypes']) if row['proallargtypes'] is not None
              else row['proargtypes'].split())
     return (row['proname'], array(row['proargnames']) or None,
             array(row['proargmodes']) or None, [int(t) for t in types],
-            oid(row['prorettype']), row['provolatile'])
+            oid(row['prorettype']), row['proretset'] == 't',
+            row['provolatile'])
 
 
-def generate(gen, constants, all_types):
+def generate(gen, constants, all_types, bodies):
     names = {}
     for type_oid, row in all_types.items():
         element = all_types.get(row[10])
         names[type_oid] = (element[1] + '[]'
                            if element and element[11] == type_oid
                            else row[1])
-    stubs = (config.STUB_FUNCTIONS + config.ZERO_STUB_FUNCTIONS +
-             config.NULL_STUB_FUNCTIONS)
-    rows = {row['proname']: stub(row) for row in sorted(
+    called = {name.lower() for body in bodies for name in CALL.findall(body)}
+    rows = [stub(row) for row in sorted(
         (row for row in gen.rows['pg_proc']
-         if row['pronamespace'] == PG_CATALOG and row['proname'] in stubs),
-        key=lambda row: row['proname'])}
-    missing = [name for name in stubs if name not in rows]
-    if missing:
-        raise SystemExit(f'functions unknown to PostgreSQL: {missing}')
+         if row['pronamespace'] == PG_CATALOG and row['prokind'] == 'f' and
+         row['proname'] in called),
+        key=lambda row: (row['proname'], int(row['oid'])))]
 
     def typed(oid):
         typname = names[oid]
         return config.STUB_TYPES.get(typname, typname)
 
     out, scalars = [], []
-    for name in stubs:
-        _, argnames, modes, types, rettype, volatility = rows[name]
+    for name, argnames, modes, types, rettype, retset, volatility in rows:
         modes = modes or ['i'] * len(types)
         argnames = argnames or [f'arg{i + 1}' for i in range(len(types))]
-        inputs = [i for i, mode in enumerate(modes) if mode in 'ib']
-        if name not in config.STUB_FUNCTIONS:
-            zero = name in config.ZERO_STUB_FUNCTIONS
-            if len(inputs) > 1 or (zero and names[rettype] not in
-                                   ('int8', 'float8')):
-                raise SystemExit(f'{name}: a scalar stub takes at most one '
-                                 f'argument and returns 0 as int8 or float8')
-            argument = constants[types[inputs[0]]] if inputs else '0'
-            scalars.append(f'{{"{name}", {argument}, {constants[rettype]}, '
-                           f'{cpp_bool(zero)}, duckdb::FunctionStability::'
+        inputs = [i for i, mode in enumerate(modes) if mode in 'ibv']
+        columns = [i for i, mode in enumerate(modes) if mode in 'otb']
+        signature = ([types[i] for i in inputs + columns] +
+                     ([] if columns else [rettype]))
+        if (retset and not columns) or any(
+                t not in constants or all_types[t][5] == 'p'
+                for t in signature):
+            continue
+        if not columns:
+            arguments = ', '.join(constants[types[i]] for i in inputs)
+            scalars.append(f'{{"{name}", {{{arguments}}}, '
+                           f'{constants[rettype]}, duckdb::FunctionStability::'
                            f'{STABILITIES[volatility]}}},')
             continue
-        args = [f'"{argnames[i]}" {typed(types[i])}' for i in inputs]
-        columns = [i for i, mode in enumerate(modes) if mode in 'otb']
         if 'v' in modes:
-            variadic = [argnames[i] for i, mode in enumerate(modes)
-                        if mode in 'ibv']
             select = ', '.join(f'NULL::{typed(types[i])} AS "{argnames[i]}"'
                                for i in columns)
-            out.append(f'{{"pg_catalog", "{name}",\n R"(({", ".join(variadic)}) '
+            variadic = ', '.join(argnames[i] for i in inputs)
+            out.append(f'{{"pg_catalog", "{name}",\n R"(({variadic}) '
                        f'AS TABLE SELECT {select} WHERE false)"}},')
             continue
+        args = ', '.join(f'"{argnames[i]}" {typed(types[i])}' for i in inputs)
         returns = ',\n                '.join(
             f'"{argnames[i]}" {typed(types[i])}' for i in columns)
         nulls = ', '.join(f'NULL::{typed(types[i])}' for i in columns)
-        out.append(f'{{"pg_catalog", "{name}",\n R"(({", ".join(args)})\n'
+        out.append(f'{{"pg_catalog", "{name}",\n R"(({args})\n'
                    f'  RETURNS TABLE({returns})\n'
                    f'  LANGUAGE SQL\n'
                    f'  BEGIN ATOMIC\n'

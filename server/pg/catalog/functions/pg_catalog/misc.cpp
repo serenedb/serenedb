@@ -57,7 +57,6 @@
 #include "connector/pg_logical_types.h"
 #include "network/cancel_registry.h"
 #include "pg/catalog/engine/registry.h"
-#include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/oids.h"
@@ -429,58 +428,6 @@ void PgCharToEncodingFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-duckdb::unique_ptr<duckdb::Expression> BindZero(
-  duckdb::FunctionBindExpressionInput& input) {
-  const auto& type = input.bound_function.GetReturnType();
-  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-    duckdb::Value::INTEGER(0).DefaultCastAs(type));
-}
-
-duckdb::unique_ptr<duckdb::Expression> BindNull(
-  duckdb::FunctionBindExpressionInput& input) {
-  return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-    duckdb::Value{input.bound_function.GetReturnType()});
-}
-
-template<typename T>
-void ZeroFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                  duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<int64_t, T>(args.data[0], result, args.size(),
-                                             [](int64_t) { return T{0}; });
-}
-
-struct StubFunction {
-  std::string_view name;
-  int32_t argument;
-  int32_t result;
-  bool zero;
-  duckdb::FunctionStability stability;
-};
-
-constexpr StubFunction kStubFunctions[] = {
-#include "pg/catalog/generated/scalar_stubs.gen.inc"
-};
-
-void RegisterStubFunctions(duckdb::ExtensionLoader& loader) {
-  for (const auto& stub : kStubFunctions) {
-    auto result = SystemColumnType(stub.result);
-    const bool per_row = stub.zero && stub.argument != 0;
-    const auto zero = result.id() == duckdb::LogicalTypeId::DOUBLE
-                        ? ZeroFunction<double>
-                        : ZeroFunction<int64_t>;
-    duckdb::ScalarFunction function{
-      stub.argument != 0
-        ? duckdb::vector<duckdb::LogicalType>{SystemColumnType(stub.argument)}
-        : duckdb::vector<duckdb::LogicalType>{},
-      std::move(result), per_row ? zero : nullptr};
-    if (!per_row) {
-      function.SetBindExpressionCallback(stub.zero ? BindZero : BindNull);
-    }
-    RegisterScalar(loader, irs::StaticStrings::kPgCatalogSchema, stub.name,
-                   stub.stability, {function});
-  }
-}
-
 int64_t LiveTuples(const Session& session, int64_t oid) {
   auto entry = EntryByOid(session, oid);
   if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
@@ -774,7 +721,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "pg_char_to_encoding", CONSISTENT_WITHIN_QUERY,
     {duckdb::ScalarFunction{{text}, int4, PgCharToEncodingFunction}});
-  RegisterStubFunctions(loader);
   RegisterScalar(loader, pg_catalog, "pg_stat_get_live_tuples",
                  CONSISTENT_WITHIN_QUERY, InitSession,
                  {duckdb::ScalarFunction{{oid}, int8, LiveTuplesFunction}});

@@ -60,6 +60,9 @@ inline void RegisterScalar(
   RegisterScalar(loader, schema, name, stability, nullptr, functions);
 }
 
+duckdb::unique_ptr<duckdb::Expression> BindNull(
+  duckdb::FunctionBindExpressionInput& input);
+
 inline duckdb::unique_ptr<duckdb::FunctionLocalState> InitSession(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression&,
   duckdb::FunctionData*) {

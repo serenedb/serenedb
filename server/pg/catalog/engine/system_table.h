@@ -164,6 +164,7 @@ struct SystemSql {
   char relkind;
   char replident;
   bool superuser_only;
+  uint64_t public_columns;
   bool shared;
   std::span<const SystemSqlColumn> columns;
 

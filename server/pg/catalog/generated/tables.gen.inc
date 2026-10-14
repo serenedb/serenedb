@@ -46,7 +46,7 @@ inline constexpr SystemSqlColumn kInfoColumnsColumns[] = {
   {"generation_expression", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"is_updatable", kYesOrNo, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kInfoColumnsSql{kInfoColumnsTable, "information_schema", "columns", 13383, 13382, 'v', 'n', false, false, kInfoColumnsColumns};
+inline constexpr SystemSql kInfoColumnsSql{kInfoColumnsTable, "information_schema", "columns", 13383, 13382, 'v', 'n', false, 0x0, false, kInfoColumnsColumns};
 inline constexpr SystemSqlColumn kInfoSqlFeaturesColumns[] = {
   {"feature_id", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"feature_name", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
@@ -56,7 +56,7 @@ inline constexpr SystemSqlColumn kInfoSqlFeaturesColumns[] = {
   {"is_verified_by", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"comments", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kInfoSqlFeaturesSql{kInfoSqlFeaturesTable, "information_schema", "sql_features", 13478, 13477, 'r', 'd', false, false, kInfoSqlFeaturesColumns};
+inline constexpr SystemSql kInfoSqlFeaturesSql{kInfoSqlFeaturesTable, "information_schema", "sql_features", 13478, 13477, 'r', 'd', false, 0x0, false, kInfoSqlFeaturesColumns};
 inline constexpr SystemSqlColumn kInfoSqlImplementationInfoColumns[] = {
   {"implementation_info_id", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"implementation_info_name", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
@@ -64,7 +64,7 @@ inline constexpr SystemSqlColumn kInfoSqlImplementationInfoColumns[] = {
   {"character_value", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"comments", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kInfoSqlImplementationInfoSql{kInfoSqlImplementationInfoTable, "information_schema", "sql_implementation_info", 13483, 13482, 'r', 'd', false, false, kInfoSqlImplementationInfoColumns};
+inline constexpr SystemSql kInfoSqlImplementationInfoSql{kInfoSqlImplementationInfoTable, "information_schema", "sql_implementation_info", 13483, 13482, 'r', 'd', false, 0x0, false, kInfoSqlImplementationInfoColumns};
 inline constexpr SystemSqlColumn kInfoSqlPartsColumns[] = {
   {"feature_id", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"feature_name", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
@@ -72,14 +72,14 @@ inline constexpr SystemSqlColumn kInfoSqlPartsColumns[] = {
   {"is_verified_by", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"comments", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kInfoSqlPartsSql{kInfoSqlPartsTable, "information_schema", "sql_parts", 13488, 13487, 'r', 'd', true, false, kInfoSqlPartsColumns};
+inline constexpr SystemSql kInfoSqlPartsSql{kInfoSqlPartsTable, "information_schema", "sql_parts", 13488, 13487, 'r', 'd', true, 0x0, false, kInfoSqlPartsColumns};
 inline constexpr SystemSqlColumn kInfoSqlSizingColumns[] = {
   {"sizing_id", kCardinalNumber, 0, false, false, 0, 0, SystemKey::None},
   {"sizing_name", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
   {"supported_value", kCardinalNumber, 0, false, false, 0, 0, SystemKey::None},
   {"comments", kCharacterData, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kInfoSqlSizingSql{kInfoSqlSizingTable, "information_schema", "sql_sizing", 13493, 13492, 'r', 'd', false, false, kInfoSqlSizingColumns};
+inline constexpr SystemSql kInfoSqlSizingSql{kInfoSqlSizingTable, "information_schema", "sql_sizing", 13493, 13492, 'r', 'd', false, 0x0, false, kInfoSqlSizingColumns};
 inline constexpr SystemSqlColumn kPgAggregateColumns[] = {
   {"aggfnoid", kRegproc, 0, false, true, 0, 0, SystemKey::Unique},
   {"aggkind", kChar, 0, false, true, 0, 0, SystemKey::None},
@@ -104,14 +104,14 @@ inline constexpr SystemSqlColumn kPgAggregateColumns[] = {
   {"agginitval", kText, 0, false, false, 950, 0, SystemKey::None},
   {"aggminitval", kText, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAggregateSql{kPgAggregateTable, "pg_catalog", "pg_aggregate", 10027, 10026, 'r', 'n', false, false, kPgAggregateColumns};
+inline constexpr SystemSql kPgAggregateSql{kPgAggregateTable, "pg_catalog", "pg_aggregate", 10027, 10026, 'r', 'n', false, 0x0, false, kPgAggregateColumns};
 inline constexpr SystemSqlColumn kPgAmColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"amname", kName, 0, false, true, 950, 0, SystemKey::Unique},
   {"amhandler", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"amtype", kChar, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAmSql{kPgAmTable, "pg_catalog", "pg_am", 10015, 10014, 'r', 'n', false, false, kPgAmColumns};
+inline constexpr SystemSql kPgAmSql{kPgAmTable, "pg_catalog", "pg_am", 10015, 10014, 'r', 'n', false, 0x0, false, kPgAmColumns};
 inline constexpr SystemSqlColumn kPgAmopColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"amopfamily", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -123,7 +123,7 @@ inline constexpr SystemSqlColumn kPgAmopColumns[] = {
   {"amopmethod", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"amopsortfamily", kOid, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAmopSql{kPgAmopTable, "pg_catalog", "pg_amop", 10017, 10016, 'r', 'n', false, false, kPgAmopColumns};
+inline constexpr SystemSql kPgAmopSql{kPgAmopTable, "pg_catalog", "pg_amop", 10017, 10016, 'r', 'n', false, 0x0, false, kPgAmopColumns};
 inline constexpr SystemSqlColumn kPgAmprocColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"amprocfamily", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -132,14 +132,14 @@ inline constexpr SystemSqlColumn kPgAmprocColumns[] = {
   {"amprocnum", kInt2, 0, false, true, 0, 0, SystemKey::Indexed},
   {"amproc", kRegproc, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAmprocSql{kPgAmprocTable, "pg_catalog", "pg_amproc", 10019, 10018, 'r', 'n', false, false, kPgAmprocColumns};
+inline constexpr SystemSql kPgAmprocSql{kPgAmprocTable, "pg_catalog", "pg_amproc", 10019, 10018, 'r', 'n', false, 0x0, false, kPgAmprocColumns};
 inline constexpr SystemSqlColumn kPgAttrdefColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"adrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"adnum", kInt2, 0, false, true, 0, 0, SystemKey::Indexed},
   {"adbin", kPgNodeTree, 0, false, true, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAttrdefSql{kPgAttrdefTable, "pg_catalog", "pg_attrdef", 10001, 10000, 'r', 'n', false, false, kPgAttrdefColumns};
+inline constexpr SystemSql kPgAttrdefSql{kPgAttrdefTable, "pg_catalog", "pg_attrdef", 10001, 10000, 'r', 'n', false, 0x0, false, kPgAttrdefColumns};
 inline constexpr SystemSqlColumn kPgAttributeColumns[] = {
   {"attrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"attname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -167,7 +167,7 @@ inline constexpr SystemSqlColumn kPgAttributeColumns[] = {
   {"attfdwoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
   {"attmissingval", kAnyarray, 0, false, false, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAttributeSql{kPgAttributeTable, "pg_catalog", "pg_attribute", 75, 270, 'r', 'n', false, false, kPgAttributeColumns};
+inline constexpr SystemSql kPgAttributeSql{kPgAttributeTable, "pg_catalog", "pg_attribute", 75, 270, 'r', 'n', false, 0x0, false, kPgAttributeColumns};
 inline constexpr SystemSqlColumn kPgAuthMembersColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"roleid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -177,7 +177,7 @@ inline constexpr SystemSqlColumn kPgAuthMembersColumns[] = {
   {"inherit_option", kBool, 0, false, true, 0, 0, SystemKey::None},
   {"set_option", kBool, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAuthMembersSql{kPgAuthMembersTable, "pg_catalog", "pg_auth_members", 2843, 10058, 'r', 'n', false, true, kPgAuthMembersColumns};
+inline constexpr SystemSql kPgAuthMembersSql{kPgAuthMembersTable, "pg_catalog", "pg_auth_members", 2843, 10058, 'r', 'n', false, 0x0, true, kPgAuthMembersColumns};
 inline constexpr SystemSqlColumn kPgAuthidColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"rolname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -192,7 +192,7 @@ inline constexpr SystemSqlColumn kPgAuthidColumns[] = {
   {"rolpassword", kText, 0, false, false, 950, 0, SystemKey::None},
   {"rolvaliduntil", kTimestamptz, 0, false, false, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgAuthidSql{kPgAuthidTable, "pg_catalog", "pg_authid", 2842, 10057, 'r', 'n', true, true, kPgAuthidColumns};
+inline constexpr SystemSql kPgAuthidSql{kPgAuthidTable, "pg_catalog", "pg_authid", 2842, 10057, 'r', 'n', true, 0x0, true, kPgAuthidColumns};
 inline constexpr SystemSqlColumn kPgCastColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"castsource", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -201,7 +201,7 @@ inline constexpr SystemSqlColumn kPgCastColumns[] = {
   {"castcontext", kChar, 0, false, true, 0, 0, SystemKey::None},
   {"castmethod", kChar, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgCastSql{kPgCastTable, "pg_catalog", "pg_cast", 10043, 10042, 'r', 'n', false, false, kPgCastColumns};
+inline constexpr SystemSql kPgCastSql{kPgCastTable, "pg_catalog", "pg_cast", 10043, 10042, 'r', 'n', false, 0x0, false, kPgCastColumns};
 inline constexpr SystemSqlColumn kPgClassColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"relname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -238,7 +238,7 @@ inline constexpr SystemSqlColumn kPgClassColumns[] = {
   {"reloptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
   {"relpartbound", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgClassSql{kPgClassTable, "pg_catalog", "pg_class", 83, 273, 'r', 'n', false, false, kPgClassColumns};
+inline constexpr SystemSql kPgClassSql{kPgClassTable, "pg_catalog", "pg_class", 83, 273, 'r', 'n', false, 0x0, false, kPgClassColumns};
 inline constexpr SystemSqlColumn kPgCollationColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"collname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -253,7 +253,7 @@ inline constexpr SystemSqlColumn kPgCollationColumns[] = {
   {"collicurules", kText, 0, false, false, 950, 0, SystemKey::None},
   {"collversion", kText, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgCollationSql{kPgCollationTable, "pg_catalog", "pg_collation", 10095, 10094, 'r', 'n', false, false, kPgCollationColumns};
+inline constexpr SystemSql kPgCollationSql{kPgCollationTable, "pg_catalog", "pg_collation", 10095, 10094, 'r', 'n', false, 0x0, false, kPgCollationColumns};
 inline constexpr SystemSqlColumn kPgConstraintColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"conname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -284,7 +284,7 @@ inline constexpr SystemSqlColumn kPgConstraintColumns[] = {
   {"conexclop", kOidArray, kOid, false, false, 0, 1, SystemKey::None},
   {"conbin", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgConstraintSql{kPgConstraintTable, "pg_catalog", "pg_constraint", 10003, 10002, 'r', 'n', false, false, kPgConstraintColumns};
+inline constexpr SystemSql kPgConstraintSql{kPgConstraintTable, "pg_catalog", "pg_constraint", 10003, 10002, 'r', 'n', false, 0x0, false, kPgConstraintColumns};
 inline constexpr SystemSqlColumn kPgConversionColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"conname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -295,7 +295,7 @@ inline constexpr SystemSqlColumn kPgConversionColumns[] = {
   {"conproc", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"condefault", kBool, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgConversionSql{kPgConversionTable, "pg_catalog", "pg_conversion", 10049, 10048, 'r', 'n', false, false, kPgConversionColumns};
+inline constexpr SystemSql kPgConversionSql{kPgConversionTable, "pg_catalog", "pg_conversion", 10049, 10048, 'r', 'n', false, 0x0, false, kPgConversionColumns};
 inline constexpr SystemSqlColumn kPgDatabaseColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"datname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -316,13 +316,13 @@ inline constexpr SystemSqlColumn kPgDatabaseColumns[] = {
   {"datcollversion", kText, 0, false, false, 950, 0, SystemKey::None},
   {"datacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgDatabaseSql{kPgDatabaseTable, "pg_catalog", "pg_database", 1248, 10052, 'r', 'n', false, true, kPgDatabaseColumns};
+inline constexpr SystemSql kPgDatabaseSql{kPgDatabaseTable, "pg_catalog", "pg_database", 1248, 10052, 'r', 'n', false, 0x0, true, kPgDatabaseColumns};
 inline constexpr SystemSqlColumn kPgDbRoleSettingColumns[] = {
   {"setdatabase", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"setrole", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"setconfig", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgDbRoleSettingSql{kPgDbRoleSettingTable, "pg_catalog", "pg_db_role_setting", 10054, 10053, 'r', 'n', false, true, kPgDbRoleSettingColumns};
+inline constexpr SystemSql kPgDbRoleSettingSql{kPgDbRoleSettingTable, "pg_catalog", "pg_db_role_setting", 10054, 10053, 'r', 'n', false, 0x0, true, kPgDbRoleSettingColumns};
 inline constexpr SystemSqlColumn kPgDefaultAclColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"defaclrole", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -330,7 +330,7 @@ inline constexpr SystemSqlColumn kPgDefaultAclColumns[] = {
   {"defaclobjtype", kChar, 0, false, true, 0, 0, SystemKey::Indexed},
   {"defaclacl", kAclitemArray, kAclitem, false, true, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgDefaultAclSql{kPgDefaultAclTable, "pg_catalog", "pg_default_acl", 10088, 10087, 'r', 'n', false, false, kPgDefaultAclColumns};
+inline constexpr SystemSql kPgDefaultAclSql{kPgDefaultAclTable, "pg_catalog", "pg_default_acl", 10088, 10087, 'r', 'n', false, 0x0, false, kPgDefaultAclColumns};
 inline constexpr SystemSqlColumn kPgDependColumns[] = {
   {"classid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"objid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -340,21 +340,21 @@ inline constexpr SystemSqlColumn kPgDependColumns[] = {
   {"refobjsubid", kInt4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"deptype", kChar, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgDependSql{kPgDependTable, "pg_catalog", "pg_depend", 10051, 10050, 'r', 'n', false, false, kPgDependColumns};
+inline constexpr SystemSql kPgDependSql{kPgDependTable, "pg_catalog", "pg_depend", 10051, 10050, 'r', 'n', false, 0x0, false, kPgDependColumns};
 inline constexpr SystemSqlColumn kPgDescriptionColumns[] = {
   {"objoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"classoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"objsubid", kInt4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"description", kText, 0, false, true, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgDescriptionSql{kPgDescriptionTable, "pg_catalog", "pg_description", 10041, 10040, 'r', 'n', false, false, kPgDescriptionColumns};
+inline constexpr SystemSql kPgDescriptionSql{kPgDescriptionTable, "pg_catalog", "pg_description", 10041, 10040, 'r', 'n', false, 0x0, false, kPgDescriptionColumns};
 inline constexpr SystemSqlColumn kPgEnumColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"enumtypid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"enumsortorder", kFloat4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"enumlabel", kName, 0, false, true, 950, 0, SystemKey::Indexed},
 };
-inline constexpr SystemSql kPgEnumSql{kPgEnumTable, "pg_catalog", "pg_enum", 10045, 10044, 'r', 'n', false, false, kPgEnumColumns};
+inline constexpr SystemSql kPgEnumSql{kPgEnumTable, "pg_catalog", "pg_enum", 10045, 10044, 'r', 'n', false, 0x0, false, kPgEnumColumns};
 inline constexpr SystemSqlColumn kPgEventTriggerColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"evtname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -364,7 +364,7 @@ inline constexpr SystemSqlColumn kPgEventTriggerColumns[] = {
   {"evtenabled", kChar, 0, false, true, 0, 0, SystemKey::None},
   {"evttags", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgEventTriggerSql{kPgEventTriggerTable, "pg_catalog", "pg_event_trigger", 10039, 10038, 'r', 'n', false, false, kPgEventTriggerColumns};
+inline constexpr SystemSql kPgEventTriggerSql{kPgEventTriggerTable, "pg_catalog", "pg_event_trigger", 10039, 10038, 'r', 'n', false, 0x0, false, kPgEventTriggerColumns};
 inline constexpr SystemSqlColumn kPgExtensionColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"extname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -375,7 +375,7 @@ inline constexpr SystemSqlColumn kPgExtensionColumns[] = {
   {"extconfig", kOidArray, kOid, false, false, 0, 1, SystemKey::None},
   {"extcondition", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgExtensionSql{kPgExtensionTable, "pg_catalog", "pg_extension", 10074, 10073, 'r', 'n', false, false, kPgExtensionColumns};
+inline constexpr SystemSql kPgExtensionSql{kPgExtensionTable, "pg_catalog", "pg_extension", 10074, 10073, 'r', 'n', false, 0x0, false, kPgExtensionColumns};
 inline constexpr SystemSqlColumn kPgForeignDataWrapperColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"fdwname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -385,7 +385,7 @@ inline constexpr SystemSqlColumn kPgForeignDataWrapperColumns[] = {
   {"fdwacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
   {"fdwoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgForeignDataWrapperSql{kPgForeignDataWrapperTable, "pg_catalog", "pg_foreign_data_wrapper", 10076, 10075, 'r', 'n', false, false, kPgForeignDataWrapperColumns};
+inline constexpr SystemSql kPgForeignDataWrapperSql{kPgForeignDataWrapperTable, "pg_catalog", "pg_foreign_data_wrapper", 10076, 10075, 'r', 'n', false, 0x0, false, kPgForeignDataWrapperColumns};
 inline constexpr SystemSqlColumn kPgForeignServerColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"srvname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -396,13 +396,13 @@ inline constexpr SystemSqlColumn kPgForeignServerColumns[] = {
   {"srvacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
   {"srvoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgForeignServerSql{kPgForeignServerTable, "pg_catalog", "pg_foreign_server", 10078, 10077, 'r', 'n', false, false, kPgForeignServerColumns};
+inline constexpr SystemSql kPgForeignServerSql{kPgForeignServerTable, "pg_catalog", "pg_foreign_server", 10078, 10077, 'r', 'n', false, 0x0, false, kPgForeignServerColumns};
 inline constexpr SystemSqlColumn kPgForeignTableColumns[] = {
   {"ftrelid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"ftserver", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"ftoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgForeignTableSql{kPgForeignTableTable, "pg_catalog", "pg_foreign_table", 10082, 10081, 'r', 'n', false, false, kPgForeignTableColumns};
+inline constexpr SystemSql kPgForeignTableSql{kPgForeignTableTable, "pg_catalog", "pg_foreign_table", 10082, 10081, 'r', 'n', false, 0x0, false, kPgForeignTableColumns};
 inline constexpr SystemSqlColumn kPgIndexColumns[] = {
   {"indexrelid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"indrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -426,14 +426,14 @@ inline constexpr SystemSqlColumn kPgIndexColumns[] = {
   {"indexprs", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
   {"indpred", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgIndexSql{kPgIndexTable, "pg_catalog", "pg_index", 10007, 10006, 'r', 'n', false, false, kPgIndexColumns};
+inline constexpr SystemSql kPgIndexSql{kPgIndexTable, "pg_catalog", "pg_index", 10007, 10006, 'r', 'n', false, 0x0, false, kPgIndexColumns};
 inline constexpr SystemSqlColumn kPgInheritsColumns[] = {
   {"inhrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"inhparent", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"inhseqno", kInt4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"inhdetachpending", kBool, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgInheritsSql{kPgInheritsTable, "pg_catalog", "pg_inherits", 10005, 10004, 'r', 'n', false, false, kPgInheritsColumns};
+inline constexpr SystemSql kPgInheritsSql{kPgInheritsTable, "pg_catalog", "pg_inherits", 10005, 10004, 'r', 'n', false, 0x0, false, kPgInheritsColumns};
 inline constexpr SystemSqlColumn kPgInitPrivsColumns[] = {
   {"objoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"classoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -441,7 +441,7 @@ inline constexpr SystemSqlColumn kPgInitPrivsColumns[] = {
   {"privtype", kChar, 0, false, true, 0, 0, SystemKey::None},
   {"initprivs", kAclitemArray, kAclitem, false, true, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgInitPrivsSql{kPgInitPrivsTable, "pg_catalog", "pg_init_privs", 10090, 10089, 'r', 'n', false, false, kPgInitPrivsColumns};
+inline constexpr SystemSql kPgInitPrivsSql{kPgInitPrivsTable, "pg_catalog", "pg_init_privs", 10090, 10089, 'r', 'n', false, 0x0, false, kPgInitPrivsColumns};
 inline constexpr SystemSqlColumn kPgLanguageColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"lanname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -453,26 +453,26 @@ inline constexpr SystemSqlColumn kPgLanguageColumns[] = {
   {"lanvalidator", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"lanacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgLanguageSql{kPgLanguageTable, "pg_catalog", "pg_language", 10021, 10020, 'r', 'n', false, false, kPgLanguageColumns};
+inline constexpr SystemSql kPgLanguageSql{kPgLanguageTable, "pg_catalog", "pg_language", 10021, 10020, 'r', 'n', false, 0x0, false, kPgLanguageColumns};
 inline constexpr SystemSqlColumn kPgLargeobjectColumns[] = {
   {"loid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"pageno", kInt4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"data", kBytea, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgLargeobjectSql{kPgLargeobjectTable, "pg_catalog", "pg_largeobject", 10025, 10024, 'r', 'n', true, false, kPgLargeobjectColumns};
+inline constexpr SystemSql kPgLargeobjectSql{kPgLargeobjectTable, "pg_catalog", "pg_largeobject", 10025, 10024, 'r', 'n', true, 0x0, false, kPgLargeobjectColumns};
 inline constexpr SystemSqlColumn kPgLargeobjectMetadataColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"lomowner", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"lomacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgLargeobjectMetadataSql{kPgLargeobjectMetadataTable, "pg_catalog", "pg_largeobject_metadata", 10023, 10022, 'r', 'n', false, false, kPgLargeobjectMetadataColumns};
+inline constexpr SystemSql kPgLargeobjectMetadataSql{kPgLargeobjectMetadataTable, "pg_catalog", "pg_largeobject_metadata", 10023, 10022, 'r', 'n', false, 0x0, false, kPgLargeobjectMetadataColumns};
 inline constexpr SystemSqlColumn kPgNamespaceColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"nspname", kName, 0, false, true, 950, 0, SystemKey::Unique},
   {"nspowner", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"nspacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgNamespaceSql{kPgNamespaceTable, "pg_catalog", "pg_namespace", 10047, 10046, 'r', 'n', false, false, kPgNamespaceColumns};
+inline constexpr SystemSql kPgNamespaceSql{kPgNamespaceTable, "pg_catalog", "pg_namespace", 10047, 10046, 'r', 'n', false, 0x0, false, kPgNamespaceColumns};
 inline constexpr SystemSqlColumn kPgOpclassColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"opcmethod", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -484,7 +484,7 @@ inline constexpr SystemSqlColumn kPgOpclassColumns[] = {
   {"opcdefault", kBool, 0, false, true, 0, 0, SystemKey::None},
   {"opckeytype", kOid, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgOpclassSql{kPgOpclassTable, "pg_catalog", "pg_opclass", 10013, 10012, 'r', 'n', false, false, kPgOpclassColumns};
+inline constexpr SystemSql kPgOpclassSql{kPgOpclassTable, "pg_catalog", "pg_opclass", 10013, 10012, 'r', 'n', false, 0x0, false, kPgOpclassColumns};
 inline constexpr SystemSqlColumn kPgOperatorColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"oprname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -502,7 +502,7 @@ inline constexpr SystemSqlColumn kPgOperatorColumns[] = {
   {"oprrest", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"oprjoin", kRegproc, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgOperatorSql{kPgOperatorTable, "pg_catalog", "pg_operator", 10009, 10008, 'r', 'n', false, false, kPgOperatorColumns};
+inline constexpr SystemSql kPgOperatorSql{kPgOperatorTable, "pg_catalog", "pg_operator", 10009, 10008, 'r', 'n', false, 0x0, false, kPgOperatorColumns};
 inline constexpr SystemSqlColumn kPgOpfamilyColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"opfmethod", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -510,13 +510,13 @@ inline constexpr SystemSqlColumn kPgOpfamilyColumns[] = {
   {"opfnamespace", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"opfowner", kOid, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgOpfamilySql{kPgOpfamilyTable, "pg_catalog", "pg_opfamily", 10011, 10010, 'r', 'n', false, false, kPgOpfamilyColumns};
+inline constexpr SystemSql kPgOpfamilySql{kPgOpfamilyTable, "pg_catalog", "pg_opfamily", 10011, 10010, 'r', 'n', false, 0x0, false, kPgOpfamilyColumns};
 inline constexpr SystemSqlColumn kPgParameterAclColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"parname", kText, 0, false, true, 950, 0, SystemKey::Unique},
   {"paracl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgParameterAclSql{kPgParameterAclTable, "pg_catalog", "pg_parameter_acl", 10097, 10096, 'r', 'n', false, true, kPgParameterAclColumns};
+inline constexpr SystemSql kPgParameterAclSql{kPgParameterAclTable, "pg_catalog", "pg_parameter_acl", 10097, 10096, 'r', 'n', false, 0x0, true, kPgParameterAclColumns};
 inline constexpr SystemSqlColumn kPgPartitionedTableColumns[] = {
   {"partrelid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"partstrat", kChar, 0, false, true, 0, 0, SystemKey::None},
@@ -527,7 +527,7 @@ inline constexpr SystemSqlColumn kPgPartitionedTableColumns[] = {
   {"partcollation", kOidvector, kOid, false, true, 0, 1, SystemKey::None},
   {"partexprs", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgPartitionedTableSql{kPgPartitionedTableTable, "pg_catalog", "pg_partitioned_table", 10099, 10098, 'r', 'n', false, false, kPgPartitionedTableColumns};
+inline constexpr SystemSql kPgPartitionedTableSql{kPgPartitionedTableTable, "pg_catalog", "pg_partitioned_table", 10099, 10098, 'r', 'n', false, 0x0, false, kPgPartitionedTableColumns};
 inline constexpr SystemSqlColumn kPgPolicyColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"polname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -538,7 +538,7 @@ inline constexpr SystemSqlColumn kPgPolicyColumns[] = {
   {"polqual", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
   {"polwithcheck", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgPolicySql{kPgPolicyTable, "pg_catalog", "pg_policy", 10084, 10083, 'r', 'n', false, false, kPgPolicyColumns};
+inline constexpr SystemSql kPgPolicySql{kPgPolicyTable, "pg_catalog", "pg_policy", 10084, 10083, 'r', 'n', false, 0x0, false, kPgPolicyColumns};
 inline constexpr SystemSqlColumn kPgProcColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"proname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -571,7 +571,7 @@ inline constexpr SystemSqlColumn kPgProcColumns[] = {
   {"proconfig", kTextArray, kText, false, false, 950, 1, SystemKey::None},
   {"proacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgProcSql{kPgProcTable, "pg_catalog", "pg_proc", 81, 272, 'r', 'n', false, false, kPgProcColumns};
+inline constexpr SystemSql kPgProcSql{kPgProcTable, "pg_catalog", "pg_proc", 81, 272, 'r', 'n', false, 0x0, false, kPgProcColumns};
 inline constexpr SystemSqlColumn kPgPublicationColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"pubname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -584,13 +584,13 @@ inline constexpr SystemSqlColumn kPgPublicationColumns[] = {
   {"pubviaroot", kBool, 0, false, true, 0, 0, SystemKey::None},
   {"pubgencols", kChar, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgPublicationSql{kPgPublicationTable, "pg_catalog", "pg_publication", 10107, 10106, 'r', 'n', false, false, kPgPublicationColumns};
+inline constexpr SystemSql kPgPublicationSql{kPgPublicationTable, "pg_catalog", "pg_publication", 10107, 10106, 'r', 'n', false, 0x0, false, kPgPublicationColumns};
 inline constexpr SystemSqlColumn kPgPublicationNamespaceColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"pnpubid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"pnnspid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
 };
-inline constexpr SystemSql kPgPublicationNamespaceSql{kPgPublicationNamespaceTable, "pg_catalog", "pg_publication_namespace", 10109, 10108, 'r', 'n', false, false, kPgPublicationNamespaceColumns};
+inline constexpr SystemSql kPgPublicationNamespaceSql{kPgPublicationNamespaceTable, "pg_catalog", "pg_publication_namespace", 10109, 10108, 'r', 'n', false, 0x0, false, kPgPublicationNamespaceColumns};
 inline constexpr SystemSqlColumn kPgPublicationRelColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"prpubid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -598,7 +598,7 @@ inline constexpr SystemSqlColumn kPgPublicationRelColumns[] = {
   {"prqual", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
   {"prattrs", kInt2Vector, kInt2, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgPublicationRelSql{kPgPublicationRelTable, "pg_catalog", "pg_publication_rel", 10111, 10110, 'r', 'n', false, false, kPgPublicationRelColumns};
+inline constexpr SystemSql kPgPublicationRelSql{kPgPublicationRelTable, "pg_catalog", "pg_publication_rel", 10111, 10110, 'r', 'n', false, 0x0, false, kPgPublicationRelColumns};
 inline constexpr SystemSqlColumn kPgRangeColumns[] = {
   {"rngtypid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"rngsubtype", kOid, 0, false, true, 0, 0, SystemKey::None},
@@ -608,12 +608,12 @@ inline constexpr SystemSqlColumn kPgRangeColumns[] = {
   {"rngcanonical", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"rngsubdiff", kRegproc, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgRangeSql{kPgRangeTable, "pg_catalog", "pg_range", 10101, 10100, 'r', 'n', false, false, kPgRangeColumns};
+inline constexpr SystemSql kPgRangeSql{kPgRangeTable, "pg_catalog", "pg_range", 10101, 10100, 'r', 'n', false, 0x0, false, kPgRangeColumns};
 inline constexpr SystemSqlColumn kPgReplicationOriginColumns[] = {
   {"roident", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"roname", kText, 0, false, true, 950, 0, SystemKey::Unique},
 };
-inline constexpr SystemSql kPgReplicationOriginSql{kPgReplicationOriginTable, "pg_catalog", "pg_replication_origin", 10086, 10085, 'r', 'n', false, true, kPgReplicationOriginColumns};
+inline constexpr SystemSql kPgReplicationOriginSql{kPgReplicationOriginTable, "pg_catalog", "pg_replication_origin", 10086, 10085, 'r', 'n', false, 0x0, true, kPgReplicationOriginColumns};
 inline constexpr SystemSqlColumn kPgRewriteColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"rulename", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -624,7 +624,7 @@ inline constexpr SystemSqlColumn kPgRewriteColumns[] = {
   {"ev_qual", kPgNodeTree, 0, false, true, 950, 0, SystemKey::None},
   {"ev_action", kPgNodeTree, 0, false, true, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgRewriteSql{kPgRewriteTable, "pg_catalog", "pg_rewrite", 10035, 10034, 'r', 'n', false, false, kPgRewriteColumns};
+inline constexpr SystemSql kPgRewriteSql{kPgRewriteTable, "pg_catalog", "pg_rewrite", 10035, 10034, 'r', 'n', false, 0x0, false, kPgRewriteColumns};
 inline constexpr SystemSqlColumn kPgSeclabelColumns[] = {
   {"objoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"classoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -632,7 +632,7 @@ inline constexpr SystemSqlColumn kPgSeclabelColumns[] = {
   {"provider", kText, 0, false, true, 950, 0, SystemKey::Indexed},
   {"label", kText, 0, false, true, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgSeclabelSql{kPgSeclabelTable, "pg_catalog", "pg_seclabel", 10092, 10091, 'r', 'n', false, false, kPgSeclabelColumns};
+inline constexpr SystemSql kPgSeclabelSql{kPgSeclabelTable, "pg_catalog", "pg_seclabel", 10092, 10091, 'r', 'n', false, 0x0, false, kPgSeclabelColumns};
 inline constexpr SystemSqlColumn kPgSequenceColumns[] = {
   {"seqrelid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"seqtypid", kOid, 0, false, true, 0, 0, SystemKey::None},
@@ -643,7 +643,7 @@ inline constexpr SystemSqlColumn kPgSequenceColumns[] = {
   {"seqcache", kInt8, 0, false, true, 0, 0, SystemKey::None},
   {"seqcycle", kBool, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgSequenceSql{kPgSequenceTable, "pg_catalog", "pg_sequence", 10105, 10104, 'r', 'n', false, false, kPgSequenceColumns};
+inline constexpr SystemSql kPgSequenceSql{kPgSequenceTable, "pg_catalog", "pg_sequence", 10105, 10104, 'r', 'n', false, 0x0, false, kPgSequenceColumns};
 inline constexpr SystemSqlColumn kPgShdependColumns[] = {
   {"dbid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"classid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -653,20 +653,20 @@ inline constexpr SystemSqlColumn kPgShdependColumns[] = {
   {"refobjid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"deptype", kChar, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgShdependSql{kPgShdependTable, "pg_catalog", "pg_shdepend", 10060, 10059, 'r', 'n', false, true, kPgShdependColumns};
+inline constexpr SystemSql kPgShdependSql{kPgShdependTable, "pg_catalog", "pg_shdepend", 10060, 10059, 'r', 'n', false, 0x0, true, kPgShdependColumns};
 inline constexpr SystemSqlColumn kPgShdescriptionColumns[] = {
   {"objoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"classoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"description", kText, 0, false, true, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgShdescriptionSql{kPgShdescriptionTable, "pg_catalog", "pg_shdescription", 10062, 10061, 'r', 'n', false, true, kPgShdescriptionColumns};
+inline constexpr SystemSql kPgShdescriptionSql{kPgShdescriptionTable, "pg_catalog", "pg_shdescription", 10062, 10061, 'r', 'n', false, 0x0, true, kPgShdescriptionColumns};
 inline constexpr SystemSqlColumn kPgShseclabelColumns[] = {
   {"objoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"classoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"provider", kText, 0, false, true, 950, 0, SystemKey::Indexed},
   {"label", kText, 0, false, true, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgShseclabelSql{kPgShseclabelTable, "pg_catalog", "pg_shseclabel", 4066, 10093, 'r', 'n', false, true, kPgShseclabelColumns};
+inline constexpr SystemSql kPgShseclabelSql{kPgShseclabelTable, "pg_catalog", "pg_shseclabel", 4066, 10093, 'r', 'n', false, 0x0, true, kPgShseclabelColumns};
 inline constexpr SystemSqlColumn kPgStatisticColumns[] = {
   {"starelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"staattnum", kInt2, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -700,7 +700,7 @@ inline constexpr SystemSqlColumn kPgStatisticColumns[] = {
   {"stavalues4", kAnyarray, 0, false, false, 0, 0, SystemKey::None},
   {"stavalues5", kAnyarray, 0, false, false, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgStatisticSql{kPgStatisticTable, "pg_catalog", "pg_statistic", 10029, 10028, 'r', 'n', true, false, kPgStatisticColumns};
+inline constexpr SystemSql kPgStatisticSql{kPgStatisticTable, "pg_catalog", "pg_statistic", 10029, 10028, 'r', 'n', true, 0x0, false, kPgStatisticColumns};
 inline constexpr SystemSqlColumn kPgStatisticExtColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"stxrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -712,7 +712,7 @@ inline constexpr SystemSqlColumn kPgStatisticExtColumns[] = {
   {"stxkind", kCharArray, kChar, false, true, 0, 1, SystemKey::None},
   {"stxexprs", kPgNodeTree, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgStatisticExtSql{kPgStatisticExtTable, "pg_catalog", "pg_statistic_ext", 10031, 10030, 'r', 'n', false, false, kPgStatisticExtColumns};
+inline constexpr SystemSql kPgStatisticExtSql{kPgStatisticExtTable, "pg_catalog", "pg_statistic_ext", 10031, 10030, 'r', 'n', false, 0x0, false, kPgStatisticExtColumns};
 inline constexpr SystemSqlColumn kPgStatisticExtDataColumns[] = {
   {"stxoid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"stxdinherit", kBool, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -721,7 +721,7 @@ inline constexpr SystemSqlColumn kPgStatisticExtDataColumns[] = {
   {"stxdmcv", kPgMcvList, 0, false, false, 950, 0, SystemKey::None},
   {"stxdexpr", 10028, 10029, true, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgStatisticExtDataSql{kPgStatisticExtDataTable, "pg_catalog", "pg_statistic_ext_data", 10033, 10032, 'r', 'n', true, false, kPgStatisticExtDataColumns};
+inline constexpr SystemSql kPgStatisticExtDataSql{kPgStatisticExtDataTable, "pg_catalog", "pg_statistic_ext_data", 10033, 10032, 'r', 'n', true, 0x0, false, kPgStatisticExtDataColumns};
 inline constexpr SystemSqlColumn kPgSubscriptionColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"subdbid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -742,14 +742,14 @@ inline constexpr SystemSqlColumn kPgSubscriptionColumns[] = {
   {"subpublications", kTextArray, kText, false, true, 950, 1, SystemKey::None},
   {"suborigin", kText, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgSubscriptionSql{kPgSubscriptionTable, "pg_catalog", "pg_subscription", 6101, 10112, 'r', 'n', false, true, kPgSubscriptionColumns};
+inline constexpr SystemSql kPgSubscriptionSql{kPgSubscriptionTable, "pg_catalog", "pg_subscription", 6101, 10112, 'r', 'n', true, 0x3dfff, true, kPgSubscriptionColumns};
 inline constexpr SystemSqlColumn kPgSubscriptionRelColumns[] = {
   {"srsubid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"srrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"srsubstate", kChar, 0, false, true, 0, 0, SystemKey::None},
   {"srsublsn", kPgLsn, 0, false, false, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgSubscriptionRelSql{kPgSubscriptionRelTable, "pg_catalog", "pg_subscription_rel", 10114, 10113, 'r', 'n', false, false, kPgSubscriptionRelColumns};
+inline constexpr SystemSql kPgSubscriptionRelSql{kPgSubscriptionRelTable, "pg_catalog", "pg_subscription_rel", 10114, 10113, 'r', 'n', false, 0x0, false, kPgSubscriptionRelColumns};
 inline constexpr SystemSqlColumn kPgTablespaceColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"spcname", kName, 0, false, true, 950, 0, SystemKey::Unique},
@@ -757,7 +757,7 @@ inline constexpr SystemSqlColumn kPgTablespaceColumns[] = {
   {"spcacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
   {"spcoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgTablespaceSql{kPgTablespaceTable, "pg_catalog", "pg_tablespace", 10056, 10055, 'r', 'n', false, true, kPgTablespaceColumns};
+inline constexpr SystemSql kPgTablespaceSql{kPgTablespaceTable, "pg_catalog", "pg_tablespace", 10056, 10055, 'r', 'n', false, 0x0, true, kPgTablespaceColumns};
 inline constexpr SystemSqlColumn kPgTransformColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"trftype", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -765,7 +765,7 @@ inline constexpr SystemSqlColumn kPgTransformColumns[] = {
   {"trffromsql", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"trftosql", kRegproc, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTransformSql{kPgTransformTable, "pg_catalog", "pg_transform", 10103, 10102, 'r', 'n', false, false, kPgTransformColumns};
+inline constexpr SystemSql kPgTransformSql{kPgTransformTable, "pg_catalog", "pg_transform", 10103, 10102, 'r', 'n', false, 0x0, false, kPgTransformColumns};
 inline constexpr SystemSqlColumn kPgTriggerColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"tgrelid", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
@@ -787,7 +787,7 @@ inline constexpr SystemSqlColumn kPgTriggerColumns[] = {
   {"tgoldtable", kName, 0, false, false, 950, 0, SystemKey::None},
   {"tgnewtable", kName, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTriggerSql{kPgTriggerTable, "pg_catalog", "pg_trigger", 10037, 10036, 'r', 'n', false, false, kPgTriggerColumns};
+inline constexpr SystemSql kPgTriggerSql{kPgTriggerTable, "pg_catalog", "pg_trigger", 10037, 10036, 'r', 'n', false, 0x0, false, kPgTriggerColumns};
 inline constexpr SystemSqlColumn kPgTsConfigColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"cfgname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -795,14 +795,14 @@ inline constexpr SystemSqlColumn kPgTsConfigColumns[] = {
   {"cfgowner", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"cfgparser", kOid, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTsConfigSql{kPgTsConfigTable, "pg_catalog", "pg_ts_config", 10064, 10063, 'r', 'n', false, false, kPgTsConfigColumns};
+inline constexpr SystemSql kPgTsConfigSql{kPgTsConfigTable, "pg_catalog", "pg_ts_config", 10064, 10063, 'r', 'n', false, 0x0, false, kPgTsConfigColumns};
 inline constexpr SystemSqlColumn kPgTsConfigMapColumns[] = {
   {"mapcfg", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"maptokentype", kInt4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"mapseqno", kInt4, 0, false, true, 0, 0, SystemKey::Indexed},
   {"mapdict", kOid, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTsConfigMapSql{kPgTsConfigMapTable, "pg_catalog", "pg_ts_config_map", 10066, 10065, 'r', 'n', false, false, kPgTsConfigMapColumns};
+inline constexpr SystemSql kPgTsConfigMapSql{kPgTsConfigMapTable, "pg_catalog", "pg_ts_config_map", 10066, 10065, 'r', 'n', false, 0x0, false, kPgTsConfigMapColumns};
 inline constexpr SystemSqlColumn kPgTsDictColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"dictname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -811,7 +811,7 @@ inline constexpr SystemSqlColumn kPgTsDictColumns[] = {
   {"dicttemplate", kOid, 0, false, true, 0, 0, SystemKey::None},
   {"dictinitoption", kText, 0, false, false, 950, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTsDictSql{kPgTsDictTable, "pg_catalog", "pg_ts_dict", 10068, 10067, 'r', 'n', false, false, kPgTsDictColumns};
+inline constexpr SystemSql kPgTsDictSql{kPgTsDictTable, "pg_catalog", "pg_ts_dict", 10068, 10067, 'r', 'n', false, 0x0, false, kPgTsDictColumns};
 inline constexpr SystemSqlColumn kPgTsParserColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"prsname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -822,7 +822,7 @@ inline constexpr SystemSqlColumn kPgTsParserColumns[] = {
   {"prsheadline", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"prslextype", kRegproc, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTsParserSql{kPgTsParserTable, "pg_catalog", "pg_ts_parser", 10070, 10069, 'r', 'n', false, false, kPgTsParserColumns};
+inline constexpr SystemSql kPgTsParserSql{kPgTsParserTable, "pg_catalog", "pg_ts_parser", 10070, 10069, 'r', 'n', false, 0x0, false, kPgTsParserColumns};
 inline constexpr SystemSqlColumn kPgTsTemplateColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"tmplname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -830,7 +830,7 @@ inline constexpr SystemSqlColumn kPgTsTemplateColumns[] = {
   {"tmplinit", kRegproc, 0, false, true, 0, 0, SystemKey::None},
   {"tmpllexize", kRegproc, 0, false, true, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgTsTemplateSql{kPgTsTemplateTable, "pg_catalog", "pg_ts_template", 10072, 10071, 'r', 'n', false, false, kPgTsTemplateColumns};
+inline constexpr SystemSql kPgTsTemplateSql{kPgTsTemplateTable, "pg_catalog", "pg_ts_template", 10072, 10071, 'r', 'n', false, 0x0, false, kPgTsTemplateColumns};
 inline constexpr SystemSqlColumn kPgTypeColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"typname", kName, 0, false, true, 950, 0, SystemKey::Indexed},
@@ -865,14 +865,14 @@ inline constexpr SystemSqlColumn kPgTypeColumns[] = {
   {"typdefault", kText, 0, false, false, 950, 0, SystemKey::None},
   {"typacl", kAclitemArray, kAclitem, false, false, 0, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgTypeSql{kPgTypeTable, "pg_catalog", "pg_type", 71, 210, 'r', 'n', false, false, kPgTypeColumns};
+inline constexpr SystemSql kPgTypeSql{kPgTypeTable, "pg_catalog", "pg_type", 71, 210, 'r', 'n', false, 0x0, false, kPgTypeColumns};
 inline constexpr SystemSqlColumn kPgUserMappingColumns[] = {
   {"oid", kOid, 0, false, true, 0, 0, SystemKey::Unique},
   {"umuser", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"umserver", kOid, 0, false, true, 0, 0, SystemKey::Indexed},
   {"umoptions", kTextArray, kText, false, false, 950, 1, SystemKey::None},
 };
-inline constexpr SystemSql kPgUserMappingSql{kPgUserMappingTable, "pg_catalog", "pg_user_mapping", 10080, 10079, 'r', 'n', true, false, kPgUserMappingColumns};
+inline constexpr SystemSql kPgUserMappingSql{kPgUserMappingTable, "pg_catalog", "pg_user_mapping", 10080, 10079, 'r', 'n', true, 0x0, false, kPgUserMappingColumns};
 inline constexpr SystemSqlColumn kPgHbaFileRulesColumns[] = {
   {"rule_number", kInt4, 0, false, false, 0, 0, SystemKey::None},
   {"file_name", kText, 0, false, false, 100, 0, SystemKey::None},
@@ -886,7 +886,7 @@ inline constexpr SystemSqlColumn kPgHbaFileRulesColumns[] = {
   {"options", kTextArray, kText, false, false, 100, 0, SystemKey::None},
   {"error", kText, 0, false, false, 100, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgHbaFileRulesSql{kPgHbaFileRulesFunction, "pg_catalog", "pg_hba_file_rules", 0, 0, '\0', '\0', true, false, kPgHbaFileRulesColumns};
+inline constexpr SystemSql kPgHbaFileRulesSql{kPgHbaFileRulesFunction, "pg_catalog", "pg_hba_file_rules", 0, 0, '\0', '\0', true, 0x0, false, kPgHbaFileRulesColumns};
 inline constexpr SystemSqlColumn kPgShowAllSettingsColumns[] = {
   {"name", kText, 0, false, false, 100, 0, SystemKey::None},
   {"setting", kText, 0, false, false, 100, 0, SystemKey::None},
@@ -906,7 +906,7 @@ inline constexpr SystemSqlColumn kPgShowAllSettingsColumns[] = {
   {"sourceline", kInt4, 0, false, false, 0, 0, SystemKey::None},
   {"pending_restart", kBool, 0, false, false, 0, 0, SystemKey::None},
 };
-inline constexpr SystemSql kPgShowAllSettingsSql{kPgShowAllSettingsFunction, "pg_catalog", "pg_show_all_settings", 0, 0, '\0', '\0', false, false, kPgShowAllSettingsColumns};
+inline constexpr SystemSql kPgShowAllSettingsSql{kPgShowAllSettingsFunction, "pg_catalog", "pg_show_all_settings", 0, 0, '\0', '\0', false, 0x0, false, kPgShowAllSettingsColumns};
 inline constexpr const SystemSql* kGeneratedTables[] = {
   &kInfoColumnsSql,
   &kInfoSqlFeaturesSql,

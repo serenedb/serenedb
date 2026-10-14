@@ -521,6 +521,17 @@ ObjectName NameOf(duckdb::CatalogTransaction transaction,
   return {.schema = relation.view->schema, .name = relation.view->name};
 }
 
+const duckdb::ColumnList* TableColumns(const Relation& relation) {
+  if (relation.system) {
+    return &relation.system->Columns();
+  }
+  if (relation.key || !relation.entry ||
+      relation.entry->type != duckdb::CatalogType::TABLE_ENTRY) {
+    return nullptr;
+  }
+  return &relation.entry->Cast<duckdb::TableCatalogEntry>().GetColumns();
+}
+
 namespace {
 
 const duckdb::Permissions& SystemTablePermissions(const SystemTable& table) {

@@ -28,7 +28,9 @@ LEFT JOIN pg_type e ON e.oid = t.typelem
 
 COLUMNS_SQL = f"""
 SELECT a.attname, a.atttypid::int8, coalesce(e.oid, 0)::int8, e.typrelid <> 0,
-       a.attnotnull, a.attcollation::int8, a.attndims
+       a.attnotnull, a.attcollation::int8, a.attndims,
+       EXISTS (SELECT FROM aclexplode(a.attacl)
+               WHERE grantee = 0 AND privilege_type = 'SELECT')
 FROM pg_attribute a
 JOIN pg_type t ON t.oid = a.atttypid
 {ELEMENT_JOIN}
@@ -89,17 +91,19 @@ def table_lines(gen, oid, schema, name, relkind, shared, superuser, row_type,
     keys = {column: 'Unique' if unique else 'Indexed'
             for column, unique in gen.query(KEYS_SQL, (oid,))}
     const = relation_constant(schema, name)
+    public_columns = sum(1 << i for i, column in enumerate(columns)
+                         if column[-1])
     return ([f'inline constexpr SystemSqlColumn {const}Columns[] = {{'] +
             [column_line(column, type_oid, element, composite, notnull,
                          collation, ndims, keys.get(column, 'None'), types)
              for column, type_oid, element, composite, notnull, collation,
-             ndims in columns] +
+             ndims, _ in columns] +
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Table, '
              f'{cpp_str(schema)}, {cpp_str(name)}, {row_type}, '
              f'{row_array_type}, {cpp_char(relkind)}, '
              f'{cpp_char(replident)}, {cpp_bool(superuser)}, '
-             f'{cpp_bool(shared)}, {const}Columns}};'])
+             f'{public_columns:#x}, {cpp_bool(shared)}, {const}Columns}};'])
 
 
 def function_lines(gen, oid, schema, name, superuser, types):
@@ -112,7 +116,7 @@ def function_lines(gen, oid, schema, name, superuser, types):
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Function, '
              f"{cpp_str(schema)}, {cpp_str(name)}, 0, 0, '\\0', '\\0', "
-             f'{cpp_bool(superuser)}, false, {const}Columns}};'])
+             f'{cpp_bool(superuser)}, 0x0, false, {const}Columns}};'])
 
 
 REGISTRY = os.path.join(GENERATED_DIR, 'registry.gen.inc')

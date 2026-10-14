@@ -31,6 +31,8 @@
 #include <span>
 #include <string_view>
 
+#include "pg/catalog/oids.h"
+
 namespace duckdb {
 
 struct DefaultType;
@@ -54,6 +56,11 @@ struct StaticView {
   std::shared_ptr<ViewBinding> binding;
 };
 using StaticFunction = std::shared_ptr<const duckdb::CreateMacroInfo>;
+
+inline constexpr duckdb::AclItem kPublicSelect{
+  .grantee = kPublicGrantee,
+  .grantor = kRootUser,
+  .privs = duckdb::AclMode::Select};
 
 std::span<const duckdb::DefaultType> ExternalTypes();
 

@@ -131,7 +131,7 @@ Local tables are not created for you. Create every published table locally befor
 
 | Relation | Shows |
 |---|---|
-| `pg_subscription` | Every subscription of the current database and its settings. `subskiplsn` is the pending `SKIP` position. |
+| `pg_subscription` | Every subscription of the current database and its settings. `subskiplsn` is the pending `SKIP` position. As in PostgreSQL, every role can read every column except `subconninfo`, the connection string with its password, which only superusers can read; `SELECT *` therefore needs a superuser. |
 | `pg_subscription_rel` | Every table of a subscription with its state: `i` while waiting for its initial copy, `r` once it is replicated, and in `srsublsn` the publisher position of its copy. |
 | `pg_stat_subscription` | One row per subscription. While its apply worker is connected: `received_lsn` (the latest publisher position received), `latest_end_lsn` (the latest position durably applied), and the times of the last message sent by the publisher, received, and reported back; otherwise the worker columns are NULL. |
 | `pg_stat_subscription_stats` | Per subscription, `apply_error_count`, `sync_error_count` and the `confl_*` conflict counters since the server started or since `stats_reset`. `pg_stat_reset_subscription_stats(subid)` resets them for one subscription, or for all of them when `subid` is `NULL`; only superusers may call it. |

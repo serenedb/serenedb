@@ -54,14 +54,19 @@ duckdb::LogicalType SystemColumnType(int32_t oid) {
 }
 
 void SystemTable::Init() {
-  for (const auto& column : _sql.columns) {
+  for (uint32_t i = 0; i < _sql.columns.size(); ++i) {
+    const auto& column = _sql.columns[i];
     auto type = SystemColumnType(column.type);
     SDB_ASSERT(
       type.InternalType() == column.physical &&
       (column.physical != duckdb::PhysicalType::LIST ||
        duckdb::ListType::GetChildType(type).InternalType() == column.element));
-    _columns.AddColumn(duckdb::ColumnDefinition{duckdb::Identifier{column.name},
-                                                std::move(type)});
+    duckdb::ColumnDefinition definition{duckdb::Identifier{column.name},
+                                        std::move(type)};
+    if ((_sql.public_columns >> i) & 1) {
+      definition.SetAcl({kPublicSelect});
+    }
+    _columns.AddColumn(std::move(definition));
   }
 }
 

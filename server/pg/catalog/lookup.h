@@ -373,6 +373,7 @@ struct Relation {
 std::optional<Relation> FindRelation(const Session& session, uint64_t oid);
 ObjectName NameOf(duckdb::CatalogTransaction transaction,
                   const Relation& relation);
+const duckdb::ColumnList* TableColumns(const Relation& relation);
 
 struct RelationAccess : Relation {
   const duckdb::Permissions* permissions;

@@ -21,7 +21,6 @@
 #include "iresearch/formats/hnsw/hnsw_writer.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
 
 #include <algorithm>
 #include <array>
@@ -296,65 +295,99 @@ uint64_t ScanValidVectors(const ColumnReader& col, ReadContext& ctx,
 
 inline constexpr uint64_t kHnswMinRowsPerEncoder = 32768;
 
+class HnswCrew {
+ public:
+  HnswCrew(const AnnBuildEnv* env, uint32_t want) noexcept
+    : _env{env != nullptr && env->executor != nullptr && want > 1 ? env
+                                                                  : nullptr},
+      _want{_env != nullptr ? want : 1U} {
+    if (_env != nullptr) {
+      _held = _env->acquire(_want, 0);
+    }
+  }
+
+  HnswCrew(const HnswCrew&) = delete;
+  HnswCrew& operator=(const HnswCrew&) = delete;
+
+  ~HnswCrew() {
+    Join();
+    if (_env != nullptr) {
+      _env->release(_held);
+    }
+  }
+
+  bool CanGrow() const noexcept { return _env != nullptr; }
+  uint32_t Want() const noexcept { return _want; }
+
+  uint32_t Take() {
+    if (_env != nullptr && _held < _want) {
+      _held += _env->acquire(_want - _held, _held);
+    }
+    return _held;
+  }
+
+  template<typename F>
+  void Spawn(F& work) {
+    for (; _spawned < _held; ++_spawned) {
+      _runs.push_back(
+        yaclib::Run(*_env->executor, [&work, w = _spawned] { work(w); }));
+    }
+  }
+
+  template<typename F>
+  void Grow(F& work) {
+    Take();
+    Spawn(work);
+  }
+
+  std::vector<yaclib::FutureOn<>>& Runs() noexcept { return _runs; }
+
+  void Join() {
+    if (!_runs.empty()) {
+      yaclib::Wait(_runs.begin(), _runs.end());
+      _runs.clear();
+    }
+    _spawned = 1;
+  }
+
+ private:
+  const AnnBuildEnv* _env;
+  uint32_t _want;
+  uint32_t _held = 1;
+  uint32_t _spawned = 1;
+  std::vector<yaclib::FutureOn<>> _runs;
+};
+
 void FanOut(const AnnBuildEnv* env, size_t tasks,
             absl::FunctionRef<void(size_t)> task) {
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want =
-    can_fan_out
-      ? static_cast<uint32_t>(std::clamp<size_t>(tasks, 1, kHnswMaxWorkers))
-      : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
-    }
-  };
   std::atomic<size_t> next{0};
-  const auto work = [&] {
+  const auto work = [&](size_t) {
     for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
       task(t);
     }
   };
-  std::vector<yaclib::FutureOn<>> runs;
-  runs.reserve(workers - 1);
-  for (uint32_t i = 1; i < workers; ++i) {
-    runs.push_back(yaclib::Run(*env->executor, [&work] { work(); }));
+  HnswCrew crew{
+    env, static_cast<uint32_t>(std::clamp<size_t>(tasks, 1, kHnswMaxWorkers))};
+  crew.Spawn(work);
+  for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
+    task(t);
+    crew.Grow(work);
   }
-  work();
-  if (!runs.empty()) {
-    yaclib::Wait(runs.begin(), runs.end());
-  }
+  crew.Join();
 }
 
 bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
                   uint32_t d, bool normalize, QuantizerWriter& qw,
                   byte_type* codes, uint32_t record_size,
                   std::vector<uint8_t>& valid, const AnnBuildEnv* env) {
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want = can_fan_out
-                      ? static_cast<uint32_t>(std::clamp<uint64_t>(
-                          rows / kHnswMinRowsPerEncoder, 1, kHnswMaxWorkers))
-                      : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
-    }
-  };
-
+  HnswCrew crew{env, static_cast<uint32_t>(std::clamp<uint64_t>(
+                       rows * qw.EncodeWidth() / kHnswMinRowsPerEncoder, 1,
+                       kHnswMaxWorkers))};
   std::vector<std::unique_ptr<QuantizerWriter>> spare;
-  for (uint32_t i = 1; i < workers; ++i) {
-    auto clone = qw.CloneForEncode();
-    if (!clone) {
-      break;
-    }
-    spare.push_back(std::move(clone));
-  }
-  const size_t parts = spare.size() + 1;
+  bool clonable = true;
 
   std::vector<float> owned;
   std::vector<yaclib::FutureOn<>> runs;
-  runs.reserve(spare.size());
   ColumnReader::VectorScratch scratch{col.Type()};
   auto scan = col.InitScan(ctx);
   std::atomic<bool> ok{true};
@@ -381,6 +414,16 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
       vecs = owned.data();
     }
 
+    const uint32_t held = crew.Take();
+    while (clonable && spare.size() + 1 < held) {
+      auto clone = qw.CloneForEncode();
+      if (!clone) {
+        clonable = false;
+        break;
+      }
+      spare.push_back(std::move(clone));
+    }
+    const size_t parts = spare.size() + 1;
     const size_t n = take;
     const auto run_part = [&](size_t w) {
       const size_t lo = n * w / parts;
@@ -568,22 +611,19 @@ struct HnswInsertJob {
   HnswInsertJob(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
                 std::span<const uint32_t> nodes, size_t workers, size_t rows)
     : _graph{graph},
+      _factory{factory},
       _ef{ef},
+      _rows{rows},
       _nodes{nodes},
       _sync{workers * graph.M()},
-      _scratch{workers} {
-    _dists.reserve(workers);
-    for (size_t i = 0; i < workers; ++i) {
-      _dists.push_back(factory.Make());
-    }
-    for (auto& s : _scratch) {
-      s.search.visited.Reset(rows);
-    }
-  }
+      _slots(workers) {}
 
   void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
-    for (auto& d : _dists) {
-      d.SetWindow(base, first, count);
+    _window = {.base = base, .first = first, .count = count};
+    for (auto& slot : _slots) {
+      if (slot) {
+        slot->dist.SetWindow(base, first, count);
+      }
     }
   }
 
@@ -593,28 +633,62 @@ struct HnswInsertJob {
   }
 
   void RunWorker(size_t worker) noexcept {
-    auto& scratch = _scratch[worker];
-    auto& dist = _dists[worker];
-    for (auto begin = _cursor.fetch_add(kHnswInsertGranule);
-         begin < _nodes.size(); begin = _cursor.fetch_add(kHnswInsertGranule)) {
+    RunWorker(worker, [] {});
+  }
+
+  template<typename Between>
+  void RunWorker(size_t worker, Between&& between) noexcept {
+    auto begin = _cursor.fetch_add(kHnswInsertGranule);
+    if (begin >= _nodes.size()) {
+      return;
+    }
+    auto& slot = Slot(worker);
+    for (; begin < _nodes.size();
+         begin = _cursor.fetch_add(kHnswInsertGranule)) {
       const auto end = std::min(begin + kHnswInsertGranule, _nodes.size());
       for (auto i = begin; i < end; ++i) {
         const auto node = _nodes[i];
         SDB_ASSERT(_graph.LevelOf(node) <= _graph.LevelOf(_graph.EntryPoint()));
-        dist.SetQuery(node);
-        HnswInsert(_graph, node, dist, _ef, scratch, _sync);
+        slot.dist.SetQuery(node);
+        HnswInsert(_graph, node, slot.dist, _ef, slot.scratch, _sync);
       }
+      between();
     }
   }
 
  private:
+  struct Window {
+    const float* base = nullptr;
+    uint32_t first = 0;
+    uint32_t count = 0;
+  };
+
+  struct WorkerSlot {
+    explicit WorkerSlot(typename Factory::Dist d) : dist{std::move(d)} {}
+
+    typename Factory::Dist dist;
+    HnswBuildScratch scratch;
+  };
+
+  WorkerSlot& Slot(size_t worker) {
+    auto& slot = _slots[worker];
+    if (!slot) {
+      slot = std::make_unique<WorkerSlot>(_factory.Make());
+      slot->scratch.search.visited.Reset(_rows);
+      slot->dist.SetWindow(_window.base, _window.first, _window.count);
+    }
+    return *slot;
+  }
+
   HnswGraphWriter& _graph;
+  const Factory& _factory;
   uint32_t _ef;
+  size_t _rows;
   std::span<const uint32_t> _nodes;  // retargeted per window by Restart()
+  Window _window;
   HnswStripeSync _sync;
   std::atomic<size_t> _cursor{0};
-  std::vector<HnswBuildScratch> _scratch;
-  std::vector<typename Factory::Dist> _dists;
+  std::vector<std::unique_ptr<WorkerSlot>> _slots;
 };
 
 std::vector<uint32_t> SeedGraph(HnswGraphWriter& graph,
@@ -663,21 +737,12 @@ template<typename Factory>
 auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
                  std::span<const uint32_t> nodes, size_t rows, uint32_t warmup,
                  const AnnBuildEnv* env) -> yaclib::Future<> {
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want =
-    can_fan_out ? static_cast<uint32_t>(std::clamp<size_t>(
-                    nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))
-                : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
-    }
-  };
-  const uint32_t helpers = workers - 1;
+  HnswCrew crew{env,
+                static_cast<uint32_t>(std::clamp<size_t>(
+                  nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
 
   const size_t serial =
-    helpers == 0 ? nodes.size() : std::min<size_t>(nodes.size(), warmup);
+    crew.CanGrow() ? std::min<size_t>(nodes.size(), warmup) : nodes.size();
   {
     auto dist = factory.Make();
     HnswBuildScratch scratch;
@@ -691,16 +756,13 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
     co_return {};
   }
 
-  HnswInsertJob<Factory> job{graph,   factory, ef, nodes.subspan(serial),
-                             workers, rows};
-  std::vector<yaclib::FutureOn<>> runs;
-  runs.reserve(helpers);
-  for (uint32_t i = 0; i < helpers; ++i) {
-    runs.push_back(yaclib::Run(
-      *env->executor, [&job, w = size_t{i} + 1] { job.RunWorker(w); }));
-  }
-  job.RunWorker(0);
-  co_await yaclib::Await(runs.begin(), runs.end());
+  HnswInsertJob<Factory> job{graph,       factory, ef, nodes.subspan(serial),
+                             crew.Want(), rows};
+  const auto work = [&job](size_t w) { job.RunWorker(w); };
+  crew.Spawn(work);
+  job.RunWorker(0, [&] { crew.Grow(work); });
+  co_await yaclib::Await(crew.Runs().begin(), crew.Runs().end());
+  crew.Join();
   job.RunWorker(0);
   co_return {};
 }
@@ -881,39 +943,25 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     return;
   }
 
-  const bool can_fan_out = env != nullptr && env->executor != nullptr;
-  const auto want =
-    can_fan_out ? static_cast<uint32_t>(std::clamp<size_t>(
-                    nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))
-                : 1U;
-  const uint32_t workers = want > 1 ? env->acquire(want) : 1;
-  absl::Cleanup release_workers = [&] {
-    if (want > 1) {
-      env->release(workers);
-    }
-  };
+  HnswCrew crew{env,
+                static_cast<uint32_t>(std::clamp<size_t>(
+                  nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
+  HnswInsertJob<Factory> job{graph, factory,     ef_construction,
+                             {},    crew.Want(), rows};
+  const auto work = [&job](size_t w) { job.RunWorker(w); };
 
-  HnswInsertJob<Factory> job{graph, factory, ef_construction,
-                             {},    workers, rows};
-
-  std::vector<yaclib::FutureOn<>> runs;
-  auto run_span = [&](std::span<const uint32_t> span, uint32_t par) {
+  auto run_span = [&](std::span<const uint32_t> span, bool parallel) {
     if (span.empty()) {
       return;
     }
     job.Restart(span);
-    if (par <= 1) {
+    if (!parallel || !crew.CanGrow()) {
       job.RunWorker(0);
       return;
     }
-    runs.clear();
-    runs.reserve(par - 1);
-    for (uint32_t i = 1; i < par; ++i) {
-      runs.push_back(yaclib::Run(*env->executor,
-                                 [&job, w = size_t{i}] { job.RunWorker(w); }));
-    }
-    job.RunWorker(0);
-    yaclib::Wait(runs.begin(), runs.end());
+    crew.Grow(work);
+    job.RunWorker(0, [&] { crew.Grow(work); });
+    crew.Join();
   };
 
   std::vector<float> window;
@@ -935,11 +983,11 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
     std::span<const uint32_t> span{nodes.data() + begin, next - begin};
     if (warmed < warmup) {
       const auto take = std::min<size_t>(span.size(), warmup - warmed);
-      run_span(span.first(take), 1);
+      run_span(span.first(take), false);
       warmed += take;
       span = span.subspan(take);
     }
-    run_span(span, workers);
+    run_span(span, true);
   };
 
   ScanVectors(*src.col, *src.ctx, rows, d, src.normalize, batch_buf,

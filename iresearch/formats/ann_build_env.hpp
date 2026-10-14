@@ -29,7 +29,7 @@ namespace irs {
 
 struct AnnBuildEnv {
   yaclib::IExecutor* executor = nullptr;
-  absl::FunctionRef<uint32_t(uint32_t)> acquire;
+  absl::FunctionRef<uint32_t(uint32_t, uint32_t)> acquire;
   absl::FunctionRef<void(uint32_t)> release;
 };
 

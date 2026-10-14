@@ -264,8 +264,8 @@ void CompactInvertedStorage(search::InvertedIndexStorage& inverted,
       engine.ReleaseCompaction();
     }
   };
-  const auto acquire = [&engine](uint32_t want) {
-    return engine.AcquireAnnWorkers(want,
+  const auto acquire = [&engine](uint32_t want, uint32_t held) {
+    return engine.AcquireAnnWorkers(want, held,
                                     search::SearchEngine::MaxAnnBuildWorkers());
   };
   const irs::AnnBuildEnv env{.executor = search::AnnBuildEnv().executor,

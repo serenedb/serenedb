@@ -502,8 +502,9 @@ absl::Status SearchTable::VacuumCompact(uint32_t target_segments) {
       engine.ReleaseCompaction();
     }
   };
-  const auto acquire = [&engine](uint32_t want) {
-    return engine.AcquireAnnWorkers(want, SearchEngine::MaxAnnBuildWorkers());
+  const auto acquire = [&engine](uint32_t want, uint32_t held) {
+    return engine.AcquireAnnWorkers(want, held,
+                                    SearchEngine::MaxAnnBuildWorkers());
   };
   const irs::AnnBuildEnv round_env{.executor = AnnBuildEnv().executor,
                                    .acquire = acquire,

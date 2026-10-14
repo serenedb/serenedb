@@ -24,6 +24,7 @@
 #include <cmath>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -36,6 +37,7 @@
 #include <random>
 #include <tuple>
 #include <vector>
+#include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "search/filter_test_case_base.hpp"
@@ -933,3 +935,86 @@ TEST(HnswWalkTest, PruneAsksTheAcceptorPerHop) {
 TEST(HnswWalkTest, BridgeAsksTheAcceptorPerHop) {
   CheckWalkAsksPerHop<irs::HnswWalk::Bridge>();
 }
+
+class HnswBuildWorkersTest
+  : public ::testing::TestWithParam<irs::AnnInfo::Quantizer> {};
+
+TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
+  constexpr size_t kRows = 6000;
+  constexpr size_t kK = 10;
+  const auto quant = GetParam();
+  const auto vecs = MakeVectors(kRows, 11);
+
+  auto pool = yaclib::MakeFairThreadPool(4);
+  std::atomic<uint32_t> held{0};
+  std::atomic<uint32_t> top_ups{0};
+  const auto acquire = [&](uint32_t want, uint32_t have) -> uint32_t {
+    const uint32_t grant = have == 0 ? 1U : std::min(want, 3U);
+    if (have != 0 && grant != 0) {
+      top_ups.fetch_add(1);
+    }
+    held.fetch_add(grant);
+    return grant;
+  };
+  const auto release = [&](uint32_t n) { held.fetch_sub(n); };
+  const irs::AnnBuildEnv env{
+    .executor = pool.Get(), .acquire = acquire, .release = release};
+
+  auto opts = irs::tests::DefaultWriterOptions();
+  opts.column_options = [quant](irs::field_id id) -> irs::ColumnOptions {
+    irs::ColumnOptions col;
+    if (id == kVec) {
+      col.ann_info = irs::AnnInfo{
+        .kind = irs::AnnKind::Hnsw,
+        .centroids_id = kVec,
+        .postings_id = kVec,
+        .d = kDim,
+        .metric = irs::VectorMetric::L2Sqr,
+        .quant = quant,
+        .m = 8,
+        .ef_construction = 64,
+      };
+    }
+    return col;
+  };
+  opts.ann_env = &env;
+
+  irs::MemoryDirectory dir;
+  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  ASSERT_NE(nullptr, writer);
+  {
+    auto trx = writer->GetBatch();
+    for (const auto& vec : vecs) {
+      auto doc = trx.Insert();
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vec);
+    }
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+  const auto reader = writer->GetSnapshot();
+  ASSERT_EQ(kRows, reader->docs_count());
+  EXPECT_GT(top_ups.load(), 0U);
+  EXPECT_EQ(held.load(), 0U);
+
+  size_t total_hits = 0;
+  size_t matched = 0;
+  for (const auto& q : MakeVectors(20, 99)) {
+    auto filter = MakeKnnFilter(q, irs::VectorMetric::L2Sqr, quant.kind, 128);
+    const auto got = RunKnn(reader, filter);
+    for (const auto doc :
+         BruteForceTopK(vecs, q, irs::VectorMetric::L2Sqr, kK)) {
+      ++total_hits;
+      matched += std::ranges::find(got, doc) != got.end() ? 1 : 0;
+    }
+  }
+  EXPECT_GE(static_cast<double>(matched) / static_cast<double>(total_hits),
+            0.95);
+  pool->SoftStop();
+  pool->Wait();
+}
+
+INSTANTIATE_TEST_SUITE_P(
+  Quants, HnswBuildWorkersTest,
+  ::testing::Values(
+    irs::AnnInfo::Quantizer{.kind = irs::VectorQuantization::None},
+    irs::AnnInfo::Quantizer{.kind = irs::VectorQuantization::PQ, .pq_m = 4}));

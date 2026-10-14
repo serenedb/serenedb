@@ -686,6 +686,10 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     return out;
   }
 
+  uint32_t EncodeWidth() const noexcept final {
+    return _pq.dsub == 1 ? 1U : static_cast<uint32_t>(kPq8Ksub);
+  }
+
   void Finish(IndexOutput& /*out*/) final {}
 
   void Serialize(DataOutput& out) const final {

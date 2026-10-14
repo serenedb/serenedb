@@ -84,6 +84,8 @@ class QuantizerWriter {
     return nullptr;
   }
 
+  virtual uint32_t EncodeWidth() const noexcept { return 1; }
+
   virtual void Finish(IndexOutput& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }

@@ -23,7 +23,9 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
+#include <atomic>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "iresearch/types.hpp"
@@ -44,6 +46,35 @@ class HnswBases {
   mutable absl::Mutex _mutex;
   absl::flat_hash_map<field_id, Basis> _published;
   std::vector<std::weak_ptr<const std::vector<float>>> _loaded;
+};
+
+struct PanoramaQuery {
+  std::vector<float> rotated;
+  std::vector<float> tails;
+};
+
+class AnnQueryCache {
+ public:
+  using Basis = HnswBases::Basis;
+
+  AnnQueryCache() = default;
+  AnnQueryCache(const AnnQueryCache&) noexcept {}
+  AnnQueryCache& operator=(const AnnQueryCache&) noexcept { return *this; }
+
+  std::shared_ptr<const PanoramaQuery> Get(const Basis& basis,
+                                           std::span<const float> query);
+
+ private:
+  struct Entry {
+    Basis basis;
+    std::shared_ptr<PanoramaQuery> query;
+    std::atomic_uint32_t next{0};
+    std::atomic_uint32_t done{0};
+    std::atomic_bool ready{false};
+  };
+
+  absl::Mutex _mutex;
+  std::vector<std::unique_ptr<Entry>> _entries;
 };
 
 }  // namespace irs

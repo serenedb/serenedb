@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/detail/vector_filter_util.hpp"
 #include "iresearch/search/filters/filter.hpp"
 

@@ -37,6 +37,8 @@
 
 namespace irs {
 
+struct PanoramaQuery;
+
 class HnswQuery : public QueryBuilderImpl<HnswQuery> {
  public:
   HnswQuery(const SubReader& segment, std::shared_ptr<const HnswData> data,

@@ -27,7 +27,6 @@
 #include <utility>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
-#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/queries/hnsw_query.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -124,20 +123,12 @@ std::shared_ptr<const HnswData> HnswIndex::Load(
 namespace {
 
 std::shared_ptr<const PanoramaQuery> MakePanoramaQuery(
-  const HnswData& data, std::span<const float> query, uint32_t d,
-  AnnQueryCache* cache) {
+  const HnswData& data, std::span<const float> query, AnnQueryCache* cache) {
   if (!data.rotation) {
     return nullptr;
   }
-  const auto make = [&] {
-    auto out = std::make_shared<PanoramaQuery>();
-    out->rotated.resize(d);
-    RotateVector(data.rotation->data(), query.data(), out->rotated.data(), d);
-    out->tails.resize(HnswPanoramaLevels(d) + 1);
-    HnswPanoramaTails(out->rotated.data(), d, out->tails.data());
-    return std::shared_ptr<const PanoramaQuery>{std::move(out)};
-  };
-  return cache ? cache->Get(data.rotation, make) : make();
+  return cache ? cache->Get(data.rotation, query)
+               : AnnQueryCache{}.Get(data.rotation, query);
 }
 
 }  // namespace
@@ -156,7 +147,7 @@ QueryBuilder::ptr HnswIndex::PrepareKnn(const SubReader& segment,
     return QueryBuilder::Empty();
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
-  auto panorama = MakePanoramaQuery(*data, query, _header.d, cache);
+  auto panorama = MakePanoramaQuery(*data, query, cache);
   auto codebook = data->stats ? data->stats->MakeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   SDB_ASSERT(opts.ef_search != 0);
@@ -190,7 +181,7 @@ QueryBuilder::ptr HnswIndex::PrepareRange(const SubReader& segment,
     return QueryBuilder::Empty();
   }
   auto query = NormalizedQuery(opts.query, opts.metric, _header.d);
-  auto panorama = MakePanoramaQuery(*data, query, _header.d, cache);
+  auto panorama = MakePanoramaQuery(*data, query, cache);
   auto codebook = data->stats ? data->stats->MakeRangeCodebook(query) : nullptr;
   SDB_ASSERT(!data->stats || codebook);
   const auto* exact = data->stats ? segment.Column(opts.centroids_id) : nullptr;

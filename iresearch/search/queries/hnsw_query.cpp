@@ -27,6 +27,7 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"

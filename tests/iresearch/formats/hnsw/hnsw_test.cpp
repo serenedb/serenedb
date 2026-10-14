@@ -719,6 +719,65 @@ void AppendBatch(irs::IndexWriter& writer,
 
 }  // namespace
 
+TEST(AnnQueryCacheTest, ThreadsShareOneRotationPerBasis) {
+  constexpr uint32_t kD = 4 * irs::kHnswPanoramaLevel + 17;
+  pcg32 rng{kD};
+  const auto random = [&](size_t n) {
+    std::vector<float> out(n);
+    for (auto& v : out) {
+      v = absl::Uniform<float>(rng, -1.f, 1.f);
+    }
+    return out;
+  };
+  const auto first =
+    std::make_shared<const std::vector<float>>(random(size_t{kD} * kD));
+  const auto second =
+    std::make_shared<const std::vector<float>>(random(size_t{kD} * kD));
+  const auto query = random(kD);
+
+  irs::AnnQueryCache cache;
+  constexpr size_t kThreads = 8;
+  std::vector<std::shared_ptr<const irs::PanoramaQuery>> got(2 * kThreads);
+  std::vector<std::thread> threads;
+  for (size_t t = 0; t < 2 * kThreads; ++t) {
+    threads.emplace_back(
+      [&, t] { got[t] = cache.Get(t % 2 == 0 ? first : second, query); });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  for (const auto* basis : {first.get(), second.get()}) {
+    const size_t parity = basis == first.get() ? 0 : 1;
+    std::vector<float> rotated(kD);
+    for (uint32_t row = 0; row < kD; ++row) {
+      double sum = 0;
+      for (uint32_t col = 0; col < kD; ++col) {
+        sum += double{(*basis)[size_t{row} * kD + col]} * query[col];
+      }
+      rotated[row] = static_cast<float>(sum);
+    }
+    std::vector<float> tails(irs::HnswPanoramaLevels(kD) + 1);
+    irs::HnswPanoramaTails(rotated.data(), kD, tails.data());
+    const auto& shared = got[parity];
+    for (size_t t = parity; t < got.size(); t += 2) {
+      ASSERT_EQ(shared, got[t]);
+    }
+    for (uint32_t i = 0; i < kD; ++i) {
+      ASSERT_NEAR(rotated[i], shared->rotated[i],
+                  1e-4f * (1.f + std::abs(rotated[i])))
+        << "row " << i;
+    }
+    for (size_t i = 0; i < tails.size(); ++i) {
+      ASSERT_NEAR(tails[i], shared->tails[i], 1e-3f * (1.f + tails[i]))
+        << "level " << i;
+    }
+  }
+  EXPECT_NE(got[0], got[1]);
+
+  auto copy = cache;
+  EXPECT_NE(got[0], copy.Get(first, query));
+}
+
 TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {
   constexpr uint32_t kD = irs::kHnswPanoramaMinDim;
   constexpr size_t kBatch = 8 * kD;

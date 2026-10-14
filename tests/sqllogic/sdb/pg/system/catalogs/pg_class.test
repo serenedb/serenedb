@@ -43,6 +43,14 @@ DROP TABLE IF EXISTS aegis_cls_moved;
 
 
 statement ok
+DROP SEQUENCE IF EXISTS rubick_cls_pk;
+
+
+statement ok
+DROP TABLE IF EXISTS rubick_cls_self;
+
+
+statement ok
 DROP SEQUENCE IF EXISTS pudge_cls_seq;
 
 
@@ -535,6 +543,46 @@ SELECT relname FROM pg_class
 WHERE relname OPERATOR(pg_catalog.~) '^(pudge_cls_upper)$' COLLATE pg_catalog.default;
 ----
 relname
+
+
+statement ok
+CREATE SEQUENCE rubick_cls_pk;
+
+
+statement ok
+CREATE TABLE rubick_cls_self (id int, CONSTRAINT rubick_cls_self PRIMARY KEY (id));
+
+
+query
+SELECT relkind FROM pg_class WHERE relname = 'rubick_cls_pk' ORDER BY 1;
+----
+relkind
+S
+i
+
+
+query
+SELECT relkind FROM pg_class WHERE (CASE WHEN random() >= 0 THEN relname END) = 'rubick_cls_pk' ORDER BY 1;
+----
+relkind
+S
+i
+
+
+query
+SELECT relkind FROM pg_class WHERE relname = 'rubick_cls_self' ORDER BY 1;
+----
+relkind
+i
+r
+
+
+statement ok
+DROP SEQUENCE rubick_cls_pk;
+
+
+statement ok
+DROP TABLE rubick_cls_self;
 
 
 statement ok

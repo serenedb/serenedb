@@ -469,7 +469,7 @@ void SystemScan::VisitNamed(
   const auto& wanted = entries.wanted;
   const duckdb::Identifier identifier{name};
   for (auto* schema : entries.schemas) {
-    bool found = false;
+    const duckdb::CatalogEntry* table = nullptr;
     for (const auto type : entries.keys.source->types | kMemberTypes) {
       if (!wanted.test(std::to_underlying(type))) {
         continue;
@@ -477,13 +477,15 @@ void SystemScan::VisitNamed(
       if (auto entry = FindMember(Transaction(), *schema, type, identifier);
           entry && entry->type == type &&
           (!entry->internal || schema->internal)) {
-        found = true;
+        if (type == TABLE_ENTRY) {
+          table = entry.get();
+        }
         visit(*entry);
       }
     }
-    if (!found && wanted.test(std::to_underlying(INDEX_ENTRY))) {
+    if (wanted.test(std::to_underlying(INDEX_ENTRY))) {
       if (const auto key = FindKeyIndex(_context, *schema, name);
-          key.key_index) {
+          key.key_index && key.table != table) {
         visit(*key.table);
       }
     }

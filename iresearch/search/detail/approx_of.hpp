@@ -30,7 +30,7 @@
 
 namespace irs::detail {
 
-template<template<typename> class Impl, typename Result, typename... Prefix>
+template<template<typename> typename Impl, typename Result, typename... Prefix>
 Result MakeApprox(const ApproxQuery& query, uint64_t interrogations,
                   Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <memory>
 #include <span>
@@ -135,8 +137,8 @@ class TokenPhraseSlots {
   doc_id_t Seek(doc_id_t target)
     requires requires(Approx& approx, doc_id_t doc) { approx.Seek(doc); }
   {
-    const auto it =
-      std::ranges::lower_bound(std::span{_hits}.subspan(_pos), target);
+    const auto pending = std::span{_hits}.subspan(_pos);
+    const auto it = absl::c_lower_bound(pending, target);
     _pos = static_cast<size_t>(it - std::span{_hits}.begin());
     if (_pos != _hits.size()) {
       return *it;
@@ -216,8 +218,8 @@ class TokenPhraseSlots {
   bool _end = false;
 };
 
-template<template<typename> class Impl, typename Result, bool Scored = false,
-         template<typename> class Wrap = DeducedNode, typename... Prefix>
+template<template<typename> typename Impl, typename Result, bool Scored = false,
+         template<typename> typename Wrap = DeducedNode, typename... Prefix>
 Result MakeTokenPhrase(const TokenPhraseQuery& query, uint64_t interrogations,
                        Prefix&&... prefix) {
   constexpr bool kProbed = std::is_same_v<Result, ProbeNode::ptr>;

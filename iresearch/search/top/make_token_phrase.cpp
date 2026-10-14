@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <utility>
 
@@ -132,10 +134,10 @@ class PrunedTokenPhrase : public Root {
 bool FreqBoundedByAnchor(const TokenPhraseQuery& query) {
   const auto& phrase = query.Compiled();
   return phrase.slop.max == 0 &&
-         std::ranges::all_of(phrase.slots,
-                             [](const CompiledPhrase::Slot& slot) {
-                               return slot.offs_min == slot.offs_max;
-                             }) &&
+         absl::c_all_of(phrase.slots,
+                        [](const CompiledPhrase::Slot& slot) {
+                          return slot.offs_min == slot.offs_max;
+                        }) &&
          !query.Tokenizer()()->Traits().explicit_pos;
 }
 

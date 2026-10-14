@@ -95,9 +95,10 @@ std::vector<PhraseWordStat> PhraseWordStats(const ByPhraseOptions& phrase,
     }
   }
   if (readers.size() > kSampled) {
-    std::ranges::nth_element(
-      readers, readers.begin() + kSampled, std::ranges::greater{},
-      [](const TermReader* reader) { return reader->docs_count(); });
+    absl::c_nth_element(readers, readers.begin() + kSampled,
+                        [](const TermReader* lhs, const TermReader* rhs) {
+                          return lhs->docs_count() > rhs->docs_count();
+                        });
     readers.resize(kSampled);
   }
   return PhraseWordStats(phrase, readers);

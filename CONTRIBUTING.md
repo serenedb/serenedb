@@ -81,7 +81,7 @@ git submodule update --init third_party/postgres
 python3 scripts/generate_pg_catalog.py
 ```
 
-A system object has one OID in every database and every release. Below 16384 the OIDs are PostgreSQL's; SereneDB's own system objects use 16384 to 49151 (`server/pg/catalog/utils/oids.h`), DuckDB's builtins in its system catalog 49152 to 65535, and the objects users create 65536 and up.
+A system object has one OID in every database and every release. Below 16384 the OIDs are PostgreSQL's; SereneDB's own system objects use 16384 to 49151 (`server/pg/catalog/oids.h`), DuckDB's builtins in its system catalog 49152 to 65535, and the objects users create 65536 and up.
 
 initdb numbers the objects it creates from those SQL files while it runs, so the source holds no OIDs for them. `server/pg/catalog/system_oids.lock` keeps their OIDs, and the OIDs of SereneDB's builtin functions and collations. The system views, `information_schema` and its domains and tables have the OIDs PostgreSQL 18.6's initdb gave them. A builtin function whose kind, name and argument types are exactly a PostgreSQL function's has PostgreSQL's OID, and every other builtin function and collation has one from SereneDB's range. The generator keeps the file and nothing else edits it: a new object gets the next free OID, a removed one stays as a `retired` line, and no line is ever renumbered or reused.
 

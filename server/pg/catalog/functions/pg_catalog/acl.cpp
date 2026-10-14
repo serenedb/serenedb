@@ -59,9 +59,9 @@
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
+#include "pg/catalog/oids.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
-#include "pg/catalog/utils/oids.h"
 #include "pg/connection_context.h"
 
 namespace sdb::pg {

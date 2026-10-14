@@ -37,7 +37,7 @@
 #include <vector>
 
 #include "pg/catalog/engine/system_table.h"
-#include "pg/catalog/utils/oids.h"
+#include "pg/catalog/oids.h"
 #include "pg/catalog/utils/session.h"
 
 namespace sdb {

@@ -30,7 +30,7 @@
 
 #include "catalog/catalog.h"
 #include "connector/duckdb_client_state.h"
-#include "pg/catalog/utils/oids.h"
+#include "pg/catalog/oids.h"
 
 namespace sdb::pg {
 

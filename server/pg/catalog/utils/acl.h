@@ -27,7 +27,7 @@
 #include <string>
 #include <string_view>
 
-#include "pg/catalog/utils/oids.h"
+#include "pg/catalog/oids.h"
 
 namespace duckdb {
 

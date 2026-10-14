@@ -153,9 +153,50 @@ void PlaceAlone(const irs::SubReader& segment, const CopyChecker* checker,
   merge.lone = irs::LoneSegment::Rewrite;
 }
 
+void PlaceInSteps(std::span<const irs::SubReader* const> group,
+                  size_t inputs_max, std::string_view reason,
+                  MergeRoundPlan& plan) {
+  SDB_ASSERT(inputs_max >= 2);
+  SDB_ASSERT(group.size() > inputs_max);
+  const auto count = group.size();
+  const auto merges = std::min((count - 2) / (inputs_max - 1), inputs_max);
+  const auto inputs =
+    std::min(count - inputs_max + merges, merges * inputs_max);
+  size_t first = 0;
+  uint64_t window = 0;
+  for (size_t i = 0; i < inputs; ++i) {
+    window += group[i]->live_docs_count();
+  }
+  auto lightest = window;
+  for (size_t i = inputs; i < count; ++i) {
+    window += group[i]->live_docs_count();
+    window -= group[i - inputs]->live_docs_count();
+    if (window < lightest) {
+      lightest = window;
+      first = i - inputs + 1;
+    }
+  }
+  const auto step = absl::StrCat(reason, ", first step");
+  for (size_t merge = 0, begin = first; merge < merges; ++merge) {
+    const auto end = first + inputs * (merge + 1) / merges;
+    plan.merges.emplace_back(
+      DescribeMerge(step, group.subspan(begin, end - begin)));
+    begin = end;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (i < first || i >= first + inputs) {
+      plan.skipped.emplace_back(SkippedSegment{
+        .name = group[i]->Meta().name,
+        .reason = "later step",
+      });
+    }
+  }
+  plan.partial = true;
+}
+
 void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
-                   std::string_view reason, const CopyChecker* checker,
-                   MergeRoundPlan& plan) {
+                   std::string_view reason, size_t inputs_max,
+                   const CopyChecker* checker, MergeRoundPlan& plan) {
   struct Placed {
     const irs::SubReader* segment;
     int64_t first_row;
@@ -212,6 +253,10 @@ void PlaceInGroups(const irs::IndexReader& reader, uint32_t target,
       PlaceAlone(*bucket.front(), checker, plan);
       continue;
     }
+    if (bucket.size() > inputs_max) {
+      PlaceInSteps(bucket, inputs_max, reason, plan);
+      continue;
+    }
     plan.merges.emplace_back(DescribeMerge(std::string{reason}, bucket));
   }
 }
@@ -225,7 +270,7 @@ void PlanCompact(const irs::IndexReader& reader,
     return;
   }
   PlaceInGroups(reader, target, absl::StrCat("compact to ", Segments(target)),
-                nullptr, plan);
+                request.inputs_max, nullptr, plan);
 }
 
 void PlanOptimize(const irs::IndexReader& reader,
@@ -236,7 +281,7 @@ void PlanOptimize(const irs::IndexReader& reader,
   const auto target = static_cast<uint32_t>(std::clamp<uint64_t>(
     by_size, 1, std::max<uint32_t>(1, request.target_segments)));
   PlaceInGroups(reader, target, absl::StrCat("optimize to ", Segments(target)),
-                request.copy_check, plan);
+                request.inputs_max, request.copy_check, plan);
 }
 
 void PlanSegments(const irs::IndexReader& reader,
@@ -251,6 +296,22 @@ void PlanSegments(const irs::IndexReader& reader,
   if (candidates.size() == 1 && !HasDeletes(*candidates.front())) {
     plan.notes.emplace_back(
       "a single segment without deletes has nothing to merge");
+    return;
+  }
+  if (candidates.size() > request.inputs_max) {
+    std::vector<std::pair<int64_t, const irs::SubReader*>> by_row;
+    by_row.reserve(candidates.size());
+    for (const auto* segment : candidates) {
+      by_row.emplace_back(DescribeSegment(*segment).rowid_min.value_or(0),
+                          segment);
+    }
+    absl::c_stable_sort(by_row, [](const auto& lhs, const auto& rhs) {
+      return lhs.first < rhs.first;
+    });
+    for (size_t i = 0; i < by_row.size(); ++i) {
+      candidates[i] = by_row[i].second;
+    }
+    PlaceInSteps(candidates, request.inputs_max, "listed segments", plan);
     return;
   }
   plan.merges.emplace_back(DescribeMerge("listed segments", candidates));
@@ -324,6 +385,11 @@ MergeRoundPlan PlanMergeRound(const irs::IndexReader& reader,
     case MergeMode::Optimize:
       PlanOptimize(reader, request, plan);
       break;
+  }
+  if (plan.partial) {
+    plan.notes.emplace_back(absl::StrCat(
+      "a merge in key order takes at most ", Segments(request.inputs_max),
+      ", so a larger group is merged in steps"));
   }
   return plan;
 }

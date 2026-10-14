@@ -263,39 +263,53 @@ struct IndexMerge {
   irs::LoneSegment lone = irs::LoneSegment::Skip;
 };
 
-std::vector<IndexMerge> IndexMerges(Action action,
-                                    search::InvertedIndexStorage& inverted,
-                                    const irs::IndexFieldOptions& field_options,
-                                    duckdb::ClientContext& context) {
+struct IndexRound {
   std::vector<IndexMerge> merges;
-  if (action == Action::Compact) {
-    merges.emplace_back(IndexMerge{
+  size_t segments = 0;
+  bool partial = false;
+};
+
+IndexRound IndexMerges(Action action, search::InvertedIndexStorage& inverted,
+                       const irs::IndexFieldOptions& field_options,
+                       duckdb::ClientContext& context) {
+  const auto snapshot = inverted.GetInvertedIndexSnapshot();
+  const size_t inputs_max = inverted.GetTasksSettings().merge_inputs_max;
+  IndexRound round{.segments = snapshot->reader.size()};
+  if (action == Action::Compact && round.segments <= inputs_max) {
+    round.merges.emplace_back(IndexMerge{
       .policy = irs::index_utils::MakePolicy(
-        irs::index_utils::CompactionCount{std::numeric_limits<size_t>::max()}),
+        irs::index_utils::CompactionCount{inputs_max}),
     });
-    return merges;
+    return round;
   }
   const search::CopyChecker checker{
     field_options, duckdb::TaskScheduler::GetScheduler(context)};
   const auto plan = search::PlanMergeRound(
-    inverted.GetInvertedIndexSnapshot()->reader,
-    search::MergeRoundRequest{.mode = search::MergeMode::Optimize,
-                              .target_segments = QueryThreads(context),
-                              .row_group_size = field_options.row_group_size,
-                              .copy_check = &checker});
-  merges.reserve(plan.merges.size());
+    snapshot->reader,
+    action == Action::Compact
+      ? search::MergeRoundRequest{.mode = search::MergeMode::Compact,
+                                  .inputs_max = inputs_max,
+                                  .single_output = true}
+      : search::MergeRoundRequest{
+          .mode = search::MergeMode::Optimize,
+          .target_segments = QueryThreads(context),
+          .row_group_size = field_options.row_group_size,
+          .inputs_max = inputs_max,
+          .copy_check = &checker});
+  round.partial = plan.partial;
+  round.merges.reserve(plan.merges.size());
   for (const auto& planned : plan.merges) {
     std::vector<std::string> names;
     names.reserve(planned.inputs.size());
     for (const auto& segment : planned.inputs) {
       names.emplace_back(segment.name);
     }
-    merges.emplace_back(IndexMerge{
+    round.merges.emplace_back(IndexMerge{
       .policy = search::ExplicitPolicy(names),
       .lone = planned.lone,
     });
   }
-  return merges;
+  return round;
 }
 
 void CompactInvertedStorage(Action action,
@@ -317,22 +331,26 @@ void CompactInvertedStorage(Action action,
   const irs::AnnBuildEnv* env_ptr = &search::AnnBuildEnv();
 
   inverted.Refresh();
-  for (const auto& merge :
-       IndexMerges(action, inverted, field_options, context)) {
-    bool empty_compaction = false;
-    // The merge encodes against the index definition the step captured,
-    // which the step holds for the whole call.
-    const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
-      merge.policy, tick, empty_compaction, &field_options, env_ptr,
-      search::MergeOrigin::Vacuum, nullptr, &executor, merge.lone));
-    context.InterruptCheck();
-    context.DeadlineCheck();
-    if (!res.ok()) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INTERNAL_ERROR),
-        ERR_MSG("compact_index: compaction failed: ", res.message()));
+  for (auto more = true; more;) {
+    const auto round = IndexMerges(action, inverted, field_options, context);
+    for (const auto& merge : round.merges) {
+      bool empty_compaction = false;
+      // The merge encodes against the index definition the step captured,
+      // which the step holds for the whole call.
+      const auto [res, _] = irs::GetBlocking(inverted.CompactUnsafeAsync(
+        merge.policy, tick, empty_compaction, &field_options, env_ptr,
+        search::MergeOrigin::Vacuum, nullptr, &executor, merge.lone));
+      context.InterruptCheck();
+      context.DeadlineCheck();
+      if (!res.ok()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INTERNAL_ERROR),
+          ERR_MSG("compact_index: compaction failed: ", res.message()));
+      }
+      inverted.Refresh();
     }
-    inverted.Refresh();
+    more = round.partial &&
+           inverted.GetInvertedIndexSnapshot()->reader.size() < round.segments;
   }
 }
 

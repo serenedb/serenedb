@@ -31,6 +31,7 @@
 #include <duckdb/main/database_manager.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -94,6 +95,9 @@ SearchTable::SearchTable(std::shared_ptr<catalog::DatabaseDirectory> directory,
     _compression{std::move(compression)},
     _codec_params{options.codec},
     _sort{std::move(sort)} {
+  if (!_sort.Empty()) {
+    _maint_settings.merge_inputs_max = irs::kSortedMergeInputsMax;
+  }
   if (!options.optimize_top_k.empty()) {
     _topk_options = ParseScorerExpression(nullptr, options.optimize_top_k);
     _topk_scorer = MakeScorer(*_topk_options);
@@ -499,26 +503,32 @@ void SearchTable::VacuumCompact(MergeMode mode, uint32_t target_segments,
   RefreshResult code = RefreshResult::Undefined;
   RefreshUnsafe(/*wait=*/true, nullptr, code);
   const CopyChecker checker{*field_options, scheduler};
-  const auto plan =
-    PlanMergeRound(_writer->GetSnapshot(),
-                   MergeRoundRequest{.mode = mode,
-                                     .target_segments = target_segments,
-                                     .row_group_size = _row_group_size,
-                                     .copy_check = &checker});
-  for (const auto& planned : plan.merges) {
-    if (!progress()) {
-      break;
+  for (auto more = true; more;) {
+    const auto plan = PlanMergeRound(
+      _writer->GetSnapshot(),
+      MergeRoundRequest{.mode = mode,
+                        .target_segments = target_segments,
+                        .row_group_size = _row_group_size,
+                        .inputs_max = _maint_settings.merge_inputs_max,
+                        .copy_check = &checker});
+    more = plan.partial;
+    for (const auto& planned : plan.merges) {
+      if (!progress()) {
+        more = false;
+        break;
+      }
+      std::vector<std::string> names;
+      names.reserve(planned.inputs.size());
+      for (const auto& segment : planned.inputs) {
+        names.emplace_back(segment.name);
+      }
+      bool empty = false;
+      CompactUnsafe(ExplicitPolicy(names), progress, empty, field_options.get(),
+                    MergeOrigin::Vacuum, executor, planned.lone);
+      SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
+      RefreshUnsafe(/*wait=*/true, nullptr, code);
     }
-    std::vector<std::string> names;
-    names.reserve(planned.inputs.size());
-    for (const auto& segment : planned.inputs) {
-      names.emplace_back(segment.name);
-    }
-    bool empty = false;
-    CompactUnsafe(ExplicitPolicy(names), progress, empty, field_options.get(),
-                  MergeOrigin::Vacuum, executor, planned.lone);
-    SDB_WAIT_ON_FAILURE("pause_search_compact_before_publish");
-    RefreshUnsafe(/*wait=*/true, nullptr, code);
+    more = more && _writer->GetSnapshot().size() < plan.segments;
   }
   CleanupUnsafe();
 }

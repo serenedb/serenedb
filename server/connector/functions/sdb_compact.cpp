@@ -152,6 +152,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> CompactBindOperator(
     .merges = search::GetSearchEngine().MergeRoundSize(),
     .target_segments = target_segments.value_or(default_target),
     .row_group_size = target.RowGroupSize(),
+    .inputs_max = settings.merge_inputs_max,
     .single_output = target.IsIndex(),
     .segments = segments,
     .copy_check = &checker,

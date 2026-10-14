@@ -43,13 +43,15 @@ Inverted indexes are eventually consistent: rows you `INSERT`, `UPDATE` or `DELE
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_007" />
 
-### Compacting -- `COMPACT_*`
+### Compacting -- `COMPACT_*` {#compact}
 
 `COMPACT_*` merges index segments to reclaim space and keep queries fast. It does not change query results:
 
 <SqlLogicTest id="sql/statements/vacuum/index/example_008" />
 
 Inverted indexes and search tables also compact in the background by default (see [Background compaction](../../indexes/inverted/maintenance.md#background-compaction)); `COMPACT_*` merges on demand, including when background compaction is disabled. A search table is merged into a single segment. Set `sdb_compact_target_segments` to `N` to stop at `N` segments instead: the segments, in the order their rows were written, are split into `N` runs of about as many live rows each, and each run is merged into one segment. No single merge holds the whole table, and each new segment holds rows written next to each other. Each merge spreads its columns and postings over as many threads as the session may use (the `threads` setting).
+
+A merge of a search table or an index with a sort key ([`SORTED BY`](../create_table/index.md#sort-keys)) takes at most 256 segments. When more segments are to become one, `COMPACT_*` and `OPTIMIZE_*` merge them in steps: the first step merges just enough neighbouring segments, choosing those with the fewest live rows, to leave at most 256, and the next step merges what is left. Only the rows of the first step are written twice.
 
 While `COMPACT_*` works on a table or an index, its background merges pause: those in progress stop, and none starts until `COMPACT_*` ends. Each merge becomes visible as soon as it finishes, so the disk holds at most one merge's extra copy at a time. Cancelling the statement or reaching `statement_timeout` stops the merge in progress and leaves its segments as they were; merges that finished before remain.
 

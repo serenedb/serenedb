@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
@@ -84,6 +85,7 @@ struct MergeRoundPlan {
   std::vector<PlannedMerge> merges{};
   std::vector<SkippedSegment> skipped{};
   std::vector<std::string> notes{};
+  bool partial = false;
 };
 
 struct MergeRoundRequest {
@@ -92,6 +94,7 @@ struct MergeRoundRequest {
   size_t merges = 1;
   uint32_t target_segments = 1;
   uint32_t row_group_size = 0;
+  size_t inputs_max = std::numeric_limits<size_t>::max();
   bool single_output = false;
   std::span<const std::string> segments{};
   const CopyChecker* copy_check = nullptr;

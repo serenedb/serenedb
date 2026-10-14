@@ -60,6 +60,8 @@ Background compaction merges runs of neighbouring segments in the order their ro
 
 A segment holds at most 2,147,418,110 rows. A merge whose segments hold more live rows than that together is refused and logged, and its segments stay as they are; this applies to background compaction, `VACUUM` and [`sdb_compact`](#sdb-compact) alike.
 
+A merge of a search table or an index with a sort key (`SORTED BY`) takes at most 256 segments, so its background compaction merges at most 256 at a time, whatever `compaction_max_segments` says. `VACUUM` merges a larger group [in steps](../../statements/vacuum/index.md#compact).
+
 - **Disable** background compaction with `compaction_interval = 0`, in `WITH` at creation or later with `ALTER INDEX ... SET` for an index and [`ALTER TABLE ... SET`](../../statements/alter_table/index.md#set--reset-storage-options) for a search table. Segments are then merged only when you ask for it.
 - **Enable** it again, or change how often it runs, the same way with a non-zero interval. `RESET (compaction_interval)` returns to the session default. The change applies to the running background task at once.
 - **Compact manually** at any time, whether background compaction is enabled or not, with `VACUUM (COMPACT_INDEX)` or `VACUUM (COMPACT_TABLE)` -- see [below](#manual-maintenance-with-vacuum).
@@ -113,15 +115,17 @@ Each result row describes one merge:
 | Line | Meaning |
 |---|---|
 | `Segments`, `Merges` | Segments of the relation and merges planned |
-| `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed` |
+| `Merge N` | How many segments the merge combines into one, and why: `adjacent policy` for `background`, `compact to N segments` for `compact`, `optimize to N segments` for `optimize`, `listed segments` for `segments`. An `optimize` that rewrites a single segment says `re-encoding saves N%` or `a declared column codec changed`. The first step of a merge in key order adds `first step` |
 | `Merge N Inputs` | The segments merged: the first eight, then `+N more` |
 | `Merge N Docs` | Documents and live documents of the inputs, and the range of their row ids |
 | `Merge N Bytes` | Size of the inputs and the estimated size of the new segment |
 | `Merge N Columns` | Columns stored in the inputs, internal ones included: how many, their size and the largest one |
 | `Merge N Postings` | Indexed fields whose postings the merge combines |
 | `Merge N ANN` | Vector columns whose ANN index the merge builds |
-| `Not Merged` | Segments left out, with the reason: `not selected by the adjacent policy`, `at or above the merge size cap` or `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) |
-| `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, or the only listed segment has no deletes |
+| `Not Merged` | Segments left out, with the reason: `not selected by the adjacent policy`, `at or above the merge size cap`, `alone in its group without deletes` (for `optimize` followed by how much re-encoding would save) or `later step` |
+| `Notes` | Why less is merged: background compaction is disabled, the relation already has at most the target number of segments, the only listed segment has no deletes, or a merge in key order takes at most 256 segments |
+
+On a search table or an index with a sort key (`SORTED BY`), a merge takes at most 256 segments. When a `compact`, `optimize` or `segments` call would merge more segments into one, it runs only the first of the [steps](../../statements/vacuum/index.md#compact) `VACUUM` takes: it merges just enough neighbouring segments, those with the fewest live rows, to leave at most 256, and lists the rest as `later step`. Call it again for the next step.
 
 `EXPLAIN ANALYZE` runs the merges and adds `Actual Outcome` (how many merges ended with each outcome), `Actual Written` (bytes of the new segments), one `Actual <step>` line per merge step and `Actual Total`.
 

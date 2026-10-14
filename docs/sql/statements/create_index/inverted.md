@@ -49,6 +49,7 @@ Columns in `INCLUDE (...)` are **stored but not indexed**: they cannot be search
 -   Each key is a column of the indexed table, listed in key order. A key is ascending unless it says `DESC`. NULLs come last in an ascending key and first in a descending one, as in PostgreSQL's `ORDER BY`, unless `NULLS FIRST` or `NULLS LAST` says otherwise.
 -   A key column need not be indexed. The index stores its values as if it were in `INCLUDE`, and the index's definition lists it there.
 -   Every segment of the index holds its rows in key order from the moment it is written, and merges keep that order. A query that reads from the index gets each segment's rows in key order, and the key columns compress better. Rows with equal keys are stored in no particular order.
+-   A merge in key order takes at most 256 segments: background compaction merges at most 256 at a time, whatever `compaction_max_segments` says, and `VACUUM` merges more [in steps](../vacuum/index.md#compact).
 -   A key is a stored column: an expression, a `COLLATE` clause or a generated column is rejected, and so is a column listed twice.
 -   Indexes on search tables and on views reject `SORTED BY`; a search table is sorted by its own `SORTED BY`.
 

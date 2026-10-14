@@ -42,6 +42,7 @@
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_order.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/store/fs_directory.hpp>
@@ -165,6 +166,9 @@ InvertedIndexStorage::InvertedIndexStorage(
     options.compaction_max_segments_bytes;
   _tasks_settings.compaction_floor_segment_bytes =
     options.compaction_floor_segment_bytes;
+  if (!sort.Empty()) {
+    _tasks_settings.merge_inputs_max = irs::kSortedMergeInputsMax;
+  }
 
   SDB_ASSERT(index_id != 0);
 

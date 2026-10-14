@@ -358,9 +358,12 @@ duckdb::optional_ptr<catalog::SereneDBCatalog> SessionCatalog(
   if (!connector::GetSereneDBContextPtr(context)) {
     return nullptr;
   }
-  return duckdb::Catalog::GetCatalog(
-           context, duckdb::DatabaseManager::GetDefaultDatabase(context))
-    .Cast<catalog::SereneDBCatalog>();
+  auto& catalog = duckdb::Catalog::GetCatalog(
+    context, duckdb::DatabaseManager::GetDefaultDatabase(context));
+  if (catalog.GetCatalogType() != catalog::SereneDBCatalog::kStorageType) {
+    return nullptr;
+  }
+  return catalog.Cast<catalog::SereneDBCatalog>();
 }
 
 Session MakeSession(duckdb::ClientContext* context) {
